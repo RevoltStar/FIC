@@ -12,7 +12,7 @@
 namespace {
 QString levelLabel(logLevel level)
 {
-    return QString::fromStdString(Logger::level_to_string(level));
+    return logLevelToString(level);
 }
 }
 

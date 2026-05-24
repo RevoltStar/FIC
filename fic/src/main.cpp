@@ -7,8 +7,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
+#include <fstream>
 #include <iostream>
 #include <locale>
+#include <optional>
 #include <string>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -17,11 +20,14 @@
 #include <sys/un.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "core/main_function.h"
 #include "ipc/FicIpcClient.h"
+#include "utils/DB.h"
+#include "utils/SystemBootInfo.h"
 
 using json = nlohmann::json;
 
@@ -91,6 +97,72 @@ std::string canonical_module_name(
 
     return module;
 }
+std::string editor_type_for_policy(const PolicyTypeValue& value) {
+    if (dynamic_cast<const EnableDisablePolicyTypeValue*>(&value) != nullptr) {
+        return "checkbox";
+    }
+    if (dynamic_cast<const IntPolicyTypeValue*>(&value) != nullptr) {
+        return "spinbox";
+    }
+    if (dynamic_cast<const MultiLineTextPolicyTypeValue*>(&value) != nullptr) {
+        return "textedit";
+    }
+    if (dynamic_cast<const PossibleListPolicyTypeValue*>(&value) != nullptr) {
+        return "combobox";
+    }
+    return "unknown";
+}
+
+json policy_to_json(const std::string& module,
+                    const std::string& submoduleName,
+                    const std::string& policyName,
+                    const std::shared_ptr<CheckAndFix>& policyClass) {
+    const PolicyTypeValue& typeValue = policyClass->getPolicyTypeValue();
+    const std::string editorType = editor_type_for_policy(typeValue);
+    const bool isSet = policyClass->isPolicySet();
+    bool valueValid = true;
+    std::string value = policyClass->getDefaultValue();
+
+    if (isSet) {
+        try {
+            std::optional<std::string> currentValue = policyClass->getValue();
+            if (currentValue.has_value()) {
+                value = currentValue.value();
+            } else {
+                valueValid = false;
+            }
+        } catch (const std::exception&) {
+            valueValid = false;
+        }
+    }
+
+    json possibleValues = json::array();
+    for (const std::string& possibleValue : policyClass->getPossibleValues()) {
+        possibleValues.push_back(possibleValue);
+    }
+
+    json item = {
+        {"module", module},
+        {"submodule", submoduleName},
+        {"policy", policyName},
+        {"enabled", policyClass->isEnable()},
+        {"set", isSet},
+        {"value", value},
+        {"value_valid", valueValid},
+        {"default_value", policyClass->getDefaultValue()},
+        {"editor", editorType},
+        {"possible_values", possibleValues},
+        {"restriction", policyClass->getPolicyRestriction()}
+    };
+
+    if (editorType == "spinbox") {
+        item["min"] = policyClass->getMin();
+        item["max"] = policyClass->getMax();
+    }
+
+    return item;
+}
+
 json policy_list_json(const std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
                       const std::string& module) {
     json result = json::array();
@@ -101,16 +173,109 @@ json policy_list_json(const std::map<std::string, std::map<std::string, std::map
 
     for (const auto& [submoduleName, policyMap] : moduleIt->second) {
         for (const auto& [policyName, policyClass] : policyMap) {
-            result.push_back({
-                {"module", module},
-                {"submodule", submoduleName},
-                {"policy", policyName},
-                {"enabled", policyClass->isEnable()},
-                {"set", policyClass->isPolicySet()}
-            });
+            result.push_back(policy_to_json(module, submoduleName, policyName, policyClass));
         }
     }
     return result;
+}
+
+constexpr const char* DEVICE_DB_PATH = "/opt/fic/db/devices.db";
+constexpr const char* LOG_BASE_PATH = "/opt/fic/log";
+
+json device_to_json(const DeviceInfo& device) {
+    return json{
+        {"id", device.id},
+        {"device_hash", device.device_hash},
+        {"devpath", device.devpath},
+        {"subsystem", device.subsystem},
+        {"device_type", device.device_type},
+        {"parent_id", device.parent_id},
+        {"control_level", device.control_level},
+        {"ignore_hierarchy", device.ignore_hierarchy},
+        {"boot_id", device.boot_id},
+        {"created_at", device.created_at},
+        {"last_event_at", device.last_event_at},
+        {"notes", device.notes}
+    };
+}
+
+json with_device_db(const std::function<json(DB&)>& action) {
+    DB db(DEVICE_DB_PATH);
+    if (!db.initializeDatabase()) {
+        return fic::ipc::make_error_response("failed to initialize devices database");
+    }
+    if (!db.acquireLock()) {
+        return fic::ipc::make_error_response("failed to lock devices database");
+    }
+
+    try {
+        json response = action(db);
+        db.releaseLock();
+        return response;
+    } catch (const std::exception& e) {
+        db.releaseLock();
+        return fic::ipc::make_error_response("device database error: " + std::string(e.what()));
+    }
+}
+
+json log_records_json(const std::string& requestedBootId) {
+    const std::string bootId = requestedBootId.empty()
+        ? SystemBootInfo::get_boot_id()
+        : requestedBootId;
+
+    json categories = json::array();
+    json records = json::array();
+    if (bootId.empty()) {
+        return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
+    }
+
+    const std::filesystem::path bootDir = std::filesystem::path(LOG_BASE_PATH) / bootId;
+    if (!std::filesystem::exists(bootDir) || !std::filesystem::is_directory(bootDir)) {
+        return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
+    }
+
+    std::vector<std::filesystem::path> categoryDirs;
+    for (const auto& entry : std::filesystem::directory_iterator(bootDir)) {
+        if (entry.is_directory()) {
+            categoryDirs.push_back(entry.path());
+        }
+    }
+    std::sort(categoryDirs.begin(), categoryDirs.end());
+
+    for (const auto& categoryDir : categoryDirs) {
+        const std::string category = categoryDir.filename().string();
+        categories.push_back(category);
+
+        std::vector<std::filesystem::path> logFiles;
+        for (const auto& entry : std::filesystem::directory_iterator(categoryDir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".txt") {
+                logFiles.push_back(entry.path());
+            }
+        }
+        std::sort(logFiles.begin(), logFiles.end());
+
+        for (const auto& logFile : logFiles) {
+            std::ifstream stream(logFile);
+            if (!stream.is_open()) {
+                continue;
+            }
+
+            std::string line;
+            while (std::getline(stream, line)) {
+                if (line.empty()) {
+                    continue;
+                }
+                records.push_back({
+                    {"category", category},
+                    {"source_file", logFile.string()},
+                    {"line", line},
+                    {"byte_size", line.size()}
+                });
+            }
+        }
+    }
+
+    return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
 }
 
 json handle_request(json request,
@@ -205,6 +370,71 @@ json handle_request(json request,
             bool ok = check(cafMap, module, policy);
             return ok ? fic::ipc::make_ok_response("policy applied")
                       : fic::ipc::make_error_response("failed to apply policy");
+        }
+        if (command == "device_get") {
+            int deviceId = request.value("device_id", 0);
+            if (deviceId <= 0) {
+                return fic::ipc::make_error_response("device_id is required");
+            }
+            return with_device_db([deviceId](DB& db) {
+                DeviceInfo device = db.getDeviceById(deviceId);
+                if (device.id == -1) {
+                    return fic::ipc::make_error_response("device not found");
+                }
+                return json{{"ok", true}, {"message", "device loaded"}, {"device", device_to_json(device)}};
+            });
+        }
+        if (command == "device_children") {
+            int parentId = request.value("parent_id", 0);
+            if (parentId <= 0) {
+                return fic::ipc::make_error_response("parent_id is required");
+            }
+            return with_device_db([parentId](DB& db) {
+                json children = json::array();
+                for (const DeviceInfo& child : db.getChildDevices(parentId)) {
+                    children.push_back(device_to_json(child));
+                }
+                return json{{"ok", true}, {"message", "children loaded"}, {"children", children}};
+            });
+        }
+        if (command == "device_attributes") {
+            int deviceId = request.value("device_id", 0);
+            if (deviceId <= 0) {
+                return fic::ipc::make_error_response("device_id is required");
+            }
+            return with_device_db([deviceId](DB& db) {
+                json attributes = json::object();
+                for (const auto& [name, value] : db.getDeviceAttributes(deviceId)) {
+                    attributes[name] = value;
+                }
+                return json{{"ok", true}, {"message", "attributes loaded"}, {"attributes", attributes}};
+            });
+        }
+        if (command == "device_update_control_level") {
+            int deviceId = request.value("device_id", 0);
+            std::string controlLevel = request.value("control_level", "");
+            if (deviceId <= 0 || controlLevel.empty()) {
+                return fic::ipc::make_error_response("device_id and control_level are required");
+            }
+            return with_device_db([deviceId, controlLevel](DB& db) {
+                bool ok = db.updateDeviceControlLevel(deviceId, controlLevel);
+                return ok ? fic::ipc::make_ok_response("device control level updated")
+                          : fic::ipc::make_error_response("failed to update device control level");
+            });
+        }
+        if (command == "device_delete") {
+            int deviceId = request.value("device_id", 0);
+            if (deviceId <= 0) {
+                return fic::ipc::make_error_response("device_id is required");
+            }
+            return with_device_db([deviceId](DB& db) {
+                bool ok = db.deleteDevice(deviceId);
+                return ok ? fic::ipc::make_ok_response("device deleted")
+                          : fic::ipc::make_error_response("failed to delete device");
+            });
+        }
+        if (command == "log_records") {
+            return log_records_json(request.value("boot_id", ""));
         }
         if (command == "calc_hash") {
             bool ok = calcHash(value);

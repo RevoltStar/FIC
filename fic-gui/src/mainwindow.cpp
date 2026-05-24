@@ -1,10 +1,12 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
-#include "policy/PolicyEditorFactory.h"
 #include "utils/SystemBootInfo.h"
 #include "ipc/FicIpcClient.h"
 
 #include <QStringList>
+#include <algorithm>
+#include <map>
+#include <stdexcept>
 #include <vector>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -102,20 +104,18 @@ void MainWindow::onAttributesUpdated(int deviceId, int attributeCount)
         ui->statusbar->showMessage("У устройства нет атрибутов", 3000);
     }
 }
-QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>& submoduleMap,
-                         const std::string moduleName, QWidget* parent) {
-    // Основной виджет
+QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
+                                      const std::string moduleName,
+                                      QWidget* parent) {
     QWidget* mainWidget = new QWidget(parent);
     QVBoxLayout* mainLayout = new QVBoxLayout(mainWidget);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    // Scroll Area для содержимого
     QScrollArea* scrollArea = new QScrollArea();
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
 
-    // Контейнер для содержимого с границами
     QFrame* contentFrame = new QFrame();
     contentFrame->setFrameShape(QFrame::Box);
     contentFrame->setLineWidth(1);
@@ -125,7 +125,6 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
     gridLayout->setSpacing(10);
     gridLayout->setColumnMinimumWidth(1, 200);
 
-    // Стили
     QString cellStyle = "QFrame { border: 1px solid #d0d0d0; border-radius: 3px; padding: 5px; }";
     QString submoduleHeaderStyle = "QLabel {"
                                  "  font-weight: bold;"
@@ -136,7 +135,6 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
                                  "  border-radius: 4px;"
                                  "}";
 
-    // Заголовки столбцов
     QFont headerFont;
     headerFont.setBold(true);
 
@@ -175,8 +173,7 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
     gridLayout->addWidget(descHeaderFrame, 0, 3);
 
     struct PolicyRowControl {
-        std::string policyName;
-        std::shared_ptr<CheckAndFix> policyClass;
+        PolicyInfo policy;
         QCheckBox* activeCheckbox;
         QWidget* valueWidget;
         PolicyEditorType type;
@@ -189,11 +186,13 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
     };
 
     std::vector<PolicyRowControl> policyControls;
+    std::map<std::string, std::vector<PolicyInfo>> policiesBySubmodule;
+    for (const PolicyInfo& policy : policies) {
+        policiesBySubmodule[policy.submoduleName].push_back(policy);
+    }
 
-    // Добавление подмодулей и политик
     int row = 1;
-    for(const auto& [submoduleName, policyMap] : submoduleMap) {
-        // Заголовок подмодуля
+    for (const auto& [submoduleName, submodulePolicies] : policiesBySubmodule) {
         QFrame* submoduleFrame = new QFrame();
         submoduleFrame->setStyleSheet(submoduleHeaderStyle);
         QHBoxLayout* submoduleLayout = new QHBoxLayout(submoduleFrame);
@@ -201,13 +200,7 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
 
         QLabel* submoduleLabel = new QLabel(
             QLocalizationManager::getLang(
-                    QString::fromStdString(
-                        "[module:"+
-                        moduleName+
-                        "][submodule:"+
-                        submoduleName+
-                        "]"
-                    )
+                QString::fromStdString("[module:" + moduleName + "][submodule:" + submoduleName + "]")
             )
         );
         submoduleLabel->setAlignment(Qt::AlignCenter);
@@ -216,23 +209,17 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
         gridLayout->addWidget(submoduleFrame, row, 0, 1, 4);
         row++;
 
-        // Добавление политик подмодуля
-        std::string strLangTpl = "";
-        std::string strLangTplDescr = "";
-        for (const auto& [policyName, policyClass] : policyMap) {
-            strLangTpl = "[module:"+moduleName+"][policy:" + policyName + "]";
-            strLangTplDescr = strLangTpl + "[description]";
+        for (const PolicyInfo& policy : submodulePolicies) {
+            const std::string strLangTpl = "[module:" + moduleName + "][policy:" + policy.policyName + "]";
+            const std::string strLangTplDescr = strLangTpl + "[description]";
 
-            // Ячейка "Включено"
             QFrame* enabledFrame = new QFrame();
             enabledFrame->setStyleSheet(cellStyle);
             QCheckBox* activeCheckbox = new QCheckBox(enabledFrame);
-            // Устанавливаем состояние из isEnable(). Если политика не установлена, то считается, что она выключена
-            activeCheckbox->setChecked(policyClass->isEnable());
+            activeCheckbox->setChecked(policy.enabled && policy.valueValid);
             QVBoxLayout* enabledLayout = new QVBoxLayout(enabledFrame);
             enabledLayout->addWidget(activeCheckbox, 0, Qt::AlignCenter);
 
-            // Ячейка "Название"
             QFrame* nameFrame = new QFrame();
             nameFrame->setStyleSheet(cellStyle);
             QLabel* nameLabel = new QLabel(QLocalizationManager::getLang(QString::fromStdString(strLangTpl)), nameFrame);
@@ -240,40 +227,11 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
             QVBoxLayout* nameLayout = new QVBoxLayout(nameFrame);
             nameLayout->addWidget(nameLabel);
 
-            // Ячейка "Значение"
             QFrame* valueFrame = new QFrame();
             valueFrame->setStyleSheet(cellStyle);
             QWidget* controlWidget = nullptr;
-            //Тип GUI-элемента
-            auto type = buildEditorSpec(policyClass->getPolicyTypeValue()).type;
-            //Установлено ли значение политики в конфигурационном файле
-            bool isPolicySet = policyClass->isPolicySet();
-            std::string value;
-
-            /*Здесь проверям, что значение в конф. файле записано корректно
-            */
-            if (isPolicySet) {
-                std::optional valueOpt = policyClass->getValue();
-                if(!valueOpt){
-                    //Здесь может быть ТОЛЬКО невалидное значение, т.к. isPolicySet гарантирует, что какое-то значение записано
-                        QMessageBox::warning(parent, "Ошибка",
-                                             QString("Недопустимое значение в конфигурационном файле для политики %1: %2.\n"
-                                                     "Учтите, что пока значение не будет валидно, политика применяться не будет.")
-                                                 .arg(QString::fromStdString(policyName))
-                                                 .arg(QString::fromStdString(value))
-                                                 );
-                    //В графический элемент запишем значение по умолчанию, политику вырубим (isEnable=DISABLE)
-                    value = policyClass->getDefaultValue();
-                    activeCheckbox->setChecked(false);
-                }else{
-                    //Значение валидно - берем его.
-                    value = *valueOpt;
-                }
-            } else {
-                //Политика не установлена - пишем значение по умолчанию
-                //Это безопасно, т.к. политика по умолчанию выключена
-                value = policyClass->getDefaultValue();
-            }
+            PolicyEditorType type = editorTypeFromString(policy.editor);
+            const std::string value = policy.valueValid ? policy.value : policy.defaultValue;
 
             switch(type) {
                 case PolicyEditorType::CheckBox: {
@@ -284,75 +242,67 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
                 }
                 case PolicyEditorType::SpinBox: {
                     QSpinBox* spinBox = new QSpinBox();
-                    spinBox->setRange(policyClass->getMin(), policyClass->getMax());
-                    spinBox->setValue(std::stoi(value));
-
+                    spinBox->setRange(policy.min, policy.max);
+                    try {
+                        spinBox->setValue(std::stoi(value));
+                    } catch (const std::exception&) {
+                        spinBox->setValue(policy.min);
+                    }
                     controlWidget = spinBox;
                     break;
                 }
                 case PolicyEditorType::TextEdit: {
                     QTextEdit* textEdit = new QTextEdit();
-                    QString text = QString::fromStdString(value);
-                    text.replace(":", "\n");
-                    textEdit->setPlainText(text);
-
+                    textEdit->setPlainText(QString::fromStdString(value));
                     controlWidget = textEdit;
                     break;
                 }
                 case PolicyEditorType::ComboBox: {
                     QComboBox* comboBox = new QComboBox();
-                    for (const std::string& possibleValue : policyClass->getPossibleValues()) {
+                    for (const std::string& possibleValue : policy.possibleValues) {
                         comboBox->addItem(QString::fromStdString(possibleValue));
                     }
                     int valueIndex = comboBox->findText(QString::fromStdString(value));
                     if (valueIndex >= 0) {
                         comboBox->setCurrentIndex(valueIndex);
                     }
-
                     controlWidget = comboBox;
                     break;
                 }
                 default: {
-                    controlWidget = new QLabel("Unknown type");
+                    QLabel* label = new QLabel("Unsupported policy type: " + QString::fromStdString(policy.editor));
+                    label->setWordWrap(true);
+                    controlWidget = label;
+                    activeCheckbox->setEnabled(false);
                     break;
                 }
             }
 
             policyControls.push_back({
-                policyName,
-                policyClass,
+                policy,
                 activeCheckbox,
                 controlWidget,
                 type
             });
 
-            /*
-            // Если значение невалидно, отключаем чекбокс "Включено"
-            if (!valueValid) {
-                activeCheckbox->setChecked(false);
-                activeCheckbox->setEnabled(false);
-            }
-            */
-
             QVBoxLayout* valueLayout = new QVBoxLayout(valueFrame);
             valueLayout->addWidget(controlWidget);
 
-            // Ячейка "Описание"
             QFrame* descFrame = new QFrame();
             descFrame->setStyleSheet(cellStyle);
             QTextEdit* descEdit = new QTextEdit(descFrame);
-            //Получаем описание политики и добавляем ограничения
-            descEdit->setPlainText(
-                QLocalizationManager::getLang(QString::fromStdString(strLangTplDescr)) + "\n" +
-                "--------------------------------\n" +
-                QString::fromStdString(policyClass->getPolicyRestriction())
-            );
+            QString description = QLocalizationManager::getLang(QString::fromStdString(strLangTplDescr)) +
+                "\n--------------------------------\n" +
+                QString::fromStdString(policy.restriction);
+            if (!policy.valueValid) {
+                description += "\n--------------------------------\nCurrent config value is invalid; default value is shown.";
+            }
+            descEdit->setPlainText(description);
             descEdit->setReadOnly(true);
             descEdit->setMaximumHeight(100);
             QVBoxLayout* descLayout = new QVBoxLayout(descFrame);
             descLayout->addWidget(descEdit);
 
-            // Добавление строки в сетку
             gridLayout->addWidget(enabledFrame, row, 0);
             gridLayout->addWidget(nameFrame, row, 1);
             gridLayout->addWidget(valueFrame, row, 2);
@@ -362,14 +312,12 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
         }
     }
 
-    // Настройка растягивания
     gridLayout->setColumnStretch(1, 1);
     gridLayout->setColumnStretch(3, 2);
 
     scrollArea->setWidget(contentFrame);
     mainLayout->addWidget(scrollArea);
 
-    // Кнопка "Применить"
     QPushButton* applyButton = new QPushButton(QLocalizationManager::getLang("[apply_button]"));
     applyButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     applyButton->setMinimumHeight(40);
@@ -414,15 +362,14 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
                 }
             }
 
-            if (!row.policyClass->validate(value)) {
-                validationErrors << QString("Policy %1: invalid value \"%2\"")
-                    .arg(QString::fromStdString(row.policyName))
-                    .arg(QString::fromStdString(value));
+            QString validationError;
+            if (!validatePolicyValue(row.policy, value, &validationError)) {
+                validationErrors << validationError;
                 continue;
             }
 
             changes.push_back({
-                row.policyName,
+                row.policy.policyName,
                 value,
                 row.activeCheckbox && row.activeCheckbox->isChecked()
             });
@@ -486,14 +433,140 @@ QWidget* MainWindow::createPolicyPage(const std::map<std::string, std::map<std::
 
     return mainWidget;
 }
+
+std::vector<MainWindow::PolicyInfo> MainWindow::loadPoliciesFromDaemon(QStringList& errors) const {
+    std::vector<PolicyInfo> result;
+    fic::ipc::Client daemonClient;
+    auto response = daemonClient.request({{"command", "policy_list"}, {"module", "all"}});
+
+    if (!response.value("ok", false)) {
+        errors << QString::fromStdString(response.value("message", "failed to load policies from daemon"));
+        return result;
+    }
+
+    if (!response.contains("policies") || !response["policies"].is_array()) {
+        errors << "Daemon response does not contain policies array";
+        return result;
+    }
+
+    for (const auto& item : response["policies"]) {
+        if (!item.is_object()) {
+            continue;
+        }
+
+        PolicyInfo policy;
+        policy.moduleName = item.value("module", "");
+        policy.submoduleName = item.value("submodule", "");
+        policy.policyName = item.value("policy", "");
+        policy.editor = item.value("editor", "unknown");
+        policy.value = item.value("value", item.value("default_value", ""));
+        policy.defaultValue = item.value("default_value", "");
+        policy.restriction = item.value("restriction", "");
+        policy.enabled = item.value("enabled", false);
+        policy.isSet = item.value("set", false);
+        policy.valueValid = item.value("value_valid", true);
+        policy.min = item.value("min", 0);
+        policy.max = item.value("max", 0);
+
+        if (item.contains("possible_values") && item["possible_values"].is_array()) {
+            for (const auto& possibleValue : item["possible_values"]) {
+                if (possibleValue.is_string()) {
+                    policy.possibleValues.push_back(possibleValue.get<std::string>());
+                }
+            }
+        }
+
+        if (!policy.moduleName.empty() && !policy.policyName.empty()) {
+            result.push_back(policy);
+        }
+    }
+
+    return result;
+}
+
+MainWindow::PolicyEditorType MainWindow::editorTypeFromString(const std::string& editor) const {
+    if (editor == "checkbox") {
+        return PolicyEditorType::CheckBox;
+    }
+    if (editor == "spinbox") {
+        return PolicyEditorType::SpinBox;
+    }
+    if (editor == "textedit") {
+        return PolicyEditorType::TextEdit;
+    }
+    if (editor == "combobox") {
+        return PolicyEditorType::ComboBox;
+    }
+    return PolicyEditorType::Unknown;
+}
+
+bool MainWindow::validatePolicyValue(const PolicyInfo& policy, const std::string& value, QString* error) const {
+    const PolicyEditorType type = editorTypeFromString(policy.editor);
+
+    if (type == PolicyEditorType::SpinBox) {
+        try {
+            int parsed = std::stoi(value);
+            if (parsed < policy.min || parsed > policy.max) {
+                if (error != nullptr) {
+                    *error = QString("Policy %1: value %2 is outside allowed range [%3; %4]")
+                        .arg(QString::fromStdString(policy.policyName))
+                        .arg(parsed)
+                        .arg(policy.min)
+                        .arg(policy.max);
+                }
+                return false;
+            }
+        } catch (const std::exception&) {
+            if (error != nullptr) {
+                *error = QString("Policy %1: value '%2' is not an integer")
+                    .arg(QString::fromStdString(policy.policyName))
+                    .arg(QString::fromStdString(value));
+            }
+            return false;
+        }
+    }
+
+    if (type == PolicyEditorType::ComboBox || type == PolicyEditorType::CheckBox) {
+        if (!policy.possibleValues.empty() &&
+            std::find(policy.possibleValues.begin(), policy.possibleValues.end(), value) == policy.possibleValues.end()) {
+            if (error != nullptr) {
+                *error = QString("Policy %1: value '%2' is not in allowed values list")
+                    .arg(QString::fromStdString(policy.policyName))
+                    .arg(QString::fromStdString(value));
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void MainWindow::addModules() {
-    this->cafMap = init_cafMap();
     this->ui->tab_modules->setTabText(0, QLocalizationManager::getLang("[module:DC]"));
     this->ui->tab_modules->setTabText(1, QLocalizationManager::getLang("[module:LOG]"));
-    for (const auto& [moduleName, submoduleMap] : cafMap) {
+
+    while (this->ui->tab_modules->count() > 2) {
+        QWidget* widget = this->ui->tab_modules->widget(2);
+        this->ui->tab_modules->removeTab(2);
+        delete widget;
+    }
+
+    QStringList errors;
+    const std::vector<PolicyInfo> policies = loadPoliciesFromDaemon(errors);
+    if (!errors.isEmpty()) {
+        QMessageBox::warning(this, "FIC daemon", "Failed to load policy data from daemon:\n" + errors.join("\n"));
+        return;
+    }
+
+    std::map<std::string, std::vector<PolicyInfo>> policiesByModule;
+    for (const PolicyInfo& policy : policies) {
+        policiesByModule[policy.moduleName].push_back(policy);
+    }
+
+    for (const auto& [moduleName, modulePolicies] : policiesByModule) {
         if (moduleName != "DC") {
             ui->tab_modules->addTab(
-                createPolicyPage(submoduleMap, moduleName),
+                createPolicyPage(modulePolicies, moduleName),
                 QLocalizationManager::getLang(
                     QString::fromStdString("[module:" + moduleName + "]")
                 )

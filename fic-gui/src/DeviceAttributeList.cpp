@@ -3,13 +3,12 @@
 #include <QLabel>
 #include <QHeaderView>
 #include <QDebug>
+#include "ipc/FicIpcClient.h"
 
 DeviceAttributeList::DeviceAttributeList(QWidget *parent)
     : QWidget(parent)
-    , database(DB("/opt/fic/db/devices.db"))
 {
     setupUI();
-    database.releaseLock();
 }
 
 DeviceAttributeList::~DeviceAttributeList()
@@ -58,10 +57,22 @@ void DeviceAttributeList::showDeviceAttributes(int deviceId)
 {
     clear();
 
-    // Получаем атрибуты устройства из БД
-    database.acquireLock();
-    std::map<std::string, std::string> attributes = database.getDeviceAttributes(deviceId);
-    database.releaseLock();
+    std::map<std::string, std::string> attributes;
+    auto response = fic::ipc::Client().request({{"command", "device_attributes"}, {"device_id", deviceId}});
+    if (!response.value("ok", false)) {
+        qDebug() << "Failed to load device attributes:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        populateTree(attributes);
+        emit attributesUpdated(deviceId, 0);
+        return;
+    }
+
+    if (response.contains("attributes") && response["attributes"].is_object()) {
+        for (auto it = response["attributes"].begin(); it != response["attributes"].end(); ++it) {
+            if (it.value().is_string()) {
+                attributes[it.key()] = it.value().get<std::string>();
+            }
+        }
+    }
 
     populateTree(attributes);
 

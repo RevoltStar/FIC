@@ -10,27 +10,18 @@
 #include <QSignalBlocker>
 #include <QStyle>
 #include "utils/SystemBootInfo.h"
+#include "ipc/FicIpcClient.h"
 #include <sys/utsname.h> // Для получения времени старта ОС
 
-const QString DeviceTree::dbPath = "/opt/fic/db/devices.db";
-
 DeviceTree::DeviceTree(QWidget *parent)
-    : QWidget(parent),
-      db(DB(dbPath.toStdString()))
+    : QWidget(parent)
 {
-    if (!db.initializeDatabase())
-    {
-        qDebug() << "Failed to initialize devices database";
-    }
-
     setupUI();
-    setupDatabaseWatcher();
-    db.releaseLock();
+    setupRefreshTimer();
 }
 
 DeviceTree::~DeviceTree()
 {
-    db.releaseLock();
 }
 
 void DeviceTree::setupUI()
@@ -87,74 +78,132 @@ void DeviceTree::setupUI()
     setLayout(mainLayout);
 }
 
-void DeviceTree::setupDatabaseWatcher()
+
+DeviceInfo DeviceTree::fetchDeviceById(int deviceId) const
 {
-    dbWatcher = new QFileSystemWatcher(this);
+    DeviceInfo device{};
+    device.id = -1;
+
+    auto response = fic::ipc::Client().request({{"command", "device_get"}, {"device_id", deviceId}});
+    if (!response.value("ok", false) || !response.contains("device") || !response["device"].is_object()) {
+        qDebug() << "Failed to load device:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        return device;
+    }
+
+    const auto& item = response["device"];
+    device.id = item.value("id", -1);
+    device.device_hash = item.value("device_hash", "");
+    device.devpath = item.value("devpath", "");
+    device.subsystem = item.value("subsystem", "");
+    device.device_type = item.value("device_type", "");
+    device.parent_id = item.value("parent_id", 0);
+    device.control_level = item.value("control_level", "");
+    device.ignore_hierarchy = item.value("ignore_hierarchy", false);
+    device.boot_id = item.value("boot_id", "");
+    device.created_at = item.value("created_at", "");
+    device.last_event_at = item.value("last_event_at", "");
+    device.notes = item.value("notes", "");
+    return device;
+}
+
+std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId) const
+{
+    std::vector<DeviceInfo> children;
+    auto response = fic::ipc::Client().request({{"command", "device_children"}, {"parent_id", parentId}});
+    if (!response.value("ok", false) || !response.contains("children") || !response["children"].is_array()) {
+        qDebug() << "Failed to load device children:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        return children;
+    }
+
+    for (const auto& childJson : response["children"]) {
+        if (!childJson.is_object()) {
+            continue;
+        }
+        DeviceInfo child{};
+        child.id = childJson.value("id", -1);
+        child.device_hash = childJson.value("device_hash", "");
+        child.devpath = childJson.value("devpath", "");
+        child.subsystem = childJson.value("subsystem", "");
+        child.device_type = childJson.value("device_type", "");
+        child.parent_id = childJson.value("parent_id", 0);
+        child.control_level = childJson.value("control_level", "");
+        child.ignore_hierarchy = childJson.value("ignore_hierarchy", false);
+        child.boot_id = childJson.value("boot_id", "");
+        child.created_at = childJson.value("created_at", "");
+        child.last_event_at = childJson.value("last_event_at", "");
+        child.notes = childJson.value("notes", "");
+        if (child.id != -1) {
+            children.push_back(child);
+        }
+    }
+
+    return children;
+}
+
+std::map<std::string, std::string> DeviceTree::fetchDeviceAttributes(int deviceId) const
+{
+    std::map<std::string, std::string> attributes;
+    auto response = fic::ipc::Client().request({{"command", "device_attributes"}, {"device_id", deviceId}});
+    if (!response.value("ok", false) || !response.contains("attributes") || !response["attributes"].is_object()) {
+        qDebug() << "Failed to load device attributes:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        return attributes;
+    }
+
+    for (auto it = response["attributes"].begin(); it != response["attributes"].end(); ++it) {
+        if (it.value().is_string()) {
+            attributes[it.key()] = it.value().get<std::string>();
+        }
+    }
+    return attributes;
+}
+
+std::string DeviceTree::getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue) const
+{
+    const auto attributes = fetchDeviceAttributes(deviceId);
+    auto it = attributes.find(attributeName);
+    if (it == attributes.end()) {
+        return defaultValue;
+    }
+    return it->second;
+}
+
+bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel) const
+{
+    auto response = fic::ipc::Client().request({
+        {"command", "device_update_control_level"},
+        {"device_id", deviceId},
+        {"control_level", controlLevel}
+    });
+    if (!response.value("ok", false)) {
+        qDebug() << "Failed to update device control level:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        return false;
+    }
+    return true;
+}
+
+bool DeviceTree::deleteDeviceRemote(int deviceId) const
+{
+    auto response = fic::ipc::Client().request({{"command", "device_delete"}, {"device_id", deviceId}});
+    if (!response.value("ok", false)) {
+        qDebug() << "Failed to delete device:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        return false;
+    }
+    return true;
+}
+
+void DeviceTree::setupRefreshTimer()
+{
     refreshTimer = new QTimer(this);
-    refreshTimer->setSingleShot(true);
-    refreshTimer->setInterval(400);
+    refreshTimer->setInterval(5000);
 
     connect(refreshTimer, &QTimer::timeout,
             this, &DeviceTree::refreshPreservingState);
-    connect(dbWatcher, &QFileSystemWatcher::fileChanged,
-            this, &DeviceTree::scheduleDeviceTreeRefresh);
-    connect(dbWatcher, &QFileSystemWatcher::directoryChanged,
-            this, &DeviceTree::scheduleDeviceTreeRefresh);
-
-    refreshWatchedDatabasePaths();
-}
-
-void DeviceTree::refreshWatchedDatabasePaths()
-{
-    const QString dbDir = QFileInfo(dbPath).absolutePath();
-    const QStringList desiredPaths = {
-        dbPath,
-        dbPath + "-wal",
-        dbPath + "-shm",
-        dbDir
-    };
-
-    for (const QString &path : dbWatcher->files())
-    {
-        if (!desiredPaths.contains(path))
-        {
-            dbWatcher->removePath(path);
-        }
-    }
-
-    for (const QString &path : dbWatcher->directories())
-    {
-        if (!desiredPaths.contains(path))
-        {
-            dbWatcher->removePath(path);
-        }
-    }
-
-    for (const QString &path : desiredPaths)
-    {
-        if (!QFileInfo::exists(path))
-        {
-            continue;
-        }
-
-        if (QFileInfo(path).isDir())
-        {
-            if (!dbWatcher->directories().contains(path))
-            {
-                dbWatcher->addPath(path);
-            }
-        }
-        else if (!dbWatcher->files().contains(path))
-        {
-            dbWatcher->addPath(path);
-        }
-    }
+    refreshTimer->start();
 }
 
 void DeviceTree::scheduleDeviceTreeRefresh()
 {
-    refreshWatchedDatabasePaths();
-    refreshTimer->start();
+    refreshPreservingState();
 }
 
 void DeviceTree::onItemClicked(QTreeWidgetItem *item, int column)
@@ -170,9 +219,7 @@ void DeviceTree::onItemClicked(QTreeWidgetItem *item, int column)
     int deviceId = item->data(0, Qt::UserRole).toInt();
 
     // Получаем информацию об устройстве из базы данных
-    db.acquireLock();
-    DeviceInfo device = db.getDeviceById(deviceId);
-    db.releaseLock();
+    DeviceInfo device = fetchDeviceById(deviceId);
 
     if (device.id != -1)
     {
@@ -194,14 +241,11 @@ void DeviceTree::showControlLevelContextMenu(const QPoint &position)
     int deviceId = item->data(0, Qt::UserRole).toInt();
     const std::string currentBootId = getSystemBootId();
     bool canDelete = false;
-
-    db.acquireLock();
-    DeviceInfo device = db.getDeviceById(deviceId);
+    DeviceInfo device = fetchDeviceById(deviceId);
     if (device.id != -1)
     {
         canDelete = canDeleteDeviceSubtree(deviceId, currentBootId);
     }
-    db.releaseLock();
 
     if (device.id == -1)
     {
@@ -243,21 +287,17 @@ void DeviceTree::setDeviceControlLevel(int deviceId, const std::string &controlL
     {
         return;
     }
-
-    db.acquireLock();
-    DeviceInfo device = db.getDeviceById(deviceId);
+    DeviceInfo device = fetchDeviceById(deviceId);
     if (device.id == -1)
     {
-        db.releaseLock();
         return;
     }
 
-    bool updated = db.updateDeviceControlLevel(deviceId, controlLevel);
+    bool updated = updateDeviceControlLevelRemote(deviceId, controlLevel);
     if (updated)
     {
         device.control_level = controlLevel;
     }
-    db.releaseLock();
 
     if (!updated)
     {
@@ -315,14 +355,14 @@ bool DeviceTree::canDeleteDeviceSubtree(int deviceId, const std::string &current
         return false;
     }
 
-    DeviceInfo device = db.getDeviceById(deviceId);
+    DeviceInfo device = fetchDeviceById(deviceId);
     if (device.id <= 0 || device.id == 1 || device.parent_id <= 0 ||
         device.boot_id == "-1" || device.boot_id == currentBootId)
     {
         return false;
     }
 
-    const std::vector<DeviceInfo> children = db.getChildDevices(deviceId);
+    const std::vector<DeviceInfo> children = fetchChildDevices(deviceId);
     for (const DeviceInfo &child : children)
     {
         if (!canDeleteDeviceSubtree(child.id, currentBootId))
@@ -336,9 +376,7 @@ bool DeviceTree::canDeleteDeviceSubtree(int deviceId, const std::string &current
 
 void DeviceTree::deleteDeviceFromDatabase(int deviceId, const QString &deviceName)
 {
-    db.acquireLock();
-    DeviceInfo device = db.getDeviceById(deviceId);
-    db.releaseLock();
+    DeviceInfo device = fetchDeviceById(deviceId);
 
     if (device.id == -1)
     {
@@ -367,15 +405,12 @@ void DeviceTree::deleteDeviceFromDatabase(int deviceId, const QString &deviceNam
     }
 
     const std::string currentBootId = getSystemBootId();
-
-    db.acquireLock();
-    device = db.getDeviceById(deviceId);
+    device = fetchDeviceById(deviceId);
     bool deleted = false;
     if (device.id != -1 && canDeleteDeviceSubtree(deviceId, currentBootId))
     {
-        deleted = db.deleteDevice(deviceId);
+        deleted = deleteDeviceRemote(deviceId);
     }
-    db.releaseLock();
 
     if (!deleted)
     {
@@ -442,23 +477,23 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     }
     if (device.subsystem == "cpu")
     {
-        std::string model_name = this->db.getDeviceAttribute(device.id, "Model name", "Unknown Model");
+        std::string model_name = getDeviceAttribute(device.id, "Model name", "Unknown Model");
         device_name = "Процессор [" + model_name + "]";
         return device_name;
     }
     if (device.subsystem == "board")
     {
-        std::string manufacturer = this->db.getDeviceAttribute(device.id, "Manufacturer", "Unknown Manufacturer");
-        std::string product_name = this->db.getDeviceAttribute(device.id, "Product Name", "Unknown Product Name");
+        std::string manufacturer = getDeviceAttribute(device.id, "Manufacturer", "Unknown Manufacturer");
+        std::string product_name = getDeviceAttribute(device.id, "Product Name", "Unknown Product Name");
         device_name = "Материнская плата [" + manufacturer + "]" + " [" + product_name + "]";
         return device_name;
     }
     if (device.subsystem == "memory")
     {
-        std::string manufacturer = this->db.getDeviceAttribute(device.id, "Manufacturer", "Unknown Manufacturer");
-        std::string size = this->db.getDeviceAttribute(device.id, "Size", "Unknown Size");
-        std::string locator = this->db.getDeviceAttribute(device.id, "Locator", "Unknown Locator");
-        std::string serial_number = this->db.getDeviceAttribute(device.id, "Serial Number", "Unknown Serial");
+        std::string manufacturer = getDeviceAttribute(device.id, "Manufacturer", "Unknown Manufacturer");
+        std::string size = getDeviceAttribute(device.id, "Size", "Unknown Size");
+        std::string locator = getDeviceAttribute(device.id, "Locator", "Unknown Locator");
+        std::string serial_number = getDeviceAttribute(device.id, "Serial Number", "Unknown Serial");
         device_name = "ОЗУ [" + manufacturer + "] " + "[" + serial_number + "]" + " [" + size + "] " + "[" + locator + "]";
         return device_name;
     }
@@ -475,10 +510,8 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     /*pci*/
     if (device.subsystem == "pci")
     {
-        std::string pci_class = this->db.getDeviceAttribute(device.id, "PCI_CLASS", "");
-        std::string pci_id = this->db.getDeviceAttribute(device.id, "PCI_ID", "");
-        std::string pci_slot_name = this->db.getDeviceAttribute(device.id, "PCI_SLOT_NAME", "");
-        std::string pci_subsys_id = this->db.getDeviceAttribute(device.id, "PCI_SUBSYS_ID", "");
+        std::string pci_class = getDeviceAttribute(device.id, "PCI_CLASS", "");
+        std::string pci_id = getDeviceAttribute(device.id, "PCI_ID", "");
         std::string pci_class_prepared = pci_class;
         while (pci_class_prepared.length() < 6)
         {
@@ -487,14 +520,16 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
         pci_class_prepared = pci_class_prepared.substr(0, 2) + "|" +
                              pci_class_prepared.substr(2, 2) + "|" +
                              pci_class_prepared.substr(4, 2);
-        ConfigFileHandler cfh("/opt/fic/db/PCI_CLASS_ru.txt", "=");
-        cfh.loadConfig();
-        std::string pci_device_info = cfh.getValue(pci_class_prepared);
-        return pci_device_info;
+        device_name = "[PCI] class " + pci_class_prepared;
+        if (!pci_id.empty())
+        {
+            device_name += " [" + pci_id + "]";
+        }
+        return device_name;
     }
     if (device.subsystem == "usb")
     {
-        std::string type = this->db.getDeviceAttribute(device.id, "TYPE", "");
+        std::string type = getDeviceAttribute(device.id, "TYPE", "");
         std::vector<std::string> parts;
         std::stringstream ss(type);
         std::string token;
@@ -522,15 +557,12 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
             }
         }
 
-        ConfigFileHandler cfh("/opt/fic/db/USB_CLASS_ru.txt", "=");
-        cfh.loadConfig();
-        std::string usb_class_info = cfh.getValue(result);
-        return usb_class_info;
+        return result.empty() ? "[USB]" : "[USB] class " + result;
     }
     if (device.subsystem == "block")
     {
-        std::string major_digit = this->db.getDeviceAttribute(device.id, "MAJOR", "");
-        std::string minor_digit = this->db.getDeviceAttribute(device.id, "MINOR", "");
+        std::string major_digit = getDeviceAttribute(device.id, "MAJOR", "");
+        std::string minor_digit = getDeviceAttribute(device.id, "MINOR", "");
 
         if (major_digit.empty() || minor_digit.empty())
         {
@@ -951,8 +983,6 @@ QTreeWidgetItem* DeviceTree::findItemByDeviceId(QTreeWidgetItem *item, int devic
 
 void DeviceTree::refreshPreservingState()
 {
-    refreshWatchedDatabasePaths();
-
     QSet<int> expandedIds;
     for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
     {
@@ -1003,13 +1033,11 @@ void DeviceTree::loadDeviceTree()
 {
     treeWidget->clear();
     // Загружаем корневое устройство (id = 1)
-    db.acquireLock();
-    DeviceInfo rootDevice = db.getDeviceById(1);
+    DeviceInfo rootDevice = fetchDeviceById(1);
 
     if (rootDevice.id == -1)
     {
         qDebug() << "Root device not found!";
-        db.releaseLock();
         return;
     }
 
@@ -1025,7 +1053,6 @@ void DeviceTree::loadDeviceTree()
     QTreeWidgetItem *dummyItem = new QTreeWidgetItem(rootItem);
     dummyItem->setText(0, "Загрузка...");
     treeWidget->addTopLevelItem(rootItem);
-    db.releaseLock();
 }
 
 void DeviceTree::onItemExpanded(QTreeWidgetItem *item)
@@ -1042,9 +1069,7 @@ void DeviceTree::onItemExpanded(QTreeWidgetItem *item)
 
 void DeviceTree::loadChildDevices(QTreeWidgetItem *parentItem, int parentId)
 {
-    db.acquireLock();
-    // Получаем всех детей для данного родителя
-    std::vector<DeviceInfo> allChildren = db.getChildDevices(parentId);
+    std::vector<DeviceInfo> allChildren = fetchChildDevices(parentId);
 
     for (const auto &child : allChildren)
     {
@@ -1059,7 +1084,6 @@ void DeviceTree::loadChildDevices(QTreeWidgetItem *parentItem, int parentId)
         QTreeWidgetItem *dummy = new QTreeWidgetItem(childItem);
         dummy->setText(0, "Загрузка...");
     }
-    db.releaseLock();
 }
 
 void DeviceTree::ensureChildrenLoaded(QTreeWidgetItem *item)

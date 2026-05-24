@@ -3,7 +3,7 @@
 
 #include <QSortFilterProxyModel>
 
-#include "Logger.h"
+#include "LogLevel.h"
 
 class LogFilterProxyModel : public QSortFilterProxyModel
 {

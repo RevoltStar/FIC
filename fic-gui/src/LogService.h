@@ -1,11 +1,9 @@
 #ifndef LOGSERVICE_H
 #define LOGSERVICE_H
 
-#include <QFileSystemWatcher>
 #include <QObject>
 #include <QTimer>
 #include <QVector>
-#include <QSet>
 #include <QString>
 
 #include "LogRecord.h"
@@ -36,32 +34,18 @@ private slots:
     void onWatchedPathChanged(const QString &path);
 
 private:
-    struct FileCursor {
-        qint64 offset = 0;
-        QString category;
-    };
-
-    QString baseLogDirectory_ = QStringLiteral("/opt/fic/log");
     QString bootId_;
     QStringList categories_;
-    QHash<QString, FileCursor> fileCursors_;
-    QFileSystemWatcher watcher_;
     QTimer refreshTimer_;
     quint64 sequenceCounter_ = 0;
+    qsizetype knownRecordCount_ = 0;
 
     QString currentBootId() const;
-    QString currentBootDirectory() const;
-    QStringList discoverCategories() const;
-    QStringList discoverLogFiles() const;
-    QVector<LogRecord> readRecordsFromFile(const QString &filePath,
-                                           const QString &category,
-                                           qint64 startOffset,
-                                           qint64 *endOffset);
+    QVector<LogRecord> loadRecordsFromDaemon(QStringList *categories);
     bool parseLogLine(const QString &line,
                       const QString &category,
                       const QString &sourceFile,
                       LogRecord *record);
-    void rebuildWatcher();
     void updateCategories(const QStringList &categories);
     static bool recordLessThan(const LogRecord &left, const LogRecord &right);
 };

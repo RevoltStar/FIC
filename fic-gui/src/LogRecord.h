@@ -4,7 +4,7 @@
 #include <QDateTime>
 #include <QString>
 
-#include "Logger.h"
+#include "LogLevel.h"
 
 struct LogRecord {
     QDateTime timestamp;

@@ -8,16 +8,29 @@
 #include <QPoint>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QFileSystemWatcher>
 #include <QSet>
 #include <QTimer>
+#include <map>
 #include <vector>
 #include <string>
-#include "utils/DB.h"
 #include <fstream>
 #include <istream>
 #include <filesystem>
-#include "ConfigFileHandler.h"
+
+struct DeviceInfo {
+    int id = -1;
+    std::string device_hash;
+    std::string devpath;
+    std::string subsystem;
+    std::string device_type;
+    int parent_id = 0;
+    std::string control_level;
+    bool ignore_hierarchy = false;
+    std::string boot_id;
+    std::string created_at;
+    std::string last_event_at;
+    std::string notes;
+};
 
 class DeviceTree : public QWidget
 {
@@ -38,18 +51,13 @@ private slots:
     void scheduleDeviceTreeRefresh();
 
 private:
-    static const QString dbPath;
-
-    DB db;
     QTreeWidget *treeWidget;
     QPushButton *btnExpandAll;
     QPushButton *btnCollapseAll;
-    QFileSystemWatcher *dbWatcher;
     QTimer *refreshTimer;
 
     void setupUI();
-    void setupDatabaseWatcher();
-    void refreshWatchedDatabasePaths();
+    void setupRefreshTimer();
     void refreshPreservingState();
     void collectExpandedDeviceIds(QTreeWidgetItem *item, QSet<int> &expandedIds) const;
     bool restoreExpandedDeviceIds(QTreeWidgetItem *item, const QSet<int> &expandedIds, int selectedId);
@@ -61,6 +69,13 @@ private:
     void deleteDeviceFromDatabase(int deviceId, const QString &deviceName);
     bool canDeleteDevice(const DeviceInfo& device);
     bool canDeleteDeviceSubtree(int deviceId, const std::string &currentBootId);
+
+    DeviceInfo fetchDeviceById(int deviceId) const;
+    std::vector<DeviceInfo> fetchChildDevices(int parentId) const;
+    std::map<std::string, std::string> fetchDeviceAttributes(int deviceId) const;
+    std::string getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue = "") const;
+    bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel) const;
+    bool deleteDeviceRemote(int deviceId) const;
 
     std::string getSystemBootId();
     bool isDeviceBootIdValid(const DeviceInfo& device);

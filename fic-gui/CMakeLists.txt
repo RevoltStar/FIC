@@ -11,7 +11,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
-find_package(SQLite3 REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 file(GLOB_RECURSE SRC_FILES
@@ -29,6 +28,16 @@ file(GLOB_RECURSE HDR_FILES
 
 list(FILTER SRC_FILES EXCLUDE REGEX ".*test.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*Test.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/core/.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/modules/.*")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/utils/DB\\.cpp$")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/utils/ExclusivePidLock\\.cpp$")
+list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/utils/Logger\\.cpp$")
+list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/core/.*")
+list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/modules/.*")
+list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/utils/DB\\.h$")
+list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/utils/ExclusivePidLock\\.h$")
+list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/utils/Logger\\.h$")
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(fic-gui
@@ -49,7 +58,6 @@ endif()
 
 target_link_libraries(fic-gui PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
-    SQLite::SQLite3
     OpenSSL::SSL
     OpenSSL::Crypto
 )
@@ -57,7 +65,6 @@ target_link_libraries(fic-gui PRIVATE
 target_include_directories(fic-gui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/wrappers
     ${CMAKE_CURRENT_SOURCE_DIR}/../fic/src
 )

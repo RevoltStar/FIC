@@ -152,7 +152,7 @@ bool LogModel::hasRecords() const
 
 QString LogModel::levelText(logLevel level) const
 {
-    return QString::fromStdString(Logger::level_to_string(level));
+    return logLevelToString(level);
 }
 
 QBrush LogModel::levelBrush(logLevel level) const

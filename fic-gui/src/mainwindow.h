@@ -3,16 +3,16 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include "core/CheckAndFix.h"
-#include "core/main_function.h"
-
-#include <QScrollArea>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QTextEdit>
-#include <QComboBox>
-#include <QPushButton>
+
+#include <string>
+#include <vector>
 
 #include "DeviceAttributeList.h"
 #include "DeviceTree.h"
@@ -31,7 +31,6 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    //Создать все политики
     void addModules();
 
 private slots:
@@ -39,16 +38,35 @@ private slots:
     void onAttributesUpdated(int deviceId, int attributeCount);
 
 private:
+    struct PolicyInfo {
+        std::string moduleName;
+        std::string submoduleName;
+        std::string policyName;
+        std::string editor;
+        std::string value;
+        std::string defaultValue;
+        std::string restriction;
+        std::vector<std::string> possibleValues;
+        bool enabled = false;
+        bool isSet = false;
+        bool valueValid = true;
+        int min = 0;
+        int max = 0;
+    };
+
+    enum class PolicyEditorType { CheckBox, SpinBox, TextEdit, ComboBox, Unknown };
+
     Ui::MainWindow *ui;
     DeviceTree *deviceTree;
     DeviceAttributeList *deviceAttributeList;
-    LogViewer *logViewer; // Добавьте этот указатель
+    LogViewer *logViewer;
 
-    //Создать вкладку политики.
-    QWidget* createPolicyPage(const std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>& submoduleMap,
-                                 const std::string moduleName, QWidget* parent = nullptr);
-    //Массив политик
-    std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>> cafMap;
+    QWidget* createPolicyPage(const std::vector<PolicyInfo>& policies,
+                              const std::string moduleName,
+                              QWidget* parent = nullptr);
+    std::vector<PolicyInfo> loadPoliciesFromDaemon(QStringList& errors) const;
+    PolicyEditorType editorTypeFromString(const std::string& editor) const;
+    bool validatePolicyValue(const PolicyInfo& policy, const std::string& value, QString* error) const;
 };
 
 #endif // MAINWINDOW_H

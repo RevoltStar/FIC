@@ -1,26 +1,15 @@
 #include "LogService.h"
 
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QTextStream>
+#include <algorithm>
 
+#include "ipc/FicIpcClient.h"
 #include "utils/SystemBootInfo.h"
-
-namespace {
-QString normalizeCategoryListEntry(const QString &value)
-{
-    return value.trimmed();
-}
-}
 
 LogService::LogService(QObject *parent)
     : QObject(parent)
 {
     refreshTimer_.setInterval(2000);
     connect(&refreshTimer_, &QTimer::timeout, this, &LogService::refreshIncremental);
-    connect(&watcher_, &QFileSystemWatcher::directoryChanged, this, &LogService::onWatchedPathChanged);
-    connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &LogService::onWatchedPathChanged);
 }
 
 void LogService::start()
@@ -39,12 +28,6 @@ void LogService::start()
 void LogService::stop()
 {
     refreshTimer_.stop();
-    if (!watcher_.files().isEmpty()) {
-        watcher_.removePaths(watcher_.files());
-    }
-    if (!watcher_.directories().isEmpty()) {
-        watcher_.removePaths(watcher_.directories());
-    }
 }
 
 void LogService::reloadAll()
@@ -53,24 +36,12 @@ void LogService::reloadAll()
         bootId_ = currentBootId();
     }
 
-    fileCursors_.clear();
-    sequenceCounter_ = 0;
-
-    const QStringList categories = discoverCategories();
-    updateCategories(categories);
-
-    QVector<LogRecord> records;
-    const QStringList logFiles = discoverLogFiles();
-    for (const QString &filePath : logFiles) {
-        const QString category = QFileInfo(filePath).dir().dirName();
-        qint64 endOffset = 0;
-        QVector<LogRecord> parsedRecords = readRecordsFromFile(filePath, category, 0, &endOffset);
-        fileCursors_.insert(filePath, FileCursor{endOffset, category});
-        records += parsedRecords;
-    }
-
+    QStringList categories;
+    QVector<LogRecord> records = loadRecordsFromDaemon(&categories);
     std::sort(records.begin(), records.end(), recordLessThan);
-    rebuildWatcher();
+
+    knownRecordCount_ = records.size();
+    updateCategories(categories);
 
     emit fullReloaded(records);
     emit lastUpdateChanged(QDateTime::currentDateTime());
@@ -89,48 +60,23 @@ void LogService::refreshIncremental()
         bootId_ = actualBootId;
     }
 
-    const QStringList categories = discoverCategories();
+    QStringList categories;
+    QVector<LogRecord> records = loadRecordsFromDaemon(&categories);
+    std::sort(records.begin(), records.end(), recordLessThan);
     updateCategories(categories);
 
-    QVector<LogRecord> appendedRecords;
-    QSet<QString> discoveredFiles;
-
-    const QStringList logFiles = discoverLogFiles();
-    for (const QString &filePath : logFiles) {
-        discoveredFiles.insert(filePath);
-
-        const QFileInfo fileInfo(filePath);
-        const QString category = fileInfo.dir().dirName();
-        const qint64 fileSize = fileInfo.size();
-
-        qint64 startOffset = 0;
-        if (fileCursors_.contains(filePath)) {
-            startOffset = fileCursors_.value(filePath).offset;
-            if (fileSize < startOffset) {
-                startOffset = 0;
-            }
+    if (records.size() < knownRecordCount_) {
+        knownRecordCount_ = records.size();
+        emit fullReloaded(records);
+    } else if (records.size() > knownRecordCount_) {
+        QVector<LogRecord> appendedRecords;
+        for (qsizetype i = knownRecordCount_; i < records.size(); ++i) {
+            appendedRecords.append(records.at(i));
         }
-
-        qint64 endOffset = startOffset;
-        QVector<LogRecord> parsedRecords = readRecordsFromFile(filePath, category, startOffset, &endOffset);
-        fileCursors_.insert(filePath, FileCursor{endOffset, category});
-        appendedRecords += parsedRecords;
-    }
-
-    for (auto it = fileCursors_.begin(); it != fileCursors_.end();) {
-        if (!discoveredFiles.contains(it.key())) {
-            it = fileCursors_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    std::sort(appendedRecords.begin(), appendedRecords.end(), recordLessThan);
-    rebuildWatcher();
-
-    if (!appendedRecords.isEmpty()) {
+        knownRecordCount_ = records.size();
         emit recordsAppended(appendedRecords);
     }
+
     emit lastUpdateChanged(QDateTime::currentDateTime());
 }
 
@@ -165,94 +111,61 @@ QString LogService::currentBootId() const
     return QString::fromStdString(SystemBootInfo::get_boot_id());
 }
 
-QString LogService::currentBootDirectory() const
-{
-    if (bootId_.isEmpty()) {
-        return {};
-    }
-
-    return QDir(baseLogDirectory_).filePath(bootId_);
-}
-
-QStringList LogService::discoverCategories() const
-{
-    QStringList categories;
-    const QDir bootDir(currentBootDirectory());
-    if (!bootDir.exists()) {
-        return categories;
-    }
-
-    const QFileInfoList entries = bootDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-    for (const QFileInfo &entry : entries) {
-        categories.append(normalizeCategoryListEntry(entry.fileName()));
-    }
-
-    categories.removeDuplicates();
-    return categories;
-}
-
-QStringList LogService::discoverLogFiles() const
-{
-    QStringList files;
-    const QDir bootDir(currentBootDirectory());
-    if (!bootDir.exists()) {
-        return files;
-    }
-
-    const QFileInfoList categoryDirs = bootDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-    for (const QFileInfo &categoryDirInfo : categoryDirs) {
-        const QDir categoryDir(categoryDirInfo.absoluteFilePath());
-        const QFileInfoList fileInfos = categoryDir.entryInfoList(QStringList() << QStringLiteral("*.txt"),
-                                                                  QDir::Files,
-                                                                  QDir::Name);
-        for (const QFileInfo &fileInfo : fileInfos) {
-            files.append(fileInfo.absoluteFilePath());
-        }
-    }
-
-    files.sort();
-    return files;
-}
-
-QVector<LogRecord> LogService::readRecordsFromFile(const QString &filePath,
-                                                   const QString &category,
-                                                   qint64 startOffset,
-                                                   qint64 *endOffset)
+QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories)
 {
     QVector<LogRecord> records;
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (endOffset) {
-            *endOffset = startOffset;
-        }
+    sequenceCounter_ = 0;
+
+    auto response = fic::ipc::Client().request({
+        {"command", "log_records"},
+        {"boot_id", bootId_.toStdString()}
+    });
+
+    if (!response.value("ok", false)) {
         return records;
     }
 
-    if (startOffset > 0) {
-        file.seek(startOffset);
-        if (startOffset > 0) {
-            file.readLine();
-        }
+    const std::string responseBootId = response.value("boot_id", "");
+    if (!responseBootId.empty()) {
+        bootId_ = QString::fromStdString(responseBootId);
     }
 
-    QTextStream stream(&file);
-    while (!stream.atEnd()) {
-        const QString line = stream.readLine();
+    if (categories != nullptr) {
+        categories->clear();
+        if (response.contains("categories") && response["categories"].is_array()) {
+            for (const auto &category : response["categories"]) {
+                if (category.is_string()) {
+                    categories->append(QString::fromStdString(category.get<std::string>()).trimmed());
+                }
+            }
+        }
+        categories->removeDuplicates();
+        categories->sort();
+    }
+
+    if (!response.contains("records") || !response["records"].is_array()) {
+        return records;
+    }
+
+    for (const auto &item : response["records"]) {
+        if (!item.is_object()) {
+            continue;
+        }
+
+        const QString line = QString::fromStdString(item.value("line", ""));
+        const QString category = QString::fromStdString(item.value("category", ""));
+        const QString sourceFile = QString::fromStdString(item.value("source_file", ""));
         if (line.isEmpty()) {
             continue;
         }
 
         LogRecord record;
-        if (!parseLogLine(line, category, filePath, &record)) {
+        if (!parseLogLine(line, category, sourceFile, &record)) {
             continue;
         }
 
-        record.byteSize = line.toUtf8().size();
+        record.byteSize = static_cast<qint64>(item.value("byte_size", line.toUtf8().size()));
         records.append(record);
-    }
-
-    if (endOffset) {
-        *endOffset = file.pos();
     }
 
     return records;
@@ -298,7 +211,7 @@ bool LogService::parseLogLine(const QString &line,
     }
 
     const QString message = line.mid(levelEnd + 2);
-    QString sortableTimestamp = timestampText.left(23);
+    const QString sortableTimestamp = timestampText.left(23);
     QDateTime parsedTime = QDateTime::fromString(sortableTimestamp, QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
     if (parsedTime.isValid()) {
         parsedTime.setTimeSpec(Qt::LocalTime);
@@ -313,69 +226,6 @@ bool LogService::parseLogLine(const QString &line,
     record->sequence = ++sequenceCounter_;
 
     return true;
-}
-
-void LogService::rebuildWatcher()
-{
-    QStringList desiredDirectories;
-    QStringList desiredFiles;
-
-    const QString bootDirPath = currentBootDirectory();
-    if (!bootDirPath.isEmpty() && QDir(bootDirPath).exists()) {
-        desiredDirectories.append(bootDirPath);
-
-        const QStringList categories = discoverCategories();
-        for (const QString &category : categories) {
-            desiredDirectories.append(QDir(bootDirPath).filePath(category));
-        }
-    }
-
-    desiredFiles = discoverLogFiles();
-
-    const QStringList currentDirectories = watcher_.directories();
-    const QStringList currentFiles = watcher_.files();
-
-    QStringList directoriesToRemove;
-    for (const QString &path : currentDirectories) {
-        if (!desiredDirectories.contains(path)) {
-            directoriesToRemove.append(path);
-        }
-    }
-
-    QStringList filesToRemove;
-    for (const QString &path : currentFiles) {
-        if (!desiredFiles.contains(path)) {
-            filesToRemove.append(path);
-        }
-    }
-
-    if (!directoriesToRemove.isEmpty()) {
-        watcher_.removePaths(directoriesToRemove);
-    }
-    if (!filesToRemove.isEmpty()) {
-        watcher_.removePaths(filesToRemove);
-    }
-
-    QStringList directoriesToAdd;
-    for (const QString &path : desiredDirectories) {
-        if (!currentDirectories.contains(path)) {
-            directoriesToAdd.append(path);
-        }
-    }
-
-    QStringList filesToAdd;
-    for (const QString &path : desiredFiles) {
-        if (!currentFiles.contains(path)) {
-            filesToAdd.append(path);
-        }
-    }
-
-    if (!directoriesToAdd.isEmpty()) {
-        watcher_.addPaths(directoriesToAdd);
-    }
-    if (!filesToAdd.isEmpty()) {
-        watcher_.addPaths(filesToAdd);
-    }
 }
 
 void LogService::updateCategories(const QStringList &categories)

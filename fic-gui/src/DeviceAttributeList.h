@@ -6,7 +6,8 @@
 #include <QTreeWidgetItem>
 #include <QMap>
 #include <QString>
-#include "utils/DB.h"
+#include <map>
+#include <string>
 
 class DeviceAttributeList : public QWidget
 {
@@ -34,7 +35,6 @@ private:
     void populateTree(const std::map<std::string, std::string>& attributes);
 
     QTreeWidget *treeWidget;
-    DB database;
 };
 
 #endif // DEVICEATTRIBUTELIST_H
