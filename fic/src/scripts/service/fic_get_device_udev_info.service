@@ -1,0 +1,11 @@
+[Unit]
+Description=FIC UDEV info collector
+After=multi-user.target
+
+[Service]
+ExecStart=/opt/fic/bin/fic-udevadm-trigger
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

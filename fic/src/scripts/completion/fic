@@ -1,0 +1,108 @@
+_fic_completion()
+{
+    local cur words cword
+
+    if declare -F _init_completion >/dev/null 2>&1; then
+        _init_completion || return
+    else
+        COMPREPLY=()
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
+        cur="${COMP_WORDS[COMP_CWORD]}"
+    fi
+
+    _fic_get_modules()
+    {
+        fic-cli module list 2>/dev/null
+    }
+
+    _fic_get_modules_with_all()
+    {
+        local modules
+        modules=$(_fic_get_modules)
+        printf '%s all\n' "$modules"
+    }
+
+    _fic_get_policies()
+    {
+        local module="$1"
+        fic-cli policy list "$module" 2>/dev/null
+    }
+
+    _fic_get_policies_with_all()
+    {
+        local module="$1"
+        local policies
+        policies=$(_fic_get_policies "$module")
+        printf '%s all\n' "$policies"
+    }
+
+    case $cword in
+        1)
+            COMPREPLY=( $(compgen -W "policy module hash help lock unlock lockstatus" -- "$cur") )
+            ;;
+        2)
+            case "${words[1]}" in
+                policy)
+                    COMPREPLY=( $(compgen -W "enable disable info check set list" -- "$cur") )
+                    ;;
+                module)
+                    COMPREPLY=( $(compgen -W "list" -- "$cur") )
+                    ;;
+                hash)
+                    COMPREPLY=( $(compgen -W "calc" -- "$cur") )
+                    ;;
+            esac
+            ;;
+        3)
+            case "${words[1]}-${words[2]}" in
+                policy-enable|policy-disable|policy-set)
+                    COMPREPLY=( $(compgen -W "$(_fic_get_modules)" -- "$cur") )
+                    ;;
+                policy-check|policy-list)
+                    COMPREPLY=( $(compgen -W "$(_fic_get_modules_with_all)" -- "$cur") )
+                    ;;
+                policy-info)
+                    COMPREPLY=( $(compgen -W "restriction" -- "$cur") )
+                    ;;
+                hash-calc)
+                    compopt -o filenames 2>/dev/null
+                    COMPREPLY=( $(compgen -f -- "$cur") )
+                    ;;
+            esac
+            ;;
+        4)
+            case "${words[1]}-${words[2]}-${words[3]}" in
+                policy-enable-*|policy-disable-*|policy-set-*)
+                    COMPREPLY=( $(compgen -W "$(_fic_get_policies "${words[3]}")" -- "$cur") )
+                    ;;
+                policy-check-all)
+                    COMPREPLY=()
+                    ;;
+                policy-check-*)
+                    COMPREPLY=( $(compgen -W "$(_fic_get_policies_with_all "${words[3]}")" -- "$cur") )
+                    ;;
+                policy-info-restriction)
+                    COMPREPLY=( $(compgen -W "$(_fic_get_modules)" -- "$cur") )
+                    ;;
+                hash-calc-*)
+                    compopt -o filenames 2>/dev/null
+                    COMPREPLY=( $(compgen -f -- "$cur") )
+                    ;;
+            esac
+            ;;
+        5)
+            case "${words[1]}-${words[2]}-${words[3]}-${words[4]}" in
+                policy-info-restriction-*)
+                    COMPREPLY=( $(compgen -W "$(_fic_get_policies "${words[4]}")" -- "$cur") )
+                    ;;
+                hash-calc-*)
+                    compopt -o filenames 2>/dev/null
+                    COMPREPLY=( $(compgen -f -- "$cur") )
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+complete -F _fic_completion fic-cli

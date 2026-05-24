@@ -1,0 +1,227 @@
+# Global FIC settings
+[apply_button]=Apply
+
+
+[devices:cpu_list]=Processors
+[devices:board_list]=Motherboards
+[devices:pci0000:00]=PCI bus
+[devices:platform]=Built-in motherboard devices [platform]
+[devices:LNXSYSTM:00]=ACPI bus
+[devices:pnp0]=Plug and Play devices
+[devices:motherboard]=Motherboard
+[devices:memory_list]=Memory
+[devices:virtual]=Virtual devices
+
+[devices:message][type:device_not_have_a_param] = Device has no parameters
+[devices:message][type:expand_context_menu] = Expand
+[devices:message][type:device_control] = Device control
+
+[devices:param_info][subsystem:cpu][param:ARCHITECTURE]=Architecture
+[devices:param_info][subsystem:cpu][param:CPU FAMILY]=CPU family
+[devices:param_info][subsystem:cpu][param:CPU OP-MODE(S)]=Supported instruction modes
+[devices:param_info][subsystem:cpu][param:CPU(S)]=Core count
+[devices:param_info][subsystem:cpu][param:MODEL]=Processor model
+[devices:param_info][subsystem:cpu][param:MODEL NAME]=Processor name
+[devices:param_info][subsystem:cpu][param:VENDOR ID]=Vendor
+
+
+[devices:param_info][subsystem:pci][param:DEVPATH]=Device path
+[devices:param_info][subsystem:pci][param:ID_PCI_CLASS_FROM_DATABASE]=PCI class
+[devices:param_info][subsystem:pci][param:ID_PCI_SUBCLASS_FROM_DATABASE]=PCI subclass
+[devices:param_info][subsystem:pci][param:ID_PCI_INTERFACE_FROM_DATABASE]=PCI interface
+[devices:param_info][subsystem:pci][param:ID_VENDOR_FROM_DATABASE]=Vendor
+[devices:param_info][subsystem:pci][param:ID_MODEL_FROM_DATABASE]=Device model
+[devices:param_info][subsystem:pci][param:MODALIAS]=Device alias
+[devices:param_info][subsystem:pci][param:PCI_CLASS]=PCI class
+[devices:param_info][subsystem:pci][param:PCI_ID]=Vendor ID:Model ID
+[devices:param_info][subsystem:pci][param:PCI_SLOT_NAME]=PCI slot
+[devices:param_info][subsystem:pci][param:PCI_SUBSYS_ID]=PCI subsystem ID
+
+[devices:param_info][subsystem:memory][param:MANUFACTURER]=Vendor
+[devices:param_info][subsystem:memory][param:PART NUMBER]=Memory module part number
+[devices:param_info][subsystem:memory][param:SERIAL NUMBER]=Serial number
+[devices:param_info][subsystem:memory][param:SIZE]=Size
+[devices:param_info][subsystem:memory][param:SPEED]=Speed
+[devices:param_info][subsystem:memory][param:SUBSYSTEM]=Subsystem
+[devices:param_info][subsystem:memory][param:TYPE]=Memory generation
+
+[devices:param_info][subsystem:motherboard][param:MANUFACTURER]=Vendor
+[devices:param_info][subsystem:motherboard][param:PRODUCT NAME]=Model
+[devices:param_info][subsystem:motherboard][param:SERIAL NUMBER]=Serial number
+[devices:param_info][subsystem:motherboard][param:VERSION]=Motherboard revision
+
+
+[devices:param_info][subsystem:usb][param:ID_SERIAL]=Serial number
+[devices:param_info][subsystem:usb][param:ID_VENDOR_ID]=Vendor ID
+[devices:param_info][subsystem:usb][param:ID_VENDOR_FROM_DATABASE]=Vendor
+
+
+[devices:param_info][subsystem:net][param:ID_NET_NAME_MAC]=MAC address
+[devices:param_info][subsystem:net][param:ID_NET_DRIVER]=Driver
+[devices:param_info][subsystem:net][param:DEVPATH]=DEVPATH
+[devices:param_info][subsystem:net][param:ID_MODEL_FROM_DATABASE]=Model
+[devices:param_info][subsystem:net][param:ID_VENDOR_FROM_DATABASE]=Vendor
+[devices:param_info][subsystem:net][param:ID_MODEL_ID]=Model ID
+[devices:param_info][subsystem:net][param:SYSTEM_ALIAS]=System alias
+[devices:param_info][subsystem:net][param:ID_PATH]=???
+[devices:param_info][subsystem:net][param:ID_BUS]=Bus ID
+[devices:param_info][subsystem:net][param:ID_NET_NAME_PATH]=Path name ID
+
+[utils:policytypevalue][type:intpolicytypevalue] = The value must be in the range
+[utils:policytypevalue][type:multilinepolicytypevalue] = No restriction
+[utils:policytypevalue][type:possiblelistpolicytypevalue] = Only from this list:
+
+#
+[module:all][col:is_policy_active]=Enabled?
+[module:all][col:policy_name]=Policy name
+[module:all][col:policy_value]=Policy value
+[module:all][col:policy_descr]=Policy description
+
+
+# Modules
+[module:DC]=Device control
+[module:LOG]=Log analysis
+[module:DAC]=Discretionary access control
+[module:OSS]=OS settings
+[module:SYSCTL]=Kernel settings
+[module:NET]=Network settings
+[module:GLOBAL]=Application settings
+
+# Submodules
+[module:DAC][submodule:Mode_and_Owner]=File and directory permissions and owners
+[module:DAC][submodule:SudoEdit]=SUDO parameter settings
+[module:OSS][submodule:DesktopEnvironment]=Desktop environment settings
+[module:SYSCTL][submodule:fs_kernel_protection]=Filesystem settings
+[module:SYSCTL][submodule:global_kernel_protection]=General kernel settings
+[module:SYSCTL][submodule:network_kernel_protection]=Network settings
+[module:NET][submodule:SshEdit]=SSH settings
+[module:GLOBAL][submodule:system_settings]=General settings
+
+
+# Discretionary access control
+[module:DAC][policy:blocking_user_access_to_system_files]=Restrict user access to system files
+[module:DAC][policy:custom_mode_and_owner]=Custom file permissions and owners
+[module:DAC][policy:sudo_passwd_tries]=Number of authentication attempts
+[module:DAC][policy:sudo_securepath]=List of directories searched for commands executed through sudo
+[module:DAC][policy:sudo_timeout]=Time between sudo launches in minutes before the password is requested again
+[module:DAC][policy:sudo_timeout]=Time between sudo launches in minutes before the password is requested again
+[module:DAC][policy:systemcommandlock]=Restrict system commands for users
+
+[module:DAC][policy:blocking_user_access_to_system_files][description]=Sets secure permissions for system files, primarily configuration files. The following files and permissions will be used:
+    /etc/bashrc root:root 0644
+    /etc/crontab root:root 0600
+    /etc/fstab root:root 0640
+    /etc/hostname root:root 0644
+    /etc/hosts root:root 0644
+    /etc/hosts.allow root:root 0644
+    /etc/hosts.deny root:root 0644
+    /etc/group  root:root 0644
+    /etc/ntpd.conf root:ntp 0640
+    /etc/resolv.conf root:root 0644
+    /etc/sysctl.conf root:root 0644
+    /etc/logrotate.conf root:root 0644
+    /etc/inittab root:root 0644
+    /etc/passwd root:root 0644
+    /etc/shadow root:shadow 0640
+    /etc/sudoers root:root 0440
+    /etc/grub.cfg root:root, 0600
+    /etc/sysconfig/securetty root:root  0600
+[module:DAC][policy:custom_mode_and_owner][description]=Allows setting a custom list of files and directories for which FIC will check and fix the owner, group, and access mode. Specify one rule per line in the format: /path|owner|group|mode. The path must be absolute, and the mode must be a 3- or 4-digit octal value. Example:
+    /etc/example.conf|root|root|0644
+    /opt/app/private|root|fic|0750
+[module:DAC][policy:sudo_passwd_tries][description]=Number of authentication attempts
+[module:DAC][policy:sudo_securepath][description]=Description
+[module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
+[module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
+[module:DAC][policy:systemcommandlock][description]=Restrict system commands for users
+
+
+# OS settings
+[module:OSS][policy:screenlock_timeout]=Screen lock timeout
+[module:OSS][policy:disable_autologin]=Disable automatic login
+[module:OSS][policy:disable_videodisplay_when_locked]=Disable video display on the lock screen
+[module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
+
+[module:OSS][policy:disable_autologin][description]=Disable automatic login
+[module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
+[module:OSS][policy:disable_videodisplay_when_locked][description]=In the SDDM display manager, the name of the enabled video adapter is shown on the lock screen by default.
+[module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
+
+Some desktop environments support global settings, for example MATE
+Others use per-user settings, for example KDE
+Where possible, a lock against modification is applied
+
+# Kernel settings
+[module:SYSCTL][policy:kernel_exec_shield_enable]=Buffer overflow protection
+[module:SYSCTL][policy:kernel_dmesg_restrict]=Restrict access to dmesg
+[module:SYSCTL][policy:fs_file_max_limit]=System-wide open file limit
+[module:SYSCTL][policy:fs_protected_hardlinks]=Hardlink protection
+[module:SYSCTL][policy:ipv4_default_accept_redirects_disable]=Disable IPv4 redirect acceptance by default
+[module:SYSCTL][policy:ipv4_default_rp_filter_enable]=Enable IPv4 rp_filter by default
+[module:SYSCTL][policy:ipv4_default_send_redirects_disable]=Disable IPv4 redirect sending by default
+[module:SYSCTL][policy:ipv6_all_accept_redirects_disable]=Disable IPv6 redirect acceptance
+[module:SYSCTL][policy:ipv6_default_accept_redirects_disable]=Disable IPv6 redirect acceptance by default
+[module:SYSCTL][policy:ipv6_packet_forwarding_disable]=Disable IPv6 packet forwarding
+[module:SYSCTL][policy:kernel_kptr_restrict]=Restrict kernel pointer exposure
+[module:SYSCTL][policy:fs_nr_open_limit]=nr_open limit
+[module:SYSCTL][policy:ipv4_packet_forwarding_disable]=Disable IPv4 packet forwarding
+[module:SYSCTL][policy:kernel_perf_event_paranoid]=Restrict perf_event
+[module:SYSCTL][policy:fs_protected_symlinks]=Symlink protection
+[module:SYSCTL][policy:kernel_pid_max_limit]=Maximum PID limit
+[module:SYSCTL][policy:ptrace_proc_restriction]=Restrict ptrace
+[module:SYSCTL][policy:kernel_randomize_va_space]=Address space randomization
+[module:SYSCTL][policy:ipv4_all_accept_redirects_disable]=Disable IPv4 redirect acceptance
+[module:SYSCTL][policy:ipv4_all_rp_filter_enable]=Enable IPv4 rp_filter
+[module:SYSCTL][policy:ipv4_all_send_redirects_disable]=Disable IPv4 redirect sending
+[module:SYSCTL][policy:fs_suid_dump_disable]=Disable core dump for SUID processes
+[module:SYSCTL][policy:tcp_syncookies_enable]=SYN flood protection
+[module:SYSCTL][policy:tcp_keepalive_time]=Keepalive time
+[module:SYSCTL][policy:tcp_max_syn_backlog]=SYN backlog size
+[module:SYSCTL][policy:tcp_synack_retries]=SYN-ACK retry count
+[module:SYSCTL][policy:tcp_fin_timeout]=FIN timeout
+[module:SYSCTL][policy:kernel_threads_max_limit]=Maximum thread limit
+[module:SYSCTL][policy:user_namespace_restriction]=Restrict user namespaces
+
+[module:SYSCTL][policy:kernel_exec_shield_enable][description]=Buffer overflow protection.
+[module:SYSCTL][policy:kernel_dmesg_restrict][description]=Restricts access to dmesg output for unprivileged users.
+[module:SYSCTL][policy:fs_file_max_limit][description]=Sets the maximum number of open files in the system. A value that is too low can limit high-load services and reduce performance under load.
+[module:SYSCTL][policy:fs_protected_hardlinks][description]=Enables protection against unsafe hardlinks.
+[module:SYSCTL][policy:ipv4_default_accept_redirects_disable][description]=Prevents accepting IPv4 redirects on new interfaces by default.
+[module:SYSCTL][policy:ipv4_default_rp_filter_enable][description]=Enables IPv4 reverse path filtering on new interfaces by default. On complex routed or multi-homed systems it may affect network performance and traffic availability.
+[module:SYSCTL][policy:ipv4_default_send_redirects_disable][description]=Prevents sending IPv4 redirects on new interfaces by default.
+[module:SYSCTL][policy:ipv6_all_accept_redirects_disable][description]=Prevents accepting IPv6 redirects on all interfaces.
+[module:SYSCTL][policy:ipv6_default_accept_redirects_disable][description]=Prevents accepting IPv6 redirects on new interfaces by default.
+[module:SYSCTL][policy:ipv6_packet_forwarding_disable][description]=Disables IPv6 packet forwarding.
+[module:SYSCTL][policy:kernel_kptr_restrict][description]=Restricts kernel pointer exposure in /proc and dmesg.
+[module:SYSCTL][policy:fs_nr_open_limit][description]=Sets the maximum number of file descriptors per process. A value that is too low can limit applications with many connections or open files.
+[module:SYSCTL][policy:ipv4_packet_forwarding_disable][description]=Disables IPv4 packet forwarding.
+[module:SYSCTL][policy:kernel_perf_event_paranoid][description]=Restricts access to perf_event. It may make performance profiling and diagnostics harder for unprivileged users.
+[module:SYSCTL][policy:fs_protected_symlinks][description]=Enables protection against unsafe symlinks.
+[module:SYSCTL][policy:kernel_pid_max_limit][description]=Sets the maximum number of PIDs in the system. A value that is too low can limit systems with many processes and services.
+[module:SYSCTL][policy:ptrace_proc_restriction][description]=Restricts ptrace for unprivileged processes.
+[module:SYSCTL][policy:kernel_randomize_va_space][description]=Enables ASLR for process address spaces. Performance impact is usually minimal, but some workloads may see a small process startup overhead.
+[module:SYSCTL][policy:ipv4_all_accept_redirects_disable][description]=Prevents accepting IPv4 redirects on all interfaces.
+[module:SYSCTL][policy:ipv4_all_rp_filter_enable][description]=Enables IPv4 reverse path filtering on all interfaces. On complex routed or multi-homed systems it may affect network performance and traffic availability.
+[module:SYSCTL][policy:ipv4_all_send_redirects_disable][description]=Prevents sending IPv4 redirects on all interfaces.
+[module:SYSCTL][policy:fs_suid_dump_disable][description]=Prevents core dump creation for SUID/SGID processes.
+[module:SYSCTL][policy:tcp_syncookies_enable][description]=Enables SYN cookies for SYN flood protection.
+[module:SYSCTL][policy:tcp_keepalive_time][description]=Sets the time before a TCP connection sends keepalive probes. Overly aggressive values can increase network and CPU load on hosts with many connections.
+[module:SYSCTL][policy:tcp_max_syn_backlog][description]=Sets the maximum SYN backlog queue size. A value that is too low can hurt performance and availability during bursts of incoming connections.
+[module:SYSCTL][policy:tcp_synack_retries][description]=Sets the number of SYN-ACK retries. Values that are too low can reduce availability on unstable networks, while values that are too high keep connection resources allocated longer.
+[module:SYSCTL][policy:tcp_fin_timeout][description]=Sets the FIN timeout for TCP connections. Values that are too high keep resources occupied longer, while values that are too low can affect compatibility and connection stability.
+[module:SYSCTL][policy:kernel_threads_max_limit][description]=Sets the maximum number of threads in the system. A value that is too low can limit multithreaded applications and large numbers of services.
+[module:SYSCTL][policy:user_namespace_restriction][description]=Restricts creation of user namespaces by unprivileged users.
+
+# Network settings
+[module:NET][policy:ssh_max_auth_tries]=Maximum number of authorization attempts
+[module:NET][policy:ssh_max_auth_tries][description]=Maximum number of authorization attempts
+[module:NET][policy:ssh_port]=Connection port
+[module:NET][policy:ssh_port][description]=Connection port
+[module:NET][policy:ssh_root_login]=Root login policy
+[module:NET][policy:ssh_root_login][description]=Root login policy
+
+# Application settings
+[module:GLOBAL][policy:log_level]=Logging level
+[module:GLOBAL][policy:log_level][description]=Logging level. Logs of the selected level and above will be written to the log file. For the NoLog level, logging is disabled.
+[module:GLOBAL][policy:lang]=Application language
+[module:GLOBAL][policy:lang][description]=Application language. If language files are missing or corrupted, Russian is used.

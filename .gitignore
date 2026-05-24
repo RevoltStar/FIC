@@ -1,0 +1,15 @@
+build*/
+*.user
+*.user.*
+.vscode
+dist/
+CMakeLists.txt.user
+.qmake.stash
+devices.db-shm
+devices.db-wal
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+.DS_Store

@@ -1,0 +1,1 @@
+ACTION=="add|remove", SUBSYSTEM!="", ENV{DEVPATH}!="", RUN+="/opt/fic/bin/fic-dick udev"

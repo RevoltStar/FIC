@@ -1,0 +1,11 @@
+[Unit]
+Description=FIC cpu/motherboard/memory info collector
+After=multi-user.target
+
+[Service]
+ExecStart=/opt/fic/bin/fic-dick "cpu_board_memory"
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

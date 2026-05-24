@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if command -v udevadm >/dev/null 2>&1; then
+    exec "$(command -v udevadm)" trigger --action=add
+fi
+
+for candidate in /usr/bin/udevadm /sbin/udevadm /bin/udevadm; do
+    if [ -x "$candidate" ]; then
+        exec "$candidate" trigger --action=add
+    fi
+done
+
+echo "udevadm not found" >&2
+exit 1

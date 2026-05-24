@@ -1,0 +1,16 @@
+#include "modules/net/submodules/ssh/NET_ssh_max_auth_tries.h"
+
+NET_ssh_max_auth_tries::NET_ssh_max_auth_tries()
+    : Ssh(){
+    this->Ssh::sshParameter = "MaxAuthTries";
+    this->policyName = "ssh_max_auth_tries";
+    this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 5, 3);
+}
+
+NET_ssh_max_auth_tries::~NET_ssh_max_auth_tries() {
+}
+
+bool NET_ssh_max_auth_tries::check_and_fix() {
+    this->log("Starting SSH MaxAuthTries check", logLevel::INFO);
+    return this->Ssh::check_and_fix();
+}

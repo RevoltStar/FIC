@@ -1,0 +1,13 @@
+#ifndef SYSCTL_PROTECTED_SYMLINKS_H
+#define SYSCTL_PROTECTED_SYMLINKS_H
+
+#include "modules/sysctl/submodules/FSKernelProtection.h"
+
+class SYSCTL_protected_symlinks : public FSKernelProtection
+{
+public:
+    SYSCTL_protected_symlinks();
+    bool check_and_fix() override;
+};
+
+#endif // SYSCTL_PROTECTED_SYMLINKS_H
