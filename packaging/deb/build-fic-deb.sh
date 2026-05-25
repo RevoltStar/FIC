@@ -456,7 +456,6 @@ ln -sfn "$target_path" "/bin/$command_name"
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
-    systemctl enable fic_get_device_info.service || true
     systemctl enable fic_get_device_udev_info.service || true
     systemctl enable --now fic.service || true
 fi
@@ -522,8 +521,57 @@ fi
 
 if [ "\$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now fic.service || true
-    systemctl disable fic_get_device_info.service || true
     systemctl disable fic_get_device_udev_info.service || true
+    systemctl daemon-reload || true
+fi
+
+exit 0
+EOF
+
+    chmod 0755 "$package_root/DEBIAN/prerm"
+}
+
+write_fic_dick_postinst() {
+    local package_root="$1"
+
+    cat > "$package_root/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd --system fic
+fi
+
+if [ -d /opt/fic ]; then
+    chown -R root:fic /opt/fic
+    find /opt/fic -type d -exec chmod 2770 {} \;
+    find /opt/fic -type f -exec chmod 0660 {} \;
+
+    if [ -d /opt/fic/bin ]; then
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0770 {} \;
+    fi
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable fic_get_device_info.service || true
+fi
+
+exit 0
+EOF
+
+    chmod 0755 "$package_root/DEBIAN/postinst"
+}
+
+write_fic_dick_prerm() {
+    local package_root="$1"
+
+    cat > "$package_root/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -e
+
+if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl disable fic_get_device_info.service || true
     systemctl daemon-reload || true
 fi
 
@@ -697,7 +745,9 @@ build_fic_dick_package() {
     output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${ARCH}.deb"
 
     mkdir -p "$package_root/opt/fic/bin"
+    mkdir -p "$package_root/lib/systemd/system"
     install -m 0755 "$FIC_DICK_BUILD_DIR/fic-dick" "$package_root/opt/fic/bin/fic-dick"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_info.service" "$package_root/lib/systemd/system/fic_get_device_info.service"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-dick")"
 
@@ -708,7 +758,8 @@ build_fic_dick_package() {
         "Free Integrity Control device collector binary"
 
     write_common_preinst "$package_root"
-    write_common_postinst "$package_root"
+    write_fic_dick_postinst "$package_root"
+    write_fic_dick_prerm "$package_root"
 
     rm -f "$output_deb"
     build_deb_package "$package_root" "$output_deb"
@@ -781,7 +832,9 @@ build_fic_package() {
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/lang" "$package_root/opt/fic/lang"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/notify" "$package_root/opt/fic/notify"
 
-    copy_tree_contents "$FIC_SRC_DIR/src/scripts/service" "$package_root/lib/systemd/system"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.service" "$package_root/lib/systemd/system/fic.service"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root/lib/systemd/system/fic.timer"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root/lib/systemd/system/fic_get_device_udev_info.service"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")"
