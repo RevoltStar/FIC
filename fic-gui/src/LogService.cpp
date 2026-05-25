@@ -219,7 +219,7 @@ bool LogService::parseLogLine(const QString &line,
     const QString sortableTimestamp = timestampText.left(23);
     QDateTime parsedTime = QDateTime::fromString(sortableTimestamp, QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
     if (parsedTime.isValid()) {
-        parsedTime.setTimeZone(QTimeZone::LocalTime);
+        parsedTime.setTimeZone(QTimeZone::systemTimeZone());
     }
 
     record->timestamp = parsedTime;
