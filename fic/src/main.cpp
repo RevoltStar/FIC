@@ -179,8 +179,57 @@ json policy_list_json(const std::map<std::string, std::map<std::string, std::map
     return result;
 }
 
+json policy_status_json(
+    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
+    const std::string& module,
+    const std::string& policy
+) {
+    std::shared_ptr<CheckAndFix> policyClass = getPolicyClass(cafMap, module, policy);
+    if (policyClass == nullptr) {
+        return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
+    }
+
+    const bool enabled = policyClass->isEnable();
+    return json{
+        {"ok", true},
+        {"message", "policy status loaded"},
+        {"module", module},
+        {"policy", policy},
+        {"enabled", enabled},
+        {"disabled", !enabled}
+    };
+}
+
+json policy_value_json(
+    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
+    const std::string& module,
+    const std::string& policy
+) {
+    std::shared_ptr<CheckAndFix> policyClass = getPolicyClass(cafMap, module, policy);
+    if (policyClass == nullptr) {
+        return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
+    }
+    if (!policyClass->isPolicySet()) {
+        return fic::ipc::make_error_response("policy value is not set: " + module + " " + policy);
+    }
+
+    std::optional<std::string> currentValue = policyClass->getValue();
+    if (!currentValue.has_value()) {
+        return fic::ipc::make_error_response("policy value is invalid: " + module + " " + policy);
+    }
+
+    return json{
+        {"ok", true},
+        {"message", "policy value loaded"},
+        {"module", module},
+        {"policy", policy},
+        {"value", currentValue.value()}
+    };
+}
+
 constexpr const char* DEVICE_DB_PATH = "/opt/fic/db/devices.db";
 constexpr const char* LOG_BASE_PATH = "/opt/fic/log";
+constexpr const char* LOCK_STATUS_PATH = "/opt/fic/lockstatus";
 
 json device_to_json(const DeviceInfo& device) {
     return json{
@@ -278,6 +327,20 @@ json log_records_json(const std::string& requestedBootId) {
     return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
 }
 
+json lock_status_json() {
+    SingleLineFileHandler lockStatus(LOCK_STATUS_PATH);
+    if (!lockStatus.loadConfig()) {
+        return fic::ipc::make_error_response("failed to read lock status");
+    }
+
+    const bool locked = lockStatus.getValue() != "0";
+    return json{
+        {"ok", true},
+        {"message", locked ? "locked" : "unlocked"},
+        {"locked", locked}
+    };
+}
+
 json handle_request(json request,
                     std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap) {
     const std::string command = request.value("command", "");
@@ -315,6 +378,15 @@ json handle_request(json request,
                 return fic::ipc::make_error_response("module is required");
             }
             return json{{"ok", true}, {"message", "policies listed"}, {"policies", policy_list_json(cafMap, module)}};
+        }
+        if (command == "policy_is_enabled" || command == "policy_is_disabled" || command == "policy_value") {
+            if (module.empty() || policy.empty()) {
+                return fic::ipc::make_error_response("module and policy are required");
+            }
+            if (command == "policy_value") {
+                return policy_value_json(cafMap, module, policy);
+            }
+            return policy_status_json(cafMap, module, policy);
         }
         if (command == "set_policy_value") {
             if (module.empty() || policy.empty()) {
@@ -452,9 +524,7 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to unlock computer");
         }
         if (command == "lockstatus") {
-            bool ok = lockstatus();
-            return ok ? fic::ipc::make_ok_response("lock status printed to daemon log")
-                      : fic::ipc::make_error_response("failed to read lock status");
+            return lock_status_json();
         }
 
         return fic::ipc::make_error_response("unknown command: " + command);

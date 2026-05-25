@@ -52,12 +52,14 @@ int main(int argc, char* argv[], char* envp[]) {
             const char* action = std::getenv("ACTION");
             const char* devpath = std::getenv("DEVPATH");
             const char* subsystem = std::getenv("SUBSYSTEM");
+            /*
             std::ofstream debug("/opt/fic/log/fic-debug.log", std::ios::app);
             debug << "PID: " << getpid()
                   << " | ACTION: " << (action ? action : "NULL")
                   << " | DEVPATH: " << (devpath ? devpath : "NULL")
                   << " | SUBSYSTEM: " << (subsystem ? subsystem : "NULL")
                   << std::endl;
+            */
             log("Обрабатываем устройство: " + std::string(devpath), logLevel::DEBUG);
             if (action == nullptr ||devpath == nullptr || subsystem == nullptr) {
                 log("Недостаточно переменных окружения UDEV. Прерываем обработку данного устройства", logLevel::DEBUG);

@@ -21,10 +21,14 @@ void print_help() {
               << "  policy set <module> <policy> <value>\n"
               << "  policy enable <module> <policy>\n"
               << "  policy disable <module> <policy>\n"
+              << "  policy isenable <module> <policy>\n"
+              << "  policy isdisable <module> <policy>\n"
+              << "  policy value <module> <policy>\n"
               << "  policy check all\n"
               << "  policy check <module> all\n"
               << "  policy check <module> <policy>\n"
               << "  policy list <module|all>\n"
+              << "  policy info restriction <module> <policy>\n"
               << "  module list\n"
               << "  hash calc <path>\n"
               << "  lock | unlock | lockstatus | status | shutdown\n";
@@ -32,7 +36,6 @@ void print_help() {
 
 int print_response(const json& response) {
     bool ok = response.value("ok", false);
-    std::cout << response.value("message", ok ? "OK" : "ERROR") << std::endl;
 
     if (response.contains("modules")) {
         bool first = true;
@@ -54,7 +57,64 @@ int print_response(const json& response) {
         }
     }
 
+    if (!response.contains("modules") && !response.contains("policies")) {
+        std::cout << response.value("message", ok ? "OK" : "ERROR") << std::endl;
+    }
+
     return ok ? 0 : 1;
+}
+
+int print_policy_restriction(const json& response, const std::string& module, const std::string& policy) {
+    if (!response.value("ok", false)) {
+        return print_response(response);
+    }
+
+    if (!response.contains("policies") || !response["policies"].is_array()) {
+        std::cout << "policy information is unavailable" << std::endl;
+        return 1;
+    }
+
+    for (const auto& item : response["policies"]) {
+        if (item.value("policy", "") != policy) {
+            continue;
+        }
+
+        const std::string restriction = item.value("restriction", "");
+        std::cout << restriction;
+        if (restriction.empty() || restriction.back() != '\n') {
+            std::cout << std::endl;
+        }
+        return 0;
+    }
+
+    std::cout << "policy not found: " << module << " " << policy << std::endl;
+    return 1;
+}
+
+int print_policy_state(const json& response, bool expectedEnabled) {
+    if (!response.value("ok", false)) {
+        return print_response(response);
+    }
+    if (!response.contains("enabled")) {
+        std::cout << "policy status is unavailable" << std::endl;
+        return 1;
+    }
+
+    std::cout << (response.value("enabled", false) == expectedEnabled ? "true" : "false") << std::endl;
+    return 0;
+}
+
+int print_policy_value(const json& response) {
+    if (!response.value("ok", false)) {
+        return print_response(response);
+    }
+    if (!response.contains("value")) {
+        std::cout << "policy value is unavailable" << std::endl;
+        return 1;
+    }
+
+    std::cout << response.value("value", "") << std::endl;
+    return 0;
 }
 } // namespace
 
@@ -81,6 +141,21 @@ int main(int argc, char* argv[]) {
         const std::string module = arg(argc, argv, 3);
         const std::string policy = arg(argc, argv, 4);
 
+        if (action == "info") {
+            const std::string infoType = arg(argc, argv, 3);
+            const std::string infoModule = arg(argc, argv, 4);
+            const std::string infoPolicy = arg(argc, argv, 5);
+            if (infoType != "restriction" || infoModule.empty() || infoPolicy.empty()) {
+                print_help();
+                return 1;
+            }
+            return print_policy_restriction(
+                client.request({{"command", "policy_list"}, {"module", infoModule}}),
+                infoModule,
+                infoPolicy
+            );
+        }
+
         if (action == "set") {
             const std::string value = arg(argc, argv, 5);
             if (module.empty() || policy.empty() || value.empty()) {
@@ -94,6 +169,19 @@ int main(int argc, char* argv[]) {
         }
         if (action == "disable") {
             return print_response(client.request({{"command", "disable_policy"}, {"module", module}, {"policy", policy}}));
+        }
+        if (action == "isenable" || action == "isdisable" || action == "value") {
+            if (module.empty() || policy.empty()) {
+                print_help();
+                return 1;
+            }
+            if (action == "value") {
+                return print_policy_value(client.request({{"command", "policy_value"}, {"module", module}, {"policy", policy}}));
+            }
+            return print_policy_state(
+                client.request({{"command", action == "isenable" ? "policy_is_enabled" : "policy_is_disabled"}, {"module", module}, {"policy", policy}}),
+                action == "isenable"
+            );
         }
         if (action == "check") {
             if (module == "all") {
