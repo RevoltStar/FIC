@@ -11,6 +11,10 @@ RPM_RELEASE="${RPM_RELEASE:-1.altp11}"
 ARCH="$(rpm --eval '%{_arch}')"
 GUI_QT_BUNDLE_ROOT="/opt/fic/qt"
 SYSTEMD_UNIT_DIR="/usr/lib/systemd/system"
+BUILD_LOCALE="${BUILD_LOCALE:-C.UTF-8}"
+
+export LANG="$BUILD_LOCALE"
+export LC_ALL="$BUILD_LOCALE"
 
 FIC_SRC_DIR="$ROOT_DIR/fic"
 FIC_DICK_SRC_DIR="$ROOT_DIR/fic-dick"
@@ -459,6 +463,7 @@ write_spec_file() {
         printf 'License: Proprietary\n'
         printf 'Group: System/Configuration/Other\n'
         printf 'BuildArch: %s\n' "$ARCH"
+        printf '%%undefine __find_debuginfo_files\n'
         printf 'Source0: %s\n' "$source_name"
         printf 'Source1: %s\n' "$file_list_source"
         if [ -n "$requires" ]; then
@@ -650,16 +655,22 @@ fi
 
 ln -sfn "$target_path" "/bin/$command_name"
 
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl enable fic_get_device_info.service >/dev/null 2>&1 || true
-    systemctl enable fic_get_device_udev_info.service >/dev/null 2>&1 || true
-    systemctl enable --now fic.service >/dev/null 2>&1 || true
-fi
+for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
+    if [ -x "\$systemctl_bin" ]; then
+        "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
+        "\$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
+        "\$systemctl_bin" enable fic_get_device_udev_info.service >/dev/null 2>&1 || true
+        "\$systemctl_bin" enable --now fic.service >/dev/null 2>&1 || true
+        break
+    fi
+done
 
-if command -v udevadm >/dev/null 2>&1; then
-    udevadm control --reload-rules >/dev/null 2>&1 || true
-fi
+for udevadm_bin in /usr/bin/udevadm /usr/sbin/udevadm /sbin/udevadm /bin/udevadm; do
+    if [ -x "\$udevadm_bin" ]; then
+        "\$udevadm_bin" control --reload-rules >/dev/null 2>&1 || true
+        break
+    fi
+done
 
 exit 0
 EOF
@@ -693,11 +704,59 @@ if [ "\$1" -eq 0 ] && [ -L "/bin/$command_name" ] && [ "\$(readlink -f "/bin/$co
     rm -f "/bin/$command_name"
 fi
 
-if [ "\$1" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl disable --now fic.service >/dev/null 2>&1 || true
-    systemctl disable fic_get_device_info.service >/dev/null 2>&1 || true
-    systemctl disable fic_get_device_udev_info.service >/dev/null 2>&1 || true
-    systemctl daemon-reload >/dev/null 2>&1 || true
+if [ "\$1" -eq 0 ]; then
+    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
+        if [ -x "\$systemctl_bin" ]; then
+            "\$systemctl_bin" disable --now fic.service >/dev/null 2>&1 || true
+            "\$systemctl_bin" disable fic_get_device_udev_info.service >/dev/null 2>&1 || true
+            "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
+            break
+        fi
+    done
+fi
+
+exit 0
+EOF
+}
+
+fic_dick_post_script() {
+    cat <<'EOF'
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd -r fic >/dev/null 2>&1 || true
+fi
+
+if [ -d /opt/fic ]; then
+    chown -R root:fic /opt/fic || true
+    find /opt/fic -type d -exec chmod 2770 {} \; || true
+    find /opt/fic -type f -exec chmod 0660 {} \; || true
+
+    if [ -d /opt/fic/bin ]; then
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0770 {} \; || true
+    fi
+fi
+
+for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
+    if [ -x "$systemctl_bin" ]; then
+        "$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
+        "$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
+        break
+    fi
+done
+
+exit 0
+EOF
+}
+
+fic_dick_preun_script() {
+    cat <<'EOF'
+if [ "$1" -eq 0 ]; then
+    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
+        if [ -x "$systemctl_bin" ]; then
+            "$systemctl_bin" disable fic_get_device_info.service >/dev/null 2>&1 || true
+            "$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
+            break
+        fi
+    done
 fi
 
 exit 0
@@ -711,7 +770,9 @@ build_fic_dick_package() {
 
     package_root="$(init_package_root "$package_name")"
     mkdir -p "$package_root/opt/fic/bin"
+    mkdir -p "$package_root$SYSTEMD_UNIT_DIR"
     install -m 0755 "$FIC_DICK_BUILD_DIR/fic-dick" "$package_root/opt/fic/bin/fic-dick"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_info.service"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
@@ -720,8 +781,8 @@ build_fic_dick_package() {
         "Free Integrity Control device collector binary." \
         "" \
         "$(common_pre_script)" \
-        "$(common_post_script)" \
-        "$(simple_preun_script)")"
+        "$(fic_dick_post_script)" \
+        "$(fic_dick_preun_script)")"
 
     printf '%s\n' "$output_rpm"
 }
@@ -776,8 +837,9 @@ build_fic_package() {
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/lang" "$package_root/opt/fic/lang"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/notify" "$package_root/opt/fic/notify"
 
-    copy_matching_files "$FIC_SRC_DIR/src/scripts/service" "$package_root$SYSTEMD_UNIT_DIR" '*.service'
-    copy_matching_files "$FIC_SRC_DIR/src/scripts/service" "$package_root$SYSTEMD_UNIT_DIR" '*.timer'
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.service" "$package_root$SYSTEMD_UNIT_DIR/fic.service"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root$SYSTEMD_UNIT_DIR/fic.timer"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_udev_info.service"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
 
     output_rpm="$(build_rpm_package \
