@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <memory>
+#include <unordered_map>
 #include "ConfigFileHandler.h"
 #include "MultilineConfigFileHandler.h"
 #include "ModuleConfigFileHandler.h"
@@ -22,6 +23,7 @@ public:
     static std::string readLanguageFromGlobalConfig();
     static void syncLanguageWithConfig();
     static std::string getLang(std::string key);
+    static std::unordered_map<std::string, std::string> getTranslations();
 };
 
 #endif // LOCALIZATIONMANAGER_H

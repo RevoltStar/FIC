@@ -97,3 +97,14 @@ std::string LocalizationManager::getLang(std::string key)
 
     return key;
 }
+
+std::unordered_map<std::string, std::string> LocalizationManager::getTranslations()
+{
+    syncLanguageWithConfig();
+
+    if (!ensureLanguageLoaded()) {
+        return {};
+    }
+
+    return langFile->entries();
+}

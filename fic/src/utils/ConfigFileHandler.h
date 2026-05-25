@@ -46,6 +46,7 @@ public:
     int parameterCount();
 
     bool isParameterExists(const std::string& parameter);
+    const std::unordered_map<std::string, std::string>& entries() const;
 protected:
     //Конфиг
     std::unordered_map<std::string, std::string> config_;

@@ -120,6 +120,10 @@ bool ConfigFileHandler::isParameterExists(const std::string& parameter){
     const auto it = config_.find(parameter);
     return it != config_.end();
 }
+
+const std::unordered_map<std::string, std::string>& ConfigFileHandler::entries() const {
+    return config_;
+}
 //Вывести конфигурационный файл
 void ConfigFileHandler::printConfig() const {
     std::cout << "Configuration Parameters:" << "\n";

@@ -2,12 +2,9 @@
 #define QLOCALIZATIONMANAGER_H
 
 #include <QString>
-#include "../utils/LocalizationManager.h"
 
-//Класс для мультиязычности
-class QLocalizationManager : public LocalizationManager{
+class QLocalizationManager {
 public:
-    //Дать перевод по строке
     static QString getLang(const QString& key);
 };
 

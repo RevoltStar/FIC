@@ -360,6 +360,18 @@ json handle_request(json request,
                 {"boot_id", SystemBootInfo::get_boot_id()}
             };
         }
+        if (command == "localization_bundle") {
+            json translations = json::object();
+            for (const auto& [key, value] : LocalizationManager::getTranslations()) {
+                translations[key] = value;
+            }
+            return json{
+                {"ok", true},
+                {"message", "localization loaded"},
+                {"language", LocalizationManager::getCurrentLanguage()},
+                {"translations", translations}
+            };
+        }
         if (command == "shutdown") {
             g_stop = true;
             return fic::ipc::make_ok_response("shutdown requested");
