@@ -1,4 +1,4 @@
-#include "utils/CommandExecutor.h"
+/*#include "utils/CommandExecutor.h"
 
 std::string CommandExecutor::commandHashFilePath = "/opt/fic/config/commandhash.conf";
 std::unique_ptr<ConfigFileHandler> CommandExecutor::cfh = std::make_unique<ConfigFileHandler>(commandHashFilePath);
@@ -162,3 +162,4 @@ bool CommandExecutor::execute(const std::string &command, const std::string &par
     }
     return true;
 }
+*/

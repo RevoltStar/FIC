@@ -1,4 +1,4 @@
-#ifndef COMMANDEXECUTOR_H
+/*#ifndef COMMANDEXECUTOR_H
 #define COMMANDEXECUTOR_H
 
 #include <string>
@@ -38,3 +38,4 @@ public:
 };
 
 #endif // COMMANDEXECUTOR_H
+*/
