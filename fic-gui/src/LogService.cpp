@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include <QTimeZone>
+
 #include "ipc/FicIpcClient.h"
 
 LogService::LogService(QObject *parent)
@@ -217,7 +219,7 @@ bool LogService::parseLogLine(const QString &line,
     const QString sortableTimestamp = timestampText.left(23);
     QDateTime parsedTime = QDateTime::fromString(sortableTimestamp, QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
     if (parsedTime.isValid()) {
-        parsedTime.setTimeSpec(Qt::LocalTime);
+        parsedTime.setTimeZone(QTimeZone::LocalTime);
     }
 
     record->timestamp = parsedTime;

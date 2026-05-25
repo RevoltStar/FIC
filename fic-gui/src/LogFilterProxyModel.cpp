@@ -15,7 +15,7 @@ void LogFilterProxyModel::setCategoryFilter(const QString &category)
     }
 
     categoryFilter_ = category;
-    invalidateFilter();
+    refreshFilter();
 }
 
 void LogFilterProxyModel::setMinimumLevel(logLevel level)
@@ -25,7 +25,7 @@ void LogFilterProxyModel::setMinimumLevel(logLevel level)
     }
 
     minimumLevel_ = level;
-    invalidateFilter();
+    refreshFilter();
 }
 
 void LogFilterProxyModel::setSearchText(const QString &text)
@@ -36,7 +36,17 @@ void LogFilterProxyModel::setSearchText(const QString &text)
     }
 
     searchText_ = normalized;
+    refreshFilter();
+}
+
+void LogFilterProxyModel::refreshFilter()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+    beginFilterChange();
+    endFilterChange();
+#else
     invalidateFilter();
+#endif
 }
 
 QString LogFilterProxyModel::categoryFilter() const
