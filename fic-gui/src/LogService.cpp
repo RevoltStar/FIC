@@ -3,7 +3,6 @@
 #include <algorithm>
 
 #include "ipc/FicIpcClient.h"
-#include "utils/SystemBootInfo.h"
 
 LogService::LogService(QObject *parent)
     : QObject(parent)
@@ -108,7 +107,11 @@ void LogService::onWatchedPathChanged(const QString &)
 
 QString LogService::currentBootId() const
 {
-    return QString::fromStdString(SystemBootInfo::get_boot_id());
+    const auto response = fic::ipc::Client().request({{"command", "boot_id"}});
+    if (!response.value("ok", false)) {
+        return {};
+    }
+    return QString::fromStdString(response.value("boot_id", ""));
 }
 
 QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories)

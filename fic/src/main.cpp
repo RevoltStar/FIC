@@ -353,6 +353,13 @@ json handle_request(json request,
         if (command == "status") {
             return fic::ipc::make_ok_response("fic daemon is running");
         }
+        if (command == "boot_id") {
+            return json{
+                {"ok", true},
+                {"message", "boot id loaded"},
+                {"boot_id", SystemBootInfo::get_boot_id()}
+            };
+        }
         if (command == "shutdown") {
             g_stop = true;
             return fic::ipc::make_ok_response("shutdown requested");

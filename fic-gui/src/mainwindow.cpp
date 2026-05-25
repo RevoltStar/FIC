@@ -1,6 +1,5 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
-#include "utils/SystemBootInfo.h"
 #include "ipc/FicIpcClient.h"
 
 #include <QStringList>
@@ -8,6 +7,17 @@
 #include <map>
 #include <stdexcept>
 #include <vector>
+
+namespace {
+QString currentBootIdFromDaemon()
+{
+    const auto response = fic::ipc::Client().request({{"command", "boot_id"}});
+    if (!response.value("ok", false)) {
+        return {};
+    }
+    return QString::fromStdString(response.value("boot_id", ""));
+}
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -49,7 +59,7 @@ MainWindow::MainWindow(QWidget *parent)
     deviceTree->loadDeviceTree();
     ui->label_currentBootTime->setText("Текущий boot_id ОС:");
     ui->label_deviceBootTime->setText("boot_id устройства в БД:");
-    ui->currentBootTimeLabel->setText(QString::fromStdString(SystemBootInfo::get_boot_id()));
+    ui->currentBootTimeLabel->setText(currentBootIdFromDaemon());
     ui->deviceBootTimeLabel->setText("[NO SET]");
 
     // СОЗДАЕМ И ИНИЦИАЛИЗИРУЕМ LogViewer С СУЩЕСТВУЮЩИМИ ЭЛЕМЕНТАМИ UI
@@ -89,7 +99,7 @@ void MainWindow::onDeviceClicked(const DeviceInfo& device)
     ui->controlLevelLabel->setText(QString::fromStdString(device.control_level));
 
     ui->devpathLabel->setText(QString::fromStdString(device.devpath));
-    ui->currentBootTimeLabel->setText(QString::fromStdString(SystemBootInfo::get_boot_id()));
+    ui->currentBootTimeLabel->setText(currentBootIdFromDaemon());
     ui->deviceBootTimeLabel->setText(QString::fromStdString(device.boot_id));
     //Выводим параметры выбранного устройства
     deviceAttributeList->showDeviceAttributes(device.id);

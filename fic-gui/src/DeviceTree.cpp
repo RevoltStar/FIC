@@ -9,7 +9,6 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStyle>
-#include "utils/SystemBootInfo.h"
 #include "ipc/FicIpcClient.h"
 #include <sys/utsname.h> // Для получения времени старта ОС
 
@@ -426,13 +425,21 @@ void DeviceTree::deleteDeviceFromDatabase(int deviceId, const QString &deviceNam
 // Функция для получения времени старта ОС
 std::string DeviceTree::getSystemBootId()
 {
-    return SystemBootInfo::get_boot_id();
+    const auto response = fic::ipc::Client().request({{"command", "boot_id"}});
+    if (!response.value("ok", false)) {
+        qDebug() << "Failed to load boot_id:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        return "";
+    }
+    return response.value("boot_id", "");
 }
 
 // Проверка, совпадает ли время старта устройства с временем старта ОС
 bool DeviceTree::isDeviceBootIdValid(const DeviceInfo &device)
 {
-    static std::string systemBootId = getSystemBootId();
+    static std::string systemBootId;
+    if (systemBootId.empty()) {
+        systemBootId = getSystemBootId();
+    }
 
     // Сравниваем boot_id с временем старта системы
     // Или на равенство -1 (для предустановленных устройств)
