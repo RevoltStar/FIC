@@ -583,9 +583,15 @@ int create_server_socket(const std::string& socketPath) {
     const bool manageRuntimeDirPermissions = !runtimeDirAlreadyExisted || runtimeDir == std::filesystem::path("/run/fic");
     if (manageRuntimeDirPermissions) {
         if (ficGroup != nullptr) {
-            ::chown(runtimeDir.c_str(), static_cast<uid_t>(-1), ficGroup->gr_gid);
+            if (::chown(runtimeDir.c_str(), static_cast<uid_t>(-1), ficGroup->gr_gid) < 0) {
+                std::cerr << "chown(" << runtimeDir << ") failed: " << std::strerror(errno) << std::endl;
+                return -1;
+            }
         }
-        ::chmod(runtimeDir.c_str(), 0770);
+        if (::chmod(runtimeDir.c_str(), 0770) < 0) {
+            std::cerr << "chmod(" << runtimeDir << ") failed: " << std::strerror(errno) << std::endl;
+            return -1;
+        }
     }
 
     ::unlink(socketPath.c_str());
@@ -612,9 +618,19 @@ int create_server_socket(const std::string& socketPath) {
     }
 
     if (ficGroup != nullptr) {
-        ::chown(socketPath.c_str(), static_cast<uid_t>(-1), ficGroup->gr_gid);
+        if (::chown(socketPath.c_str(), static_cast<uid_t>(-1), ficGroup->gr_gid) < 0) {
+            std::cerr << "chown(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
+            ::close(fd);
+            ::unlink(socketPath.c_str());
+            return -1;
+        }
     }
-    ::chmod(socketPath.c_str(), 0660);
+    if (::chmod(socketPath.c_str(), 0660) < 0) {
+        std::cerr << "chmod(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
+        ::close(fd);
+        ::unlink(socketPath.c_str());
+        return -1;
+    }
 
     if (::listen(fd, 32) < 0) {
         std::cerr << "listen() failed: " << std::strerror(errno) << std::endl;
