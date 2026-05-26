@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <cerrno>
 #include <clocale>
 #include <csignal>
 #include <cstdlib>
@@ -574,6 +575,53 @@ bool serve_one_client(int clientFd,
     return fic::ipc::write_all(clientFd, responseText, error);
 }
 
+bool probe_existing_daemon(const std::string& socketPath,
+                           std::optional<pid_t>& daemonPid,
+                           int& connectError,
+                           std::string& error) {
+    connectError = 0;
+
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        error = "socket() failed: " + std::string(std::strerror(errno));
+        return false;
+    }
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (socketPath.size() >= sizeof(addr.sun_path)) {
+        error = "socket path is too long: " + socketPath;
+        ::close(fd);
+        return false;
+    }
+    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        connectError = errno;
+        error = std::strerror(errno);
+        ::close(fd);
+        return false;
+    }
+
+#ifdef SO_PEERCRED
+    struct ucred credentials {};
+    socklen_t credentialsLength = sizeof(credentials);
+    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &credentialsLength) == 0) {
+        daemonPid = credentials.pid;
+    }
+#endif
+
+    std::string ioError;
+    const std::string requestText = json{{"command", "status"}}.dump() + "\n";
+    fic::ipc::write_all(fd, requestText, ioError);
+    ::shutdown(fd, SHUT_WR);
+
+    std::string responseText;
+    fic::ipc::read_until_eof(fd, responseText, ioError);
+    ::close(fd);
+    return true;
+}
+
 int create_server_socket(const std::string& socketPath) {
     const auto runtimeDir = std::filesystem::path(socketPath).parent_path();
     const bool runtimeDirAlreadyExisted = std::filesystem::exists(runtimeDir);
@@ -590,6 +638,25 @@ int create_server_socket(const std::string& socketPath) {
         }
         if (::chmod(runtimeDir.c_str(), 0770) < 0) {
             std::cerr << "chmod(" << runtimeDir << ") failed: " << std::strerror(errno) << std::endl;
+            return -1;
+        }
+    }
+
+    if (std::filesystem::exists(socketPath)) {
+        std::optional<pid_t> daemonPid;
+        int probeConnectError = 0;
+        std::string probeError;
+        if (probe_existing_daemon(socketPath, daemonPid, probeConnectError, probeError)) {
+            std::cerr << "fic daemon is already running, socket=" << socketPath;
+            if (daemonPid.has_value()) {
+                std::cerr << ", pid=" << daemonPid.value();
+            }
+            std::cerr << std::endl;
+            return -1;
+        }
+        if (probeConnectError != ECONNREFUSED && probeConnectError != ENOENT) {
+            std::cerr << "socket exists but could not verify it is stale: " << socketPath
+                      << ": " << probeError << std::endl;
             return -1;
         }
     }
