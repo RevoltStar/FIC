@@ -22,6 +22,8 @@ public:
     virtual std::string getValue(const std::string& parameter) const;
 
     //Установить значение
+    //true - значение установлено успешно
+    //false - значение установить не удалось
     virtual bool setValue(const std::string& parameter, const std::string& value) = 0;
 
     //Вывести конфигурационный файл
@@ -30,7 +32,7 @@ public:
     //Сохранить файл
     bool saveFile();
     //Закомментировать все параметры в файле
-    virtual bool commentAllParameters();
+    /*virtual bool commentAllParameters();*/
 
     virtual ~FileHandler() = default;
 protected:
