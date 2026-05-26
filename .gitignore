@@ -13,3 +13,4 @@ devices.db-wal
 *.dylib
 *.dll
 .DS_Store
+log.txt
