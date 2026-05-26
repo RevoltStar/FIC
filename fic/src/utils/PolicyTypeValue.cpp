@@ -85,7 +85,7 @@ bool IntPolicyTypeValue::validate(const std::string& value) {
 }
 
 std::string IntPolicyTypeValue::getPolicyRestrictionInfo() {
-    return LocalizationManager::getLang("[utils:policytypevalue][type:intpolicytypevalue]") + 
+    return LocalizationManager::getLang("[utils:policytypevalue][type:intpolicytypevalue] ") + 
         "[" +
         std::to_string(this->min) +
         ";"
