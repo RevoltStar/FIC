@@ -709,6 +709,9 @@ bundle_fic_gui_qt_runtime() {
         if [ -d "$plugin_dir" ]; then
             mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/plugins/$plugin_subdir"
             find "$plugin_dir" -maxdepth 1 -type f -name '*.so*' | while IFS= read -r plugin_file; do
+                if [ "$plugin_subdir" = "platformthemes" ] && [ "$(basename "$plugin_file")" = "libqgtk3.so" ]; then
+                    continue
+                fi
                 install -m 0755 "$plugin_file" "$package_root${GUI_QT_BUNDLE_ROOT}/plugins/$plugin_subdir/$(basename "$plugin_file")"
             done
         fi
