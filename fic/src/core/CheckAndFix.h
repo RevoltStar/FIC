@@ -17,6 +17,7 @@ protected:
     //Конфигурационный файл с настройками модуля
     std::unique_ptr<ModuleConfigFileHandler> moduleConf;
 
+    //Тип значения политики
     std::unique_ptr<PolicyTypeValue> policyTypeValue;
     bool isPolicyTypeValueSet() const {
         if(policyTypeValue == nullptr){
@@ -39,6 +40,7 @@ public:
     }
 
     //Получаем значение параметра
+    //Возвращаем nullopt, если значение не установлено или невалидно
     std::optional<std::string> getValue() {
         if (!this->moduleConf->isParameterExists(this->policyName)) {
             this->log("Значение политики " + this->policyName + " не установлено", logLevel::ERROR);
@@ -135,7 +137,7 @@ public:
     std::string moduleName="";
     //Имя политики
     std::string policyName="";
-    //DesktopEnvironment
+    //Название подмодуля
     std::string submoduleName="";
 
     //Логгировать (через this->logger)

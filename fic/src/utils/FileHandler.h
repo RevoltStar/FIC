@@ -9,6 +9,10 @@
 #include <unordered_map>
 #include <algorithm>
 
+
+/*
+Базовый класс для работы с файлами
+*/
 class FileHandler {
 public:
     FileHandler(const std::string& filepath, const std::string& delimeter = "=");
