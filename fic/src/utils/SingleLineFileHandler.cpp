@@ -70,7 +70,7 @@ bool SingleLineFileHandler::saveConfig(){
 void SingleLineFileHandler::printConfig() const {
     std::cout << "Current line: " << current_line_ << std::endl;
 }
-
+/*
 bool SingleLineFileHandler::commentAllParameters() {
     return false;
 
@@ -86,3 +86,4 @@ bool SingleLineFileHandler::commentAllParameters() {
     }
     return false;
 }
+*/

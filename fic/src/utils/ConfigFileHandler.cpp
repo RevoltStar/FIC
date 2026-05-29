@@ -131,7 +131,7 @@ void ConfigFileHandler::printConfig() const {
         std::cout << "  '" << pair.first << "':'" << pair.second << "'\n";
     }
 }
-
+/*
 //Закомментировать все параметры в файле
 bool ConfigFileHandler::commentAllParameters() {
     for (auto& line : original_lines_) {
@@ -143,3 +143,4 @@ bool ConfigFileHandler::commentAllParameters() {
         }
         return true;
     }
+*/

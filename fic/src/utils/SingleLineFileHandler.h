@@ -24,7 +24,7 @@ public:
     void printConfig() const override;
 
     // Закомментировать все параметры в файле (в данном случае закомментировать строку)
-    bool commentAllParameters() override;
+    /*bool commentAllParameters() override;*/
 
 protected:
     std::string current_line_;  // Текущая строка с данными

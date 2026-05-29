@@ -37,7 +37,7 @@ public:
     void printConfig() const override;
 
     //Закомментировать все параметры в файле
-    bool commentAllParameters() override;
+    /*bool commentAllParameters() override;*/
 
     //Пока не нужна
     bool isEmptyConfig();
