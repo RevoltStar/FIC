@@ -826,6 +826,7 @@ build_fic_package() {
     install -m 0755 "$FIC_BUILD_DIR/fic" "$package_root/opt/fic/bin/fic"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/service/fic-udevadm-trigger" "$package_root/opt/fic/bin/fic-udevadm-trigger"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/completion/fic" "$package_root/usr/share/bash-completion/completions/fic-cli"
+    sed -i 's/\r$//' "$package_root/usr/share/bash-completion/completions/fic-cli"
 
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/config" "$package_root/opt/fic/config"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/db/PCI_CLASS_ru.txt" "$package_root/opt/fic/db/PCI_CLASS_ru.txt"
