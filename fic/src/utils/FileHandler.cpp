@@ -43,12 +43,12 @@ std::string FileHandler::collapseSpaces(const std::string &input){
 
     return result;
 }
-
+/*
 bool FileHandler::commentAllParameters() {
     // Базовая реализация
     return false;
 }
-
+*/
 bool FileHandler::loadFile(){
     //std::cout << "Путь к файлу:" + filepath_ << std::endl;
     std::ifstream file(filepath_);
