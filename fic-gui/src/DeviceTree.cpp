@@ -10,7 +10,103 @@
 #include <QSignalBlocker>
 #include <QStyle>
 #include "ipc/FicIpcClient.h"
+#include "wrappers/QLocalizationManager.h"
+#include <algorithm>
+#include <cctype>
+#include <exception>
+#include <iomanip>
+#include <sstream>
 #include <sys/utsname.h> // Для получения времени старта ОС
+
+namespace {
+std::string upperCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    return value;
+}
+
+std::string normalizePciClassKey(std::string value)
+{
+    value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isxdigit(ch) == 0;
+    }), value.end());
+
+    while (value.length() < 6) {
+        value = "0" + value;
+    }
+    if (value.length() > 6) {
+        value = value.substr(value.length() - 6);
+    }
+
+    value = upperCopy(value);
+    return value.substr(0, 2) + "|" + value.substr(2, 2) + "|" + value.substr(4, 2);
+}
+
+std::string normalizeUsbTypePart(std::string value)
+{
+    if (value.empty()) {
+        return "00";
+    }
+
+    const bool containsHexLetter = std::any_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isalpha(ch) != 0;
+    });
+
+    try {
+        const unsigned long number = std::stoul(value, nullptr, containsHexLetter ? 16 : 10);
+        std::stringstream ss;
+        ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << (number & 0xFF);
+        return ss.str();
+    } catch (const std::exception&) {
+        value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char ch) {
+            return std::isxdigit(ch) == 0;
+        }), value.end());
+        while (value.length() < 2) {
+            value = "0" + value;
+        }
+        if (value.length() > 2) {
+            value = value.substr(value.length() - 2);
+        }
+        return upperCopy(value);
+    }
+}
+
+std::string normalizeUsbTypeKey(const std::string& type)
+{
+    std::vector<std::string> parts;
+    std::stringstream ss(type);
+    std::string token;
+
+    while (std::getline(ss, token, '/')) {
+        parts.push_back(normalizeUsbTypePart(token));
+    }
+
+    if (parts.empty()) {
+        return "";
+    }
+    while (parts.size() < 3) {
+        parts.push_back("00");
+    }
+    if (parts.size() > 3) {
+        parts.resize(3);
+    }
+
+    return parts[0] + "|" + parts[1] + "|" + parts[2];
+}
+
+std::string localizeDeviceClass(const std::string& subsystem, const std::string& classKey)
+{
+    if (classKey.empty()) {
+        return "";
+    }
+
+    const std::string key = "[devices:class][subsystem:" + subsystem + "][class:" + classKey + "]";
+    const QString localized = QLocalizationManager::getLang(QString::fromStdString(key));
+    return localized.toStdString() == key ? "" : localized.toStdString();
+}
+} // namespace
 
 DeviceTree::DeviceTree(QWidget *parent)
     : QWidget(parent)
@@ -519,15 +615,9 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     {
         std::string pci_class = getDeviceAttribute(device.id, "PCI_CLASS", "");
         std::string pci_id = getDeviceAttribute(device.id, "PCI_ID", "");
-        std::string pci_class_prepared = pci_class;
-        while (pci_class_prepared.length() < 6)
-        {
-            pci_class_prepared = "0" + pci_class_prepared;
-        }
-        pci_class_prepared = pci_class_prepared.substr(0, 2) + "|" +
-                             pci_class_prepared.substr(2, 2) + "|" +
-                             pci_class_prepared.substr(4, 2);
-        device_name = "[PCI] class " + pci_class_prepared;
+        std::string pci_class_prepared = normalizePciClassKey(pci_class);
+        std::string pci_device_info = localizeDeviceClass("pci", pci_class_prepared);
+        device_name = pci_device_info.empty() ? "[PCI] class " + pci_class_prepared : pci_device_info;
         if (!pci_id.empty())
         {
             device_name += " [" + pci_id + "]";
@@ -537,34 +627,13 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     if (device.subsystem == "usb")
     {
         std::string type = getDeviceAttribute(device.id, "TYPE", "");
-        std::vector<std::string> parts;
-        std::stringstream ss(type);
-        std::string token;
-
-        while (std::getline(ss, token, '/'))
+        std::string usb_class_prepared = normalizeUsbTypeKey(type);
+        std::string usb_class_info = localizeDeviceClass("usb", usb_class_prepared);
+        if (!usb_class_info.empty())
         {
-            parts.push_back(token);
+            return usb_class_info;
         }
-
-        for (auto &part : parts)
-        {
-            if (part.length() < 2)
-            {
-                part = "0" + part;
-            }
-        }
-
-        std::string result;
-        for (size_t i = 0; i < parts.size(); ++i)
-        {
-            result += parts[i];
-            if (i != parts.size() - 1)
-            {
-                result += "|";
-            }
-        }
-
-        return result.empty() ? "[USB]" : "[USB] class " + result;
+        return usb_class_prepared.empty() ? "[USB]" : "[USB] class " + usb_class_prepared;
     }
     if (device.subsystem == "block")
     {

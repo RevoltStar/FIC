@@ -43,4 +43,5 @@ target_link_libraries(fic PRIVATE SQLite::SQLite3)
 # Установка
 install(TARGETS fic DESTINATION bin)
 install(DIRECTORY src/scripts/config/ DESTINATION /opt/fic/config)
+install(DIRECTORY src/scripts/lang/ DESTINATION /opt/fic/lang)
 # Bash completion is installed by fic-cli package/component.

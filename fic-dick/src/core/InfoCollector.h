@@ -7,7 +7,6 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include "FileStats.h"
 #include "Logger.h"
 #include <unordered_map>
 #include "utils/DB.h"
