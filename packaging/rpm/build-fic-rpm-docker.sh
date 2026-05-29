@@ -7,7 +7,7 @@ DOCKERFILE_PATH="${DOCKERFILE_PATH:-$ROOT_DIR/packaging/rpm/Dockerfile}"
 PACKAGE_VERSION="${1:-0.1.0}"
 
 find_container_command() {
-    if command -v podman >/dev/null 2>&1; then
+    if command -v podman >/dev/null              2>&1; then
         printf '%s\n' "podman"
         return 0
     fi

@@ -1,4 +1,4 @@
-FROM alt:p11
+FROM registry.altlinux.org/p11/alt:latest
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
