@@ -1,37 +1,120 @@
 #include "utils/NotifyUser.h"
-#include <sys/stat.h>
-#include <fstream>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 const std::string NotifyUser::NOTIFY_DIR = "/opt/fic/notify/";
 const notifyLevel NotifyUser::currNotifyLevel = notifyLevel::NoNotify;
 
-bool NotifyUser::notify_user(const std::string& filename, const std::string& content, const notifyLevel& notifyLev){
-        std::string notifyUserString = NotifyUser::enumToString(notifyLev);
-        // Создаем директорию, если не существует
-         int status = mkdir(NOTIFY_DIR.c_str(), 0755);
-         if(status != 0 && errno != EEXIST){
-             std::cout << "Ошибка при создании каталога " + NOTIFY_DIR << ":" <<strerror(errno) << std::endl;
-             return false;
-         }
+namespace {
+std::atomic<unsigned long> notifyCounter{0};
 
-        // Получаем текущее время
-        time_t now = time(nullptr);
-        std::string datetime = ctime(&now);
-        datetime.pop_back(); // Удаляем \n
+std::string sanitize_filename(std::string value)
+{
+    if (value.empty()) {
+        return "fic";
+    }
 
-        // Создаем файл уведомления
-        std::ofstream notify_file(NotifyUser::NOTIFY_DIR + filename);
-        if (!notify_file.is_open()) {
-            std::cerr << "Ошибка создания файла уведомления" << '\n';
-            return false;
+    for (char& ch : value) {
+        const bool safe =
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' || ch == '-' || ch == '.';
+
+        if (!safe) {
+            ch = '_';
         }
+    }
 
-        notify_file << "datetime=" << datetime << "\n"
-                    << "type=" << notifyUserString << "\n"
-                    << "content=" << content << "\n";
+    return value;
+}
+
+std::string escape_value(const std::string& value)
+{
+    std::string escaped;
+    escaped.reserve(value.size());
+
+    for (char ch : value) {
+        switch (ch) {
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            break;
+        default:
+            escaped += ch;
+            break;
+        }
+    }
+
+    return escaped;
+}
+} // namespace
+
+bool NotifyUser::notify_user(const std::string& filename, const std::string& content, const notifyLevel& notifyLev)
+{
+    if (notifyLev == notifyLevel::NoNotify || content.empty()) {
         return true;
+    }
 
-        //std::cout << "Ошибка создания уведомления" << '\n';
-        //return false;
+    const std::string notifyUserString = NotifyUser::enumToString(notifyLev);
+
+    try {
+        std::filesystem::create_directories(NOTIFY_DIR);
+        chmod(NOTIFY_DIR.c_str(), 02770);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to create notify directory " << NOTIFY_DIR << ": " << e.what() << std::endl;
+        return false;
+    }
+
+    const auto now = std::chrono::system_clock::now();
+    const auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+    const unsigned long counter = ++notifyCounter;
+    const std::string timestampString = std::to_string(timestamp);
+    const std::string safeFilename = sanitize_filename(filename);
+
+    std::stringstream baseName;
+    baseName << safeFilename
+             << "_" << timestampString
+             << "_" << getpid()
+             << "_" << counter;
+
+    const std::string finalPath = NotifyUser::NOTIFY_DIR + baseName.str() + ".notify";
+    const std::string tempPath = NotifyUser::NOTIFY_DIR + "." + baseName.str() + ".tmp";
+
+    std::ofstream notify_file(tempPath, std::ios::out | std::ios::trunc);
+    if (!notify_file.is_open()) {
+        std::cerr << "Failed to create notify file: " << tempPath << std::endl;
+        return false;
+    }
+
+    notify_file << "timestamp=" << timestampString << "\n"
+                << "level=" << notifyUserString << "\n"
+                << "source=" << safeFilename << "\n"
+                << "message=" << escape_value(content) << "\n";
+
+    notify_file.close();
+    chmod(tempPath.c_str(), 0660);
+
+    try {
+        std::filesystem::rename(tempPath, finalPath);
+    } catch (const std::exception& e) {
+        std::filesystem::remove(tempPath);
+        std::cerr << "Failed to publish notify file: " << e.what() << std::endl;
+        return false;
+    }
+
+    chmod(finalPath.c_str(), 0660);
+    return true;
 }

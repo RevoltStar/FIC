@@ -104,18 +104,18 @@ bool ModeAndOwner::check_and_fix() {
 
     if (failed == 0) {
         if (fixed == 0) {
-            this->notifyToUser("Отклонений от эталона в политике " +
+            this->notify("Отклонений от эталона в политике " +
                                this->policyName + " не обнаружено", notifyLevel::INFO);
             this->log("Отклонений не обнаружено", logLevel::INFO);
             return true;
         } else {
-            this->notifyToUser("Были обнаружены отклонения от эталона при применении политики " +
+            this->notify("Были обнаружены отклонения от эталона при применении политики " +
                                this->policyName + " ,однако они все были успешно исправлены", notifyLevel::WARN);
             this->log("Все обнаруженные отклонения исправлены", logLevel::INFO);
             return true;
         }
     } else {
-        this->notifyToUser("Были обнаружены отклонения от эталона при применении политики " +
+        this->notify("Были обнаружены отклонения от эталона при применении политики " +
                            this->policyName + " ,и некоторые (" + std::to_string(failed) + ") исправлены не были", notifyLevel::ERROR);
         this->log("ВНИМАНИЕ: Не все отклонения удалось исправить (Проблемных файлов: " +  std::to_string(failed) + ")", logLevel::ERROR);
         return false;

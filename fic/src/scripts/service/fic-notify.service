@@ -1,0 +1,12 @@
+[Unit]
+Description=FIC desktop notification dispatcher
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/opt/fic/bin/fic-notify-dispatcher
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

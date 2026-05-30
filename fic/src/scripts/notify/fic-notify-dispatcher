@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -u
+
+notify_dir="/opt/fic/notify"
+poll_interval="${FIC_NOTIFY_POLL_INTERVAL:-2}"
+
+unescape_value() {
+    local value="$1"
+    value="${value//\\\\/__FIC_BACKSLASH__}"
+    value="${value//\\n/$'\n'}"
+    value="${value//__FIC_BACKSLASH__/\\}"
+    printf '%s' "$value"
+}
+
+read_field() {
+    local file="$1"
+    local key="$2"
+    awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$file"
+}
+
+is_fic_user() {
+    local user="$1"
+    id -nG "$user" 2>/dev/null | grep -qw fic
+}
+
+session_property() {
+    local session="$1"
+    local property="$2"
+    loginctl show-session "$session" -p "$property" --value 2>/dev/null || true
+}
+
+is_graphical_session() {
+    local session="$1"
+    local active class remote type
+
+    active="$(session_property "$session" Active)"
+    class="$(session_property "$session" Class)"
+    remote="$(session_property "$session" Remote)"
+    type="$(session_property "$session" Type)"
+
+    [ "$active" = "yes" ] || return 1
+    [ "$class" = "user" ] || return 1
+    [ "$remote" = "no" ] || return 1
+
+    case "$type" in
+        x11|wayland|mir) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+send_to_session() {
+    local session="$1"
+    local user="$2"
+    local title="$3"
+    local message="$4"
+    local urgency="$5"
+    local uid runtime_dir bus_address display
+
+    uid="$(id -u "$user" 2>/dev/null)" || return 1
+    runtime_dir="/run/user/$uid"
+    bus_address="unix:path=$runtime_dir/bus"
+    display="$(session_property "$session" Display)"
+
+    [ -S "$runtime_dir/bus" ] || return 1
+
+    if [ -n "$display" ]; then
+        runuser -u "$user" -- env \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            DBUS_SESSION_BUS_ADDRESS="$bus_address" \
+            DISPLAY="$display" \
+            notify-send --app-name=FIC --urgency="$urgency" "$title" "$message"
+        return $?
+    fi
+
+    runuser -u "$user" -- env \
+        XDG_RUNTIME_DIR="$runtime_dir" \
+        DBUS_SESSION_BUS_ADDRESS="$bus_address" \
+        notify-send --app-name=FIC --urgency="$urgency" "$title" "$message"
+}
+
+deliver_notification() {
+    local file="$1"
+    local level source message title urgency delivered session uid user rest attempted_users
+
+    level="$(read_field "$file" level)"
+    source="$(read_field "$file" source)"
+    message="$(unescape_value "$(read_field "$file" message)")"
+
+    [ -n "$message" ] || return 0
+
+    case "$level" in
+        FATAL|ERROR) urgency="critical" ;;
+        WARNING|WARN) urgency="normal" ;;
+        *) urgency="low" ;;
+    esac
+
+    title="FIC ${level:-INFO}"
+    [ -n "$source" ] && title="$title: $source"
+
+    delivered=1
+    attempted_users=""
+    while read -r session uid user rest; do
+        [ -n "${session:-}" ] || continue
+        [ -n "${user:-}" ] || continue
+
+        is_graphical_session "$session" || continue
+        is_fic_user "$user" || continue
+
+        case " $attempted_users " in
+            *" $user "*) continue ;;
+        esac
+        attempted_users="$attempted_users $user"
+
+        if send_to_session "$session" "$user" "$title" "$message" "$urgency"; then
+            delivered=0
+        else
+            echo "Failed to deliver notification $file to $user session $session" >&2
+        fi
+    done < <(loginctl list-sessions --no-legend 2>/dev/null || true)
+
+    return "$delivered"
+}
+
+mkdir -p "$notify_dir"
+
+while true; do
+    shopt -s nullglob
+    for file in "$notify_dir"/*.notify; do
+        [ -f "$file" ] || continue
+        if deliver_notification "$file"; then
+            rm -f -- "$file"
+        fi
+    done
+    shopt -u nullglob
+    sleep "$poll_interval"
+done

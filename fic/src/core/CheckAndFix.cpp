@@ -14,7 +14,7 @@ bool CheckAndFix::log(std::string message, logLevel logLev){
     return Logger::log(message, logLev, "daemon");
 }
 
-bool CheckAndFix::notifyToUser(std::string message, notifyLevel notifyLev){
+bool CheckAndFix::notify(std::string message, notifyLevel notifyLev){
     std::string logName = this->moduleName + "_" + this->policyName;
     return NotifyUser::notify_user(logName, message, notifyLev);
 }

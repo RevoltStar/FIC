@@ -664,6 +664,7 @@ for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin
         "\$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
         "\$systemctl_bin" enable fic_get_device_udev_info.service >/dev/null 2>&1 || true
         "\$systemctl_bin" enable --now fic.service >/dev/null 2>&1 || true
+        "\$systemctl_bin" enable --now fic-notify.service >/dev/null 2>&1 || true
         break
     fi
 done
@@ -711,6 +712,7 @@ if [ "\$1" -eq 0 ]; then
     for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
         if [ -x "\$systemctl_bin" ]; then
             "\$systemctl_bin" disable --now fic.service >/dev/null 2>&1 || true
+            "\$systemctl_bin" disable --now fic-notify.service >/dev/null 2>&1 || true
             "\$systemctl_bin" disable fic_get_device_udev_info.service >/dev/null 2>&1 || true
             "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
             break
@@ -829,6 +831,7 @@ build_fic_package() {
     mkdir -p "$package_root/usr/share/bash-completion/completions"
 
     install -m 0755 "$FIC_BUILD_DIR/fic" "$package_root/opt/fic/bin/fic"
+    install -m 0755 "$FIC_SRC_DIR/src/scripts/notify/fic-notify-dispatcher" "$package_root/opt/fic/bin/fic-notify-dispatcher"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/service/fic-udevadm-trigger" "$package_root/opt/fic/bin/fic-udevadm-trigger"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/completion/fic" "$package_root/usr/share/bash-completion/completions/fic-cli"
     sed -i 's/\r$//' "$package_root/usr/share/bash-completion/completions/fic-cli"
@@ -839,9 +842,9 @@ build_fic_package() {
     install -m 0644 "$FIC_SRC_DIR/src/scripts/db/devices.db" "$package_root/opt/fic/share/devices.seed.db"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/image" "$package_root/opt/fic/image"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/lang" "$package_root/opt/fic/lang"
-    copy_tree_contents "$FIC_SRC_DIR/src/scripts/notify" "$package_root/opt/fic/notify"
 
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.service" "$package_root$SYSTEMD_UNIT_DIR/fic.service"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-notify.service" "$package_root$SYSTEMD_UNIT_DIR/fic-notify.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root$SYSTEMD_UNIT_DIR/fic.timer"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_udev_info.service"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
@@ -851,7 +854,7 @@ build_fic_package() {
         "$package_name" \
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
-        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
+        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify" \
         "$(common_pre_script)" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic")" \
         "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")"

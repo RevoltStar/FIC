@@ -144,7 +144,7 @@ public:
     bool log(std::string message, logLevel logLev);
 
     //Уведомление для пользователя
-    bool notifyToUser(std::string message, notifyLevel notifyLev);
+    bool notify(std::string message, notifyLevel notifyLev);
 
     //Конструктор
     CheckAndFix();

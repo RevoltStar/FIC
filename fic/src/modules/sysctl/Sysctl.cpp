@@ -73,6 +73,7 @@ bool Sysctl::check_and_fix (){
 
     if(!errors.empty()){
         this->log("Некоторые параметры не совпадают с эталоном для политики " + this->policyName, logLevel::WARN);
+        this->notify("Некоторые параметры не совпадают с эталоном для политики: " + this->policyName, notifyLevel::ERROR);
 
         bool isSave = this->sysctlConfig->saveFile();
         if(!isSave){

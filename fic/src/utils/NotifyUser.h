@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <errno.h>
 #include <string.h>
+#include <string>
 
 //Уровень лога
 enum class notifyLevel{
