@@ -13,7 +13,9 @@ _fic_completion()
 
     _fic_get_modules()
     {
-        fic-cli module list 2>/dev/null | awk '{for (i = 1; i <= NF; ++i) if ($i != "modules" && $i != "listed") print $i}'
+        local output
+        output=$(fic-cli module list 2>/dev/null) || return
+        printf '%s\n' "$output" | awk '{for (i = 1; i <= NF; ++i) if ($i != "modules" && $i != "listed") print $i}'
     }
 
     _fic_get_modules_with_all()
@@ -26,7 +28,9 @@ _fic_completion()
     _fic_get_policies()
     {
         local module="$1"
-        fic-cli policy list "$module" 2>/dev/null | awk -F '[: ]+' '/:/{print $3}'
+        local output
+        output=$(fic-cli policy list "$module" 2>/dev/null) || return
+        printf '%s\n' "$output" | awk -F '[: ]+' '/:/{print $3}'
     }
 
     _fic_get_policies_with_all()
