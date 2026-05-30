@@ -24,6 +24,7 @@ int PolicyTypeValue::getMax() {
     throw std::runtime_error("MAX не задан для данного типа политики");
 }
 
+/*
 IntPolicyTypeValue::IntPolicyTypeValue(int _min, int _max)
     : PolicyTypeValue() {
     if (_min >= _max){
@@ -33,7 +34,7 @@ IntPolicyTypeValue::IntPolicyTypeValue(int _min, int _max)
     max = _max;
     this->defaultValue = _min;
 }
-
+*/
 IntPolicyTypeValue::IntPolicyTypeValue(int _min, int _max, int _defaultValue)
     : PolicyTypeValue() {
     if (_min >= _max){

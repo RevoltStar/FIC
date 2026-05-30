@@ -35,7 +35,7 @@ class IntPolicyTypeValue : public PolicyTypeValue{
     int min;
     int max;
 public:
-    IntPolicyTypeValue(int _min, int _max);
+    /*IntPolicyTypeValue(int _min, int _max);*/
     IntPolicyTypeValue(int _min, int _max, int _defaultValue);
 
     int getMin() override;
