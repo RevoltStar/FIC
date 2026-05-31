@@ -14,3 +14,5 @@ devices.db-wal
 *.dll
 .DS_Store
 log.txt
+res.log
+.qtcreator/
