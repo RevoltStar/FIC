@@ -226,9 +226,6 @@ Where possible, a lock against modification is applied
 [module:GLOBAL][policy:lang]=Application language
 [module:GLOBAL][policy:lang][description]=Application language. If language files are missing or corrupted, Russian is used.
 
-# BEGIN GENERATED DEVICE CLASS LOCALIZATION
-# Generated from fic/src/scripts/db/*_CLASS_ru.txt. Keep keys stable; translate values in lang files.
-
 
 [devices:class][subsystem:pci][class:00|00|00]=[Не классифицировано] [Несовместимое с VGA неклассифицированное устройство]
 [devices:class][subsystem:pci][class:00|01|00]=[Не классифицировано] [VGA-совместимое неклассифицированное устройство]

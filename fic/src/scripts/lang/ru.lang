@@ -226,9 +226,6 @@
 [module:GLOBAL][policy:lang]=Язык приложения
 [module:GLOBAL][policy:lang][description]=Язык приложения. Если файлы языка отсутствуют или повреждены, то используется русский.
 
-# BEGIN GENERATED DEVICE CLASS LOCALIZATION
-# Generated from fic/src/scripts/db/*_CLASS_ru.txt. Keep keys stable; translate values in lang files.
-
 
 [devices:class][subsystem:pci][class:00|00|00]=[Не классифицировано] [Несовместимое с VGA неклассифицированное устройство]
 [devices:class][subsystem:pci][class:00|01|00]=[Не классифицировано] [VGA-совместимое неклассифицированное устройство]
