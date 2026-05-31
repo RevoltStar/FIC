@@ -144,6 +144,7 @@ std::string PossibleListPolicyTypeValue::reverse_postProcessingValue(const std::
     return value;
 }
 
+/*
 EnableDisablePolicyTypeValue::EnableDisablePolicyTypeValue()
     : PossibleListPolicyTypeValue({"ENABLE", "DISABLE"}) {
     this->defaultValue = "DISABLE";
@@ -160,15 +161,37 @@ std::string EnableDisablePolicyTypeValue::postProcessingValue(const std::string&
 std::string EnableDisablePolicyTypeValue::reverse_postProcessingValue(const std::string& value) {
     return this->PossibleListPolicyTypeValue::reverse_postProcessingValue(value);
 }
+*/
 
+FixedPolicyTypeValue::FixedPolicyTypeValue(){
+    this->defaultValue = "[FIXED_VALUE]";
+}
+
+bool FixedPolicyTypeValue::validate(const std::string& value) {
+    return true;
+}
+
+std::string FixedPolicyTypeValue::postProcessingValue(const std::string& value) {
+    return value;
+}
+
+std::string FixedPolicyTypeValue::reverse_postProcessingValue(const std::string& value) {
+    return value;
+}
+
+std::string FixedPolicyTypeValue::getPolicyRestrictionInfo() {
+    return LocalizationManager::getLang("[utils:policytypevalue][type:fixedpolicytypevalue]");
+}
+
+/*
 MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo)
     : PolicyTypeValue() {
     this->defaultValue = "[ЗНАЧЕНИЕ ПО УМОЛЧАНИЮ]";
     this->delimeterFrom = _delimeterFrom;
     this->delimeterTo = _delimeterTo;
 }
-
-MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string& _defaultValue)
+*/
+MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string _defaultValue)
     : PolicyTypeValue() {
     this->defaultValue = _defaultValue;
     this->delimeterFrom = _delimeterFrom;

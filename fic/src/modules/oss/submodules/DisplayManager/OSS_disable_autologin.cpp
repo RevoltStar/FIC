@@ -4,7 +4,7 @@ OSS_disable_autologin::OSS_disable_autologin()
     :DisplayManager()
 {
     this->policyName = "disable_autologin";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool OSS_disable_autologin::check_and_fix (){

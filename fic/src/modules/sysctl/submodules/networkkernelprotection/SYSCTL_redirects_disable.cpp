@@ -6,7 +6,7 @@ SYSCTL_redirects_disable::SYSCTL_redirects_disable()
     this->Sysctl::sysctlParameter = "net.ipv4.conf.all.accept_redirects";
     this->Sysctl::sysctlParameterValue = "0";
     this->policyName = "ipv4_all_accept_redirects_disable";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool SYSCTL_redirects_disable::check_and_fix()

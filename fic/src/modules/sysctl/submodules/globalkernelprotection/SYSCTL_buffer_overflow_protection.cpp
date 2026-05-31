@@ -6,7 +6,7 @@ SYSCTL_buffer_overflow_protection::SYSCTL_buffer_overflow_protection()
     this->Sysctl::sysctlParameter = "kernel.exec-shield";
     this->Sysctl::sysctlParameterValue = "1";
     this->policyName = "kernel_exec_shield_enable";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool SYSCTL_buffer_overflow_protection::check_and_fix()

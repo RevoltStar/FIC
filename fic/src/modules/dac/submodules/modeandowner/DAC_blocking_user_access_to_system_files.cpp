@@ -24,7 +24,7 @@ DAC_blocking_user_access_to_system_files::DAC_blocking_user_access_to_system_fil
     {"/etc/sysconfig/securetty", {"root", "root", 0600}}
     };
     this->policyName = "blocking_user_access_to_system_files";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool DAC_blocking_user_access_to_system_files::check_and_fix(){

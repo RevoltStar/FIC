@@ -99,8 +99,7 @@ private:
     }
 public:
     SudoSecurePathPolicyTypeValue()
-        :MultiLineTextPolicyTypeValue(",", ":"){
-        this->defaultValue = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+        :MultiLineTextPolicyTypeValue(",", ":", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"){
     }
     bool validate(const std::string& value)override{
         if (value.empty()) {

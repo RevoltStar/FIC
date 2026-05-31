@@ -193,6 +193,7 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
         std::string policyName;
         std::string value;
         bool enabled;
+        bool valueConfigurable;
     };
 
     std::vector<PolicyRowControl> policyControls;
@@ -244,10 +245,11 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
             const std::string value = policy.valueValid ? policy.value : policy.defaultValue;
 
             switch(type) {
-                case PolicyEditorType::CheckBox: {
-                    QCheckBox* checkBox = new QCheckBox();
-                    checkBox->setChecked(value == "ENABLE");
-                    controlWidget = checkBox;
+                case PolicyEditorType::Label: {
+                    QLabel* label = new QLabel("Политика не допускает конфигурирования");
+                    label->setWordWrap(true);
+                    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+                    controlWidget = label;
                     break;
                 }
                 case PolicyEditorType::SpinBox: {
@@ -346,9 +348,8 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
             std::string value;
 
             switch(row.type) {
-                case PolicyEditorType::CheckBox: {
-                    QCheckBox* checkBox = qobject_cast<QCheckBox*>(row.valueWidget);
-                    value = checkBox && checkBox->isChecked() ? "ENABLE" : "DISABLE";
+                case PolicyEditorType::Label: {
+                    value = row.policy.valueValid ? row.policy.value : row.policy.defaultValue;
                     break;
                 }
                 case PolicyEditorType::SpinBox: {
@@ -381,7 +382,8 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
             changes.push_back({
                 row.policy.policyName,
                 value,
-                row.activeCheckbox && row.activeCheckbox->isChecked()
+                row.activeCheckbox && row.activeCheckbox->isChecked(),
+                row.type != PolicyEditorType::Label
             });
         }
 
@@ -398,18 +400,20 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
         fic::ipc::Client daemonClient;
 
         for (const auto& change : changes) {
-            auto setResponse = daemonClient.request({
-                {"command", "set_policy_value"},
-                {"module", moduleName},
-                {"policy", change.policyName},
-                {"value", change.value}
-            });
+            if (change.valueConfigurable) {
+                auto setResponse = daemonClient.request({
+                    {"command", "set_policy_value"},
+                    {"module", moduleName},
+                    {"policy", change.policyName},
+                    {"value", change.value}
+                });
 
-            if (!setResponse.value("ok", false)) {
-                applyErrors << QString("Failed to set policy %1: %2")
-                    .arg(QString::fromStdString(change.policyName))
-                    .arg(QString::fromStdString(setResponse.value("message", "unknown daemon error")));
-                continue;
+                if (!setResponse.value("ok", false)) {
+                    applyErrors << QString("Failed to set policy %1: %2")
+                        .arg(QString::fromStdString(change.policyName))
+                        .arg(QString::fromStdString(setResponse.value("message", "unknown daemon error")));
+                    continue;
+                }
             }
 
             auto stateResponse = daemonClient.request({
@@ -495,8 +499,8 @@ std::vector<MainWindow::PolicyInfo> MainWindow::loadPoliciesFromDaemon(QStringLi
 }
 
 MainWindow::PolicyEditorType MainWindow::editorTypeFromString(const std::string& editor) const {
-    if (editor == "checkbox") {
-        return PolicyEditorType::CheckBox;
+    if (editor == "label") {
+        return PolicyEditorType::Label;
     }
     if (editor == "spinbox") {
         return PolicyEditorType::SpinBox;
@@ -536,7 +540,7 @@ bool MainWindow::validatePolicyValue(const PolicyInfo& policy, const std::string
         }
     }
 
-    if (type == PolicyEditorType::ComboBox || type == PolicyEditorType::CheckBox) {
+    if (type == PolicyEditorType::ComboBox) {
         if (!policy.possibleValues.empty() &&
             std::find(policy.possibleValues.begin(), policy.possibleValues.end(), value) == policy.possibleValues.end()) {
             if (error != nullptr) {

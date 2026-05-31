@@ -13,7 +13,7 @@ DAC_systemcommandlock::DAC_systemcommandlock(){
         {"/sbin/ip", {"root", "root", 0750}}
     };
     this->policyName = "systemcommandlock";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool DAC_systemcommandlock::check_and_fix(){

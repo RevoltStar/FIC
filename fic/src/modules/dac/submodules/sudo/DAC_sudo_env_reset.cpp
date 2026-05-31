@@ -5,7 +5,7 @@ DAC_sudo_env_reset::DAC_sudo_env_reset()
     this->Sudo::sudoParameter = std::make_unique<SingleDefaultsSudoersParam>(
         "Defaults", "", "", "env_reset", 0);
     this->policyName = "sudo_env_reset";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 DAC_sudo_env_reset::~DAC_sudo_env_reset() {

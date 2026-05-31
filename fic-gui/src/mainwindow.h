@@ -54,7 +54,7 @@ private:
         int max = 0;
     };
 
-    enum class PolicyEditorType { CheckBox, SpinBox, TextEdit, ComboBox, Unknown };
+    enum class PolicyEditorType { Label, SpinBox, TextEdit, ComboBox, Unknown };
 
     Ui::MainWindow *ui;
     DeviceTree *deviceTree;

@@ -61,6 +61,7 @@ public:
     std::string reverse_postProcessingValue(const std::string& value) override;
 };
 
+/*
 //Параметр политики - вкл/выкл
 class EnableDisablePolicyTypeValue : public PossibleListPolicyTypeValue{
 public:
@@ -70,6 +71,19 @@ public:
     std::string postProcessingValue(const std::string& value) override;
     std::string reverse_postProcessingValue(const std::string& value) override;
 };
+*/
+
+//Параметр политики - фиксированное (обычно, в классе политики) значение
+class FixedPolicyTypeValue : public PolicyTypeValue{
+public:
+    FixedPolicyTypeValue();
+
+    std::string getPolicyRestrictionInfo() override;
+    bool validate(const std::string& value) override;
+    std::string postProcessingValue(const std::string& value) override;
+    std::string reverse_postProcessingValue(const std::string& value) override;
+};
+
 
 //Параметр сам по себе представляет из себя строку, состоящую из нескольких подстрок
 class MultiLineTextPolicyTypeValue : public PolicyTypeValue{
@@ -77,8 +91,8 @@ private:
     std::string delimeterFrom;
     std::string delimeterTo;
 public:
-    MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo);
-    MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string& _defaultValue);
+    /*MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo);*/
+    MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string _defaultValue);
 
     bool validate(const std::string& value) override;
     std::string postProcessingValue(const std::string& value) override;

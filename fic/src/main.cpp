@@ -99,8 +99,8 @@ std::string canonical_module_name(
     return module;
 }
 std::string editor_type_for_policy(const PolicyTypeValue& value) {
-    if (dynamic_cast<const EnableDisablePolicyTypeValue*>(&value) != nullptr) {
-        return "checkbox";
+    if (dynamic_cast<const FixedPolicyTypeValue*>(&value) != nullptr) {
+        return "label";
     }
     if (dynamic_cast<const IntPolicyTypeValue*>(&value) != nullptr) {
         return "spinbox";

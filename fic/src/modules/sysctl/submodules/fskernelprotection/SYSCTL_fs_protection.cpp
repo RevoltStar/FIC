@@ -6,7 +6,7 @@ SYSCTL_fs_protection::SYSCTL_fs_protection()
     this->Sysctl::sysctlParameter = "fs.protected_hardlinks";
     this->Sysctl::sysctlParameterValue = "1";
     this->policyName = "fs_protected_hardlinks";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool SYSCTL_fs_protection::check_and_fix()

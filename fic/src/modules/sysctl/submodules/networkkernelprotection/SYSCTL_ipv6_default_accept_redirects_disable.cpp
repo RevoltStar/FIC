@@ -6,7 +6,7 @@ SYSCTL_ipv6_default_accept_redirects_disable::SYSCTL_ipv6_default_accept_redirec
     this->Sysctl::sysctlParameter = "net.ipv6.conf.default.accept_redirects";
     this->Sysctl::sysctlParameterValue = "0";
     this->policyName = "ipv6_default_accept_redirects_disable";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool SYSCTL_ipv6_default_accept_redirects_disable::check_and_fix()

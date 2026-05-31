@@ -4,7 +4,7 @@ OSS_disable_videodisplay_when_locked::OSS_disable_videodisplay_when_locked()
     :DisplayManager()
 {
     this->policyName = "disable_videodisplay_when_locked";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool OSS_disable_videodisplay_when_locked::check_and_fix (){

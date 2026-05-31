@@ -4,7 +4,7 @@ OSS_lock_on_tty_switch::OSS_lock_on_tty_switch()
     :DisplayManager()
 {
     this->policyName = "lock_on_tty_switch";
-    this->policyTypeValue = std::make_unique<EnableDisablePolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
 bool OSS_lock_on_tty_switch::check_and_fix (){

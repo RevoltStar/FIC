@@ -104,8 +104,7 @@ std::string join_rules_text(const std::vector<ModeAndOwnerRule>& rules) {
 class CustomModeAndOwnerPolicyTypeValue : public MultiLineTextPolicyTypeValue {
 public:
     CustomModeAndOwnerPolicyTypeValue()
-        : MultiLineTextPolicyTypeValue("\n", "\n") {
-        this->defaultValue = "";
+        : MultiLineTextPolicyTypeValue("\n", "\n", "") {
     }
 
     bool validate(const std::string& value) override {
