@@ -198,6 +198,10 @@ MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimete
     this->delimeterTo = _delimeterTo;
 }
 
+std::string MultiLineTextPolicyTypeValue::getDelimeterTo() const {
+    return this->delimeterTo;
+}
+
 bool MultiLineTextPolicyTypeValue::validate(const std::string& value) {
     return true;
 }

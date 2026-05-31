@@ -45,6 +45,7 @@ private:
         std::string editor;
         std::string value;
         std::string defaultValue;
+        std::string textDelimiter;
         std::string restriction;
         std::vector<std::string> possibleValues;
         bool enabled = false;

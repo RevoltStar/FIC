@@ -3,12 +3,25 @@
 #include "ipc/FicIpcClient.h"
 
 #include <QStringList>
+#include <QWheelEvent>
 #include <algorithm>
 #include <map>
 #include <stdexcept>
 #include <vector>
 
 namespace {
+class NoWheelSpinBox : public QSpinBox
+{
+public:
+    using QSpinBox::QSpinBox;
+
+protected:
+    void wheelEvent(QWheelEvent* event) override
+    {
+        event->ignore();
+    }
+};
+
 QString currentBootIdFromDaemon()
 {
     const auto response = fic::ipc::Client().request({{"command", "boot_id"}});
@@ -253,7 +266,7 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
                     break;
                 }
                 case PolicyEditorType::SpinBox: {
-                    QSpinBox* spinBox = new QSpinBox();
+                    QSpinBox* spinBox = new NoWheelSpinBox();
                     spinBox->setRange(policy.min, policy.max);
                     try {
                         spinBox->setValue(std::stoi(value));
@@ -265,7 +278,12 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
                 }
                 case PolicyEditorType::TextEdit: {
                     QTextEdit* textEdit = new QTextEdit();
-                    textEdit->setPlainText(QString::fromStdString(value));
+                    QString text = QString::fromStdString(value);
+                    const QString delimiter = QString::fromStdString(policy.textDelimiter);
+                    if (!delimiter.isEmpty() && delimiter != "\n") {
+                        text.replace(delimiter, "\n");
+                    }
+                    textEdit->setPlainText(text);
                     controlWidget = textEdit;
                     break;
                 }
@@ -359,7 +377,13 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
                 }
                 case PolicyEditorType::TextEdit: {
                     QTextEdit* textEdit = qobject_cast<QTextEdit*>(row.valueWidget);
-                    value = textEdit ? textEdit->toPlainText().toStdString() : "";
+                    QString text = textEdit ? textEdit->toPlainText() : "";
+                    const QString delimiter = QString::fromStdString(row.policy.textDelimiter);
+                    if (!delimiter.isEmpty() && delimiter != "\n") {
+                        text.replace("\r\n", "\n");
+                        text.replace("\n", delimiter);
+                    }
+                    value = text.toStdString();
                     break;
                 }
                 case PolicyEditorType::ComboBox: {
@@ -475,6 +499,7 @@ std::vector<MainWindow::PolicyInfo> MainWindow::loadPoliciesFromDaemon(QStringLi
         policy.editor = item.value("editor", "unknown");
         policy.value = item.value("value", item.value("default_value", ""));
         policy.defaultValue = item.value("default_value", "");
+        policy.textDelimiter = item.value("text_delimiter", "");
         policy.restriction = item.value("restriction", "");
         policy.enabled = item.value("enabled", false);
         policy.isSet = item.value("set", false);

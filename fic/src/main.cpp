@@ -160,6 +160,9 @@ json policy_to_json(const std::string& module,
         item["min"] = policyClass->getMin();
         item["max"] = policyClass->getMax();
     }
+    if (const auto* multiLineType = dynamic_cast<const MultiLineTextPolicyTypeValue*>(&typeValue)) {
+        item["text_delimiter"] = multiLineType->getDelimeterTo();
+    }
 
     return item;
 }

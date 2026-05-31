@@ -94,6 +94,8 @@ public:
     /*MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo);*/
     MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string _defaultValue);
 
+    std::string getDelimeterTo() const;
+
     bool validate(const std::string& value) override;
     std::string postProcessingValue(const std::string& value) override;
     std::string reverse_postProcessingValue(const std::string& value) override;
