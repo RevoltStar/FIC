@@ -51,7 +51,7 @@ bool Sudo::check_and_fix() {
         return false;
     }
     std::string valueNew = *valueOpt;
-    if(valueNew.empty() || valueNew == "[NO VALUE SET]"){
+    if(valueNew.empty()){
         this->log("Эталон не задан", logLevel::ERROR);
         return false;
     }
