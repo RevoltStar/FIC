@@ -1,12 +1,21 @@
 #ifndef POLICYTYPEVALUE_H
 #define POLICYTYPEVALUE_H
 
+#include <optional>
 #include <string>
 #include <vector>
 #include "utils/LocalizationManager.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+
+struct PolicyEditorSpec {
+    std::string editor;
+    std::optional<int> min;
+    std::optional<int> max;
+    std::vector<std::string> possibleValues;
+    std::optional<std::string> textDelimiter;
+};
 
 //Тип параметра политики
 class PolicyTypeValue{
@@ -18,9 +27,7 @@ public:
 
     //Дать значение по умолчанию
     std::string getDefaultValue();
-    virtual std::vector<std::string> getPossibleValues();
-    virtual int getMin();
-    virtual int getMax();
+    virtual PolicyEditorSpec getEditorSpec() const = 0;
 
     virtual bool validate(const std::string& value) = 0;
     //Преобразуем в удобный для хранения вид
@@ -38,8 +45,7 @@ public:
     /*IntPolicyTypeValue(int _min, int _max);*/
     IntPolicyTypeValue(int _min, int _max, int _defaultValue);
 
-    int getMin() override;
-    int getMax() override;
+    PolicyEditorSpec getEditorSpec() const override;
 
     bool validate(const std::string& value) override;
     std::string getPolicyRestrictionInfo() override;
@@ -55,7 +61,7 @@ public:
     PossibleListPolicyTypeValue(const std::vector<std::string>& _possibleList);
 
     bool validate(const std::string& value) override;
-    std::vector<std::string> getPossibleValues() override;
+    PolicyEditorSpec getEditorSpec() const override;
     std::string getPolicyRestrictionInfo() override;
     std::string postProcessingValue(const std::string& value) override;
     std::string reverse_postProcessingValue(const std::string& value) override;
@@ -78,6 +84,7 @@ class FixedPolicyTypeValue : public PolicyTypeValue{
 public:
     FixedPolicyTypeValue();
 
+    PolicyEditorSpec getEditorSpec() const override;
     std::string getPolicyRestrictionInfo() override;
     bool validate(const std::string& value) override;
     std::string postProcessingValue(const std::string& value) override;
@@ -94,7 +101,7 @@ public:
     /*MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo);*/
     MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string _defaultValue);
 
-    std::string getDelimeterTo() const;
+    PolicyEditorSpec getEditorSpec() const override;
 
     bool validate(const std::string& value) override;
     std::string postProcessingValue(const std::string& value) override;

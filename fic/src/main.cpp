@@ -98,28 +98,12 @@ std::string canonical_module_name(
 
     return module;
 }
-std::string editor_type_for_policy(const PolicyTypeValue& value) {
-    if (dynamic_cast<const FixedPolicyTypeValue*>(&value) != nullptr) {
-        return "label";
-    }
-    if (dynamic_cast<const IntPolicyTypeValue*>(&value) != nullptr) {
-        return "spinbox";
-    }
-    if (dynamic_cast<const MultiLineTextPolicyTypeValue*>(&value) != nullptr) {
-        return "textedit";
-    }
-    if (dynamic_cast<const PossibleListPolicyTypeValue*>(&value) != nullptr) {
-        return "combobox";
-    }
-    return "unknown";
-}
-
 json policy_to_json(const std::string& module,
                     const std::string& submoduleName,
                     const std::string& policyName,
                     const std::shared_ptr<CheckAndFix>& policyClass) {
     const PolicyTypeValue& typeValue = policyClass->getPolicyTypeValue();
-    const std::string editorType = editor_type_for_policy(typeValue);
+    const PolicyEditorSpec editorSpec = typeValue.getEditorSpec();
     const bool isSet = policyClass->isPolicySet();
     bool valueValid = true;
     std::string value = policyClass->getDefaultValue();
@@ -138,7 +122,7 @@ json policy_to_json(const std::string& module,
     }
 
     json possibleValues = json::array();
-    for (const std::string& possibleValue : policyClass->getPossibleValues()) {
+    for (const std::string& possibleValue : editorSpec.possibleValues) {
         possibleValues.push_back(possibleValue);
     }
 
@@ -151,17 +135,19 @@ json policy_to_json(const std::string& module,
         {"value", value},
         {"value_valid", valueValid},
         {"default_value", policyClass->getDefaultValue()},
-        {"editor", editorType},
+        {"editor", editorSpec.editor},
         {"possible_values", possibleValues},
         {"restriction", policyClass->getPolicyRestriction()}
     };
 
-    if (editorType == "spinbox") {
-        item["min"] = policyClass->getMin();
-        item["max"] = policyClass->getMax();
+    if (editorSpec.min.has_value()) {
+        item["min"] = editorSpec.min.value();
     }
-    if (const auto* multiLineType = dynamic_cast<const MultiLineTextPolicyTypeValue*>(&typeValue)) {
-        item["text_delimiter"] = multiLineType->getDelimeterTo();
+    if (editorSpec.max.has_value()) {
+        item["max"] = editorSpec.max.value();
+    }
+    if (editorSpec.textDelimiter.has_value()) {
+        item["text_delimiter"] = editorSpec.textDelimiter.value();
     }
 
     return item;

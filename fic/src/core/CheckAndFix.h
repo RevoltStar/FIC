@@ -75,27 +75,6 @@ public:
         throw std::runtime_error("policyTypeValue не был установлен. Требуются правки кода");
     }
 
-    std::vector<std::string> getPossibleValues(){
-        if(this->isPolicyTypeValueSet()){
-            return policyTypeValue->getPossibleValues();
-        }
-        throw std::runtime_error("policyTypeValue не был установлен. Требуются правки кода");
-    }
-
-    int getMin(){
-        if(this->isPolicyTypeValueSet()){
-            return policyTypeValue->getMin();
-        }
-        throw std::runtime_error("policyTypeValue не был установлен. Требуются правки кода");
-    }
-
-    int getMax(){
-        if(this->isPolicyTypeValueSet()){
-            return policyTypeValue->getMax();
-        }
-        throw std::runtime_error("policyTypeValue не был установлен. Требуются правки кода");
-    }
-
     //Включена ли указанная политика?
     bool isEnable(){
         if(moduleConf->getIsEnable(this->policyName) == "ENABLE"){

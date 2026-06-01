@@ -12,18 +12,6 @@ std::string PolicyTypeValue::getDefaultValue() {
     return this->defaultValue;
 }
 
-std::vector<std::string> PolicyTypeValue::getPossibleValues() {
-    return {};
-}
-
-int PolicyTypeValue::getMin() {
-    throw std::runtime_error("MIN не задан для данного типа политики");
-}
-
-int PolicyTypeValue::getMax() {
-    throw std::runtime_error("MAX не задан для данного типа политики");
-}
-
 /*
 IntPolicyTypeValue::IntPolicyTypeValue(int _min, int _max)
     : PolicyTypeValue() {
@@ -48,12 +36,12 @@ IntPolicyTypeValue::IntPolicyTypeValue(int _min, int _max, int _defaultValue)
     this->defaultValue = std::to_string(_defaultValue);
 }
 
-int IntPolicyTypeValue::getMin() {
-    return this->min;
-}
-
-int IntPolicyTypeValue::getMax() {
-    return this->max;
+PolicyEditorSpec IntPolicyTypeValue::getEditorSpec() const {
+    PolicyEditorSpec spec;
+    spec.editor = "spinbox";
+    spec.min = this->min;
+    spec.max = this->max;
+    return spec;
 }
 
 bool IntPolicyTypeValue::validate(const std::string& value) {
@@ -121,8 +109,11 @@ bool PossibleListPolicyTypeValue::validate(const std::string& value) {
     return true;
 }
 
-std::vector<std::string> PossibleListPolicyTypeValue::getPossibleValues() {
-    return this->possibleList;
+PolicyEditorSpec PossibleListPolicyTypeValue::getEditorSpec() const {
+    PolicyEditorSpec spec;
+    spec.editor = "combobox";
+    spec.possibleValues = this->possibleList;
+    return spec;
 }
 
 std::string PossibleListPolicyTypeValue::getPolicyRestrictionInfo() {
@@ -167,6 +158,12 @@ FixedPolicyTypeValue::FixedPolicyTypeValue(){
     this->defaultValue = "[FIXED_VALUE]";
 }
 
+PolicyEditorSpec FixedPolicyTypeValue::getEditorSpec() const {
+    PolicyEditorSpec spec;
+    spec.editor = "label";
+    return spec;
+}
+
 bool FixedPolicyTypeValue::validate(const std::string& value) {
     return true;
 }
@@ -198,8 +195,11 @@ MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimete
     this->delimeterTo = _delimeterTo;
 }
 
-std::string MultiLineTextPolicyTypeValue::getDelimeterTo() const {
-    return this->delimeterTo;
+PolicyEditorSpec MultiLineTextPolicyTypeValue::getEditorSpec() const {
+    PolicyEditorSpec spec;
+    spec.editor = "textedit";
+    spec.textDelimiter = this->delimeterTo;
+    return spec;
 }
 
 bool MultiLineTextPolicyTypeValue::validate(const std::string& value) {
