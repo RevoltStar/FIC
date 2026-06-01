@@ -36,7 +36,7 @@ bool Sysctl::check_and_fix (){
     std::string value = ""; 
 
     if(dynamic_cast<FixedPolicyTypeValue*>(this->policyTypeValue.get()) != nullptr){
-        /*Для ENABLE/DISABLE политики берем из класса*/
+        /*Для FIXED политики берем из класса*/
         value = this->Sysctl::sysctlParameterValue;
     }else if(dynamic_cast<IntPolicyTypeValue*>(this->policyTypeValue.get()) != nullptr ||
             dynamic_cast<PossibleListPolicyTypeValue*>(this->policyTypeValue.get()) != nullptr){
