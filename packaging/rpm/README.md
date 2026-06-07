@@ -84,8 +84,8 @@ The package:
 Build the packages inside the provided Docker image based on `alt:p11`:
 
 ```bash
-chmod +x packaging/rpm/build-fic-rpm-docker.sh
-./packaging/rpm/build-fic-rpm-docker.sh 0.1.0
+chmod +x packaging/rpm/build-fic-alt-p11-rpm-docker.sh
+./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 0.1.0
 ```
 
 This wrapper:
@@ -93,7 +93,7 @@ This wrapper:
 - builds `packaging/rpm/Dockerfile`;
 - starts a container from `alt:p11`;
 - installs build dependencies for `fic`, `fic-cli`, `fic-dick`, and `fic-gui`;
-- runs `build-fic-rpm.sh` inside that container;
+- runs `build-fic-alt-p11-rpm.sh` inside that container;
 - uses a separate temporary `BUILD_ROOT` inside the container so it does not
   conflict with host-side CMake caches.
 

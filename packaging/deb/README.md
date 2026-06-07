@@ -92,11 +92,12 @@ The launcher sets `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH`, and
 Run on a Debian/Ubuntu-like system or inside WSL with Debian tooling installed:
 
 ```bash
-chmod +x packaging/deb/build-fic-deb.sh
-./packaging/deb/build-fic-deb.sh 0.1.0
+chmod +x packaging/deb/build-fic-debian12-deb.sh
+./packaging/deb/build-fic-debian12-deb.sh 0.1.0
 ```
 
-The resulting packages are created under `dist/`.
+The resulting packages are created under `dist/`. Output filenames include the
+target distribution tag, for example `fic-cli_0.1.0_debian12_amd64.deb`.
 
 ## Docker build for broader compatibility
 
@@ -112,8 +113,8 @@ Why Debian 12:
 Build through Docker:
 
 ```bash
-chmod +x packaging/deb/build-fic-deb-docker.sh
-./packaging/deb/build-fic-deb-docker.sh 0.1.0
+chmod +x packaging/deb/build-fic-debian12-deb-docker.sh
+./packaging/deb/build-fic-debian12-deb-docker.sh 0.1.0
 ```
 
 This wrapper:
@@ -121,11 +122,12 @@ This wrapper:
 - builds `packaging/deb/Dockerfile`;
 - starts a container from `debian:12`;
 - installs build dependencies for `fic`, `fic-cli`, `fic-dick`, and `fic-gui`;
-- runs `build-fic-deb.sh` inside that container;
+- runs `build-fic-debian12-deb.sh` inside that container;
 - uses a separate temporary `BUILD_ROOT` inside the container so it does not
   conflict with host-side `build-linux/` CMake caches.
 
 The resulting `.deb` files are still written into `dist/` in the repository.
+The distribution tag can be overridden with `PACKAGE_DISTRO_TAG` if needed.
 
 ## Debian 9 compatibility
 
@@ -135,5 +137,5 @@ older systems such as Debian 9 can install the resulting `.deb` files.
 If needed, the compressor can be overridden explicitly:
 
 ```bash
-DEB_COMPRESSOR=gzip ./packaging/deb/build-fic-deb.sh 0.1.0
+DEB_COMPRESSOR=gzip ./packaging/deb/build-fic-debian12-deb.sh 0.1.0
 ```

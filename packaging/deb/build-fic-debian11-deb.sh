@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PACKAGE_VERSION="${1:-0.1.0}"
+PACKAGE_DISTRO_TAG="${PACKAGE_DISTRO_TAG:-debian11}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 STAGING_BASE="${STAGING_BASE:-$(mktemp -d /tmp/fic-deb-XXXXXX)}"
@@ -700,9 +701,9 @@ bundle_fic_gui_qt_runtime() {
     mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
     mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/plugins"
 
-    # Bundle the whole Qt6 shared runtime from the build environment to avoid
+    # Bundle the whole Qt shared runtime from the build environment to avoid
     # mixing packaged Qt modules with system Qt modules on the target host.
-    find "$qt_lib_dir" -maxdepth 1 \( -type f -o -type l \) -name 'libQt6*.so*' | while IFS= read -r qt_lib_file; do
+    find "$qt_lib_dir" -maxdepth 1 \( -type f -o -type l \) \( -name 'libQt5*.so*' -o -name 'libQt6*.so*' \) | while IFS= read -r qt_lib_file; do
         copy_shared_library_with_metadata "$qt_lib_file" "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
     done
 
@@ -747,7 +748,7 @@ build_fic_dick_package() {
     local output_deb
 
     package_root="$(init_package_root "$package_name")"
-    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${ARCH}.deb"
+    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     mkdir -p "$package_root/opt/fic/bin"
     mkdir -p "$package_root/lib/systemd/system"
@@ -780,7 +781,7 @@ build_fic_cli_package() {
     local output_deb
 
     package_root="$(init_package_root "$package_name")"
-    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${ARCH}.deb"
+    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     mkdir -p "$package_root/opt/fic/bin"
     install -m 0755 "$FIC_CLI_BUILD_DIR/fic-cli" "$package_root/opt/fic/bin/fic-cli"
@@ -813,7 +814,7 @@ build_fic_package() {
     local data_dir
 
     package_root="$(init_package_root "$package_name")"
-    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${ARCH}.deb"
+    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     mkdir -p "$package_root/opt/fic/bin"
     mkdir -p "$package_root/opt/fic/config"
@@ -872,7 +873,7 @@ build_fic_gui_package() {
     local output_deb
 
     package_root="$(init_package_root "$package_name")"
-    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${ARCH}.deb"
+    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     mkdir -p "$package_root/opt/fic/bin"
     install -m 0755 "$FIC_GUI_BUILD_DIR/fic-gui" "$package_root/opt/fic/bin/fic-gui.real"
