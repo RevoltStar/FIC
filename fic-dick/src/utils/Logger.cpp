@@ -1,5 +1,5 @@
 #include "Logger.h"
-#include "ModuleConfigFileHandler.h"
+#include "GlobalConfig.h"
 
 #include <algorithm>
 #include <cctype>
@@ -96,25 +96,12 @@ logLevel Logger::string_to_level(const std::string& levelStr) {
 }
 
 logLevel Logger::get_configured_log_level() {
-    ModuleConfigFileHandler globalConfig("GLOBAL");
-    if (!globalConfig.loadConfig()) {
+    const std::optional<std::string> configuredLevel = GlobalConfig::getEnabledValue("log_level");
+    if (!configuredLevel.has_value() || configuredLevel.value().empty()) {
         return logLevel::ERROR;
     }
 
-    if (!globalConfig.isParameterExists("log_level")) {
-        return logLevel::ERROR;
-    }
-
-    if (globalConfig.getIsEnable("log_level") != "ENABLE") {
-        return logLevel::ERROR;
-    }
-
-    const std::string configuredLevel = globalConfig.getValue("log_level");
-    if (configuredLevel.empty()) {
-        return logLevel::ERROR;
-    }
-
-    return string_to_level(configuredLevel);
+    return string_to_level(configuredLevel.value());
 }
 
 /*

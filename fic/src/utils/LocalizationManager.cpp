@@ -1,10 +1,10 @@
 #include "utils/LocalizationManager.h"
 
+#include "utils/GlobalConfig.h"
+
 namespace {
 const char* kDefaultLanguage = "ru";
-const char* kGlobalModuleName = "GLOBAL";
 const char* kGlobalLanguageParameter = "lang";
-const char* kEnabledFlag = "ENABLE";
 const char* kLangDirectory = "/opt/fic/lang/";
 const char* kLangFileExtension = ".lang";
 }
@@ -54,25 +54,12 @@ bool LocalizationManager::setCurrentLanguage(const std::string& lang)
 
 std::string LocalizationManager::readLanguageFromGlobalConfig()
 {
-    ModuleConfigFileHandler globalConfig(kGlobalModuleName);
-    if (!globalConfig.loadConfig()) {
+    const std::optional<std::string> lang = GlobalConfig::getEnabledValue(kGlobalLanguageParameter);
+    if (!lang.has_value() || lang.value().empty()) {
         return kDefaultLanguage;
     }
 
-    if (!globalConfig.isParameterExists(kGlobalLanguageParameter)) {
-        return kDefaultLanguage;
-    }
-
-    if (globalConfig.getIsEnable(kGlobalLanguageParameter) != kEnabledFlag) {
-        return kDefaultLanguage;
-    }
-
-    const std::string lang = globalConfig.getValue(kGlobalLanguageParameter);
-    if (lang.empty()) {
-        return kDefaultLanguage;
-    }
-
-    return lang;
+    return lang.value();
 }
 
 void LocalizationManager::syncLanguageWithConfig()

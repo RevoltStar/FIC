@@ -17,6 +17,9 @@ protected:
     //Конфигурационный файл с настройками модуля
     std::unique_ptr<ModuleConfigFileHandler> moduleConf;
 
+    //Получить включенное значение из глобального конфига программы (GLOBAL.conf)
+    std::optional<std::string> getGlobalConfigValue(const std::string& parameter);
+
     //Тип значения политики
     std::unique_ptr<PolicyTypeValue> policyTypeValue;
     bool isPolicyTypeValueSet() const {

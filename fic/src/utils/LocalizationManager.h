@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include "ConfigFileHandler.h"
 #include "MultilineConfigFileHandler.h"
-#include "ModuleConfigFileHandler.h"
 
 // Class for application localization.
 class LocalizationManager {

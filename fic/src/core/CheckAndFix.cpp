@@ -1,10 +1,16 @@
 #include "CheckAndFix.h"
 
+#include "utils/GlobalConfig.h"
+
 CheckAndFix::CheckAndFix(){
 
 }
 CheckAndFix::~CheckAndFix(){
 
+}
+
+std::optional<std::string> CheckAndFix::getGlobalConfigValue(const std::string& parameter){
+    return GlobalConfig::getEnabledValue(parameter);
 }
 
 bool CheckAndFix::log(std::string message, logLevel logLev){
