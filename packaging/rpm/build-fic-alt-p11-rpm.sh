@@ -8,6 +8,7 @@ STAGING_BASE="${STAGING_BASE:-$(mktemp -d /tmp/fic-rpm-stage-XXXXXX)}"
 BUILD_ROOT="${BUILD_ROOT:-$ROOT_DIR/build-rpm}"
 RPM_TOPDIR="${RPM_TOPDIR:-$(mktemp -d /tmp/fic-rpmbuild-XXXXXX)}"
 RPM_RELEASE="${RPM_RELEASE:-1.altp11}"
+RPM_ALLOW_ROOT_BUILD="${RPM_ALLOW_ROOT_BUILD:-1}"
 ARCH="$(rpm --eval '%{_arch}')"
 GUI_QT_BUNDLE_ROOT="/opt/fic/qt"
 SYSTEMD_UNIT_DIR="/usr/lib/systemd/system"
@@ -405,6 +406,17 @@ init_rpm_tree() {
         "$RPM_TOPDIR/SRPMS"
 }
 
+run_rpmbuild() {
+    local spec_path="$1"
+    local rpmbuild_args=("--define" "_topdir $RPM_TOPDIR")
+
+    if [ "$(id -u)" -eq 0 ] && [ "$RPM_ALLOW_ROOT_BUILD" = "1" ]; then
+        rpmbuild_args+=("--define" "_allow_root_build 1")
+    fi
+
+    rpmbuild "${rpmbuild_args[@]}" -bb "$spec_path" >&2
+}
+
 init_package_root() {
     local package_name="$1"
     local package_root="$STAGING_BASE/${package_name}-${PACKAGE_VERSION}-${ARCH}"
@@ -523,7 +535,7 @@ build_rpm_package() {
         "$post_script" \
         "$preun_script"
 
-    rpmbuild --define "_topdir $RPM_TOPDIR" -bb "$spec_path" >&2
+    run_rpmbuild "$spec_path"
 
     output_rpm="$(find "$RPM_TOPDIR/RPMS/$ARCH" -maxdepth 1 -type f -name "${package_name}-${PACKAGE_VERSION}-${RPM_RELEASE}.${ARCH}.rpm" | head -n 1)"
     if [ -z "$output_rpm" ]; then

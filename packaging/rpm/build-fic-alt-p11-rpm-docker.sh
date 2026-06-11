@@ -23,16 +23,17 @@ find_container_command() {
 
 CONTAINER_CMD="$(find_container_command)"
 CONTAINER_RUN_ARGS=()
+CONTAINER_USER_ARGS=()
 
-if [ "$CONTAINER_CMD" = "podman" ]; then
-    CONTAINER_RUN_ARGS+=(--userns=keep-id)
+if [ "$CONTAINER_CMD" = "docker" ]; then
+    CONTAINER_USER_ARGS+=(--user "$(id -u):$(id -g)")
 fi
 
 "$CONTAINER_CMD" build -t "$IMAGE_NAME" -f "$DOCKERFILE_PATH" "$ROOT_DIR"
 
 "$CONTAINER_CMD" run --rm \
     "${CONTAINER_RUN_ARGS[@]}" \
-    --user "$(id -u):$(id -g)" \
+    "${CONTAINER_USER_ARGS[@]}" \
     -e BUILD_ROOT="${BUILD_ROOT:-/tmp/fic-build-rpm}" \
     -e DIST_DIR="${DIST_DIR:-/workspace/dist}" \
     -e RPM_TOPDIR="${RPM_TOPDIR:-/tmp/fic-rpmbuild}" \
@@ -40,4 +41,4 @@ fi
     -v "$ROOT_DIR:/workspace" \
     -w /workspace/packaging/rpm \
     "$IMAGE_NAME" \
-    ./build-fic-alt-p11-rpm.sh "$PACKAGE_VERSION"
+    bash ./build-fic-alt-p11-rpm.sh "$PACKAGE_VERSION"
