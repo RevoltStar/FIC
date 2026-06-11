@@ -15,8 +15,12 @@ file(GLOB_RECURSE SRC_FILES
 )
 
 list(APPEND SRC_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/DB.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/ExclusivePidLock.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/FileHandler.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/FileStats.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/GlobalConfig.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/Logger.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/ModuleConfigFileHandler.cpp"
 )
 
