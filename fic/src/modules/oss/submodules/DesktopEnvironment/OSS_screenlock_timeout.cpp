@@ -1,6 +1,7 @@
 #include "modules/oss/submodules/DesktopEnvironment/OSS_screenlock_timeout.h"
 
-#include "modules/oss/submodules/DesktopEnvironment/backends/ScreenLockTimeoutBackend.h"
+#include "modules/oss/submodules/DesktopEnvironment/backends/DesktopEnvironmentBackend.h"
+#include "modules/oss/submodules/DesktopEnvironment/policies/ScreenLockTimeoutHandler.h"
 #include "session/SessionAgentClient.h"
 #include "session/SessionLocator.h"
 
@@ -54,10 +55,10 @@ bool OSS_screenlock_timeout::check_and_fix()
             continue;
         }
 
-        std::unique_ptr<ScreenLockTimeoutBackend> backend =
-            ScreenLockTimeoutBackendFactory::create(context.desktop);
-        if (!backend) {
-            const std::string desktop = ScreenLockTimeoutBackendFactory::normalizeDesktopName(context.desktop);
+        std::unique_ptr<ScreenLockTimeoutHandler> handler =
+            ScreenLockTimeoutHandlerFactory::create(session, context);
+        if (!handler) {
+            const std::string desktop = DesktopEnvironmentBackend::normalizeName(context.desktop);
             this->log(
                 "screenlock_timeout is not supported for desktop " +
                 (desktop.empty() ? std::string("UNKNOWN") : desktop) +
@@ -68,12 +69,12 @@ bool OSS_screenlock_timeout::check_and_fix()
             continue;
         }
 
-        std::string backendError;
-        if (!backend->apply(session, context, timeoutMinutes, backendError)) {
+        std::string handlerError;
+        if (!handler->apply(timeoutMinutes, handlerError)) {
             this->log(
                 "Failed to apply screenlock_timeout for user " + session.user +
-                ", session " + session.id + ", desktop " + backend->name() +
-                ": " + backendError,
+                ", session " + session.id + ", desktop " + handler->desktopName() +
+                ": " + handlerError,
                 logLevel::ERROR
             );
             success = false;

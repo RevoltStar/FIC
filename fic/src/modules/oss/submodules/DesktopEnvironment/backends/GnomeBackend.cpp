@@ -1,62 +1,42 @@
 #include "modules/oss/submodules/DesktopEnvironment/backends/GnomeBackend.h"
 
-#include "modules/oss/submodules/DesktopEnvironment/backends/BackendCommand.h"
-
-#include <optional>
-
-bool GnomeBackend::apply(
-    const UserSession& session,
-    const SessionContext& context,
-    int timeoutMinutes,
-    std::string& error
-) const {
-    const std::string gsettings = desktop_backend::findExecutable({
+namespace {
+std::string find_gsettings()
+{
+    return DesktopEnvironmentBackend::findExecutable({
         "/usr/bin/gsettings",
         "/bin/gsettings"
     });
+}
+} // namespace
+
+bool GnomeBackend::setSetting(
+    const std::string& schema,
+    const std::string& key,
+    const std::string& value,
+    std::string& error
+) const
+{
+    const std::string gsettings = find_gsettings();
     if (gsettings.empty()) {
         error = "gsettings was not found";
         return false;
     }
+    std::string output;
+    return execute(gsettings, {"set", schema, key, value}, output, error);
+}
 
-    ProcessResult result;
-    const std::string timeoutSeconds = "uint32 " + std::to_string(timeoutMinutes * 60);
-    if (!desktop_backend::execute(session, context, gsettings,
-                                  {"set", "org.gnome.desktop.session", "idle-delay", timeoutSeconds},
-                                  result, error) ||
-        !desktop_backend::execute(session, context, gsettings,
-                                  {"set", "org.gnome.desktop.screensaver", "lock-enabled", "true"},
-                                  result, error) ||
-        !desktop_backend::execute(session, context, gsettings,
-                                  {"set", "org.gnome.desktop.screensaver", "lock-delay", "uint32 0"},
-                                  result, error)) {
+bool GnomeBackend::getSetting(
+    const std::string& schema,
+    const std::string& key,
+    std::string& value,
+    std::string& error
+) const
+{
+    const std::string gsettings = find_gsettings();
+    if (gsettings.empty()) {
+        error = "gsettings was not found";
         return false;
     }
-
-    ProcessResult idleDelay;
-    ProcessResult lockEnabled;
-    ProcessResult lockDelay;
-    if (!desktop_backend::execute(session, context, gsettings,
-                                  {"get", "org.gnome.desktop.session", "idle-delay"},
-                                  idleDelay, error) ||
-        !desktop_backend::execute(session, context, gsettings,
-                                  {"get", "org.gnome.desktop.screensaver", "lock-enabled"},
-                                  lockEnabled, error) ||
-        !desktop_backend::execute(session, context, gsettings,
-                                  {"get", "org.gnome.desktop.screensaver", "lock-delay"},
-                                  lockDelay, error)) {
-        return false;
-    }
-
-    const std::optional<int> actualIdleDelay = desktop_backend::parseInteger(idleDelay.standardOutput);
-    const std::optional<int> actualLockDelay = desktop_backend::parseInteger(lockDelay.standardOutput);
-    bool actualLockEnabled = false;
-    if (!actualIdleDelay.has_value() || actualIdleDelay.value() != timeoutMinutes * 60 ||
-        !actualLockDelay.has_value() || actualLockDelay.value() != 0 ||
-        !desktop_backend::parseBoolean(lockEnabled.standardOutput, actualLockEnabled) ||
-        !actualLockEnabled) {
-        error = "GNOME screen lock settings did not reach the requested state";
-        return false;
-    }
-    return true;
+    return execute(gsettings, {"get", schema, key}, value, error);
 }
