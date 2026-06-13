@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=FIC Session Agent
+Comment=Provides graphical session context to the FIC policy daemon
+Exec=/opt/fic/bin/fic-session-agent
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

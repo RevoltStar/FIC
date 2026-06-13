@@ -16,6 +16,7 @@ This packaging flow builds three RPM packages for ALT Linux p11:
 `fic` installs:
 
 - `/opt/fic/bin/fic`
+- `/opt/fic/bin/fic-session-agent`
 - `/opt/fic/bin/fic-udevadm-trigger`
 - `/opt/fic/config`
 - `/opt/fic/db`
@@ -26,6 +27,7 @@ This packaging flow builds three RPM packages for ALT Linux p11:
 - `/opt/fic/notify`
 - `/usr/lib/systemd/system/*` from `fic/src/scripts/service`
 - `/etc/udev/rules.d/*` from `fic/src/scripts/udev`
+- `/etc/xdg/autostart/fic-session-agent.desktop`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, the bundled systemd services are enabled with

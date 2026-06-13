@@ -824,9 +824,11 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/notify"
     mkdir -p "$package_root/lib/systemd/system"
     mkdir -p "$package_root/etc/udev/rules.d"
+    mkdir -p "$package_root/etc/xdg/autostart"
     mkdir -p "$package_root/usr/share/bash-completion/completions"
 
     install -m 0755 "$FIC_BUILD_DIR/fic" "$package_root/opt/fic/bin/fic"
+    install -m 0755 "$FIC_BUILD_DIR/fic-session-agent" "$package_root/opt/fic/bin/fic-session-agent"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/notify/fic-notify-dispatcher" "$package_root/opt/fic/bin/fic-notify-dispatcher"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/service/fic-udevadm-trigger" "$package_root/opt/fic/bin/fic-udevadm-trigger"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/completion/fic" "$package_root/usr/share/bash-completion/completions/fic-cli"
@@ -843,6 +845,7 @@ build_fic_package() {
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-notify.service" "$package_root/lib/systemd/system/fic-notify.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root/lib/systemd/system/fic.timer"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root/lib/systemd/system/fic_get_device_udev_info.service"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/autostart/fic-session-agent.desktop" "$package_root/etc/xdg/autostart/fic-session-agent.desktop"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")"

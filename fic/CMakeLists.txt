@@ -26,9 +26,11 @@ list(FILTER SRC_FILES EXCLUDE REGEX ".*test.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*Test.*")
 find_package(SQLite3 REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 
 # Создаем исполняемый файл
 add_executable(fic ${SRC_FILES} ${HDR_FILES})
+add_executable(fic-session-agent session-agent/main.cpp)
 
 # Подключаем заголовки
 target_include_directories(fic PRIVATE
@@ -38,13 +40,19 @@ target_include_directories(fic PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
 )
 
+target_include_directories(fic-session-agent PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
 target_link_libraries(fic PRIVATE OpenSSL::Crypto)
 target_link_libraries(fic PRIVATE SQLite::SQLite3)
+target_link_libraries(fic PRIVATE Threads::Threads)
 # Установка
-install(TARGETS fic DESTINATION bin)
+install(TARGETS fic fic-session-agent DESTINATION bin)
 install(PROGRAMS src/scripts/notify/fic-notify-dispatcher DESTINATION bin)
 install(DIRECTORY src/scripts/config/ DESTINATION /opt/fic/config)
 install(DIRECTORY src/scripts/lang/ DESTINATION /opt/fic/lang)
+install(FILES src/scripts/autostart/fic-session-agent.desktop DESTINATION /etc/xdg/autostart)
 install(FILES src/scripts/service/fic.service
               src/scripts/service/fic.timer
               src/scripts/service/fic-notify.service
