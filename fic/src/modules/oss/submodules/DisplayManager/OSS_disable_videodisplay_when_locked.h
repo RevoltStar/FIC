@@ -2,7 +2,6 @@
 #define OSS_DISABLE_VIDEODISPLAY_WHEN_LOCKED_H
 
 #include "modules/oss/submodules/DisplayManager.h"
-#include "utils/SectionConfigFileHandler.h"
 class OSS_disable_videodisplay_when_locked : public DisplayManager
 {
 public:

@@ -1,70 +1,54 @@
 #include "modules/oss/submodules/DisplayManager/OSS_disable_autologin.h"
 
+#include "modules/oss/submodules/DisplayManager/backends/DisplayManagerBackend.h"
+
 OSS_disable_autologin::OSS_disable_autologin()
-    :DisplayManager()
+    : DisplayManager()
 {
     this->policyName = "disable_autologin";
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool OSS_disable_autologin::check_and_fix (){
+bool OSS_disable_autologin::check_and_fix()
+{
     const std::string displayManager = this->detectDisplayManager();
-    std::string configPath;
-
-    if (displayManager == "SDDM") {
-        configPath = this->sddmConf;
-        SectionConfigFileHandler scfh(configPath);
-        if (!scfh.loadConfig()) {
-            this->log("Failed to load SDDM configuration: " + configPath, logLevel::ERROR);
-            return false;
-        }
-
-        if (!scfh.setValue("Autologin", "User", "") ||
-            !scfh.setValue("Autologin", "Session", "") ||
-            !scfh.saveConfig()) {
-            this->log("Failed to disable autologin for SDDM", logLevel::ERROR);
-            return false;
-        }
-
-        return true;
+    std::unique_ptr<DisplayManagerBackend> backend =
+        DisplayManagerBackendFactory::create(displayManager);
+    if (!backend) {
+        this->log("Failed to detect active display manager for disable_autologin policy", logLevel::ERROR);
+        return false;
     }
 
-    if (displayManager == "LIGHTDM") {
-        configPath = this->lightdmConf;
-        SectionConfigFileHandler scfh(configPath);
-        if (!scfh.loadConfig()) {
-            this->log("Failed to load LightDM configuration: " + configPath, logLevel::ERROR);
-            return false;
-        }
-
-        if (!scfh.setValue("Seat:*", "autologin-user", "") ||
-            !scfh.setValue("Seat:*", "autologin-session", "") ||
-            !scfh.saveConfig()) {
-            this->log("Failed to disable autologin for LightDM", logLevel::ERROR);
-            return false;
-        }
-
-        return true;
+    std::vector<DisplayManagerConfigValue> values;
+    switch (backend->kind()) {
+    case DisplayManagerKind::Sddm:
+        values = {
+            {"Autologin", "User", ""},
+            {"Autologin", "Session", ""}
+        };
+        break;
+    case DisplayManagerKind::LightDm:
+        values = {
+            {"Seat:*", "autologin-user", ""},
+            {"Seat:*", "autologin-session", ""}
+        };
+        break;
+    case DisplayManagerKind::Gdm:
+        values = {
+            {"daemon", "AutomaticLoginEnable", "false"},
+            {"daemon", "AutomaticLogin", ""}
+        };
+        break;
+    case DisplayManagerKind::Unknown:
+        this->log("Unsupported display manager: " + displayManager, logLevel::ERROR);
+        return false;
     }
 
-    if (displayManager == "GDM" || displayManager == "GDM3") {
-        configPath = displayManager == "GDM3" ? this->gdm3Conf : this->gdmConf;
-        SectionConfigFileHandler scfh(configPath);
-        if (!scfh.loadConfig()) {
-            this->log("Failed to load GDM configuration: " + configPath, logLevel::ERROR);
-            return false;
-        }
-
-        if (!scfh.setValue("daemon", "AutomaticLoginEnable", "false") ||
-            !scfh.setValue("daemon", "AutomaticLogin", "") ||
-            !scfh.saveConfig()) {
-            this->log("Failed to disable autologin for GDM", logLevel::ERROR);
-            return false;
-        }
-
-        return true;
+    std::string error;
+    if (!backend->updateConfig(values, error)) {
+        this->log("Failed to disable autologin for " + std::string(backend->name()) + ": " + error,
+                  logLevel::ERROR);
+        return false;
     }
-
-    this->log("Failed to detect active display manager for disable_autologin policy", logLevel::ERROR);
-    return false;
+    return true;
 }

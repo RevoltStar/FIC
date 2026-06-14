@@ -1,9 +1,57 @@
 #include "modules/oss/submodules/DisplayManager.h"
 
+#include "session/ProcessExecutor.h"
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <fstream>
+#include <sstream>
+#include <unordered_map>
+#include <unistd.h>
+
+namespace {
+std::string find_systemctl()
+{
+    for (const char* path : {"/usr/bin/systemctl", "/bin/systemctl"}) {
+        if (::access(path, X_OK) == 0) {
+            return path;
+        }
+    }
+    return "";
+}
+
+std::unordered_map<std::string, std::string> parse_properties(const std::string& output)
+{
+    std::unordered_map<std::string, std::string> properties;
+    std::istringstream lines(output);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const size_t separator = line.find('=');
+        if (separator != std::string::npos) {
+            properties[line.substr(0, separator)] = line.substr(separator + 1);
+        }
+    }
+    return properties;
+}
+
+std::string display_manager_name(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    std::istringstream tokens(value);
+    std::string token;
+    while (tokens >> token) {
+        const std::string filename = std::filesystem::path(token).filename().string();
+        if (filename == "gdm3" || filename == "gdm3.service") return "GDM3";
+        if (filename == "gdm" || filename == "gdm.service") return "GDM";
+        if (filename == "sddm" || filename == "sddm.service") return "SDDM";
+        if (filename == "lightdm" || filename == "lightdm.service") return "LIGHTDM";
+    }
+    return "UNKNOWN";
+}
+} // namespace
 
 DisplayManager::DisplayManager()
     :OSS()
@@ -15,53 +63,42 @@ bool DisplayManager::check_and_fix() {
     return true;
 }
 
-bool DisplayManager::fileExists(const std::string& path) const {
-    std::error_code ec;
-    return std::filesystem::exists(path, ec);
-}
-
 std::string DisplayManager::detectDisplayManager() const {
-    auto normalizeName = [](std::string value) -> std::string {
-        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-
-        if (value.find("gdm3") != std::string::npos) return "GDM3";
-        if (value.find("gdm") != std::string::npos) return "GDM";
-        if (value.find("sddm") != std::string::npos) return "SDDM";
-        if (value.find("lightdm") != std::string::npos) return "LIGHTDM";
-
+    const std::string systemctl = find_systemctl();
+    if (systemctl.empty()) {
         return "UNKNOWN";
-    };
-
-    const std::string displayManagerService = "/etc/systemd/system/display-manager.service";
-
-    if (fileExists(displayManagerService)) {
-        std::error_code ec;
-        if (std::filesystem::is_symlink(displayManagerService, ec)) {
-            auto target = std::filesystem::read_symlink(displayManagerService, ec).string();
-            auto detected = normalizeName(target);
-            if (detected != "UNKNOWN") {
-                return detected;
-            }
-        }
-
-        std::ifstream serviceFile(displayManagerService);
-        if (serviceFile.is_open()) {
-            std::string line;
-            while (std::getline(serviceFile, line)) {
-                auto detected = normalizeName(line);
-                if (detected != "UNKNOWN") {
-                    return detected;
-                }
-            }
-        }
     }
 
-    if (fileExists(gdm3Conf)) return "GDM3";
-    if (fileExists(gdmConf)) return "GDM";
-    if (fileExists(sddmConf)) return "SDDM";
-    if (fileExists(lightdmConf)) return "LIGHTDM";
+    const ProcessResult result = ProcessExecutor::execute(
+        systemctl,
+        {
+            "show", "display-manager.service",
+            "--property=Id",
+            "--property=Names",
+            "--property=FragmentPath",
+            "--property=ActiveState",
+            "--no-pager"
+        }
+    );
+    if (!result.success()) {
+        return "UNKNOWN";
+    }
+
+    const auto properties = parse_properties(result.standardOutput);
+    const auto property = [&properties](const std::string& name) {
+        const auto it = properties.find(name);
+        return it == properties.end() ? std::string() : it->second;
+    };
+    if (property("ActiveState") != "active") {
+        return "UNKNOWN";
+    }
+
+    for (const char* name : {"Id", "Names", "FragmentPath"}) {
+        const std::string detected = display_manager_name(property(name));
+        if (detected != "UNKNOWN") {
+            return detected;
+        }
+    }
 
     return "UNKNOWN";
 }
