@@ -3,16 +3,14 @@
 
 #include "modules/oss/OSS.h"
 
-//Класс для работы с графическим окружением (определение, редактирование настроек)
+//Класс для работы с графическим окружением
+//(определение настроек производится с помощью агента)
 class DesktopEnvironment : public OSS
 {
 public:
     DesktopEnvironment();
     virtual ~DesktopEnvironment() = default;
 
-
-    //Определить графическую оболочку
-    std::string detectDE();
     bool check_and_fix () override;
 };
 
