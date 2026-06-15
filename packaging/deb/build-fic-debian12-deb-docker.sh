@@ -24,15 +24,10 @@ find_container_command() {
 CONTAINER_CMD="$(find_container_command)"
 CONTAINER_RUN_ARGS=()
 
-if [ "$CONTAINER_CMD" = "podman" ]; then
-    CONTAINER_RUN_ARGS+=(--userns=keep-id)
-fi
-
 "$CONTAINER_CMD" build -t "$IMAGE_NAME" -f "$DOCKERFILE_PATH" "$ROOT_DIR"
 
 "$CONTAINER_CMD" run --rm \
     "${CONTAINER_RUN_ARGS[@]}" \
-    --user "$(id -u):$(id -g)" \
     -e DEB_COMPRESSOR="${DEB_COMPRESSOR:-gzip}" \
     -e PACKAGE_DISTRO_TAG="${PACKAGE_DISTRO_TAG:-debian12}" \
     -e BUILD_ROOT="${BUILD_ROOT:-/tmp/fic-build-linux}" \
