@@ -1,76 +1,11 @@
 #Глобальные настройки FIC
 [apply_button]=Применить
 
-
-[devices:cpu_list]=Процессоры
-[devices:board_list]=Материнские платы
-[devices:pci0000:00]=Шина PCI
-[devices:platform]=Встроенные устройства материнской платы [platform]
-[devices:LNXSYSTM:00]=Шина ACPI
-[devices:pnp0]=Устройства Plug And Play
-[devices:motherboard]=Материнская плата
-[devices:memory_list]=Оперативная память
-[devices:virtual]=Виртуальные устройства
-
-[devices:message][type:device_not_have_a_param] = Устройство не имеет параметров
-[devices:message][type:expand_context_menu] = Раскрыть
-[devices:message][type:device_control] = Контроль устройства
-
-[devices:param_info][subsystem:cpu][param:ARCHITECTURE]=Архитектура
-[devices:param_info][subsystem:cpu][param:CPU FAMILY]=Семейство процессора
-[devices:param_info][subsystem:cpu][param:CPU OP-MODE(S)]=Поддерживаемые режимы работы
-[devices:param_info][subsystem:cpu][param:CPU(S)]=Количество ядер
-[devices:param_info][subsystem:cpu][param:MODEL]=Модель процессора
-[devices:param_info][subsystem:cpu][param:MODEL NAME]=Название процессора
-[devices:param_info][subsystem:cpu][param:VENDOR ID]=Производитель
-
-
-[devices:param_info][subsystem:pci][param:DEVPATH]=Путь к устройству
-[devices:param_info][subsystem:pci][param:ID_PCI_CLASS_FROM_DATABASE]=Класс PCI
-[devices:param_info][subsystem:pci][param:ID_PCI_SUBCLASS_FROM_DATABASE]=Подкласс PCI
-[devices:param_info][subsystem:pci][param:ID_PCI_INTERFACE_FROM_DATABASE]=Интерфейс PCI
-[devices:param_info][subsystem:pci][param:ID_VENDOR_FROM_DATABASE]=Производитель
-[devices:param_info][subsystem:pci][param:ID_MODEL_FROM_DATABASE]=Модель устройства
-[devices:param_info][subsystem:pci][param:MODALIAS]=Псевдоним устройства
-[devices:param_info][subsystem:pci][param:PCI_CLASS]=Класс PCI
-[devices:param_info][subsystem:pci][param:PCI_ID]=ID производителя:ID модели
-[devices:param_info][subsystem:pci][param:PCI_SLOT_NAME]=Слот подключения PCI-устройства
-[devices:param_info][subsystem:pci][param:PCI_SUBSYS_ID]=ID подсистемы PCI
-
-[devices:param_info][subsystem:memory][param:MANUFACTURER]=Производитель
-[devices:param_info][subsystem:memory][param:PART NUMBER]=Номер модуля памяти
-[devices:param_info][subsystem:memory][param:SERIAL NUMBER]=Серийный номер
-[devices:param_info][subsystem:memory][param:SIZE]=Объем
-[devices:param_info][subsystem:memory][param:SPEED]=Скорость
-[devices:param_info][subsystem:memory][param:SUBSYSTEM]=Подсистема
-[devices:param_info][subsystem:memory][param:TYPE]=Поколение оперативной памяти
-
-[devices:param_info][subsystem:motherboard][param:MANUFACTURER]=Производитель
-[devices:param_info][subsystem:motherboard][param:PRODUCT NAME]=Модель
-[devices:param_info][subsystem:motherboard][param:SERIAL NUMBER]=Серийный номер
-[devices:param_info][subsystem:motherboard][param:VERSION]=Ревизия материнской платы
-
-
-[devices:param_info][subsystem:usb][param:ID_SERIAL]=Серийный номер
-[devices:param_info][subsystem:usb][param:ID_VENDOR_ID]=ID производителя
-[devices:param_info][subsystem:usb][param:ID_VENDOR_FROM_DATABASE]=Производитель
-
-
-[devices:param_info][subsystem:net][param:ID_NET_NAME_MAC]=MAC-адрес
-[devices:param_info][subsystem:net][param:ID_NET_DRIVER]=Драйвер
-[devices:param_info][subsystem:net][param:DEVPATH]=DEVPATH
-[devices:param_info][subsystem:net][param:ID_MODEL_FROM_DATABASE]=Модель
-[devices:param_info][subsystem:net][param:ID_VENDOR_FROM_DATABASE]=Производитель
-[devices:param_info][subsystem:net][param:ID_MODEL_ID]=ID модели
-[devices:param_info][subsystem:net][param:SYSTEM_ALIAS]=Системный псевдоним
-[devices:param_info][subsystem:net][param:ID_PATH]=???
-[devices:param_info][subsystem:net][param:ID_BUS]=ID шины
-[devices:param_info][subsystem:net][param:ID_NET_NAME_PATH]=ID имени
-
 #
 [utils:policytypevalue][type:intpolicytypevalue] = Значение должно находиться в диапазоне
 [utils:policytypevalue][type:multilinepolicytypevalue] = Ограничений на значение политики не накладывается
 [utils:policytypevalue][type:possiblelistpolicytypevalue] = Политика может принимать только одно из следующих значений:
+[utils:policytypevalue][type:fixedpolicytypevalue] = Политика не допускает конфигурирования
 #
 [module:all][col:is_policy_active]=Включено?
 [module:all][col:policy_name]=Название политики
@@ -88,9 +23,13 @@
 [module:GLOBAL]=Настройки программы
 
 #Подмодули
+[module:DAC][policy:sudo_env_reset]=Сброс переменных окружения перед выполнением команды через sudo
+[module:DAC][policy:sudo_env_reset][description]=Рекомендуемая к использованию настройка для повышения безопасности, так как переменные окружения могут влиять на поведение утилит, запускаемых с привилегиями суперпользователя.
 [module:DAC][submodule:Mode_and_Owner]=Права и владельцы файлов и каталогов
 [module:DAC][submodule:SudoEdit]=Настройки параметров SUDO
-[module:OSS][submodule:DesktopEnvironment]=Настройки графического окружения
+[module:OSS][submodule:DesktopEnvironment]=Графическое окружение
+[module:OSS][submodule:DisplayManager]=Графический менеджер входа в систему
+[module:OSS][submodule:SessionManagement]=Пользовательская сессия
 [module:SYSCTL][submodule:fs_kernel_protection]=Настройки файловой системы
 [module:SYSCTL][submodule:global_kernel_protection]=Общие настройки ядра
 [module:SYSCTL][submodule:network_kernel_protection]=Настройки сети
@@ -103,7 +42,6 @@
 [module:DAC][policy:custom_mode_and_owner]=Пользовательские права и владельцы файлов
 [module:DAC][policy:sudo_passwd_tries]=Количество попыток аутентификации
 [module:DAC][policy:sudo_securepath]=Список каталогов, в которых будет выполняться поиск запускаемых через sudo утилит
-[module:DAC][policy:sudo_timeout]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:sudo_timeout]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:systemcommandlock]=Блокировка системных команд для пользователей
 
@@ -132,7 +70,6 @@
 [module:DAC][policy:sudo_passwd_tries][description]=Количество попыток аутентификации
 [module:DAC][policy:sudo_securepath][description]=Описание
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
-[module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:systemcommandlock][description]=Блокировка системных команд для пользователей
 
 
@@ -140,12 +77,12 @@
 [module:OSS][policy:screenlock_timeout]=Таймаут блокировки экрана
 [module:OSS][policy:disable_autologin]=Отключение автоматического входа
 [module:OSS][policy:disable_videodisplay_when_locked]=Отключение отображения видео на экране блокировки
-[module:OSS][policy:lock_on_tty_switch]=Блокировка экрана при переключении на другой терминал
 
 [module:OSS][policy:disable_autologin][description]=Отключение автоматического входа
 [module:OSS][policy:screenlock_timeout][description]=Таймаут блокировки экрана
 [module:OSS][policy:disable_videodisplay_when_locked][description]=В графическом менеджере входа SDDM по умолчанию при блокировке экрана отображается название включенного видео.
 [module:OSS][policy:lock_on_tty_switch]=Блокировка экрана при переключении на другой терминал
+[module:OSS][policy:lock_on_tty_switch][description]=Блокировка экрана при переключении на другой терминал
 
 Некоторые графические среды поддерживают глобальные настройки (например, MATE)
 У других - настройки индивидуальны для каждого пользователя (например, KDE)

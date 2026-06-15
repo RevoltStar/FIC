@@ -1,75 +1,10 @@
 # Global FIC settings
 [apply_button]=Apply
 
-
-[devices:cpu_list]=Processors
-[devices:board_list]=Motherboards
-[devices:pci0000:00]=PCI bus
-[devices:platform]=Built-in motherboard devices [platform]
-[devices:LNXSYSTM:00]=ACPI bus
-[devices:pnp0]=Plug and Play devices
-[devices:motherboard]=Motherboard
-[devices:memory_list]=Memory
-[devices:virtual]=Virtual devices
-
-[devices:message][type:device_not_have_a_param] = Device has no parameters
-[devices:message][type:expand_context_menu] = Expand
-[devices:message][type:device_control] = Device control
-
-[devices:param_info][subsystem:cpu][param:ARCHITECTURE]=Architecture
-[devices:param_info][subsystem:cpu][param:CPU FAMILY]=CPU family
-[devices:param_info][subsystem:cpu][param:CPU OP-MODE(S)]=Supported instruction modes
-[devices:param_info][subsystem:cpu][param:CPU(S)]=Core count
-[devices:param_info][subsystem:cpu][param:MODEL]=Processor model
-[devices:param_info][subsystem:cpu][param:MODEL NAME]=Processor name
-[devices:param_info][subsystem:cpu][param:VENDOR ID]=Vendor
-
-
-[devices:param_info][subsystem:pci][param:DEVPATH]=Device path
-[devices:param_info][subsystem:pci][param:ID_PCI_CLASS_FROM_DATABASE]=PCI class
-[devices:param_info][subsystem:pci][param:ID_PCI_SUBCLASS_FROM_DATABASE]=PCI subclass
-[devices:param_info][subsystem:pci][param:ID_PCI_INTERFACE_FROM_DATABASE]=PCI interface
-[devices:param_info][subsystem:pci][param:ID_VENDOR_FROM_DATABASE]=Vendor
-[devices:param_info][subsystem:pci][param:ID_MODEL_FROM_DATABASE]=Device model
-[devices:param_info][subsystem:pci][param:MODALIAS]=Device alias
-[devices:param_info][subsystem:pci][param:PCI_CLASS]=PCI class
-[devices:param_info][subsystem:pci][param:PCI_ID]=Vendor ID:Model ID
-[devices:param_info][subsystem:pci][param:PCI_SLOT_NAME]=PCI slot
-[devices:param_info][subsystem:pci][param:PCI_SUBSYS_ID]=PCI subsystem ID
-
-[devices:param_info][subsystem:memory][param:MANUFACTURER]=Vendor
-[devices:param_info][subsystem:memory][param:PART NUMBER]=Memory module part number
-[devices:param_info][subsystem:memory][param:SERIAL NUMBER]=Serial number
-[devices:param_info][subsystem:memory][param:SIZE]=Size
-[devices:param_info][subsystem:memory][param:SPEED]=Speed
-[devices:param_info][subsystem:memory][param:SUBSYSTEM]=Subsystem
-[devices:param_info][subsystem:memory][param:TYPE]=Memory generation
-
-[devices:param_info][subsystem:motherboard][param:MANUFACTURER]=Vendor
-[devices:param_info][subsystem:motherboard][param:PRODUCT NAME]=Model
-[devices:param_info][subsystem:motherboard][param:SERIAL NUMBER]=Serial number
-[devices:param_info][subsystem:motherboard][param:VERSION]=Motherboard revision
-
-
-[devices:param_info][subsystem:usb][param:ID_SERIAL]=Serial number
-[devices:param_info][subsystem:usb][param:ID_VENDOR_ID]=Vendor ID
-[devices:param_info][subsystem:usb][param:ID_VENDOR_FROM_DATABASE]=Vendor
-
-
-[devices:param_info][subsystem:net][param:ID_NET_NAME_MAC]=MAC address
-[devices:param_info][subsystem:net][param:ID_NET_DRIVER]=Driver
-[devices:param_info][subsystem:net][param:DEVPATH]=DEVPATH
-[devices:param_info][subsystem:net][param:ID_MODEL_FROM_DATABASE]=Model
-[devices:param_info][subsystem:net][param:ID_VENDOR_FROM_DATABASE]=Vendor
-[devices:param_info][subsystem:net][param:ID_MODEL_ID]=Model ID
-[devices:param_info][subsystem:net][param:SYSTEM_ALIAS]=System alias
-[devices:param_info][subsystem:net][param:ID_PATH]=???
-[devices:param_info][subsystem:net][param:ID_BUS]=Bus ID
-[devices:param_info][subsystem:net][param:ID_NET_NAME_PATH]=Path name ID
-
 [utils:policytypevalue][type:intpolicytypevalue] = The value must be in the range
 [utils:policytypevalue][type:multilinepolicytypevalue] = No restriction
 [utils:policytypevalue][type:possiblelistpolicytypevalue] = Only from this list:
+[utils:policytypevalue][type:fixedpolicytypevalue]= No editable policy
 
 #
 [module:all][col:is_policy_active]=Enabled?
@@ -88,9 +23,13 @@
 [module:GLOBAL]=Application settings
 
 # Submodules
+[module:DAC][policy:sudo_env_reset]=Reset environment variables before executing a command via sudo
+[module:DAC][policy:sudo_env_reset][description]=Recommended for enhanced security, as environment variables can affect the behavior of utilities run with superuser privileges.
 [module:DAC][submodule:Mode_and_Owner]=File and directory permissions and owners
 [module:DAC][submodule:SudoEdit]=SUDO parameter settings
-[module:OSS][submodule:DesktopEnvironment]=Desktop environment settings
+[module:OSS][submodule:DesktopEnvironment]=Desktop environment
+[module:OSS][submodule:DisplayManager]=Display Manager
+[module:OSS][submodule:SessionManagement]=User Session
 [module:SYSCTL][submodule:fs_kernel_protection]=Filesystem settings
 [module:SYSCTL][submodule:global_kernel_protection]=General kernel settings
 [module:SYSCTL][submodule:network_kernel_protection]=Network settings
@@ -103,7 +42,6 @@
 [module:DAC][policy:custom_mode_and_owner]=Custom file permissions and owners
 [module:DAC][policy:sudo_passwd_tries]=Number of authentication attempts
 [module:DAC][policy:sudo_securepath]=List of directories searched for commands executed through sudo
-[module:DAC][policy:sudo_timeout]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:sudo_timeout]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:systemcommandlock]=Restrict system commands for users
 
@@ -132,7 +70,6 @@
 [module:DAC][policy:sudo_passwd_tries][description]=Number of authentication attempts
 [module:DAC][policy:sudo_securepath][description]=Description
 [module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
-[module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:systemcommandlock][description]=Restrict system commands for users
 
 
@@ -140,12 +77,12 @@
 [module:OSS][policy:screenlock_timeout]=Screen lock timeout
 [module:OSS][policy:disable_autologin]=Disable automatic login
 [module:OSS][policy:disable_videodisplay_when_locked]=Disable video display on the lock screen
-[module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
 
 [module:OSS][policy:disable_autologin][description]=Disable automatic login
 [module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
 [module:OSS][policy:disable_videodisplay_when_locked][description]=In the SDDM display manager, the name of the enabled video adapter is shown on the lock screen by default.
 [module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
+[module:OSS][policy:lock_on_tty_switch][description]=Lock screen when switching to another terminal
 
 Some desktop environments support global settings, for example MATE
 Others use per-user settings, for example KDE
