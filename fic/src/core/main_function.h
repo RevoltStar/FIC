@@ -53,7 +53,7 @@
 //Настройки ОС
 #include "modules/oss/submodules/DisplayManager/OSS_disable_autologin.h"
 #include "modules/oss/submodules/DisplayManager/OSS_disable_videodisplay_when_locked.h"
-#include "modules/oss/submodules/DisplayManager/OSS_lock_on_tty_switch.h"
+#include "modules/oss/submodules/SessionManagement/OSS_lock_on_tty_switch.h"
 #include "modules/oss/submodules/DesktopEnvironment/OSS_screenlock_timeout.h"
 
 //Сетевые настройки
