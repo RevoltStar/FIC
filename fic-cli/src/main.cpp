@@ -24,9 +24,9 @@ void print_help() {
               << "  policy isenable <module> <policy>\n"
               << "  policy isdisable <module> <policy>\n"
               << "  policy value <module> <policy>\n"
-              << "  policy check all\n"
-              << "  policy check <module> all\n"
-              << "  policy check <module> <policy>\n"
+              << "  policy apply all\n"
+              << "  policy apply <module> all\n"
+              << "  policy apply <module> <policy>\n"
               << "  policy list <module|all>\n"
               << "  policy info restriction <module> <policy>\n"
               << "  module list\n"
@@ -183,7 +183,7 @@ int main(int argc, char* argv[]) {
                 action == "isenable"
             );
         }
-        if (action == "check") {
+        if (action == "apply") {
             if (module == "all") {
                 return print_response(client.request({{"command", "apply_all"}}));
             }

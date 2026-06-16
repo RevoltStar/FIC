@@ -1,12 +1,16 @@
 #ifndef MAIN_FUNCTION_H
 #define MAIN_FUNCTION_H
 
+#include <map>
+#include <memory>
+#include <string>
 
 #include "utils/SingleLineFileHandler.h"
 #include "utils/CommandExecutor.h"
 #include "utils/ConfigFileHandler.h"
 #include "utils/SectionConfigFileHandler.h"
 #include "utils/LocalizationManager.h"
+#include "core/PolicyApplyResult.h"
 
 //Дискреционное разграничение доступа
 #include "modules/dac/submodules/modeandowner/DAC_blocking_user_access_to_system_files.h"
@@ -69,7 +73,7 @@
 void test();
 /*Функции вывода справки*/
 void print_program_info();
-void print_help_check();
+void print_help_apply();
 void print_help_enable();
 void print_help_set();
 void print_help_disable();
@@ -100,31 +104,38 @@ bool calcHash(const std::string& command);
 //Получить значение параметра
 std::string getArgvValue(int argc, char* argv[], int ind);
 
-std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>> getModule(
-        std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap,
+using PolicyMap = std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>;
+using ModulePolicyMap = std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>;
+
+ModulePolicyMap getModule(
+        PolicyMap& cafMap,
         const std::string& module);
 std::shared_ptr<Policy> getPolicyClass(
-            std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap,
+            PolicyMap& cafMap,
             const std::string& module,
             const std::string& policy
         );
 
 //Дать информацию об ограничении
-bool policy_info_restriction(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
+bool policy_info_restriction(PolicyMap& cafMap, std::string module, std::string policy);
 //Дать список модулей
-bool module_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap);
+bool module_list(PolicyMap& cafMap);
 
-bool policy_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module);
+bool policy_list(PolicyMap& cafMap, std::string module);
 
-bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
+PolicyApplyResult applyPolicy(PolicyMap& cafMap, std::string module, std::string policy);
+PolicyApplySummary applyModulePolicies(PolicyMap& cafMap, std::string module);
+PolicyApplySummary applyAllPolicies(PolicyMap& cafMap);
+bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy);
+bool apply(PolicyMap& cafMap, std::string module, std::string policy);
 
 //Отключить политику
-bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
+bool disable (PolicyMap& cafMap, std::string module, std::string policy);
 //Включить политику
-bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
+bool enable(PolicyMap& cafMap, std::string module, std::string policy);
 
-bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy, std::string value);
+bool set(PolicyMap& cafMap, std::string module, std::string policy, std::string value);
 
 
-std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>> init_cafMap();
+PolicyMap init_cafMap();
 #endif // MAIN_FUNCTION_H

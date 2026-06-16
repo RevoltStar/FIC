@@ -44,7 +44,7 @@ flowchart TB
         ipcServer[Unix socket server]
         requestRouter[handle_request]
         cafMap["init_cafMap<br/>module -> submodule -> policy -> Policy"]
-        policyOps[set / enable / disable / check]
+        policyOps[set / enable / disable / apply]
         deviceApi[device_get / device_children / device_attributes]
         logApi[boot_id / log_records]
         lockApi[lock / unlock / lockstatus]
@@ -93,8 +93,8 @@ flowchart TD
     locale --> initMap[init_cafMap]
     initMap --> oneshot{--oneshot?}
 
-    oneshot -->|да| checkOnce[check all enabled policies]
-    checkOnce --> exitOnce([exit])
+    oneshot -->|да| applyOnce[apply all enabled policies]
+    applyOnce --> exitOnce([exit])
 
     oneshot -->|нет| socketPath["Выбор socket path<br/>--socket или /run/fic/fic.sock"]
     socketPath --> interval["Выбор interval<br/>--interval или 1800 сек"]
@@ -111,10 +111,10 @@ flowchart TD
     route --> writeJson[write JSON response]
     writeJson --> periodic
 
-    clientReady -->|нет| periodic{пора periodic check?}
+    clientReady -->|нет| periodic{пора periodic apply?}
     periodic -->|да| reload[init_cafMap]
-    reload --> checkAll[check all enabled policies]
-    checkAll --> schedule[обновить nextPeriodicCheck]
+    reload --> applyAll[apply all enabled policies]
+    applyAll --> schedule[обновить nextPeriodicApply]
     schedule --> mainLoop
 
     periodic -->|нет| mainLoop
@@ -186,8 +186,8 @@ flowchart TD
     disableConfig --> reloadAfterDisable[init_cafMap]
 
     commandType -->|apply_all / apply_module / apply_policy| reloadBeforeApply[init_cafMap]
-    reloadBeforeApply --> check[check]
-    check --> chooseScope{scope}
+    reloadBeforeApply --> apply[apply]
+    apply --> chooseScope{scope}
     chooseScope -->|all| allModules[iterate all modules]
     chooseScope -->|module all| oneModule[iterate module policies]
     chooseScope -->|module policy| onePolicy[getPolicyClass]

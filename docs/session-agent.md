@@ -30,4 +30,4 @@ a dedicated daemon-side backend is implemented.
 
 After installing or upgrading the package, existing graphical sessions must
 be restarted or the agent must be launched manually before session-dependent
-policy checks can succeed.
+policy apply commands can succeed.

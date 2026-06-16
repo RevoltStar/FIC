@@ -217,6 +217,52 @@ json policy_value_json(
     };
 }
 
+json policy_apply_result_json(const PolicyApplyResult& result) {
+    return json{
+        {"module", result.moduleName},
+        {"submodule", result.submoduleName},
+        {"policy", result.policyName},
+        {"status", policyApplyStatusToString(result.status)},
+        {"message", result.message}
+    };
+}
+
+json policy_apply_summary_json(const PolicyApplySummary& summary, bool ok, const std::string& message) {
+    json results = json::array();
+    for (const PolicyApplyResult& result : summary.getResults()) {
+        results.push_back(policy_apply_result_json(result));
+    }
+
+    return json{
+        {"ok", ok},
+        {"message", message},
+        {"summary", {
+            {"total", summary.totalCount()},
+            {"applied", summary.appliedCount()},
+            {"failed", summary.failedCount()},
+            {"disabled", summary.disabledCount()},
+            {"not_found", summary.notFoundCount()}
+        }},
+        {"results", results}
+    };
+}
+
+std::string policy_apply_message(const PolicyApplySummary& summary,
+                                 bool ok,
+                                 const std::string& successMessage,
+                                 const std::string& failureMessage) {
+    if (ok) {
+        return successMessage;
+    }
+
+    const std::vector<PolicyApplyResult>& results = summary.getResults();
+    if (results.size() == 1 && !results.front().message.empty()) {
+        return results.front().message;
+    }
+
+    return failureMessage;
+}
+
 constexpr const char* DEVICE_DB_PATH = "/opt/fic/db/devices.db";
 constexpr const char* LOG_BASE_PATH = "/opt/fic/log";
 constexpr const char* LOCK_STATUS_PATH = "/opt/fic/lockstatus";
@@ -430,27 +476,40 @@ json handle_request(json request,
         }
         if (command == "apply_all") {
             cafMap = init_cafMap();
-            bool ok = check(cafMap, "all", "");
-            return ok ? fic::ipc::make_ok_response("all enabled policies applied")
-                      : fic::ipc::make_error_response("failed to apply one or more policies");
+            PolicyApplySummary summary = applyAllPolicies(cafMap);
+            const bool ok = isPolicyApplySuccessful(summary, "all", "");
+            return policy_apply_summary_json(
+                summary,
+                ok,
+                policy_apply_message(summary, ok, "all enabled policies applied", "failed to apply one or more policies")
+            );
         }
         if (command == "apply_module") {
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
             cafMap = init_cafMap();
-            bool ok = check(cafMap, module, "all");
-            return ok ? fic::ipc::make_ok_response("module policies applied")
-                      : fic::ipc::make_error_response("failed to apply module policies");
+            PolicyApplySummary summary = applyModulePolicies(cafMap, module);
+            const bool ok = isPolicyApplySuccessful(summary, module, "all");
+            return policy_apply_summary_json(
+                summary,
+                ok,
+                policy_apply_message(summary, ok, "module policies applied", "failed to apply module policies")
+            );
         }
         if (command == "apply_policy") {
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
             cafMap = init_cafMap();
-            bool ok = check(cafMap, module, policy);
-            return ok ? fic::ipc::make_ok_response("policy applied")
-                      : fic::ipc::make_error_response("failed to apply policy");
+            PolicyApplySummary summary;
+            summary.add(applyPolicy(cafMap, module, policy));
+            const bool ok = isPolicyApplySuccessful(summary, module, policy);
+            return policy_apply_summary_json(
+                summary,
+                ok,
+                policy_apply_message(summary, ok, "policy applied", "failed to apply policy")
+            );
         }
         if (command == "device_get") {
             int deviceId = request.value("device_id", 0);
@@ -709,7 +768,7 @@ int main(int argc, char* argv[]) {
     auto cafMap = init_cafMap();
 
     if (once) {
-        return check(cafMap, "all", "") ? 0 : 1;
+        return apply(cafMap, "all", "") ? 0 : 1;
     }
 
     const std::string socketPath = get_socket_path(argc, argv);
@@ -726,7 +785,7 @@ int main(int argc, char* argv[]) {
     std::cout << "fic daemon started, socket=" << socketPath
               << ", interval=" << intervalSeconds << "s" << std::endl;
 
-    auto nextPeriodicCheck = std::chrono::steady_clock::now() + std::chrono::seconds(intervalSeconds);
+    auto nextPeriodicApply = std::chrono::steady_clock::now() + std::chrono::seconds(intervalSeconds);
 
     while (!g_stop) {
         fd_set readSet;
@@ -747,10 +806,10 @@ int main(int argc, char* argv[]) {
         }
 
         auto now = std::chrono::steady_clock::now();
-        if (now >= nextPeriodicCheck) {
+        if (now >= nextPeriodicApply) {
             cafMap = init_cafMap();
-            check(cafMap, "all", "");
-            nextPeriodicCheck = now + std::chrono::seconds(intervalSeconds);
+            apply(cafMap, "all", "");
+            nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }
     }
 

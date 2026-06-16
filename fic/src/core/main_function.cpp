@@ -19,8 +19,8 @@ void test(){
 void print_program_info(){
     std::cout << "  FREE INTEGRITY CONTROL (FIC) - программа настройки СЗИ для ОС на базе ядра Linux" << std::endl;
 }
-void print_help_check(){
-    std::cout << "  policy check <модуль> <политика>         Проверяет действие политики. Укажите all вместо <модуль>, если требуется проверить все политики. Укажите all вместо <политика>, если требуется проверить все политики в модуле" << std::endl;
+void print_help_apply(){
+    std::cout << "  policy apply <модуль> <политика>         Применяет политику. Укажите all вместо <модуль>, если требуется применить все политики. Укажите all вместо <политика>, если требуется применить все политики в модуле" << std::endl;
 }
 void print_help_enable(){
     std::cout << "  policy enable <модуль> <политика>        Включает политику." << std::endl;
@@ -63,7 +63,7 @@ void print_help_hash(){
 void print_help_policy_action(){
     print_help_enable();
     print_help_disable();
-    print_help_check();
+    print_help_apply();
     print_help_set();
     print_help_policyrestrictioninfo();
     print_help_policylist();
@@ -75,7 +75,7 @@ void print_help() {
     std::cout << "Синтаксис команд:" << std::endl;
     print_help_enable();
     print_help_disable();
-    print_help_check();
+    print_help_apply();
     print_help_set();
 
     print_help_help();
@@ -174,20 +174,20 @@ std::string getArgvValue(int argc, char* argv[], int ind){
     return argv[ind];
 }
 
-std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>> getModule(
-        std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap,
+ModulePolicyMap getModule(
+        PolicyMap& cafMap,
         const std::string& module){
         // Проверяем внешний ключ
         auto outerIt = cafMap.find(module);
         if (outerIt != cafMap.end()) {
-            return outerIt->second;  // Модуль не найден
+            return outerIt->second;
         }
         //Возвращаем пустой массив (нет политик)
-        return std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>();
+        return ModulePolicyMap();
 }
 //Дать класс политики
 std::shared_ptr<Policy> getPolicyClass(
-    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
+    PolicyMap& cafMap,
     const std::string& module,
     const std::string& policy
 ) {
@@ -210,7 +210,7 @@ std::shared_ptr<Policy> getPolicyClass(
 }
 
 //Дать информацию об ограничении
-bool policy_info_restriction(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy){
+bool policy_info_restriction(PolicyMap& cafMap, std::string module, std::string policy){
     std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy != nullptr){
         std::cout << concretePolicy->getPolicyRestriction();
@@ -221,7 +221,7 @@ bool policy_info_restriction(std::map<std::string, std::map<std::string, std::ma
     return false;
 }
 //Дать список модулей
-bool module_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap){
+bool module_list(PolicyMap& cafMap){
     std::string moduleList;
        bool first = true;
        for (const auto& [moduleConcrete, policyMap] : cafMap){
@@ -233,7 +233,7 @@ bool module_list(std::map<std::string, std::map<std::string, std::map<std::strin
        return true;
 }
 
-bool policy_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module){
+bool policy_list(PolicyMap& cafMap, std::string module){
     if(module == "all"){
         for(const auto& [moduleName, submoduleMap] : cafMap){
             policy_list(cafMap, moduleName);
@@ -258,74 +258,170 @@ bool policy_list(std::map<std::string, std::map<std::string, std::map<std::strin
        return true;
 }
 
-bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy) {
-    /*std::cout << module << std::endl;*/
-    //Если мы хотим проверить все политики - перебираем cafMap
-    if(module == "all"){
-        bool fl = true;
-        for (const auto& [moduleName, submoduleMap] : cafMap){
-            std::cout<<"Проверка политик в модуле: " + moduleName << std::endl;
-            for(const auto& [submoduleName, policyMap] : submoduleMap){
-                std::cout<<"Проверка подмодуля: " + submoduleName << std::endl;
-                for(const auto& [policyName, policyClass] : policyMap){
-                    if(policyClass->isEnable()){
-                        std::cout<<"Проверка политики: " + policyName << std::endl;
-                        fl &= policyClass->apply();
-                    }else{
-                        std::cerr << "Политика " + policyName +  " отключена. Проверка прозведена не будет." << '\n';
-                    }
-                }
-            }
-        }
-        if(fl){
-            std::cout << "Все политики успешно применены" << '\n';
-        }else{
-            std::cout << "Не удалось применить одну или несколько политик" << '\n';
-        }
-        return fl;
-    }
-    //Получаем модуль
-    auto mp = getModule(cafMap, module);
-    if(!mp.empty() && policy == "all"){
-        bool fl = true;
-        for(const auto& [submoduleName, submoduleMap] : mp){
-            for(const auto& [policyName, policyClass] : submoduleMap){
-                if(policyClass->isEnable()){
-                    std::cout<<"Проверка политики: " + policyName << std::endl;
-                    fl &= policyClass->apply();
-                }else{
-                    std::cerr << "Политика " + policyClass->policyName +  " отключена. Проверка прозведена не будет." << '\n';
-                }
-            }
-        }
-        if(fl){
-            std::cout << "Все политики успешно применены" << '\n';
-        }else{
-            std::cout << "Не удалось применить одну или несколько политик" << '\n';
-        }
-        return fl;
+PolicyApplyResult applyPolicy(PolicyMap& cafMap, std::string module, std::string policy) {
+    auto moduleIt = cafMap.find(module);
+    if (moduleIt == cafMap.end()) {
+        return {module, "", policy, PolicyApplyStatus::NotFound, "Модуль не существует"};
     }
 
-
-    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
-    if(concretePolicy!=nullptr){
-        std::cout << "Производим проверку политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
-        bool res = true;
-        if(concretePolicy->isEnable()){
-            res = concretePolicy->apply();
-            if(res){
-                std::cout << "Политика успешно применена" << '\n';
-            }else{
-                std::cout << "Не удалось применить политику" << '\n';
-            }
-        }else{
-            std::cout << "Политика " + concretePolicy->policyName +  " отключена. Проверка прозведена не будет." << '\n';
+    for (const auto& [submoduleName, policyMap] : moduleIt->second) {
+        auto policyIt = policyMap.find(policy);
+        if (policyIt == policyMap.end()) {
+            continue;
         }
-        return res;
-    }else{
-        std::cout << "Указанная политика не существует" << '\n';
+
+        const std::shared_ptr<Policy>& policyClass = policyIt->second;
+        if (!policyClass->isEnable()) {
+            return {
+                module,
+                submoduleName,
+                policy,
+                PolicyApplyStatus::Disabled,
+                "Политика отключена. Применение не будет выполнено."
+            };
+        }
+
+        const bool applied = policyClass->apply();
+        return {
+            module,
+            submoduleName,
+            policy,
+            applied ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
+            applied ? "Политика успешно применена" : "Не удалось применить политику"
+        };
     }
-    return false;
+
+    return {module, "", policy, PolicyApplyStatus::NotFound, "Политика не существует"};
+}
+
+PolicyApplySummary applyModulePolicies(PolicyMap& cafMap, std::string module) {
+    PolicyApplySummary summary;
+    auto moduleIt = cafMap.find(module);
+    if (moduleIt == cafMap.end()) {
+        summary.add({module, "", "all", PolicyApplyStatus::NotFound, "Модуль не существует"});
+        return summary;
+    }
+
+    for (const auto& [submoduleName, policyMap] : moduleIt->second) {
+        for (const auto& [policyName, policyClass] : policyMap) {
+            if (!policyClass->isEnable()) {
+                summary.add({
+                    module,
+                    submoduleName,
+                    policyName,
+                    PolicyApplyStatus::Disabled,
+                    "Политика отключена. Применение не будет выполнено."
+                });
+                continue;
+            }
+
+            const bool applied = policyClass->apply();
+            summary.add({
+                module,
+                submoduleName,
+                policyName,
+                applied ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
+                applied ? "Политика успешно применена" : "Не удалось применить политику"
+            });
+        }
+    }
+
+    return summary;
+}
+
+PolicyApplySummary applyAllPolicies(PolicyMap& cafMap) {
+    PolicyApplySummary summary;
+    for (const auto& [moduleName, submoduleMap] : cafMap) {
+        for (const auto& [submoduleName, policyMap] : submoduleMap) {
+            for (const auto& [policyName, policyClass] : policyMap) {
+                if (!policyClass->isEnable()) {
+                    summary.add({
+                        moduleName,
+                        submoduleName,
+                        policyName,
+                        PolicyApplyStatus::Disabled,
+                        "Политика отключена. Применение не будет выполнено."
+                    });
+                    continue;
+                }
+
+                const bool applied = policyClass->apply();
+                summary.add({
+                    moduleName,
+                    submoduleName,
+                    policyName,
+                    applied ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
+                    applied ? "Политика успешно применена" : "Не удалось применить политику"
+                });
+            }
+        }
+    }
+
+    return summary;
+}
+
+bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy) {
+    if (summary.hasFailures()) {
+        return false;
+    }
+
+    const bool isSinglePolicyRequest = module != "all" && policy != "all";
+    if (isSinglePolicyRequest) {
+        return summary.totalCount() == 1 && summary.appliedCount() == 1;
+    }
+
+    return true;
+}
+
+static void printPolicyApplyResult(const PolicyApplyResult& result) {
+    const std::string policyInfo = result.moduleName + " " + result.policyName;
+    if (result.status == PolicyApplyStatus::Applied) {
+        std::cout << "Политика " << policyInfo << " успешно применена" << '\n';
+        return;
+    }
+    if (result.status == PolicyApplyStatus::Disabled) {
+        std::cout << "Политика " << policyInfo << " отключена. Применение не будет выполнено." << '\n';
+        return;
+    }
+    if (result.status == PolicyApplyStatus::NotFound) {
+        std::cout << result.message << ": " << policyInfo << '\n';
+        return;
+    }
+    std::cout << "Не удалось применить политику " << policyInfo << '\n';
+}
+
+static void printPolicyApplySummary(const PolicyApplySummary& summary, std::string module, std::string policy) {
+    for (const PolicyApplyResult& result : summary.getResults()) {
+        printPolicyApplyResult(result);
+    }
+
+    if (isPolicyApplySuccessful(summary, module, policy)) {
+        std::cout << "Итог применения: успешно"
+                  << " (применено: " << summary.appliedCount()
+                  << ", отключено: " << summary.disabledCount()
+                  << ")" << '\n';
+    } else {
+        std::cout << "Итог применения: есть проблемы"
+                  << " (применено: " << summary.appliedCount()
+                  << ", ошибок: " << summary.failedCount()
+                  << ", отключено: " << summary.disabledCount()
+                  << ", не найдено: " << summary.notFoundCount()
+                  << ")" << '\n';
+    }
+}
+
+bool apply(PolicyMap& cafMap, std::string module, std::string policy) {
+    PolicyApplySummary summary;
+    if (module == "all") {
+        summary = applyAllPolicies(cafMap);
+    } else if (policy == "all") {
+        summary = applyModulePolicies(cafMap, module);
+    } else {
+        summary.add(applyPolicy(cafMap, module, policy));
+    }
+
+    printPolicyApplySummary(summary, module, policy);
+    return isPolicyApplySuccessful(summary, module, policy);
 }
 
 //Отключить политику
