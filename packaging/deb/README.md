@@ -1,9 +1,10 @@
 # FIC Debian packaging
 
-This packaging flow builds four Debian packages:
+This packaging flow builds five Debian packages:
 
 - `fic-dick`
 - `fic`
+- `fic-session-agent`
 - `fic-cli`
 - `fic-gui`
 
@@ -16,7 +17,6 @@ This packaging flow builds four Debian packages:
 `fic` installs:
 
 - `/opt/fic/bin/fic`
-- `/opt/fic/bin/fic-session-agent`
 - `/opt/fic/bin/fic-udevadm-trigger`
 - `/opt/fic/config`
 - `/opt/fic/db`
@@ -27,11 +27,15 @@ This packaging flow builds four Debian packages:
 - `/opt/fic/notify`
 - `/lib/systemd/system/*` from `fic/src/scripts/service`
 - `/etc/udev/rules.d/*` from `fic/src/scripts/udev`
-- `/etc/xdg/autostart/fic-session-agent.desktop`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, the bundled systemd services are enabled with
 `systemctl enable`, and `fic.service` is started automatically.
+
+`fic-session-agent` installs:
+
+- `/opt/fic/bin/fic-session-agent`
+- `/etc/xdg/autostart/fic-session-agent.desktop`
 
 `fic-cli` installs:
 
@@ -50,11 +54,14 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 ## Dependency chain
 
 - `fic` depends on `fic-dick`
+- `fic` recommends `fic-session-agent`
 - `fic-gui` depends on both `fic` and `fic-dick`
 
 As a result:
 
 - `fic` cannot be installed without `fic-dick`
+- `fic` can be installed without `fic-session-agent`, but desktop-session policies
+  require the agent package to be installed and running in graphical sessions
 - `fic-gui` cannot be installed without `fic` and `fic-dick`
 
 ## Ownership and permissions
@@ -123,7 +130,7 @@ This wrapper:
 
 - builds `packaging/deb/Dockerfile`;
 - starts a container from `debian:12`;
-- installs build dependencies for `fic`, `fic-cli`, `fic-dick`, and `fic-gui`;
+- installs build dependencies for `fic`, `fic-session-agent`, `fic-cli`, `fic-dick`, and `fic-gui`;
 - runs `build-fic-debian12-deb.sh` inside that container;
 - uses a separate temporary `BUILD_ROOT` inside the container so it does not
   conflict with host-side `build-linux/` CMake caches.

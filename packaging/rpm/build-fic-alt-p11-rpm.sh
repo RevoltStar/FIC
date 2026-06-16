@@ -18,11 +18,13 @@ export LANG="$BUILD_LOCALE"
 export LC_ALL="$BUILD_LOCALE"
 
 FIC_SRC_DIR="$ROOT_DIR/fic"
+FIC_SESSION_AGENT_SRC_DIR="$ROOT_DIR/fic-session-agent"
 FIC_DICK_SRC_DIR="$ROOT_DIR/fic-dick"
 FIC_CLI_SRC_DIR="$ROOT_DIR/fic-cli"
 FIC_GUI_SRC_DIR="$ROOT_DIR/fic-gui"
 
 FIC_BUILD_DIR="$BUILD_ROOT/fic"
+FIC_SESSION_AGENT_BUILD_DIR="$BUILD_ROOT/fic-session-agent"
 FIC_DICK_BUILD_DIR="$BUILD_ROOT/fic-dick"
 FIC_CLI_BUILD_DIR="$BUILD_ROOT/fic-cli"
 FIC_GUI_BUILD_DIR="$BUILD_ROOT/fic-gui"
@@ -464,11 +466,12 @@ write_spec_file() {
     local summary="$3"
     local description="$4"
     local requires="$5"
-    local source_name="$6"
-    local file_list_source="$7"
-    local pre_script="$8"
-    local post_script="$9"
-    local preun_script="${10}"
+    local recommends="$6"
+    local source_name="$7"
+    local file_list_source="$8"
+    local pre_script="$9"
+    local post_script="${10}"
+    local preun_script="${11}"
 
     {
         printf 'Name: %s\n' "$package_name"
@@ -483,6 +486,9 @@ write_spec_file() {
         printf 'Source1: %s\n' "$file_list_source"
         if [ -n "$requires" ]; then
             printf 'Requires: %s\n' "$requires"
+        fi
+        if [ -n "$recommends" ]; then
+            printf 'Recommends: %s\n' "$recommends"
         fi
         printf '\n%%description\n%s\n' "$description"
         printf '\n%%prep\n'
@@ -511,9 +517,10 @@ build_rpm_package() {
     local summary="$3"
     local description="$4"
     local requires="$5"
-    local pre_script="$6"
-    local post_script="$7"
-    local preun_script="$8"
+    local recommends="$6"
+    local pre_script="$7"
+    local post_script="$8"
+    local preun_script="$9"
     local source_name="${package_name}-${PACKAGE_VERSION}.tar.gz"
     local source_path="$RPM_TOPDIR/SOURCES/$source_name"
     local file_list_source="${package_name}.files"
@@ -529,6 +536,7 @@ build_rpm_package() {
         "$summary" \
         "$description" \
         "$requires" \
+        "$recommends" \
         "$source_name" \
         "$file_list_source" \
         "$pre_script" \
@@ -797,6 +805,7 @@ build_fic_dick_package() {
         "Free Integrity Control device collector binary" \
         "Free Integrity Control device collector binary." \
         "" \
+        "" \
         "$(common_pre_script)" \
         "$(fic_dick_post_script)" \
         "$(fic_dick_preun_script)")"
@@ -819,9 +828,36 @@ build_fic_cli_package() {
         "Free Integrity Control terminal client" \
         "Free Integrity Control terminal socket client." \
         "fic = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
+        "" \
         "$(common_pre_script)" \
         "$(symlink_post_script "fic-cli" "/opt/fic/bin/fic-cli")" \
         "$(symlink_preun_script "fic-cli" "/opt/fic/bin/fic-cli")")"
+
+    printf '%s\n' "$output_rpm"
+}
+
+build_fic_session_agent_package() {
+    local package_name="fic-session-agent"
+    local package_root
+    local output_rpm
+
+    package_root="$(init_package_root "$package_name")"
+    mkdir -p "$package_root/opt/fic/bin"
+    mkdir -p "$package_root/etc/xdg/autostart"
+
+    install -m 0755 "$FIC_SESSION_AGENT_BUILD_DIR/fic-session-agent" "$package_root/opt/fic/bin/fic-session-agent"
+    install -m 0644 "$FIC_SESSION_AGENT_SRC_DIR/fic-session-agent.desktop" "$package_root/etc/xdg/autostart/fic-session-agent.desktop"
+
+    output_rpm="$(build_rpm_package \
+        "$package_root" \
+        "$package_name" \
+        "Free Integrity Control graphical session agent" \
+        "Free Integrity Control graphical session agent." \
+        "" \
+        "" \
+        "$(common_pre_script)" \
+        "$(common_post_script)" \
+        "$(simple_preun_script)")"
 
     printf '%s\n' "$output_rpm"
 }
@@ -840,11 +876,9 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/notify"
     mkdir -p "$package_root$SYSTEMD_UNIT_DIR"
     mkdir -p "$package_root/etc/udev/rules.d"
-    mkdir -p "$package_root/etc/xdg/autostart"
     mkdir -p "$package_root/usr/share/bash-completion/completions"
 
     install -m 0755 "$FIC_BUILD_DIR/fic" "$package_root/opt/fic/bin/fic"
-    install -m 0755 "$FIC_BUILD_DIR/fic-session-agent" "$package_root/opt/fic/bin/fic-session-agent"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/notify/fic-notify-dispatcher" "$package_root/opt/fic/bin/fic-notify-dispatcher"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/service/fic-udevadm-trigger" "$package_root/opt/fic/bin/fic-udevadm-trigger"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/completion/fic" "$package_root/usr/share/bash-completion/completions/fic-cli"
@@ -861,7 +895,6 @@ build_fic_package() {
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-notify.service" "$package_root$SYSTEMD_UNIT_DIR/fic-notify.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root$SYSTEMD_UNIT_DIR/fic.timer"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_udev_info.service"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/autostart/fic-session-agent.desktop" "$package_root/etc/xdg/autostart/fic-session-agent.desktop"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
 
     output_rpm="$(build_rpm_package \
@@ -870,6 +903,7 @@ build_fic_package() {
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
         "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify" \
+        "fic-session-agent = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
         "$(common_pre_script)" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic")" \
         "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")"
@@ -895,6 +929,7 @@ build_fic_gui_package() {
         "Free Integrity Control GUI package" \
         "Free Integrity Control GUI package." \
         "fic = ${PACKAGE_VERSION}-${RPM_RELEASE}, fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
+        "" \
         "$(common_pre_script)" \
         "$(symlink_post_script "fic-gui" "/opt/fic/bin/fic-gui")" \
         "$(symlink_preun_script "fic-gui" "/opt/fic/bin/fic-gui")")"
@@ -921,22 +956,26 @@ main() {
 
     build_project "$FIC_DICK_SRC_DIR" "$FIC_DICK_BUILD_DIR"
     build_project "$FIC_SRC_DIR" "$FIC_BUILD_DIR"
+    build_project "$FIC_SESSION_AGENT_SRC_DIR" "$FIC_SESSION_AGENT_BUILD_DIR"
     build_project "$FIC_CLI_SRC_DIR" "$FIC_CLI_BUILD_DIR"
     build_project "$FIC_GUI_SRC_DIR" "$FIC_GUI_BUILD_DIR"
 
     local dick_rpm
     local fic_rpm
+    local session_agent_rpm
     local cli_rpm
     local gui_rpm
 
     dick_rpm="$(build_fic_dick_package)"
     fic_rpm="$(build_fic_package)"
+    session_agent_rpm="$(build_fic_session_agent_package)"
     cli_rpm="$(build_fic_cli_package)"
     gui_rpm="$(build_fic_gui_package)"
 
     echo "Packages created:"
     echo "  $dick_rpm"
     echo "  $fic_rpm"
+    echo "  $session_agent_rpm"
     echo "  $cli_rpm"
     echo "  $gui_rpm"
 }

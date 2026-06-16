@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 project(fic_2_0 LANGUAGES CXX)
 
 add_subdirectory(fic)
+add_subdirectory(fic-session-agent)
 add_subdirectory(fic-cli)
 add_subdirectory(fic-dick)
 add_subdirectory(fic-gui)

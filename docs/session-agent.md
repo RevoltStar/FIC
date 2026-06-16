@@ -23,9 +23,10 @@ For policies that require graphical-session access, the daemon:
    failure.
 
 `OSS/screenlock_timeout` currently implements this flow for GNOME, Unity, and
-Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`, and
-XFCE through `xfconf-query`. Other desktop environments fail explicitly until a
-dedicated daemon-side backend is implemented.
+Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,
+XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
+`~/.fly/theme/current.themerc`. Other desktop environments fail explicitly until
+a dedicated daemon-side backend is implemented.
 
 After installing or upgrading the package, existing graphical sessions must
 be restarted or the agent must be launched manually before session-dependent

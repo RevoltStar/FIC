@@ -12,11 +12,13 @@ DEB_COMPRESSOR="${DEB_COMPRESSOR:-gzip}"
 GUI_QT_BUNDLE_ROOT="/opt/fic/qt"
 
 FIC_SRC_DIR="$ROOT_DIR/fic"
+FIC_SESSION_AGENT_SRC_DIR="$ROOT_DIR/fic-session-agent"
 FIC_DICK_SRC_DIR="$ROOT_DIR/fic-dick"
 FIC_CLI_SRC_DIR="$ROOT_DIR/fic-cli"
 FIC_GUI_SRC_DIR="$ROOT_DIR/fic-gui"
 
 FIC_BUILD_DIR="$BUILD_ROOT/fic"
+FIC_SESSION_AGENT_BUILD_DIR="$BUILD_ROOT/fic-session-agent"
 FIC_DICK_BUILD_DIR="$BUILD_ROOT/fic-dick"
 FIC_CLI_BUILD_DIR="$BUILD_ROOT/fic-cli"
 FIC_GUI_BUILD_DIR="$BUILD_ROOT/fic-gui"
@@ -247,6 +249,7 @@ write_control_file() {
     local package_name="$2"
     local depends="$3"
     local description="$4"
+    local recommends="${5:-}"
     local installed_size
 
     installed_size="$(du -sk "$package_root" | awk '{print $1}')"
@@ -262,6 +265,10 @@ Depends: ${depends}
 Installed-Size: ${installed_size}
 Description: ${description}
 EOF
+
+    if [ -n "$recommends" ]; then
+        sed -i "/^Installed-Size:/i Recommends: ${recommends}" "$package_root/DEBIAN/control"
+    fi
 }
 
 write_common_preinst() {
@@ -811,6 +818,42 @@ build_fic_cli_package() {
     printf '%s\n' "$output_deb"
 }
 
+build_fic_session_agent_package() {
+    local package_name="fic-session-agent"
+    local package_root
+    local binary_depends
+    local output_deb
+
+    package_root="$(init_package_root "$package_name")"
+    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
+
+    mkdir -p "$package_root/opt/fic/bin"
+    mkdir -p "$package_root/etc/xdg/autostart"
+
+    install -m 0755 "$FIC_SESSION_AGENT_BUILD_DIR/fic-session-agent" "$package_root/opt/fic/bin/fic-session-agent"
+    install -m 0644 "$FIC_SESSION_AGENT_SRC_DIR/fic-session-agent.desktop" "$package_root/etc/xdg/autostart/fic-session-agent.desktop"
+
+    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-session-agent")"
+
+    write_control_file \
+        "$package_root" \
+        "$package_name" \
+        "$binary_depends" \
+        "Free Integrity Control graphical session agent package"
+
+    cat >> "$package_root/DEBIAN/control" <<EOF
+Replaces: fic (<< ${PACKAGE_VERSION})
+Breaks: fic (<< ${PACKAGE_VERSION})
+EOF
+
+    write_common_preinst "$package_root"
+
+    rm -f "$output_deb"
+    build_deb_package "$package_root" "$output_deb"
+
+    printf '%s\n' "$output_deb"
+}
+
 build_fic_package() {
     local package_name="fic"
     local package_root
@@ -830,11 +873,9 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/notify"
     mkdir -p "$package_root/lib/systemd/system"
     mkdir -p "$package_root/etc/udev/rules.d"
-    mkdir -p "$package_root/etc/xdg/autostart"
     mkdir -p "$package_root/usr/share/bash-completion/completions"
 
     install -m 0755 "$FIC_BUILD_DIR/fic" "$package_root/opt/fic/bin/fic"
-    install -m 0755 "$FIC_BUILD_DIR/fic-session-agent" "$package_root/opt/fic/bin/fic-session-agent"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/notify/fic-notify-dispatcher" "$package_root/opt/fic/bin/fic-notify-dispatcher"
     install -m 0755 "$FIC_SRC_DIR/src/scripts/service/fic-udevadm-trigger" "$package_root/opt/fic/bin/fic-udevadm-trigger"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/completion/fic" "$package_root/usr/share/bash-completion/completions/fic-cli"
@@ -851,7 +892,6 @@ build_fic_package() {
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-notify.service" "$package_root/lib/systemd/system/fic-notify.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root/lib/systemd/system/fic.timer"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root/lib/systemd/system/fic_get_device_udev_info.service"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/autostart/fic-session-agent.desktop" "$package_root/etc/xdg/autostart/fic-session-agent.desktop"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")"
@@ -861,7 +901,8 @@ build_fic_package() {
         "$package_root" \
         "$package_name" \
         "$package_depends" \
-        "Free Integrity Control daemon package with runtime data"
+        "Free Integrity Control daemon package with runtime data" \
+        "fic-session-agent (= ${PACKAGE_VERSION})"
 
     write_common_preinst "$package_root"
     write_conffiles "$package_root"
@@ -924,22 +965,26 @@ main() {
 
     build_project "$FIC_DICK_SRC_DIR" "$FIC_DICK_BUILD_DIR"
     build_project "$FIC_SRC_DIR" "$FIC_BUILD_DIR"
+    build_project "$FIC_SESSION_AGENT_SRC_DIR" "$FIC_SESSION_AGENT_BUILD_DIR"
     build_project "$FIC_CLI_SRC_DIR" "$FIC_CLI_BUILD_DIR"
     build_project "$FIC_GUI_SRC_DIR" "$FIC_GUI_BUILD_DIR"
 
     local dick_deb
     local fic_deb
+    local session_agent_deb
     local cli_deb
     local gui_deb
 
     dick_deb="$(build_fic_dick_package)"
     fic_deb="$(build_fic_package)"
+    session_agent_deb="$(build_fic_session_agent_package)"
     cli_deb="$(build_fic_cli_package)"
     gui_deb="$(build_fic_gui_package)"
 
     echo "Packages created:"
     echo "  $dick_deb"
     echo "  $fic_deb"
+    echo "  $session_agent_deb"
     echo "  $cli_deb"
     echo "  $gui_deb"
 }

@@ -1,9 +1,10 @@
 # FIC RPM packaging for ALT p11
 
-This packaging flow builds three RPM packages for ALT Linux p11:
+This packaging flow builds five RPM packages for ALT Linux p11:
 
 - `fic-dick`
 - `fic`
+- `fic-session-agent`
 - `fic-cli`
 - `fic-gui`
 
@@ -16,7 +17,6 @@ This packaging flow builds three RPM packages for ALT Linux p11:
 `fic` installs:
 
 - `/opt/fic/bin/fic`
-- `/opt/fic/bin/fic-session-agent`
 - `/opt/fic/bin/fic-udevadm-trigger`
 - `/opt/fic/config`
 - `/opt/fic/db`
@@ -27,11 +27,15 @@ This packaging flow builds three RPM packages for ALT Linux p11:
 - `/opt/fic/notify`
 - `/usr/lib/systemd/system/*` from `fic/src/scripts/service`
 - `/etc/udev/rules.d/*` from `fic/src/scripts/udev`
-- `/etc/xdg/autostart/fic-session-agent.desktop`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, the bundled systemd services are enabled with
 `systemctl enable`, and `fic.service` is started automatically.
+
+`fic-session-agent` installs:
+
+- `/opt/fic/bin/fic-session-agent`
+- `/etc/xdg/autostart/fic-session-agent.desktop`
 
 `fic-cli` installs:
 
@@ -50,6 +54,7 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 ## Dependency chain
 
 - `fic` requires `fic-dick`
+- `fic` recommends `fic-session-agent`
 - `fic-gui` requires both `fic` and `fic-dick`
 
 ## Ownership and permissions
@@ -94,7 +99,7 @@ This wrapper:
 
 - builds `packaging/rpm/Dockerfile`;
 - starts a container from `alt:p11`;
-- installs build dependencies for `fic`, `fic-cli`, `fic-dick`, and `fic-gui`;
+- installs build dependencies for `fic`, `fic-session-agent`, `fic-cli`, `fic-dick`, and `fic-gui`;
 - runs `build-fic-alt-p11-rpm.sh` inside that container;
 - uses a separate temporary `BUILD_ROOT` inside the container so it does not
   conflict with host-side CMake caches.
