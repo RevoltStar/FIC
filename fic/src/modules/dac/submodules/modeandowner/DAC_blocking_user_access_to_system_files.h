@@ -60,7 +60,7 @@ class DAC_blocking_user_access_to_system_files : public ModeAndOwner
     };
 public:
      DAC_blocking_user_access_to_system_files ();
-     bool check_and_fix () override;
+     bool apply () override;
 
 };
 

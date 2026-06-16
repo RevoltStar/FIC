@@ -7,7 +7,7 @@ class SYSCTL_ipv4_default_send_redirects_disable : public NetworkKernelProtectio
 {
 public:
     SYSCTL_ipv4_default_send_redirects_disable();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_IPV4_DEFAULT_SEND_REDIRECTS_DISABLE_H

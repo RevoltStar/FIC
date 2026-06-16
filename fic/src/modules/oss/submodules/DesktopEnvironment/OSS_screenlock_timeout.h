@@ -8,7 +8,7 @@ class OSS_screenlock_timeout : public DesktopEnvironment
 public:
     OSS_screenlock_timeout();
 
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // OSS_SCREENLOCK_TIMEOUT_H

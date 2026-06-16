@@ -9,7 +9,7 @@ SYSCTL_tcp_keepalive_time::SYSCTL_tcp_keepalive_time()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(60, 7200, 300);
 }
 
-bool SYSCTL_tcp_keepalive_time::check_and_fix()
+bool SYSCTL_tcp_keepalive_time::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

@@ -7,7 +7,7 @@ class SYSCTL_tcp_max_syn_backlog : public NetworkKernelProtection
 {
 public:
     SYSCTL_tcp_max_syn_backlog();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_TCP_MAX_SYN_BACKLOG_H

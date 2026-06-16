@@ -8,7 +8,7 @@ class SYSCTL_kernel_code_execution_restrict : public GlobalKernelProtection
 {
 public:
     SYSCTL_kernel_code_execution_restrict();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 

@@ -9,7 +9,7 @@ SYSCTL_fs_protection::SYSCTL_fs_protection()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool SYSCTL_fs_protection::check_and_fix()
+bool SYSCTL_fs_protection::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

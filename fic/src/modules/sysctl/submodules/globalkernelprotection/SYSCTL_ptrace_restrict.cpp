@@ -10,7 +10,7 @@ SYSCTL_ptrace_restrict::SYSCTL_ptrace_restrict()
         std::vector<std::string>{"2", "0", "1", "3"});
 }
 
-bool SYSCTL_ptrace_restrict::check_and_fix()
+bool SYSCTL_ptrace_restrict::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

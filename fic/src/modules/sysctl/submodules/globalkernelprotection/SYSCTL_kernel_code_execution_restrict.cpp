@@ -10,7 +10,7 @@ SYSCTL_kernel_code_execution_restrict::SYSCTL_kernel_code_execution_restrict()
         std::vector<std::string>{"2", "0", "1"});
 }
 
-bool SYSCTL_kernel_code_execution_restrict::check_and_fix()
+bool SYSCTL_kernel_code_execution_restrict::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

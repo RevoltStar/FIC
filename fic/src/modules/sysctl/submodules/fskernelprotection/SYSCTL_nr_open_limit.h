@@ -7,7 +7,7 @@ class SYSCTL_nr_open_limit : public FSKernelProtection
 {
 public:
     SYSCTL_nr_open_limit();
-    bool check_and_fix() override;
+    bool apply() override;
 
 private:
     static constexpr unsigned int MAX_FD_LIMIT = 786144;

@@ -7,7 +7,7 @@ class SYSCTL_protected_symlinks : public FSKernelProtection
 {
 public:
     SYSCTL_protected_symlinks();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_PROTECTED_SYMLINKS_H

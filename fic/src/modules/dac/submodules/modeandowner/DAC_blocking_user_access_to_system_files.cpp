@@ -27,6 +27,6 @@ DAC_blocking_user_access_to_system_files::DAC_blocking_user_access_to_system_fil
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool DAC_blocking_user_access_to_system_files::check_and_fix(){
-        return this->ModeAndOwner::check_and_fix();
+bool DAC_blocking_user_access_to_system_files::apply(){
+        return this->ModeAndOwner::apply();
 }

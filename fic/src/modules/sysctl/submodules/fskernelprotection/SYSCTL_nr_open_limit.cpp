@@ -10,7 +10,7 @@ SYSCTL_nr_open_limit::SYSCTL_nr_open_limit()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(65536, 2097152, MAX_FD_LIMIT);
 }
 
-bool SYSCTL_nr_open_limit::check_and_fix()
+bool SYSCTL_nr_open_limit::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

@@ -6,7 +6,7 @@ SessionManagement::SessionManagement()
     this->submoduleName = "SessionManagement";
 }
 
-bool SessionManagement::check_and_fix()
+bool SessionManagement::apply()
 {
     return true;
 }

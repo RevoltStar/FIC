@@ -9,7 +9,7 @@ SYSCTL_protected_symlinks::SYSCTL_protected_symlinks()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool SYSCTL_protected_symlinks::check_and_fix()
+bool SYSCTL_protected_symlinks::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

@@ -8,7 +8,7 @@ class SYSCTL_packet_forwarding_disable : public NetworkKernelProtection
 {
 public:
     SYSCTL_packet_forwarding_disable();
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // SYSCTL_PACKET_FORWARDING_DISABLE_H

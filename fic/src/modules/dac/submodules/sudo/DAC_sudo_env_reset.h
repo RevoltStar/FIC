@@ -9,7 +9,7 @@ class DAC_sudo_env_reset : public Sudo
 public:
     DAC_sudo_env_reset();
     ~DAC_sudo_env_reset();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // DAC_SUDO_ENV_RESET_H

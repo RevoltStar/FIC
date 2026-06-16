@@ -43,7 +43,7 @@ flowchart TB
     subgraph Daemon[fic]
         ipcServer[Unix socket server]
         requestRouter[handle_request]
-        cafMap["init_cafMap<br/>module -> submodule -> policy -> CheckAndFix"]
+        cafMap["init_cafMap<br/>module -> submodule -> policy -> Policy"]
         policyOps[set / enable / disable / check]
         deviceApi[device_get / device_children / device_attributes]
         logApi[boot_id / log_records]
@@ -194,7 +194,7 @@ flowchart TD
     allModules --> enabledOnly{policy.isEnable?}
     oneModule --> enabledOnly
     onePolicy --> enabledOnly
-    enabledOnly -->|yes| caf[CheckAndFix.check_and_fix]
+    enabledOnly -->|yes| caf[Policy.apply]
     enabledOnly -->|no| skip[skip policy]
     caf --> osChange[Изменение ОС или конфигов утилит]
     caf --> log[Logger category daemon]
@@ -204,7 +204,7 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    init[init_cafMap] --> arr["vector&lt;shared_ptr&lt;CheckAndFix&gt;&gt;"]
+    init[init_cafMap] --> arr["vector&lt;shared_ptr&lt;Policy&gt;&gt;"]
 
     arr --> dac[DAC]
     dac --> dacMode[ModeAndOwner]

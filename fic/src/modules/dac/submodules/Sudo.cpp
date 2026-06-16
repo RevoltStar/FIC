@@ -34,7 +34,7 @@ bool Sudo::checkValid(std::string sudoersPath){
 }
 
 // Проверить и исправить параметр sudo
-bool Sudo::check_and_fix() {
+bool Sudo::apply() {
     if (this->Sudo::sudoParameter == nullptr){
         this->log("Не задан sudoParameter", logLevel::FATAL);
         return false;

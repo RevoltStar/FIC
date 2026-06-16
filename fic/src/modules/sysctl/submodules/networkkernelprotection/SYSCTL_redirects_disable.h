@@ -7,7 +7,7 @@ class SYSCTL_redirects_disable : public NetworkKernelProtection
 {
 public:
     SYSCTL_redirects_disable();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_REDIRECTS_DISABLE_H

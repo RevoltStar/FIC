@@ -9,7 +9,7 @@ OSS_disable_videodisplay_when_locked::OSS_disable_videodisplay_when_locked()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool OSS_disable_videodisplay_when_locked::check_and_fix()
+bool OSS_disable_videodisplay_when_locked::apply()
 {
     const std::string displayManager = this->detectDisplayManager();
     std::unique_ptr<DisplayManagerBackend> backend =

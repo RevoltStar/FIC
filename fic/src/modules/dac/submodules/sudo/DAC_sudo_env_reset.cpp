@@ -12,7 +12,7 @@ DAC_sudo_env_reset::~DAC_sudo_env_reset() {
 
 }
 
-bool DAC_sudo_env_reset::check_and_fix() {
+bool DAC_sudo_env_reset::apply() {
     this->log("Начинаем проверку сброса переменных окружения sudo", logLevel::INFO);
-    return this->Sudo::check_and_fix();
+    return this->Sudo::apply();
 }

@@ -9,7 +9,7 @@ SYSCTL_tcp_timeout::SYSCTL_tcp_timeout()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(10, 120, 30);
 }
 
-bool SYSCTL_tcp_timeout::check_and_fix()
+bool SYSCTL_tcp_timeout::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

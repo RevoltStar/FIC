@@ -7,7 +7,7 @@ class SYSCTL_randomize_va_space : public GlobalKernelProtection
 {
 public:
     SYSCTL_randomize_va_space();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_RANDOMIZE_VA_SPACE_H

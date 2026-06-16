@@ -174,8 +174,8 @@ std::string getArgvValue(int argc, char* argv[], int ind){
     return argv[ind];
 }
 
-std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>> getModule(
-        std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap,
+std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>> getModule(
+        std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap,
         const std::string& module){
         // Проверяем внешний ключ
         auto outerIt = cafMap.find(module);
@@ -183,11 +183,11 @@ std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>> getMo
             return outerIt->second;  // Модуль не найден
         }
         //Возвращаем пустой массив (нет политик)
-        return std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>();
+        return std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>();
 }
 //Дать класс политики
-std::shared_ptr<CheckAndFix> getPolicyClass(
-    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
+std::shared_ptr<Policy> getPolicyClass(
+    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
     const std::string& module,
     const std::string& policy
 ) {
@@ -210,8 +210,8 @@ std::shared_ptr<CheckAndFix> getPolicyClass(
 }
 
 //Дать информацию об ограничении
-bool policy_info_restriction(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy){
-    std::shared_ptr<CheckAndFix> concretePolicy = getPolicyClass(cafMap, module, policy);
+bool policy_info_restriction(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy){
+    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy != nullptr){
         std::cout << concretePolicy->getPolicyRestriction();
         return true;
@@ -221,7 +221,7 @@ bool policy_info_restriction(std::map<std::string, std::map<std::string, std::ma
     return false;
 }
 //Дать список модулей
-bool module_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap){
+bool module_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap){
     std::string moduleList;
        bool first = true;
        for (const auto& [moduleConcrete, policyMap] : cafMap){
@@ -233,7 +233,7 @@ bool module_list(std::map<std::string, std::map<std::string, std::map<std::strin
        return true;
 }
 
-bool policy_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module){
+bool policy_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module){
     if(module == "all"){
         for(const auto& [moduleName, submoduleMap] : cafMap){
             policy_list(cafMap, moduleName);
@@ -258,7 +258,7 @@ bool policy_list(std::map<std::string, std::map<std::string, std::map<std::strin
        return true;
 }
 
-bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy) {
+bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy) {
     /*std::cout << module << std::endl;*/
     //Если мы хотим проверить все политики - перебираем cafMap
     if(module == "all"){
@@ -270,7 +270,7 @@ bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std
                 for(const auto& [policyName, policyClass] : policyMap){
                     if(policyClass->isEnable()){
                         std::cout<<"Проверка политики: " + policyName << std::endl;
-                        fl &= policyClass->check_and_fix();
+                        fl &= policyClass->apply();
                     }else{
                         std::cerr << "Политика " + policyName +  " отключена. Проверка прозведена не будет." << '\n';
                     }
@@ -292,7 +292,7 @@ bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std
             for(const auto& [policyName, policyClass] : submoduleMap){
                 if(policyClass->isEnable()){
                     std::cout<<"Проверка политики: " + policyName << std::endl;
-                    fl &= policyClass->check_and_fix();
+                    fl &= policyClass->apply();
                 }else{
                     std::cerr << "Политика " + policyClass->policyName +  " отключена. Проверка прозведена не будет." << '\n';
                 }
@@ -307,12 +307,12 @@ bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std
     }
 
 
-    std::shared_ptr<CheckAndFix> concretePolicy = getPolicyClass(cafMap, module, policy);
+    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим проверку политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         bool res = true;
         if(concretePolicy->isEnable()){
-            res = concretePolicy->check_and_fix();
+            res = concretePolicy->apply();
             if(res){
                 std::cout << "Политика успешно применена" << '\n';
             }else{
@@ -329,8 +329,8 @@ bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std
 }
 
 //Отключить политику
-bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy){
-    std::shared_ptr<CheckAndFix> concretePolicy = getPolicyClass(cafMap, module, policy);
+bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy){
+    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим отключение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -361,8 +361,8 @@ bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,
     return false;
 }
 //Включить политику
-bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy){
-    std::shared_ptr<CheckAndFix> concretePolicy = getPolicyClass(cafMap, module, policy);
+bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy){
+    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим включение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -396,8 +396,8 @@ bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,st
     return false;
 }
 
-bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy, std::string value){
-   std::shared_ptr<CheckAndFix> concretePolicy = getPolicyClass(cafMap, module, policy);
+bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy, std::string value){
+   std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy != nullptr){
         std::cout << "Производим попытку смены значения политики " + policy + " в модуле " + module + "..." << std::endl;
         //Производим валидацию и преобразование параметра
@@ -449,8 +449,8 @@ bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::
 }
 
 /*Ининциализируем массив классов*/
-std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>> init_cafMap(){
-    std::vector<std::shared_ptr<CheckAndFix>> cafArr;
+std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>> init_cafMap(){
+    std::vector<std::shared_ptr<Policy>> cafArr;
 
     //Дискреционное разграничение доступа (DAC)
     cafArr.push_back(std::make_shared<DAC_systemcommandlock>());
@@ -508,7 +508,7 @@ std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_pt
     cafArr.push_back(std::make_shared<GLOBAL_log_level>());
     cafArr.push_back(std::make_shared<GLOBAL_lang>());
     //Для удобства отсортируем в массив вида "модуль->подмодуль->политика->класс,представляющий политику для данного модуля"
-    std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>> cafMap;
+    std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>> cafMap;
 
     auto it = cafArr.begin();
         while (it != cafArr.end()) {

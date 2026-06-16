@@ -1217,7 +1217,7 @@ public:
     //Проверить файл sudo
     bool checkValid(std::string sudoersPath = "/etc/sudoers");
     Sudo();
-    bool check_and_fix () override;
+    bool apply () override;
     virtual ~Sudo();
 };
 

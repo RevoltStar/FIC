@@ -2,7 +2,7 @@
 #include <exception>
 
 DC::DC()
-    :CheckAndFix(), DC_database(DB("/opt/fic/db/devices.db")){
+    :Policy(), DC_database(DB("/opt/fic/db/devices.db")){
     this->moduleName = "DC";
     this->moduleConf = std::make_unique<ModuleConfigFileHandler>(this->moduleName);
     this->moduleConf->loadConfig();
@@ -12,6 +12,6 @@ DC::DC()
 
 
 //
-bool DC::check_and_fix (){
+bool DC::apply (){
     return true;
 }

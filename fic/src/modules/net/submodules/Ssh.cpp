@@ -194,7 +194,7 @@ Ssh::Ssh()
     this->submoduleName = "SshEdit";
 }
 
-bool Ssh::check_and_fix() {
+bool Ssh::apply() {
     if (this->sshParameter.empty()) {
         this->log("SSH parameter is not configured for policy " + this->policyName, logLevel::FATAL);
         return false;

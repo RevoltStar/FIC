@@ -9,7 +9,7 @@ SYSCTL_dmesg_restrict::SYSCTL_dmesg_restrict()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool SYSCTL_dmesg_restrict::check_and_fix()
+bool SYSCTL_dmesg_restrict::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

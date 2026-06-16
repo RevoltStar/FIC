@@ -1,5 +1,5 @@
-#ifndef CHECK_AND_FIX_H
-#define CHECK_AND_FIX_H
+#ifndef POLICY_H
+#define POLICY_H
 
 //Логгирование
 #include "utils/Logger.h"
@@ -11,7 +11,7 @@
 #include <memory>
 #include <optional>
 
-class CheckAndFix
+class Policy
 {
 protected:
     //Конфигурационный файл с настройками модуля
@@ -129,13 +129,13 @@ public:
     bool notify(std::string message, notifyLevel notifyLev);
 
     //Конструктор
-    CheckAndFix();
+    Policy();
     //Деструктор
-    virtual ~CheckAndFix();
+    virtual ~Policy();
 
-    //Проверить и исправить
+    //Применить политику
     //Конкретные действия должны определяться в наследуемых классах
-    virtual bool check_and_fix() = 0;
+    virtual bool apply() = 0;
 };
 
-#endif // CHECK_AND_FIX_H
+#endif // POLICY_H

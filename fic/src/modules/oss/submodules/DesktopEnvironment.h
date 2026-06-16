@@ -11,7 +11,7 @@ public:
     DesktopEnvironment();
     virtual ~DesktopEnvironment() = default;
 
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // DESKTOPENVIRONMENT_H

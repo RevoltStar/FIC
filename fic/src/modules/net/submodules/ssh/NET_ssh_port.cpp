@@ -10,7 +10,7 @@ NET_ssh_port::NET_ssh_port()
 NET_ssh_port::~NET_ssh_port() {
 }
 
-bool NET_ssh_port::check_and_fix() {
+bool NET_ssh_port::apply() {
     this->log("Starting SSH port check", logLevel::INFO);
-    return this->Ssh::check_and_fix();
+    return this->Ssh::apply();
 }

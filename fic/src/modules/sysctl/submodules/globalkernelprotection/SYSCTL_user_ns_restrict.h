@@ -8,7 +8,7 @@ class SYSCTL_user_ns_restrict : public GlobalKernelProtection
 {
 public:
     SYSCTL_user_ns_restrict();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_USER_NS_RESTRICT_H

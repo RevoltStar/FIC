@@ -7,7 +7,7 @@ OSS_lock_on_tty_switch::OSS_lock_on_tty_switch()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool OSS_lock_on_tty_switch::check_and_fix()
+bool OSS_lock_on_tty_switch::apply()
 {
     return true;
 }

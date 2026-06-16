@@ -10,7 +10,7 @@ SYSCTL_suid_dump_disable::SYSCTL_suid_dump_disable()
         std::vector<std::string>{"0", "1", "2"});
 }
 
-bool SYSCTL_suid_dump_disable::check_and_fix()
+bool SYSCTL_suid_dump_disable::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

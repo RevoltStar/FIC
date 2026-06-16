@@ -177,6 +177,6 @@ DAC_sudo_securepath::~DAC_sudo_securepath() {
 
 }
 
-bool DAC_sudo_securepath::check_and_fix() {
-    return this->Sudo::check_and_fix();
+bool DAC_sudo_securepath::apply() {
+    return this->Sudo::apply();
 }

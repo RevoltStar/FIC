@@ -6,7 +6,7 @@ DesktopEnvironment::DesktopEnvironment()
     this->submoduleName = "DesktopEnvironment";
 }
 
-bool DesktopEnvironment::check_and_fix() {
+bool DesktopEnvironment::apply() {
     return true;
 }
 

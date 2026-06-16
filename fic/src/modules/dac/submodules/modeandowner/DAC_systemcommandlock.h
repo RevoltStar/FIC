@@ -11,6 +11,6 @@ class DAC_systemcommandlock : public ModeAndOwner{
 
 public:
     DAC_systemcommandlock();
-    bool check_and_fix () override;
+    bool apply () override;
 };
 #endif // DAC_SYSTEMCOMMANDLOCK_H

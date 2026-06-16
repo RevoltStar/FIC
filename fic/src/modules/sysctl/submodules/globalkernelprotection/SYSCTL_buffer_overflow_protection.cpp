@@ -9,7 +9,7 @@ SYSCTL_buffer_overflow_protection::SYSCTL_buffer_overflow_protection()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool SYSCTL_buffer_overflow_protection::check_and_fix()
+bool SYSCTL_buffer_overflow_protection::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

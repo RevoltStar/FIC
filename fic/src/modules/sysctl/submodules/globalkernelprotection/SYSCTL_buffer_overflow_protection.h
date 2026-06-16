@@ -8,7 +8,7 @@ class SYSCTL_buffer_overflow_protection : public GlobalKernelProtection
 {
 public:
     SYSCTL_buffer_overflow_protection();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 

@@ -2,7 +2,7 @@
 
 //Задаем путь к конфигурационному файлу Дискреционного разграничения доступа
 DAC::DAC()
-    :CheckAndFix()
+    :Policy()
 {
     this->moduleName = "DAC";
     this->moduleConf = std::make_unique<ModuleConfigFileHandler>(this->moduleName);

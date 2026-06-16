@@ -7,7 +7,7 @@ class OSS_disable_videodisplay_when_locked : public DisplayManager
 public:
     OSS_disable_videodisplay_when_locked();
 
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // OSS_DISABLE_VIDEODISPLAY_WHEN_LOCKED_H

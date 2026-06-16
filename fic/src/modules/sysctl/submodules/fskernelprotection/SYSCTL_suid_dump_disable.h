@@ -7,7 +7,7 @@ class SYSCTL_suid_dump_disable : public FSKernelProtection
 {
 public:
     SYSCTL_suid_dump_disable();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_SUID_DUMP_DISABLE_H

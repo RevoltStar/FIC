@@ -16,7 +16,7 @@ OSS_screenlock_timeout::OSS_screenlock_timeout()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 20, 5);
 }
 
-bool OSS_screenlock_timeout::check_and_fix()
+bool OSS_screenlock_timeout::apply()
 {
     const std::optional<std::string> configuredValue = this->getValue();
     if (!configuredValue.has_value()) {

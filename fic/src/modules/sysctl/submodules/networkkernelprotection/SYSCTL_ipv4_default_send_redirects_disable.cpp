@@ -9,7 +9,7 @@ SYSCTL_ipv4_default_send_redirects_disable::SYSCTL_ipv4_default_send_redirects_d
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool SYSCTL_ipv4_default_send_redirects_disable::check_and_fix()
+bool SYSCTL_ipv4_default_send_redirects_disable::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

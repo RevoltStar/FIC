@@ -14,7 +14,7 @@ DAC_sudo_passwd_tries::~DAC_sudo_passwd_tries() {
 
 }
 
-bool DAC_sudo_passwd_tries::check_and_fix() {
+bool DAC_sudo_passwd_tries::apply() {
     this->log("Начинаем проверку максимального количества попыток ввода пароля sudo", logLevel::INFO);
-    return this->Sudo::check_and_fix();
+    return this->Sudo::apply();
 }

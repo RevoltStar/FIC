@@ -8,7 +8,7 @@ GLOBAL_log_level::GLOBAL_log_level()
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(v);
 }
 
-bool GLOBAL_log_level::check_and_fix (){
+bool GLOBAL_log_level::apply (){
     if (!this->moduleConf || !this->moduleConf->loadConfig()) {
         return false;
     }

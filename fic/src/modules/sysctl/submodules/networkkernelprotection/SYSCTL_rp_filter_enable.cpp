@@ -10,7 +10,7 @@ SYSCTL_rp_filter_enable::SYSCTL_rp_filter_enable()
         std::vector<std::string>{"1", "0", "2"});
 }
 
-bool SYSCTL_rp_filter_enable::check_and_fix()
+bool SYSCTL_rp_filter_enable::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

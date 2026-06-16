@@ -7,7 +7,7 @@ class SYSCTL_tcp_timeout : public NetworkKernelProtection
 {
 public:
     SYSCTL_tcp_timeout();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_TCP_TIMEOUTS_H

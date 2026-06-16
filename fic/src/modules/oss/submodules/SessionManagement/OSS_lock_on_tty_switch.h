@@ -8,7 +8,7 @@ class OSS_lock_on_tty_switch : public SessionManagement
 public:
     OSS_lock_on_tty_switch();
 
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // OSS_LOCK_ON_TTY_SWITCH_H

@@ -13,7 +13,7 @@ public:
     DisplayManager();
     virtual ~DisplayManager() = default;
 
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // DISPLAYMANAGER_H

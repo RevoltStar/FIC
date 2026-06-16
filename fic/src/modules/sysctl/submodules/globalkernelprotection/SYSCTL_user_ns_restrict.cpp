@@ -9,7 +9,7 @@ SYSCTL_user_ns_restrict::SYSCTL_user_ns_restrict()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(0, 65536, 0);
 }
 
-bool SYSCTL_user_ns_restrict::check_and_fix()
+bool SYSCTL_user_ns_restrict::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

@@ -9,7 +9,7 @@ SYSCTL_syn_flood_protection::SYSCTL_syn_flood_protection()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool SYSCTL_syn_flood_protection::check_and_fix()
+bool SYSCTL_syn_flood_protection::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

@@ -8,7 +8,7 @@ class OSS_disable_autologin : public DisplayManager
 public:
     OSS_disable_autologin();
 
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // OSS_DISABLE_AUTOLOGIN_H

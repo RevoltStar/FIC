@@ -1,9 +1,9 @@
 #ifndef DAC_H
 #define DAC_H
-#include "CheckAndFix.h"
+#include "Policy.h"
 
 //Класс для дискреционного управления доступом
-class DAC : public CheckAndFix
+class DAC : public Policy
 {
 public:
     DAC();

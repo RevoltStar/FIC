@@ -2,8 +2,8 @@
 #define OSS_H
 
 //Класс для модуля "Настройки ОС"
-#include "core/CheckAndFix.h"
-class OSS : public CheckAndFix
+#include "core/Policy.h"
+class OSS : public Policy
 {
 public:
     OSS();

@@ -10,7 +10,7 @@ NET_ssh_max_auth_tries::NET_ssh_max_auth_tries()
 NET_ssh_max_auth_tries::~NET_ssh_max_auth_tries() {
 }
 
-bool NET_ssh_max_auth_tries::check_and_fix() {
+bool NET_ssh_max_auth_tries::apply() {
     this->log("Starting SSH MaxAuthTries check", logLevel::INFO);
-    return this->Ssh::check_and_fix();
+    return this->Ssh::apply();
 }

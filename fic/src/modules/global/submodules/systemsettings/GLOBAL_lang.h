@@ -9,7 +9,7 @@ public:
     GLOBAL_lang();
     virtual ~GLOBAL_lang() = default;
 
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // GLOBAL_LANG_H

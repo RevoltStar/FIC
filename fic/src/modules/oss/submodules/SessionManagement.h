@@ -9,7 +9,7 @@ public:
     SessionManagement();
     virtual ~SessionManagement() = default;
 
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SESSION_MANAGEMENT_H

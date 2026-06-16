@@ -6,8 +6,8 @@ ModeAndOwner::ModeAndOwner()
 }
 
 //Проверить и исправить права и владельца
-bool ModeAndOwner::check_and_fix() {
-    this->log("Запуск функции Mode_And_Owner::check_and_fix", logLevel::TRACE);
+bool ModeAndOwner::apply() {
+    this->log("Запуск функции Mode_And_Owner::apply", logLevel::TRACE);
     int total = 0, success = 0, failed = 0, fixed = 0;
     for (auto& [filename, expected_stats] : this->ModeAndOwner::expected) {
         //Сколько параметров всего

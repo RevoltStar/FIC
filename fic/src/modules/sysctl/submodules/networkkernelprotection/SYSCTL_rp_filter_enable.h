@@ -6,6 +6,6 @@ class SYSCTL_rp_filter_enable : public NetworkKernelProtection
 {
 public:
     SYSCTL_rp_filter_enable();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 #endif // SYSCTL_RP_FILTER_ENABLE_H

@@ -1,13 +1,13 @@
 #ifndef DC_H
 #define DC_H
 
-#include "core/CheckAndFix.h"
+#include "core/Policy.h"
 #include "utils/ConfigFileHandler.h"
 #include "utils/DB.h"
 #include <iostream>
 
 //Класс для работы с устройствами
-class DC : public CheckAndFix
+class DC : public Policy
 {
 private:
     //Каталог с базой данных контроля устройств
@@ -23,7 +23,7 @@ public:
     bool is_allowed();
     //bool
     //Проверить, что используются только разрешенные устройства.
-    bool check_and_fix () override;
+    bool apply () override;
     DC();
 };
 

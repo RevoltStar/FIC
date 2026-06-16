@@ -2,8 +2,8 @@
 #define NET_H
 
 //Класс для модуля "Настройки сетевых сервисов"
-#include "core/CheckAndFix.h"
-class Net : public CheckAndFix
+#include "core/Policy.h"
+class Net : public Policy
 {
 public:
     Net();

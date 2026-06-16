@@ -10,7 +10,7 @@ NET_ssh_pubkey_auth::NET_ssh_pubkey_auth()
 NET_ssh_pubkey_auth::~NET_ssh_pubkey_auth() {
 }
 
-bool NET_ssh_pubkey_auth::check_and_fix() {
+bool NET_ssh_pubkey_auth::apply() {
     this->log("Starting SSH PubkeyAuthentication check", logLevel::INFO);
-    return this->Ssh::check_and_fix();
+    return this->Ssh::apply();
 }

@@ -16,7 +16,7 @@ DAC_systemcommandlock::DAC_systemcommandlock(){
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool DAC_systemcommandlock::check_and_fix(){
-    return this->ModeAndOwner::check_and_fix();
+bool DAC_systemcommandlock::apply(){
+    return this->ModeAndOwner::apply();
 }
 

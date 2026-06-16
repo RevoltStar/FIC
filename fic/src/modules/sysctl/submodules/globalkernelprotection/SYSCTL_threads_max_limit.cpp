@@ -9,7 +9,7 @@ SYSCTL_threads_max_limit::SYSCTL_threads_max_limit()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1024, 262144, 4096);
 }
 
-bool SYSCTL_threads_max_limit::check_and_fix()
+bool SYSCTL_threads_max_limit::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

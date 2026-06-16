@@ -9,7 +9,7 @@ class DAC_sudo_timeout : public Sudo
 public:
     DAC_sudo_timeout();
     ~DAC_sudo_timeout();
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // DAC_SUDO_TIMEOUT_H

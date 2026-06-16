@@ -11,7 +11,7 @@ SYSCTL_fd_limits::SYSCTL_fd_limits()
 
 }
 
-bool SYSCTL_fd_limits::check_and_fix()
+bool SYSCTL_fd_limits::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

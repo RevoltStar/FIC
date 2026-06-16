@@ -9,7 +9,7 @@ SYSCTL_process_limits::SYSCTL_process_limits()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(32768, 1048576, 65536);
 }
 
-bool SYSCTL_process_limits::check_and_fix()
+bool SYSCTL_process_limits::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

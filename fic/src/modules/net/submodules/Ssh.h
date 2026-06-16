@@ -39,7 +39,7 @@ protected:
 
 public:
     Ssh();
-    bool check_and_fix() override;
+    bool apply() override;
     virtual ~Ssh();
 };
 

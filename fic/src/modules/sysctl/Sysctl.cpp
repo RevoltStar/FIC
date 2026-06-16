@@ -8,7 +8,7 @@ std::unique_ptr<ConfigFileHandler> Sysctl::sysctlConfig =
         std::make_unique<ConfigFileHandler>(Sysctl::sysctlPath);
 
 Sysctl::Sysctl()
-    :CheckAndFix(){
+    :Policy(){
     this->moduleName = "SYSCTL";
     this->moduleConf = std::make_unique<ModuleConfigFileHandler>(this->moduleName);
     this->moduleConf->loadConfig();
@@ -16,7 +16,7 @@ Sysctl::Sysctl()
 
 
 // Correct /etc/sysctl.conf according to one sysctl parameter policy.
-bool Sysctl::check_and_fix (){
+bool Sysctl::apply (){
     this->log("Запущена проверка политики " + this->policyName, logLevel::INFO);
     if (this->Sysctl::sysctlParameter.empty()){
         this->log("Имя контролируемого параметра пусто", logLevel::ERROR);

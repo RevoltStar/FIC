@@ -9,7 +9,7 @@ SYSCTL_tcp_synack_retries::SYSCTL_tcp_synack_retries()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 7, 2);
 }
 
-bool SYSCTL_tcp_synack_retries::check_and_fix()
+bool SYSCTL_tcp_synack_retries::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

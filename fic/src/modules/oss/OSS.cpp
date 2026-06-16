@@ -1,7 +1,7 @@
 #include "modules/oss/OSS.h"
 
 OSS::OSS()
-    :CheckAndFix()
+    :Policy()
 {
     this->moduleName = "OSS";
     this->moduleConf = std::make_unique<ModuleConfigFileHandler>(this->moduleName);

@@ -1,12 +1,12 @@
 #ifndef SYSCTLEDIT_H
 #define SYSCTLEDIT_H
 
-#include "core/CheckAndFix.h"
+#include "core/Policy.h"
 #include "utils/ConfigFileHandler.h"
 #include <string>
 
 //Класс для работы с файлом /etc/sysctl
-class Sysctl : public CheckAndFix
+class Sysctl : public Policy
 {
 private:
     static std::string sysctlPath;
@@ -19,7 +19,7 @@ protected:
 public:
 
     //Проверить файл /etc/sysctl и исправить
-    bool check_and_fix () override;
+    bool apply () override;
     Sysctl();
 };
 

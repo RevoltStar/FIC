@@ -7,7 +7,7 @@ class SYSCTL_dmesg_restrict : public GlobalKernelProtection
 {
 public:
     SYSCTL_dmesg_restrict();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_DMESG_RESTRICT_H

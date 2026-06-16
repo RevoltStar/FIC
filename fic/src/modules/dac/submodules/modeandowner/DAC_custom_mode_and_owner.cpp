@@ -171,7 +171,7 @@ DAC_custom_mode_and_owner::DAC_custom_mode_and_owner()
     this->policyTypeValue = std::make_unique<CustomModeAndOwnerPolicyTypeValue>();
 }
 
-bool DAC_custom_mode_and_owner::check_and_fix() {
+bool DAC_custom_mode_and_owner::apply() {
     this->expected.clear();
 
     const std::optional valueOpt = this->getValue();
@@ -190,5 +190,5 @@ bool DAC_custom_mode_and_owner::check_and_fix() {
         this->expected.insert_or_assign(rule.path, FileStats(rule.owner, rule.group, permissions));
     }
 
-    return this->ModeAndOwner::check_and_fix();
+    return this->ModeAndOwner::apply();
 }

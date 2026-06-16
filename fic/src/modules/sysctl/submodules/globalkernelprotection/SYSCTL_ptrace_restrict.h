@@ -8,7 +8,7 @@ class SYSCTL_ptrace_restrict : public GlobalKernelProtection
 {
 public:
     SYSCTL_ptrace_restrict();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_PTRACE_RESTRICT_H

@@ -12,7 +12,7 @@ NET_ssh_root_login::NET_ssh_root_login()
 NET_ssh_root_login::~NET_ssh_root_login() {
 }
 
-bool NET_ssh_root_login::check_and_fix() {
+bool NET_ssh_root_login::apply() {
     this->log("Starting SSH PermitRootLogin check", logLevel::INFO);
-    return this->Ssh::check_and_fix();
+    return this->Ssh::apply();
 }

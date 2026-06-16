@@ -9,7 +9,7 @@ OSS_disable_autologin::OSS_disable_autologin()
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 
-bool OSS_disable_autologin::check_and_fix()
+bool OSS_disable_autologin::apply()
 {
     const std::string displayManager = this->detectDisplayManager();
     std::unique_ptr<DisplayManagerBackend> backend =

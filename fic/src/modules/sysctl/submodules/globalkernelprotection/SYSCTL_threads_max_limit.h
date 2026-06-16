@@ -7,7 +7,7 @@ class SYSCTL_threads_max_limit : public GlobalKernelProtection
 {
 public:
     SYSCTL_threads_max_limit();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_THREADS_MAX_LIMIT_H

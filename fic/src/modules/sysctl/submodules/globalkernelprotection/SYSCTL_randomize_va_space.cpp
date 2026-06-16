@@ -10,7 +10,7 @@ SYSCTL_randomize_va_space::SYSCTL_randomize_va_space()
         std::vector<std::string>{"2", "0", "1"});
 }
 
-bool SYSCTL_randomize_va_space::check_and_fix()
+bool SYSCTL_randomize_va_space::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

@@ -1,13 +1,13 @@
 #include "modules/global/GLOBAL.h"
 
 Global::Global()
-    :CheckAndFix()
+    :Policy()
 {
     this->moduleName = "GLOBAL";
     this->moduleConf = std::make_unique<ModuleConfigFileHandler>(this->moduleName);
     this->moduleConf->loadConfig();
 }
 
-bool Global::check_and_fix (){
+bool Global::apply (){
     return true;
 }

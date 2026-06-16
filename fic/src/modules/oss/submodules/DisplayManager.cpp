@@ -59,7 +59,7 @@ DisplayManager::DisplayManager()
     this->submoduleName = "DisplayManager";
 }
 
-bool DisplayManager::check_and_fix() {
+bool DisplayManager::apply() {
     return true;
 }
 

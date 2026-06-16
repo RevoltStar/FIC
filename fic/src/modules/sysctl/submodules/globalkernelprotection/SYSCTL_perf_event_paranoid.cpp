@@ -10,7 +10,7 @@ SYSCTL_perf_event_paranoid::SYSCTL_perf_event_paranoid()
         std::vector<std::string>{"3", "2", "1", "0", "-1", "4"});
 }
 
-bool SYSCTL_perf_event_paranoid::check_and_fix()
+bool SYSCTL_perf_event_paranoid::apply()
 {
-    return this->Sysctl::check_and_fix();
+    return this->Sysctl::apply();
 }

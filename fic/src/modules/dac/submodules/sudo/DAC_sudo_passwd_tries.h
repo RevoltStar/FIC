@@ -8,7 +8,7 @@ class DAC_sudo_passwd_tries : public Sudo
 public:
     DAC_sudo_passwd_tries();
     ~DAC_sudo_passwd_tries();
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // DAC_SUDO_PASSWD_TRIES_H

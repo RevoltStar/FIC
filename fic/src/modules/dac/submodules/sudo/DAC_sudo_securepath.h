@@ -9,7 +9,7 @@ class DAC_sudo_securepath : public Sudo
 public:
     DAC_sudo_securepath();
     ~DAC_sudo_securepath();
-    bool check_and_fix () override;
+    bool apply () override;
 
 };
 

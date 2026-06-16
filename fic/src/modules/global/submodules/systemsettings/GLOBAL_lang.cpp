@@ -8,7 +8,7 @@ GLOBAL_lang::GLOBAL_lang()
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(v);
 }
 
-bool GLOBAL_lang::check_and_fix (){
+bool GLOBAL_lang::apply (){
     if (!this->moduleConf || !this->moduleConf->loadConfig()) {
         return false;
     }

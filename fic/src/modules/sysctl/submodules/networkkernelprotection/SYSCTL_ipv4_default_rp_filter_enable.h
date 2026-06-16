@@ -7,7 +7,7 @@ class SYSCTL_ipv4_default_rp_filter_enable : public NetworkKernelProtection
 {
 public:
     SYSCTL_ipv4_default_rp_filter_enable();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_IPV4_DEFAULT_RP_FILTER_ENABLE_H

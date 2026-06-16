@@ -7,7 +7,7 @@ class DAC_custom_mode_and_owner : public ModeAndOwner
 {
 public:
     DAC_custom_mode_and_owner();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // DAC_CUSTOM_MODE_AND_OWNER_H

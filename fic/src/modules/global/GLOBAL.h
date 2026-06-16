@@ -2,14 +2,14 @@
 #define GLOBAL_H
 
 //Глобальные настройки приложения
-#include "core/CheckAndFix.h"
-class Global : public CheckAndFix
+#include "core/Policy.h"
+class Global : public Policy
 {
 public:
     Global();
     virtual ~Global() = default;
 
-    bool check_and_fix () override;
+    bool apply () override;
 };
 
 #endif // GLOBAL_H

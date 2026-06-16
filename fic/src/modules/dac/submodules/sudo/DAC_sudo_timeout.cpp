@@ -12,7 +12,7 @@ DAC_sudo_timeout::~DAC_sudo_timeout() {
 
 }
 
-bool DAC_sudo_timeout::check_and_fix() {
+bool DAC_sudo_timeout::apply() {
     this->log("Начинаем проверку времени действия sudo", logLevel::INFO);
-    return this->Sudo::check_and_fix();
+    return this->Sudo::apply();
 }

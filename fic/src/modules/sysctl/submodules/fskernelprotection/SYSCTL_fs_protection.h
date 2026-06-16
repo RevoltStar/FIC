@@ -7,7 +7,7 @@ class SYSCTL_fs_protection : public FSKernelProtection
 {
 public:
     SYSCTL_fs_protection();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 

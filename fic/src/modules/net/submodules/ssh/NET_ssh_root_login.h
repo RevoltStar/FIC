@@ -8,7 +8,7 @@ class NET_ssh_root_login : public Ssh
 public:
     NET_ssh_root_login();
     ~NET_ssh_root_login();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // NET_SSH_ROOT_LOGIN_H

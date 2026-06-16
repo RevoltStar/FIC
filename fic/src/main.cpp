@@ -77,7 +77,7 @@ std::string to_lower_ascii(std::string value) {
 }
 
 std::string canonical_module_name(
-    const std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
+    const std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
     const std::string& module
 ) {
     if (module.empty() || module == "all") {
@@ -101,7 +101,7 @@ std::string canonical_module_name(
 json policy_to_json(const std::string& module,
                     const std::string& submoduleName,
                     const std::string& policyName,
-                    const std::shared_ptr<CheckAndFix>& policyClass) {
+                    const std::shared_ptr<Policy>& policyClass) {
     const PolicyTypeValue& typeValue = policyClass->getPolicyTypeValue();
     const PolicyEditorSpec editorSpec = typeValue.getEditorSpec();
     const bool isSet = policyClass->isPolicySet();
@@ -153,7 +153,7 @@ json policy_to_json(const std::string& module,
     return item;
 }
 
-json policy_list_json(const std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
+json policy_list_json(const std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
                       const std::string& module) {
     json result = json::array();
     auto moduleIt = cafMap.find(module);
@@ -170,11 +170,11 @@ json policy_list_json(const std::map<std::string, std::map<std::string, std::map
 }
 
 json policy_status_json(
-    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
+    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
     const std::string& module,
     const std::string& policy
 ) {
-    std::shared_ptr<CheckAndFix> policyClass = getPolicyClass(cafMap, module, policy);
+    std::shared_ptr<Policy> policyClass = getPolicyClass(cafMap, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -191,11 +191,11 @@ json policy_status_json(
 }
 
 json policy_value_json(
-    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap,
+    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
     const std::string& module,
     const std::string& policy
 ) {
-    std::shared_ptr<CheckAndFix> policyClass = getPolicyClass(cafMap, module, policy);
+    std::shared_ptr<Policy> policyClass = getPolicyClass(cafMap, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -332,7 +332,7 @@ json lock_status_json() {
 }
 
 json handle_request(json request,
-                    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap) {
+                    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap) {
     const std::string command = request.value("command", "");
     const std::string requestedModule = request.value("module", "");
     const std::string module = canonical_module_name(cafMap, requestedModule);
@@ -543,7 +543,7 @@ json handle_request(json request,
 }
 
 bool serve_one_client(int clientFd,
-                      std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<CheckAndFix>>>>& cafMap) {
+                      std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap) {
     std::string requestText;
     std::string error;
     if (!fic::ipc::read_until_eof(clientFd, requestText, error)) {

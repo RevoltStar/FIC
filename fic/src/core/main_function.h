@@ -100,31 +100,31 @@ bool calcHash(const std::string& command);
 //Получить значение параметра
 std::string getArgvValue(int argc, char* argv[], int ind);
 
-std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>> getModule(
-        std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap,
+std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>> getModule(
+        std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap,
         const std::string& module);
-std::shared_ptr<CheckAndFix> getPolicyClass(
-            std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap,
+std::shared_ptr<Policy> getPolicyClass(
+            std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap,
             const std::string& module,
             const std::string& policy
         );
 
 //Дать информацию об ограничении
-bool policy_info_restriction(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy);
+bool policy_info_restriction(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
 //Дать список модулей
-bool module_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap);
+bool module_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap);
 
-bool policy_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module);
+bool policy_list(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module);
 
-bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy);
+bool check(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
 
 //Отключить политику
-bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy);
+bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
 //Включить политику
-bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy);
+bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy);
 
-bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>>& cafMap, std::string module, std::string policy, std::string value);
+bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy, std::string value);
 
 
-std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<CheckAndFix>>>> init_cafMap();
+std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>> init_cafMap();
 #endif // MAIN_FUNCTION_H

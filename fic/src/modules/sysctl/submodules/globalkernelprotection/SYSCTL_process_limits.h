@@ -8,7 +8,7 @@ class SYSCTL_process_limits : public GlobalKernelProtection
 {
 public:
     SYSCTL_process_limits();
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // SYSCTL_PROCESS_LIMITS_H

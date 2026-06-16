@@ -10,7 +10,7 @@ public:
     GLOBAL_log_level();
     virtual ~GLOBAL_log_level() = default;
 
-    bool check_and_fix() override;
+    bool apply() override;
 };
 
 #endif // GLOBAL_LOG_LEVEL_H
