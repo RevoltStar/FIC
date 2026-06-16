@@ -16,6 +16,9 @@ DesktopEnvironmentBackend::DesktopEnvironmentBackend(
 DesktopEnvironmentKind DesktopEnvironmentBackend::kindFromName(const std::string& desktop)
 {
     const std::string normalized = normalizeName(desktop);
+    if (normalized == "FLY") {
+        return DesktopEnvironmentKind::Fly;
+    }
     if (normalized == "GNOME") {
         return DesktopEnvironmentKind::Gnome;
     }
@@ -43,6 +46,9 @@ std::string DesktopEnvironmentBackend::normalizeName(std::string desktop)
         const size_t last = token.find_last_not_of(" \t");
         token = first == std::string::npos ? "" : token.substr(first, last - first + 1);
 
+        if (token == "FLY" || token == "FLYDESKTOP" || token == "FLY-WM") {
+            return "FLY";
+        }
         if (token == "GNOME" || token == "UNITY" || token == "BUDGIE") {
             return "GNOME";
         }

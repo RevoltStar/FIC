@@ -1,6 +1,7 @@
 #include "modules/oss/submodules/DesktopEnvironment/policies/ScreenLockTimeoutHandler.h"
 
 #include "modules/oss/submodules/DesktopEnvironment/backends/DesktopEnvironmentBackend.h"
+#include "modules/oss/submodules/DesktopEnvironment/policies/FlyScreenLockTimeoutHandler.h"
 #include "modules/oss/submodules/DesktopEnvironment/policies/GnomeScreenLockTimeoutHandler.h"
 #include "modules/oss/submodules/DesktopEnvironment/policies/KdeScreenLockTimeoutHandler.h"
 #include "modules/oss/submodules/DesktopEnvironment/policies/XfceScreenLockTimeoutHandler.h"
@@ -11,6 +12,8 @@ std::unique_ptr<ScreenLockTimeoutHandler> ScreenLockTimeoutHandlerFactory::creat
 )
 {
     switch (DesktopEnvironmentBackend::kindFromName(context.desktop)) {
+    case DesktopEnvironmentKind::Fly:
+        return std::make_unique<FlyScreenLockTimeoutHandler>(session, context);
     case DesktopEnvironmentKind::Gnome:
         return std::make_unique<GnomeScreenLockTimeoutHandler>(session, context);
     case DesktopEnvironmentKind::Kde:

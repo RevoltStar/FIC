@@ -8,6 +8,7 @@
 
 enum class DesktopEnvironmentKind {
     Unknown,
+    Fly,
     Gnome,
     Kde,
     Xfce
