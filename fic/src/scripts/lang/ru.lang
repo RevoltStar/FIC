@@ -71,6 +71,11 @@
 [module:DAC][policy:sudo_securepath][description]=Описание
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:systemcommandlock][description]=Блокировка системных команд для пользователей
+    Программам ниже назначаются права 750 и владелец root:root:
+    /bin/df,
+    /usr/bin/chattr,
+    /usr/sbin/arp,
+    /sbin/ip
 
 
 #Настройки ОС
