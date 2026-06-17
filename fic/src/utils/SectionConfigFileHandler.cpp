@@ -10,6 +10,11 @@ bool SectionConfigFileHandler::loadConfig() {
         return false;
     }
 
+    rebuildSectionsFromOriginalLines();
+    return true;
+}
+
+void SectionConfigFileHandler::rebuildSectionsFromOriginalLines() {
     sections_.clear();
     Section* currentSection = nullptr;
 
@@ -17,13 +22,12 @@ bool SectionConfigFileHandler::loadConfig() {
         std::string line = original_lines_[i];
         trim(line);
 
-        // Пропуск пустых строк и комментариев
-        if (line.empty() || line[0] == '#') {
-            continue;
-        }
-
         // Проверка на заголовок секции
-        if (line[0] == '[' && line.back() == ']') {
+        if (!line.empty() && line[0] == '[' && line.back() == ']') {
+            if (currentSection && i > 0) {
+                currentSection->endLine = i - 1;
+            }
+
             std::string sectionName = line.substr(1, line.size() - 2);
             trim(sectionName);
 
@@ -32,17 +36,23 @@ bool SectionConfigFileHandler::loadConfig() {
             continue;
         }
 
+        if (!currentSection) {
+            continue;
+        }
+
+        currentSection->endLine = i;
+
+        // Пропуск пустых строк и комментариев
+        if (isCommentOrEmpty(line)) {
+            continue;
+        }
+
         // Парсинг строки параметра, если мы внутри секции
-        if (currentSection) {
-            std::string parameter, value;
-            if (parseParameterLine(line, parameter, value)) {
-                currentSection->parameters[parameter] = value;
-                currentSection->endLine = i;
-            }
+        std::string parameter, value;
+        if (parseParameterLine(line, parameter, value)) {
+            currentSection->parameters.push_back({parameter, value, i});
         }
     }
-
-    return true;
 }
 
 bool SectionConfigFileHandler::parseParameterLine(const std::string& line, std::string& parameter, std::string& value) const {
@@ -61,33 +71,56 @@ bool SectionConfigFileHandler::parseParameterLine(const std::string& line, std::
 }
 
 std::string SectionConfigFileHandler::getValue(const std::string& section, const std::string& parameter) const {
+    std::string value;
+    if (!tryGetValue(section, parameter, value)) {
+        return "";
+    }
+
+    return value;
+}
+
+bool SectionConfigFileHandler::tryGetValue(const std::string& section, const std::string& parameter, std::string& value) const {
     auto it = findSection(section);
     if (it == sections_.end()) {
-        return "";
+        return false;
     }
 
-    auto paramIt = it->parameters.find(parameter);
+    auto paramIt = findParameter(*it, parameter);
     if (paramIt == it->parameters.end()) {
-        return "";
+        return false;
     }
 
-    return paramIt->second;
+    value = paramIt->value;
+    return true;
 }
 
 bool SectionConfigFileHandler::setValue(const std::string& section, const std::string& parameter, const std::string& value) {
-    if (parameter.empty()) {
+    if (section.empty() || parameter.empty()) {
         return false;
     }
 
     auto it = findSection(section);
     if (it == sections_.end()) {
         // Секция не существует, создаем новую
-        sections_.push_back({section, {}, 0, 0});
-        it = sections_.end() - 1;
+        if (!original_lines_.empty() && !original_lines_.back().empty()) {
+            original_lines_.push_back("");
+        }
+        original_lines_.push_back("[" + section + "]");
+        original_lines_.push_back(formatParameterLine(parameter, value));
+        rebuildSectionsFromOriginalLines();
+        return true;
     }
 
-    it->parameters[parameter] = value;
-    updateOriginalLines();
+    auto paramIt = findParameter(*it, parameter);
+    if (paramIt != it->parameters.end()) {
+        original_lines_[paramIt->line] = formatParameterLine(parameter, value);
+        rebuildSectionsFromOriginalLines();
+        return true;
+    }
+
+    const size_t insertLine = findParameterInsertLine(*it);
+    original_lines_.insert(original_lines_.begin() + insertLine, formatParameterLine(parameter, value));
+    rebuildSectionsFromOriginalLines();
     return true;
 }
 
@@ -96,7 +129,9 @@ std::vector<std::string> SectionConfigFileHandler::getParameters(const std::stri
     auto it = findSection(section);
     if (it != sections_.end()) {
         for (const auto& param : it->parameters) {
-            parameters.push_back(param.first);
+            if (std::find(parameters.begin(), parameters.end(), param.name) == parameters.end()) {
+                parameters.push_back(param.name);
+            }
         }
     }
     return parameters;
@@ -119,16 +154,19 @@ bool SectionConfigFileHandler::hasParameter(const std::string& section, const st
     if (it == sections_.end()) {
         return false;
     }
-    return it->parameters.find(parameter) != it->parameters.end();
+    return findParameter(*it, parameter) != it->parameters.end();
 }
 
 bool SectionConfigFileHandler::addSection(const std::string& section) {
-    if (hasSection(section)) {
+    if (section.empty() || hasSection(section)) {
         return false;
     }
 
-    sections_.push_back({section, {}, 0, 0});
-    updateOriginalLines();
+    if (!original_lines_.empty() && !original_lines_.back().empty()) {
+        original_lines_.push_back("");
+    }
+    original_lines_.push_back("[" + section + "]");
+    rebuildSectionsFromOriginalLines();
     return true;
 }
 
@@ -138,8 +176,18 @@ bool SectionConfigFileHandler::removeSection(const std::string& section) {
         return false;
     }
 
-    sections_.erase(it);
-    updateOriginalLines();
+    const size_t startLine = it->startLine;
+    size_t endLine = it->endLine;
+    if (endLine + 1 < original_lines_.size()) {
+        std::string nextLine = original_lines_[endLine + 1];
+        trim(nextLine);
+        if (nextLine.empty()) {
+            ++endLine;
+        }
+    }
+
+    original_lines_.erase(original_lines_.begin() + startLine, original_lines_.begin() + endLine + 1);
+    rebuildSectionsFromOriginalLines();
     return true;
 }
 
@@ -149,18 +197,21 @@ bool SectionConfigFileHandler::removeParameter(const std::string& section, const
         return false;
     }
 
-    auto paramIt = it->parameters.find(parameter);
+    auto paramIt = findParameter(*it, parameter);
     if (paramIt == it->parameters.end()) {
         return false;
     }
 
-    it->parameters.erase(paramIt);
-    updateOriginalLines();
+    for (auto current = it->parameters.rbegin(); current != it->parameters.rend(); ++current) {
+        if (current->name == parameter) {
+            original_lines_.erase(original_lines_.begin() + current->line);
+        }
+    }
+    rebuildSectionsFromOriginalLines();
     return true;
 }
 
 bool SectionConfigFileHandler::saveConfig() {
-    updateOriginalLines();
     return FileHandler::saveFile();
 }
 
@@ -168,7 +219,7 @@ void SectionConfigFileHandler::printConfig() const {
     for (const auto& section : sections_) {
         std::cout << "[" << section.name << "]\n";
         for (const auto& param : section.parameters) {
-            std::cout << param.first << " = " << param.second << "\n";
+            std::cout << param.name << " = " << param.value << "\n";
         }
         std::cout << "\n";
     }
@@ -200,19 +251,47 @@ std::vector<SectionConfigFileHandler::Section>::const_iterator SectionConfigFile
         [&section](const Section& s) { return s.name == section; });
 }
 
-void SectionConfigFileHandler::updateOriginalLines() {
-    original_lines_.clear();
-
-    for (const auto& section : sections_) {
-        original_lines_.push_back("[" + section.name + "]");
-        for (const auto& param : section.parameters) {
-            original_lines_.push_back(param.first + " = " + param.second);
+std::vector<SectionConfigFileHandler::Parameter>::iterator SectionConfigFileHandler::findParameter(
+    Section& section,
+    const std::string& parameter
+) {
+    for (auto it = section.parameters.end(); it != section.parameters.begin();) {
+        --it;
+        if (it->name == parameter) {
+            return it;
         }
-        original_lines_.push_back("");  // Пустая строка между секциями
     }
+    return section.parameters.end();
+}
 
-    // Удаление пустых строк в конце
-    while (!original_lines_.empty() && original_lines_.back().empty()) {
-        original_lines_.pop_back();
+std::vector<SectionConfigFileHandler::Parameter>::const_iterator SectionConfigFileHandler::findParameter(
+    const Section& section,
+    const std::string& parameter
+) const {
+    for (auto it = section.parameters.end(); it != section.parameters.begin();) {
+        --it;
+        if (it->name == parameter) {
+            return it;
+        }
     }
+    return section.parameters.end();
+}
+
+std::string SectionConfigFileHandler::formatParameterLine(
+    const std::string& parameter,
+    const std::string& value
+) const {
+    return parameter + " = " + value;
+}
+
+size_t SectionConfigFileHandler::findParameterInsertLine(const Section& section) const {
+    size_t insertLine = section.startLine + 1;
+    for (const auto& parameter : section.parameters) {
+        insertLine = std::max(insertLine, parameter.line + 1);
+    }
+    return std::min(insertLine, original_lines_.size());
+}
+
+bool SectionConfigFileHandler::isCommentOrEmpty(const std::string& line) const {
+    return line.empty() || line[0] == '#' || line[0] == ';';
 }
