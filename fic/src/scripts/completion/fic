@@ -48,7 +48,7 @@ _fic_completion()
         2)
             case "${words[1]}" in
                 policy)
-                    COMPREPLY=( $(compgen -W "enable disable isenable isdisable value info check set list" -- "$cur") )
+                    COMPREPLY=( $(compgen -W "enable disable isenable isdisable value info apply set list" -- "$cur") )
                     ;;
                 module)
                     COMPREPLY=( $(compgen -W "list" -- "$cur") )
@@ -63,7 +63,7 @@ _fic_completion()
                 policy-enable|policy-disable|policy-isenable|policy-isdisable|policy-value|policy-set)
                     COMPREPLY=( $(compgen -W "$(_fic_get_modules)" -- "$cur") )
                     ;;
-                policy-check|policy-list)
+                policy-apply|policy-list)
                     COMPREPLY=( $(compgen -W "$(_fic_get_modules_with_all)" -- "$cur") )
                     ;;
                 policy-info)
@@ -80,10 +80,10 @@ _fic_completion()
                 policy-enable-*|policy-disable-*|policy-isenable-*|policy-isdisable-*|policy-value-*|policy-set-*)
                     COMPREPLY=( $(compgen -W "$(_fic_get_policies "${words[3]}")" -- "$cur") )
                     ;;
-                policy-check-all)
+                policy-apply-all)
                     COMPREPLY=()
                     ;;
-                policy-check-*)
+                policy-apply-*)
                     COMPREPLY=( $(compgen -W "$(_fic_get_policies_with_all "${words[3]}")" -- "$cur") )
                     ;;
                 policy-info-restriction)

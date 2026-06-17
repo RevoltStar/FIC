@@ -156,32 +156,32 @@ fic-cli policy disable DAC sudo_timeout
 
 Команда отправляет демону `disable_policy`.
 
-### policy check all
+### policy apply all
 
 Немедленно применяет все включенные политики.
 
 ```bash
-fic-cli policy check all
+fic-cli policy apply all
 ```
 
 Команда отправляет демону `apply_all`.
 
-### policy check <module> all
+### policy apply <module> all
 
 Немедленно применяет все включенные политики одного модуля.
 
 ```bash
-fic-cli policy check DAC all
+fic-cli policy apply DAC all
 ```
 
 Команда отправляет демону `apply_module`.
 
-### policy check <module> <policy>
+### policy apply <module> <policy>
 
 Немедленно применяет одну политику.
 
 ```bash
-fic-cli policy check DAC sudo_timeout
+fic-cli policy apply DAC sudo_timeout
 ```
 
 Команда отправляет демону `apply_policy`.
@@ -270,7 +270,7 @@ FIC_SOCKET_PATH=/tmp/fic.sock fic-cli policy enable DAC sudo_timeout
 5. Применить политику немедленно:
 
 ```bash
-FIC_SOCKET_PATH=/tmp/fic.sock fic-cli policy check DAC sudo_timeout
+FIC_SOCKET_PATH=/tmp/fic.sock fic-cli policy apply DAC sudo_timeout
 ```
 
 ## Важные правила разработки
