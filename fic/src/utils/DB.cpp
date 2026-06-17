@@ -274,7 +274,7 @@ DeviceInfo DB::resultToDeviceInfo(sqlite3_stmt* stmt) {
 
 // В методе initializeDatabase:
 bool DB::initializeDatabase() {
-    log("Начало инициализации БД, PID: " + std::to_string(getpid()), logLevel::DEBUG);
+    log("Начало инициализации БД, PID: " + std::to_string(getpid()), logLevel::TRACE);
     auto hasColumn = [this](const std::string& tableName, const std::string& columnName) {
         std::string sql = "PRAGMA table_info(" + tableName + ")";
         sqlite3_stmt* stmt = nullptr;
