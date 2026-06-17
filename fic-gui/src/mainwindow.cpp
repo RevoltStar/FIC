@@ -6,6 +6,7 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <map>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <vector>
 
@@ -29,6 +30,67 @@ QString currentBootIdFromDaemon()
         return {};
     }
     return QString::fromStdString(response.value("boot_id", ""));
+}
+
+QString policyApplySummaryText(const nlohmann::json& response)
+{
+    if (!response.contains("summary") || !response["summary"].is_object()) {
+        return QString::fromStdString(response.value("message", "unknown daemon response"));
+    }
+
+    const auto& summary = response["summary"];
+    return QString("Total: %1, applied: %2, failed: %3, disabled: %4, not found: %5")
+        .arg(summary.value("total", 0))
+        .arg(summary.value("applied", 0))
+        .arg(summary.value("failed", 0))
+        .arg(summary.value("disabled", 0))
+        .arg(summary.value("not_found", 0));
+}
+
+QString policyApplyDetailsText(const nlohmann::json& response)
+{
+    QStringList lines;
+
+    if (response.contains("results") && response["results"].is_array()) {
+        for (const auto& item : response["results"]) {
+            QString policyRef = QString::fromStdString(item.value("module", ""));
+            const QString submodule = QString::fromStdString(item.value("submodule", ""));
+            if (!submodule.isEmpty()) {
+                policyRef += ":" + submodule;
+            }
+            policyRef += ":" + QString::fromStdString(item.value("policy", ""));
+
+            QString line = QString("%1 %2")
+                .arg(policyRef)
+                .arg(QString::fromStdString(item.value("status", "unknown")));
+
+            const QString message = QString::fromStdString(item.value("message", ""));
+            if (!message.isEmpty()) {
+                line += " - " + message;
+            }
+
+            lines << line;
+        }
+    }
+
+    return lines.join("\n");
+}
+
+void showPolicyApplyResult(QWidget* parent, const nlohmann::json& response)
+{
+    const bool ok = response.value("ok", false);
+    QMessageBox messageBox(parent);
+    messageBox.setIcon(ok ? QMessageBox::Information : QMessageBox::Warning);
+    messageBox.setWindowTitle(ok ? "Policies applied" : "Policy apply failed");
+    messageBox.setText(QString::fromStdString(response.value("message", ok ? "OK" : "ERROR")));
+    messageBox.setInformativeText(policyApplySummaryText(response));
+
+    const QString details = policyApplyDetailsText(response);
+    if (!details.isEmpty()) {
+        messageBox.setDetailedText(details);
+    }
+
+    messageBox.exec();
 }
 } // namespace
 
@@ -462,11 +524,12 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
             return;
         }
 
-        QMessageBox::information(
-            this,
-            "Done",
-            "Policies were applied successfully"
-        );
+        const auto applyResponse = daemonClient.request({
+            {"command", "apply_module"},
+            {"module", moduleName}
+        });
+
+        showPolicyApplyResult(this, applyResponse);
     });
 
     return mainWidget;

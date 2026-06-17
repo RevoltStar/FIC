@@ -1,4 +1,5 @@
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -59,6 +60,48 @@ int print_response(const json& response) {
 
     if (!response.contains("modules") && !response.contains("policies")) {
         std::cout << response.value("message", ok ? "OK" : "ERROR") << std::endl;
+    }
+
+    return ok ? 0 : 1;
+}
+
+std::string format_policy_ref(const json& item) {
+    std::ostringstream out;
+    out << item.value("module", "");
+    const std::string submodule = item.value("submodule", "");
+    if (!submodule.empty()) {
+        out << ":" << submodule;
+    }
+    out << ":" << item.value("policy", "");
+    return out.str();
+}
+
+int print_policy_apply_response(const json& response) {
+    const bool ok = response.value("ok", false);
+
+    std::cout << response.value("message", ok ? "OK" : "ERROR") << std::endl;
+
+    if (response.contains("summary") && response["summary"].is_object()) {
+        const auto& summary = response["summary"];
+        std::cout << "summary: total=" << summary.value("total", 0)
+                  << ", applied=" << summary.value("applied", 0)
+                  << ", failed=" << summary.value("failed", 0)
+                  << ", disabled=" << summary.value("disabled", 0)
+                  << ", not_found=" << summary.value("not_found", 0)
+                  << std::endl;
+    }
+
+    if (response.contains("results") && response["results"].is_array()) {
+        for (const auto& item : response["results"]) {
+            std::cout << format_policy_ref(item) << " "
+                      << item.value("status", "unknown");
+
+            const std::string message = item.value("message", "");
+            if (!message.empty()) {
+                std::cout << " - " << message;
+            }
+            std::cout << std::endl;
+        }
     }
 
     return ok ? 0 : 1;
@@ -185,12 +228,12 @@ int main(int argc, char* argv[]) {
         }
         if (action == "apply") {
             if (module == "all") {
-                return print_response(client.request({{"command", "apply_all"}}));
+                return print_policy_apply_response(client.request({{"command", "apply_all"}}));
             }
             if (policy == "all") {
-                return print_response(client.request({{"command", "apply_module"}, {"module", module}}));
+                return print_policy_apply_response(client.request({{"command", "apply_module"}, {"module", module}}));
             }
-            return print_response(client.request({{"command", "apply_policy"}, {"module", module}, {"policy", policy}}));
+            return print_policy_apply_response(client.request({{"command", "apply_policy"}, {"module", module}, {"policy", policy}}));
         }
         if (action == "list") {
             return print_response(client.request({{"command", "policy_list"}, {"module", module.empty() ? "all" : module}}));
