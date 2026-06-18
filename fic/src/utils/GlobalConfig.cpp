@@ -14,13 +14,13 @@ std::optional<std::string> GlobalConfig::getEnabledValue(const std::string& para
         return std::nullopt;
     }
 
-    if (!globalConfig.isParameterExists(parameter)) {
+    if (!globalConfig.hasConfiguredValue(parameter)) {
         return std::nullopt;
     }
 
-    if (globalConfig.getIsEnable(parameter) != ENABLED_FLAG) {
+    if (globalConfig.getPolicyStatus(parameter) != ENABLED_FLAG) {
         return std::nullopt;
     }
 
-    return globalConfig.getValue(parameter);
+    return globalConfig.getPolicyValue(parameter);
 }

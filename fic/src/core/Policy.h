@@ -29,9 +29,9 @@ protected:
         return true;
     }
 public:
-    //Записана ли политика в конфигурационный файл
-    bool isPolicySet(){
-        return this->moduleConf->isParameterExists(this->policyName);
+    //Задано ли значение политики в конфигурационном файле
+    bool hasConfiguredValue(){
+        return this->moduleConf->hasConfiguredValue(this->policyName);
     }
 
 
@@ -45,7 +45,7 @@ public:
     //Получаем значение параметра
     //Возвращаем nullopt, если значение не установлено или невалидно
     std::optional<std::string> getValue() {
-        if (!this->moduleConf->isParameterExists(this->policyName)) {
+        if (!this->moduleConf->hasConfiguredValue(this->policyName)) {
             this->log("Значение политики " + this->policyName + " не установлено", logLevel::ERROR);
             return std::nullopt;
         }
@@ -79,8 +79,8 @@ public:
     }
 
     //Включена ли указанная политика?
-    bool isEnable(){
-        if(moduleConf->getIsEnable(this->policyName) == "ENABLE"){
+    bool isEnabled(){
+        if(moduleConf->getPolicyStatus(this->policyName) == "ENABLE"){
             return true;
         }
         return false;

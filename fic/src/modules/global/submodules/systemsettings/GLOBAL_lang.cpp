@@ -13,7 +13,7 @@ bool GLOBAL_lang::apply (){
         return false;
     }
 
-    if (!this->moduleConf->isParameterExists(this->policyName)) {
+    if (!this->moduleConf->hasConfiguredValue(this->policyName)) {
         return false;
     }
 

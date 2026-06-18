@@ -271,7 +271,7 @@ PolicyApplyResult applyPolicy(PolicyMap& cafMap, std::string module, std::string
         }
 
         const std::shared_ptr<Policy>& policyClass = policyIt->second;
-        if (!policyClass->isEnable()) {
+        if (!policyClass->isEnabled()) {
             return {
                 module,
                 submoduleName,
@@ -304,7 +304,7 @@ PolicyApplySummary applyModulePolicies(PolicyMap& cafMap, std::string module) {
 
     for (const auto& [submoduleName, policyMap] : moduleIt->second) {
         for (const auto& [policyName, policyClass] : policyMap) {
-            if (!policyClass->isEnable()) {
+            if (!policyClass->isEnabled()) {
                 summary.add({
                     module,
                     submoduleName,
@@ -334,7 +334,7 @@ PolicyApplySummary applyAllPolicies(PolicyMap& cafMap) {
     for (const auto& [moduleName, submoduleMap] : cafMap) {
         for (const auto& [submoduleName, policyMap] : submoduleMap) {
             for (const auto& [policyName, policyClass] : policyMap) {
-                if (!policyClass->isEnable()) {
+                if (!policyClass->isEnabled()) {
                     summary.add({
                         moduleName,
                         submoduleName,
@@ -434,17 +434,11 @@ bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,
             std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
             return false;
         }
-        if(mcfh.isParameterExists(policy)){
-            if(!mcfh.disableParam(policy)){
-                std::cout << "Не удалось отключить параметр" << '\n';
-                return false;
-            }else{
-                std::cout << "Параметр " + policy + " отключен" << '\n';
-            }
-        }else{
-            std::cout << "Параметра не существует. Добавьте его вручную через fic-cli policy set ..." << '\n';
-            return true;
+        if(!mcfh.disablePolicy(policy)){
+            std::cout << "Не удалось отключить параметр" << '\n';
+            return false;
         }
+        std::cout << "Параметр " + policy + " отключен" << '\n';
         //mcfh.printConfig();
         if(!mcfh.saveConfig()){
             std::cout << "Не удалось отключить политику" << '\n';
@@ -466,17 +460,11 @@ bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,st
             std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
             return false;
         }
-        if(mcfh.isParameterExists(policy)){
-            if(!mcfh.enableParam(policy)){
-                std::cout << "Не удалось включить параметр" << '\n';
-                return false;
-            }else{
-                std::cout << "Параметр " + policy + " включен" << '\n';
-            }
-        }else{
-            std::cout << "Параметра не существует. Добавьте его вручную через fic-cli policy set ..." << '\n';
-            return true;
+        if(!mcfh.enablePolicy(policy)){
+            std::cout << "Не удалось включить параметр" << '\n';
+            return false;
         }
+        std::cout << "Параметр " + policy + " включен" << '\n';
         //mcfh.printConfig();
         if(!mcfh.saveConfig()){
             std::cout << "Не удалось включить политику" << '\n';
@@ -514,22 +502,11 @@ bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::
             std::cerr << "Не удалось преобразовать параметр." << '\n';
             return false;
         }
-        if(mcfh.isParameterExists(policy)){
-            if(!mcfh.setValue(policy, valPostprocessing)){
-                std::cerr << "Не удалось задать значение параметра" << '\n';
-                return false;
-            }else{
-                std::cout << "Параметру " + policy + " было присвоено переданное значение" << '\n';
-            }
-        }else{
-            std::cout << "Параметра не существует. Попытка создания..."<<std::endl;
-            if(!mcfh.setValue(policy, valPostprocessing)){
-                std::cerr << "Не удалось добавить параметр в конфигурационный файл" << '\n';
-                return false;
-            }else{
-                std::cout << "Параметру " + policy + " было присвоено переданное значение. Учтите, что политика при создании по умолчанию выключена." << '\n';
-            }
+        if(!mcfh.setPolicyValue(policy, valPostprocessing)){
+            std::cerr << "Не удалось задать значение параметра" << '\n';
+            return false;
         }
+        std::cout << "Параметру " + policy + " было присвоено переданное значение. Если статус не был задан ранее, политика остается выключенной." << '\n';
         if(!mcfh.saveConfig()){
             std::cerr << "Не удалось сохранить конфигурационный файл" << '\n';
             return false;

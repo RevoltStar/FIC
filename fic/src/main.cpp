@@ -278,7 +278,7 @@ json policy_to_json(const std::string& module,
                     const std::shared_ptr<Policy>& policyClass) {
     const PolicyTypeValue& typeValue = policyClass->getPolicyTypeValue();
     const PolicyEditorSpec editorSpec = typeValue.getEditorSpec();
-    const bool isSet = policyClass->isPolicySet();
+    const bool isSet = policyClass->hasConfiguredValue();
     bool valueValid = true;
     std::string value = policyClass->getDefaultValue();
 
@@ -304,7 +304,7 @@ json policy_to_json(const std::string& module,
         {"module", module},
         {"submodule", submoduleName},
         {"policy", policyName},
-        {"enabled", policyClass->isEnable()},
+        {"enabled", policyClass->isEnabled()},
         {"set", isSet},
         {"value", value},
         {"value_valid", valueValid},
@@ -353,7 +353,7 @@ json policy_status_json(
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
 
-    const bool enabled = policyClass->isEnable();
+    const bool enabled = policyClass->isEnabled();
     return json{
         {"ok", true},
         {"message", "policy status loaded"},
@@ -373,7 +373,7 @@ json policy_value_json(
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
-    if (!policyClass->isPolicySet()) {
+    if (!policyClass->hasConfiguredValue()) {
         return fic::ipc::make_error_response("policy value is not set: " + module + " " + policy);
     }
 

@@ -13,7 +13,7 @@ bool GLOBAL_log_level::apply (){
         return false;
     }
 
-    if (!this->moduleConf->isParameterExists(this->policyName)) {
+    if (!this->moduleConf->hasConfiguredValue(this->policyName)) {
         return false;
     }
 

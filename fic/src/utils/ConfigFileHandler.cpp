@@ -116,7 +116,7 @@ bool ConfigFileHandler::saveConfig() {
 }
 */
 //Параметр существует
-bool ConfigFileHandler::isParameterExists(const std::string& parameter){
+bool ConfigFileHandler::isParameterExists(const std::string& parameter) const{
     const auto it = config_.find(parameter);
     return it != config_.end();
 }
