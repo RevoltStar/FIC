@@ -13,6 +13,7 @@
 #include <iostream>
 #include <locale>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -28,12 +29,21 @@
 #include "core/main_function.h"
 #include "ipc/FicIpcClient.h"
 #include "utils/DB.h"
+#include "utils/Logger.h"
 #include "utils/SystemBootInfo.h"
 
 using json = nlohmann::json;
 
 namespace {
 std::atomic_bool g_stop{false};
+
+struct PeerCredentials {
+    bool available = false;
+    pid_t pid = -1;
+    uid_t uid = static_cast<uid_t>(-1);
+    gid_t gid = static_cast<gid_t>(-1);
+    std::string error;
+};
 
 void handle_signal(int) {
     g_stop = true;
@@ -74,6 +84,170 @@ std::string to_lower_ascii(std::string value) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+std::string sanitize_log_value(std::string value) {
+    for (char& ch : value) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            ch = ' ';
+        }
+    }
+    return value;
+}
+
+std::string peer_credentials_to_string(const PeerCredentials& peer) {
+    if (!peer.available) {
+        return "peer=unknown error=\"" + sanitize_log_value(peer.error) + "\"";
+    }
+
+    return "peer_pid=" + std::to_string(peer.pid) +
+           " peer_uid=" + std::to_string(peer.uid) +
+           " peer_gid=" + std::to_string(peer.gid);
+}
+
+PeerCredentials get_peer_credentials(int fd) {
+    PeerCredentials peer;
+#ifdef SO_PEERCRED
+    struct ucred credentials {};
+    socklen_t credentialsLength = sizeof(credentials);
+    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &credentialsLength) == 0) {
+        peer.available = true;
+        peer.pid = credentials.pid;
+        peer.uid = credentials.uid;
+        peer.gid = credentials.gid;
+        return peer;
+    }
+    peer.error = std::strerror(errno);
+#else
+    peer.error = "SO_PEERCRED is unavailable";
+#endif
+    return peer;
+}
+
+std::string request_audit_summary(const json& request) {
+    if (!request.is_object()) {
+        return "command=<invalid-json>";
+    }
+
+    std::string summary = "command=" + sanitize_log_value(request.value("command", ""));
+
+    const std::vector<std::string> stringFields = {"module", "policy", "control_level"};
+    for (const std::string& field : stringFields) {
+        if (request.contains(field) && request[field].is_string()) {
+            summary += " " + field + "=" + sanitize_log_value(request[field].get<std::string>());
+        }
+    }
+
+    const std::vector<std::string> integerFields = {"device_id", "parent_id"};
+    for (const std::string& field : integerFields) {
+        if (request.contains(field) && request[field].is_number_integer()) {
+            summary += " " + field + "=" + std::to_string(request[field].get<int>());
+        }
+    }
+
+    return summary;
+}
+
+void write_audit_log(const std::string& message) {
+    try {
+        const std::string bootId = SystemBootInfo::get_boot_id();
+        const std::filesystem::path auditDir = std::filesystem::path("/opt/fic/log") /
+            (bootId.empty() ? "unknown_boot" : bootId) /
+            "audit";
+        std::filesystem::create_directories(auditDir);
+
+        const std::filesystem::path auditFile = auditDir / ("audit_" + std::to_string(getpid()) + ".txt");
+        std::ofstream stream(auditFile, std::ios::app);
+        if (!stream.is_open()) {
+            std::cerr << "failed to open audit log: " << auditFile << std::endl;
+            return;
+        }
+
+        stream << "[" << Logger::get_current_time() << "] " << message << '\n';
+    } catch (const std::exception& e) {
+        std::cerr << "audit logging error: " << e.what() << std::endl;
+    }
+}
+
+void audit_ipc_request(const PeerCredentials& peer, const json& request, const json& response) {
+    const bool ok = response.value("ok", false);
+    const std::string responseMessage = response.value("message", "");
+
+    write_audit_log(
+        peer_credentials_to_string(peer) + " " +
+        request_audit_summary(request) +
+        " ok=" + std::string(ok ? "true" : "false") +
+        " message=\"" + sanitize_log_value(responseMessage) + "\""
+    );
+}
+
+std::string mode_to_octal(mode_t mode) {
+    std::ostringstream out;
+    out << "0" << std::oct << (mode & 07777);
+    return out.str();
+}
+
+bool verify_path_permissions(const std::filesystem::path& path,
+                             const std::string& label,
+                             mode_t expectedType,
+                             mode_t expectedMode,
+                             uid_t expectedUid,
+                             std::optional<gid_t> expectedGid) {
+    struct stat info {};
+    if (::lstat(path.c_str(), &info) != 0) {
+        std::cerr << "lstat(" << path << ") failed while checking " << label
+                  << ": " << std::strerror(errno) << std::endl;
+        return false;
+    }
+
+    if ((info.st_mode & S_IFMT) != expectedType) {
+        std::cerr << label << " has invalid type: " << path << std::endl;
+        return false;
+    }
+    if (info.st_uid != expectedUid) {
+        std::cerr << label << " has invalid owner: " << path
+                  << ", expected uid=" << expectedUid
+                  << ", actual uid=" << info.st_uid << std::endl;
+        return false;
+    }
+    if (expectedGid.has_value() && info.st_gid != expectedGid.value()) {
+        std::cerr << label << " has invalid group: " << path
+                  << ", expected gid=" << expectedGid.value()
+                  << ", actual gid=" << info.st_gid << std::endl;
+        return false;
+    }
+
+    const mode_t actualMode = info.st_mode & 07777;
+    if (actualMode != expectedMode) {
+        std::cerr << label << " has invalid permissions: " << path
+                  << ", expected mode=" << mode_to_octal(expectedMode)
+                  << ", actual mode=" << mode_to_octal(actualMode) << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool verify_runtime_socket_permissions(const std::string& socketPath, const group* ficGroup) {
+    const auto runtimeDir = std::filesystem::path(socketPath).parent_path();
+    const bool isDefaultRuntimeDir = runtimeDir == std::filesystem::path("/run/fic");
+
+    std::optional<gid_t> expectedGid;
+    if (ficGroup != nullptr) {
+        expectedGid = ficGroup->gr_gid;
+    }
+
+    if (isDefaultRuntimeDir) {
+        if (ficGroup == nullptr) {
+            std::cerr << "group 'fic' does not exist; refusing to expose default daemon socket" << std::endl;
+            return false;
+        }
+        if (!verify_path_permissions(runtimeDir, "fic runtime directory", S_IFDIR, 0770, 0, expectedGid)) {
+            return false;
+        }
+    }
+
+    return verify_path_permissions(socketPath, "fic daemon socket", S_IFSOCK, 0660, geteuid(), expectedGid);
 }
 
 std::string canonical_module_name(
@@ -603,21 +777,27 @@ json handle_request(json request,
 
 bool serve_one_client(int clientFd,
                       std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap) {
+    const PeerCredentials peer = get_peer_credentials(clientFd);
     std::string requestText;
     std::string error;
     if (!fic::ipc::read_until_eof(clientFd, requestText, error)) {
         json response = fic::ipc::make_error_response("read failed: " + error);
+        audit_ipc_request(peer, json{}, response);
         std::string text = response.dump() + "\n";
         fic::ipc::write_all(clientFd, text, error);
         return false;
     }
 
+    json request;
     json response;
     try {
-        response = handle_request(json::parse(requestText), cafMap);
+        request = json::parse(requestText);
+        response = handle_request(request, cafMap);
     } catch (const std::exception& e) {
         response = fic::ipc::make_error_response("invalid request: " + std::string(e.what()));
     }
+
+    audit_ipc_request(peer, request, response);
 
     std::string responseText = response.dump() + "\n";
     return fic::ipc::write_all(clientFd, responseText, error);
@@ -676,6 +856,11 @@ int create_server_socket(const std::string& socketPath) {
     std::filesystem::create_directories(runtimeDir);
 
     group* ficGroup = ::getgrnam("fic");
+    if (runtimeDir == std::filesystem::path("/run/fic") && ficGroup == nullptr) {
+        std::cerr << "group 'fic' does not exist; refusing to expose default daemon socket" << std::endl;
+        return -1;
+    }
+
     const bool manageRuntimeDirPermissions = !runtimeDirAlreadyExisted || runtimeDir == std::filesystem::path("/run/fic");
     if (manageRuntimeDirPermissions) {
         if (ficGroup != nullptr) {
@@ -742,6 +927,12 @@ int create_server_socket(const std::string& socketPath) {
     }
     if (::chmod(socketPath.c_str(), 0660) < 0) {
         std::cerr << "chmod(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
+        ::close(fd);
+        ::unlink(socketPath.c_str());
+        return -1;
+    }
+
+    if (!verify_runtime_socket_permissions(socketPath, ficGroup)) {
         ::close(fd);
         ::unlink(socketPath.c_str());
         return -1;
