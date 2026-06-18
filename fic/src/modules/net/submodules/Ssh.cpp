@@ -184,7 +184,7 @@ void SshConfigFileHandler::printConfig() const {
 Ssh::~Ssh() {
 }
 
-const std::string Ssh::sshPath="/home/MFC.LOCAL/poroshinmi/openssh-test.txt";
+const std::string Ssh::sshPath="/etc/ssh/sshd_config";
 
 std::unique_ptr<SshConfigFileHandler> Ssh::sshConfig =
         std::make_unique<SshConfigFileHandler>(Ssh::sshPath);
