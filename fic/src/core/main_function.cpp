@@ -1,5 +1,7 @@
 #include "main_function.h"
 
+#include "session/ProcessExecutor.h"
+
 
 //Реализация test
 void test(){
@@ -114,8 +116,8 @@ bool lock(){
     //Производим блокировку всех активных сессий
     //В новых системах - /usr/bin/loginctl
     //В старых системах (а также в некоторых новых) - /bin/loginctl
-    bool res = CommandExecutor::execute("/usr/bin/loginctl", "lock-sessions") ||
-            CommandExecutor::execute("/bin/loginctl", "lock-sessions");
+    bool res = ProcessExecutor::execute("/usr/bin/loginctl", {"lock-sessions"}).success() ||
+            ProcessExecutor::execute("/bin/loginctl", {"lock-sessions"}).success();
 
     if(!res){
         std::cerr << "    Не удалось произвести блокировку активных сессий." << std::endl;
