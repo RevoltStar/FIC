@@ -22,28 +22,13 @@ bool ModuleConfigFileHandler::hasConfiguredValue(const std::string& policy) cons
     return ConfigFileHandler::isParameterExists(valueKey(policy));
 }
 
-bool ModuleConfigFileHandler::normalizeMissingOrInvalidStatus(const std::string& policy) {
+std::string ModuleConfigFileHandler::getPolicyStatus(const std::string& policy) {
     const std::string key = statusKey(policy);
     if (!ConfigFileHandler::isParameterExists(key)) {
-        ConfigFileHandler::setValue(key, DISABLED_STATUS);
-        return saveConfig();
-    }
-
-    const std::string status = ConfigFileHandler::getValue(key);
-    if (status == ENABLED_STATUS || status == DISABLED_STATUS) {
-        return true;
-    }
-
-    ConfigFileHandler::setValue(key, DISABLED_STATUS);
-    return saveConfig();
-}
-
-std::string ModuleConfigFileHandler::getPolicyStatus(const std::string& policy) {
-    if (!normalizeMissingOrInvalidStatus(policy)) {
         return DISABLED_STATUS;
     }
 
-    const std::string status = ConfigFileHandler::getValue(statusKey(policy));
+    const std::string status = ConfigFileHandler::getValue(key);
     return status == ENABLED_STATUS ? ENABLED_STATUS : DISABLED_STATUS;
 }
 

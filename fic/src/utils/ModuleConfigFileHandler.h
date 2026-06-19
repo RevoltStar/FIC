@@ -41,8 +41,6 @@ private:
 
     static std::string statusKey(const std::string& policy);
     static std::string valueKey(const std::string& policy);
-
-    bool normalizeMissingOrInvalidStatus(const std::string& policy);
 };
 
 #endif // MODULECONFIGFILEHANDLER_H
