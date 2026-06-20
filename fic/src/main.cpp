@@ -28,7 +28,7 @@
 
 #include "core/main_function.h"
 #include <fic/ipc/FicIpcClient.h>
-#include "utils/DB.h"
+#include <fic/device-db/DB.h>
 #include "utils/Logger.h"
 #include "utils/SystemBootInfo.h"
 

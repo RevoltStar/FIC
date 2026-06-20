@@ -1,6 +1,6 @@
 // file name: main.cpp
 #include <iostream>
-#include "utils/DB.h"
+#include <fic/device-db/DB.h>
 #include "modules/UDEVInfoCollector.h"
 #include "modules/USBInfoCollector.h"
 #include "modules/PCIInfoCollector.h"

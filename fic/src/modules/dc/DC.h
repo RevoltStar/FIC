@@ -3,7 +3,7 @@
 
 #include "core/Policy.h"
 #include "utils/ConfigFileHandler.h"
-#include "utils/DB.h"
+#include <fic/device-db/DB.h>
 #include <iostream>
 
 //Класс для работы с устройствами

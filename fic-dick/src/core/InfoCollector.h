@@ -9,7 +9,7 @@
 #include <vector>
 #include "Logger.h"
 #include <unordered_map>
-#include "utils/DB.h"
+#include <fic/device-db/DB.h>
 #include <openssl/sha.h>
 
 namespace fs = std::filesystem;

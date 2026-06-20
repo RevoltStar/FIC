@@ -4,6 +4,10 @@ project(fic_dick LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
+if(NOT TARGET fic-device-db)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-device-db ${CMAKE_CURRENT_BINARY_DIR}/fic-device-db)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -12,17 +16,6 @@ file(GLOB_RECURSE SRC_FILES
     "src/*.cpp"
     "src/*/*.cpp"
     "src/*/*/*.cpp"
-)
-
-list(APPEND SRC_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/DB.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/ConfigFileHandler.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/ExclusivePidLock.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/FileHandler.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/FileStats.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/GlobalConfig.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/Logger.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/utils/ModuleConfigFileHandler.cpp"
 )
 
 # Собираем заголовки для IDE и MOC
@@ -54,6 +47,7 @@ target_include_directories(fic-dick PRIVATE
 target_link_libraries(fic-dick PRIVATE
     OpenSSL::Crypto
     SQLite::SQLite3
+    fic-device-db
 )
 # Установка
 install(TARGETS fic-dick DESTINATION bin)
