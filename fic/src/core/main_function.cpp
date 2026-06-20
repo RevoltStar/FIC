@@ -122,6 +122,7 @@ bool lock(){
 
     if(!res){
         std::cerr << "    Не удалось произвести блокировку активных сессий." << std::endl;
+        return false;
     }
     return true;
 }
