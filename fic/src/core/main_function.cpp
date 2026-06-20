@@ -1,6 +1,7 @@
 #include "main_function.h"
 
-#include "utils/ProcessExecutor.h"
+#include "utils/CommandHashStore.h"
+#include "utils/VerifiedProcessExecutor.h"
 
 
 //Реализация test
@@ -116,8 +117,8 @@ bool lock(){
     //Производим блокировку всех активных сессий
     //В новых системах - /usr/bin/loginctl
     //В старых системах (а также в некоторых новых) - /bin/loginctl
-    bool res = ProcessExecutor::execute("/usr/bin/loginctl", {"lock-sessions"}).success() ||
-            ProcessExecutor::execute("/bin/loginctl", {"lock-sessions"}).success();
+    bool res = VerifiedProcessExecutor::execute("/usr/bin/loginctl", {"lock-sessions"}).success() ||
+            VerifiedProcessExecutor::execute("/bin/loginctl", {"lock-sessions"}).success();
 
     if(!res){
         std::cerr << "    Не удалось произвести блокировку активных сессий." << std::endl;
@@ -162,7 +163,9 @@ bool lockstatus(){
 
 //Вычислить хэш для исполняемого файла
 bool calcHash(const std::string& command){
-    if(!CommandExecutor::calcHash(command)){
+    std::string error;
+    if(!CommandHashStore::saveHash(command, error)){
+        std::cerr << error << std::endl;
         return false;
     }
     return true;

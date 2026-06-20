@@ -6,7 +6,6 @@
 #include <string>
 
 #include "utils/SingleLineFileHandler.h"
-#include "utils/CommandExecutor.h"
 #include "utils/ConfigFileHandler.h"
 #include "utils/SectionConfigFileHandler.h"
 #include "utils/LocalizationManager.h"
