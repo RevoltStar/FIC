@@ -9,7 +9,7 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStyle>
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 #include "wrappers/QLocalizationManager.h"
 #include <algorithm>
 #include <cctype>

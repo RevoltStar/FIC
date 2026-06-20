@@ -4,6 +4,10 @@ project(fic_gui VERSION 0.1 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
+if(NOT TARGET fic-ipc)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
+endif()
+
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -56,12 +60,12 @@ target_link_libraries(fic-gui PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     OpenSSL::SSL
     OpenSSL::Crypto
+    fic-ipc
 )
 
 target_include_directories(fic-gui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/wrappers
-    ${CMAKE_CURRENT_SOURCE_DIR}/../fic/src
 )
 
 set_target_properties(fic-gui PROPERTIES

@@ -65,7 +65,7 @@ fic --oneshot
 Путь задан в общем IPC-заголовке:
 
 ```text
-fic/src/ipc/FicIpcClient.h
+fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 ```
 
 При создании сокета демон:

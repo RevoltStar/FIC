@@ -1,6 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 
 #include <QStringList>
 #include <QWheelEvent>

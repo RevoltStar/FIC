@@ -7,6 +7,9 @@ Components:
 - fic-gui: graphical client; sends config mutation commands to fic
 - fic-dick: device database collector
 
+Shared libraries:
+- fic-common/fic-ipc: shared IPC client/protocol helpers used by fic, fic-cli, fic-gui, and fic-session-agent
+
 Access model:
 - Access to the daemon API is intentionally controlled by Unix socket permissions.
 - Members of the `fic` OS group are treated as full FIC administrators and currently have full access to all daemon API commands, including configuration changes, policy application, device database changes, lock/unlock actions, hash recalculation, and daemon shutdown.

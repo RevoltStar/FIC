@@ -3,7 +3,7 @@
 #include <QLabel>
 #include <QHeaderView>
 #include <QDebug>
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 
 DeviceAttributeList::DeviceAttributeList(QWidget *parent)
     : QWidget(parent)

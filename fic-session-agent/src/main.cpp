@@ -16,7 +16,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 
 namespace {
 std::atomic_bool stopRequested{false};

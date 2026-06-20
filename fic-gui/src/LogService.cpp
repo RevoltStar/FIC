@@ -4,7 +4,7 @@
 
 #include <QTimeZone>
 
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 
 LogService::LogService(QObject *parent)
     : QObject(parent)

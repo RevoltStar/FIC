@@ -24,7 +24,7 @@ GUI предназначен для удобного изменения знач
 GUI использует общий IPC-клиент:
 
 ```text
-fic/src/ipc/FicIpcClient.h
+fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 ```
 
 По умолчанию подключение выполняется к:
@@ -137,7 +137,7 @@ cmake --build build-fic-gui
 - `fic-gui/src/mainwindow.cpp` - основная логика окна и применения изменений;
 - `fic-gui/src/policy` - редакторы политик;
 - `fic-gui/src/wrappers` - Qt-обертки над общей логикой;
-- `fic/src/ipc/FicIpcClient.h` - IPC-клиент для связи с демоном.
+- `fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h` - IPC-клиент для связи с демоном.
 
 ## Типовой сценарий разработки
 

@@ -1,6 +1,6 @@
 #include "session/SessionAgentClient.h"
 
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 
 #include <cerrno>
 #include <cstring>

@@ -25,7 +25,7 @@ FIC_SOCKET_PATH=/tmp/fic.sock fic-cli status
 Переменная обрабатывается в общем IPC-клиенте:
 
 ```text
-fic/src/ipc/FicIpcClient.h
+fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 ```
 
 ## Общий формат работы

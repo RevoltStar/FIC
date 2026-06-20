@@ -27,7 +27,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/main_function.h"
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 #include "utils/DB.h"
 #include "utils/Logger.h"
 #include "utils/SystemBootInfo.h"

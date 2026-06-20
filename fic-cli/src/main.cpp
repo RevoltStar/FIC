@@ -4,7 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 
 using json = nlohmann::json;
 

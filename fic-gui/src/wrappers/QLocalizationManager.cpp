@@ -2,7 +2,7 @@
 
 #include <QHash>
 
-#include "ipc/FicIpcClient.h"
+#include <fic/ipc/FicIpcClient.h>
 
 namespace {
 struct LocalizationCache {
