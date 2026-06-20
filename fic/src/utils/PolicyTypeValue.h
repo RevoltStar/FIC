@@ -1,6 +1,0 @@
-#ifndef FIC_SRC_UTILS_POLICY_TYPE_VALUE_COMPAT_H
-#define FIC_SRC_UTILS_POLICY_TYPE_VALUE_COMPAT_H
-
-#include <fic/policy/PolicyTypeValue.h>
-
-#endif // FIC_SRC_UTILS_POLICY_TYPE_VALUE_COMPAT_H

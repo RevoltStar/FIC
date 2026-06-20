@@ -1,6 +1,0 @@
-#ifndef FIC_SRC_IPC_FIC_IPC_CLIENT_COMPAT_H
-#define FIC_SRC_IPC_FIC_IPC_CLIENT_COMPAT_H
-
-#include <fic/ipc/FicIpcClient.h>
-
-#endif // FIC_SRC_IPC_FIC_IPC_CLIENT_COMPAT_H

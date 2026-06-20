@@ -1,6 +1,0 @@
-#ifndef FIC_SRC_UTILS_NOTIFY_USER_COMPAT_H
-#define FIC_SRC_UTILS_NOTIFY_USER_COMPAT_H
-
-#include <fic/core/NotifyUser.h>
-
-#endif // FIC_SRC_UTILS_NOTIFY_USER_COMPAT_H

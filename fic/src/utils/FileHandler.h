@@ -1,6 +1,0 @@
-#ifndef FIC_SRC_UTILS_FILE_HANDLER_COMPAT_H
-#define FIC_SRC_UTILS_FILE_HANDLER_COMPAT_H
-
-#include <fic/core/FileHandler.h>
-
-#endif // FIC_SRC_UTILS_FILE_HANDLER_COMPAT_H

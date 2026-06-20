@@ -2,7 +2,7 @@
 #define MODE_ADN_OWNER_H
 
 #include "modules/dac/DAC.h"
-#include "utils/FileStats.h"
+#include <fic/core/FileStats.h>
 #include <map>
 
 //Класс для работы правами/владельцами файлов и каталогов

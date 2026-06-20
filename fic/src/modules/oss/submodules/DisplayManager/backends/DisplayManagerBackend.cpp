@@ -3,7 +3,7 @@
 #include "modules/oss/submodules/DisplayManager/backends/GdmBackend.h"
 #include "modules/oss/submodules/DisplayManager/backends/LightDmBackend.h"
 #include "modules/oss/submodules/DisplayManager/backends/SddmBackend.h"
-#include "utils/SectionConfigFileHandler.h"
+#include <fic/core/SectionConfigFileHandler.h>
 
 #include <algorithm>
 #include <cctype>

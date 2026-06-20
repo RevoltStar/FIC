@@ -2,7 +2,7 @@
 #define GLOBAL_LOG_LEVEL_H
 
 #include "modules/global/submodules/SystemSettings.h"
-#include "utils/Logger.h"
+#include <fic/core/Logger.h>
 
 class GLOBAL_log_level : public SystemSettings
 {

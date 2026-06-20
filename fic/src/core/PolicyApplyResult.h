@@ -1,6 +1,0 @@
-#ifndef FIC_SRC_CORE_POLICY_APPLY_RESULT_COMPAT_H
-#define FIC_SRC_CORE_POLICY_APPLY_RESULT_COMPAT_H
-
-#include <fic/policy/PolicyApplyResult.h>
-
-#endif // FIC_SRC_CORE_POLICY_APPLY_RESULT_COMPAT_H

@@ -2,7 +2,7 @@
 #define GLOBAL_H
 
 //Глобальные настройки приложения
-#include "core/Policy.h"
+#include <fic/policy/Policy.h>
 class Global : public Policy
 {
 public:

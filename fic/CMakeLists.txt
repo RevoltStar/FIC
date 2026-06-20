@@ -49,7 +49,6 @@ target_include_directories(fic PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/modules
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
 )
 
 target_link_libraries(fic PRIVATE OpenSSL::Crypto)

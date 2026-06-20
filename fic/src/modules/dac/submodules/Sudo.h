@@ -1,6 +1,6 @@
 #ifndef SUDOEDIT_H
 #define SUDOEDIT_H
-#include "utils/ConfigFileHandler.h"
+#include <fic/core/ConfigFileHandler.h>
 #include "modules/dac/DAC.h"
 #include <iostream>
 #include <string>

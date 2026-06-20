@@ -1,6 +1,0 @@
-#ifndef FIC_SRC_UTILS_GLOBAL_CONFIG_COMPAT_H
-#define FIC_SRC_UTILS_GLOBAL_CONFIG_COMPAT_H
-
-#include <fic/core/GlobalConfig.h>
-
-#endif // FIC_SRC_UTILS_GLOBAL_CONFIG_COMPAT_H

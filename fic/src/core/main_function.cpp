@@ -1,7 +1,7 @@
 #include "main_function.h"
 
-#include "utils/CommandHashStore.h"
-#include "utils/VerifiedProcessExecutor.h"
+#include <fic/core/CommandHashStore.h>
+#include <fic/core/VerifiedProcessExecutor.h>
 
 
 //Реализация test

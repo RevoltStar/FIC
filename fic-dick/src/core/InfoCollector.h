@@ -7,7 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include "Logger.h"
+#include <fic/core/Logger.h>
 #include <unordered_map>
 #include <fic/device-db/DB.h>
 #include <openssl/sha.h>

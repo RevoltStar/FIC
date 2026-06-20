@@ -1,6 +1,6 @@
 #ifndef DAC_H
 #define DAC_H
-#include "Policy.h"
+#include <fic/policy/Policy.h>
 
 //Класс для дискреционного управления доступом
 class DAC : public Policy

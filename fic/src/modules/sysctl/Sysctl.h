@@ -1,8 +1,8 @@
 #ifndef SYSCTLEDIT_H
 #define SYSCTLEDIT_H
 
-#include "core/Policy.h"
-#include "utils/ConfigFileHandler.h"
+#include <fic/policy/Policy.h>
+#include <fic/core/ConfigFileHandler.h>
 #include <string>
 
 //Класс для работы с файлом /etc/sysctl

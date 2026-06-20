@@ -29,8 +29,8 @@
 #include "core/main_function.h"
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/device-db/DB.h>
-#include "utils/Logger.h"
-#include "utils/SystemBootInfo.h"
+#include <fic/core/Logger.h>
+#include <fic/core/SystemBootInfo.h>
 
 using json = nlohmann::json;
 

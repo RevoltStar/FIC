@@ -1,7 +1,7 @@
 #ifndef SESSION_COMMAND_EXECUTOR_H
 #define SESSION_COMMAND_EXECUTOR_H
 
-#include "utils/ProcessExecutor.h"
+#include <fic/core/ProcessExecutor.h>
 #include "session/UserSession.h"
 
 #include <string>

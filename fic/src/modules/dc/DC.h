@@ -1,8 +1,8 @@
 #ifndef DC_H
 #define DC_H
 
-#include "core/Policy.h"
-#include "utils/ConfigFileHandler.h"
+#include <fic/policy/Policy.h>
+#include <fic/core/ConfigFileHandler.h>
 #include <fic/device-db/DB.h>
 #include <iostream>
 

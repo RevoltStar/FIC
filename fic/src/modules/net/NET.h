@@ -2,7 +2,7 @@
 #define NET_H
 
 //Класс для модуля "Настройки сетевых сервисов"
-#include "core/Policy.h"
+#include <fic/policy/Policy.h>
 class Net : public Policy
 {
 public:

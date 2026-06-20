@@ -1,7 +1,7 @@
 #ifndef DESKTOP_BACKEND_COMMAND_H
 #define DESKTOP_BACKEND_COMMAND_H
 
-#include "utils/ProcessExecutor.h"
+#include <fic/core/ProcessExecutor.h>
 #include "session/UserSession.h"
 
 #include <optional>

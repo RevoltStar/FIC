@@ -2,7 +2,7 @@
 #define OSS_H
 
 //Класс для модуля "Настройки ОС"
-#include "core/Policy.h"
+#include <fic/policy/Policy.h>
 class OSS : public Policy
 {
 public:

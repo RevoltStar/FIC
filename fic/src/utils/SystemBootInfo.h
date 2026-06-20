@@ -1,6 +1,0 @@
-#ifndef FIC_SRC_UTILS_SYSTEM_BOOT_INFO_COMPAT_H
-#define FIC_SRC_UTILS_SYSTEM_BOOT_INFO_COMPAT_H
-
-#include <fic/core/SystemBootInfo.h>
-
-#endif // FIC_SRC_UTILS_SYSTEM_BOOT_INFO_COMPAT_H

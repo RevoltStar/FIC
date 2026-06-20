@@ -5,11 +5,11 @@
 #include <memory>
 #include <string>
 
-#include "utils/SingleLineFileHandler.h"
-#include "utils/ConfigFileHandler.h"
-#include "utils/SectionConfigFileHandler.h"
-#include "utils/LocalizationManager.h"
-#include "core/PolicyApplyResult.h"
+#include <fic/core/SingleLineFileHandler.h>
+#include <fic/core/ConfigFileHandler.h>
+#include <fic/core/SectionConfigFileHandler.h>
+#include <fic/core/LocalizationManager.h>
+#include <fic/policy/PolicyApplyResult.h>
 
 //Дискреционное разграничение доступа
 #include "modules/dac/submodules/modeandowner/DAC_blocking_user_access_to_system_files.h"
