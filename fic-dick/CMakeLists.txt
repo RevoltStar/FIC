@@ -4,6 +4,9 @@ project(fic_dick LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
+if(NOT TARGET fic-core)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-core ${CMAKE_CURRENT_BINARY_DIR}/fic-core)
+endif()
 if(NOT TARGET fic-device-db)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-device-db ${CMAKE_CURRENT_BINARY_DIR}/fic-device-db)
 endif()
@@ -47,6 +50,7 @@ target_include_directories(fic-dick PRIVATE
 target_link_libraries(fic-dick PRIVATE
     OpenSSL::Crypto
     SQLite::SQLite3
+    fic-core
     fic-device-db
 )
 # Установка

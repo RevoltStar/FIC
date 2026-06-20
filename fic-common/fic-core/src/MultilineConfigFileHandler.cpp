@@ -1,4 +1,4 @@
-#include "utils/MultilineConfigFileHandler.h"
+#include <fic/core/MultilineConfigFileHandler.h>
 #include <algorithm>
 
 MultilineConfigFileHandler::MultilineConfigFileHandler(const std::string& filepath, const std::string& delimeter)

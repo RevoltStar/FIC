@@ -1,6 +1,6 @@
-#include "utils/LocalizationManager.h"
+#include <fic/core/LocalizationManager.h>
 
-#include "utils/GlobalConfig.h"
+#include <fic/core/GlobalConfig.h>
 
 namespace {
 const char* kDefaultLanguage = "ru";

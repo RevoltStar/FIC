@@ -1,5 +1,5 @@
-#include "Logger.h"
-#include "GlobalConfig.h"
+#include <fic/core/Logger.h>
+#include <fic/core/GlobalConfig.h>
 
 #include <algorithm>
 #include <cctype>

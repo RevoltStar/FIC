@@ -1,4 +1,4 @@
-#include "utils/FileStats.h"
+#include <fic/core/FileStats.h>
 #include <sstream>
 
 FileStats::FileStats(const std::string &path)

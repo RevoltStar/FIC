@@ -1,4 +1,4 @@
-#include "utils/SingleLineFileHandler.h"
+#include <fic/core/SingleLineFileHandler.h>
 #include <algorithm>
 
 SingleLineFileHandler::SingleLineFileHandler(const std::string& filepath)

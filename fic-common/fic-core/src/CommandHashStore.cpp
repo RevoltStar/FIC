@@ -1,6 +1,6 @@
-#include "utils/CommandHashStore.h"
+#include <fic/core/CommandHashStore.h>
 
-#include "utils/ConfigFileHandler.h"
+#include <fic/core/ConfigFileHandler.h>
 
 #include <filesystem>
 #include <fstream>

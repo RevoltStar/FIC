@@ -1,4 +1,4 @@
-#include "utils/NotifyUser.h"
+#include <fic/core/NotifyUser.h>
 
 #include <sys/stat.h>
 #include <unistd.h>

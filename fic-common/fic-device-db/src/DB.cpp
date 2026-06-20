@@ -1,7 +1,7 @@
 #include <fic/device-db/DB.h>
 
-#include "utils/ExclusivePidLock.h"
-#include "utils/Logger.h"
+#include <fic/core/ExclusivePidLock.h>
+#include <fic/core/Logger.h>
 
 DB::DB(const std::string& db_path)
     : db_path(db_path),

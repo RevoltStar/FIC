@@ -1,4 +1,4 @@
-#include "utils/ConfigFileHandler.h"
+#include <fic/core/ConfigFileHandler.h>
 
 ConfigFileHandler::ConfigFileHandler(const std::string& filepath, const std::string& delimeter)
     :FileHandler(filepath, delimeter){

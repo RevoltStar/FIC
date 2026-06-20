@@ -1,4 +1,4 @@
-#include "utils/ModuleConfigFileHandler.h"
+#include <fic/core/ModuleConfigFileHandler.h>
 
 const std::string ModuleConfigFileHandler::moduleFolderPath = "/opt/fic/config";
 

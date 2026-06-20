@@ -9,6 +9,7 @@ Components:
 
 Shared libraries:
 - fic-common/fic-ipc: shared IPC client/protocol helpers used by fic, fic-cli, fic-gui, and fic-session-agent
+- fic-common/fic-core: shared low-level utilities used by fic, fic-dick, and fic-device-db
 - fic-common/fic-device-db: shared SQLite device database access layer used by fic and fic-dick
 
 Access model:

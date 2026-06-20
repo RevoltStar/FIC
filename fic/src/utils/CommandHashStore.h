@@ -1,16 +1,6 @@
-#ifndef COMMAND_HASH_STORE_H
-#define COMMAND_HASH_STORE_H
+#ifndef FIC_SRC_UTILS_COMMAND_HASH_STORE_COMPAT_H
+#define FIC_SRC_UTILS_COMMAND_HASH_STORE_COMPAT_H
 
-#include <string>
+#include <fic/core/CommandHashStore.h>
 
-class CommandHashStore {
-public:
-    static bool saveHash(const std::string& executable, std::string& error);
-    static bool verifyHash(const std::string& executable, std::string& error);
-
-private:
-    static bool isValidExecutablePath(const std::string& executable, std::string& error);
-    static std::string calculateSha256(const std::string& executable, std::string& error);
-};
-
-#endif // COMMAND_HASH_STORE_H
+#endif // FIC_SRC_UTILS_COMMAND_HASH_STORE_COMPAT_H

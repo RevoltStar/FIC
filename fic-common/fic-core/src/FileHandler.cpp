@@ -1,4 +1,4 @@
-#include "utils/FileHandler.h"
+#include <fic/core/FileHandler.h>
 
 FileHandler::FileHandler(const std::string& filepath, const std::string& delimeter){
     this->filepath_ = filepath;
@@ -133,5 +133,4 @@ std::string FileHandler::getValue(const std::string& parameter) const {
 void FileHandler::printConfig() const {
     // Ничего не делаем
 }
-
 

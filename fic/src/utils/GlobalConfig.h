@@ -1,13 +1,6 @@
-#ifndef GLOBALCONFIG_H
-#define GLOBALCONFIG_H
+#ifndef FIC_SRC_UTILS_GLOBAL_CONFIG_COMPAT_H
+#define FIC_SRC_UTILS_GLOBAL_CONFIG_COMPAT_H
 
-#include <optional>
-#include <string>
+#include <fic/core/GlobalConfig.h>
 
-class GlobalConfig
-{
-public:
-    static std::optional<std::string> getEnabledValue(const std::string& parameter);
-};
-
-#endif // GLOBALCONFIG_H
+#endif // FIC_SRC_UTILS_GLOBAL_CONFIG_COMPAT_H

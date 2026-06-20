@@ -1,6 +1,6 @@
-#include "utils/GlobalConfig.h"
+#include <fic/core/GlobalConfig.h>
 
-#include "utils/ModuleConfigFileHandler.h"
+#include <fic/core/ModuleConfigFileHandler.h>
 
 namespace {
 constexpr const char* GLOBAL_MODULE_NAME = "GLOBAL";
