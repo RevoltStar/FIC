@@ -1,6 +1,6 @@
 #include "modules/oss/submodules/DisplayManager.h"
 
-#include "session/ProcessExecutor.h"
+#include "utils/ProcessExecutor.h"
 
 #include <algorithm>
 #include <cctype>
