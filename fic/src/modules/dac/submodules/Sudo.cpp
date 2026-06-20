@@ -20,19 +20,6 @@ Sudo::Sudo()
     /*this->Check_And_Fix::postProcessingValue = std::make_unique<PostProcessingValueJSON>(",", ",");*/
 }
 
-// Проверить файл sudoers
-bool Sudo::checkValid(std::string sudoersPath){
-    const std::string request = "visudo -c -f " + sudoersPath;
-    int result = system(request.c_str());
-    if (result == 0) {
-        std::cout << "/etc/sudoers is syntactically valid." << std::endl;
-        return true;
-    } else {
-        std::cerr << "Error: /etc/sudoers is syntactically invalid. Check with visudo." << std::endl;
-        return false;
-    }
-}
-
 // Проверить и исправить параметр sudo
 bool Sudo::apply() {
     if (this->Sudo::sudoParameter == nullptr){

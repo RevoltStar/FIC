@@ -1214,8 +1214,6 @@ protected:
     //Соответствие какого параметра проверяем?
     std::unique_ptr<SudoersParam> sudoParameter;
 public:
-    //Проверить файл sudo
-    bool checkValid(std::string sudoersPath = "/etc/sudoers");
     Sudo();
     bool apply () override;
     virtual ~Sudo();
