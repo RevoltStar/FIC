@@ -1,6 +1,6 @@
-#include "Policy.h"
+#include <fic/policy/Policy.h>
 
-#include "utils/GlobalConfig.h"
+#include <fic/core/GlobalConfig.h>
 
 Policy::Policy(){
 
