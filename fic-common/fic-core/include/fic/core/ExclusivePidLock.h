@@ -99,10 +99,6 @@ public:
         }
     }
 
-    bool hasRight() const {
-        return isLocked_;
-    }
-
     bool isLocked() const {
         return isLocked_;
     }
