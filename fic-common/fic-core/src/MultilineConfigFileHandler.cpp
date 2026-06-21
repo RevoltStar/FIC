@@ -1,8 +1,8 @@
 #include <fic/core/MultilineConfigFileHandler.h>
 #include <algorithm>
 
-MultilineConfigFileHandler::MultilineConfigFileHandler(const std::string& filepath, const std::string& delimeter)
-    : ConfigFileHandler(filepath, delimeter) {}
+MultilineConfigFileHandler::MultilineConfigFileHandler(const std::string& filepath, const std::string& delimiter)
+    : ConfigFileHandler(filepath, delimiter) {}
 
 bool MultilineConfigFileHandler::loadConfig() {
     if (!this->FileHandler::loadFile()) {
@@ -21,7 +21,7 @@ bool MultilineConfigFileHandler::loadConfig() {
         }
 
         // Проверяем, начинается ли строка с нового параметра
-        const size_t delimiter_pos = line.find(delimeter_);
+        const size_t delimiter_pos = line.find(delimiter_);
         if (delimiter_pos != std::string::npos) {
             // Это новый параметр
             current_param = line.substr(0, delimiter_pos);
@@ -90,7 +90,7 @@ bool MultilineConfigFileHandler::setMultilineValue(const std::string& parameter,
     original_lines_.erase(
         std::remove_if(original_lines_.begin(), original_lines_.end(),
             [this, &parameter](const std::string& line) {
-                size_t pos = line.find(this->delimeter_);
+                size_t pos = line.find(this->delimiter_);
                 if (pos == std::string::npos) return false;
 
                 std::string param = line.substr(0, pos);
@@ -101,7 +101,7 @@ bool MultilineConfigFileHandler::setMultilineValue(const std::string& parameter,
     );
 
     // Добавляем новые строки
-    original_lines_.push_back(parameter + delimeter_ + values[0]);
+    original_lines_.push_back(parameter + delimiter_ + values[0]);
     for (size_t i = 1; i < values.size(); ++i) {
         original_lines_.push_back(values[i]);
     }
@@ -114,7 +114,7 @@ bool MultilineConfigFileHandler::isNewParameter(const std::string& line) const {
         return false;
     }
 
-    size_t delimiter_pos = line.find(delimeter_);
+    size_t delimiter_pos = line.find(delimiter_);
     if (delimiter_pos == std::string::npos) {
         return false;
     }

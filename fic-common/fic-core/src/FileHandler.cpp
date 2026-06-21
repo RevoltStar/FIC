@@ -66,9 +66,9 @@ std::string errnoMessage() {
 
 } // namespace
 
-FileHandler::FileHandler(const std::string& filepath, const std::string& delimeter){
+FileHandler::FileHandler(const std::string& filepath, const std::string& delimiter){
     this->filepath_ = filepath;
-    this->delimeter_ = delimeter;
+    this->delimiter_ = delimiter;
 }
 
 bool FileHandler::loadConfig() {

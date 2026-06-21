@@ -181,24 +181,24 @@ std::string FixedPolicyTypeValue::getPolicyRestrictionInfo() {
 }
 
 /*
-MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo)
+MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimiterFrom, std::string _delimiterTo)
     : PolicyTypeValue() {
     this->defaultValue = "[ЗНАЧЕНИЕ ПО УМОЛЧАНИЮ]";
-    this->delimeterFrom = _delimeterFrom;
-    this->delimeterTo = _delimeterTo;
+    this->delimiterFrom = _delimiterFrom;
+    this->delimiterTo = _delimiterTo;
 }
 */
-MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string _defaultValue)
+MultiLineTextPolicyTypeValue::MultiLineTextPolicyTypeValue(std::string _delimiterFrom, std::string _delimiterTo, std::string _defaultValue)
     : PolicyTypeValue() {
     this->defaultValue = _defaultValue;
-    this->delimeterFrom = _delimeterFrom;
-    this->delimeterTo = _delimeterTo;
+    this->delimiterFrom = _delimiterFrom;
+    this->delimiterTo = _delimiterTo;
 }
 
 PolicyEditorSpec MultiLineTextPolicyTypeValue::getEditorSpec() const {
     PolicyEditorSpec spec;
     spec.editor = "textedit";
-    spec.textDelimiter = this->delimeterTo;
+    spec.textDelimiter = this->delimiterTo;
     return spec;
 }
 
@@ -212,13 +212,13 @@ std::string MultiLineTextPolicyTypeValue::postProcessingValue(const std::string&
             throw std::invalid_argument("Input string is empty");
         }
 
-        if (delimeterFrom.empty()) {
+        if (delimiterFrom.empty()) {
             throw std::runtime_error("Delimiter is not set");
         }
 
         std::vector<std::string> items;
         size_t start = 0;
-        size_t end = value.find(delimeterFrom);
+        size_t end = value.find(delimiterFrom);
 
         if (end == std::string::npos && !value.empty()) {
             return json({value}).dump();
@@ -230,8 +230,8 @@ std::string MultiLineTextPolicyTypeValue::postProcessingValue(const std::string&
             } else {
                 items.push_back(value.substr(start, end - start));
             }
-            start = end + delimeterFrom.length();
-            end = value.find(delimeterFrom, start);
+            start = end + delimiterFrom.length();
+            end = value.find(delimiterFrom, start);
         }
 
         if (start < value.length()) {
@@ -271,7 +271,7 @@ std::string MultiLineTextPolicyTypeValue::reverse_postProcessingValue(const std:
         std::string result;
         for (size_t i = 0; i < items.size(); ++i) {
             if (i != 0) {
-                result += delimeterTo;
+                result += delimiterTo;
             }
             result += items[i];
         }
@@ -288,10 +288,10 @@ std::string MultiLineTextPolicyTypeValue::getPolicyRestrictionInfo() {
     return LocalizationManager::getLang("[utils:policytypevalue][type:multilinepolicytypevalue]");
 }
 
-std::vector<std::string> MultiLineTextPolicyTypeValue::split_paths(const std::string& str, const char delimeter) {
+std::vector<std::string> MultiLineTextPolicyTypeValue::split_paths(const std::string& str, const char delimiter) {
     std::vector<std::string> paths;
     size_t start = 0;
-    size_t end = str.find(delimeter);
+    size_t end = str.find(delimiter);
 
     while (end != std::string::npos) {
         std::string path = str.substr(start, end - start);
@@ -302,7 +302,7 @@ std::vector<std::string> MultiLineTextPolicyTypeValue::split_paths(const std::st
             paths.push_back(path);
         }
         start = end + 1;
-        end = str.find(delimeter, start);
+        end = str.find(delimiter, start);
     }
 
     std::string last_path = str.substr(start);

@@ -56,7 +56,7 @@ void SectionConfigFileHandler::rebuildSectionsFromOriginalLines() {
 }
 
 bool SectionConfigFileHandler::parseParameterLine(const std::string& line, std::string& parameter, std::string& value) const {
-    size_t delimiter_pos = line.find(delimeter_);
+    size_t delimiter_pos = line.find(delimiter_);
     if (delimiter_pos == std::string::npos) {
         return false;
     }

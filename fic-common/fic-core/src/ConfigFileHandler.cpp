@@ -1,7 +1,7 @@
 #include <fic/core/ConfigFileHandler.h>
 
-ConfigFileHandler::ConfigFileHandler(const std::string& filepath, const std::string& delimeter)
-    :FileHandler(filepath, delimeter){
+ConfigFileHandler::ConfigFileHandler(const std::string& filepath, const std::string& delimiter)
+    :FileHandler(filepath, delimiter){
     //Загружаем файл в переменную (плохо - может возникнуть ошибка с правами когда не надо)
     //this->FileHandler::loadFile();
     //Создаем конфигурационный файл (плохо - создается много массивов одновременно)
@@ -34,7 +34,7 @@ bool ConfigFileHandler::loadConfig() {
         }
 
         // Разделяем строку на параметр и значение
-        const size_t delimiter_pos = line.find(this->delimeter_);
+        const size_t delimiter_pos = line.find(this->delimiter_);
         if (delimiter_pos == std::string::npos) {
             //Строка не имеет вид параметр=значение
             //std::cerr << "Warning: Invalid line format: " << line << std::endl;
@@ -48,7 +48,7 @@ bool ConfigFileHandler::loadConfig() {
         trim(parameter, true);
         trim(value);
 
-        line = parameter + this->delimeter_ + value;
+        line = parameter + this->delimiter_ + value;
         if (!parameter.empty()) {
             //Проверяем, нет ли такого же ключа. Если есть -> комментируем
             if (config_.find(parameter) != config_.end()) {
@@ -76,7 +76,7 @@ bool ConfigFileHandler::setValue(const std::string& parameter, const std::string
     // Ищем строку с параметром
     auto line_it = std::find_if(original_lines_.begin(), original_lines_.end(),
         [this, &parameter](const std::string& line) {
-            size_t pos = line.find(this->delimeter_);
+            size_t pos = line.find(this->delimiter_);
             if (pos == std::string::npos) return false;
 
             std::string param = line.substr(0, pos);
@@ -84,7 +84,7 @@ bool ConfigFileHandler::setValue(const std::string& parameter, const std::string
             return param == parameter;
         });
 
-    const std::string new_line = parameter + this->delimeter_ + value;
+    const std::string new_line = parameter + this->delimiter_ + value;
 
     if (line_it != original_lines_.end()) {
         *line_it = new_line;
@@ -137,7 +137,7 @@ bool ConfigFileHandler::commentAllParameters() {
     for (auto& line : original_lines_) {
             if (line.empty() || line[0] == '#') continue;
 
-            if (line.find(this->delimeter_) != std::string::npos) {
+            if (line.find(this->delimiter_) != std::string::npos) {
                 line = "#" + line;
             }
         }
