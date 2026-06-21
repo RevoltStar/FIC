@@ -567,7 +567,7 @@ PolicyMap init_policyMap(){
     cafArr.push_back(std::make_unique<SYSCTL_tcp_keepalive_time>());
     cafArr.push_back(std::make_unique<SYSCTL_tcp_max_syn_backlog>());
     cafArr.push_back(std::make_unique<SYSCTL_tcp_synack_retries>());
-    cafArr.push_back(std::make_unique<SYSCTL_tcp_timeout>());
+    cafArr.push_back(std::make_unique<SYSCTL_tcp_fin_timeout>());
     cafArr.push_back(std::make_unique<SYSCTL_threads_max_limit>());
     cafArr.push_back(std::make_unique<SYSCTL_user_ns_restrict>());
 

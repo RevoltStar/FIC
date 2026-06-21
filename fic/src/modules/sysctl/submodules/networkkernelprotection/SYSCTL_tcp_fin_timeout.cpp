@@ -1,6 +1,6 @@
-#include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_timeout.h"
+#include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_fin_timeout.h"
 
-SYSCTL_tcp_timeout::SYSCTL_tcp_timeout()
+SYSCTL_tcp_fin_timeout::SYSCTL_tcp_fin_timeout()
     : NetworkKernelProtection()
 {
     this->Sysctl::sysctlParameter = "net.ipv4.tcp_fin_timeout";
@@ -9,7 +9,7 @@ SYSCTL_tcp_timeout::SYSCTL_tcp_timeout()
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(10, 120, 30);
 }
 
-bool SYSCTL_tcp_timeout::apply()
+bool SYSCTL_tcp_fin_timeout::apply()
 {
     return this->Sysctl::apply();
 }

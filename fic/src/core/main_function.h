@@ -41,7 +41,7 @@
 #include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_keepalive_time.h"
 #include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_max_syn_backlog.h"
 #include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_synack_retries.h"
-#include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_timeout.h"
+#include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_fin_timeout.h"
 
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_buffer_overflow_protection.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_dmesg_restrict.h"
