@@ -180,19 +180,19 @@ std::string getArgvValue(int argc, char* argv[], int ind){
     return argv[ind];
 }
 
-ModulePolicyMap getModule(
+ModulePolicyMap* getModule(
         PolicyMap& cafMap,
         const std::string& module){
         // Проверяем внешний ключ
         auto outerIt = cafMap.find(module);
         if (outerIt != cafMap.end()) {
-            return outerIt->second;
+            return &outerIt->second;
         }
         //Возвращаем пустой массив (нет политик)
-        return ModulePolicyMap();
+        return nullptr;
 }
 //Дать класс политики
-std::shared_ptr<Policy> getPolicyClass(
+Policy* getPolicyClass(
     PolicyMap& cafMap,
     const std::string& module,
     const std::string& policy
@@ -208,7 +208,7 @@ std::shared_ptr<Policy> getPolicyClass(
         const auto& policyMap = submodulePair.second;
         auto policyIt = policyMap.find(policy);
         if (policyIt != policyMap.end()) {
-            return policyIt->second;  // Нашли политику
+            return policyIt->second.get();  // Нашли политику
         }
     }
 
@@ -217,7 +217,7 @@ std::shared_ptr<Policy> getPolicyClass(
 
 //Дать информацию об ограничении
 bool policy_info_restriction(PolicyMap& cafMap, std::string module, std::string policy){
-    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
+    Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy != nullptr){
         std::cout << concretePolicy->getPolicyRestriction();
         return true;
@@ -276,7 +276,7 @@ PolicyApplyResult applyPolicy(PolicyMap& cafMap, std::string module, std::string
             continue;
         }
 
-        const std::shared_ptr<Policy>& policyClass = policyIt->second;
+        Policy* policyClass = policyIt->second.get();
         if (!policyClass->isEnabled()) {
             return {
                 module,
@@ -431,8 +431,8 @@ bool apply(PolicyMap& cafMap, std::string module, std::string policy) {
 }
 
 //Отключить политику
-bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy){
-    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
+bool disable (PolicyMap& cafMap, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим отключение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -457,8 +457,8 @@ bool disable (std::map<std::string, std::map<std::string, std::map<std::string ,
     return false;
 }
 //Включить политику
-bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy){
-    std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
+bool enable(PolicyMap& cafMap, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим включение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -486,8 +486,8 @@ bool enable(std::map<std::string, std::map<std::string, std::map<std::string ,st
     return false;
 }
 
-bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>>& cafMap, std::string module, std::string policy, std::string value){
-   std::shared_ptr<Policy> concretePolicy = getPolicyClass(cafMap, module, policy);
+bool set(PolicyMap& cafMap, std::string module, std::string policy, std::string value){
+   Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
     if(concretePolicy != nullptr){
         std::cout << "Производим попытку смены значения политики " + policy + " в модуле " + module + "..." << std::endl;
         //Производим валидацию и преобразование параметра
@@ -528,74 +528,73 @@ bool set(std::map<std::string, std::map<std::string, std::map<std::string ,std::
 }
 
 /*Ининциализируем массив классов*/
-std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>> init_cafMap(){
-    std::vector<std::shared_ptr<Policy>> cafArr;
+PolicyMap init_cafMap(){
+    std::vector<std::unique_ptr<Policy>> cafArr;
 
     //Дискреционное разграничение доступа (DAC)
-    cafArr.push_back(std::make_shared<DAC_systemcommandlock>());
-    cafArr.push_back(std::make_shared<DAC_blocking_user_access_to_system_files>());
-    cafArr.push_back(std::make_shared<DAC_custom_mode_and_owner>());
-    cafArr.push_back(std::make_shared<DAC_sudo_env_reset>());
-    cafArr.push_back(std::make_shared<DAC_sudo_passwd_tries>());
-    cafArr.push_back(std::make_shared<DAC_sudo_securepath>());
-    cafArr.push_back(std::make_shared<DAC_sudo_timeout>());
+    cafArr.push_back(std::make_unique<DAC_systemcommandlock>());
+    cafArr.push_back(std::make_unique<DAC_blocking_user_access_to_system_files>());
+    cafArr.push_back(std::make_unique<DAC_custom_mode_and_owner>());
+    cafArr.push_back(std::make_unique<DAC_sudo_env_reset>());
+    cafArr.push_back(std::make_unique<DAC_sudo_passwd_tries>());
+    cafArr.push_back(std::make_unique<DAC_sudo_securepath>());
+    cafArr.push_back(std::make_unique<DAC_sudo_timeout>());
 
     //Настройки ядра (SYSCTL)
-    cafArr.push_back(std::make_shared<SYSCTL_buffer_overflow_protection>());
-    cafArr.push_back(std::make_shared<SYSCTL_dmesg_restrict>());
-    cafArr.push_back(std::make_shared<SYSCTL_fd_limits>());
-    cafArr.push_back(std::make_shared<SYSCTL_fs_protection>());
-    cafArr.push_back(std::make_shared<SYSCTL_ipv4_default_accept_redirects_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_ipv4_default_rp_filter_enable>());
-    cafArr.push_back(std::make_shared<SYSCTL_ipv4_default_send_redirects_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_ipv6_all_accept_redirects_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_ipv6_default_accept_redirects_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_ipv6_packet_forwarding_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_kernel_code_execution_restrict>());
-    cafArr.push_back(std::make_shared<SYSCTL_nr_open_limit>());
-    cafArr.push_back(std::make_shared<SYSCTL_packet_forwarding_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_perf_event_paranoid>());
-    cafArr.push_back(std::make_shared<SYSCTL_protected_symlinks>());
-    cafArr.push_back(std::make_shared<SYSCTL_process_limits>());
-    cafArr.push_back(std::make_shared<SYSCTL_ptrace_restrict>());
-    cafArr.push_back(std::make_shared<SYSCTL_randomize_va_space>());
-    cafArr.push_back(std::make_shared<SYSCTL_redirects_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_rp_filter_enable>());
-    cafArr.push_back(std::make_shared<SYSCTL_send_redirects_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_suid_dump_disable>());
-    cafArr.push_back(std::make_shared<SYSCTL_syn_flood_protection>());
-    cafArr.push_back(std::make_shared<SYSCTL_tcp_keepalive_time>());
-    cafArr.push_back(std::make_shared<SYSCTL_tcp_max_syn_backlog>());
-    cafArr.push_back(std::make_shared<SYSCTL_tcp_synack_retries>());
-    cafArr.push_back(std::make_shared<SYSCTL_tcp_timeout>());
-    cafArr.push_back(std::make_shared<SYSCTL_threads_max_limit>());
-    cafArr.push_back(std::make_shared<SYSCTL_user_ns_restrict>());
+    cafArr.push_back(std::make_unique<SYSCTL_buffer_overflow_protection>());
+    cafArr.push_back(std::make_unique<SYSCTL_dmesg_restrict>());
+    cafArr.push_back(std::make_unique<SYSCTL_fd_limits>());
+    cafArr.push_back(std::make_unique<SYSCTL_fs_protection>());
+    cafArr.push_back(std::make_unique<SYSCTL_ipv4_default_accept_redirects_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_ipv4_default_rp_filter_enable>());
+    cafArr.push_back(std::make_unique<SYSCTL_ipv4_default_send_redirects_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_ipv6_all_accept_redirects_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_ipv6_default_accept_redirects_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_ipv6_packet_forwarding_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_kernel_code_execution_restrict>());
+    cafArr.push_back(std::make_unique<SYSCTL_nr_open_limit>());
+    cafArr.push_back(std::make_unique<SYSCTL_packet_forwarding_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_perf_event_paranoid>());
+    cafArr.push_back(std::make_unique<SYSCTL_protected_symlinks>());
+    cafArr.push_back(std::make_unique<SYSCTL_process_limits>());
+    cafArr.push_back(std::make_unique<SYSCTL_ptrace_restrict>());
+    cafArr.push_back(std::make_unique<SYSCTL_randomize_va_space>());
+    cafArr.push_back(std::make_unique<SYSCTL_redirects_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_rp_filter_enable>());
+    cafArr.push_back(std::make_unique<SYSCTL_send_redirects_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_suid_dump_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_syn_flood_protection>());
+    cafArr.push_back(std::make_unique<SYSCTL_tcp_keepalive_time>());
+    cafArr.push_back(std::make_unique<SYSCTL_tcp_max_syn_backlog>());
+    cafArr.push_back(std::make_unique<SYSCTL_tcp_synack_retries>());
+    cafArr.push_back(std::make_unique<SYSCTL_tcp_timeout>());
+    cafArr.push_back(std::make_unique<SYSCTL_threads_max_limit>());
+    cafArr.push_back(std::make_unique<SYSCTL_user_ns_restrict>());
 
     //Настройки операционной системы (OSS)
-    cafArr.push_back(std::make_shared<OSS_screenlock_timeout>());
-    cafArr.push_back(std::make_shared<OSS_disable_autologin>());
-    cafArr.push_back(std::make_shared<OSS_disable_videodisplay_when_locked>());
-    cafArr.push_back(std::make_shared<OSS_lock_on_tty_switch>());
+    cafArr.push_back(std::make_unique<OSS_screenlock_timeout>());
+    cafArr.push_back(std::make_unique<OSS_disable_autologin>());
+    cafArr.push_back(std::make_unique<OSS_disable_videodisplay_when_locked>());
+    cafArr.push_back(std::make_unique<OSS_lock_on_tty_switch>());
 
     //Сетевые настройки
-    cafArr.push_back(std::make_shared<NET_ssh_port>());
-    cafArr.push_back(std::make_shared<NET_ssh_max_auth_tries>());
-    cafArr.push_back(std::make_shared<NET_ssh_root_login>());
+    cafArr.push_back(std::make_unique<NET_ssh_port>());
+    cafArr.push_back(std::make_unique<NET_ssh_max_auth_tries>());
+    cafArr.push_back(std::make_unique<NET_ssh_root_login>());
 
 
     //Глобальные настройки программы
-    cafArr.push_back(std::make_shared<GLOBAL_log_level>());
-    cafArr.push_back(std::make_shared<GLOBAL_lang>());
+    cafArr.push_back(std::make_unique<GLOBAL_log_level>());
+    cafArr.push_back(std::make_unique<GLOBAL_lang>());
     //Для удобства отсортируем в массив вида "модуль->подмодуль->политика->класс,представляющий политику для данного модуля"
-    std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_ptr<Policy>>>> cafMap;
+    PolicyMap cafMap;
 
-    auto it = cafArr.begin();
-        while (it != cafArr.end()) {
-            //std::cout << (*it)->moduleName << std::endl;
-            //std::cout << (*it)->submoduleName << std::endl;
-            //std::cout << (*it)->policyName << std::endl;
-            if((*it)->moduleName == "" || (*it)->policyName == "" || (*it)->submoduleName == ""){
-                if((*it)->submoduleName == ""){
+    for (auto& policyClass : cafArr) {
+            //std::cout << policyClass->moduleName << std::endl;
+            //std::cout << policyClass->submoduleName << std::endl;
+            //std::cout << policyClass->policyName << std::endl;
+            if(policyClass->moduleName == "" || policyClass->policyName == "" || policyClass->submoduleName == ""){
+                if(policyClass->submoduleName == ""){
                     //submodule пуст -> нужно быть осторожным и следить, чтобы это поле не было пусто когда не надо
                 }else{
                     std::cerr << "Не заданы значения moduleName, policyName. Требуется проверить код!" << std::endl;
@@ -603,8 +602,7 @@ std::map<std::string, std::map<std::string, std::map<std::string ,std::shared_pt
                     return cafMap;
                 }
             }
-            cafMap[(*it)->moduleName][(*it)->submoduleName][(*it)->policyName] = (*it);
-            ++it;  // перемещаемся вперёд на один элемент
+            cafMap[policyClass->moduleName][policyClass->submoduleName][policyClass->policyName] = std::move(policyClass);
     }
     return cafMap;
 }

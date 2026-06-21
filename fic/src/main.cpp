@@ -251,7 +251,7 @@ bool verify_runtime_socket_permissions(const std::string& socketPath, const grou
 }
 
 std::string canonical_module_name(
-    const std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
+    const PolicyMap& cafMap,
     const std::string& module
 ) {
     if (module.empty() || module == "all") {
@@ -275,16 +275,16 @@ std::string canonical_module_name(
 json policy_to_json(const std::string& module,
                     const std::string& submoduleName,
                     const std::string& policyName,
-                    const std::shared_ptr<Policy>& policyClass) {
-    const PolicyTypeValue& typeValue = policyClass->getPolicyTypeValue();
+                    Policy& policyClass) {
+    const PolicyTypeValue& typeValue = policyClass.getPolicyTypeValue();
     const PolicyEditorSpec editorSpec = typeValue.getEditorSpec();
-    const bool isSet = policyClass->hasConfiguredValue();
+    const bool isSet = policyClass.hasConfiguredValue();
     bool valueValid = true;
-    std::string value = policyClass->getDefaultValue();
+    std::string value = policyClass.getDefaultValue();
 
     if (isSet) {
         try {
-            std::optional<std::string> currentValue = policyClass->getValue();
+            std::optional<std::string> currentValue = policyClass.getValue();
             if (currentValue.has_value()) {
                 value = currentValue.value();
             } else {
@@ -304,14 +304,14 @@ json policy_to_json(const std::string& module,
         {"module", module},
         {"submodule", submoduleName},
         {"policy", policyName},
-        {"enabled", policyClass->isEnabled()},
+        {"enabled", policyClass.isEnabled()},
         {"set", isSet},
         {"value", value},
         {"value_valid", valueValid},
-        {"default_value", policyClass->getDefaultValue()},
+        {"default_value", policyClass.getDefaultValue()},
         {"editor", editorSpec.editor},
         {"possible_values", possibleValues},
-        {"restriction", policyClass->getPolicyRestriction()}
+        {"restriction", policyClass.getPolicyRestriction()}
     };
 
     if (editorSpec.min.has_value()) {
@@ -327,7 +327,7 @@ json policy_to_json(const std::string& module,
     return item;
 }
 
-json policy_list_json(const std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
+json policy_list_json(const PolicyMap& cafMap,
                       const std::string& module) {
     json result = json::array();
     auto moduleIt = cafMap.find(module);
@@ -337,18 +337,18 @@ json policy_list_json(const std::map<std::string, std::map<std::string, std::map
 
     for (const auto& [submoduleName, policyMap] : moduleIt->second) {
         for (const auto& [policyName, policyClass] : policyMap) {
-            result.push_back(policy_to_json(module, submoduleName, policyName, policyClass));
+            result.push_back(policy_to_json(module, submoduleName, policyName, *policyClass));
         }
     }
     return result;
 }
 
 json policy_status_json(
-    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
+    PolicyMap& cafMap,
     const std::string& module,
     const std::string& policy
 ) {
-    std::shared_ptr<Policy> policyClass = getPolicyClass(cafMap, module, policy);
+    Policy* policyClass = getPolicyClass(cafMap, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -365,11 +365,11 @@ json policy_status_json(
 }
 
 json policy_value_json(
-    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap,
+    PolicyMap& cafMap,
     const std::string& module,
     const std::string& policy
 ) {
-    std::shared_ptr<Policy> policyClass = getPolicyClass(cafMap, module, policy);
+    Policy* policyClass = getPolicyClass(cafMap, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -552,7 +552,7 @@ json lock_status_json() {
 }
 
 json handle_request(json request,
-                    std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap) {
+                    PolicyMap& cafMap) {
     const std::string command = request.value("command", "");
     const std::string requestedModule = request.value("module", "");
     const std::string module = canonical_module_name(cafMap, requestedModule);
@@ -776,7 +776,7 @@ json handle_request(json request,
 }
 
 bool serve_one_client(int clientFd,
-                      std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>& cafMap) {
+                      PolicyMap& cafMap) {
     const PeerCredentials peer = get_peer_credentials(clientFd);
     std::string requestText;
     std::string error;

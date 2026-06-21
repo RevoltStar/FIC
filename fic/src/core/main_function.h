@@ -103,13 +103,13 @@ bool calcHash(const std::string& command);
 //Получить значение параметра
 std::string getArgvValue(int argc, char* argv[], int ind);
 
-using PolicyMap = std::map<std::string, std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>>;
-using ModulePolicyMap = std::map<std::string, std::map<std::string, std::shared_ptr<Policy>>>;
+using PolicyMap = std::map<std::string, std::map<std::string, std::map<std::string, std::unique_ptr<Policy>>>>;
+using ModulePolicyMap = std::map<std::string, std::map<std::string, std::unique_ptr<Policy>>>;
 
-ModulePolicyMap getModule(
+ModulePolicyMap* getModule(
         PolicyMap& cafMap,
         const std::string& module);
-std::shared_ptr<Policy> getPolicyClass(
+Policy* getPolicyClass(
             PolicyMap& cafMap,
             const std::string& module,
             const std::string& policy
