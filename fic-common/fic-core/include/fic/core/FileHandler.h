@@ -15,7 +15,7 @@
 */
 class FileHandler {
 public:
-    FileHandler(const std::string& filepath, const std::string& delimeter = "=");
+    FileHandler(const std::string& filepath, const std::string& delimiter = "=");
 
     //Загрузить файл
     bool loadFile();
@@ -46,7 +46,7 @@ protected:
     //Убрать пробельные символы
     void trim(std::string& str, bool needMid = false) const;
     //Разделитель
-    std::string delimeter_;
+    std::string delimiter_;
     //Путь к файлу
     std::string filepath_;
     // Сохраняем оригинальные строки из файла

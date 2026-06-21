@@ -95,11 +95,11 @@ public:
 //Параметр сам по себе представляет из себя строку, состоящую из нескольких подстрок
 class MultiLineTextPolicyTypeValue : public PolicyTypeValue{
 private:
-    std::string delimeterFrom;
-    std::string delimeterTo;
+    std::string delimiterFrom;
+    std::string delimiterTo;
 public:
-    /*MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo);*/
-    MultiLineTextPolicyTypeValue(std::string _delimeterFrom, std::string _delimeterTo, std::string _defaultValue);
+    /*MultiLineTextPolicyTypeValue(std::string _delimiterFrom, std::string _delimiterTo);*/
+    MultiLineTextPolicyTypeValue(std::string _delimiterFrom, std::string _delimiterTo, std::string _defaultValue);
 
     PolicyEditorSpec getEditorSpec() const override;
 
@@ -108,7 +108,7 @@ public:
     std::string reverse_postProcessingValue(const std::string& value) override;
     std::string getPolicyRestrictionInfo() override;
 
-    std::vector<std::string> split_paths(const std::string& str, const char delimeter = ',');
+    std::vector<std::string> split_paths(const std::string& str, const char delimiter = ',');
 };
 
 #endif // POLICYTYPEVALUE_H

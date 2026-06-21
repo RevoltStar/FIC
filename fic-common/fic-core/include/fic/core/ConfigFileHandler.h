@@ -16,13 +16,13 @@ class ConfigFileHandler : public FileHandler {
 private:
 
 public:
-    //delimeter может принимать одно из следующих специальных значений
-    ConfigFileHandler(const std::string& filepath, const std::string& delimeter = "=");
+    //delimiter может принимать одно из следующих специальных значений
+    ConfigFileHandler(const std::string& filepath, const std::string& delimiter = "=");
     //Загружаем конфигурационный файл
     bool loadConfig() override;
 
     //Загружаем конфигурационный файл (если не указали путь и разделитель раньше)
-    bool loadConfig(const std::string& filepath, const std::string& delimeter = "=");
+    bool loadConfig(const std::string& filepath, const std::string& delimiter = "=");
 
     //Получить параметр
     std::string getValue(const std::string& parameter) const override;
