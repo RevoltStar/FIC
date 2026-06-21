@@ -1,5 +1,7 @@
 // file name: main.cpp
 #include <iostream>
+#include <memory>
+#include <vector>
 #include <fic/device-db/DB.h>
 #include "modules/UDEVInfoCollector.h"
 #include "modules/USBInfoCollector.h"
@@ -13,18 +15,20 @@
 using namespace std;
 
 // Фабрика для создания коллектора в зависимости от подсистемы
-UDEVInfoCollector* create_collector_for_subsystem(const std::string& subsystem) {
+std::unique_ptr<UDEVInfoCollector> create_collector_for_subsystem(const std::string& subsystem) {
     if (subsystem == "usb") {
-        return new USBInfoCollector();
+        return std::make_unique<USBInfoCollector>();
     } else if (subsystem == "block") {
-        return new BlockInfoCollector();
+        return std::make_unique<BlockInfoCollector>();
     } else if(subsystem == "pci"){
-        return new PCIInfoCollector();
+        return std::make_unique<PCIInfoCollector>();
     }/*else if(subsystem=="net"){
-        return new NetInfoCollector();
+        return std::make_unique<NetInfoCollector>();
     }*/
     // Для других подсистем создаем базовый коллектор со стабильными udev-полями
-    return new UDEVInfoCollector({"DEVPATH", "SUBSYSTEM", "DEVTYPE", "MODALIAS"});
+    return std::make_unique<UDEVInfoCollector>(
+        std::vector<std::string>{"DEVPATH", "SUBSYSTEM", "DEVTYPE", "MODALIAS"}
+    );
 }
 
 bool log(std::string message, logLevel logLev){
@@ -86,7 +90,7 @@ int main(int argc, char* argv[], char* envp[]) {
                 }
 
                 // Создаем соответствующий коллектор
-                std::unique_ptr<UDEVInfoCollector> collector(create_collector_for_subsystem(subsystem));
+                std::unique_ptr<UDEVInfoCollector> collector = create_collector_for_subsystem(subsystem);
 
                 // Пытаемся создать/обновить устройство
                 log("Пытаемся добавить/обновить udev-устройство", logLevel::DEBUG);
@@ -110,7 +114,7 @@ int main(int argc, char* argv[], char* envp[]) {
                 }
 
                 // Создаем соответствующий коллектор
-                std::unique_ptr<UDEVInfoCollector> collector(create_collector_for_subsystem(subsystem));
+                std::unique_ptr<UDEVInfoCollector> collector = create_collector_for_subsystem(subsystem);
 
                 // Пытаемся удалить устройство
                 if (!collector->safe_remove_device(devpath, subsystem)) {
