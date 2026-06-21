@@ -21,11 +21,6 @@ protected:
     //Путь к базе устройств
     std::string dbPath = "/opt/fic/db";
 
-    // Сохраняем время старта ОС
-    bool saveBootId(){
-        std::string boot_id = get_boot_id();
-        return true;
-    }
     //Параметры устройство
     //1-Название параметра (передается в конструкторе)
     //2-Значение параметра (вычисляется в process_device_concrete)
