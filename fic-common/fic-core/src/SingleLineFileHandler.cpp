@@ -54,17 +54,7 @@ bool SingleLineFileHandler::setValue(const std::string& parameter, const std::st
 
 //Сохранить изменения
 bool SingleLineFileHandler::saveConfig(){
-    std::ofstream file(filepath_, std::ios::trunc | std::ios::out);
-    if (!file.is_open()) {
-        std::cerr << "Ошибка: Файл не может быть открыт для записи [" << filepath_  << "]" <<std::endl;
-        return false;
-    }
-    for (const std::string& line : original_lines_) {
-         file << line << '\n';
-    }
-
-    file.close();
-    return true;
+    return FileHandler::saveFile();
 }
 
 void SingleLineFileHandler::printConfig() const {
