@@ -107,34 +107,34 @@ using PolicyMap = std::map<std::string, std::map<std::string, std::map<std::stri
 using ModulePolicyMap = std::map<std::string, std::map<std::string, std::unique_ptr<Policy>>>;
 
 ModulePolicyMap* getModule(
-        PolicyMap& cafMap,
+        PolicyMap& policyMap,
         const std::string& module);
 Policy* getPolicyClass(
-            PolicyMap& cafMap,
+            PolicyMap& policyMap,
             const std::string& module,
             const std::string& policy
         );
 
 //Дать информацию об ограничении
-bool policy_info_restriction(PolicyMap& cafMap, std::string module, std::string policy);
+bool policy_info_restriction(PolicyMap& policyMap, std::string module, std::string policy);
 //Дать список модулей
-bool module_list(PolicyMap& cafMap);
+bool module_list(PolicyMap& policyMap);
 
-bool policy_list(PolicyMap& cafMap, std::string module);
+bool policy_list(PolicyMap& policyMap, std::string module);
 
-PolicyApplyResult applyPolicy(PolicyMap& cafMap, std::string module, std::string policy);
-PolicyApplySummary applyModulePolicies(PolicyMap& cafMap, std::string module);
-PolicyApplySummary applyAllPolicies(PolicyMap& cafMap);
+PolicyApplyResult applyPolicy(PolicyMap& policyMap, std::string module, std::string policy);
+PolicyApplySummary applyModulePolicies(PolicyMap& policyMap, std::string module);
+PolicyApplySummary applyAllPolicies(PolicyMap& policyMap);
 bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy);
-bool apply(PolicyMap& cafMap, std::string module, std::string policy);
+bool apply(PolicyMap& policyMap, std::string module, std::string policy);
 
 //Отключить политику
-bool disable (PolicyMap& cafMap, std::string module, std::string policy);
+bool disable (PolicyMap& policyMap, std::string module, std::string policy);
 //Включить политику
-bool enable(PolicyMap& cafMap, std::string module, std::string policy);
+bool enable(PolicyMap& policyMap, std::string module, std::string policy);
 
-bool set(PolicyMap& cafMap, std::string module, std::string policy, std::string value);
+bool set(PolicyMap& policyMap, std::string module, std::string policy, std::string value);
 
 
-PolicyMap init_cafMap();
+PolicyMap init_policyMap();
 #endif // MAIN_FUNCTION_H

@@ -66,7 +66,7 @@ flowchart TB
     subgraph Daemon[fic]
         ipcServer[Unix socket server]
         requestRouter[handle_request]
-        cafMap["init_cafMap<br/>module -> submodule -> policy -> Policy"]
+        policyMap["init_policyMap<br/>module -> submodule -> policy -> Policy"]
         policyOps[set / enable / disable / apply]
         deviceApi[device_get / device_children / device_attributes]
         logApi[boot_id / log_records]
@@ -90,13 +90,13 @@ flowchart TB
     cli --> ipcServer
     gui --> ipcServer
     ipcServer --> requestRouter
-    requestRouter --> cafMap
+    requestRouter --> policyMap
     requestRouter --> policyOps
     requestRouter --> deviceApi
     requestRouter --> logApi
     requestRouter --> lockApi
 
-    cafMap --> modules
+    policyMap --> modules
     policyOps --> config
     policyOps --> modules
     logApi --> logs
@@ -113,7 +113,7 @@ flowchart TB
 ```mermaid
 flowchart TD
     start([fic start]) --> locale[Инициализация локали]
-    locale --> initMap[init_cafMap]
+    locale --> initMap[init_policyMap]
     initMap --> oneshot{--oneshot?}
 
     oneshot -->|да| applyOnce[apply all enabled policies]
@@ -135,7 +135,7 @@ flowchart TD
     writeJson --> periodic
 
     clientReady -->|нет| periodic{пора periodic apply?}
-    periodic -->|да| reload[init_cafMap]
+    periodic -->|да| reload[init_policyMap]
     reload --> applyAll[apply all enabled policies]
     applyAll --> schedule[обновить nextPeriodicApply]
     schedule --> mainLoop
@@ -192,23 +192,23 @@ flowchart TD
 
     router --> commandType{command}
 
-    commandType -->|set_policy_value| setFn[set cafMap module policy value]
+    commandType -->|set_policy_value| setFn[set policyMap module policy value]
     setFn --> getPolicy[getPolicyClass]
     getPolicy --> validate[policy.validate value]
     validate --> postprocess[policy.postprocessingValue]
     postprocess --> moduleConfig[ModuleConfigFileHandler module]
     moduleConfig --> saveValue[setValue and saveConfig]
-    saveValue --> reloadAfterSet[init_cafMap]
+    saveValue --> reloadAfterSet[init_policyMap]
 
     commandType -->|enable_policy| enableFn[enable]
     enableFn --> enableConfig[ModuleConfigFileHandler.enableParam]
-    enableConfig --> reloadAfterEnable[init_cafMap]
+    enableConfig --> reloadAfterEnable[init_policyMap]
 
     commandType -->|disable_policy| disableFn[disable]
     disableFn --> disableConfig[ModuleConfigFileHandler.disableParam]
-    disableConfig --> reloadAfterDisable[init_cafMap]
+    disableConfig --> reloadAfterDisable[init_policyMap]
 
-    commandType -->|apply_all / apply_module / apply_policy| reloadBeforeApply[init_cafMap]
+    commandType -->|apply_all / apply_module / apply_policy| reloadBeforeApply[init_policyMap]
     reloadBeforeApply --> apply[apply]
     apply --> chooseScope{scope}
     chooseScope -->|all| allModules[iterate all modules]
@@ -227,7 +227,7 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    init[init_cafMap] --> arr["vector&lt;shared_ptr&lt;Policy&gt;&gt;"]
+    init[init_policyMap] --> arr["vector&lt;unique_ptr&lt;Policy&gt;&gt;"]
 
     arr --> dac[DAC]
     dac --> dacMode[ModeAndOwner]
@@ -255,7 +255,7 @@ flowchart TB
     arr --> global[GLOBAL]
     global --> systemSettings[SystemSettings]
 
-    dacSystemCommandLock --> map["cafMap<br/>module -> submodule -> policy -> object"]
+    dacSystemCommandLock --> map["policyMap<br/>module -> submodule -> policy -> object"]
     dacBlockSystemFiles --> map
     dacCustomMode --> map
     sudoEnvReset --> map

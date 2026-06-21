@@ -251,20 +251,20 @@ bool verify_runtime_socket_permissions(const std::string& socketPath, const grou
 }
 
 std::string canonical_module_name(
-    const PolicyMap& cafMap,
+    const PolicyMap& policyMap,
     const std::string& module
 ) {
     if (module.empty() || module == "all") {
         return module;
     }
 
-    auto exact = cafMap.find(module);
-    if (exact != cafMap.end()) {
+    auto exact = policyMap.find(module);
+    if (exact != policyMap.end()) {
         return module;
     }
 
     const std::string lowered = to_lower_ascii(module);
-    for (const auto& [moduleName, _] : cafMap) {
+    for (const auto& [moduleName, _] : policyMap) {
         if (to_lower_ascii(moduleName) == lowered) {
             return moduleName;
         }
@@ -327,16 +327,16 @@ json policy_to_json(const std::string& module,
     return item;
 }
 
-json policy_list_json(const PolicyMap& cafMap,
+json policy_list_json(const PolicyMap& policyMap,
                       const std::string& module) {
     json result = json::array();
-    auto moduleIt = cafMap.find(module);
-    if (moduleIt == cafMap.end()) {
+    auto moduleIt = policyMap.find(module);
+    if (moduleIt == policyMap.end()) {
         return result;
     }
 
-    for (const auto& [submoduleName, policyMap] : moduleIt->second) {
-        for (const auto& [policyName, policyClass] : policyMap) {
+    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second) {
+        for (const auto& [policyName, policyClass] : submodulePolicies) {
             result.push_back(policy_to_json(module, submoduleName, policyName, *policyClass));
         }
     }
@@ -344,11 +344,11 @@ json policy_list_json(const PolicyMap& cafMap,
 }
 
 json policy_status_json(
-    PolicyMap& cafMap,
+    PolicyMap& policyMap,
     const std::string& module,
     const std::string& policy
 ) {
-    Policy* policyClass = getPolicyClass(cafMap, module, policy);
+    Policy* policyClass = getPolicyClass(policyMap, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -365,11 +365,11 @@ json policy_status_json(
 }
 
 json policy_value_json(
-    PolicyMap& cafMap,
+    PolicyMap& policyMap,
     const std::string& module,
     const std::string& policy
 ) {
-    Policy* policyClass = getPolicyClass(cafMap, module, policy);
+    Policy* policyClass = getPolicyClass(policyMap, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -552,10 +552,10 @@ json lock_status_json() {
 }
 
 json handle_request(json request,
-                    PolicyMap& cafMap) {
+                    PolicyMap& policyMap) {
     const std::string command = request.value("command", "");
     const std::string requestedModule = request.value("module", "");
-    const std::string module = canonical_module_name(cafMap, requestedModule);
+    const std::string module = canonical_module_name(policyMap, requestedModule);
     const std::string policy = request.value("policy", "");
     const std::string value = request.value("value", "");
 
@@ -588,7 +588,7 @@ json handle_request(json request,
         }
         if (command == "module_list") {
             json modules = json::array();
-            for (const auto& [moduleName, _] : cafMap) {
+            for (const auto& [moduleName, _] : policyMap) {
                 modules.push_back(moduleName);
             }
             return json{{"ok", true}, {"message", "modules listed"}, {"modules", modules}};
@@ -596,8 +596,8 @@ json handle_request(json request,
         if (command == "policy_list") {
             if (module == "all") {
                 json all = json::array();
-                for (const auto& [moduleName, _] : cafMap) {
-                    for (const auto& item : policy_list_json(cafMap, moduleName)) {
+                for (const auto& [moduleName, _] : policyMap) {
+                    for (const auto& item : policy_list_json(policyMap, moduleName)) {
                         all.push_back(item);
                     }
                 }
@@ -606,51 +606,51 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            return json{{"ok", true}, {"message", "policies listed"}, {"policies", policy_list_json(cafMap, module)}};
+            return json{{"ok", true}, {"message", "policies listed"}, {"policies", policy_list_json(policyMap, module)}};
         }
         if (command == "policy_is_enabled" || command == "policy_is_disabled" || command == "policy_value") {
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
             if (command == "policy_value") {
-                return policy_value_json(cafMap, module, policy);
+                return policy_value_json(policyMap, module, policy);
             }
-            return policy_status_json(cafMap, module, policy);
+            return policy_status_json(policyMap, module, policy);
         }
         if (command == "set_policy_value") {
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            bool ok = set(cafMap, module, policy, value);
+            bool ok = set(policyMap, module, policy, value);
             if (ok) {
-                cafMap = init_cafMap();
+                policyMap = init_policyMap();
             }
             return ok ? fic::ipc::make_ok_response("policy value updated")
                       : fic::ipc::make_error_response("failed to update policy value");
         }
         if (command == "enable_policy") {
-            bool ok = enable(cafMap, module, policy);
+            bool ok = enable(policyMap, module, policy);
             if (ok) {
-                cafMap = init_cafMap();
+                policyMap = init_policyMap();
             }
             return ok ? fic::ipc::make_ok_response("policy enabled")
                       : fic::ipc::make_error_response("failed to enable policy");
         }
         if (command == "disable_policy") {
-            bool ok = disable(cafMap, module, policy);
+            bool ok = disable(policyMap, module, policy);
             if (ok) {
-                cafMap = init_cafMap();
+                policyMap = init_policyMap();
             }
             return ok ? fic::ipc::make_ok_response("policy disabled")
                       : fic::ipc::make_error_response("failed to disable policy");
         }
         if (command == "reload_config") {
-            cafMap = init_cafMap();
+            policyMap = init_policyMap();
             return fic::ipc::make_ok_response("config reloaded");
         }
         if (command == "apply_all") {
-            cafMap = init_cafMap();
-            PolicyApplySummary summary = applyAllPolicies(cafMap);
+            policyMap = init_policyMap();
+            PolicyApplySummary summary = applyAllPolicies(policyMap);
             const bool ok = isPolicyApplySuccessful(summary, "all", "");
             return policy_apply_summary_json(
                 summary,
@@ -662,8 +662,8 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            cafMap = init_cafMap();
-            PolicyApplySummary summary = applyModulePolicies(cafMap, module);
+            policyMap = init_policyMap();
+            PolicyApplySummary summary = applyModulePolicies(policyMap, module);
             const bool ok = isPolicyApplySuccessful(summary, module, "all");
             return policy_apply_summary_json(
                 summary,
@@ -675,9 +675,9 @@ json handle_request(json request,
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            cafMap = init_cafMap();
+            policyMap = init_policyMap();
             PolicyApplySummary summary;
-            summary.add(applyPolicy(cafMap, module, policy));
+            summary.add(applyPolicy(policyMap, module, policy));
             const bool ok = isPolicyApplySuccessful(summary, module, policy);
             return policy_apply_summary_json(
                 summary,
@@ -776,7 +776,7 @@ json handle_request(json request,
 }
 
 bool serve_one_client(int clientFd,
-                      PolicyMap& cafMap) {
+                      PolicyMap& policyMap) {
     const PeerCredentials peer = get_peer_credentials(clientFd);
     std::string requestText;
     std::string error;
@@ -792,7 +792,7 @@ bool serve_one_client(int clientFd,
     json response;
     try {
         request = json::parse(requestText);
-        response = handle_request(request, cafMap);
+        response = handle_request(request, policyMap);
     } catch (const std::exception& e) {
         response = fic::ipc::make_error_response("invalid request: " + std::string(e.what()));
     }
@@ -956,10 +956,10 @@ int main(int argc, char* argv[]) {
     }
 
     const bool once = get_arg_value(argc, argv, 1) == "--oneshot";
-    auto cafMap = init_cafMap();
+    auto policyMap = init_policyMap();
 
     if (once) {
-        return apply(cafMap, "all", "") ? 0 : 1;
+        return apply(policyMap, "all", "") ? 0 : 1;
     }
 
     const std::string socketPath = get_socket_path(argc, argv);
@@ -991,15 +991,15 @@ int main(int argc, char* argv[]) {
         if (ready > 0 && FD_ISSET(serverFd, &readSet)) {
             int clientFd = ::accept(serverFd, nullptr, nullptr);
             if (clientFd >= 0) {
-                serve_one_client(clientFd, cafMap);
+                serve_one_client(clientFd, policyMap);
                 ::close(clientFd);
             }
         }
 
         auto now = std::chrono::steady_clock::now();
         if (now >= nextPeriodicApply) {
-            cafMap = init_cafMap();
-            apply(cafMap, "all", "");
+            policyMap = init_policyMap();
+            apply(policyMap, "all", "");
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }
     }

@@ -181,11 +181,11 @@ std::string getArgvValue(int argc, char* argv[], int ind){
 }
 
 ModulePolicyMap* getModule(
-        PolicyMap& cafMap,
+        PolicyMap& policyMap,
         const std::string& module){
         // Проверяем внешний ключ
-        auto outerIt = cafMap.find(module);
-        if (outerIt != cafMap.end()) {
+        auto outerIt = policyMap.find(module);
+        if (outerIt != policyMap.end()) {
             return &outerIt->second;
         }
         //Возвращаем пустой массив (нет политик)
@@ -193,21 +193,21 @@ ModulePolicyMap* getModule(
 }
 //Дать класс политики
 Policy* getPolicyClass(
-    PolicyMap& cafMap,
+    PolicyMap& policyMap,
     const std::string& module,
     const std::string& policy
 ) {
     // Проверяем внешний ключ (ищем модуль)
-    auto moduleIt = cafMap.find(module);
-    if (moduleIt == cafMap.end()) {
+    auto moduleIt = policyMap.find(module);
+    if (moduleIt == policyMap.end()) {
         return nullptr;  // Модуль не найден
     }
 
     // Ищем политику во всех подмодулях этого модуля
     for (const auto& submodulePair : moduleIt->second) {
-        const auto& policyMap = submodulePair.second;
-        auto policyIt = policyMap.find(policy);
-        if (policyIt != policyMap.end()) {
+        const auto& submodulePolicies = submodulePair.second;
+        auto policyIt = submodulePolicies.find(policy);
+        if (policyIt != submodulePolicies.end()) {
             return policyIt->second.get();  // Нашли политику
         }
     }
@@ -216,8 +216,8 @@ Policy* getPolicyClass(
 }
 
 //Дать информацию об ограничении
-bool policy_info_restriction(PolicyMap& cafMap, std::string module, std::string policy){
-    Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
+bool policy_info_restriction(PolicyMap& policyMap, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
     if(concretePolicy != nullptr){
         std::cout << concretePolicy->getPolicyRestriction();
         return true;
@@ -227,10 +227,10 @@ bool policy_info_restriction(PolicyMap& cafMap, std::string module, std::string 
     return false;
 }
 //Дать список модулей
-bool module_list(PolicyMap& cafMap){
+bool module_list(PolicyMap& policyMap){
     std::string moduleList;
        bool first = true;
-       for (const auto& [moduleConcrete, policyMap] : cafMap){
+       for (const auto& [moduleConcrete, modulePolicies] : policyMap){
            if (!first) moduleList += " ";
            moduleList += moduleConcrete;
            first = false;
@@ -239,21 +239,21 @@ bool module_list(PolicyMap& cafMap){
        return true;
 }
 
-bool policy_list(PolicyMap& cafMap, std::string module){
+bool policy_list(PolicyMap& policyMap, std::string module){
     if(module == "all"){
-        for(const auto& [moduleName, submoduleMap] : cafMap){
-            policy_list(cafMap, moduleName);
+        for(const auto& [moduleName, submoduleMap] : policyMap){
+            policy_list(policyMap, moduleName);
             std::cout << " ";
         }
         return true;
     }
-    auto outerIt = cafMap.find(module);
-       if (outerIt == cafMap.end()) {
+    auto outerIt = policyMap.find(module);
+       if (outerIt == policyMap.end()) {
            return false;
        }
        std::string policyList;
        bool first = true;
-       for(const auto& [submoduleName, submoduleMap]: cafMap[module]){
+       for(const auto& [submoduleName, submoduleMap]: policyMap[module]){
            for(const auto& [policyName, policyClass] : submoduleMap){
             if (!first) policyList += " ";
             policyList += policyName;
@@ -264,15 +264,15 @@ bool policy_list(PolicyMap& cafMap, std::string module){
        return true;
 }
 
-PolicyApplyResult applyPolicy(PolicyMap& cafMap, std::string module, std::string policy) {
-    auto moduleIt = cafMap.find(module);
-    if (moduleIt == cafMap.end()) {
+PolicyApplyResult applyPolicy(PolicyMap& policyMap, std::string module, std::string policy) {
+    auto moduleIt = policyMap.find(module);
+    if (moduleIt == policyMap.end()) {
         return {module, "", policy, PolicyApplyStatus::NotFound, "Модуль не существует"};
     }
 
-    for (const auto& [submoduleName, policyMap] : moduleIt->second) {
-        auto policyIt = policyMap.find(policy);
-        if (policyIt == policyMap.end()) {
+    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second) {
+        auto policyIt = submodulePolicies.find(policy);
+        if (policyIt == submodulePolicies.end()) {
             continue;
         }
 
@@ -300,16 +300,16 @@ PolicyApplyResult applyPolicy(PolicyMap& cafMap, std::string module, std::string
     return {module, "", policy, PolicyApplyStatus::NotFound, "Политика не существует"};
 }
 
-PolicyApplySummary applyModulePolicies(PolicyMap& cafMap, std::string module) {
+PolicyApplySummary applyModulePolicies(PolicyMap& policyMap, std::string module) {
     PolicyApplySummary summary;
-    auto moduleIt = cafMap.find(module);
-    if (moduleIt == cafMap.end()) {
+    auto moduleIt = policyMap.find(module);
+    if (moduleIt == policyMap.end()) {
         summary.add({module, "", "all", PolicyApplyStatus::NotFound, "Модуль не существует"});
         return summary;
     }
 
-    for (const auto& [submoduleName, policyMap] : moduleIt->second) {
-        for (const auto& [policyName, policyClass] : policyMap) {
+    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second) {
+        for (const auto& [policyName, policyClass] : submodulePolicies) {
             if (!policyClass->isEnabled()) {
                 summary.add({
                     module,
@@ -335,11 +335,11 @@ PolicyApplySummary applyModulePolicies(PolicyMap& cafMap, std::string module) {
     return summary;
 }
 
-PolicyApplySummary applyAllPolicies(PolicyMap& cafMap) {
+PolicyApplySummary applyAllPolicies(PolicyMap& policyMap) {
     PolicyApplySummary summary;
-    for (const auto& [moduleName, submoduleMap] : cafMap) {
-        for (const auto& [submoduleName, policyMap] : submoduleMap) {
-            for (const auto& [policyName, policyClass] : policyMap) {
+    for (const auto& [moduleName, submoduleMap] : policyMap) {
+        for (const auto& [submoduleName, submodulePolicies] : submoduleMap) {
+            for (const auto& [policyName, policyClass] : submodulePolicies) {
                 if (!policyClass->isEnabled()) {
                     summary.add({
                         moduleName,
@@ -416,14 +416,14 @@ static void printPolicyApplySummary(const PolicyApplySummary& summary, std::stri
     }
 }
 
-bool apply(PolicyMap& cafMap, std::string module, std::string policy) {
+bool apply(PolicyMap& policyMap, std::string module, std::string policy) {
     PolicyApplySummary summary;
     if (module == "all") {
-        summary = applyAllPolicies(cafMap);
+        summary = applyAllPolicies(policyMap);
     } else if (policy == "all") {
-        summary = applyModulePolicies(cafMap, module);
+        summary = applyModulePolicies(policyMap, module);
     } else {
-        summary.add(applyPolicy(cafMap, module, policy));
+        summary.add(applyPolicy(policyMap, module, policy));
     }
 
     printPolicyApplySummary(summary, module, policy);
@@ -431,8 +431,8 @@ bool apply(PolicyMap& cafMap, std::string module, std::string policy) {
 }
 
 //Отключить политику
-bool disable (PolicyMap& cafMap, std::string module, std::string policy){
-    Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
+bool disable (PolicyMap& policyMap, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим отключение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -457,8 +457,8 @@ bool disable (PolicyMap& cafMap, std::string module, std::string policy){
     return false;
 }
 //Включить политику
-bool enable(PolicyMap& cafMap, std::string module, std::string policy){
-    Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
+bool enable(PolicyMap& policyMap, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим включение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -486,8 +486,8 @@ bool enable(PolicyMap& cafMap, std::string module, std::string policy){
     return false;
 }
 
-bool set(PolicyMap& cafMap, std::string module, std::string policy, std::string value){
-   Policy* concretePolicy = getPolicyClass(cafMap, module, policy);
+bool set(PolicyMap& policyMap, std::string module, std::string policy, std::string value){
+   Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
     if(concretePolicy != nullptr){
         std::cout << "Производим попытку смены значения политики " + policy + " в модуле " + module + "..." << std::endl;
         //Производим валидацию и преобразование параметра
@@ -528,7 +528,7 @@ bool set(PolicyMap& cafMap, std::string module, std::string policy, std::string 
 }
 
 /*Ининциализируем массив классов*/
-PolicyMap init_cafMap(){
+PolicyMap init_policyMap(){
     std::vector<std::unique_ptr<Policy>> cafArr;
 
     //Дискреционное разграничение доступа (DAC)
@@ -587,7 +587,7 @@ PolicyMap init_cafMap(){
     cafArr.push_back(std::make_unique<GLOBAL_log_level>());
     cafArr.push_back(std::make_unique<GLOBAL_lang>());
     //Для удобства отсортируем в массив вида "модуль->подмодуль->политика->класс,представляющий политику для данного модуля"
-    PolicyMap cafMap;
+    PolicyMap policyMap;
 
     for (auto& policyClass : cafArr) {
             //std::cout << policyClass->moduleName << std::endl;
@@ -598,11 +598,11 @@ PolicyMap init_cafMap(){
                     //submodule пуст -> нужно быть осторожным и следить, чтобы это поле не было пусто когда не надо
                 }else{
                     std::cerr << "Не заданы значения moduleName, policyName. Требуется проверить код!" << std::endl;
-                    cafMap.clear();
-                    return cafMap;
+                    policyMap.clear();
+                    return policyMap;
                 }
             }
-            cafMap[policyClass->moduleName][policyClass->submoduleName][policyClass->policyName] = std::move(policyClass);
+            policyMap[policyClass->moduleName][policyClass->submoduleName][policyClass->policyName] = std::move(policyClass);
     }
-    return cafMap;
+    return policyMap;
 }
