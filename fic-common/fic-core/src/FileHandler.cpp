@@ -1,5 +1,71 @@
 #include <fic/core/FileHandler.h>
 
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
+#include <system_error>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+namespace {
+
+bool writeAll(int fd, const char* data, size_t size) {
+    while (size > 0) {
+        ssize_t written = ::write(fd, data, size);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (written == 0) {
+            errno = EIO;
+            return false;
+        }
+
+        data += written;
+        size -= static_cast<size_t>(written);
+    }
+
+    return true;
+}
+
+bool writeLine(int fd, const std::string& line) {
+    return writeAll(fd, line.data(), line.size()) && writeAll(fd, "\n", 1);
+}
+
+bool closeFd(int& fd) {
+    if (fd < 0) {
+        return true;
+    }
+
+    while (::close(fd) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        fd = -1;
+        return false;
+    }
+
+    fd = -1;
+    return true;
+}
+
+void cleanupTempFile(int& fd, const std::filesystem::path& tempPath) {
+    closeFd(fd);
+    std::error_code error;
+    std::filesystem::remove(tempPath, error);
+}
+
+std::string errnoMessage() {
+    return std::strerror(errno);
+}
+
+} // namespace
+
 FileHandler::FileHandler(const std::string& filepath, const std::string& delimeter){
     this->filepath_ = filepath;
     this->delimeter_ = delimeter;
@@ -81,20 +147,117 @@ bool FileHandler::loadFile(){
 }
 
 bool FileHandler::saveFile(){
-    //Открываем файл (затирая содержимое)
-    //std::cout << "Сохраняем файл" << std::endl;
-    std::ofstream file(filepath_, std::ios::trunc | std::ios::out);
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open file for writing: " << filepath_ << std::endl;
+    std::error_code error;
+    const std::filesystem::path requestedPath(filepath_);
+    const bool targetExists = std::filesystem::exists(requestedPath, error);
+    if (error) {
+        std::cerr << "Error: Could not check file existence: " << filepath_
+                  << ": " << error.message() << std::endl;
         return false;
     }
 
-    // Используем original_lines_, чтобы сохранить структуру файла, включая комментарии
-    for (const std::string& line : original_lines_) {
-         file << line << '\n';
+    const std::filesystem::path targetPath = targetExists
+        ? std::filesystem::canonical(requestedPath, error)
+        : std::filesystem::absolute(requestedPath, error);
+
+    if (error) {
+        std::cerr << "Error: Could not resolve file path: " << filepath_
+                  << ": " << error.message() << std::endl;
+        return false;
     }
 
-    file.close();
+    const std::filesystem::path targetDir = targetPath.parent_path();
+    if (targetDir.empty()) {
+        std::cerr << "Error: Could not determine parent directory: " << filepath_ << std::endl;
+        return false;
+    }
+
+    struct stat targetStat {};
+    const bool hasTargetStat = ::stat(targetPath.c_str(), &targetStat) == 0;
+    if (!hasTargetStat && errno != ENOENT) {
+        std::cerr << "Error: Could not stat file: " << targetPath
+                  << ": " << errnoMessage() << std::endl;
+        return false;
+    }
+
+    std::string tempTemplate =
+        (targetDir / ("." + targetPath.filename().string() + ".tmp.XXXXXX")).string();
+
+    int tempFd = ::mkstemp(tempTemplate.data());
+    if (tempFd < 0) {
+        std::cerr << "Error: Could not create temporary file for: " << targetPath
+                  << ": " << errnoMessage() << std::endl;
+        return false;
+    }
+
+    const std::filesystem::path tempPath(tempTemplate);
+
+    if (hasTargetStat) {
+        if (::fchown(tempFd, targetStat.st_uid, targetStat.st_gid) < 0) {
+            std::cerr << "Error: Could not set temporary file owner: " << tempPath
+                      << ": " << errnoMessage() << std::endl;
+            cleanupTempFile(tempFd, tempPath);
+            return false;
+        }
+
+        if (::fchmod(tempFd, targetStat.st_mode & 07777) < 0) {
+            std::cerr << "Error: Could not set temporary file mode: " << tempPath
+                      << ": " << errnoMessage() << std::endl;
+            cleanupTempFile(tempFd, tempPath);
+            return false;
+        }
+    }
+
+    for (const std::string& line : original_lines_) {
+        if (!writeLine(tempFd, line)) {
+            std::cerr << "Error: Could not write temporary file: " << tempPath
+                      << ": " << errnoMessage() << std::endl;
+            cleanupTempFile(tempFd, tempPath);
+            return false;
+        }
+    }
+
+    if (::fsync(tempFd) < 0) {
+        std::cerr << "Error: Could not fsync temporary file: " << tempPath
+                  << ": " << errnoMessage() << std::endl;
+        cleanupTempFile(tempFd, tempPath);
+        return false;
+    }
+
+    if (!closeFd(tempFd)) {
+        std::cerr << "Error: Could not close temporary file: " << tempPath
+                  << ": " << errnoMessage() << std::endl;
+        cleanupTempFile(tempFd, tempPath);
+        return false;
+    }
+
+    if (::rename(tempPath.c_str(), targetPath.c_str()) < 0) {
+        std::cerr << "Error: Could not replace file: " << targetPath
+                  << ": " << errnoMessage() << std::endl;
+        cleanupTempFile(tempFd, tempPath);
+        return false;
+    }
+
+    int dirFd = ::open(targetDir.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dirFd < 0) {
+        std::cerr << "Error: Could not open directory for fsync: " << targetDir
+                  << ": " << errnoMessage() << std::endl;
+        return false;
+    }
+
+    if (::fsync(dirFd) < 0) {
+        std::cerr << "Error: Could not fsync directory: " << targetDir
+                  << ": " << errnoMessage() << std::endl;
+        closeFd(dirFd);
+        return false;
+    }
+
+    if (!closeFd(dirFd)) {
+        std::cerr << "Error: Could not close directory: " << targetDir
+                  << ": " << errnoMessage() << std::endl;
+        return false;
+    }
+
     return true;
 }
 
@@ -133,4 +296,3 @@ std::string FileHandler::getValue(const std::string& parameter) const {
 void FileHandler::printConfig() const {
     // Ничего не делаем
 }
-
