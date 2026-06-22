@@ -72,7 +72,7 @@ During installation each package:
 - preserves `/opt/fic/config/*.conf` as package-managed configuration files;
 - installs the seed database as `/opt/fic/share/devices.seed.db`;
 - creates `/opt/fic/db/devices.db` from the seed only when the working database does not yet exist;
-- creates `/opt/fic/lockstatus` and `/opt/fic/config/commandhash.conf` only when they do not yet exist;
+- creates `/opt/fic/lockstatus` and `/opt/fic/db/commandhash.txt` only when they do not yet exist;
 - applies `root:fic` recursively to `/opt/fic`;
 - applies `2770` to directories under `/opt/fic` so the group is inherited and the directories remain traversable;
 - applies `0660` to regular files under `/opt/fic`;

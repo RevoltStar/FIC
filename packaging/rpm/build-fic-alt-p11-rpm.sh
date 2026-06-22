@@ -587,8 +587,8 @@ if [ -d /opt/fic ]; then
         printf '0\n' > /opt/fic/lockstatus || true
     fi
 
-    if [ ! -f /opt/fic/config/commandhash.conf ]; then
-        : > /opt/fic/config/commandhash.conf || true
+    if [ ! -f /opt/fic/db/commandhash.txt ]; then
+        : > /opt/fic/db/commandhash.txt || true
     fi
 
     chown -R root:fic /opt/fic || true
@@ -624,8 +624,8 @@ if [ -d /opt/fic ]; then
         printf '0\n' > /opt/fic/lockstatus || true
     fi
 
-    if [ ! -f /opt/fic/config/commandhash.conf ]; then
-        : > /opt/fic/config/commandhash.conf || true
+    if [ ! -f /opt/fic/db/commandhash.txt ]; then
+        : > /opt/fic/db/commandhash.txt || true
     fi
 
     chown -R root:fic /opt/fic || true
@@ -663,8 +663,8 @@ if [ -d /opt/fic ]; then
         printf '0\n' > /opt/fic/lockstatus || true
     fi
 
-    if [ ! -f /opt/fic/config/commandhash.conf ]; then
-        : > /opt/fic/config/commandhash.conf || true
+    if [ ! -f /opt/fic/db/commandhash.txt ]; then
+        : > /opt/fic/db/commandhash.txt || true
     fi
 
     chown -R root:fic /opt/fic || true
