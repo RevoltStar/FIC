@@ -1,7 +1,8 @@
 #include "MemoryInfoCollector.h"
 
-#include <cstdio>
-#include <memory>
+#include <fic/core/VerifiedProcessExecutor.h>
+
+#include <sstream>
 #include <unordered_map>
 
 MemoryInfoCollector::MemoryInfoCollector()
@@ -61,14 +62,13 @@ bool MemoryInfoCollector::process_device_concrete(){
     };
 
     // Выполняем команду dmidecode -t 17 (информация о памяти)
-    const char* command = "dmidecode -t 17";
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command, "r"), pclose);
-    if (!pipe) {
-        std::cerr << "Failed to execute dmidecode command" << std::endl;
+    ProcessResult result = VerifiedProcessExecutor::execute("/usr/sbin/dmidecode", {"-t", "17"});
+    if (!result.success()) {
+        std::string error = result.error.empty() ? result.standardError : result.error;
+        this->log("Failed to execute dmidecode command: " + error, logLevel::WARN);
         return collectFromProcMeminfo();
     }
 
-    char buffer[256];
     bool inMemorySection = false;
     std::unordered_map<std::string, std::string> currentModule;
     int moduleCount = 0;
@@ -129,9 +129,9 @@ bool MemoryInfoCollector::process_device_concrete(){
         inMemorySection = false;
     };
 
-    while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr) {
-        std::string line(buffer);
-
+    std::istringstream output(result.standardOutput);
+    std::string line;
+    while (std::getline(output, line)) {
         // Проверяем начало секции Memory Device
         if (line.find("Memory Device") != std::string::npos) {
             // Обрабатываем предыдущий модуль (если есть)
@@ -174,9 +174,6 @@ bool MemoryInfoCollector::process_device_concrete(){
 
     // Обрабатываем последний модуль (после окончания чтения)
     processCurrentModule();
-
-    // Закрываем pipe
-    //pclose(pipe.get());
 
     //std::cout << "Обработка завершена. Всего обработано модулей памяти: " << moduleCount << std::endl;
 
