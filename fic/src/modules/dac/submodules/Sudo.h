@@ -405,27 +405,6 @@ public:
                     original_lines_.size()));
                 return true;
             }
-
-            if (value == "DISABLE") {
-                std::vector<size_t> lineNumbersToErase;
-
-                for (size_t i = config_.size(); i > 0; --i) {
-                    auto* current = dynamic_cast<SingleDefaultsSudoersParam*>(config_[i - 1].get());
-                    if (current != nullptr && isSameDefaultsParameter(*current, *expected)) {
-                        const size_t lineNumber = current->getLineNumber();
-                        if (lineNumber > 0 && lineNumber <= original_lines_.size()) {
-                            lineNumbersToErase.push_back(lineNumber - 1);
-                        }
-                        config_.erase(config_.begin() + (i - 1));
-                    }
-                }
-
-                for (size_t lineIndex : lineNumbersToErase) {
-                    original_lines_.erase(original_lines_.begin() + lineIndex);
-                }
-
-                return true;
-            }
         }
 
         return false;
