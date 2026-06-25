@@ -30,7 +30,7 @@ void read_pipe(int fd, std::string& output) {
 
 void write_child_error(const std::string& message) {
     const std::string line = message + ": " + std::strerror(errno) + "\n";
-    ::write(STDERR_FILENO, line.data(), line.size());
+    auto res = ::write(STDERR_FILENO, line.data(), line.size());
 }
 } // namespace
 
