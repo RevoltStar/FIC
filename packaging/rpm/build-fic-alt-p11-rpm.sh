@@ -466,12 +466,11 @@ write_spec_file() {
     local summary="$3"
     local description="$4"
     local requires="$5"
-    local recommends="$6"
-    local source_name="$7"
-    local file_list_source="$8"
-    local pre_script="$9"
-    local post_script="${10}"
-    local preun_script="${11}"
+    local source_name="$6"
+    local file_list_source="$7"
+    local pre_script="$8"
+    local post_script="$9"
+    local preun_script="${10}"
 
     {
         printf 'Name: %s\n' "$package_name"
@@ -486,9 +485,6 @@ write_spec_file() {
         printf 'Source1: %s\n' "$file_list_source"
         if [ -n "$requires" ]; then
             printf 'Requires: %s\n' "$requires"
-        fi
-        if [ -n "$recommends" ]; then
-            printf 'Recommends: %s\n' "$recommends"
         fi
         printf '\n%%description\n%s\n' "$description"
         printf '\n%%prep\n'
@@ -517,10 +513,9 @@ build_rpm_package() {
     local summary="$3"
     local description="$4"
     local requires="$5"
-    local recommends="$6"
-    local pre_script="$7"
-    local post_script="$8"
-    local preun_script="$9"
+    local pre_script="$6"
+    local post_script="$7"
+    local preun_script="$8"
     local source_name="${package_name}-${PACKAGE_VERSION}.tar.gz"
     local source_path="$RPM_TOPDIR/SOURCES/$source_name"
     local file_list_source="${package_name}.files"
@@ -536,14 +531,16 @@ build_rpm_package() {
         "$summary" \
         "$description" \
         "$requires" \
-        "$recommends" \
         "$source_name" \
         "$file_list_source" \
         "$pre_script" \
         "$post_script" \
         "$preun_script"
 
-    run_rpmbuild "$spec_path"
+    if ! run_rpmbuild "$spec_path"; then
+        echo "Failed to build RPM for $package_name" >&2
+        return 1
+    fi
 
     output_rpm="$(find "$RPM_TOPDIR/RPMS/$ARCH" -maxdepth 1 -type f -name "${package_name}-${PACKAGE_VERSION}-${RPM_RELEASE}.${ARCH}.rpm" | head -n 1)"
     if [ -z "$output_rpm" ]; then
@@ -805,10 +802,9 @@ build_fic_dick_package() {
         "Free Integrity Control device collector binary" \
         "Free Integrity Control device collector binary." \
         "" \
-        "" \
         "$(common_pre_script)" \
         "$(fic_dick_post_script)" \
-        "$(fic_dick_preun_script)")"
+        "$(fic_dick_preun_script)")" || return 1
 
     printf '%s\n' "$output_rpm"
 }
@@ -828,10 +824,9 @@ build_fic_cli_package() {
         "Free Integrity Control terminal client" \
         "Free Integrity Control terminal socket client." \
         "fic = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
-        "" \
         "$(common_pre_script)" \
         "$(symlink_post_script "fic-cli" "/opt/fic/bin/fic-cli")" \
-        "$(symlink_preun_script "fic-cli" "/opt/fic/bin/fic-cli")")"
+        "$(symlink_preun_script "fic-cli" "/opt/fic/bin/fic-cli")")" || return 1
 
     printf '%s\n' "$output_rpm"
 }
@@ -854,10 +849,9 @@ build_fic_session_agent_package() {
         "Free Integrity Control graphical session agent" \
         "Free Integrity Control graphical session agent." \
         "" \
-        "" \
         "$(common_pre_script)" \
         "$(common_post_script)" \
-        "$(simple_preun_script)")"
+        "$(simple_preun_script)")" || return 1
 
     printf '%s\n' "$output_rpm"
 }
@@ -903,10 +897,9 @@ build_fic_package() {
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
         "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify" \
-        "fic-session-agent = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
         "$(common_pre_script)" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic")" \
-        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")"
+        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")" || return 1
 
     printf '%s\n' "$output_rpm"
 }
@@ -929,10 +922,9 @@ build_fic_gui_package() {
         "Free Integrity Control GUI package" \
         "Free Integrity Control GUI package." \
         "fic = ${PACKAGE_VERSION}-${RPM_RELEASE}, fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
-        "" \
         "$(common_pre_script)" \
         "$(symlink_post_script "fic-gui" "/opt/fic/bin/fic-gui")" \
-        "$(symlink_preun_script "fic-gui" "/opt/fic/bin/fic-gui")")"
+        "$(symlink_preun_script "fic-gui" "/opt/fic/bin/fic-gui")")" || return 1
 
     printf '%s\n' "$output_rpm"
 }

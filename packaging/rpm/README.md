@@ -54,7 +54,9 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 ## Dependency chain
 
 - `fic` requires `fic-dick`
-- `fic` recommends `fic-session-agent`
+- `fic-session-agent` is optional and must be installed separately when
+  graphical-session policies are needed; ALT p11 RPM does not support the
+  `Recommends` spec tag
 - `fic-gui` requires both `fic` and `fic-dick`
 
 ## Ownership and permissions
