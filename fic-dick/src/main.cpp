@@ -1,7 +1,9 @@
 // file name: main.cpp
 #include <iostream>
+#include <exception>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 #include <fic/device-db/DB.h>
 #include "core/DeviceControlDaemon.h"
@@ -78,6 +80,18 @@ int main(int argc, char* argv[], char* envp[]) {
         else if (mode == "check-permanent") {
             return fic::device_control::request_permanent_check();
         }
+        else if (mode == "wait-daemon") {
+            int timeoutSeconds = 10;
+            if (argc > 2) {
+                try {
+                    timeoutSeconds = std::stoi(argv[2]);
+                } catch (const std::exception&) {
+                    std::cerr << "Invalid wait-daemon timeout: " << argv[2] << std::endl;
+                    return 1;
+                }
+            }
+            return fic::device_control::wait_for_daemon(timeoutSeconds);
+        }
         // Собираем информацию о ЦПУ, м/плате, ОЗУ
         else if (mode == "cpu_board_memory") {
             DB db = DB("/opt/fic/db/devices.db");
@@ -101,7 +115,7 @@ int main(int argc, char* argv[], char* envp[]) {
             return 1;
         }
     } else {
-        std::cerr << "Неверный синтаксис. Используйте: " << argv[0] << " [--daemon|udev|check-permanent|cpu_board_memory]" << std::endl;
+        std::cerr << "Неверный синтаксис. Используйте: " << argv[0] << " [--daemon|udev|check-permanent|wait-daemon|cpu_board_memory]" << std::endl;
         return 1;
     }
 

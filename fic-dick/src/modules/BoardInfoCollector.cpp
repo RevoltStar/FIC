@@ -19,7 +19,15 @@ bool BoardInfoCollector::process_device_concrete(){
     ProcessResult result = VerifiedProcessExecutor::execute("/usr/sbin/dmidecode", {"-t", "2"});
     if (!result.success()) {
         std::string error = result.error.empty() ? result.standardError : result.error;
-        throw std::runtime_error("Failed to execute dmidecode command: " + error);
+        this->log("Verified dmidecode execution failed; creating unknown board placeholder: " + error, logLevel::WARN);
+        for (auto& [key, value] : this->deviceParam) {
+            value = "unknown";
+        }
+        this->deviceParam["Manufacturer"] = "unknown";
+        this->deviceParam["Product Name"] = "[Неизвестная материнская плата]";
+        this->deviceParam["Serial Number"] = "unknown";
+        this->deviceParam["Version"] = "unknown";
+        return process_device("board", board_list_dir);
     }
 
     bool inBaseBoardSection = false;

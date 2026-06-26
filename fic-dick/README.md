@@ -17,7 +17,7 @@
 Компонент запускается с обязательным аргументом режима:
 
 ```bash
-fic-dick [--daemon|udev|check-permanent|cpu_board_memory]
+fic-dick [--daemon|udev|check-permanent|wait-daemon|cpu_board_memory]
 ```
 
 Если режим не указан, программа завершится с ошибкой.
@@ -82,6 +82,17 @@ fic-dick check-permanent
 
 Отправляет daemon команду проверки `permanent` устройств. Если обязательное
 устройство отсутствует, daemon вызывает `lock` через основной `fic` socket.
+
+## Режим wait-daemon
+
+```bash
+fic-dick wait-daemon [timeout_seconds]
+```
+
+Ожидает готовности `/run/fic/fic-device.sock`, отправляя daemon команду
+`status`. Режим используется `fic-udevadm-trigger` перед `udevadm trigger`,
+чтобы boot-time udev-события не терялись из-за запуска раньше готовности
+`fic-dick --daemon`.
 
 ## Поддерживаемые подсистемы
 

@@ -23,7 +23,14 @@ bool CPUInfoCollector::process_device_concrete(){
     ProcessResult result = VerifiedProcessExecutor::execute("/usr/bin/lscpu", {}, options);
     if (!result.success()) {
         std::string error = result.error.empty() ? result.standardError : result.error;
-        throw std::runtime_error("Failed to execute lscpu command: " + error);
+        this->log("Verified lscpu execution failed; creating unknown CPU placeholder: " + error, logLevel::WARN);
+        for (auto& [key, value] : this->deviceParam) {
+            value = "unknown";
+        }
+        this->deviceParam["Model name"] = "[Неизвестный процессор]";
+        this->deviceParam["Vendor ID"] = "unknown";
+        this->deviceParam["CPU(s)"] = "unknown";
+        return process_device("cpu", cpu_list_dir);
     }
 
     std::istringstream output(result.standardOutput);

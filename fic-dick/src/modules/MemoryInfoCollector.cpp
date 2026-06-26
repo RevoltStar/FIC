@@ -65,8 +65,18 @@ bool MemoryInfoCollector::process_device_concrete(){
     ProcessResult result = VerifiedProcessExecutor::execute("/usr/sbin/dmidecode", {"-t", "17"});
     if (!result.success()) {
         std::string error = result.error.empty() ? result.standardError : result.error;
-        this->log("Failed to execute dmidecode command: " + error, logLevel::WARN);
-        return collectFromProcMeminfo();
+        this->log("Verified dmidecode execution failed; creating unknown memory placeholder: " + error, logLevel::WARN);
+        for (auto& [key, value] : this->deviceParam) {
+            value = "unknown";
+        }
+        this->deviceParam["Manufacturer"] = "unknown";
+        this->deviceParam["Part Number"] = "[Неизвестная оперативная память]";
+        this->deviceParam["Serial Number"] = "unknown";
+        this->deviceParam["Size"] = "unknown";
+        this->deviceParam["Speed"] = "unknown";
+        this->deviceParam["Type"] = "unknown";
+        this->deviceParam["Locator"] = "unknown";
+        return process_device("memory", memory_list_dir);
     }
 
     bool inMemorySection = false;

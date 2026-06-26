@@ -10,43 +10,66 @@
 - Обновлено: 2026-06-26.
 - Ветка: `main`.
 - Базовый commit: `befcfd6` (`Исправляем баги сокетов`).
-- Текущая задача: исправить boot-запуск FIC после установки Debian-пакетов и
-  перезагрузки.
+- Текущая задача: исправить пустое дерево устройств после boot и падение
+  `fic_get_device_info.service` при отсутствии command hash.
 
 ## Что было обнаружено на машине `172.17.1.105`
 
-- Установлены пакеты `fic`, `fic-cli`, `fic-dick`, `fic-gui`,
-  `fic-session-agent` версии `0.1.0`.
-- После reboot GUI показывал ошибку:
-  `connect(/run/fic/fic.sock) failed: Нет такого файла или каталога`.
-- `/run/fic` был создан корректно: `root:fic 0770`, но сокеты отсутствовали.
-- `fic.service` и `fic-device.service` были `inactive (dead)`.
-- `journalctl -b` показал ordering cycle:
-  `fic-device.service: Found ordering cycle on fic.service/start` и
-  `Job fic.service/start deleted to break ordering cycle`.
-- Цикл возникал из-за сочетания `WantedBy=multi-user.target` и
-  `After=multi-user.target` у `fic.service`, плюс цепочки
-  `fic_get_device_udev_info.service -> fic-device.service -> fic.service`.
-- Также найден packaging/runtime дефект: установленный
-  `/etc/udev/rules.d/99-fic-devices.rules` имел права `0777`, из-за чего
-  `systemd-udevd` предупреждал, что файл executable и world-writable.
+- После предыдущих unit-fix пакетов `fic.service` и `fic-device.service`
+  стартуют, `/run/fic/fic.sock` и `/run/fic/fic-device.sock` существуют с
+  правами `root:fic 0660`.
+- `fic-cli status` работает, `fic-cli device root` возвращает seed-root.
+- Дерево устройств почти пустое: есть только `/`, `/cpu_list`, `/memory_list`,
+  `/board_list`, `/devices`, `/devices/pci0000:00`; ниже `/devices/pci0000:00`
+  детей нет.
+- В boot-логах `fic-dick udev` массово падал с:
+  `connect(/run/fic/fic-device.sock) failed: No such file or directory`.
+- Причина: `fic_get_device_udev_info.service` запускал `fic-udevadm-trigger`
+  сразу после старта `fic-device.service`. Так как `fic-device.service` имеет
+  `Type=simple`, systemd считает сервис запущенным до того, как daemon реально
+  создал и начал слушать `/run/fic/fic-device.sock`.
+- `fic_get_device_udev_info.service` завершался `SUCCESS`, потому что
+  `udevadm trigger/settle` не считает ошибки `RUN+=/opt/fic/bin/fic-dick udev`
+  ошибкой самого `udevadm`.
+- `fic_get_device_info.service` отдельно падал с core dump:
+  `Failed to execute lscpu command: no stored reference hash was found for executable: /usr/bin/lscpu`.
 
 ## Сделано
 
-- Удален лишний `After=multi-user.target` из:
-  - `fic/src/scripts/service/fic.service`;
-  - `fic/src/scripts/service/fic_get_device_info.service`;
-  - `fic/src/scripts/service/fic-notify.service`.
-- Для CMake install udev rules добавлены явные права `0644` через
-  `FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ`.
-- В Debian 10/11/12 packaging после копирования udev rules добавлен
-  `chmod 0644` для файлов в package root.
-- В ALT p11 RPM packaging после копирования udev rules добавлен такой же
-  `chmod 0644`.
-- На машине `172.17.1.105` никаких правок, рестартов сервисов или package
-  install не выполнялось; использовалась только диагностика.
+- `fic-udevadm-trigger` теперь перед `udevadm trigger --action=add` вызывает:
+  `fic-dick wait-daemon 15`.
+- В `fic-dick` добавлен служебный режим:
+  `fic-dick wait-daemon [timeout_seconds]`.
+  Он опрашивает `/run/fic/fic-device.sock` командой `status` и возвращает 0
+  только после реальной готовности device daemon.
+- В `fic-dick udev` добавлен retry отправки udev-события в daemon:
+  до 50 попыток с паузой 100 мс, но только для ошибок подключения к Unix-сокету.
+  Ошибки самой обработки `udev_event` не ретраятся.
+- В `CPUInfoCollector`, `BoardInfoCollector`, `MemoryInfoCollector` добавлен
+  fallback: если `VerifiedProcessExecutor::execute` неуспешен, команда не
+  запускается в обход проверки; вместо этого создается фиктивное устройство
+  (`[Неизвестный процессор]`, `[Неизвестная материнская плата]`,
+  `[Неизвестная оперативная память]`).
+- Для `MemoryInfoCollector` сохранен существующий fallback на `/proc/meminfo`,
+  если и обычный `dmidecode` не сработал или не дал пригодных модулей памяти.
+- Обновлен `fic-dick/README.md` с описанием режима `wait-daemon`.
+- На машине `172.17.1.105` никаких правок, рестартов сервисов, package install
+  или повторного `udevadm trigger` не выполнялось; использовалась только
+  диагностика.
 
 ## Измененные файлы
+
+- `fic/src/scripts/service/fic-udevadm-trigger`
+- `fic-dick/src/core/DeviceControlDaemon.cpp`
+- `fic-dick/src/core/DeviceControlDaemon.h`
+- `fic-dick/src/main.cpp`
+- `fic-dick/src/modules/CPUInfoCollector.cpp`
+- `fic-dick/src/modules/BoardInfoCollector.cpp`
+- `fic-dick/src/modules/MemoryInfoCollector.cpp`
+- `fic-dick/README.md`
+- `docs/HANDOFF.md`
+
+Также в рабочем дереве остаются предыдущие незакоммиченные fix-файлы:
 
 - `fic/src/scripts/service/fic.service`
 - `fic/src/scripts/service/fic_get_device_info.service`
@@ -56,7 +79,6 @@
 - `packaging/deb/build-fic-debian11-deb.sh`
 - `packaging/deb/build-fic-debian12-deb.sh`
 - `packaging/rpm/build-fic-alt-p11-rpm.sh`
-- `docs/HANDOFF.md`
 
 ## Проверки
 
@@ -64,31 +86,43 @@
 
 ```bash
 git status --short
-rg -n "After=multi-user.target" fic/src/scripts/service packaging/deb packaging/rpm fic/CMakeLists.txt
+sh -n fic/src/scripts/service/fic-udevadm-trigger
+rg -n "wait-daemon|wait_for_daemon|unknown .*placeholder|Неизвест" fic-dick/src fic/src/scripts/service/fic-udevadm-trigger
+```
+
+Перед текущими изменениями уже выполнялись:
+
+```bash
 bash -n packaging/deb/build-fic-debian10-deb.sh packaging/deb/build-fic-debian11-deb.sh packaging/deb/build-fic-debian12-deb.sh packaging/rpm/build-fic-alt-p11-rpm.sh
 git diff --check
 ```
 
-Результат:
+Нужно выполнить после текущих изменений:
 
-- `After=multi-user.target` больше не найден;
-- shell-синтаксис packaging-скриптов корректен;
-- `git diff --check` без ошибок.
+```bash
+git diff --check
+cmake -S . -B build-check
+cmake --build build-check --target fic-dick -j2
+```
 
-Не выполнялось по просьбе пользователя:
+Не выполнялось по просьбе пользователя в предыдущем шаге:
 
-- CMake configure/build;
 - сборка deb/rpm пакетов;
 - установка пакетов;
 - runtime-рестарты сервисов на тестовой машине.
 
-## Важные замечания
+## Что проверить после пересборки и установки пакетов
 
-- В текущем workspace на Windows/WSL `stat` может показывать `0777` для
-  исходных файлов независимо от git mode. В git эти unit/udev файлы сохранены
-  как `100644`; packaging и CMake теперь дополнительно принудительно задают
-  `0644` для udev rules в staging/install.
-- После пересборки и установки пакетов нужно повторить reboot/runtime-проверку:
-  `systemctl status fic.service fic-device.service`,
-  `stat -c '%U %G %a %n' /run/fic /run/fic/fic.sock /run/fic/fic-device.sock`,
-  `fic-cli status`, `fic-cli device root`, запуск `fic-gui`.
+1. Перезагрузить тестовую машину.
+2. Проверить:
+   - `systemctl status fic.service fic-device.service fic_get_device_udev_info.service fic_get_device_info.service`;
+   - `stat -c '%U %G %a %n' /run/fic /run/fic/fic.sock /run/fic/fic-device.sock`;
+   - `fic-cli status`;
+   - `fic-cli device root`;
+   - `fic-cli device children 5`;
+   - `fic-cli device children 6`.
+3. В journal не должно быть массовых ошибок
+   `connect(/run/fic/fic-device.sock) failed`.
+4. `fic_get_device_info.service` не должен падать из-за отсутствия hash для
+   `/usr/bin/lscpu`; в дереве должен появиться placeholder
+   `[Неизвестный процессор]`, если verified-запуск невозможен.

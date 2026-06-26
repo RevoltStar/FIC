@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstring>
 #include <filesystem>
@@ -17,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <cctype>
+#include <thread>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -919,6 +921,11 @@ std::string get_device_socket_path_from_env() {
     return fic::ipc::DEFAULT_DEVICE_SOCKET_PATH;
 }
 
+bool is_retryable_device_socket_error(const json& response) {
+    const std::string message = response.value("message", "");
+    return message.rfind("connect(", 0) == 0;
+}
+
 bool prepare_runtime_socket(const std::string& socketPath, int serverFd) {
     const std::filesystem::path socket = socketPath;
     const std::filesystem::path runtimeDir = socket.parent_path();
@@ -1039,13 +1046,25 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
         envJson[key] = val;
     }
 
-    json response = fic::ipc::Client(get_device_socket_path_from_env()).request({
+    const json request = {
         {"command", "udev_event"},
         {"action", value("ACTION")},
         {"devpath", value("DEVPATH")},
         {"subsystem", value("SUBSYSTEM")},
         {"env", envJson}
-    });
+    };
+
+    json response;
+    constexpr int maxAttempts = 50;
+    for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
+        response = fic::ipc::Client(get_device_socket_path_from_env()).request(request);
+        if (response.value("ok", false) || !is_retryable_device_socket_error(response)) {
+            break;
+        }
+        if (attempt < maxAttempts) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
 
     if (!response.value("ok", false)) {
         log_device("udev event failed: " + response.value("message", "unknown error"), logLevel::ERROR);
@@ -1053,6 +1072,25 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
     }
 
     return 0;
+}
+
+int wait_for_daemon(int timeoutSeconds) {
+    if (timeoutSeconds < 0) {
+        timeoutSeconds = 0;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeoutSeconds);
+    json response;
+    do {
+        response = fic::ipc::Client(get_device_socket_path_from_env()).request({{"command", "status"}});
+        if (response.value("ok", false)) {
+            return 0;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    log_device("device daemon did not become ready: " + response.value("message", "unknown error"), logLevel::ERROR);
+    return 1;
 }
 
 int request_permanent_check() {
