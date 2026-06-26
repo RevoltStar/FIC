@@ -40,7 +40,31 @@ std::string UDEVInfoCollector::getParentDevpath(const std::string& devpath){
        return  "/devices/unclassified";
 }
 
-std::string UDEVInfoCollector::get_env_value(const std::string& key) {
+void UDEVInfoCollector::set_control_list(const std::vector<std::string>& newControlList) {
+    this->controlList = newControlList;
+    this->deviceParam.clear();
+    for (const auto& elem : this->controlList) {
+        this->deviceParam[elem] = "";
+    }
+}
+
+std::vector<std::string> UDEVInfoCollector::control_list_for_current_env() const {
+    return this->controlList;
+}
+
+std::map<std::string, std::string> UDEVInfoCollector::extra_device_attributes() const {
+    return {};
+}
+
+std::string UDEVInfoCollector::device_note_suffix() const {
+    return "";
+}
+
+void UDEVInfoCollector::refresh_control_list() {
+    set_control_list(control_list_for_current_env());
+}
+
+std::string UDEVInfoCollector::get_env_value(const std::string& key) const {
     auto explicitValue = this->udevEnv.find(key);
     if (explicitValue != this->udevEnv.end()) {
         return explicitValue->second;
@@ -52,6 +76,7 @@ std::string UDEVInfoCollector::get_env_value(const std::string& key) {
 
 void UDEVInfoCollector::set_udev_env(const std::map<std::string, std::string>& env) {
     this->udevEnv = env;
+    refresh_control_list();
 }
 
 std::map<std::string, std::string> UDEVInfoCollector::collect_all_udev_attributes() {
@@ -63,6 +88,11 @@ std::map<std::string, std::string> UDEVInfoCollector::collect_all_udev_attribute
                 continue;
             }
             attributes[key] = value;
+        }
+        for (const auto& [key, value] : this->extra_device_attributes()) {
+            if (!value.empty()) {
+                attributes[key] = value;
+            }
         }
         return attributes;
     }
@@ -81,6 +111,12 @@ std::map<std::string, std::string> UDEVInfoCollector::collect_all_udev_attribute
         }
 
         attributes[key] = value;
+    }
+
+    for (const auto& [key, value] : this->extra_device_attributes()) {
+        if (!value.empty()) {
+            attributes[key] = value;
+        }
     }
 
     return attributes;
@@ -162,6 +198,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
     try {
         this->log("Начинаем добавление/обновление устройства: " + devpath, logLevel::DEBUG);
 
+        refresh_control_list();
         if(this->deviceParam.empty()){
             this->log("Не заданы параметры контроля для устройства:" + devpath, logLevel::WARN);
             return false;
@@ -227,7 +264,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                    existing_device.device_type = subsystem;
                    existing_device.parent_id = parent_device.id;
                    existing_device.boot_id = boot_id;
-                   existing_device.notes = "UDEV device updated: " + devpath;
+                   existing_device.notes = "UDEV device updated: " + devpath + device_note_suffix();
                    if (!db.updateDevice(existing_device, existing_device.id)) {
                        return false;
                    }
@@ -258,7 +295,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                        boot_id,                   // Обновляем boot_id
                        existing_virtual_device.created_at, // Сохраняем время создания
                        "",                        // last_event_at обновится
-                       "Обновлено из виртуального: " + devpath
+                       "Обновлено из виртуального: " + devpath + device_note_suffix()
                    };
 
                    if (!db.updateDevice(updated_device, existing_virtual_device.id)) {
@@ -294,7 +331,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                        boot_id,
                        "",
                        "",
-                       "UDEV device occurrence: " + devpath
+                       "UDEV device occurrence: " + devpath + device_note_suffix()
                    };
 
                    int device_id = db.addDevice(new_device);
@@ -325,7 +362,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                    boot_id,
                    "",
                    "",
-                   "UDEV device: " + devpath
+                   "UDEV device: " + devpath + device_note_suffix()
                };
 
                int device_id = db.addDevice(new_device);
@@ -352,6 +389,7 @@ bool UDEVInfoCollector::safe_remove_device(const std::string& devpath, const std
     try {
         this->log("Начинаем удаление устройства: " + devpath, logLevel::TRACE);
 
+        refresh_control_list();
         // Собираем параметры из переменных окружения
         collect_udev_params();
 

@@ -1,16 +1,9 @@
 #include "BlockInfoCollector.h"
 
-#include <cstdlib>
 #include <string>
 #include <vector>
 
 namespace {
-std::string envValue(const char *name)
-{
-    const char *value = std::getenv(name);
-    return value == nullptr ? std::string() : std::string(value);
-}
-
 bool startsWith(const std::string &value, const std::string &prefix)
 {
     return value.rfind(prefix, 0) == 0;
@@ -20,13 +13,19 @@ bool contains(const std::string &value, const std::string &needle)
 {
     return value.find(needle) != std::string::npos;
 }
+}
 
-std::vector<std::string> createBlockControlList()
+BlockInfoCollector::BlockInfoCollector()
+    : UDEVInfoCollector(std::vector<std::string>{}) {
+    set_control_list(control_list_for_current_env());
+}
+
+std::vector<std::string> BlockInfoCollector::control_list_for_current_env() const
 {
-    const std::string devtype = envValue("DEVTYPE");
-    const std::string devname = envValue("DEVNAME");
-    const std::string devpath = envValue("DEVPATH");
-    const std::string dmUuid = envValue("DM_UUID");
+    const std::string devtype = get_env_value("DEVTYPE");
+    const std::string devname = get_env_value("DEVNAME");
+    const std::string devpath = get_env_value("DEVPATH");
+    const std::string dmUuid = get_env_value("DM_UUID");
 
     if (!dmUuid.empty() || startsWith(devname, "/dev/dm-") || contains(devpath, "/virtual/block/dm-"))
     {
@@ -42,14 +41,24 @@ std::vector<std::string> createBlockControlList()
 
     if (devtype == "partition")
     {
-        return {"DEVTYPE", "ID_PART_ENTRY_UUID", "ID_FS_UUID", "ID_PART_ENTRY_NUMBER",
-                "ID_SERIAL"};
+        if (!get_env_value("ID_PART_ENTRY_UUID").empty()) {
+            return {"DEVTYPE", "ID_PART_ENTRY_UUID", "ID_SERIAL"};
+        }
+        if (!get_env_value("ID_FS_UUID").empty()) {
+            return {"DEVTYPE", "ID_FS_UUID", "ID_SERIAL"};
+        }
+        if (!get_env_value("ID_PART_ENTRY_NUMBER").empty() && !get_env_value("ID_SERIAL").empty()) {
+            return {"DEVTYPE", "ID_SERIAL", "ID_PART_ENTRY_NUMBER"};
+        }
+        if (!devname.empty()) {
+            return {"DEVTYPE", "DEVNAME"};
+        }
+        if (!get_env_value("MAJOR").empty() && !get_env_value("MINOR").empty()) {
+            return {"DEVTYPE", "MAJOR", "MINOR"};
+        }
+        return {"DEVTYPE", "DEVPATH"};
     }
 
     return {"DEVTYPE", "ID_WWN", "ID_SERIAL", "ID_SERIAL_SHORT",
             "ID_MODEL", "ID_VENDOR"};
 }
-}
-
-BlockInfoCollector::BlockInfoCollector()
-    : UDEVInfoCollector(createBlockControlList()) {}

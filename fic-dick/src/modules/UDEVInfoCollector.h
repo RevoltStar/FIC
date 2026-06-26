@@ -12,6 +12,12 @@ protected:
     static const std::unordered_set<std::string> EXCLUDE_PARAMS;
     std::map<std::string, std::string> udevEnv;
 
+    void set_control_list(const std::vector<std::string>& newControlList);
+    virtual std::vector<std::string> control_list_for_current_env() const;
+    virtual std::map<std::string, std::string> extra_device_attributes() const;
+    virtual std::string device_note_suffix() const;
+    void refresh_control_list();
+
 public:
     UDEVInfoCollector(std::vector<std::string> _controlList = {""})
         : InfoCollector(_controlList) {}
@@ -40,7 +46,7 @@ public:
     std::map<std::string, std::string> collect_all_udev_attributes();
 
     // Получаем значение переменной окружения
-    std::string get_env_value(const std::string& key);
+    std::string get_env_value(const std::string& key) const;
 
     std::string getParentDevpath(const std::string& devpath);
 };

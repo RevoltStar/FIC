@@ -918,6 +918,17 @@ std::string get_device_socket_path_from_env() {
     return fic::ipc::DEFAULT_DEVICE_SOCKET_PATH;
 }
 
+bool is_missing_device_socket_error(const json& response, const std::string& socketPath) {
+    const std::string message = response.value("message", "");
+    const std::string prefix = "connect(" + socketPath + ") failed: ";
+    if (message.rfind(prefix, 0) != 0) {
+        return false;
+    }
+
+    return message.find("No such file or directory", prefix.size()) != std::string::npos ||
+           message.find("Нет такого файла", prefix.size()) != std::string::npos;
+}
+
 bool prepare_runtime_socket(const std::string& socketPath, int serverFd) {
     const std::filesystem::path socket = socketPath;
     const std::filesystem::path runtimeDir = socket.parent_path();
@@ -1038,7 +1049,8 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
         envJson[key] = val;
     }
 
-    json response = fic::ipc::Client(get_device_socket_path_from_env()).request({
+    const std::string socketPath = get_device_socket_path_from_env();
+    json response = fic::ipc::Client(socketPath).request({
         {"command", "udev_event"},
         {"action", value("ACTION")},
         {"devpath", value("DEVPATH")},
@@ -1047,6 +1059,11 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
     });
 
     if (!response.value("ok", false)) {
+        if (is_missing_device_socket_error(response, socketPath)) {
+            log_device("udev event skipped: device daemon socket is not ready; scheduled boot retrigger will rescan devices", logLevel::TRACE);
+            return 0;
+        }
+
         log_device("udev event failed: " + response.value("message", "unknown error"), logLevel::ERROR);
         return 1;
     }

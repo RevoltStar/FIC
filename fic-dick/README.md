@@ -75,6 +75,7 @@ fic/src/scripts/udev/99-fic-devices.rules
 
 - helper пересылает `ACTION`, `DEVPATH`, `SUBSYSTEM` и udev environment в `fic-dick --daemon`;
 - helper делает одну IPC-попытку и быстро завершается, если device daemon еще не готов;
+- отсутствие `/run/fic/fic-device.sock` во время раннего coldplug не считается ошибкой helper: boot-time `fic-udevadm-trigger` позже выполнит контролируемый retrigger после `wait-daemon`;
 - daemon добавляет, обновляет или помечает устройство отключенным;
 - daemon вычисляет effective policy и применяет USB/PCI/block enforcement best-effort;
 - если обязательных переменных окружения нет, обработка завершается с ошибкой.
@@ -106,6 +107,17 @@ fic-dick wait-daemon [timeout_seconds]
 - `usb` - `USBInfoCollector`;
 - `block` - `BlockInfoCollector`;
 - `pci` - `PCIInfoCollector`.
+
+`BlockInfoCollector` выбирает поля идентификации после получения текущего udev
+environment. Для partitions приоритет отдается `ID_PART_ENTRY_UUID`, затем
+`ID_FS_UUID`, затем сочетанию `ID_SERIAL + ID_PART_ENTRY_NUMBER`, с fallback на
+`DEVNAME`, `MAJOR/MINOR` или `DEVPATH`.
+
+`PCIInfoCollector` использует базовые PCI-поля и добавляет weak-disambiguator:
+`PCI_SLOT_NAME`, а если его нет — `DEVPATH`. Такие записи получают атрибуты
+`FIC_IDENTITY_STRENGTH=weak` и `FIC_IDENTITY_DISAMBIGUATOR`, чтобы GUI/CLI и
+администратор могли видеть, что устройство различено по топологии, а не только
+по сильной аппаратной идентичности.
 
 Для остальных подсистем используется базовый `UDEVInfoCollector` с набором стабильных udev-полей:
 

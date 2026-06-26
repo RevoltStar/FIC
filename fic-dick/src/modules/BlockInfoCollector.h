@@ -5,6 +5,9 @@
 #include "UDEVInfoCollector.h"
 
 class BlockInfoCollector : public UDEVInfoCollector {
+protected:
+    std::vector<std::string> control_list_for_current_env() const override;
+
 public:
     BlockInfoCollector();
 };
