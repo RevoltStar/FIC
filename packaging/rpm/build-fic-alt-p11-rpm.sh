@@ -905,6 +905,7 @@ build_fic_package() {
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_udev_info.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/tmpfiles/fic.conf" "$package_root$TMPFILES_DIR/fic.conf"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
+    find "$package_root/etc/udev/rules.d" -type f -exec chmod 0644 {} \;
 
     output_rpm="$(build_rpm_package \
         "$package_root" \

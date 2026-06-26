@@ -1,6 +1,5 @@
 [Unit]
 Description=FIC desktop notification dispatcher
-After=multi-user.target
 
 [Service]
 Type=simple
