@@ -666,13 +666,13 @@ void MainWindow::addModules() {
     }
 
     for (const auto& [moduleName, modulePolicies] : policiesByModule) {
-        if (moduleName != "DC") {
-            ui->tab_modules->addTab(
-                createPolicyPage(modulePolicies, moduleName),
-                QLocalizationManager::getLang(
-                    QString::fromStdString("[module:" + moduleName + "]")
-                )
-            );
-        }
+        const QString tabTitle = moduleName == "DC"
+            ? QLocalizationManager::getLang("[module:DC][settings]")
+            : QLocalizationManager::getLang(QString::fromStdString("[module:" + moduleName + "]"));
+
+        ui->tab_modules->addTab(
+            createPolicyPage(modulePolicies, moduleName),
+            tabTitle
+        );
     }
 }

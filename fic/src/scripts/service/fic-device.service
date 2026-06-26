@@ -1,0 +1,14 @@
+[Unit]
+Description=FIC device control daemon
+After=fic.service
+Requires=fic.service
+
+[Service]
+Type=simple
+ExecStart=/opt/fic/bin/fic-dick --daemon
+Restart=on-failure
+RuntimeDirectory=fic
+RuntimeDirectoryMode=0770
+
+[Install]
+WantedBy=multi-user.target

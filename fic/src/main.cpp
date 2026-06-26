@@ -28,7 +28,6 @@
 
 #include "core/main_function.h"
 #include <fic/ipc/FicIpcClient.h>
-#include <fic/device-db/DB.h>
 #include <fic/core/Logger.h>
 #include <fic/core/SystemBootInfo.h>
 
@@ -437,45 +436,8 @@ std::string policy_apply_message(const PolicyApplySummary& summary,
     return failureMessage;
 }
 
-constexpr const char* DEVICE_DB_PATH = "/opt/fic/db/devices.db";
 constexpr const char* LOG_BASE_PATH = "/opt/fic/log";
 constexpr const char* LOCK_STATUS_PATH = "/opt/fic/lockstatus";
-
-json device_to_json(const DeviceInfo& device) {
-    return json{
-        {"id", device.id},
-        {"device_hash", device.device_hash},
-        {"devpath", device.devpath},
-        {"subsystem", device.subsystem},
-        {"device_type", device.device_type},
-        {"parent_id", device.parent_id},
-        {"control_level", device.control_level},
-        {"ignore_hierarchy", device.ignore_hierarchy},
-        {"boot_id", device.boot_id},
-        {"created_at", device.created_at},
-        {"last_event_at", device.last_event_at},
-        {"notes", device.notes}
-    };
-}
-
-json with_device_db(const std::function<json(DB&)>& action) {
-    DB db(DEVICE_DB_PATH);
-    if (!db.initializeDatabase()) {
-        return fic::ipc::make_error_response("failed to initialize devices database");
-    }
-    if (!db.acquireLock()) {
-        return fic::ipc::make_error_response("failed to lock devices database");
-    }
-
-    try {
-        json response = action(db);
-        db.releaseLock();
-        return response;
-    } catch (const std::exception& e) {
-        db.releaseLock();
-        return fic::ipc::make_error_response("device database error: " + std::string(e.what()));
-    }
-}
 
 json log_records_json(const std::string& requestedBootId) {
     const std::string bootId = requestedBootId.empty()
@@ -685,67 +647,11 @@ json handle_request(json request,
                 policy_apply_message(summary, ok, "policy applied", "failed to apply policy")
             );
         }
-        if (command == "device_get") {
-            int deviceId = request.value("device_id", 0);
-            if (deviceId <= 0) {
-                return fic::ipc::make_error_response("device_id is required");
-            }
-            return with_device_db([deviceId](DB& db) {
-                DeviceInfo device = db.getDeviceById(deviceId);
-                if (device.id == -1) {
-                    return fic::ipc::make_error_response("device not found");
-                }
-                return json{{"ok", true}, {"message", "device loaded"}, {"device", device_to_json(device)}};
-            });
-        }
-        if (command == "device_children") {
-            int parentId = request.value("parent_id", 0);
-            if (parentId <= 0) {
-                return fic::ipc::make_error_response("parent_id is required");
-            }
-            return with_device_db([parentId](DB& db) {
-                json children = json::array();
-                for (const DeviceInfo& child : db.getChildDevices(parentId)) {
-                    children.push_back(device_to_json(child));
-                }
-                return json{{"ok", true}, {"message", "children loaded"}, {"children", children}};
-            });
-        }
-        if (command == "device_attributes") {
-            int deviceId = request.value("device_id", 0);
-            if (deviceId <= 0) {
-                return fic::ipc::make_error_response("device_id is required");
-            }
-            return with_device_db([deviceId](DB& db) {
-                json attributes = json::object();
-                for (const auto& [name, value] : db.getDeviceAttributes(deviceId)) {
-                    attributes[name] = value;
-                }
-                return json{{"ok", true}, {"message", "attributes loaded"}, {"attributes", attributes}};
-            });
-        }
-        if (command == "device_update_control_level") {
-            int deviceId = request.value("device_id", 0);
-            std::string controlLevel = request.value("control_level", "");
-            if (deviceId <= 0 || controlLevel.empty()) {
-                return fic::ipc::make_error_response("device_id and control_level are required");
-            }
-            return with_device_db([deviceId, controlLevel](DB& db) {
-                bool ok = db.updateDeviceControlLevel(deviceId, controlLevel);
-                return ok ? fic::ipc::make_ok_response("device control level updated")
-                          : fic::ipc::make_error_response("failed to update device control level");
-            });
-        }
-        if (command == "device_delete") {
-            int deviceId = request.value("device_id", 0);
-            if (deviceId <= 0) {
-                return fic::ipc::make_error_response("device_id is required");
-            }
-            return with_device_db([deviceId](DB& db) {
-                bool ok = db.deleteDevice(deviceId);
-                return ok ? fic::ipc::make_ok_response("device deleted")
-                          : fic::ipc::make_error_response("failed to delete device");
-            });
+        if (command.rfind("device_", 0) == 0) {
+            return fic::ipc::make_error_response(
+                "device tree API is served by fic-dick on " +
+                std::string(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH)
+            );
         }
         if (command == "log_records") {
             return log_records_json(request.value("boot_id", ""));

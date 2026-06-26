@@ -20,14 +20,15 @@ enum class logLevel;
 
 // Структуры для данных устройств
 struct DeviceInfo {
-    int id;
+    int id = -1;
     std::string device_hash;
     std::string devpath;
     std::string subsystem;
     std::string device_type;
-    int parent_id;
+    int parent_id = -1;
     std::string control_level;
-    bool ignore_hierarchy;
+    bool control_explicit = true;
+    bool ignore_hierarchy = false;
     std::string boot_id;
     std::string created_at;
     std::string last_event_at;
@@ -82,13 +83,21 @@ public:
     int addDevice(const DeviceInfo& device);
     bool updateDevice(const DeviceInfo& device, const int& device_id);
     bool updateDeviceControlLevel(int device_id, const std::string& control_level);
+    bool updateDeviceControl(int device_id,
+                             const std::string& control_level,
+                             bool control_explicit,
+                             bool ignore_hierarchy);
+    bool updateDeviceIgnoreHierarchy(int device_id, bool ignore_hierarchy);
     bool deleteDevice(int device_id);
     DeviceInfo getDeviceByHash(const std::string& device_hash);
     DeviceInfo getDeviceByPath(const std::string& devpath);
     DeviceInfo getDeviceByPathAndBootId(const std::string& devpath, const std::string& boot_id);
     DeviceInfo getDeviceByHashAndSubsystem(const std::string& device_hash, const std::string& subsystem);
+    std::vector<DeviceInfo> getDevicesByHashAndSubsystem(const std::string& device_hash, const std::string& subsystem);
+    std::vector<DeviceInfo> getAllDevices();
     std::vector<DeviceInfo> getDevicesByType(const std::string& device_type);
     std::vector<DeviceInfo> getChildDevices(int parent_id);
+    std::vector<DeviceInfo> getDescendantDevices(int parent_id);
 
     bool updateBootId(int device_id, const std::string& boot_id);
     DeviceInfo getDeviceByHashAndSubsystemAndParent(const std::string& device_hash,
@@ -118,6 +127,7 @@ public:
     std::vector<DeviceEvent> getRecentEvents(const std::string& event_type = "", int limit = 100);
 
     // Вспомогательные методы
+    DeviceInfo getComputerRoot();
     int getVirtualContainerId(const std::string& container_type); // cpu, memory, board, devices
     bool deviceExists(const std::string& device_hash);
     int getDeviceIdByHash(const std::string& device_hash);

@@ -679,8 +679,9 @@ for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin
     if [ -x "\$systemctl_bin" ]; then
         "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
         "\$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
-        "\$systemctl_bin" enable fic_get_device_udev_info.service >/dev/null 2>&1 || true
         "\$systemctl_bin" enable --now fic.service >/dev/null 2>&1 || true
+        "\$systemctl_bin" enable --now fic-device.service >/dev/null 2>&1 || true
+        "\$systemctl_bin" enable fic_get_device_udev_info.service >/dev/null 2>&1 || true
         "\$systemctl_bin" enable --now fic-notify.service >/dev/null 2>&1 || true
         break
     fi
@@ -729,6 +730,7 @@ if [ "\$1" -eq 0 ]; then
     for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
         if [ -x "\$systemctl_bin" ]; then
             "\$systemctl_bin" disable --now fic.service >/dev/null 2>&1 || true
+            "\$systemctl_bin" disable --now fic-device.service >/dev/null 2>&1 || true
             "\$systemctl_bin" disable --now fic-notify.service >/dev/null 2>&1 || true
             "\$systemctl_bin" disable fic_get_device_udev_info.service >/dev/null 2>&1 || true
             "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
@@ -760,6 +762,7 @@ fi
 for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
     if [ -x "$systemctl_bin" ]; then
         "$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
+        "$systemctl_bin" enable fic-device.service >/dev/null 2>&1 || true
         "$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
         break
     fi
@@ -774,6 +777,7 @@ fic_dick_preun_script() {
 if [ "$1" -eq 0 ]; then
     for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
         if [ -x "$systemctl_bin" ]; then
+            "$systemctl_bin" disable fic-device.service >/dev/null 2>&1 || true
             "$systemctl_bin" disable fic_get_device_info.service >/dev/null 2>&1 || true
             "$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
             break
@@ -794,6 +798,7 @@ build_fic_dick_package() {
     mkdir -p "$package_root/opt/fic/bin"
     mkdir -p "$package_root$SYSTEMD_UNIT_DIR"
     install -m 0755 "$FIC_DICK_BUILD_DIR/fic-dick" "$package_root/opt/fic/bin/fic-dick"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-device.service" "$package_root$SYSTEMD_UNIT_DIR/fic-device.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_info.service"
 
     output_rpm="$(build_rpm_package \

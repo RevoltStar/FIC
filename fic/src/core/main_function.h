@@ -69,6 +69,9 @@
 #include "modules/global/submodules/systemsettings/GLOBAL_log_level.h"
 #include "modules/global/submodules/systemsettings/GLOBAL_lang.h"
 
+//Контроль устройств: общие настройки
+#include "modules/dc/DC.h"
+
 void test();
 /*Функции вывода справки*/
 void print_program_info();

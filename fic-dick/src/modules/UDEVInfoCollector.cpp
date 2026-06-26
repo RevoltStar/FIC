@@ -2,6 +2,8 @@
 #include "UDEVInfoCollector.h"
 #include <functional>
 
+extern char **environ;
+
 const std::unordered_set<std::string> UDEVInfoCollector::EXCLUDE_PARAMS = {
     "_", "ACTION", "PWD", "DRIVER", "USEC_INITIALIZED", "SEQNUM", "SHLVL", "SYNTH_UUID"
 };
@@ -65,8 +67,49 @@ std::string UDEVInfoCollector::getParentDevpath(const std::string& devpath){
 }
 
 std::string UDEVInfoCollector::get_env_value(const std::string& key) {
+    auto explicitValue = this->udevEnv.find(key);
+    if (explicitValue != this->udevEnv.end()) {
+        return explicitValue->second;
+    }
+
     const char* value = std::getenv(key.c_str());
     return value ? std::string(value) : "";
+}
+
+void UDEVInfoCollector::set_udev_env(const std::map<std::string, std::string>& env) {
+    this->udevEnv = env;
+}
+
+std::map<std::string, std::string> UDEVInfoCollector::collect_all_udev_attributes() {
+    std::map<std::string, std::string> attributes;
+
+    if (!this->udevEnv.empty()) {
+        for (const auto& [key, value] : this->udevEnv) {
+            if (value.empty() || EXCLUDE_PARAMS.find(key) != EXCLUDE_PARAMS.end()) {
+                continue;
+            }
+            attributes[key] = value;
+        }
+        return attributes;
+    }
+
+    for (char **env = environ; env != nullptr && *env != nullptr; ++env) {
+        std::string entry(*env);
+        const std::size_t separator = entry.find('=');
+        if (separator == std::string::npos || separator == 0) {
+            continue;
+        }
+
+        const std::string key = entry.substr(0, separator);
+        const std::string value = entry.substr(separator + 1);
+        if (value.empty() || EXCLUDE_PARAMS.find(key) != EXCLUDE_PARAMS.end()) {
+            continue;
+        }
+
+        attributes[key] = value;
+    }
+
+    return attributes;
 }
 
 void UDEVInfoCollector::collect_udev_params() {
@@ -129,6 +172,7 @@ DeviceInfo UDEVInfoCollector::create_virtual_device_config(const std::string& de
         "__virtual__",  // device_type = subsystem
         parentDevice.id, //parent_id
         parentDevice.control_level, // control_level
+        false, // control_explicit: виртуальный узел наследует родителя
         false,  // ignore_hierarchy = false по умолчанию
         boot_id, //boot_id
         "",  // created_at заполнится автоматически
@@ -204,7 +248,15 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
         // 1. Сначала проверяем, существует ли устройство с тем же хешем, подсистемой и родителем
                DeviceInfo existing_device = db.getDeviceByHashAndSubsystemAndParent(current_hash, subsystem, parent_device.id);
                if (existing_device.id != -1) {
-                   return db.updateBootId(existing_device.id, boot_id);
+                   if (!db.updateBootId(existing_device.id, boot_id)) {
+                       return false;
+                   }
+                   for (const auto& [key, value] : this->collect_all_udev_attributes()) {
+                       if (!value.empty()) {
+                           db.addDeviceAttribute(existing_device.id, key, value);
+                       }
+                   }
+                   return true;
                }
 
                // 2. Проверяем, существует ли виртуальное устройство для этого пути
@@ -221,6 +273,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                        subsystem,                 // Меняем на реальный тип
                        parent_device.id,          // Родитель остается тем же
                        parent_device.control_level, // Наследуем от родителя
+                       false,                    // Это унаследованное значение, не явное правило администратора
                        false,                     // Это физическое устройство
                        boot_id,                   // Обновляем boot_id
                        existing_virtual_device.created_at, // Сохраняем время создания
@@ -234,7 +287,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                    }
 
                    // Добавляем атрибуты
-                   for (const auto& [key, value] : this->deviceParam) {
+                   for (const auto& [key, value] : this->collect_all_udev_attributes()) {
                        if (!value.empty()) {
                            db.addDeviceAttribute(existing_virtual_device.id, key, value);
                        }
@@ -246,54 +299,34 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                DeviceInfo existing_device_no_hierarchy = db.getDeviceByHashAndSubsystem(current_hash, subsystem);
 
                if (existing_device_no_hierarchy.id != -1) {
-                   if (existing_device_no_hierarchy.ignore_hierarchy) {
-                       //ignore_hierarchy = true
-                       this->log("Устройство существует с ignore_hierarchy, создаем копию", logLevel::DEBUG);
+                   this->log("Устройство с такой идентичностью уже встречалось в другой ветке, создаем новую occurrence", logLevel::DEBUG);
 
-                       DeviceInfo new_device{
-                           0,
-                           current_hash,
-                           devpath,
-                           subsystem,
-                           subsystem,
-                           parent_device.id,
-                           existing_device_no_hierarchy.control_level,
-                           true,
-                           boot_id,
-                           "",
-                           "",
-                           "UDEV device: " + devpath
-                       };
+                   DeviceInfo new_device{
+                       0,
+                       current_hash,
+                       devpath,
+                       subsystem,
+                       subsystem,
+                       parent_device.id,
+                       parent_device.control_level,
+                       false,
+                       false,
+                       boot_id,
+                       "",
+                       "",
+                       "UDEV device occurrence: " + devpath
+                   };
 
-                       int device_id = db.addDevice(new_device);
-                       if (device_id == -1) return false;
+                   int device_id = db.addDevice(new_device);
+                   if (device_id == -1) return false;
 
-                       // Добавляем атрибуты
-                       for (const auto& [key, value] : this->deviceParam) {
-                           if (!value.empty()) {
-                               db.addDeviceAttribute(device_id, key, value);
-                           }
+                   // Добавляем атрибуты
+                   for (const auto& [key, value] : this->collect_all_udev_attributes()) {
+                       if (!value.empty()) {
+                           db.addDeviceAttribute(device_id, key, value);
                        }
-                       return true;
-                   } else {
-                       // ignore_hierarchy = false
-                       this->log("Устройство существует без иерархии, обновляем parent_id", logLevel::DEBUG);
-
-                       existing_device_no_hierarchy.parent_id = parent_device.id;
-                       existing_device_no_hierarchy.boot_id = boot_id;
-
-                       if (!db.updateDevice(existing_device_no_hierarchy, existing_device_no_hierarchy.id)) {
-                           return false;
-                       }
-
-                       // Обновляем атрибуты
-                       for (const auto& [key, value] : this->deviceParam) {
-                           if (!value.empty()) {
-                               db.addDeviceAttribute(existing_device_no_hierarchy.id, key, value);
-                           }
-                       }
-                       return true;
                    }
+                   return true;
                }
 
                // 4. Устройство не найдено нигде - создаем новое
@@ -308,6 +341,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                    parent_device.id,
                    parent_device.control_level,
                    false,
+                   false,
                    boot_id,
                    "",
                    "",
@@ -321,7 +355,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                }
 
                // Добавляем атрибуты
-               for (const auto& [key, value] : this->deviceParam) {
+               for (const auto& [key, value] : this->collect_all_udev_attributes()) {
                    if (!value.empty()) {
                        db.addDeviceAttribute(device_id, key, value);
                    }
@@ -355,14 +389,11 @@ bool UDEVInfoCollector::safe_remove_device(const std::string& devpath, const std
         std::string parent_devpath = this->getParentDevpath(devpath);
         DeviceInfo parent_device{-1};
         if (parent_devpath == "/devices") {
-            parent_device = db.getDeviceByDevpathSubsystemAndBootId(parent_devpath, "__udev__", "-1");
+            parent_device = db.getDeviceByPathAndBootId(parent_devpath, "-1");
         } else if (parent_devpath == "/devices/pci0000:00") {
-            parent_device = db.getDeviceByDevpathSubsystemAndBootId(parent_devpath, "__pci__", "-1");
+            parent_device = db.getDeviceByPathAndBootId(parent_devpath, "-1");
         } else {
-            parent_device = db.getDeviceByDevpathSubsystemAndBootId(parent_devpath, subsystem, boot_id);
-            if (parent_device.id == -1) {
-                parent_device = db.getDeviceByDevpathSubsystemAndBootId(parent_devpath, "__virtual__", boot_id);
-            }
+            parent_device = db.getDeviceByPathAndBootId(parent_devpath, boot_id);
         }
 
         int parent_id = parent_device.id;

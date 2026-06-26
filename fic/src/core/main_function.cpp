@@ -582,6 +582,10 @@ PolicyMap init_policyMap(){
     cafArr.push_back(std::make_unique<NET_ssh_max_auth_tries>());
     cafArr.push_back(std::make_unique<NET_ssh_root_login>());
 
+    //Общие настройки контроля устройств
+    cafArr.push_back(std::make_unique<DC_block_usb_storage>());
+    cafArr.push_back(std::make_unique<DC_block_printers_scanners>());
+    cafArr.push_back(std::make_unique<DC_block_optical_drives>());
 
     //Глобальные настройки программы
     cafArr.push_back(std::make_unique<GLOBAL_log_level>());

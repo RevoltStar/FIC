@@ -464,8 +464,9 @@ ln -sfn "$target_path" "/bin/$command_name"
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
-    systemctl enable fic_get_device_udev_info.service || true
     systemctl enable --now fic.service || true
+    systemctl enable --now fic-device.service || true
+    systemctl enable fic_get_device_udev_info.service || true
     systemctl enable --now fic-notify.service || true
 fi
 
@@ -530,6 +531,7 @@ fi
 
 if [ "\$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now fic-notify.service || true
+    systemctl disable --now fic-device.service || true
     systemctl disable --now fic.service || true
     systemctl disable fic_get_device_udev_info.service || true
     systemctl daemon-reload || true
@@ -564,6 +566,7 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
+    systemctl enable fic-device.service || true
     systemctl enable fic_get_device_info.service || true
 fi
 
@@ -581,6 +584,7 @@ write_fic_dick_prerm() {
 set -e
 
 if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl disable fic-device.service || true
     systemctl disable fic_get_device_info.service || true
     systemctl daemon-reload || true
 fi
@@ -766,6 +770,7 @@ build_fic_dick_package() {
     mkdir -p "$package_root/opt/fic/bin"
     mkdir -p "$package_root/lib/systemd/system"
     install -m 0755 "$FIC_DICK_BUILD_DIR/fic-dick" "$package_root/opt/fic/bin/fic-dick"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-device.service" "$package_root/lib/systemd/system/fic-device.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_info.service" "$package_root/lib/systemd/system/fic_get_device_info.service"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-dick")"

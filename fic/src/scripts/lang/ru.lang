@@ -35,6 +35,14 @@
 [module:SYSCTL][submodule:network_kernel_protection]=Настройки сети
 [module:NET][submodule:SshEdit]=Настройки ssh
 [module:GLOBAL][submodule:system_settings]=Общие настройки
+[module:DC][submodule:DeviceControl]=Общие правила контроля устройств
+[module:DC][settings]=Настройки контроля
+[module:DC][policy:block_usb_storage]=Запретить USB-накопители
+[module:DC][policy:block_printers_scanners]=Запретить принтеры и сканеры
+[module:DC][policy:block_optical_drives]=Запретить оптические приводы
+[module:DC][policy:block_usb_storage][description]=Запрещает подключение USB-накопителей, если для конкретного устройства не задано более точное разрешающее правило.
+[module:DC][policy:block_printers_scanners][description]=Запрещает подключение USB-принтеров и сканеров, если для конкретного устройства не задано более точное разрешающее правило.
+[module:DC][policy:block_optical_drives][description]=Запрещает подключение оптических приводов, если для конкретного устройства не задано более точное разрешающее правило.
 
 
 #Дискреционное разграничение доступа

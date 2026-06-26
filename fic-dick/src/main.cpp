@@ -1,8 +1,10 @@
 // file name: main.cpp
 #include <iostream>
+#include <map>
 #include <memory>
 #include <vector>
 #include <fic/device-db/DB.h>
+#include "core/DeviceControlDaemon.h"
 #include "modules/UDEVInfoCollector.h"
 #include "modules/USBInfoCollector.h"
 #include "modules/PCIInfoCollector.h"
@@ -38,98 +40,52 @@ bool log(std::string message, logLevel logLev){
     return Logger::log(message, logLev, "devices");
 }
 
+std::map<std::string, std::string> env_to_map(char* envp[]) {
+    std::map<std::string, std::string> result;
+    if (envp == nullptr) {
+        return result;
+    }
+
+    for (char** env = envp; *env != nullptr; ++env) {
+        std::string entry(*env);
+        std::size_t separator = entry.find('=');
+        if (separator == std::string::npos || separator == 0) {
+            continue;
+        }
+        result[entry.substr(0, separator)] = entry.substr(separator + 1);
+    }
+    return result;
+}
+
 int main(int argc, char* argv[], char* envp[]) {
     if (argc > 1) {
-        // Инициализируем БД (бесконечно ждем инициализации)
-        {
+        std::string mode(argv[1]);
+
+        if (mode == "--daemon" || mode == "daemon") {
+            std::string socketPath;
+            for (int i = 2; i + 1 < argc; ++i) {
+                if (std::string(argv[i]) == "--socket") {
+                    socketPath = argv[i + 1];
+                }
+            }
+            return fic::device_control::run_daemon(socketPath);
+        }
+
+        // Собираем устройства через UDEV
+        if (mode == "udev") {
+            return fic::device_control::forward_udev_event_to_daemon(env_to_map(envp));
+        }
+        else if (mode == "check-permanent") {
+            return fic::device_control::request_permanent_check();
+        }
+        // Собираем информацию о ЦПУ, м/плате, ОЗУ
+        else if (mode == "cpu_board_memory") {
             DB db = DB("/opt/fic/db/devices.db");
             if (!db.initializeDatabase()) {
                 log("Ошибка инициализации базы данных", logLevel::FATAL);
                 return 1;
             }
-        }
 
-        std::string mode(argv[1]);
-
-        // Собираем устройства через UDEV
-        if (mode == "udev") {
-            const char* action = std::getenv("ACTION");
-            const char* devpath = std::getenv("DEVPATH");
-            const char* subsystem = std::getenv("SUBSYSTEM");
-            /*
-            std::ofstream debug("/opt/fic/log/fic-debug.log", std::ios::app);
-            debug << "PID: " << getpid()
-                  << " | ACTION: " << (action ? action : "NULL")
-                  << " | DEVPATH: " << (devpath ? devpath : "NULL")
-                  << " | SUBSYSTEM: " << (subsystem ? subsystem : "NULL")
-                  << std::endl;
-            */
-            log("Обрабатываем устройство: " + std::string(devpath), logLevel::DEBUG);
-            if (action == nullptr ||devpath == nullptr || subsystem == nullptr) {
-                log("Недостаточно переменных окружения UDEV. Прерываем обработку данного устройства", logLevel::DEBUG);
-                return 1;
-            }
-            // Создаем базовый коллектор для проверок
-            UDEVInfoCollector base_collector;
-
-            std::string action_str = "";
-            if(action == nullptr){
-                action_str = "";
-            }else{
-                action_str = std::string(action);
-            }
-            if (action_str == "add" || action_str == "change") {
-                // Проверяем devpath
-                if (!base_collector.check_devpath(devpath)) {
-                    return 1;
-                }
-
-                // Проверяем подсистему
-                if (!base_collector.check_excluded_subsystem(subsystem)) {
-                    return 1;
-                }
-
-                // Создаем соответствующий коллектор
-                std::unique_ptr<UDEVInfoCollector> collector = create_collector_for_subsystem(subsystem);
-
-                // Пытаемся создать/обновить устройство
-                log("Пытаемся добавить/обновить udev-устройство", logLevel::DEBUG);
-                if (!collector->create_device_config(devpath, subsystem)) {
-                    log("Ошибка добавления/удаления устройства: " + std::string(devpath), logLevel::DEBUG);
-                    return 1;
-                }
-
-                return 0;
-
-            } else if (action_str == "remove") {
-                log("Извлечено устройство: " + std::string(devpath), logLevel::INFO);
-                // Проверяем devpath
-                if (!base_collector.check_devpath(devpath)) {
-                    return 1;
-                }
-
-                // Проверяем подсистему
-                if (!base_collector.check_excluded_subsystem(subsystem)) {
-                    return 1;
-                }
-
-                // Создаем соответствующий коллектор
-                std::unique_ptr<UDEVInfoCollector> collector = create_collector_for_subsystem(subsystem);
-
-                // Пытаемся удалить устройство
-                if (!collector->safe_remove_device(devpath, subsystem)) {
-                    log("Ошибка удаления устройства из БД: " + std::string(devpath), logLevel::DEBUG);
-                    return 1;
-                }
-
-                return 0;
-            } else {
-                log("Неизвестное действие: ", logLevel::DEBUG);
-                return 1;
-            }
-        }
-        // Собираем информацию о ЦПУ, м/плате, ОЗУ
-        else if (mode == "cpu_board_memory") {
             CPUInfoCollector cic;
             BoardInfoCollector bic;
             MemoryInfoCollector mic;
@@ -145,7 +101,7 @@ int main(int argc, char* argv[], char* envp[]) {
             return 1;
         }
     } else {
-        std::cerr << "Неверный синтаксис. Используйте: " << argv[0] << " [udev|cpu_board_memory]" << std::endl;
+        std::cerr << "Неверный синтаксис. Используйте: " << argv[0] << " [--daemon|udev|check-permanent|cpu_board_memory]" << std::endl;
         return 1;
     }
 

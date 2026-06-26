@@ -25,7 +25,13 @@ struct DeviceInfo {
     std::string device_type;
     int parent_id = 0;
     std::string control_level;
+    bool control_explicit = true;
     bool ignore_hierarchy = false;
+    std::string effective_control_level;
+    std::string effective_source;
+    int effective_source_device_id = -1;
+    std::string effective_reason;
+    bool connected = false;
     std::string boot_id;
     std::string created_at;
     std::string last_event_at;
@@ -66,6 +72,8 @@ private:
     void expandNodeRecursively(QTreeWidgetItem *item);
     void loadChildDevices(QTreeWidgetItem *parentItem, int parentId);
     void setDeviceControlLevel(int deviceId, const std::string &controlLevel);
+    void setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy);
+    void resetDeviceControl(int deviceId);
     void deleteDeviceFromDatabase(int deviceId, const QString &deviceName);
     bool canDeleteDevice(const DeviceInfo& device);
     bool canDeleteDeviceSubtree(int deviceId, const std::string &currentBootId);
@@ -74,8 +82,10 @@ private:
     std::vector<DeviceInfo> fetchChildDevices(int parentId) const;
     std::map<std::string, std::string> fetchDeviceAttributes(int deviceId) const;
     std::string getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue = "") const;
-    bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel) const;
-    bool deleteDeviceRemote(int deviceId) const;
+    bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr) const;
+    bool updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage = nullptr) const;
+    bool resetDeviceControlRemote(int deviceId, QString *errorMessage = nullptr) const;
+    bool deleteDeviceRemote(int deviceId, QString *errorMessage = nullptr) const;
 
     std::string getSystemBootId();
     bool isDeviceBootIdValid(const DeviceInfo& device);

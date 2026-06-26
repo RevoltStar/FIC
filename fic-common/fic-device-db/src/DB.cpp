@@ -80,7 +80,7 @@ void DB::closeDatabase() {
 // Получить устройство по хешу
 DeviceInfo DB::getDeviceByHash(const std::string& device_hash) {
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE device_hash = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -103,7 +103,7 @@ DeviceInfo DB::getDeviceByHash(const std::string& device_hash) {
 
 DeviceInfo DB::getDeviceById(int id) {
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE id = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -226,7 +226,7 @@ std::string DB::getDeviceAttribute(int device_id, const std::string& attribute_n
 // Получить устройство по пути
 DeviceInfo DB::getDeviceByPath(const std::string& devpath) {
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE devpath = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -265,23 +265,24 @@ DeviceInfo DB::resultToDeviceInfo(sqlite3_stmt* stmt) {
     }
 
     device.control_level = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
-    device.ignore_hierarchy = sqlite3_column_int(stmt, 7) != 0;
+    device.control_explicit = sqlite3_column_int(stmt, 7) != 0;
+    device.ignore_hierarchy = sqlite3_column_int(stmt, 8) != 0;
 
     //
-    if (sqlite3_column_type(stmt, 8) == SQLITE_NULL) {
+    if (sqlite3_column_type(stmt, 9) == SQLITE_NULL) {
         device.boot_id = "";
     } else {
-        device.boot_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+        device.boot_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
     }
 
-    device.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
-    device.last_event_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+    device.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+    device.last_event_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 11));
 
     // Обработка notes (может быть NULL)
-    if (sqlite3_column_type(stmt, 11) == SQLITE_NULL) {
+    if (sqlite3_column_type(stmt, 12) == SQLITE_NULL) {
         device.notes = "";
     } else {
-        device.notes = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 11));
+        device.notes = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 12));
     }
 
     return device;
@@ -326,6 +327,7 @@ bool DB::initializeDatabase() {
         "    device_type TEXT NOT NULL,"
         "    parent_id INTEGER,"
         "    control_level TEXT NOT NULL CHECK(control_level IN ('blocked', 'allowed', 'permanent', 'ignored')),"
+        "    control_explicit BOOLEAN DEFAULT 1,"
         "    ignore_hierarchy BOOLEAN DEFAULT 0,"
         "    boot_id TEXT,"
         "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
@@ -360,6 +362,16 @@ bool DB::initializeDatabase() {
         this->log("Ошибка инициализации БД:" + std::string(err_msg),logLevel::FATAL);
         sqlite3_free(err_msg);
         return false;
+    }
+
+    bool hasControlExplicit = hasColumn("devices", "control_explicit");
+    if (!hasControlExplicit) {
+        rc = sqlite3_exec(db, "ALTER TABLE devices ADD COLUMN control_explicit BOOLEAN DEFAULT 1;", nullptr, nullptr, &err_msg);
+        if (rc != SQLITE_OK) {
+            this->log("Failed to add control_explicit column: " + std::string(err_msg), logLevel::FATAL);
+            sqlite3_free(err_msg);
+            return false;
+        }
     }
 
     bool hasBootId = hasColumn("devices", "boot_id");
@@ -489,6 +501,7 @@ bool DB::initializeDatabase() {
                 "    device_type TEXT NOT NULL,"
                 "    parent_id INTEGER,"
                 "    control_level TEXT NOT NULL CHECK(control_level IN ('blocked', 'allowed', 'permanent', 'ignored')),"
+                "    control_explicit BOOLEAN DEFAULT 1,"
                 "    ignore_hierarchy BOOLEAN DEFAULT 0,"
                 "    boot_id TEXT,"
                 "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
@@ -496,8 +509,8 @@ bool DB::initializeDatabase() {
                 "    notes TEXT,"
                 "    FOREIGN KEY (parent_id) REFERENCES devices(id) ON DELETE CASCADE"
                 ");"
-                "INSERT INTO devices_new (id, device_hash, devpath, subsystem, device_type, parent_id, control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes) "
-                "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes FROM devices;"
+                "INSERT INTO devices_new (id, device_hash, devpath, subsystem, device_type, parent_id, control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes) "
+                "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes FROM devices;"
                 "DROP TABLE devices;"
                 "ALTER TABLE devices_new RENAME TO devices;",
                 "Failed to migrate devices table");
@@ -601,7 +614,7 @@ bool DB::initializeDatabase() {
 
 DeviceInfo DB::getDeviceByPathAndBootId(const std::string& devpath, const std::string& boot_id){
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE devpath = ? AND boot_id = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -625,8 +638,8 @@ DeviceInfo DB::getDeviceByPathAndBootId(const std::string& devpath, const std::s
 // В методе addDevice:
 int DB::addDevice(const DeviceInfo& device) {
     const char* sql = "INSERT INTO devices (device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, notes) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, notes) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     sqlite3_stmt* stmt;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -642,9 +655,10 @@ int DB::addDevice(const DeviceInfo& device) {
     sqlite3_bind_text(stmt, 4, device.device_type.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 5, device.parent_id);
     sqlite3_bind_text(stmt, 6, device.control_level.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 7, device.ignore_hierarchy ? 1 : 0);
-    sqlite3_bind_text(stmt, 8, device.boot_id.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 9, device.notes.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 7, device.control_explicit ? 1 : 0);
+    sqlite3_bind_int(stmt, 8, device.ignore_hierarchy ? 1 : 0);
+    sqlite3_bind_text(stmt, 9, device.boot_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 10, device.notes.c_str(), -1, SQLITE_TRANSIENT);
 
     rc = sqlite3_step(stmt);
     int device_id = -1;
@@ -707,6 +721,31 @@ bool DB::addDeviceAttribute(int device_id, const std::string& name, const std::s
     return success;
 }
 
+DeviceInfo DB::getComputerRoot() {
+    const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "FROM devices "
+                     "WHERE device_hash = 'virtual_computer_root_sha256_placeholder' "
+                     "AND subsystem = '__computer__' "
+                     "AND device_type = 'computer' "
+                     "LIMIT 1";
+
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+        return DeviceInfo{-1};
+    }
+
+    DeviceInfo device{-1};
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        device = resultToDeviceInfo(stmt);
+    }
+
+    sqlite3_finalize(stmt);
+    return device;
+}
+
 int DB::getVirtualContainerId(const std::string& container_type) {
     std::string container_hash;
 
@@ -743,7 +782,7 @@ int DB::getVirtualContainerId(const std::string& container_type) {
 
 bool DB::updateDevice(const DeviceInfo& device, const int& device_id){
     const char* sql = "UPDATE devices SET device_hash = ?, devpath = ?, subsystem = ?, device_type = ?, "
-                      "parent_id = ?, control_level = ?, ignore_hierarchy = ?, boot_id = ?, notes = ? "
+                      "parent_id = ?, control_level = ?, control_explicit = ?, ignore_hierarchy = ?, boot_id = ?, notes = ? "
                       "WHERE id = ?";
     sqlite3_stmt* stmt;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
@@ -758,10 +797,11 @@ bool DB::updateDevice(const DeviceInfo& device, const int& device_id){
     sqlite3_bind_text(stmt, 4, device.device_type.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 5, device.parent_id);
     sqlite3_bind_text(stmt, 6, device.control_level.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 7, device.ignore_hierarchy ? 1 : 0);
-    sqlite3_bind_text(stmt, 8, device.boot_id.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 9, device.notes.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 10, device_id);
+    sqlite3_bind_int(stmt, 7, device.control_explicit ? 1 : 0);
+    sqlite3_bind_int(stmt, 8, device.ignore_hierarchy ? 1 : 0);
+    sqlite3_bind_text(stmt, 9, device.boot_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 10, device.notes.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 11, device_id);
 
     // Выполнение UPDATE
     rc = sqlite3_step(stmt);
@@ -777,7 +817,7 @@ bool DB::updateDevice(const DeviceInfo& device, const int& device_id){
 // Получить непосредственных потомков устройства
 bool DB::updateDeviceControlLevel(int device_id, const std::string& control_level)
 {
-    const char* sql = "UPDATE devices SET control_level = ? WHERE id = ?";
+    const char* sql = "UPDATE devices SET control_level = ?, control_explicit = 1 WHERE id = ?";
     sqlite3_stmt* stmt;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -793,6 +833,59 @@ bool DB::updateDeviceControlLevel(int device_id, const std::string& control_leve
 
     if (!success) {
         this->log("Failed to update device control_level: " + std::string(sqlite3_errmsg(db)), logLevel::FATAL);
+    }
+
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+bool DB::updateDeviceControl(int device_id,
+                             const std::string& control_level,
+                             bool control_explicit,
+                             bool ignore_hierarchy)
+{
+    const char* sql = "UPDATE devices SET control_level = ?, control_explicit = ?, ignore_hierarchy = ? WHERE id = ?";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, control_level.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, control_explicit ? 1 : 0);
+    sqlite3_bind_int(stmt, 3, ignore_hierarchy ? 1 : 0);
+    sqlite3_bind_int(stmt, 4, device_id);
+
+    rc = sqlite3_step(stmt);
+    bool success = (rc == SQLITE_DONE);
+
+    if (!success) {
+        this->log("Failed to update device control fields: " + std::string(sqlite3_errmsg(db)), logLevel::FATAL);
+    }
+
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+bool DB::updateDeviceIgnoreHierarchy(int device_id, bool ignore_hierarchy)
+{
+    const char* sql = "UPDATE devices SET ignore_hierarchy = ? WHERE id = ?";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, ignore_hierarchy ? 1 : 0);
+    sqlite3_bind_int(stmt, 2, device_id);
+
+    rc = sqlite3_step(stmt);
+    bool success = (rc == SQLITE_DONE);
+
+    if (!success) {
+        this->log("Failed to update device ignore_hierarchy: " + std::string(sqlite3_errmsg(db)), logLevel::FATAL);
     }
 
     sqlite3_finalize(stmt);
@@ -826,7 +919,7 @@ std::vector<DeviceInfo> DB::getChildDevices(int parent_id) {
     std::vector<DeviceInfo> children;
 
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE parent_id = ?";
 
     sqlite3_stmt* stmt;
@@ -854,9 +947,19 @@ std::vector<DeviceInfo> DB::getChildDevices(int parent_id) {
     return children;
 }
 
+std::vector<DeviceInfo> DB::getDescendantDevices(int parent_id) {
+    std::vector<DeviceInfo> descendants;
+    for (const DeviceInfo& child : getChildDevices(parent_id)) {
+        descendants.push_back(child);
+        std::vector<DeviceInfo> childDescendants = getDescendantDevices(child.id);
+        descendants.insert(descendants.end(), childDescendants.begin(), childDescendants.end());
+    }
+    return descendants;
+}
+
 DeviceInfo DB::getDeviceByHashAndSubsystem(const std::string& device_hash, const std::string& subsystem) {
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE device_hash = ? AND subsystem = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -878,10 +981,55 @@ DeviceInfo DB::getDeviceByHashAndSubsystem(const std::string& device_hash, const
     return device;
 }
 
+std::vector<DeviceInfo> DB::getDevicesByHashAndSubsystem(const std::string& device_hash, const std::string& subsystem) {
+    std::vector<DeviceInfo> devices;
+    const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "FROM devices WHERE device_hash = ? AND subsystem = ? ORDER BY id";
+
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+        return devices;
+    }
+
+    sqlite3_bind_text(stmt, 1, device_hash.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, subsystem.c_str(), -1, SQLITE_TRANSIENT);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        devices.push_back(resultToDeviceInfo(stmt));
+    }
+
+    sqlite3_finalize(stmt);
+    return devices;
+}
+
+std::vector<DeviceInfo> DB::getAllDevices() {
+    std::vector<DeviceInfo> devices;
+    const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "FROM devices ORDER BY id";
+
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to prepare statement: " << sqlite3_errmsg(db) << std::endl;
+        return devices;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        devices.push_back(resultToDeviceInfo(stmt));
+    }
+
+    sqlite3_finalize(stmt);
+    return devices;
+}
+
 DeviceInfo DB::getDeviceByDevpathAndSubsystem(const std::string& devpath,
                                           const std::string& subsystem){
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE devpath = ? AND subsystem = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -909,7 +1057,7 @@ DeviceInfo DB::getDeviceByDevpathSubsystemAndBootId(const std::string& devpath,
                                                     const std::string& subsystem,
                                                     const std::string& boot_id) {
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE devpath = ? AND subsystem = ? AND boot_id = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -977,7 +1125,7 @@ DeviceInfo DB::getDeviceByHashAndSubsystemAndParent(const std::string& device_ha
                                                     const std::string& subsystem,
                                                     int parent_id) {
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
-                     "control_level, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
                      "FROM devices WHERE device_hash = ? AND subsystem = ? AND parent_id = ? LIMIT 1";
 
     sqlite3_stmt* stmt;
@@ -998,4 +1146,192 @@ DeviceInfo DB::getDeviceByHashAndSubsystemAndParent(const std::string& device_ha
 
     sqlite3_finalize(stmt);
     return device;
+}
+
+DeviceEvent DB::resultToDeviceEvent(sqlite3_stmt* stmt) {
+    DeviceEvent event;
+    event.id = sqlite3_column_int(stmt, 0);
+    event.device_id = sqlite3_column_int(stmt, 1);
+    event.event_type = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+
+    if (sqlite3_column_type(stmt, 3) == SQLITE_NULL) {
+        event.event_result = "";
+    } else {
+        event.event_result = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+    }
+
+    if (sqlite3_column_type(stmt, 4) == SQLITE_NULL) {
+        event.event_details = "";
+    } else {
+        event.event_details = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+    }
+
+    event.created_at = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+    return event;
+}
+
+int DB::addDeviceEvent(const DeviceEvent& event) {
+    const char* sql = "INSERT INTO device_events (device_id, event_type, event_result, event_details) "
+                     "VALUES (?, ?, ?, ?)";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        this->log("Failed to prepare device event insert: " + std::string(sqlite3_errmsg(db)), logLevel::DEBUG);
+        return -1;
+    }
+
+    sqlite3_bind_int(stmt, 1, event.device_id);
+    sqlite3_bind_text(stmt, 2, event.event_type.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, event.event_result.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, event.event_details.c_str(), -1, SQLITE_TRANSIENT);
+
+    rc = sqlite3_step(stmt);
+    int event_id = -1;
+    if (rc == SQLITE_DONE) {
+        event_id = static_cast<int>(sqlite3_last_insert_rowid(db));
+    } else {
+        this->log("Failed to insert device event: " + std::string(sqlite3_errmsg(db)), logLevel::DEBUG);
+    }
+
+    sqlite3_finalize(stmt);
+    return event_id;
+}
+
+std::vector<DeviceEvent> DB::getDeviceEvents(int device_id, int limit) {
+    std::vector<DeviceEvent> events;
+    const char* sql = "SELECT id, device_id, event_type, event_result, event_details, created_at "
+                     "FROM device_events WHERE device_id = ? ORDER BY id DESC LIMIT ?";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        this->log("Failed to prepare device events query: " + std::string(sqlite3_errmsg(db)), logLevel::DEBUG);
+        return events;
+    }
+
+    sqlite3_bind_int(stmt, 1, device_id);
+    sqlite3_bind_int(stmt, 2, limit > 0 ? limit : 100);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        events.push_back(resultToDeviceEvent(stmt));
+    }
+
+    sqlite3_finalize(stmt);
+    return events;
+}
+
+std::vector<DeviceEvent> DB::getRecentEvents(const std::string& event_type, int limit) {
+    std::vector<DeviceEvent> events;
+    const bool filterByType = !event_type.empty();
+    const char* sqlWithType = "SELECT id, device_id, event_type, event_result, event_details, created_at "
+                             "FROM device_events WHERE event_type = ? ORDER BY id DESC LIMIT ?";
+    const char* sqlAll = "SELECT id, device_id, event_type, event_result, event_details, created_at "
+                         "FROM device_events ORDER BY id DESC LIMIT ?";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, filterByType ? sqlWithType : sqlAll, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        this->log("Failed to prepare recent device events query: " + std::string(sqlite3_errmsg(db)), logLevel::DEBUG);
+        return events;
+    }
+
+    if (filterByType) {
+        sqlite3_bind_text(stmt, 1, event_type.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 2, limit > 0 ? limit : 100);
+    } else {
+        sqlite3_bind_int(stmt, 1, limit > 0 ? limit : 100);
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        events.push_back(resultToDeviceEvent(stmt));
+    }
+
+    sqlite3_finalize(stmt);
+    return events;
+}
+
+std::vector<DeviceInfo> DB::getDevicesByType(const std::string& device_type) {
+    std::vector<DeviceInfo> devices;
+    const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes "
+                     "FROM devices WHERE device_type = ? ORDER BY id";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        return devices;
+    }
+
+    sqlite3_bind_text(stmt, 1, device_type.c_str(), -1, SQLITE_TRANSIENT);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        devices.push_back(resultToDeviceInfo(stmt));
+    }
+
+    sqlite3_finalize(stmt);
+    return devices;
+}
+
+bool DB::deviceExists(const std::string& device_hash) {
+    return getDeviceIdByHash(device_hash) > 0;
+}
+
+int DB::getDeviceIdByHash(const std::string& device_hash) {
+    const char* sql = "SELECT id FROM devices WHERE device_hash = ? LIMIT 1";
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, device_hash.c_str(), -1, SQLITE_TRANSIENT);
+    int id = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        id = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return id;
+}
+
+bool DB::beginTransaction() {
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db, "BEGIN IMMEDIATE TRANSACTION;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        this->log("Failed to begin transaction: " + std::string(err_msg), logLevel::DEBUG);
+        sqlite3_free(err_msg);
+        return false;
+    }
+    return true;
+}
+
+bool DB::commitTransaction() {
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db, "COMMIT;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        this->log("Failed to commit transaction: " + std::string(err_msg), logLevel::DEBUG);
+        sqlite3_free(err_msg);
+        return false;
+    }
+    return true;
+}
+
+bool DB::rollbackTransaction() {
+    char* err_msg = nullptr;
+    int rc = sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, &err_msg);
+    if (rc != SQLITE_OK) {
+        this->log("Failed to rollback transaction: " + std::string(err_msg), logLevel::DEBUG);
+        sqlite3_free(err_msg);
+        return false;
+    }
+    return true;
+}
+
+DeviceAttribute DB::resultToDeviceAttribute(sqlite3_stmt* stmt) {
+    DeviceAttribute attr;
+    attr.id = sqlite3_column_int(stmt, 0);
+    attr.device_id = sqlite3_column_int(stmt, 1);
+    attr.attribute_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    if (sqlite3_column_type(stmt, 3) == SQLITE_NULL) {
+        attr.attribute_value = "";
+    } else {
+        attr.attribute_value = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+    }
+    return attr;
 }

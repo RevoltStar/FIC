@@ -3,7 +3,9 @@ set -e
 
 for candidate in /usr/bin/udevadm /usr/sbin/udevadm /sbin/udevadm /bin/udevadm; do
     if [ -x "$candidate" ]; then
-        exec "$candidate" trigger --action=add
+        "$candidate" trigger --action=add
+        "$candidate" settle
+        exec /opt/fic/bin/fic-dick check-permanent
     fi
 done
 

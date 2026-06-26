@@ -110,6 +110,7 @@ bool InfoCollector::process_device(
                 device_type,
                 parent_device.id,
                 parent_device.control_level,
+                false, //Унаследовано от контейнера, администратор явно не назначал
                 1, //Для статических устройств значение ignore_hierarchy неважно
                 this->get_boot_id(), //Подвязываем устройство к текущему boot_id
                 "0", //Заглушка для даты добавления

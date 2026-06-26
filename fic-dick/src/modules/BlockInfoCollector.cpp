@@ -30,24 +30,24 @@ std::vector<std::string> createBlockControlList()
 
     if (!dmUuid.empty() || startsWith(devname, "/dev/dm-") || contains(devpath, "/virtual/block/dm-"))
     {
-        return {"DM_UUID", "DM_NAME", "DM_TYPE", "DEVNAME"};
+        return {"DM_UUID", "DM_NAME", "DM_TYPE"};
     }
 
     if (startsWith(devname, "/dev/loop") || startsWith(devname, "/dev/ram") ||
         startsWith(devname, "/dev/zram") || contains(devpath, "/virtual/block/loop") ||
         contains(devpath, "/virtual/block/ram") || contains(devpath, "/virtual/block/zram"))
     {
-        return {"DEVTYPE", "DEVNAME", "DEVPATH"};
+        return {"DEVTYPE", "DEVPATH"};
     }
 
     if (devtype == "partition")
     {
         return {"DEVTYPE", "ID_PART_ENTRY_UUID", "ID_FS_UUID", "ID_PART_ENTRY_NUMBER",
-                "ID_SERIAL", "ID_PATH", "DEVNAME", "MAJOR", "MINOR"};
+                "ID_SERIAL"};
     }
 
-    return {"DEVTYPE", "ID_WWN", "ID_SERIAL", "ID_SERIAL_SHORT", "ID_PATH",
-            "ID_MODEL", "ID_VENDOR", "MAJOR", "MINOR"};
+    return {"DEVTYPE", "ID_WWN", "ID_SERIAL", "ID_SERIAL_SHORT",
+            "ID_MODEL", "ID_VENDOR"};
 }
 }
 

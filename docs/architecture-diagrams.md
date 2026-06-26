@@ -10,26 +10,31 @@ flowchart LR
     admin[Администратор] --> cli[fic-cli]
     admin --> gui[fic-gui]
 
-    cli -->|JSON over AF_UNIX| sock["/run/fic/fic.sock"]
-    gui -->|JSON over AF_UNIX| sock
+    cli -->|policy/lock/log JSON| sock["/run/fic/fic.sock"]
+    gui -->|policy/lock/log JSON| sock
     sock --> daemon[fic daemon]
+
+    cli -->|device JSON| deviceSock["/run/fic/fic-device.sock"]
+    gui -->|device JSON| deviceSock
+    deviceSock --> deviceDaemon["fic-dick --daemon"]
 
     daemon -->|читает и меняет| config["/opt/fic/config"]
     daemon -->|применяет политики| os[Linux OS]
     daemon -->|пишет| logs["/opt/fic/log"]
     daemon -->|читает и меняет| lockstatus["/opt/fic/lockstatus"]
-    daemon -->|читает и меняет| db[(devices.db)]
+    deviceDaemon -->|читает и меняет| db[(devices.db)]
 
     udev[udev events] --> dickUdev[fic-dick udev]
     systemd[systemd service] --> dickStatic[fic-dick cpu_board_memory]
-    dickUdev -->|добавляет, обновляет, удаляет устройства| db
+    dickUdev -->|пересылает событие| deviceDaemon
     dickStatic -->|CPU, board, memory| db
 
-    gui -->|дерево устройств, атрибуты| daemon
+    deviceDaemon -->|permanent violation| daemon
+    deviceDaemon -->|USB / PCI / block sysfs enforcement| os
     gui -->|логи текущей загрузки| daemon
 ```
 
-Главная идея проекта: только демон `fic` владеет изменением конфигурации политик и применением настроек к ОС. `fic-cli` и `fic-gui` являются клиентами daemon API. `fic-dick` отдельно поддерживает базу устройств, а демон отдает эти данные GUI через тот же IPC-слой.
+Главная идея проекта: демон `fic` владеет изменением конфигурации политик и применением обычных системных политик к ОС. `fic-dick --daemon` владеет деревом устройств, `devices.db`, udev-событиями и исполнением решений контроля устройств. `fic-cli` и `fic-gui` являются клиентами обоих IPC API: `/run/fic/fic.sock` для общих политик и `/run/fic/fic-device.sock` для дерева устройств.
 
 Общая IPC-логика вынесена в библиотеку `fic-common/fic-ipc`; она содержит клиентский
 код Unix socket/JSON-протокола и общие helpers ответа. Клиенты и демон
@@ -41,8 +46,8 @@ flowchart LR
 `<fic/core/...>` напрямую.
 
 Работа с SQLite-базой устройств вынесена в библиотеку `fic-common/fic-device-db`.
-Демон `fic` и сборщик `fic-dick` используют общий слой доступа к `devices.db`,
-а не собирают реализацию БД вручную из исходников другого компонента.
+`fic-dick` использует общий слой доступа к `devices.db`; демон `fic` не обслуживает
+дерево устройств и не открывает эту БД в runtime.
 
 Базовая модель политик вынесена в `fic-common/fic-policy`: `Policy`,
 `PolicyApplyResult` и типы значений `PolicyTypeValue`. Конкретные политики
@@ -68,9 +73,15 @@ flowchart TB
         requestRouter[handle_request]
         policyMap["init_policyMap<br/>module -> submodule -> policy -> Policy"]
         policyOps[set / enable / disable / apply]
-        deviceApi[device_get / device_children / device_attributes]
         logApi[boot_id / log_records]
         lockApi[lock / unlock / lockstatus]
+    end
+
+    subgraph DeviceDaemon["fic-dick --daemon"]
+        deviceIpc[Unix socket server<br/>/run/fic/fic-device.sock]
+        deviceApi[device_get / device_children / device_attributes]
+        devicePolicy[effective policy decision]
+        deviceApply[USB / PCI / block enforcement]
     end
 
     subgraph CoreStorage[Состояние системы]
@@ -89,21 +100,27 @@ flowchart TB
 
     cli --> ipcServer
     gui --> ipcServer
+    cli --> deviceIpc
+    gui --> deviceIpc
     ipcServer --> requestRouter
     requestRouter --> policyMap
     requestRouter --> policyOps
-    requestRouter --> deviceApi
     requestRouter --> logApi
     requestRouter --> lockApi
+    deviceIpc --> deviceApi
+    deviceIpc --> devicePolicy
+    devicePolicy --> deviceApply
 
     policyMap --> modules
     policyOps --> config
     policyOps --> modules
     logApi --> logs
     deviceApi --> db
+    devicePolicy --> db
     lockApi --> lockstatus
+    devicePolicy --> lockApi
 
-    udevMode --> collectors
+    udevMode --> deviceIpc
     staticMode --> collectors
     collectors --> db
 ```
@@ -178,9 +195,19 @@ flowchart LR
     commands --> readPolicy[policy_is_enabled / policy_is_disabled / policy_value]
     commands --> mutatePolicy[set_policy_value / enable_policy / disable_policy / reload_config]
     commands --> applyPolicy[apply_all / apply_module / apply_policy]
-    commands --> devices[device_get / device_children / device_attributes / device_update_control_level / device_delete]
     commands --> logs[log_records / localization_bundle]
     commands --> tools[calc_hash / lock / unlock / lockstatus]
+```
+
+Команды дерева устройств обслуживает `fic-dick --daemon` на `/run/fic/fic-device.sock`:
+
+```mermaid
+flowchart LR
+    deviceCommands[device command]
+    deviceCommands --> read[device_root / device_get / device_children / device_attributes / device_events]
+    deviceCommands --> mutate[device_update_control_level / device_update_ignore_hierarchy / device_reset_control / device_delete]
+    deviceCommands --> udev[udev_event]
+    deviceCommands --> permanent[device_check_permanent]
 ```
 
 ## 5. Изменение и применение политики
@@ -293,10 +320,11 @@ flowchart TD
     setValue --> state[enable_policy или disable_policy]
 
     mainWindow --> deviceTree[DeviceTree]
-    deviceTree --> devGet[device_get]
-    deviceTree --> devChildren[device_children]
-    deviceTree --> devAttrs[device_attributes]
-    deviceTree --> devControl[device_update_control_level]
+    deviceTree --> deviceSock["/run/fic/fic-device.sock"]
+    deviceSock --> devGet[device_get]
+    deviceSock --> devChildren[device_children]
+    deviceSock --> devAttrs[device_attributes]
+    deviceSock --> devControl[device_update_control_level / device_update_ignore_hierarchy / device_reset_control]
 
     mainWindow --> attrList[DeviceAttributeList]
     attrList --> devAttrs

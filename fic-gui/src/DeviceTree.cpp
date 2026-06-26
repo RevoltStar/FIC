@@ -106,6 +106,33 @@ std::string localizeDeviceClass(const std::string& subsystem, const std::string&
     const QString localized = QLocalizationManager::getLang(QString::fromStdString(key));
     return localized.toStdString() == key ? "" : localized.toStdString();
 }
+
+fic::ipc::Client deviceClient()
+{
+    return fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH);
+}
+
+void fillDeviceFromJson(DeviceInfo& device, const nlohmann::json& item)
+{
+    device.id = item.value("id", -1);
+    device.device_hash = item.value("device_hash", "");
+    device.devpath = item.value("devpath", "");
+    device.subsystem = item.value("subsystem", "");
+    device.device_type = item.value("device_type", "");
+    device.parent_id = item.value("parent_id", 0);
+    device.control_level = item.value("control_level", "");
+    device.control_explicit = item.value("control_explicit", true);
+    device.ignore_hierarchy = item.value("ignore_hierarchy", false);
+    device.effective_control_level = item.value("effective_control_level", device.control_level);
+    device.effective_source = item.value("effective_source", "");
+    device.effective_source_device_id = item.value("effective_source_device_id", -1);
+    device.effective_reason = item.value("effective_reason", "");
+    device.connected = item.value("connected", false);
+    device.boot_id = item.value("boot_id", "");
+    device.created_at = item.value("created_at", "");
+    device.last_event_at = item.value("last_event_at", "");
+    device.notes = item.value("notes", "");
+}
 } // namespace
 
 DeviceTree::DeviceTree(QWidget *parent)
@@ -179,32 +206,20 @@ DeviceInfo DeviceTree::fetchDeviceById(int deviceId) const
     DeviceInfo device{};
     device.id = -1;
 
-    auto response = fic::ipc::Client().request({{"command", "device_get"}, {"device_id", deviceId}});
+    auto response = deviceClient().request({{"command", "device_get"}, {"device_id", deviceId}});
     if (!response.value("ok", false) || !response.contains("device") || !response["device"].is_object()) {
         qDebug() << "Failed to load device:" << QString::fromStdString(response.value("message", "unknown daemon error"));
         return device;
     }
 
-    const auto& item = response["device"];
-    device.id = item.value("id", -1);
-    device.device_hash = item.value("device_hash", "");
-    device.devpath = item.value("devpath", "");
-    device.subsystem = item.value("subsystem", "");
-    device.device_type = item.value("device_type", "");
-    device.parent_id = item.value("parent_id", 0);
-    device.control_level = item.value("control_level", "");
-    device.ignore_hierarchy = item.value("ignore_hierarchy", false);
-    device.boot_id = item.value("boot_id", "");
-    device.created_at = item.value("created_at", "");
-    device.last_event_at = item.value("last_event_at", "");
-    device.notes = item.value("notes", "");
+    fillDeviceFromJson(device, response["device"]);
     return device;
 }
 
 std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId) const
 {
     std::vector<DeviceInfo> children;
-    auto response = fic::ipc::Client().request({{"command", "device_children"}, {"parent_id", parentId}});
+    auto response = deviceClient().request({{"command", "device_children"}, {"parent_id", parentId}});
     if (!response.value("ok", false) || !response.contains("children") || !response["children"].is_array()) {
         qDebug() << "Failed to load device children:" << QString::fromStdString(response.value("message", "unknown daemon error"));
         return children;
@@ -215,18 +230,7 @@ std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId) const
             continue;
         }
         DeviceInfo child{};
-        child.id = childJson.value("id", -1);
-        child.device_hash = childJson.value("device_hash", "");
-        child.devpath = childJson.value("devpath", "");
-        child.subsystem = childJson.value("subsystem", "");
-        child.device_type = childJson.value("device_type", "");
-        child.parent_id = childJson.value("parent_id", 0);
-        child.control_level = childJson.value("control_level", "");
-        child.ignore_hierarchy = childJson.value("ignore_hierarchy", false);
-        child.boot_id = childJson.value("boot_id", "");
-        child.created_at = childJson.value("created_at", "");
-        child.last_event_at = childJson.value("last_event_at", "");
-        child.notes = childJson.value("notes", "");
+        fillDeviceFromJson(child, childJson);
         if (child.id != -1) {
             children.push_back(child);
         }
@@ -238,7 +242,7 @@ std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId) const
 std::map<std::string, std::string> DeviceTree::fetchDeviceAttributes(int deviceId) const
 {
     std::map<std::string, std::string> attributes;
-    auto response = fic::ipc::Client().request({{"command", "device_attributes"}, {"device_id", deviceId}});
+    auto response = deviceClient().request({{"command", "device_attributes"}, {"device_id", deviceId}});
     if (!response.value("ok", false) || !response.contains("attributes") || !response["attributes"].is_object()) {
         qDebug() << "Failed to load device attributes:" << QString::fromStdString(response.value("message", "unknown daemon error"));
         return attributes;
@@ -262,25 +266,68 @@ std::string DeviceTree::getDeviceAttribute(int deviceId, const std::string& attr
     return it->second;
 }
 
-bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel) const
+bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage) const
 {
-    auto response = fic::ipc::Client().request({
+    auto response = deviceClient().request({
         {"command", "device_update_control_level"},
         {"device_id", deviceId},
         {"control_level", controlLevel}
     });
     if (!response.value("ok", false)) {
-        qDebug() << "Failed to update device control level:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        const QString message = QString::fromStdString(response.value("message", "unknown daemon error"));
+        if (errorMessage != nullptr) {
+            *errorMessage = message;
+        }
+        qDebug() << "Failed to update device control level:" << message;
         return false;
     }
     return true;
 }
 
-bool DeviceTree::deleteDeviceRemote(int deviceId) const
+bool DeviceTree::updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage) const
 {
-    auto response = fic::ipc::Client().request({{"command", "device_delete"}, {"device_id", deviceId}});
+    auto response = deviceClient().request({
+        {"command", "device_update_ignore_hierarchy"},
+        {"device_id", deviceId},
+        {"ignore_hierarchy", ignoreHierarchy}
+    });
     if (!response.value("ok", false)) {
-        qDebug() << "Failed to delete device:" << QString::fromStdString(response.value("message", "unknown daemon error"));
+        const QString message = QString::fromStdString(response.value("message", "unknown daemon error"));
+        if (errorMessage != nullptr) {
+            *errorMessage = message;
+        }
+        qDebug() << "Failed to update ignore_hierarchy:" << message;
+        return false;
+    }
+    return true;
+}
+
+bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage) const
+{
+    auto response = deviceClient().request({
+        {"command", "device_reset_control"},
+        {"device_id", deviceId}
+    });
+    if (!response.value("ok", false)) {
+        const QString message = QString::fromStdString(response.value("message", "unknown daemon error"));
+        if (errorMessage != nullptr) {
+            *errorMessage = message;
+        }
+        qDebug() << "Failed to reset device control:" << message;
+        return false;
+    }
+    return true;
+}
+
+bool DeviceTree::deleteDeviceRemote(int deviceId, QString *errorMessage) const
+{
+    auto response = deviceClient().request({{"command", "device_delete"}, {"device_id", deviceId}});
+    if (!response.value("ok", false)) {
+        const QString message = QString::fromStdString(response.value("message", "unknown daemon error"));
+        if (errorMessage != nullptr) {
+            *errorMessage = message;
+        }
+        qDebug() << "Failed to delete device:" << message;
         return false;
     }
     return true;
@@ -354,7 +401,7 @@ void DeviceTree::showControlLevelContextMenu(const QPoint &position)
     {
         QAction *action = controlMenu->addAction(title);
         action->setCheckable(true);
-        action->setChecked(device.control_level == controlLevel);
+        action->setChecked(device.control_explicit && device.control_level == controlLevel);
         connect(action, &QAction::triggered, this, [this, deviceId, controlLevel]() {
             setDeviceControlLevel(deviceId, controlLevel);
         });
@@ -364,6 +411,20 @@ void DeviceTree::showControlLevelContextMenu(const QPoint &position)
     addControlAction("Разрешено", "allowed");
     addControlAction("Постоянно", "permanent");
     addControlAction("Не контролируется", "ignored");
+
+    menu.addSeparator();
+    QAction *ignoreHierarchyAction = menu.addAction("Действует во всей системе");
+    ignoreHierarchyAction->setCheckable(true);
+    ignoreHierarchyAction->setChecked(device.ignore_hierarchy);
+    connect(ignoreHierarchyAction, &QAction::triggered, this, [this, deviceId](bool checked) {
+        setDeviceIgnoreHierarchy(deviceId, checked);
+    });
+
+    QAction *resetControlAction = menu.addAction("Сбросить до наследования");
+    resetControlAction->setEnabled(device.control_explicit);
+    connect(resetControlAction, &QAction::triggered, this, [this, deviceId]() {
+        resetDeviceControl(deviceId);
+    });
 
     menu.addSeparator();
     QAction *deleteAction = menu.addAction("Удалить");
@@ -388,38 +449,63 @@ void DeviceTree::setDeviceControlLevel(int deviceId, const std::string &controlL
         return;
     }
 
-    bool updated = updateDeviceControlLevelRemote(deviceId, controlLevel);
+    QString errorMessage;
+    bool updated = updateDeviceControlLevelRemote(deviceId, controlLevel, &errorMessage);
     if (updated)
     {
         device.control_level = controlLevel;
+        device.control_explicit = true;
     }
 
     if (!updated)
     {
+        QMessageBox::warning(this,
+                             "Контроль устройств",
+                             errorMessage.isEmpty() ? "Не удалось обновить уровень контроля." : errorMessage);
         qDebug() << "Failed to update control_level for device" << deviceId;
         return;
     }
 
-    QTreeWidgetItem *updatedItem = nullptr;
-    for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
+    refreshPreservingState();
+    emit deviceClicked(fetchDeviceById(deviceId));
+}
+
+void DeviceTree::setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy)
+{
+    if (deviceId <= 0)
     {
-        updatedItem = findItemByDeviceId(treeWidget->topLevelItem(i), deviceId);
-        if (updatedItem != nullptr)
-        {
-            break;
-        }
+        return;
     }
 
-    if (updatedItem != nullptr)
+    QString errorMessage;
+    if (!updateDeviceIgnoreHierarchyRemote(deviceId, ignoreHierarchy, &errorMessage))
     {
-        setupTreeItemStyle(updatedItem, device);
-    }
-    else
-    {
-        refreshPreservingState();
+        QMessageBox::warning(this,
+                             "Контроль устройств",
+                             errorMessage.isEmpty() ? "Не удалось обновить область действия правила." : errorMessage);
+        return;
     }
 
-    emit deviceClicked(device);
+    refreshPreservingState();
+}
+
+void DeviceTree::resetDeviceControl(int deviceId)
+{
+    if (deviceId <= 0)
+    {
+        return;
+    }
+
+    QString errorMessage;
+    if (!resetDeviceControlRemote(deviceId, &errorMessage))
+    {
+        QMessageBox::warning(this,
+                             "Контроль устройств",
+                             errorMessage.isEmpty() ? "Не удалось сбросить правило до наследования." : errorMessage);
+        return;
+    }
+
+    refreshPreservingState();
 }
 
 bool DeviceTree::canDeleteDevice(const DeviceInfo& device)
@@ -502,16 +588,19 @@ void DeviceTree::deleteDeviceFromDatabase(int deviceId, const QString &deviceNam
     const std::string currentBootId = getSystemBootId();
     device = fetchDeviceById(deviceId);
     bool deleted = false;
+    QString errorMessage;
     if (device.id != -1 && canDeleteDeviceSubtree(deviceId, currentBootId))
     {
-        deleted = deleteDeviceRemote(deviceId);
+        deleted = deleteDeviceRemote(deviceId, &errorMessage);
     }
 
     if (!deleted)
     {
         QMessageBox::warning(this,
                              "Удаление устройства",
-                             "Не удалось удалить устройство. Возможно, оно уже изменилось или снова относится к текущей загрузке.");
+                             errorMessage.isEmpty()
+                                 ? "Не удалось удалить устройство. Возможно, оно уже изменилось или снова относится к текущей загрузке."
+                                 : errorMessage);
         refreshPreservingState();
         return;
     }
@@ -521,7 +610,7 @@ void DeviceTree::deleteDeviceFromDatabase(int deviceId, const QString &deviceNam
 // Функция для получения времени старта ОС
 std::string DeviceTree::getSystemBootId()
 {
-    const auto response = fic::ipc::Client().request({{"command", "boot_id"}});
+    const auto response = deviceClient().request({{"command", "boot_id"}});
     if (!response.value("ok", false)) {
         qDebug() << "Failed to load boot_id:" << QString::fromStdString(response.value("message", "unknown daemon error"));
         return "";
@@ -905,7 +994,11 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
     QStyle::StandardPixmap icon = QStyle::SP_MessageBoxInformation;
     bool emphasize = false;
 
-    if (device.control_level == "blocked")
+    const std::string effectiveLevel = device.effective_control_level.empty()
+        ? device.control_level
+        : device.effective_control_level;
+
+    if (effectiveLevel == "blocked")
     {
         text = "Запрещено";
         tooltip = "Устройство запрещено политикой";
@@ -913,14 +1006,14 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
         icon = QStyle::SP_DialogCancelButton;
         emphasize = true;
     }
-    else if (device.control_level == "allowed")
+    else if (effectiveLevel == "allowed")
     {
         text = "Разрешено";
         tooltip = "Устройство разрешено политикой";
         color = QColor(38, 128, 72);
         icon = QStyle::SP_DialogApplyButton;
     }
-    else if (device.control_level == "permanent")
+    else if (effectiveLevel == "permanent")
     {
         text = "Постоянно";
         tooltip = "Устройство разрешено и должно быть подключено постоянно";
@@ -928,7 +1021,7 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
         icon = QStyle::SP_DialogSaveButton;
         emphasize = true;
     }
-    else if (device.control_level == "ignored")
+    else if (effectiveLevel == "ignored")
     {
         text = "Не контрол.";
         tooltip = "Устройство не контролируется";
@@ -937,16 +1030,35 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
     }
     else
     {
-        text = QString::fromStdString(device.control_level.empty() ? "unknown" : device.control_level);
+        text = QString::fromStdString(effectiveLevel.empty() ? "unknown" : effectiveLevel);
         tooltip = "Неизвестный уровень контроля";
         color = QColor(120, 120, 120);
+    }
+
+    if (!device.control_explicit)
+    {
+        text += " ↴";
+        tooltip += "\nПравило унаследовано";
+    }
+    else
+    {
+        tooltip += "\nПравило задано явно";
+    }
+
+    if (device.ignore_hierarchy)
+    {
+        tooltip += "\nДействует для этой идентичности во всей системе";
     }
 
     item->setText(1, text);
     item->setIcon(1, style()->standardIcon(icon));
     item->setForeground(1, QBrush(color));
     item->setTextAlignment(1, Qt::AlignCenter);
-    item->setToolTip(1, tooltip + "\ncontrol_level: " + QString::fromStdString(device.control_level));
+    item->setToolTip(1,
+                     tooltip +
+                     "\nassigned control_level: " + QString::fromStdString(device.control_level) +
+                     "\neffective control_level: " + QString::fromStdString(effectiveLevel) +
+                     "\neffective source: " + QString::fromStdString(device.effective_source));
 
     QFont font = item->font(1);
     font.setBold(emphasize);
@@ -1108,8 +1220,13 @@ void DeviceTree::refreshPreservingState()
 void DeviceTree::loadDeviceTree()
 {
     treeWidget->clear();
-    // Загружаем корневое устройство (id = 1)
-    DeviceInfo rootDevice = fetchDeviceById(1);
+    DeviceInfo rootDevice{};
+    rootDevice.id = -1;
+    auto response = deviceClient().request({{"command", "device_root"}});
+    if (response.value("ok", false) && response.contains("device") && response["device"].is_object())
+    {
+        fillDeviceFromJson(rootDevice, response["device"]);
+    }
 
     if (rootDevice.id == -1)
     {

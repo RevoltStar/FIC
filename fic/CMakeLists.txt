@@ -10,9 +10,6 @@ endif()
 if(NOT TARGET fic-core)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-core ${CMAKE_CURRENT_BINARY_DIR}/fic-core)
 endif()
-if(NOT TARGET fic-device-db)
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-device-db ${CMAKE_CURRENT_BINARY_DIR}/fic-device-db)
-endif()
 if(NOT TARGET fic-policy)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-policy ${CMAKE_CURRENT_BINARY_DIR}/fic-policy)
 endif()
@@ -37,7 +34,6 @@ file(GLOB_RECURSE HDR_FILES
 # Исключаем тесты
 list(FILTER SRC_FILES EXCLUDE REGEX ".*test.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*Test.*")
-find_package(SQLite3 REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -52,11 +48,9 @@ target_include_directories(fic PRIVATE
 )
 
 target_link_libraries(fic PRIVATE OpenSSL::Crypto)
-target_link_libraries(fic PRIVATE SQLite::SQLite3)
 target_link_libraries(fic PRIVATE Threads::Threads)
 target_link_libraries(fic PRIVATE fic-ipc)
 target_link_libraries(fic PRIVATE fic-core)
-target_link_libraries(fic PRIVATE fic-device-db)
 target_link_libraries(fic PRIVATE fic-policy)
 # Установка
 install(TARGETS fic DESTINATION bin)
@@ -64,7 +58,12 @@ install(PROGRAMS src/scripts/notify/fic-notify-dispatcher DESTINATION bin)
 install(DIRECTORY src/scripts/config/ DESTINATION /opt/fic/config)
 install(DIRECTORY src/scripts/lang/ DESTINATION /opt/fic/lang)
 install(FILES src/scripts/service/fic.service
+              src/scripts/service/fic-device.service
               src/scripts/service/fic.timer
               src/scripts/service/fic-notify.service
+              src/scripts/service/fic_get_device_info.service
+              src/scripts/service/fic_get_device_udev_info.service
         DESTINATION /lib/systemd/system)
+install(PROGRAMS src/scripts/service/fic-udevadm-trigger DESTINATION bin)
+install(DIRECTORY src/scripts/udev/ DESTINATION /etc/udev/rules.d)
 # Bash completion is installed by fic-cli package/component.

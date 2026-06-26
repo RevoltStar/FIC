@@ -13,6 +13,8 @@ This packaging flow builds five Debian packages:
 `fic-dick` installs:
 
 - `/opt/fic/bin/fic-dick`
+- `/lib/systemd/system/fic-device.service`
+- `/lib/systemd/system/fic_get_device_info.service`
 
 `fic` installs:
 
@@ -29,8 +31,10 @@ This packaging flow builds five Debian packages:
 - `/etc/udev/rules.d/*` from `fic/src/scripts/udev`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
-During installation, the bundled systemd services are enabled with
-`systemctl enable`, and `fic.service` is started automatically.
+During installation, `fic.service`, `fic-device.service` and `fic-notify.service`
+are enabled and started automatically. The coldplug device scan service
+`fic_get_device_udev_info.service` is enabled and runs through systemd when
+requested by the target.
 
 `fic-session-agent` installs:
 

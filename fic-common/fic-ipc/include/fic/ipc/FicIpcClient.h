@@ -17,6 +17,7 @@ namespace fic::ipc {
 using json = nlohmann::json;
 
 inline constexpr const char* DEFAULT_SOCKET_PATH = "/run/fic/fic.sock";
+inline constexpr const char* DEFAULT_DEVICE_SOCKET_PATH = "/run/fic/fic-device.sock";
 
 inline json make_error_response(const std::string& message) {
     return json{{"ok", false}, {"message", message}};

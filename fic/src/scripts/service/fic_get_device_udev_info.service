@@ -1,6 +1,7 @@
 [Unit]
 Description=FIC UDEV info collector
-After=multi-user.target
+After=fic-device.service
+Requires=fic-device.service
 
 [Service]
 ExecStart=/opt/fic/bin/fic-udevadm-trigger

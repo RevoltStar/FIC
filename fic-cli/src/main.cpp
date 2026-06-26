@@ -31,6 +31,13 @@ void print_help() {
               << "  policy list <module|all>\n"
               << "  policy info restriction <module> <policy>\n"
               << "  module list\n"
+              << "  device root\n"
+              << "  device get <id>\n"
+              << "  device children <parent_id>\n"
+              << "  device set <id> <blocked|allowed|permanent|ignored>\n"
+              << "  device ignore-hierarchy <id> <true|false>\n"
+              << "  device reset <id>\n"
+              << "  device check-permanent\n"
               << "  hash calc <path>\n"
               << "  lock | unlock | lockstatus | status | shutdown\n";
 }
@@ -159,6 +166,76 @@ int print_policy_value(const json& response) {
     std::cout << response.value("value", "") << std::endl;
     return 0;
 }
+
+fic::ipc::Client device_client()
+{
+    return fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH);
+}
+
+void print_device_item(const json& item)
+{
+    std::cout << item.value("id", 0)
+              << " parent=" << item.value("parent_id", 0)
+              << " subsystem=" << item.value("subsystem", "")
+              << " assigned=" << item.value("control_level", "")
+              << (item.value("control_explicit", true) ? "(explicit)" : "(inherited)")
+              << " effective=" << item.value("effective_control_level", "")
+              << " ignore_hierarchy=" << (item.value("ignore_hierarchy", false) ? "true" : "false")
+              << " connected=" << (item.value("connected", false) ? "true" : "false")
+              << " devpath=" << item.value("devpath", "")
+              << std::endl;
+}
+
+int print_device_response(const json& response)
+{
+    const bool ok = response.value("ok", false);
+    if (!ok) {
+        std::cout << response.value("message", "ERROR") << std::endl;
+        if (response.contains("blockers") && response["blockers"].is_array()) {
+            for (const auto& blocker : response["blockers"]) {
+                std::cout << "blocker: id=" << blocker.value("device_id", 0)
+                          << " source=" << blocker.value("source", "")
+                          << " devpath=" << blocker.value("devpath", "")
+                          << std::endl;
+            }
+        }
+        return 1;
+    }
+
+    std::cout << response.value("message", "OK") << std::endl;
+    if (response.contains("device") && response["device"].is_object()) {
+        print_device_item(response["device"]);
+    }
+    if (response.contains("children") && response["children"].is_array()) {
+        for (const auto& child : response["children"]) {
+            if (child.is_object()) {
+                print_device_item(child);
+            }
+        }
+    }
+    if (response.contains("missing") && response["missing"].is_array()) {
+        for (const auto& missing : response["missing"]) {
+            std::cout << "missing: id=" << missing.value("device_id", 0)
+                      << " source=" << missing.value("source", "")
+                      << " devpath=" << missing.value("devpath", "")
+                      << std::endl;
+        }
+    }
+    return 0;
+}
+
+bool parse_bool_arg(const std::string& value, bool& result)
+{
+    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+        result = true;
+        return true;
+    }
+    if (value == "false" || value == "0" || value == "no" || value == "off") {
+        result = false;
+        return true;
+    }
+    return false;
+}
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -242,6 +319,60 @@ int main(int argc, char* argv[]) {
 
     if (command == "module" && arg(argc, argv, 2) == "list") {
         return print_response(client.request({{"command", "module_list"}}));
+    }
+
+    if (command == "device") {
+        const std::string action = arg(argc, argv, 2);
+        fic::ipc::Client devices = device_client();
+
+        if (action == "root") {
+            return print_device_response(devices.request({{"command", "device_root"}}));
+        }
+        if (action == "get") {
+            const std::string id = arg(argc, argv, 3);
+            if (id.empty()) {
+                print_help();
+                return 1;
+            }
+            return print_device_response(devices.request({{"command", "device_get"}, {"device_id", std::stoi(id)}}));
+        }
+        if (action == "children") {
+            const std::string id = arg(argc, argv, 3);
+            if (id.empty()) {
+                print_help();
+                return 1;
+            }
+            return print_device_response(devices.request({{"command", "device_children"}, {"parent_id", std::stoi(id)}}));
+        }
+        if (action == "set") {
+            const std::string id = arg(argc, argv, 3);
+            const std::string level = arg(argc, argv, 4);
+            if (id.empty() || level.empty()) {
+                print_help();
+                return 1;
+            }
+            return print_device_response(devices.request({{"command", "device_update_control_level"}, {"device_id", std::stoi(id)}, {"control_level", level}}));
+        }
+        if (action == "ignore-hierarchy") {
+            const std::string id = arg(argc, argv, 3);
+            bool ignoreHierarchy = false;
+            if (id.empty() || !parse_bool_arg(arg(argc, argv, 4), ignoreHierarchy)) {
+                print_help();
+                return 1;
+            }
+            return print_device_response(devices.request({{"command", "device_update_ignore_hierarchy"}, {"device_id", std::stoi(id)}, {"ignore_hierarchy", ignoreHierarchy}}));
+        }
+        if (action == "reset") {
+            const std::string id = arg(argc, argv, 3);
+            if (id.empty()) {
+                print_help();
+                return 1;
+            }
+            return print_device_response(devices.request({{"command", "device_reset_control"}, {"device_id", std::stoi(id)}}));
+        }
+        if (action == "check-permanent") {
+            return print_device_response(devices.request({{"command", "device_check_permanent"}}));
+        }
     }
 
     if (command == "hash" && arg(argc, argv, 2) == "calc") {

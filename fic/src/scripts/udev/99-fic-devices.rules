@@ -1,1 +1,1 @@
-ACTION=="add|remove", SUBSYSTEM!="", ENV{DEVPATH}!="", RUN+="/opt/fic/bin/fic-dick udev"
+ACTION=="add|change|remove", SUBSYSTEM!="", ENV{DEVPATH}!="", RUN+="/opt/fic/bin/fic-dick udev"

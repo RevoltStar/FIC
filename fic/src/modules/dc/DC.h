@@ -3,28 +3,35 @@
 
 #include <fic/policy/Policy.h>
 #include <fic/core/ConfigFileHandler.h>
-#include <fic/device-db/DB.h>
 #include <iostream>
 
-//Класс для работы с устройствами
+// Общие настройки контроля устройств. Само дерево устройств и исполнение
+// обслуживает fic-dick device daemon.
 class DC : public Policy
 {
-private:
-    //Каталог с базой данных контроля устройств
-    std::string DC_databasefile;
-    //Собственно, сама БД
-    DB DC_database;
 protected:
+    explicit DC(const std::string& policy);
     
 public:
-    //Добавить устройство
-    bool add_device();
-    //Разрешено ли устройство?
-    bool is_allowed();
-    //bool
-    //Проверить, что используются только разрешенные устройства.
     bool apply () override;
-    DC();
+};
+
+class DC_block_usb_storage : public DC
+{
+public:
+    DC_block_usb_storage();
+};
+
+class DC_block_printers_scanners : public DC
+{
+public:
+    DC_block_printers_scanners();
+};
+
+class DC_block_optical_drives : public DC
+{
+public:
+    DC_block_optical_drives();
 };
 
 #endif // D_H

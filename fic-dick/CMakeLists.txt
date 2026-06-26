@@ -10,6 +10,9 @@ endif()
 if(NOT TARGET fic-device-db)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-device-db ${CMAKE_CURRENT_BINARY_DIR}/fic-device-db)
 endif()
+if(NOT TARGET fic-ipc)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,6 +52,7 @@ target_link_libraries(fic-dick PRIVATE
     SQLite::SQLite3
     fic-core
     fic-device-db
+    fic-ipc
 )
 # Установка
 install(TARGETS fic-dick DESTINATION bin)

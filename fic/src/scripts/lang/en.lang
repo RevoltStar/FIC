@@ -35,6 +35,14 @@
 [module:SYSCTL][submodule:network_kernel_protection]=Network settings
 [module:NET][submodule:SshEdit]=SSH settings
 [module:GLOBAL][submodule:system_settings]=General settings
+[module:DC][submodule:DeviceControl]=General device control rules
+[module:DC][settings]=Device control settings
+[module:DC][policy:block_usb_storage]=Block USB storage
+[module:DC][policy:block_printers_scanners]=Block printers and scanners
+[module:DC][policy:block_optical_drives]=Block optical drives
+[module:DC][policy:block_usb_storage][description]=Blocks USB storage devices unless a more specific allowing rule is assigned to the concrete device.
+[module:DC][policy:block_printers_scanners][description]=Blocks USB printers and scanners unless a more specific allowing rule is assigned to the concrete device.
+[module:DC][policy:block_optical_drives][description]=Blocks optical drives unless a more specific allowing rule is assigned to the concrete device.
 
 
 # Discretionary access control
