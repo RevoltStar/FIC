@@ -68,10 +68,17 @@ fic --oneshot
 fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 ```
 
-При создании сокета демон:
+В пакетной установке каталог `/run/fic` создается через systemd-tmpfiles:
+
+```text
+/usr/lib/tmpfiles.d/fic.conf
+```
+
+Для разработки и аварийного fallback демон также проверяет runtime-каталог при
+создании сокета:
 
 - создает runtime-каталог, если он отсутствует;
-- выставляет права `0770` на `/run/fic`, если каталогом управляет сам демон;
+- выставляет права `0770` на `/run/fic`;
 - если существует группа `fic`, назначает ее группой runtime-каталога и socket-файла;
 - выставляет права `0660` на socket-файл.
 
@@ -255,6 +262,7 @@ ExecStart=/opt/fic/bin/fic --interval 1800
 
 - `/opt/fic/config` - конфигурационные файлы политик;
 - `/opt/fic/log` - логи;
+- `/run/fic` - общий runtime-каталог IPC, создаваемый через `fic.conf` для systemd-tmpfiles;
 - `/run/fic/fic.sock` - Unix-сокет демона.
 
 ## Сборка

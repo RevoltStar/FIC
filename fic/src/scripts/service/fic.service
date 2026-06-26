@@ -6,8 +6,6 @@ After=multi-user.target
 Type=simple
 ExecStart=/opt/fic/bin/fic --interval 1800
 Restart=on-failure
-RuntimeDirectory=fic
-RuntimeDirectoryMode=0770
 
 [Install]
 WantedBy=multi-user.target

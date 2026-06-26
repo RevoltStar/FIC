@@ -64,6 +64,7 @@ install(FILES src/scripts/service/fic.service
               src/scripts/service/fic_get_device_info.service
               src/scripts/service/fic_get_device_udev_info.service
         DESTINATION /lib/systemd/system)
+install(FILES src/scripts/tmpfiles/fic.conf DESTINATION /usr/lib/tmpfiles.d)
 install(PROGRAMS src/scripts/service/fic-udevadm-trigger DESTINATION bin)
 install(DIRECTORY src/scripts/udev/ DESTINATION /etc/udev/rules.d)
 # Bash completion is installed by fic-cli package/component.

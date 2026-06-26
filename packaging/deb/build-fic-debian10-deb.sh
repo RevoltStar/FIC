@@ -462,6 +462,10 @@ fi
 
 ln -sfn "$target_path" "/bin/$command_name"
 
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf || true
+fi
+
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
     systemctl enable --now fic.service || true
@@ -877,6 +881,7 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
     mkdir -p "$package_root/lib/systemd/system"
+    mkdir -p "$package_root/usr/lib/tmpfiles.d"
     mkdir -p "$package_root/etc/udev/rules.d"
     mkdir -p "$package_root/usr/share/bash-completion/completions"
 
@@ -897,6 +902,7 @@ build_fic_package() {
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-notify.service" "$package_root/lib/systemd/system/fic-notify.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root/lib/systemd/system/fic.timer"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root/lib/systemd/system/fic_get_device_udev_info.service"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/tmpfiles/fic.conf" "$package_root/usr/lib/tmpfiles.d/fic.conf"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")"

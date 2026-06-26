@@ -17,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <cctype>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -988,6 +989,26 @@ int run_daemon(const std::string& socketPathArg) {
     log_device("fic-dick device daemon started on " + socketPath, logLevel::INFO);
 
     while (!g_stop) {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(serverFd, &readSet);
+
+        timeval timeout{};
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+
+        int ready = ::select(serverFd + 1, &readSet, nullptr, nullptr, &timeout);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            std::cerr << "select(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
+            break;
+        }
+        if (ready == 0 || !FD_ISSET(serverFd, &readSet)) {
+            continue;
+        }
+
         int clientFd = ::accept(serverFd, nullptr, nullptr);
         if (clientFd < 0) {
             if (errno == EINTR) {

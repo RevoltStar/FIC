@@ -12,6 +12,7 @@ RPM_ALLOW_ROOT_BUILD="${RPM_ALLOW_ROOT_BUILD:-1}"
 ARCH="$(rpm --eval '%{_arch}')"
 GUI_QT_BUNDLE_ROOT="/opt/fic/qt"
 SYSTEMD_UNIT_DIR="/usr/lib/systemd/system"
+TMPFILES_DIR="/usr/lib/tmpfiles.d"
 BUILD_LOCALE="${BUILD_LOCALE:-C.UTF-8}"
 
 export LANG="$BUILD_LOCALE"
@@ -675,6 +676,13 @@ fi
 
 ln -sfn "$target_path" "/bin/$command_name"
 
+for tmpfiles_bin in /usr/bin/systemd-tmpfiles /bin/systemd-tmpfiles /usr/sbin/systemd-tmpfiles /sbin/systemd-tmpfiles; do
+    if [ -x "\$tmpfiles_bin" ]; then
+        "\$tmpfiles_bin" --create /usr/lib/tmpfiles.d/fic.conf >/dev/null 2>&1 || true
+        break
+    fi
+done
+
 for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
     if [ -x "\$systemctl_bin" ]; then
         "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
@@ -874,6 +882,7 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
     mkdir -p "$package_root$SYSTEMD_UNIT_DIR"
+    mkdir -p "$package_root$TMPFILES_DIR"
     mkdir -p "$package_root/etc/udev/rules.d"
     mkdir -p "$package_root/usr/share/bash-completion/completions"
 
@@ -894,6 +903,7 @@ build_fic_package() {
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-notify.service" "$package_root$SYSTEMD_UNIT_DIR/fic-notify.service"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root$SYSTEMD_UNIT_DIR/fic.timer"
     install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_udev_info.service"
+    install -m 0644 "$FIC_SRC_DIR/src/scripts/tmpfiles/fic.conf" "$package_root$TMPFILES_DIR/fic.conf"
     copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
 
     output_rpm="$(build_rpm_package \
