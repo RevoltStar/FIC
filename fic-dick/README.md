@@ -61,6 +61,10 @@ fic/src/scripts/udev/99-fic-devices.rules
 /opt/fic/bin/fic-dick udev
 ```
 
+Пакетное udev-правило выбирает только подсистемы `usb`, `pci` и `block`.
+Фильтрации подсистем внутри `UDEVInfoCollector` нет: если список подсистем
+нужно изменить, это делается в `fic/src/scripts/udev/99-fic-devices.rules`.
+
 Для работы режима `udev` ожидаются переменные окружения, которые предоставляет udev:
 
 - `ACTION` - действие, например `add`, `change`, `remove`;
@@ -70,6 +74,7 @@ fic/src/scripts/udev/99-fic-devices.rules
 Поддерживаемая логика:
 
 - helper пересылает `ACTION`, `DEVPATH`, `SUBSYSTEM` и udev environment в `fic-dick --daemon`;
+- helper делает одну IPC-попытку и быстро завершается, если device daemon еще не готов;
 - daemon добавляет, обновляет или помечает устройство отключенным;
 - daemon вычисляет effective policy и применяет USB/PCI/block enforcement best-effort;
 - если обязательных переменных окружения нет, обработка завершается с ошибкой.

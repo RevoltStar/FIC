@@ -1,1 +1,3 @@
-ACTION=="add|change|remove", SUBSYSTEM!="", ENV{DEVPATH}!="", RUN+="/opt/fic/bin/fic-dick udev"
+ACTION=="add|change|remove", SUBSYSTEM=="usb", ENV{DEVPATH}!="", RUN+="/opt/fic/bin/fic-dick udev"
+ACTION=="add|change|remove", SUBSYSTEM=="pci", ENV{DEVPATH}!="", RUN+="/opt/fic/bin/fic-dick udev"
+ACTION=="add|change|remove", SUBSYSTEM=="block", ENV{DEVPATH}!="", RUN+="/opt/fic/bin/fic-dick udev"

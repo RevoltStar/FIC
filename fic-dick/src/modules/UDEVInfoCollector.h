@@ -10,7 +10,6 @@
 class UDEVInfoCollector : public InfoCollector {
 protected:
     static const std::unordered_set<std::string> EXCLUDE_PARAMS;
-    static const std::unordered_set<std::string> EXCLUDED_SUBSYSTEM;
     std::map<std::string, std::string> udevEnv;
 
 public:
@@ -23,10 +22,6 @@ public:
 
     // Проверяем, что UDEV передал нам ФИЗИЧЕСКОЕ устройство
     bool check_devpath(const char* devpath);
-
-    // Проверяем подсистему
-    bool check_excluded_subsystem(const char* subsystem);
-
 
     DeviceInfo create_virtual_device_config(const std::string& devpath, const std::string& boot_id);
 

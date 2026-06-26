@@ -571,9 +571,6 @@ json handle_udev_event(const json& request) {
     if (!baseCollector.check_devpath(devpath.c_str())) {
         return fic::ipc::make_ok_response("udev event ignored: non-physical devpath");
     }
-    if (!baseCollector.check_excluded_subsystem(subsystem.c_str())) {
-        return fic::ipc::make_ok_response("udev event ignored: excluded subsystem");
-    }
 
     std::unique_ptr<UDEVInfoCollector> collector = create_collector_for_subsystem(subsystem);
     collector->set_udev_env(env);
@@ -921,11 +918,6 @@ std::string get_device_socket_path_from_env() {
     return fic::ipc::DEFAULT_DEVICE_SOCKET_PATH;
 }
 
-bool is_retryable_device_socket_error(const json& response) {
-    const std::string message = response.value("message", "");
-    return message.rfind("connect(", 0) == 0;
-}
-
 bool prepare_runtime_socket(const std::string& socketPath, int serverFd) {
     const std::filesystem::path socket = socketPath;
     const std::filesystem::path runtimeDir = socket.parent_path();
@@ -1046,25 +1038,13 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
         envJson[key] = val;
     }
 
-    const json request = {
+    json response = fic::ipc::Client(get_device_socket_path_from_env()).request({
         {"command", "udev_event"},
         {"action", value("ACTION")},
         {"devpath", value("DEVPATH")},
         {"subsystem", value("SUBSYSTEM")},
         {"env", envJson}
-    };
-
-    json response;
-    constexpr int maxAttempts = 50;
-    for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
-        response = fic::ipc::Client(get_device_socket_path_from_env()).request(request);
-        if (response.value("ok", false) || !is_retryable_device_socket_error(response)) {
-            break;
-        }
-        if (attempt < maxAttempts) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
+    });
 
     if (!response.value("ok", false)) {
         log_device("udev event failed: " + response.value("message", "unknown error"), logLevel::ERROR);

@@ -8,23 +8,13 @@ const std::unordered_set<std::string> UDEVInfoCollector::EXCLUDE_PARAMS = {
     "_", "ACTION", "PWD", "DRIVER", "USEC_INITIALIZED", "SEQNUM", "SHLVL", "SYNTH_UUID"
 };
 
-const std::unordered_set<std::string> UDEVInfoCollector::EXCLUDED_SUBSYSTEM = {
-    "", "acpi", "ac97", "ata_device", "ata_link", "ata_port", "bdi", "bsg", "edac", "clocksource", "clockevents",
-    "container", "cpu", "devlink", "dma", "dmi", "drm", "drm_dp_aux_dev", "event_source",
-    "graphics", "hdaudio", "hidraw", "hwmon", "i2c", "i2c-dev", "input", "leds", "machinecheck",
-    "mdio_bus", "mei", "mem", "memory", "memory_tiering", "misc", "msr", "net", "node",
-    "nvmem", "pci_bus", "platform", "parport", "power_supply", "pnp", "powercap", "queues", "regulator", "rtc", "serial-base", "scsi", "scsi_generic",
-    "scsi_device", "scsi_disk", "scsi_host", "sound", "tpm", "tpmrm", "thermal", "tty", "vc", "virtio", "virtual",
-    "serio", "vtconsole", "watchdog", "wakeup", "wmi", "wmi_bus", "workqueue"
-};
-
 bool UDEVInfoCollector::check_devpath(const char* devpath) {
-    this->log("Проверяем DEVPATH для устройства: " + std::string(devpath), logLevel::DEBUG);
-
     // Проверка на nullptr
     if (devpath == nullptr) {
         return false;
     }
+
+    this->log("Проверяем DEVPATH для устройства: " + std::string(devpath), logLevel::DEBUG);
 
     // Проверка, что путь начинается с /devices/
     if (strncmp(devpath, "/devices/", 9) != 0) {
@@ -38,22 +28,6 @@ bool UDEVInfoCollector::check_devpath(const char* devpath) {
         return false;
     }
 
-    return true;
-}
-
-bool UDEVInfoCollector::check_excluded_subsystem(const char* subsystem) {
-    this->log("Проверяем SUBSYSTEM (" + std::string(subsystem) + ")", logLevel::DEBUG);
-    if (subsystem == nullptr) {
-        this->log("SUBSYSTEM не задан", logLevel::TRACE);
-        return false;
-    }
-
-    if (EXCLUDED_SUBSYSTEM.find(subsystem) != EXCLUDED_SUBSYSTEM.end()) {
-        this->log("SUBSYSTEM (" + std::string(subsystem) + ") находится в списке исключенных. Пропускаем...", logLevel::TRACE);
-        return false;
-    } else {
-        this->log("SUBSYSTEM (" + std::string(subsystem) + ") не находится в списке исключенных. Обрабатываем дальше...", logLevel::TRACE);
-    }
     return true;
 }
 
@@ -248,7 +222,13 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
         // 1. Сначала проверяем, существует ли устройство с тем же хешем, подсистемой и родителем
                DeviceInfo existing_device = db.getDeviceByHashAndSubsystemAndParent(current_hash, subsystem, parent_device.id);
                if (existing_device.id != -1) {
-                   if (!db.updateBootId(existing_device.id, boot_id)) {
+                   existing_device.devpath = devpath;
+                   existing_device.subsystem = subsystem;
+                   existing_device.device_type = subsystem;
+                   existing_device.parent_id = parent_device.id;
+                   existing_device.boot_id = boot_id;
+                   existing_device.notes = "UDEV device updated: " + devpath;
+                   if (!db.updateDevice(existing_device, existing_device.id)) {
                        return false;
                    }
                    for (const auto& [key, value] : this->collect_all_udev_attributes()) {

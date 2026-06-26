@@ -347,7 +347,7 @@ flowchart TD
     ficDickUdev --> initDb[DB.initializeDatabase]
     initDb --> action{ACTION}
 
-    action -->|add/change| validateUdev[check_devpath and check_excluded_subsystem]
+    action -->|add/change| validateUdev[check_devpath]
     validateUdev --> collectorFactory[create_collector_for_subsystem]
     collectorFactory --> usb[USBInfoCollector]
     collectorFactory --> block[BlockInfoCollector]
