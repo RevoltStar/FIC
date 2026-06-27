@@ -58,7 +58,10 @@ void DeviceAttributeList::showDeviceAttributes(int deviceId)
     clear();
 
     std::map<std::string, std::string> attributes;
-    auto response = fic::ipc::Client().request({{"command", "device_attributes"}, {"device_id", deviceId}});
+    auto response = fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH).request({
+        {"command", "device_attributes"},
+        {"device_id", deviceId}
+    });
     if (!response.value("ok", false)) {
         qDebug() << "Failed to load device attributes:" << QString::fromStdString(response.value("message", "unknown daemon error"));
         populateTree(attributes);
