@@ -85,6 +85,16 @@ bool is_connected(const DeviceInfo& device, const std::string& bootId) {
     return !bootId.empty() && device.boot_id == bootId;
 }
 
+bool is_static_container(const DeviceInfo& device) {
+    return device.boot_id == "-1";
+}
+
+bool should_include_child_in_tree(const DeviceInfo& device,
+                                  const std::string& bootId,
+                                  bool includeDisconnected) {
+    return includeDisconnected || is_static_container(device) || is_connected(device, bootId);
+}
+
 bool is_valid_control_level(const std::string& level) {
     return level == "blocked" || level == "allowed" || level == "permanent" || level == "ignored";
 }
@@ -806,14 +816,24 @@ json handle_db_request(const json& request) {
     }
     if (command == "device_children") {
         const int parentId = request.value("parent_id", 0);
+        const bool includeDisconnected = request.value("include_disconnected", false);
         if (parentId <= 0) {
             return fic::ipc::make_error_response("parent_id is required");
         }
         json children = json::array();
+        const std::string bootId = current_boot_id();
         for (const DeviceInfo& child : db.getChildDevices(parentId)) {
+            if (!should_include_child_in_tree(child, bootId, includeDisconnected)) {
+                continue;
+            }
             children.push_back(device_to_json(db, child));
         }
-        return json{{"ok", true}, {"message", "children loaded"}, {"children", children}};
+        return json{
+            {"ok", true},
+            {"message", "children loaded"},
+            {"children", children},
+            {"include_disconnected", includeDisconnected}
+        };
     }
     if (command == "device_attributes") {
         const int deviceId = request.value("device_id", 0);

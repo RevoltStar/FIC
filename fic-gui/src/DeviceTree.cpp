@@ -154,9 +154,15 @@ void DeviceTree::setupUI()
     QHBoxLayout *buttonLayout = new QHBoxLayout();
     btnExpandAll = new QPushButton("Развернуть все", this);
     btnCollapseAll = new QPushButton("Свернуть все", this);
+    chkShowHistory = new QCheckBox("Показать историю", this);
+    chkShowHistory->setToolTip(
+        "Показать отключенные устройства и прошлые экземпляры. "
+        "По умолчанию дерево показывает только текущую загрузку."
+    );
 
     buttonLayout->addWidget(btnExpandAll);
     buttonLayout->addWidget(btnCollapseAll);
+    buttonLayout->addWidget(chkShowHistory);
     buttonLayout->addStretch();
 
     // Дерево устройств
@@ -183,6 +189,10 @@ void DeviceTree::setupUI()
             this, &DeviceTree::expandAllNodes);
     connect(btnCollapseAll, &QPushButton::clicked,
             this, &DeviceTree::collapseAllNodes);
+    connect(chkShowHistory, &QCheckBox::toggled,
+            this, [this](bool) {
+                refreshPreservingState();
+            });
     connect(treeWidget, &QTreeWidget::itemClicked,
             this, &DeviceTree::onItemClicked);
     connect(treeWidget, &QTreeWidget::currentItemChanged,
@@ -216,10 +226,14 @@ DeviceInfo DeviceTree::fetchDeviceById(int deviceId) const
     return device;
 }
 
-std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId) const
+std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId, bool includeDisconnected) const
 {
     std::vector<DeviceInfo> children;
-    auto response = deviceClient().request({{"command", "device_children"}, {"parent_id", parentId}});
+    auto response = deviceClient().request({
+        {"command", "device_children"},
+        {"parent_id", parentId},
+        {"include_disconnected", includeDisconnected}
+    });
     if (!response.value("ok", false) || !response.contains("children") || !response["children"].is_array()) {
         qDebug() << "Failed to load device children:" << QString::fromStdString(response.value("message", "unknown daemon error"));
         return children;
@@ -543,7 +557,7 @@ bool DeviceTree::canDeleteDeviceSubtree(int deviceId, const std::string &current
         return false;
     }
 
-    const std::vector<DeviceInfo> children = fetchChildDevices(deviceId);
+    const std::vector<DeviceInfo> children = fetchChildDevices(deviceId, true);
     for (const DeviceInfo &child : children)
     {
         if (!canDeleteDeviceSubtree(child.id, currentBootId))
@@ -1262,7 +1276,8 @@ void DeviceTree::onItemExpanded(QTreeWidgetItem *item)
 
 void DeviceTree::loadChildDevices(QTreeWidgetItem *parentItem, int parentId)
 {
-    std::vector<DeviceInfo> allChildren = fetchChildDevices(parentId);
+    const bool includeDisconnected = chkShowHistory != nullptr && chkShowHistory->isChecked();
+    std::vector<DeviceInfo> allChildren = fetchChildDevices(parentId, includeDisconnected);
 
     for (const auto &child : allChildren)
     {

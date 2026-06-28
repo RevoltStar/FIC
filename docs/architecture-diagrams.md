@@ -204,7 +204,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     deviceCommands[device command]
-    deviceCommands --> read[device_root / device_get / device_children / device_attributes / device_events]
+    deviceCommands --> read[device_root / device_get / device_children current or include_disconnected / device_attributes / device_events]
     deviceCommands --> mutate[device_update_control_level / device_update_ignore_hierarchy / device_reset_control / device_delete]
     deviceCommands --> udev[udev_event]
     deviceCommands --> permanent[device_check_permanent]

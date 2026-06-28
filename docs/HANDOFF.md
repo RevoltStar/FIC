@@ -7,45 +7,65 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-06-27.
+- Обновлено: 2026-06-28.
 - Ветка: `main`.
-- Базовый commit: `f167f88` (`Ранний fic-dick udev больше не считается ошибкой...`).
-- Текущая задача: исправить обращение GUI за атрибутами устройств в неправильный
-  Unix socket.
+- Базовый commit: `0105edd` (`Исправляем опечатку в сокете для GUI.`).
+- Текущая задача: разделить актуальное дерево устройств и исторические
+  экземпляры, чтобы GUI по умолчанию показывал полезную для администратора
+  текущую топологию, а не смешивал ее с отключенными ветками прошлых загрузок.
 
 ## Контекст
 
-- На тестовой машине `172.17.1.105` после подключения USB-флешки дерево
-  устройств обновилось корректно: появились `usb1/1-2`, `1-2:1.0`,
-  virtual SCSI/block-промежуточные узлы, `sdb`, `sdb1`, `sdb2`.
-- В journal при кликах GUI по устройствам появлялось:
-  `Failed to load device attributes: "device tree API is served by fic-dick on /run/fic/fic-device.sock"`.
-- Причина: `DeviceAttributeList::showDeviceAttributes()` отправлял команду
-  `device_attributes` через `fic::ipc::Client()` без явного socket path.
-  Такой клиент использует основной daemon socket `/run/fic/fic.sock`.
-- Device tree API обслуживается `fic-dick` на `/run/fic/fic-device.sock`.
-  `DeviceTree` и `fic-cli` уже использовали правильный socket.
+- После перезагрузки тестовой машины в GUI были видны две визуально одинаковые
+  USB-ветки: одна актуальная, вторая полностью зачеркнутая и оставшаяся с
+  прошлой загрузки.
+- Флешку физически не переставляли в другой порт. Причина не в точном дубле
+  строки `devpath`, а в том, что sysfs-имена USB-шины могут отличаться между
+  загрузками (`usb1/1-2` против `usb2/2-2`), а GUI показывал одновременно
+  текущие и исторические экземпляры из БД.
+- Для администратора полезнее иметь два режима:
+  - обычный режим — только текущая загрузка и системные контейнеры;
+  - режим истории — явно показать отключенные/прошлые ветки.
+- Схему БД сейчас не меняли: история сохраняется, просто не попадает в дерево
+  по умолчанию.
 
 ## Сделано в текущем рабочем дереве
 
-- В `fic-gui/src/DeviceAttributeList.cpp` вызов:
+- В `fic-dick --daemon` команда `device_children` теперь по умолчанию
+  возвращает только:
+  - статические контейнеры с `boot_id == "-1"`;
+  - устройства текущей загрузки (`boot_id == current_boot_id`).
+- Для старого поведения добавлен явный параметр IPC:
 
-```cpp
-fic::ipc::Client().request(...)
+```json
+{"command": "device_children", "parent_id": 1, "include_disconnected": true}
 ```
 
-заменен на:
+- В ответ `device_children` добавлено поле `include_disconnected`, чтобы клиенту
+  было видно, в каком режиме вернулся список.
+- В GUI дерева устройств добавлен чекбокс «Показать историю». Без него дерево
+  показывает текущую топологию; с ним — исторические отключенные ветки тоже.
+- Удаление отключенного поддерева в GUI проверяет детей с
+  `include_disconnected=true`, иначе скрытые исторические потомки могли бы
+  исказить проверку.
+- В CLI команда `device children <parent_id>` оставлена в current-only режиме.
+  Для истории добавлены формы:
 
-```cpp
-fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH).request(...)
+```bash
+fic-cli device children <parent_id> --all
+fic-cli device children <parent_id> --history
 ```
 
-- После правки `DeviceAttributeList` использует тот же device socket, что и
-  `DeviceTree`.
+- Обновлены `fic-dick/README.md` и `docs/architecture-diagrams.md`.
 
 ## Измененные файлы
 
-- `fic-gui/src/DeviceAttributeList.cpp`
+- `fic-dick/src/core/DeviceControlDaemon.cpp`
+- `fic-cli/src/main.cpp`
+- `fic-gui/src/DeviceTree.h`
+- `fic-gui/src/DeviceTree.cpp`
+- `fic-dick/README.md`
+- `docs/architecture-diagrams.md`
 - `docs/HANDOFF.md`
 
 ## Проверки
@@ -55,30 +75,53 @@ fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH).request(...)
 ```bash
 git status --short
 git diff --check
-rg -n "fic::ipc::Client\\(\\)\\.request\\(\\{\\{\\\"command\\\", \\\"device_|device_attributes" fic-gui/src -g '*.[ch]pp' -g '*.h'
 cmake -S . -B /tmp/fic-build-check
+cmake --build /tmp/fic-build-check --target fic-dick -j2
+cmake --build /tmp/fic-build-check --target fic-cli -j2
 cmake --build /tmp/fic-build-check --target fic-gui -j2
 ```
 
-`fic-gui` успешно собран в `/tmp/fic-build-check`.
+Все три цели успешно собраны в `/tmp/fic-build-check`.
+
+Замечание: при параллельном запуске нескольких `cmake --build` в одном build-dir
+`gmake` вывел предупреждение `jobserver mkfifo: /tmp/GMfifo3: File exists`, но
+сборки завершились успешно.
 
 Не выполнялось:
 
 - сборка deb/rpm пакетов;
 - установка пакета на тестовую машину;
-- запуск GUI/runtime-проверка на `172.17.1.105`.
+- runtime-проверка на `172.17.1.105`;
+- реальные операции применения политик, lock/unlock, udev trigger или запись в
+  `/opt/fic`.
 
 ## Что проверить после установки
 
 1. Открыть `fic-gui`.
-2. Кликнуть по устройствам, включая USB-флешку (`sdb`, `sdb1`, `sdb2`).
-3. В панели атрибутов должны отображаться udev-атрибуты устройства.
-4. В journal не должно быть ошибки:
-   `device tree API is served by fic-dick on /run/fic/fic-device.sock`.
+2. В обычном режиме убедиться, что дерево не показывает полностью зачеркнутую
+   USB-ветку прошлой загрузки рядом с актуальной.
+3. Включить «Показать историю» и убедиться, что исторические отключенные ветки
+   появляются обратно.
+4. Проверить CLI:
+
+```bash
+fic-cli device children <id>
+fic-cli device children <id> --all
+```
 
 ## Решения и риски
 
-- Исправление точечное: меняется только socket для команды `device_attributes`
-  в `DeviceAttributeList`.
-- Остальные обращения GUI к обычным политикам и логам оставлены на основном
-  daemon socket `/run/fic/fic.sock`.
+- Фильтрация сделана на уровне daemon API, а не только в GUI. Это намеренно:
+  все клиенты получают одинаковый безопасный default и не обязаны сами помнить,
+  что исторические ветки надо скрывать.
+- Статические контейнеры с `boot_id == "-1"` оставлены видимыми всегда, иначе
+  дерево могло бы потерять системные узлы-группы, через которые доступны текущие
+  устройства.
+- История не удаляется и не нормализуется. Если позже потребуется показать
+  «физически тот же порт/та же флешка через разные sysfs-имена», понадобится
+  отдельная модель группировки/дизамбигуации экземпляров, возможно уже с
+  изменением схемы БД.
+- Если `SystemBootInfo::get_boot_id()` неожиданно вернет пустую строку, обычный
+  `device_children` покажет только статические контейнеры. Это поведение
+  соответствует текущей логике `connected`, но при диагностике пустого дерева
+  стоит первым делом проверить `device_boot_id`.

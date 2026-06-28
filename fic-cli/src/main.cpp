@@ -33,7 +33,7 @@ void print_help() {
               << "  module list\n"
               << "  device root\n"
               << "  device get <id>\n"
-              << "  device children <parent_id>\n"
+              << "  device children <parent_id> [--all]\n"
               << "  device set <id> <blocked|allowed|permanent|ignored>\n"
               << "  device ignore-hierarchy <id> <true|false>\n"
               << "  device reset <id>\n"
@@ -342,7 +342,17 @@ int main(int argc, char* argv[]) {
                 print_help();
                 return 1;
             }
-            return print_device_response(devices.request({{"command", "device_children"}, {"parent_id", std::stoi(id)}}));
+            const std::string mode = arg(argc, argv, 4);
+            const bool includeDisconnected = mode == "--all" || mode == "--history" || mode == "all" || mode == "history";
+            if (!mode.empty() && !includeDisconnected) {
+                print_help();
+                return 1;
+            }
+            return print_device_response(devices.request({
+                {"command", "device_children"},
+                {"parent_id", std::stoi(id)},
+                {"include_disconnected", includeDisconnected}
+            }));
         }
         if (action == "set") {
             const std::string id = arg(argc, argv, 3);

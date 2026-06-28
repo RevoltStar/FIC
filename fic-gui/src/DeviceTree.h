@@ -5,6 +5,7 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QPushButton>
+#include <QCheckBox>
 #include <QPoint>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -60,6 +61,7 @@ private:
     QTreeWidget *treeWidget;
     QPushButton *btnExpandAll;
     QPushButton *btnCollapseAll;
+    QCheckBox *chkShowHistory;
     QTimer *refreshTimer;
 
     void setupUI();
@@ -79,7 +81,7 @@ private:
     bool canDeleteDeviceSubtree(int deviceId, const std::string &currentBootId);
 
     DeviceInfo fetchDeviceById(int deviceId) const;
-    std::vector<DeviceInfo> fetchChildDevices(int parentId) const;
+    std::vector<DeviceInfo> fetchChildDevices(int parentId, bool includeDisconnected = false) const;
     std::map<std::string, std::string> fetchDeviceAttributes(int deviceId) const;
     std::string getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue = "") const;
     bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr) const;
