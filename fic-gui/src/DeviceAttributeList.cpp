@@ -35,11 +35,16 @@ void DeviceAttributeList::setupUI()
     treeWidget->setAlternatingRowColors(true);
     treeWidget->setRootIsDecorated(false);
     treeWidget->setSortingEnabled(true);
+    treeWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    treeWidget->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    treeWidget->setTextElideMode(Qt::ElideNone);
 
     // Настройка размеров столбцов
     treeWidget->header()->setStretchLastSection(false);
-    treeWidget->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    treeWidget->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    treeWidget->header()->setSectionResizeMode(0, QHeaderView::Interactive);
+    treeWidget->header()->setSectionResizeMode(1, QHeaderView::Interactive);
+    treeWidget->setColumnWidth(0, 180);
+    treeWidget->setColumnWidth(1, 520);
 
     //mainLayout->addWidget(titleLabel);
     mainLayout->addWidget(treeWidget);
@@ -110,6 +115,8 @@ void DeviceAttributeList::populateTree(const std::map<std::string, std::string>&
         QTreeWidgetItem *item = new QTreeWidgetItem(treeWidget);
         item->setText(0, it.key());
         item->setText(1, it.value());
+        item->setToolTip(0, it.key());
+        item->setToolTip(1, it.value());
 
         // Делаем значения редактируемыми (если нужно)
         // item->setFlags(item->flags() | Qt::ItemIsEditable);
@@ -117,4 +124,12 @@ void DeviceAttributeList::populateTree(const std::map<std::string, std::string>&
 
     // Сортируем по имени параметра
     treeWidget->sortItems(0, Qt::AscendingOrder);
+    treeWidget->resizeColumnToContents(0);
+    if (treeWidget->columnWidth(0) < 180) {
+        treeWidget->setColumnWidth(0, 180);
+    }
+    treeWidget->resizeColumnToContents(1);
+    if (treeWidget->columnWidth(1) < 520) {
+        treeWidget->setColumnWidth(1, 520);
+    }
 }

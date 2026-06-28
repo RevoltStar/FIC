@@ -105,8 +105,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Добавляем виджет в gridLayoutTreeView
     ui->gridLayoutTreeView->addWidget(deviceTree, 0, 0);
-    ui->gridLayout_3->setColumnMinimumWidth(0, 500);
-    ui->gridLayout_3->setColumnStretch(0, 0);
+    ui->gridLayout_3->setColumnMinimumWidth(0, 660);
+    ui->gridLayout_3->setColumnStretch(0, 2);
     ui->gridLayout_3->setColumnStretch(1, 1);
 
     auto stabilizeValueLabel = [](QLabel *label) {
@@ -118,6 +118,7 @@ MainWindow::MainWindow(QWidget *parent)
     stabilizeValueLabel(ui->devpathLabel);
     stabilizeValueLabel(ui->currentBootTimeLabel);
     stabilizeValueLabel(ui->deviceBootTimeLabel);
+    ui->devpathLabel->setWordWrap(true);
 
     deviceAttributeList = new DeviceAttributeList(this);
     QLayoutItem* oldItem = ui->gridLayoutListView->replaceWidget(ui->deviceParamListView, deviceAttributeList);
@@ -169,13 +170,18 @@ MainWindow::~MainWindow()
 }
 void MainWindow::onDeviceClicked(const DeviceInfo& device)
 {
-    // Обновляем метки в интерфейсе
-    ui->subsystemLabel->setText(QString::fromStdString(device.subsystem));
-    ui->controlLevelLabel->setText(QString::fromStdString(device.control_level));
+    auto setLabelValue = [](QLabel *label, const QString& value) {
+        label->setText(value);
+        label->setToolTip(value);
+    };
 
-    ui->devpathLabel->setText(QString::fromStdString(device.devpath));
-    ui->currentBootTimeLabel->setText(currentBootIdFromDaemon());
-    ui->deviceBootTimeLabel->setText(QString::fromStdString(device.boot_id));
+    // Обновляем метки в интерфейсе
+    setLabelValue(ui->subsystemLabel, QString::fromStdString(device.subsystem));
+    setLabelValue(ui->controlLevelLabel, QString::fromStdString(device.control_level));
+
+    setLabelValue(ui->devpathLabel, QString::fromStdString(device.devpath));
+    setLabelValue(ui->currentBootTimeLabel, currentBootIdFromDaemon());
+    setLabelValue(ui->deviceBootTimeLabel, QString::fromStdString(device.boot_id));
     //Выводим параметры выбранного устройства
     deviceAttributeList->showDeviceAttributes(device.id);
     //ui->deviceParamListView->adddeviceTree->loadDeviceAttributes();

@@ -96,6 +96,31 @@ std::string normalizeUsbTypeKey(const std::string& type)
     return parts[0] + "|" + parts[1] + "|" + parts[2];
 }
 
+std::string lastPathComponent(const std::string& path)
+{
+    const std::size_t end = path.find_last_not_of('/');
+    if (end == std::string::npos) {
+        return {};
+    }
+
+    const std::size_t begin = path.find_last_of('/', end);
+    if (begin == std::string::npos) {
+        return path.substr(0, end + 1);
+    }
+
+    return path.substr(begin + 1, end - begin);
+}
+
+std::string compactDevpathLabel(const std::string& devpath)
+{
+    const std::string leaf = lastPathComponent(devpath);
+    if (!leaf.empty()) {
+        return leaf;
+    }
+
+    return devpath.empty() ? "unknown" : devpath;
+}
+
 std::string localizeDeviceClass(const std::string& subsystem, const std::string& classKey)
 {
     if (classKey.empty()) {
@@ -171,17 +196,19 @@ void DeviceTree::setupUI()
     treeWidget->setHeaderLabels({"Дерево устройств Linux", "Контроль"});
     treeWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     treeWidget->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
-    treeWidget->setTextElideMode(Qt::ElideRight);
+    treeWidget->setTextElideMode(Qt::ElideNone);
+    treeWidget->setWordWrap(false);
+    treeWidget->setIndentation(14);
     treeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
-    treeWidget->setMinimumWidth(460);
-    setMinimumWidth(480);
+    treeWidget->setMinimumWidth(640);
+    setMinimumWidth(660);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     treeWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     treeWidget->header()->setStretchLastSection(false);
     treeWidget->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     treeWidget->header()->setSectionResizeMode(1, QHeaderView::Fixed);
-    treeWidget->setColumnWidth(0, 340);
-    treeWidget->setColumnWidth(1, 125);
+    treeWidget->setColumnWidth(0, 520);
+    treeWidget->setColumnWidth(1, 140);
 
     connect(treeWidget, &QTreeWidget::itemExpanded,
             this, &DeviceTree::onItemExpanded);
@@ -647,7 +674,7 @@ bool DeviceTree::isDeviceBootIdValid(const DeviceInfo &device)
 
 std::string DeviceTree::generateNodeName(const DeviceInfo &device)
 {
-    std::string device_name = "[" + device.subsystem + "] " + device.devpath;
+    std::string device_name = "[" + device.subsystem + "] [" + compactDevpathLabel(device.devpath) + "]";
     if (device.subsystem == "__computer__")
     {
         char hostname[256];
@@ -678,7 +705,7 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     }
     if (device.subsystem == "__virtual__")
     {
-        device_name = "[Виртуальное устройство] " + device.devpath;
+        device_name = "[Виртуальное устройство] [" + compactDevpathLabel(device.devpath) + "]";
         return device_name;
     }
     if (device.subsystem == "cpu")
@@ -1097,11 +1124,15 @@ void DeviceTree::setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo &dev
         font.setStrikeOut(true);
         item->setFont(0, font);
 
-        // Добавляем всплывающую подсказку
-        std::string tooltip = "Устройство зарегистрировано при предыдущем запуске ОС\n";
-        tooltip += "boot_id устройства: " + device.boot_id + "\n";
-        tooltip += "Текущий boot_id ОС: " + getSystemBootId();
-        item->setToolTip(0, QString::fromStdString(tooltip));
+        QString tooltip = item->text(0);
+        if (!device.devpath.empty())
+        {
+            tooltip += "\n" + QString::fromStdString(device.devpath);
+        }
+        tooltip += "\n\nУстройство зарегистрировано при предыдущем запуске ОС\n";
+        tooltip += "boot_id устройства: " + QString::fromStdString(device.boot_id) + "\n";
+        tooltip += "Текущий boot_id ОС: " + QString::fromStdString(getSystemBootId());
+        item->setToolTip(0, tooltip);
     }
     else
     {
@@ -1110,7 +1141,12 @@ void DeviceTree::setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo &dev
         QFont font = item->font(0);
         font.setStrikeOut(false);
         item->setFont(0, font);
-        item->setToolTip(0, QString()); // Очищаем подсказку
+        QString tooltip = item->text(0);
+        if (!device.devpath.empty())
+        {
+            tooltip += "\n" + QString::fromStdString(device.devpath);
+        }
+        item->setToolTip(0, tooltip);
     }
 }
 
@@ -1260,6 +1296,11 @@ void DeviceTree::loadDeviceTree()
     QTreeWidgetItem *dummyItem = new QTreeWidgetItem(rootItem);
     dummyItem->setText(0, "Загрузка...");
     treeWidget->addTopLevelItem(rootItem);
+    treeWidget->resizeColumnToContents(0);
+    if (treeWidget->columnWidth(0) < 520)
+    {
+        treeWidget->setColumnWidth(0, 520);
+    }
 }
 
 void DeviceTree::onItemExpanded(QTreeWidgetItem *item)
@@ -1291,6 +1332,12 @@ void DeviceTree::loadChildDevices(QTreeWidgetItem *parentItem, int parentId)
         // Добавляем заглушку для ленивой загрузки
         QTreeWidgetItem *dummy = new QTreeWidgetItem(childItem);
         dummy->setText(0, "Загрузка...");
+    }
+
+    treeWidget->resizeColumnToContents(0);
+    if (treeWidget->columnWidth(0) < 520)
+    {
+        treeWidget->setColumnWidth(0, 520);
     }
 }
 
