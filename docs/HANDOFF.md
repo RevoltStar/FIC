@@ -9,63 +9,62 @@
 
 - Обновлено: 2026-06-28.
 - Ветка: `main`.
-- Базовый commit: `0105edd` (`Исправляем опечатку в сокете для GUI.`).
-- Текущая задача: разделить актуальное дерево устройств и исторические
-  экземпляры, чтобы GUI по умолчанию показывал полезную для администратора
-  текущую топологию, а не смешивал ее с отключенными ветками прошлых загрузок.
+- Базовый commit: `9dbe1c8`.
+- Текущая задача: реализовать согласованные исправления по аудиту компонента
+  «Контроль устройств».
 
-## Контекст
+## Что было решено по аудиту
 
-- После перезагрузки тестовой машины в GUI были видны две визуально одинаковые
-  USB-ветки: одна актуальная, вторая полностью зачеркнутая и оставшаяся с
-  прошлой загрузки.
-- Флешку физически не переставляли в другой порт. Причина не в точном дубле
-  строки `devpath`, а в том, что sysfs-имена USB-шины могут отличаться между
-  загрузками (`usb1/1-2` против `usb2/2-2`), а GUI показывал одновременно
-  текущие и исторические экземпляры из БД.
-- Для администратора полезнее иметь два режима:
-  - обычный режим — только текущая загрузка и системные контейнеры;
-  - режим истории — явно показать отключенные/прошлые ветки.
-- Схему БД сейчас не меняли: история сохраняется, просто не попадает в дерево
-  по умолчанию.
+- DC-01 не изменялся: ожидаемое поведение состоит в том, что
+  `block_usb_storage` и похожие DC-настройки влияют только на подключаемые или
+  переподключаемые устройства, но не отключают уже подключенные устройства.
+- DC-05 не изменялся: текущая модель контроля устройств завязана на
+  последовательном построении дерева, поэтому тайм-ауты/параллелизм DB/IPC пока
+  не переделывались.
+- DC-02, DC-03, DC-04, DC-06, DC-07, DC-08, DC-09, DC-10, DC-11, DC-12, DC-13
+  и DC-14 реализованы.
 
-## Сделано в текущем рабочем дереве
+## Сделано
 
-- В `fic-dick --daemon` команда `device_children` теперь по умолчанию
-  возвращает только:
-  - статические контейнеры с `boot_id == "-1"`;
-  - устройства текущей загрузки (`boot_id == current_boot_id`).
-- Для старого поведения добавлен явный параметр IPC:
-
-```json
-{"command": "device_children", "parent_id": 1, "include_disconnected": true}
-```
-
-- В ответ `device_children` добавлено поле `include_disconnected`, чтобы клиенту
-  было видно, в каком режиме вернулся список.
-- В GUI дерева устройств добавлен чекбокс «Показать историю». Без него дерево
-  показывает текущую топологию; с ним — исторические отключенные ветки тоже.
-- Удаление отключенного поддерева в GUI проверяет детей с
-  `include_disconnected=true`, иначе скрытые исторические потомки могли бы
-  исказить проверку.
-- В CLI команда `device children <parent_id>` оставлена в current-only режиме.
-  Для истории добавлены формы:
-
-```bash
-fic-cli device children <parent_id> --all
-fic-cli device children <parent_id> --history
-```
-
-- Обновлены `fic-dick/README.md` и `docs/architecture-diagrams.md`.
+- `permanent`-проверка теперь оценивает обязательное устройство по стабильной
+  идентичности `device_hash + subsystem`, а не по одному историческому
+  occurrence.
+- Remove-событие проверяет permanent-нарушения по всему отключенному поддереву.
+- `udev_event` через device socket теперь принимается только от root peer
+  credentials; devpath дополнительно нормализуется под `/sys/devices`.
+- Запись udev-устройства и его атрибутов выполняется транзакционно; ошибка
+  любого атрибута приводит к rollback.
+- `allow` enforcement больше не проглатывает ошибку записи в USB `authorized`;
+  результат записывается в `device_events`.
+- Sysfs block/allow/remove операции получили короткие retry-попытки.
+- `/devices/virtual/block/...` больше не отбрасывается общим udev-фильтром.
+- Coldplug service `fic_get_device_udev_info.service` запускается сразу в
+  package postinst, где есть `systemctl`.
+- Mutating device IPC-команды пишут audit-log с peer uid/gid/pid, командой и
+  результатом.
+- Runtime-миграции SQLite удалены из `DB::initializeDatabase()`.
+- Seed DB `fic/src/scripts/db/devices.db` обновлена: таблица `devices` содержит
+  `control_explicit`.
+- Device daemon больше не делает безусловный `unlink()` существующего socket:
+  перед удалением stale socket он пробует обнаружить уже работающий daemon.
+- Добавлен CTest `device_control_static_checks`.
+- Обновлен `fic-dick/README.md`.
 
 ## Измененные файлы
 
-- `fic-dick/src/core/DeviceControlDaemon.cpp`
-- `fic-cli/src/main.cpp`
-- `fic-gui/src/DeviceTree.h`
-- `fic-gui/src/DeviceTree.cpp`
+- `CMakeLists.txt`
+- `tests/CMakeLists.txt`
+- `tests/device-control/static_checks.py`
+- `fic-common/fic-device-db/src/DB.cpp`
 - `fic-dick/README.md`
-- `docs/architecture-diagrams.md`
+- `fic-dick/src/core/DeviceControlDaemon.cpp`
+- `fic-dick/src/core/InfoCollector.cpp`
+- `fic-dick/src/modules/UDEVInfoCollector.cpp`
+- `fic/src/scripts/db/devices.db`
+- `packaging/deb/build-fic-debian10-deb.sh`
+- `packaging/deb/build-fic-debian11-deb.sh`
+- `packaging/deb/build-fic-debian12-deb.sh`
+- `packaging/rpm/build-fic-alt-p11-rpm.sh`
 - `docs/HANDOFF.md`
 
 ## Проверки
@@ -73,55 +72,40 @@ fic-cli device children <parent_id> --history
 Выполнено:
 
 ```bash
-git status --short
 git diff --check
+python3 tests/device-control/static_checks.py .
 cmake -S . -B /tmp/fic-build-check
 cmake --build /tmp/fic-build-check --target fic-dick -j2
 cmake --build /tmp/fic-build-check --target fic-cli -j2
 cmake --build /tmp/fic-build-check --target fic-gui -j2
+cmake --build /tmp/fic-build-check -j2
+ctest --test-dir /tmp/fic-build-check --output-on-failure
 ```
 
-Все три цели успешно собраны в `/tmp/fic-build-check`.
+Результат: все перечисленные проверки успешно выполнены.
 
-Замечание: при параллельном запуске нескольких `cmake --build` в одном build-dir
-`gmake` вывел предупреждение `jobserver mkfifo: /tmp/GMfifo3: File exists`, но
-сборки завершились успешно.
+Замечание: при сборке `fic-gui` снова появлялось предупреждение GNU make
+`jobserver mkfifo: /tmp/GMfifo3: File exists`, но цель собралась успешно.
 
 Не выполнялось:
 
-- сборка deb/rpm пакетов;
-- установка пакета на тестовую машину;
-- runtime-проверка на `172.17.1.105`;
-- реальные операции применения политик, lock/unlock, udev trigger или запись в
-  `/opt/fic`.
+- runtime-запуск `fic-dick --daemon`;
+- реальные udev trigger, policy apply, lock/unlock, device mutation;
+- запись в `/opt/fic`;
+- сборка deb/rpm пакетов.
 
-## Что проверить после установки
+## Риски и что проверить в runtime
 
-1. Открыть `fic-gui`.
-2. В обычном режиме убедиться, что дерево не показывает полностью зачеркнутую
-   USB-ветку прошлой загрузки рядом с актуальной.
-3. Включить «Показать историю» и убедиться, что исторические отключенные ветки
-   появляются обратно.
-4. Проверить CLI:
-
-```bash
-fic-cli device children <id>
-fic-cli device children <id> --all
-```
-
-## Решения и риски
-
-- Фильтрация сделана на уровне daemon API, а не только в GUI. Это намеренно:
-  все клиенты получают одинаковый безопасный default и не обязаны сами помнить,
-  что исторические ветки надо скрывать.
-- Статические контейнеры с `boot_id == "-1"` оставлены видимыми всегда, иначе
-  дерево могло бы потерять системные узлы-группы, через которые доступны текущие
-  устройства.
-- История не удаляется и не нормализуется. Если позже потребуется показать
-  «физически тот же порт/та же флешка через разные sysfs-имена», понадобится
-  отдельная модель группировки/дизамбигуации экземпляров, возможно уже с
-  изменением схемы БД.
-- Если `SystemBootInfo::get_boot_id()` неожиданно вернет пустую строку, обычный
-  `device_children` покажет только статические контейнеры. Это поведение
-  соответствует текущей логике `connected`, но при диагностике пустого дерева
-  стоит первым делом проверить `device_boot_id`.
+- Retry для sysfs сейчас синхронный и короткий; полноценная persistent queue не
+  добавлялась, потому что DC-05 оставлен без изменения.
+- После удаления runtime-миграций старая установленная БД с прежней схемой не
+  будет автоматически обновляться. Для текущей стадии разработки это намеренно;
+  новая установка должна использовать обновленную seed DB.
+- Нужно проверить на тестовой машине:
+  - подключение USB/block/PCI через udev;
+  - `fic-dick check-permanent` при переносе permanent-устройства в другой порт;
+  - remove родителя, у которого есть permanent-потомок;
+  - отказ не-root клиента на ручной `udev_event`;
+  - появление device audit-log для `device_update_*`, `device_delete`,
+    `device_check_permanent`;
+  - immediate coldplug после установки пакета.

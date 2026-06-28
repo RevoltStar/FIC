@@ -118,11 +118,27 @@ bool InfoCollector::process_device(
                 device_type + "_concrete"
             };
             //Сгенерированный device_id
+            if (!db.beginTransaction()) {
+                this->log("Ошибка начала транзакции для " + device_type, logLevel::FATAL);
+                return false;
+            }
             int device_id = db.addDevice(di);
             if(device_id != -1){
                 for(auto it = this->deviceParam.begin(); it != this->deviceParam.end(); ++it) {
-                      db.addDeviceAttribute(device_id, it->first,  it->second);
+                      if (!db.addDeviceAttribute(device_id, it->first,  it->second)) {
+                          db.rollbackTransaction();
+                          this->log("Ошибка записи атрибута для " + device_type, logLevel::FATAL);
+                          return false;
+                      }
                   }
+                if (!db.commitTransaction()) {
+                    this->log("Ошибка фиксации транзакции для " + device_type, logLevel::FATAL);
+                    return false;
+                }
+            } else {
+                db.rollbackTransaction();
+                this->log("Ошибка создания устройства для " + device_type, logLevel::FATAL);
+                return false;
             }
         }
     }else{

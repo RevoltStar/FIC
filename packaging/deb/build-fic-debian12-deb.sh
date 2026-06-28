@@ -470,7 +470,7 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
     systemctl enable --now fic.service || true
     systemctl enable --now fic-device.service || true
-    systemctl enable fic_get_device_udev_info.service || true
+    systemctl enable --now fic_get_device_udev_info.service || true
     systemctl enable --now fic-notify.service || true
 fi
 

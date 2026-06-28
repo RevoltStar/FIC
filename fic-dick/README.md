@@ -41,6 +41,11 @@ Daemon слушает Unix-сокет:
 `ignore_hierarchy`, сброс правила до наследования, удаление отключенных
 исторических поддеревьев и проверка отсутствующих `permanent` устройств.
 
+Общие настройки DC (`block_usb_storage`, `block_printers_scanners`,
+`block_optical_drives`) применяются к устройствам при их подключении или
+переподключении. Они намеренно не отключают устройства, которые уже были
+подключены в момент изменения настройки администратором.
+
 `device_children` по умолчанию возвращает только актуальное дерево текущей
 загрузки: системные контейнеры и устройства с текущим `boot_id`. Исторические
 отключенные ветки остаются в БД, но возвращаются только при явном
@@ -83,8 +88,10 @@ fic/src/scripts/udev/99-fic-devices.rules
 - helper пересылает `ACTION`, `DEVPATH`, `SUBSYSTEM` и udev environment в `fic-dick --daemon`;
 - helper делает одну IPC-попытку и быстро завершается, если device daemon еще не готов;
 - отсутствие `/run/fic/fic-device.sock` во время раннего coldplug не считается ошибкой helper: boot-time `fic-udevadm-trigger` позже выполнит контролируемый retrigger после `wait-daemon`;
+- daemon принимает IPC-команду `udev_event` только от root peer credentials;
 - daemon добавляет, обновляет или помечает устройство отключенным;
-- daemon вычисляет effective policy и применяет USB/PCI/block enforcement best-effort;
+- daemon вычисляет effective policy и применяет USB/PCI/block enforcement с
+  несколькими короткими retry-попытками;
 - если обязательных переменных окружения нет, обработка завершается с ошибкой.
 
 ## Режим check-permanent
@@ -95,6 +102,10 @@ fic-dick check-permanent
 
 Отправляет daemon команду проверки `permanent` устройств. Если обязательное
 устройство отсутствует, daemon вызывает `lock` через основной `fic` socket.
+Проверка выполняется по стабильной идентичности устройства (`device_hash` +
+`subsystem`), а не по одному историческому экземпляру дерева. При remove-событии
+проверяется все отключенное поддерево, чтобы исчезновение обязательного
+потомка не терялось за событием родителя.
 
 ## Режим wait-daemon
 
@@ -119,6 +130,9 @@ fic-dick wait-daemon [timeout_seconds]
 environment. Для partitions приоритет отдается `ID_PART_ENTRY_UUID`, затем
 `ID_FS_UUID`, затем сочетанию `ID_SERIAL + ID_PART_ENTRY_NUMBER`, с fallback на
 `DEVNAME`, `MAJOR/MINOR` или `DEVPATH`.
+Виртуальные block-устройства `/devices/virtual/block/...` также принимаются
+udev-коллектором, чтобы device-mapper/loop/ram/zram записи могли попадать в
+дерево устройств.
 
 `PCIInfoCollector` использует базовые PCI-поля и добавляет weak-disambiguator:
 `PCI_SLOT_NAME`, а если его нет — `DEVPATH`. Такие записи получают атрибуты
@@ -171,6 +185,9 @@ Unit вызывает:
 и вызывает инициализацию схемы через `DB::initializeDatabase()`.
 
 Если база не может быть инициализирована, компонент пишет ошибку в лог и завершает работу с кодом `1`.
+Runtime-миграции схемы сейчас намеренно не выполняются: проект находится в
+разработке, поэтому установленная seed-база должна уже соответствовать текущей
+схеме.
 
 ## Логи
 
@@ -187,6 +204,8 @@ devices
 ```
 
 Туда записываются PID, `ACTION`, `DEVPATH` и `SUBSYSTEM` текущего события.
+Мутирующие device IPC-команды дополнительно пишутся в audit-log текущей
+загрузки вместе с peer uid/gid/pid, кратким описанием запроса и результатом.
 
 ## Сборка
 
@@ -195,6 +214,12 @@ devices
 ```bash
 cmake -S . -B build-check
 cmake --build build-check --target fic-dick
+```
+
+Статические проверки компонента запускаются через CTest:
+
+```bash
+ctest --test-dir build-check --output-on-failure
 ```
 
 Отдельная сборка компонента:

@@ -689,7 +689,7 @@ for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin
         "\$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
         "\$systemctl_bin" enable --now fic.service >/dev/null 2>&1 || true
         "\$systemctl_bin" enable --now fic-device.service >/dev/null 2>&1 || true
-        "\$systemctl_bin" enable fic_get_device_udev_info.service >/dev/null 2>&1 || true
+        "\$systemctl_bin" enable --now fic_get_device_udev_info.service >/dev/null 2>&1 || true
         "\$systemctl_bin" enable --now fic-notify.service >/dev/null 2>&1 || true
         break
     fi

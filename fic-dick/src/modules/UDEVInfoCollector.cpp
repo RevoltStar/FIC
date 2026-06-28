@@ -1,6 +1,7 @@
 // file name: UDEVInfoCollector.cpp
 #include "UDEVInfoCollector.h"
 #include <functional>
+#include <filesystem>
 
 extern char **environ;
 
@@ -22,8 +23,17 @@ bool UDEVInfoCollector::check_devpath(const char* devpath) {
         return false;
     }
 
-    // Проверка, что путь НЕ начинается с /devices/virtual
-    if (strncmp(devpath, "/devices/virtual", 16) == 0) {
+    std::filesystem::path sysfsPath = (std::filesystem::path("/sys") / std::string(devpath).substr(1)).lexically_normal();
+    const std::filesystem::path sysDevices = std::filesystem::path("/sys/devices");
+    std::string normalized = sysfsPath.string();
+    if (normalized.rfind(sysDevices.string() + "/", 0) != 0) {
+        this->log("Устройство исключено: DEVPATH выходит за пределы /sys/devices: (" + std::string(devpath) + ")", logLevel::TRACE);
+        return false;
+    }
+
+    // Проверка, что путь НЕ начинается с /devices/virtual, кроме управляемых virtual block устройств.
+    if (strncmp(devpath, "/devices/virtual", 16) == 0 &&
+        strncmp(devpath, "/devices/virtual/block/", 23) != 0) {
         this->log("Виртуальное устройство исключено: " + std::string(devpath), logLevel::TRACE);
         return false;
     }
@@ -255,6 +265,25 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
         }
 
         /*У нас тут уже точно должен быть какой-то родитель*/
+        auto addAttributes = [&](int deviceId) {
+            for (const auto& [key, value] : this->collect_all_udev_attributes()) {
+                if (!value.empty() && !db.addDeviceAttribute(deviceId, key, value)) {
+                    this->log("Ошибка записи атрибута " + key + " для устройства ID: " + std::to_string(deviceId), logLevel::ERROR);
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        auto rollbackAndFail = [&]() {
+            db.rollbackTransaction();
+            return false;
+        };
+
+        if (!db.beginTransaction()) {
+            this->log("Не удалось начать транзакцию записи устройства", logLevel::ERROR);
+            return false;
+        }
 
         // 1. Сначала проверяем, существует ли устройство с тем же хешем, подсистемой и родителем
                DeviceInfo existing_device = db.getDeviceByHashAndSubsystemAndParent(current_hash, subsystem, parent_device.id);
@@ -266,14 +295,12 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                    existing_device.boot_id = boot_id;
                    existing_device.notes = "UDEV device updated: " + devpath + device_note_suffix();
                    if (!db.updateDevice(existing_device, existing_device.id)) {
-                       return false;
+                       return rollbackAndFail();
                    }
-                   for (const auto& [key, value] : this->collect_all_udev_attributes()) {
-                       if (!value.empty()) {
-                           db.addDeviceAttribute(existing_device.id, key, value);
-                       }
+                   if (!addAttributes(existing_device.id)) {
+                       return rollbackAndFail();
                    }
-                   return true;
+                   return db.commitTransaction();
                }
 
                // 2. Проверяем, существует ли виртуальное устройство для этого пути
@@ -300,16 +327,13 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
 
                    if (!db.updateDevice(updated_device, existing_virtual_device.id)) {
                        this->log("Ошибка обновления виртуального устройства", logLevel::ERROR);
-                       return false;
+                       return rollbackAndFail();
                    }
 
-                   // Добавляем атрибуты
-                   for (const auto& [key, value] : this->collect_all_udev_attributes()) {
-                       if (!value.empty()) {
-                           db.addDeviceAttribute(existing_virtual_device.id, key, value);
-                       }
+                   if (!addAttributes(existing_virtual_device.id)) {
+                       return rollbackAndFail();
                    }
-                   return true;
+                   return db.commitTransaction();
                }
 
                // 3. Проверяем устройство без привязки к иерархии
@@ -335,15 +359,12 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                    };
 
                    int device_id = db.addDevice(new_device);
-                   if (device_id == -1) return false;
+                   if (device_id == -1) return rollbackAndFail();
 
-                   // Добавляем атрибуты
-                   for (const auto& [key, value] : this->collect_all_udev_attributes()) {
-                       if (!value.empty()) {
-                           db.addDeviceAttribute(device_id, key, value);
-                       }
+                   if (!addAttributes(device_id)) {
+                       return rollbackAndFail();
                    }
-                   return true;
+                   return db.commitTransaction();
                }
 
                // 4. Устройство не найдено нигде - создаем новое
@@ -368,17 +389,14 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                int device_id = db.addDevice(new_device);
                if (device_id == -1){
                     this->log("Ошибка создания устройства в БД", logLevel::ERROR);
-                    return false;
+                    return rollbackAndFail();
                }
 
-               // Добавляем атрибуты
-               for (const auto& [key, value] : this->collect_all_udev_attributes()) {
-                   if (!value.empty()) {
-                       db.addDeviceAttribute(device_id, key, value);
-                   }
+               if (!addAttributes(device_id)) {
+                   return rollbackAndFail();
                }
 
-               return true;
+               return db.commitTransaction();
     } catch (const std::exception& e) {
         std::cerr << "Ошибка в create_device_config: " << e.what() << std::endl;
         return false;

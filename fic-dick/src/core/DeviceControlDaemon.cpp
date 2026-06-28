@@ -23,6 +23,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <vector>
 
@@ -66,6 +67,21 @@ struct DcSettings {
     bool blockOpticalDrives = false;
 };
 
+struct PeerCredentials {
+    bool available = false;
+    uid_t uid = static_cast<uid_t>(-1);
+    gid_t gid = static_cast<gid_t>(-1);
+    pid_t pid = -1;
+    std::string error;
+};
+
+struct PermanentViolation {
+    int deviceId = -1;
+    int sourceDeviceId = -1;
+    std::string devpath;
+    std::string source;
+};
+
 void handle_signal(int) {
     g_stop = true;
 }
@@ -97,6 +113,114 @@ bool should_include_child_in_tree(const DeviceInfo& device,
 
 bool is_valid_control_level(const std::string& level) {
     return level == "blocked" || level == "allowed" || level == "permanent" || level == "ignored";
+}
+
+PeerCredentials peer_credentials(int fd) {
+    PeerCredentials peer;
+#ifdef SO_PEERCRED
+    struct ucred credentials {};
+    socklen_t credentialsLength = sizeof(credentials);
+    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &credentialsLength) == 0) {
+        peer.available = true;
+        peer.uid = credentials.uid;
+        peer.gid = credentials.gid;
+        peer.pid = credentials.pid;
+    } else {
+        peer.error = std::strerror(errno);
+    }
+#else
+    peer.error = "SO_PEERCRED is unavailable";
+#endif
+    return peer;
+}
+
+std::string sanitize_audit_value(std::string value) {
+    for (char& ch : value) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            ch = ' ';
+        }
+    }
+    if (value.size() > 240) {
+        value = value.substr(0, 240) + "...";
+    }
+    return value;
+}
+
+bool is_mutating_command(const std::string& command) {
+    return command == "udev_event" ||
+           command == "device_update_control_level" ||
+           command == "device_update_ignore_hierarchy" ||
+           command == "device_reset_control" ||
+           command == "device_delete" ||
+           command == "device_check_permanent" ||
+           command == "shutdown";
+}
+
+std::string request_audit_summary(const json& request) {
+    if (!request.is_object()) {
+        return "command=<invalid-json>";
+    }
+
+    std::string summary = "command=" + sanitize_audit_value(request.value("command", ""));
+    const std::vector<std::string> stringFields = {"action", "devpath", "subsystem", "control_level"};
+    for (const std::string& field : stringFields) {
+        if (request.contains(field) && request[field].is_string()) {
+            summary += " " + field + "=" + sanitize_audit_value(request[field].get<std::string>());
+        }
+    }
+
+    const std::vector<std::string> integerFields = {"device_id", "parent_id"};
+    for (const std::string& field : integerFields) {
+        if (request.contains(field) && request[field].is_number_integer()) {
+            summary += " " + field + "=" + std::to_string(request[field].get<int>());
+        }
+    }
+
+    if (request.contains("ignore_hierarchy") && request["ignore_hierarchy"].is_boolean()) {
+        summary += std::string(" ignore_hierarchy=") + (request["ignore_hierarchy"].get<bool>() ? "true" : "false");
+    }
+
+    return summary;
+}
+
+void write_device_audit_log(const std::string& message) {
+    try {
+        const std::string bootId = current_boot_id();
+        const std::filesystem::path auditDir = std::filesystem::path("/opt/fic/log") /
+            (bootId.empty() ? "unknown_boot" : bootId) /
+            "audit";
+        std::filesystem::create_directories(auditDir);
+
+        const std::filesystem::path auditFile = auditDir / ("device_audit_" + std::to_string(getpid()) + ".txt");
+        std::ofstream stream(auditFile, std::ios::app);
+        if (!stream.is_open()) {
+            std::cerr << "failed to open device audit log: " << auditFile << std::endl;
+            return;
+        }
+
+        stream << "[" << Logger::get_current_time() << "] " << message << '\n';
+    } catch (const std::exception& e) {
+        std::cerr << "device audit logging error: " << e.what() << std::endl;
+    }
+}
+
+void audit_device_request(const PeerCredentials& peer, const json& request, const json& response) {
+    const std::string command = request.is_object() ? request.value("command", "") : "";
+    if (!is_mutating_command(command)) {
+        return;
+    }
+
+    std::ostringstream out;
+    out << "peer=";
+    if (peer.available) {
+        out << "uid:" << peer.uid << " gid:" << peer.gid << " pid:" << peer.pid;
+    } else {
+        out << "unavailable(" << sanitize_audit_value(peer.error) << ")";
+    }
+    out << " " << request_audit_summary(request)
+        << " result=" << (response.value("ok", false) ? "ok" : "error")
+        << " message=" << sanitize_audit_value(response.value("message", ""));
+    write_device_audit_log(out.str());
 }
 
 DeviceInfo with_override(DeviceInfo device, const std::optional<ControlOverride>& override) {
@@ -300,6 +424,35 @@ bool write_sysfs_value(const std::filesystem::path& path,
     return true;
 }
 
+bool retry_sysfs_action(const std::string& actionName,
+                        const std::function<bool(std::string&)>& action,
+                        std::string& details) {
+    const std::vector<int> delaysMs = {0, 100, 250};
+    std::string lastError;
+
+    for (std::size_t attempt = 0; attempt < delaysMs.size(); ++attempt) {
+        if (delaysMs[attempt] > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delaysMs[attempt]));
+        }
+
+        std::string attemptDetails;
+        if (action(attemptDetails)) {
+            details = actionName + " succeeded on attempt " + std::to_string(attempt + 1);
+            if (!attemptDetails.empty()) {
+                details += ": " + attemptDetails;
+            }
+            return true;
+        }
+        lastError = attemptDetails;
+    }
+
+    details = actionName + " failed after " + std::to_string(delaysMs.size()) + " attempts";
+    if (!lastError.empty()) {
+        details += ": " + lastError;
+    }
+    return false;
+}
+
 std::optional<std::filesystem::path> find_parent_sysfs_file(const std::string& devpath,
                                                             const std::string& filename) {
     if (devpath.empty() || devpath[0] != '/') {
@@ -329,19 +482,31 @@ bool authorize_usb(const DeviceInfo& device, bool authorize, std::string& detail
         return false;
     }
 
-    return write_sysfs_value(authorized.value(), authorize ? "1" : "0", details);
+    return retry_sysfs_action(authorize ? "USB authorize" : "USB deauthorize",
+                              [&](std::string& error) {
+                                  return write_sysfs_value(authorized.value(), authorize ? "1" : "0", error);
+                              },
+                              details);
 }
 
 bool remove_via_sysfs(const DeviceInfo& device, std::string& details) {
     std::filesystem::path sysDevice = std::filesystem::path("/sys") / device.devpath.substr(1);
     const std::filesystem::path scsiDelete = sysDevice / "device" / "delete";
     if (std::filesystem::exists(scsiDelete)) {
-        return write_sysfs_value(scsiDelete, "1", details);
+        return retry_sysfs_action("sysfs delete",
+                                  [&](std::string& error) {
+                                      return write_sysfs_value(scsiDelete, "1", error);
+                                  },
+                                  details);
     }
 
     std::optional<std::filesystem::path> remove = find_parent_sysfs_file(device.devpath, "remove");
     if (remove.has_value()) {
-        return write_sysfs_value(remove.value(), "1", details);
+        return retry_sysfs_action("sysfs remove",
+                                  [&](std::string& error) {
+                                      return write_sysfs_value(remove.value(), "1", error);
+                                  },
+                                  details);
     }
 
     details = "no supported sysfs remove/delete file found";
@@ -349,12 +514,13 @@ bool remove_via_sysfs(const DeviceInfo& device, std::string& details) {
 }
 
 bool enforce_allow(const DeviceInfo& device, std::string& details) {
-    if (device.subsystem == "usb" || sysfs_file_exists_for_device(device, "authorized")) {
-        if (authorize_usb(device, true, details)) {
-            details = "USB device authorized";
-            return true;
-        }
-        return true; // absence of USB authorization for non-USB children is not a denial error
+    if (sysfs_file_exists_for_device(device, "authorized")) {
+        return authorize_usb(device, true, details);
+    }
+
+    if (device.subsystem == "usb") {
+        details = "USB authorized sysfs file not found";
+        return false;
     }
 
     details = "no allow action required";
@@ -389,6 +555,24 @@ void add_event(DB& db,
                const std::string& result,
                const std::string& details) {
     db.addDeviceEvent(DeviceEvent{0, deviceId, type, result, details, ""});
+}
+
+bool identity_connected(DB& db, const DeviceInfo& device, const std::string& bootId) {
+    if (device.id <= 0 || bootId.empty()) {
+        return false;
+    }
+
+    if (is_static_container(device)) {
+        return true;
+    }
+
+    for (const DeviceInfo& occurrence : db.getDevicesByHashAndSubsystem(device.device_hash, device.subsystem)) {
+        if (is_connected(occurrence, bootId)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool reset_subtree_boot_id(DB& db, int deviceId) {
@@ -494,23 +678,27 @@ bool permanent_satisfied(DB& db, const DeviceInfo& device, const EffectivePolicy
         source = device;
     }
 
-    if (source.ignore_hierarchy) {
-        for (const DeviceInfo& occurrence : db.getDevicesByHashAndSubsystem(source.device_hash, source.subsystem)) {
-            if (is_connected(occurrence, bootId)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    DeviceInfo current = db.getDeviceById(device.id);
-    return current.id != -1 && is_connected(current, bootId);
+    return identity_connected(db, source, bootId);
 }
 
-json check_permanent_devices(DB& db) {
-    json missing = json::array();
+std::vector<PermanentViolation> collect_missing_permanent_devices(DB& db,
+                                                                  const std::optional<std::vector<int>>& candidateIds = std::nullopt) {
+    std::vector<DeviceInfo> candidates;
+    if (candidateIds.has_value()) {
+        for (int deviceId : candidateIds.value()) {
+            DeviceInfo device = db.getDeviceById(deviceId);
+            if (device.id != -1) {
+                candidates.push_back(device);
+            }
+        }
+    } else {
+        candidates = db.getAllDevices();
+    }
 
-    for (const DeviceInfo& device : db.getAllDevices()) {
+    std::vector<PermanentViolation> missing;
+    std::set<std::string> seenObligations;
+
+    for (const DeviceInfo& device : candidates) {
         const EffectivePolicy policy = effective_policy(db, device);
         if (policy.level != "permanent") {
             continue;
@@ -519,18 +707,47 @@ json check_permanent_devices(DB& db) {
             continue;
         }
 
-        missing.push_back({{"device_id", device.id}, {"devpath", device.devpath}, {"source", policy.source}});
+        DeviceInfo source = policy.sourceDeviceId > 0 ? db.getDeviceById(policy.sourceDeviceId) : device;
+        if (source.id == -1) {
+            source = device;
+        }
+
+        const std::string obligationKey = source.device_hash + "\n" + source.subsystem;
+        if (!seenObligations.insert(obligationKey).second) {
+            continue;
+        }
+
+        missing.push_back(PermanentViolation{device.id, source.id, device.devpath, policy.source});
     }
 
-    if (missing.empty()) {
+    return missing;
+}
+
+json missing_permanent_to_json(const std::vector<PermanentViolation>& violations) {
+    json result = json::array();
+    for (const PermanentViolation& violation : violations) {
+        result.push_back({
+            {"device_id", violation.deviceId},
+            {"source_device_id", violation.sourceDeviceId},
+            {"devpath", violation.devpath},
+            {"source", violation.source}
+        });
+    }
+    return result;
+}
+
+json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& candidateIds = std::nullopt) {
+    const std::vector<PermanentViolation> violations = collect_missing_permanent_devices(db, candidateIds);
+
+    if (violations.empty()) {
         return fic::ipc::make_ok_response("all permanent devices are connected");
     }
 
     std::string lockMessage;
     const bool locked = call_fic_lock(lockMessage);
-    for (const auto& item : missing) {
+    for (const PermanentViolation& violation : violations) {
         add_event(db,
-                  item.value("device_id", -1),
+                  violation.deviceId,
                   "lock",
                   locked ? "success" : "error",
                   "permanent device is missing; fic lock: " + lockMessage);
@@ -539,7 +756,7 @@ json check_permanent_devices(DB& db) {
     return json{
         {"ok", locked},
         {"message", locked ? "missing permanent device; computer locked" : "missing permanent device; failed to lock computer"},
-        {"missing", missing},
+        {"missing", missing_permanent_to_json(violations)},
         {"lock_message", lockMessage}
     };
 }
@@ -624,7 +841,20 @@ json handle_udev_event(const json& request) {
         }
 
         if (policy.level == "allowed" || policy.level == "permanent") {
-            enforce_allow(device, enforcementDetails);
+            const bool allowed = enforce_allow(device, enforcementDetails);
+            add_event(db,
+                      device.id,
+                      "allow",
+                      allowed ? "success" : "error",
+                      enforcementDetails + "; source=" + policy.source);
+            if (!allowed) {
+                return json{
+                    {"ok", false},
+                    {"message", "device is allowed but allow enforcement failed"},
+                    {"device", device_to_json(db, device)},
+                    {"enforcement", enforcementDetails}
+                };
+            }
         }
 
         return json{
@@ -639,9 +869,12 @@ json handle_udev_event(const json& request) {
         DB dbBefore(DEVICE_DB_PATH);
         dbBefore.initializeDatabase();
         DeviceInfo before = dbBefore.getDeviceByDevpathAndSubsystem(devpath, subsystem);
-        EffectivePolicy beforePolicy;
+        std::vector<int> affectedIds;
         if (before.id != -1) {
-            beforePolicy = effective_policy(dbBefore, before);
+            affectedIds.push_back(before.id);
+            for (const DeviceInfo& descendant : dbBefore.getDescendantDevices(before.id)) {
+                affectedIds.push_back(descendant.id);
+            }
         }
 
         if (!collector->safe_remove_device(devpath, subsystem)) {
@@ -655,20 +888,17 @@ json handle_udev_event(const json& request) {
             add_event(db, device.id, "disconnect", "success", "device removed");
         }
 
-        if (device.id != -1 && beforePolicy.level == "permanent" && !permanent_satisfied(db, device, beforePolicy)) {
-            std::string lockMessage;
-            const bool locked = call_fic_lock(lockMessage);
-            add_event(db,
-                      device.id,
-                      "lock",
-                      locked ? "success" : "error",
-                      "permanent device disconnected; fic lock: " + lockMessage);
-            return json{
-                {"ok", locked},
-                {"message", locked ? "permanent device disconnected; computer locked" : "permanent device disconnected; failed to lock computer"},
-                {"device", device_to_json(db, device)},
-                {"lock_message", lockMessage}
-            };
+        if (!affectedIds.empty()) {
+            json permanentCheck = check_permanent_devices(db, affectedIds);
+            if (!permanentCheck.value("ok", true)) {
+                permanentCheck["message"] = permanentCheck.value(
+                    "message",
+                    "permanent device disconnected; failed to lock computer");
+                if (device.id != -1) {
+                    permanentCheck["device"] = device_to_json(db, device);
+                }
+                return permanentCheck;
+            }
         }
 
         return fic::ipc::make_ok_response("device removed");
@@ -691,7 +921,7 @@ json update_device_control(DB& db, const json& request) {
 
     const bool ignoreHierarchy = request.value("ignore_hierarchy", device.ignore_hierarchy);
     const std::string bootId = current_boot_id();
-    if (controlLevel == "permanent" && !is_connected(device, bootId)) {
+    if (controlLevel == "permanent" && !identity_connected(db, device, bootId)) {
         return fic::ipc::make_error_response("cannot mark absent device as permanent");
     }
 
@@ -893,7 +1123,7 @@ json handle_db_request(const json& request) {
     return fic::ipc::make_error_response("unknown device command: " + command);
 }
 
-json handle_request(const json& request) {
+json handle_request(const json& request, const PeerCredentials& peer) {
     const std::string command = request.value("command", "");
     if (command == "status") {
         return fic::ipc::make_ok_response("fic device daemon is running");
@@ -903,6 +1133,9 @@ json handle_request(const json& request) {
         return fic::ipc::make_ok_response("shutdown requested");
     }
     if (command == "udev_event") {
+        if (!peer.available || peer.uid != 0) {
+            return fic::ipc::make_error_response("udev_event requires root peer credentials");
+        }
         return handle_udev_event(request);
     }
 
@@ -910,21 +1143,27 @@ json handle_request(const json& request) {
 }
 
 bool serve_one_client(int clientFd) {
+    const PeerCredentials peer = peer_credentials(clientFd);
     std::string requestText;
     std::string error;
     if (!fic::ipc::read_until_eof(clientFd, requestText, error)) {
         json response = fic::ipc::make_error_response("read failed: " + error);
+        audit_device_request(peer, json{}, response);
         std::string text = response.dump() + "\n";
         fic::ipc::write_all(clientFd, text, error);
         return false;
     }
 
     json response;
+    json request;
     try {
-        response = handle_request(json::parse(requestText));
+        request = json::parse(requestText);
+        response = handle_request(request, peer);
     } catch (const std::exception& e) {
         response = fic::ipc::make_error_response("invalid request: " + std::string(e.what()));
     }
+
+    audit_device_request(peer, request, response);
 
     std::string responseText = response.dump() + "\n";
     return fic::ipc::write_all(clientFd, responseText, error);
@@ -949,6 +1188,44 @@ bool is_missing_device_socket_error(const json& response, const std::string& soc
            message.find("Нет такого файла", prefix.size()) != std::string::npos;
 }
 
+bool probe_existing_device_daemon(const std::string& socketPath,
+                                  int& connectError,
+                                  std::string& error) {
+    connectError = 0;
+
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        error = "socket() failed: " + std::string(std::strerror(errno));
+        return false;
+    }
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (socketPath.size() >= sizeof(addr.sun_path)) {
+        error = "device socket path is too long: " + socketPath;
+        ::close(fd);
+        return false;
+    }
+    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        connectError = errno;
+        error = std::strerror(errno);
+        ::close(fd);
+        return false;
+    }
+
+    std::string ioError;
+    const std::string requestText = json{{"command", "status"}}.dump() + "\n";
+    fic::ipc::write_all(fd, requestText, ioError);
+    ::shutdown(fd, SHUT_WR);
+
+    std::string responseText;
+    fic::ipc::read_until_eof(fd, responseText, ioError);
+    ::close(fd);
+    return true;
+}
+
 bool prepare_runtime_socket(const std::string& socketPath, int serverFd) {
     const std::filesystem::path socket = socketPath;
     const std::filesystem::path runtimeDir = socket.parent_path();
@@ -960,7 +1237,20 @@ bool prepare_runtime_socket(const std::string& socketPath, int serverFd) {
         ::chmod(runtimeDir.c_str(), 0770);
     }
 
-    ::unlink(socketPath.c_str());
+    if (std::filesystem::exists(socketPath)) {
+        int probeConnectError = 0;
+        std::string probeError;
+        if (probe_existing_device_daemon(socketPath, probeConnectError, probeError)) {
+            std::cerr << "fic device daemon is already running, socket=" << socketPath << std::endl;
+            return false;
+        }
+        if (probeConnectError != ECONNREFUSED && probeConnectError != ENOENT) {
+            std::cerr << "device socket exists but could not verify it is stale: "
+                      << socketPath << ": " << probeError << std::endl;
+            return false;
+        }
+        ::unlink(socketPath.c_str());
+    }
 
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
