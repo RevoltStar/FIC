@@ -324,6 +324,7 @@ flowchart TD
     deviceSock --> devGet[device_get]
     deviceSock --> devChildren[device_children]
     deviceSock --> devAttrs[device_attributes]
+    deviceSock --> devEvents[device_events]
     deviceSock --> devControl[device_update_control_level / device_update_ignore_hierarchy / device_reset_control]
 
     mainWindow --> attrList[DeviceAttributeList]

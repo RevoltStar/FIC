@@ -9,12 +9,14 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QTabWidget>
 #include <QTextEdit>
 
 #include <string>
 #include <vector>
 
 #include "DeviceAttributeList.h"
+#include "DeviceEventList.h"
 #include "DeviceTree.h"
 #include "wrappers/QLocalizationManager.h"
 #include "LogViewer.h"
@@ -60,7 +62,15 @@ private:
     Ui::MainWindow *ui;
     DeviceTree *deviceTree;
     DeviceAttributeList *deviceAttributeList;
+    DeviceEventList *deviceEventList;
+    QTabWidget *deviceDetailsTabs;
+    QComboBox *deviceControlCombo;
+    QCheckBox *deviceGlobalRuleCheck;
+    QPushButton *deviceResetControlButton;
+    QPushButton *copyDevpathButton;
+    QPushButton *copyDeviceSummaryButton;
     LogViewer *logViewer;
+    DeviceInfo currentDevice;
 
     QWidget* createPolicyPage(const std::vector<PolicyInfo>& policies,
                               const std::string moduleName,
@@ -68,6 +78,8 @@ private:
     std::vector<PolicyInfo> loadPoliciesFromDaemon(QStringList& errors) const;
     PolicyEditorType editorTypeFromString(const std::string& editor) const;
     bool validatePolicyValue(const PolicyInfo& policy, const std::string& value, QString* error) const;
+    void setupDeviceDetailsPanel();
+    QString deviceSummaryText(const DeviceInfo& device) const;
 };
 
 #endif // MAINWINDOW_H

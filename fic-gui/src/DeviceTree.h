@@ -6,6 +6,9 @@
 #include <QTreeWidgetItem>
 #include <QPushButton>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QLabel>
+#include <QLineEdit>
 #include <QPoint>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -46,7 +49,12 @@ class DeviceTree : public QWidget
 public:
     explicit DeviceTree(QWidget *parent = nullptr);
     void loadDeviceTree();
+    int currentDeviceId() const;
     ~DeviceTree();
+public slots:
+    void applyControlLevelToCurrentDevice(const QString &controlLevel);
+    void applyIgnoreHierarchyToCurrentDevice(bool ignoreHierarchy);
+    void resetCurrentDeviceControl();
 signals:
     void deviceClicked(const DeviceInfo& device);
 private slots:
@@ -56,13 +64,20 @@ private slots:
     void onItemClicked(QTreeWidgetItem *item, int column);
     void showControlLevelContextMenu(const QPoint &position);
     void scheduleDeviceTreeRefresh();
+    void scheduleFilterUpdate();
+    void applyDeviceFilter();
 
 private:
     QTreeWidget *treeWidget;
+    QLineEdit *searchEdit;
+    QComboBox *quickFilterCombo;
     QPushButton *btnExpandAll;
     QPushButton *btnCollapseAll;
+    QPushButton *btnClearFilter;
     QCheckBox *chkShowHistory;
+    QLabel *filterStatsLabel;
     QTimer *refreshTimer;
+    QTimer *filterTimer;
 
     void setupUI();
     void setupRefreshTimer();
@@ -73,6 +88,9 @@ private:
     void ensureChildrenLoaded(QTreeWidgetItem *item);
     void expandNodeRecursively(QTreeWidgetItem *item);
     void loadChildDevices(QTreeWidgetItem *parentItem, int parentId);
+    bool filterActive() const;
+    bool itemMatchesFilter(QTreeWidgetItem *item) const;
+    bool applyFilterToItem(QTreeWidgetItem *item, int &totalCount, int &visibleCount);
     void setDeviceControlLevel(int deviceId, const std::string &controlLevel);
     void setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy);
     void resetDeviceControl(int deviceId);
@@ -91,6 +109,7 @@ private:
 
     std::string getSystemBootId();
     bool isDeviceBootIdValid(const DeviceInfo& device);
+    void setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo& device);
     void setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo& device);
     void setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo& device);
 

@@ -1,5 +1,7 @@
 #include "DeviceTree.h"
 #include <QAction>
+#include <QApplication>
+#include <QClipboard>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
@@ -19,6 +21,12 @@
 #include <sys/utsname.h> // Для получения времени старта ОС
 
 namespace {
+constexpr int RoleSubsystem = Qt::UserRole + 1;
+constexpr int RoleDevpath = Qt::UserRole + 2;
+constexpr int RoleEffectiveControl = Qt::UserRole + 3;
+constexpr int RoleConnected = Qt::UserRole + 4;
+constexpr int RoleBootValid = Qt::UserRole + 5;
+
 std::string upperCopy(std::string value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
@@ -175,11 +183,29 @@ void DeviceTree::setupUI()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
-    // Панель кнопок
+    QHBoxLayout *filterLayout = new QHBoxLayout();
+    searchEdit = new QLineEdit(this);
+    searchEdit->setPlaceholderText("Поиск: имя, путь, subsystem");
+    quickFilterCombo = new QComboBox(this);
+    quickFilterCombo->addItem("Все устройства", "all");
+    quickFilterCombo->addItem("Заблокированные", "blocked");
+    quickFilterCombo->addItem("Постоянные", "permanent");
+    quickFilterCombo->addItem("USB", "usb");
+    quickFilterCombo->addItem("Диски", "block");
+    quickFilterCombo->addItem("История", "history");
+    btnClearFilter = new QPushButton("Сбросить", this);
+    filterStatsLabel = new QLabel(this);
+    filterStatsLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    filterLayout->addWidget(searchEdit, 1);
+    filterLayout->addWidget(quickFilterCombo);
+    filterLayout->addWidget(btnClearFilter);
+    filterLayout->addWidget(filterStatsLabel);
+
     QHBoxLayout *buttonLayout = new QHBoxLayout();
     btnExpandAll = new QPushButton("Развернуть все", this);
     btnCollapseAll = new QPushButton("Свернуть все", this);
-    chkShowHistory = new QCheckBox("Показать историю", this);
+    chkShowHistory = new QCheckBox("История", this);
     chkShowHistory->setToolTip(
         "Показать отключенные устройства и прошлые экземпляры. "
         "По умолчанию дерево показывает только текущую загрузку."
@@ -193,7 +219,7 @@ void DeviceTree::setupUI()
     // Дерево устройств
     treeWidget = new QTreeWidget(this);
     treeWidget->setColumnCount(2);
-    treeWidget->setHeaderLabels({"Дерево устройств Linux", "Контроль"});
+    treeWidget->setHeaderLabels({"Устройство", "Статус"});
     treeWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     treeWidget->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     treeWidget->setTextElideMode(Qt::ElideNone);
@@ -208,7 +234,11 @@ void DeviceTree::setupUI()
     treeWidget->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     treeWidget->header()->setSectionResizeMode(1, QHeaderView::Fixed);
     treeWidget->setColumnWidth(0, 520);
-    treeWidget->setColumnWidth(1, 140);
+    treeWidget->setColumnWidth(1, 96);
+
+    filterTimer = new QTimer(this);
+    filterTimer->setSingleShot(true);
+    filterTimer->setInterval(250);
 
     connect(treeWidget, &QTreeWidget::itemExpanded,
             this, &DeviceTree::onItemExpanded);
@@ -216,6 +246,20 @@ void DeviceTree::setupUI()
             this, &DeviceTree::expandAllNodes);
     connect(btnCollapseAll, &QPushButton::clicked,
             this, &DeviceTree::collapseAllNodes);
+    connect(searchEdit, &QLineEdit::textChanged,
+            this, &DeviceTree::scheduleFilterUpdate);
+    connect(quickFilterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+                scheduleFilterUpdate();
+            });
+    connect(btnClearFilter, &QPushButton::clicked,
+            this, [this]() {
+                searchEdit->clear();
+                quickFilterCombo->setCurrentIndex(0);
+                scheduleFilterUpdate();
+            });
+    connect(filterTimer, &QTimer::timeout,
+            this, &DeviceTree::applyDeviceFilter);
     connect(chkShowHistory, &QCheckBox::toggled,
             this, [this](bool) {
                 refreshPreservingState();
@@ -230,11 +274,56 @@ void DeviceTree::setupUI()
     connect(treeWidget, &QWidget::customContextMenuRequested,
             this, &DeviceTree::showControlLevelContextMenu);
 
+    mainLayout->addLayout(filterLayout);
     mainLayout->addLayout(buttonLayout);
     mainLayout->addWidget(treeWidget);
 
     // Устанавливаем макет для виджета
     setLayout(mainLayout);
+}
+
+int DeviceTree::currentDeviceId() const
+{
+    QTreeWidgetItem *item = treeWidget == nullptr ? nullptr : treeWidget->currentItem();
+    if (item == nullptr || !item->data(0, Qt::UserRole).isValid())
+    {
+        return -1;
+    }
+
+    return item->data(0, Qt::UserRole).toInt();
+}
+
+void DeviceTree::applyControlLevelToCurrentDevice(const QString &controlLevel)
+{
+    const int deviceId = currentDeviceId();
+    if (deviceId <= 0)
+    {
+        return;
+    }
+
+    setDeviceControlLevel(deviceId, controlLevel.toStdString());
+}
+
+void DeviceTree::applyIgnoreHierarchyToCurrentDevice(bool ignoreHierarchy)
+{
+    const int deviceId = currentDeviceId();
+    if (deviceId <= 0)
+    {
+        return;
+    }
+
+    setDeviceIgnoreHierarchy(deviceId, ignoreHierarchy);
+}
+
+void DeviceTree::resetCurrentDeviceControl()
+{
+    const int deviceId = currentDeviceId();
+    if (deviceId <= 0)
+    {
+        return;
+    }
+
+    resetDeviceControl(deviceId);
 }
 
 
@@ -389,6 +478,14 @@ void DeviceTree::scheduleDeviceTreeRefresh()
     refreshPreservingState();
 }
 
+void DeviceTree::scheduleFilterUpdate()
+{
+    if (filterTimer != nullptr)
+    {
+        filterTimer->start();
+    }
+}
+
 void DeviceTree::onItemClicked(QTreeWidgetItem *item, int column)
 {
     Q_UNUSED(column);
@@ -468,6 +565,13 @@ void DeviceTree::showControlLevelContextMenu(const QPoint &position)
     });
 
     menu.addSeparator();
+    QAction *copyDevpathAction = menu.addAction("Копировать devpath");
+    copyDevpathAction->setEnabled(!device.devpath.empty());
+    connect(copyDevpathAction, &QAction::triggered, this, [device]() {
+        QApplication::clipboard()->setText(QString::fromStdString(device.devpath));
+    });
+
+    menu.addSeparator();
     QAction *deleteAction = menu.addAction("Удалить");
     deleteAction->setEnabled(canDelete);
     const QString deviceName = item->text(0);
@@ -528,6 +632,7 @@ void DeviceTree::setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy)
     }
 
     refreshPreservingState();
+    emit deviceClicked(fetchDeviceById(deviceId));
 }
 
 void DeviceTree::resetDeviceControl(int deviceId)
@@ -547,6 +652,7 @@ void DeviceTree::resetDeviceControl(int deviceId)
     }
 
     refreshPreservingState();
+    emit deviceClicked(fetchDeviceById(deviceId));
 }
 
 bool DeviceTree::canDeleteDevice(const DeviceInfo& device)
@@ -670,6 +776,182 @@ bool DeviceTree::isDeviceBootIdValid(const DeviceInfo &device)
     // Сравниваем boot_id с временем старта системы
     // Или на равенство -1 (для предустановленных устройств)
     return device.boot_id == systemBootId || device.boot_id == "-1";
+}
+
+bool DeviceTree::filterActive() const
+{
+    const QString mode = quickFilterCombo == nullptr
+        ? QStringLiteral("all")
+        : quickFilterCombo->currentData().toString();
+    return !searchEdit->text().trimmed().isEmpty() || mode != "all";
+}
+
+bool DeviceTree::itemMatchesFilter(QTreeWidgetItem *item) const
+{
+    if (item == nullptr || !item->data(0, Qt::UserRole).isValid())
+    {
+        return false;
+    }
+
+    const QString query = searchEdit == nullptr ? QString() : searchEdit->text().trimmed();
+    if (!query.isEmpty())
+    {
+        const QString haystack =
+            item->text(0) + "\n" +
+            item->text(1) + "\n" +
+            item->data(0, RoleSubsystem).toString() + "\n" +
+            item->data(0, RoleDevpath).toString() + "\n" +
+            item->toolTip(0);
+        if (!haystack.contains(query, Qt::CaseInsensitive))
+        {
+            return false;
+        }
+    }
+
+    const QString mode = quickFilterCombo == nullptr
+        ? QStringLiteral("all")
+        : quickFilterCombo->currentData().toString();
+    if (mode == "all")
+    {
+        return true;
+    }
+
+    const QString subsystem = item->data(0, RoleSubsystem).toString();
+    const QString effectiveControl = item->data(0, RoleEffectiveControl).toString();
+    if (mode == "blocked")
+    {
+        return effectiveControl == "blocked";
+    }
+    if (mode == "permanent")
+    {
+        return effectiveControl == "permanent";
+    }
+    if (mode == "usb")
+    {
+        return subsystem == "usb";
+    }
+    if (mode == "block")
+    {
+        return subsystem == "block";
+    }
+    if (mode == "history")
+    {
+        return !item->data(0, RoleBootValid).toBool();
+    }
+
+    return true;
+}
+
+bool DeviceTree::applyFilterToItem(QTreeWidgetItem *item, int &totalCount, int &visibleCount)
+{
+    if (item == nullptr)
+    {
+        return false;
+    }
+
+    const bool hasDevice = item->data(0, Qt::UserRole).isValid();
+    if (hasDevice)
+    {
+        ++totalCount;
+    }
+
+    const bool selfMatches = !filterActive() || itemMatchesFilter(item);
+    bool childMatches = false;
+    for (int i = 0; i < item->childCount(); ++i)
+    {
+        childMatches = applyFilterToItem(item->child(i), totalCount, visibleCount) || childMatches;
+    }
+
+    const bool showItem = !filterActive() || selfMatches || childMatches;
+    item->setHidden(!showItem);
+    if (showItem && hasDevice)
+    {
+        ++visibleCount;
+    }
+    if (filterActive() && childMatches)
+    {
+        item->setExpanded(true);
+    }
+
+    return showItem && hasDevice;
+}
+
+void DeviceTree::applyDeviceFilter()
+{
+    if (treeWidget == nullptr)
+    {
+        return;
+    }
+
+    const bool active = filterActive();
+    if (active)
+    {
+        treeWidget->setUpdatesEnabled(false);
+        for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
+        {
+            expandNodeRecursively(treeWidget->topLevelItem(i));
+        }
+        treeWidget->setUpdatesEnabled(true);
+    }
+
+    int totalCount = 0;
+    int visibleCount = 0;
+    treeWidget->setUpdatesEnabled(false);
+    for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
+    {
+        applyFilterToItem(treeWidget->topLevelItem(i), totalCount, visibleCount);
+    }
+    treeWidget->setUpdatesEnabled(true);
+
+    if (filterStatsLabel != nullptr)
+    {
+        filterStatsLabel->setText(QString("%1/%2").arg(visibleCount).arg(totalCount));
+        filterStatsLabel->setToolTip(active
+            ? "Показано устройств после фильтрации"
+            : "Загружено устройств в дереве");
+    }
+}
+
+void DeviceTree::setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo &device)
+{
+    if (item == nullptr)
+    {
+        return;
+    }
+
+    const std::string effectiveLevel = device.effective_control_level.empty()
+        ? device.control_level
+        : device.effective_control_level;
+
+    item->setData(0, RoleSubsystem, QString::fromStdString(device.subsystem));
+    item->setData(0, RoleDevpath, QString::fromStdString(device.devpath));
+    item->setData(0, RoleEffectiveControl, QString::fromStdString(effectiveLevel));
+    item->setData(0, RoleConnected, device.connected);
+    item->setData(0, RoleBootValid, isDeviceBootIdValid(device));
+
+    QStyle::StandardPixmap icon = QStyle::SP_FileIcon;
+    if (device.subsystem == "__computer__")
+    {
+        icon = QStyle::SP_ComputerIcon;
+    }
+    else if (device.subsystem == "block")
+    {
+        icon = QStyle::SP_DriveHDIcon;
+    }
+    else if (device.subsystem == "usb")
+    {
+        icon = QStyle::SP_DriveNetIcon;
+    }
+    else if (device.subsystem == "pci" || device.subsystem == "__pci__")
+    {
+        icon = QStyle::SP_ComputerIcon;
+    }
+    else if (device.subsystem == "memory" || device.subsystem == "__memory__")
+    {
+        icon = QStyle::SP_DriveFDIcon;
+    }
+
+    item->setIcon(0, style()->standardIcon(icon));
 }
 
 std::string DeviceTree::generateNodeName(const DeviceInfo &device)
@@ -1041,7 +1323,7 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
 
     if (effectiveLevel == "blocked")
     {
-        text = "Запрещено";
+        text = "Блок";
         tooltip = "Устройство запрещено политикой";
         color = QColor(180, 44, 44);
         icon = QStyle::SP_DialogCancelButton;
@@ -1049,14 +1331,14 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
     }
     else if (effectiveLevel == "allowed")
     {
-        text = "Разрешено";
+        text = "Разреш.";
         tooltip = "Устройство разрешено политикой";
         color = QColor(38, 128, 72);
         icon = QStyle::SP_DialogApplyButton;
     }
     else if (effectiveLevel == "permanent")
     {
-        text = "Постоянно";
+        text = "Пост.";
         tooltip = "Устройство разрешено и должно быть подключено постоянно";
         color = QColor(36, 94, 166);
         icon = QStyle::SP_DialogSaveButton;
@@ -1064,7 +1346,7 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
     }
     else if (effectiveLevel == "ignored")
     {
-        text = "Не контрол.";
+        text = "Игнор";
         tooltip = "Устройство не контролируется";
         color = QColor(120, 120, 120);
         icon = QStyle::SP_DialogDiscardButton;
@@ -1094,6 +1376,7 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
     item->setText(1, text);
     item->setIcon(1, style()->standardIcon(icon));
     item->setForeground(1, QBrush(color));
+    item->setBackground(1, QBrush(color.lighter(185)));
     item->setTextAlignment(1, Qt::AlignCenter);
     item->setToolTip(1,
                      tooltip +
@@ -1261,6 +1544,8 @@ void DeviceTree::refreshPreservingState()
         treeWidget->verticalScrollBar()->setValue(scrollValue);
     }
 
+    applyDeviceFilter();
+
     if (selectedItem != nullptr)
     {
         onItemClicked(selectedItem, 0);
@@ -1288,6 +1573,7 @@ void DeviceTree::loadDeviceTree()
     QTreeWidgetItem *rootItem = new QTreeWidgetItem(treeWidget);
     rootItem->setText(0, QString::fromStdString(generateNodeName(rootDevice)));
     rootItem->setData(0, Qt::UserRole, rootDevice.id);
+    setupTreeItemMetadata(rootItem, rootDevice);
 
     // Устанавливаем стиль для корневого элемента
     setupTreeItemStyle(rootItem, rootDevice);
@@ -1301,6 +1587,7 @@ void DeviceTree::loadDeviceTree()
     {
         treeWidget->setColumnWidth(0, 520);
     }
+    applyDeviceFilter();
 }
 
 void DeviceTree::onItemExpanded(QTreeWidgetItem *item)
@@ -1325,6 +1612,7 @@ void DeviceTree::loadChildDevices(QTreeWidgetItem *parentItem, int parentId)
         QTreeWidgetItem *childItem = new QTreeWidgetItem(parentItem);
         childItem->setText(0, QString::fromStdString(generateNodeName(child)));
         childItem->setData(0, Qt::UserRole, child.id);
+        setupTreeItemMetadata(childItem, child);
 
         // Устанавливаем стиль в зависимости от времени старта устройства
         setupTreeItemStyle(childItem, child);
@@ -1339,6 +1627,7 @@ void DeviceTree::loadChildDevices(QTreeWidgetItem *parentItem, int parentId)
     {
         treeWidget->setColumnWidth(0, 520);
     }
+    scheduleFilterUpdate();
 }
 
 void DeviceTree::ensureChildrenLoaded(QTreeWidgetItem *item)

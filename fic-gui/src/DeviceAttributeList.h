@@ -2,6 +2,8 @@
 #define DEVICEATTRIBUTELIST_H
 
 #include <QWidget>
+#include <QLabel>
+#include <QLineEdit>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QMap>
@@ -33,8 +35,12 @@ signals:
 private:
     void setupUI();
     void populateTree(const std::map<std::string, std::string>& attributes);
+    void applyFilter();
 
+    QLineEdit *filterEdit;
+    QLabel *countLabel;
     QTreeWidget *treeWidget;
+    std::map<std::string, std::string> currentAttributes;
 };
 
 #endif // DEVICEATTRIBUTELIST_H

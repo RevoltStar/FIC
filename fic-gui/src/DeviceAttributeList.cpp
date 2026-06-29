@@ -1,8 +1,9 @@
 #include "DeviceAttributeList.h"
-#include <QVBoxLayout>
-#include <QLabel>
-#include <QHeaderView>
 #include <QDebug>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QVBoxLayout>
 #include <fic/ipc/FicIpcClient.h>
 
 DeviceAttributeList::DeviceAttributeList(QWidget *parent)
@@ -21,13 +22,14 @@ void DeviceAttributeList::setupUI()
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
 
-    // Заголовок
-    /*QLabel *titleLabel = new QLabel("Параметры устройства", this);
-    titleLabel->setAlignment(Qt::AlignCenter);
-    QFont titleFont = titleLabel->font();
-    titleFont.setBold(true);
-    titleLabel->setFont(titleFont);
-    */
+    QHBoxLayout *filterLayout = new QHBoxLayout();
+    filterEdit = new QLineEdit(this);
+    filterEdit->setPlaceholderText("Поиск в параметрах");
+    countLabel = new QLabel(this);
+    countLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    filterLayout->addWidget(filterEdit, 1);
+    filterLayout->addWidget(countLabel);
+
     // Дерево атрибутов
     treeWidget = new QTreeWidget(this);
     treeWidget->setHeaderLabels({"Параметр", "Значение"});
@@ -46,7 +48,10 @@ void DeviceAttributeList::setupUI()
     treeWidget->setColumnWidth(0, 180);
     treeWidget->setColumnWidth(1, 520);
 
-    //mainLayout->addWidget(titleLabel);
+    connect(filterEdit, &QLineEdit::textChanged,
+            this, &DeviceAttributeList::applyFilter);
+
+    mainLayout->addLayout(filterLayout);
     mainLayout->addWidget(treeWidget);
 
     setLayout(mainLayout);
@@ -55,7 +60,9 @@ void DeviceAttributeList::setupUI()
 
 void DeviceAttributeList::clear()
 {
+    currentAttributes.clear();
     treeWidget->clear();
+    countLabel->clear();
 }
 
 void DeviceAttributeList::showDeviceAttributes(int deviceId)
@@ -96,11 +103,13 @@ void DeviceAttributeList::showAttributes(const std::map<std::string, std::string
 
 void DeviceAttributeList::populateTree(const std::map<std::string, std::string>& attributes)
 {
+    currentAttributes = attributes;
     if (attributes.empty()) {
         QTreeWidgetItem *emptyItem = new QTreeWidgetItem(treeWidget);
         emptyItem->setText(0, "Атрибуты отсутствуют");
         emptyItem->setText(1, "");
         emptyItem->setFlags(emptyItem->flags() & ~Qt::ItemIsSelectable);
+        countLabel->setText("0");
         return;
     }
 
@@ -131,5 +140,27 @@ void DeviceAttributeList::populateTree(const std::map<std::string, std::string>&
     treeWidget->resizeColumnToContents(1);
     if (treeWidget->columnWidth(1) < 520) {
         treeWidget->setColumnWidth(1, 520);
+    }
+    applyFilter();
+}
+
+void DeviceAttributeList::applyFilter()
+{
+    const QString query = filterEdit == nullptr ? QString() : filterEdit->text().trimmed();
+    int visibleCount = 0;
+    const int totalCount = treeWidget->topLevelItemCount();
+
+    for (int i = 0; i < treeWidget->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *item = treeWidget->topLevelItem(i);
+        const QString haystack = item->text(0) + "\n" + item->text(1);
+        const bool visible = query.isEmpty() || haystack.contains(query, Qt::CaseInsensitive);
+        item->setHidden(!visible);
+        if (visible) {
+            ++visibleCount;
+        }
+    }
+
+    if (countLabel != nullptr) {
+        countLabel->setText(QString("%1/%2").arg(visibleCount).arg(totalCount));
     }
 }

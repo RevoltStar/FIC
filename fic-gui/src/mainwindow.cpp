@@ -2,7 +2,10 @@
 #include "./ui_mainwindow.h"
 #include <fic/ipc/FicIpcClient.h>
 
+#include <QApplication>
+#include <QClipboard>
 #include <QStringList>
+#include <QSignalBlocker>
 #include <QWheelEvent>
 #include <algorithm>
 #include <map>
@@ -120,12 +123,7 @@ MainWindow::MainWindow(QWidget *parent)
     stabilizeValueLabel(ui->deviceBootTimeLabel);
     ui->devpathLabel->setWordWrap(true);
 
-    deviceAttributeList = new DeviceAttributeList(this);
-    QLayoutItem* oldItem = ui->gridLayoutListView->replaceWidget(ui->deviceParamListView, deviceAttributeList);
-    if (oldItem) {
-            delete oldItem->widget(); // Удаляем старый QListView
-            delete oldItem;
-    }
+    setupDeviceDetailsPanel();
     connect(deviceTree, &DeviceTree::deviceClicked,
                this, &MainWindow::onDeviceClicked);
     connect(deviceAttributeList, &DeviceAttributeList::attributesUpdated,
@@ -168,8 +166,101 @@ MainWindow::~MainWindow()
 {
     delete ui;
 }
+
+void MainWindow::setupDeviceDetailsPanel()
+{
+    deviceControlCombo = new QComboBox(this);
+    deviceControlCombo->addItem("Запрещено", "blocked");
+    deviceControlCombo->addItem("Разрешено", "allowed");
+    deviceControlCombo->addItem("Постоянно", "permanent");
+    deviceControlCombo->addItem("Не контролируется", "ignored");
+    deviceControlCombo->setToolTip("Явно задать уровень контроля выбранного устройства");
+
+    deviceGlobalRuleCheck = new QCheckBox("Во всей системе", this);
+    deviceGlobalRuleCheck->setToolTip("Применять правило к этой идентичности независимо от положения в дереве");
+
+    deviceResetControlButton = new QPushButton("Сбросить", this);
+    deviceResetControlButton->setToolTip("Сбросить явное правило до наследования");
+
+    copyDevpathButton = new QPushButton("Копировать путь", this);
+    copyDeviceSummaryButton = new QPushButton("Копировать сведения", this);
+    deviceControlCombo->setEnabled(false);
+    deviceGlobalRuleCheck->setEnabled(false);
+    deviceResetControlButton->setEnabled(false);
+    copyDevpathButton->setEnabled(false);
+    copyDeviceSummaryButton->setEnabled(false);
+
+    ui->gridLayout_11->addWidget(deviceControlCombo, 0, 1);
+    ui->gridLayout_11->addWidget(deviceGlobalRuleCheck, 0, 2);
+    ui->gridLayout_11->addWidget(deviceResetControlButton, 0, 3);
+    ui->gridLayout_6->addWidget(copyDevpathButton, 0, 1);
+    ui->gridLayout_6->addWidget(copyDeviceSummaryButton, 0, 2);
+
+    deviceAttributeList = new DeviceAttributeList(this);
+    deviceEventList = new DeviceEventList(this);
+    deviceDetailsTabs = new QTabWidget(this);
+    deviceDetailsTabs->addTab(deviceAttributeList, "Параметры");
+    deviceDetailsTabs->addTab(deviceEventList, "События");
+
+    ui->deviceParamListViewLabel->setText("Сведения об устройстве");
+    QLayoutItem* oldItem = ui->gridLayoutListView->replaceWidget(ui->deviceParamListView, deviceDetailsTabs);
+    if (oldItem) {
+            delete oldItem->widget();
+            delete oldItem;
+    }
+
+    connect(deviceControlCombo, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int index) {
+                if (currentDevice.id <= 0) {
+                    return;
+                }
+                deviceTree->applyControlLevelToCurrentDevice(deviceControlCombo->itemData(index).toString());
+            });
+    connect(deviceGlobalRuleCheck, &QCheckBox::toggled,
+            this, [this](bool checked) {
+                if (currentDevice.id <= 0 || checked == currentDevice.ignore_hierarchy) {
+                    return;
+                }
+                deviceTree->applyIgnoreHierarchyToCurrentDevice(checked);
+            });
+    connect(deviceResetControlButton, &QPushButton::clicked,
+            this, [this]() {
+                if (currentDevice.id > 0) {
+                    deviceTree->resetCurrentDeviceControl();
+                }
+            });
+    connect(copyDevpathButton, &QPushButton::clicked,
+            this, [this]() {
+                QApplication::clipboard()->setText(QString::fromStdString(currentDevice.devpath));
+                ui->statusbar->showMessage("Путь устройства скопирован", 2000);
+            });
+    connect(copyDeviceSummaryButton, &QPushButton::clicked,
+            this, [this]() {
+                QApplication::clipboard()->setText(deviceSummaryText(currentDevice));
+                ui->statusbar->showMessage("Сведения об устройстве скопированы", 2000);
+            });
+}
+
+QString MainWindow::deviceSummaryText(const DeviceInfo& device) const
+{
+    return QString("id: %1\nsubsystem: %2\ncontrol_level: %3\neffective_control_level: %4\n"
+                   "effective_source: %5\nignore_hierarchy: %6\nconnected: %7\n"
+                   "devpath: %8\nboot_id: %9\nlast_event_at: %10")
+        .arg(device.id)
+        .arg(QString::fromStdString(device.subsystem))
+        .arg(QString::fromStdString(device.control_level))
+        .arg(QString::fromStdString(device.effective_control_level))
+        .arg(QString::fromStdString(device.effective_source))
+        .arg(device.ignore_hierarchy ? "true" : "false")
+        .arg(device.connected ? "true" : "false")
+        .arg(QString::fromStdString(device.devpath))
+        .arg(QString::fromStdString(device.boot_id))
+        .arg(QString::fromStdString(device.last_event_at));
+}
+
 void MainWindow::onDeviceClicked(const DeviceInfo& device)
 {
+    currentDevice = device;
     auto setLabelValue = [](QLabel *label, const QString& value) {
         label->setText(value);
         label->setToolTip(value);
@@ -177,13 +268,37 @@ void MainWindow::onDeviceClicked(const DeviceInfo& device)
 
     // Обновляем метки в интерфейсе
     setLabelValue(ui->subsystemLabel, QString::fromStdString(device.subsystem));
-    setLabelValue(ui->controlLevelLabel, QString::fromStdString(device.control_level));
+    const QString effectiveControl = QString::fromStdString(
+        device.effective_control_level.empty() ? device.control_level : device.effective_control_level);
+    const QString assignedControl = QString::fromStdString(device.control_level);
+    setLabelValue(ui->controlLevelLabel,
+                  device.control_explicit
+                      ? effectiveControl
+                      : effectiveControl + " (унаследовано)");
 
     setLabelValue(ui->devpathLabel, QString::fromStdString(device.devpath));
     setLabelValue(ui->currentBootTimeLabel, currentBootIdFromDaemon());
     setLabelValue(ui->deviceBootTimeLabel, QString::fromStdString(device.boot_id));
+
+    {
+        QSignalBlocker comboBlocker(deviceControlCombo);
+        const QString comboControl = assignedControl.isEmpty() ? effectiveControl : assignedControl;
+        const int controlIndex = deviceControlCombo->findData(comboControl);
+        deviceControlCombo->setCurrentIndex(controlIndex >= 0 ? controlIndex : 0);
+        deviceControlCombo->setEnabled(device.id > 0);
+    }
+    {
+        QSignalBlocker checkBlocker(deviceGlobalRuleCheck);
+        deviceGlobalRuleCheck->setChecked(device.ignore_hierarchy);
+        deviceGlobalRuleCheck->setEnabled(device.id > 0);
+    }
+    deviceResetControlButton->setEnabled(device.id > 0 && device.control_explicit);
+    copyDevpathButton->setEnabled(!device.devpath.empty());
+    copyDeviceSummaryButton->setEnabled(device.id > 0);
+
     //Выводим параметры выбранного устройства
     deviceAttributeList->showDeviceAttributes(device.id);
+    deviceEventList->showDeviceEvents(device.id);
     //ui->deviceParamListView->adddeviceTree->loadDeviceAttributes();
 }
 void MainWindow::onAttributesUpdated(int deviceId, int attributeCount)
@@ -327,7 +442,7 @@ QWidget* MainWindow::createPolicyPage(const std::vector<PolicyInfo>& policies,
 
             switch(type) {
                 case PolicyEditorType::Label: {
-                    QLabel* label = new QLabel("Политика не допускает конфигурирования");
+                     QLabel* label = new QLabel(QLocalizationManager::getLang(QString::fromStdString("[utils:policytypevalue][type:fixedpolicytypevalue]")));
                     label->setWordWrap(true);
                     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
                     controlWidget = label;
