@@ -104,8 +104,6 @@ bool ModeAndOwner::apply() {
 
     if (failed == 0) {
         if (fixed == 0) {
-            this->notify("Отклонений от эталона в политике " +
-                               this->policyName + " не обнаружено", notifyLevel::INFO);
             this->log("Отклонений не обнаружено", logLevel::INFO);
             return true;
         } else {
