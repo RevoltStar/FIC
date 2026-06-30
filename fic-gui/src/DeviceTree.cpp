@@ -104,6 +104,70 @@ std::string normalizeUsbTypeKey(const std::string& type)
     return parts[0] + "|" + parts[1] + "|" + parts[2];
 }
 
+std::string usbFunctionLabel(const std::string& function)
+{
+    if (function == "printer") {
+        return "Принтер";
+    }
+    if (function == "scanner") {
+        return "Сканер";
+    }
+    if (function == "storage") {
+        return "Накопитель";
+    }
+    if (function == "hid") {
+        return "HID";
+    }
+    if (function == "vendor-specific") {
+        return "Функция производителя";
+    }
+    return "";
+}
+
+std::string usbFunctionFromInterface(const std::string& interface)
+{
+    if (interface.rfind("7/", 0) == 0) {
+        return "printer";
+    }
+    if (interface.rfind("6/", 0) == 0) {
+        return "scanner";
+    }
+    if (interface.rfind("8/", 0) == 0) {
+        return "storage";
+    }
+    if (interface.rfind("3/", 0) == 0) {
+        return "hid";
+    }
+    if (interface.rfind("255/", 0) == 0 ||
+        interface.rfind("ff/", 0) == 0 ||
+        interface.rfind("FF/", 0) == 0) {
+        return "vendor-specific";
+    }
+    return "";
+}
+
+std::string firstNonEmpty(std::initializer_list<std::string> values)
+{
+    for (const std::string& value : values) {
+        if (!value.empty()) {
+            return value;
+        }
+    }
+    return "";
+}
+
+std::string joinBracketParts(const std::vector<std::string>& parts)
+{
+    std::string result;
+    for (const std::string& part : parts) {
+        if (part.empty()) {
+            continue;
+        }
+        result += " [" + part + "]";
+    }
+    return result;
+}
+
 std::string lastPathComponent(const std::string& path)
 {
     const std::size_t end = path.find_last_not_of('/');
@@ -828,7 +892,7 @@ bool DeviceTree::itemMatchesFilter(QTreeWidgetItem *item) const
     }
     if (mode == "usb")
     {
-        return subsystem == "usb";
+        return subsystem == "usb" || subsystem == "usbmisc";
     }
     if (mode == "block")
     {
@@ -938,7 +1002,7 @@ void DeviceTree::setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo &
     {
         icon = QStyle::SP_DriveHDIcon;
     }
-    else if (device.subsystem == "usb")
+    else if (device.subsystem == "usb" || device.subsystem == "usbmisc")
     {
         icon = QStyle::SP_DriveNetIcon;
     }
@@ -1038,14 +1102,70 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     }
     if (device.subsystem == "usb")
     {
-        std::string type = getDeviceAttribute(device.id, "TYPE", "");
+        const std::string devtype = getDeviceAttribute(device.id, "DEVTYPE", "");
+        const std::string vendor = firstNonEmpty({
+            getDeviceAttribute(device.id, "ID_VENDOR", ""),
+            getDeviceAttribute(device.id, "ID_USB_VENDOR", ""),
+            getDeviceAttribute(device.id, "ID_VENDOR_FROM_DATABASE", "")
+        });
+        const std::string model = firstNonEmpty({
+            getDeviceAttribute(device.id, "ID_MODEL", ""),
+            getDeviceAttribute(device.id, "ID_USB_MODEL", ""),
+            getDeviceAttribute(device.id, "ID_MODEL_FROM_DATABASE", "")
+        });
+        const std::string serial = firstNonEmpty({
+            getDeviceAttribute(device.id, "ID_SERIAL_SHORT", ""),
+            getDeviceAttribute(device.id, "ID_USB_SERIAL_SHORT", "")
+        });
+        const std::string interface = getDeviceAttribute(device.id, "INTERFACE", "");
+        const std::string function = usbFunctionLabel(firstNonEmpty({
+            getDeviceAttribute(device.id, "FIC_USB_FUNCTION", ""),
+            usbFunctionFromInterface(interface)
+        }));
+        std::string type = devtype == "usb_interface"
+            ? interface
+            : getDeviceAttribute(device.id, "TYPE", "");
+        if (type.empty()) {
+            type = interface;
+        }
         std::string usb_class_prepared = normalizeUsbTypeKey(type);
         std::string usb_class_info = localizeDeviceClass("usb", usb_class_prepared);
-        if (!usb_class_info.empty())
-        {
-            return usb_class_info;
+
+        if (devtype == "usb_device") {
+            std::string name = "USB устройство";
+            name += joinBracketParts({firstNonEmpty({vendor + (vendor.empty() || model.empty() ? "" : " ") + model,
+                                                     vendor,
+                                                     model,
+                                                     usb_class_info}),
+                                      serial,
+                                      compactDevpathLabel(device.devpath)});
+            return name;
         }
-        return usb_class_prepared.empty() ? "[USB]" : "[USB] class " + usb_class_prepared;
+
+        if (devtype == "usb_interface") {
+            std::string name = "USB интерфейс";
+            name += joinBracketParts({firstNonEmpty({function, usb_class_info}),
+                                      firstNonEmpty({model, vendor}),
+                                      interface,
+                                      compactDevpathLabel(device.devpath)});
+            return name;
+        }
+
+        std::string name = "USB";
+        name += joinBracketParts({firstNonEmpty({function, usb_class_info, usb_class_prepared}),
+                                  firstNonEmpty({model, vendor}),
+                                  compactDevpathLabel(device.devpath)});
+        return name;
+    }
+    if (device.subsystem == "usbmisc")
+    {
+        const std::string devname = getDeviceAttribute(device.id, "DEVNAME", "");
+        std::string name = "USB устройство";
+        if (devname.rfind("/dev/usb/lp", 0) == 0) {
+            name = "USB печать";
+        }
+        name += joinBracketParts({firstNonEmpty({devname, compactDevpathLabel(device.devpath)})});
+        return name;
     }
     if (device.subsystem == "block")
     {

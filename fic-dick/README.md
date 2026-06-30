@@ -73,7 +73,8 @@ fic/src/scripts/udev/99-fic-devices.rules
 /opt/fic/bin/fic-dick udev
 ```
 
-Пакетное udev-правило выбирает только подсистемы `usb`, `pci` и `block`.
+Пакетное udev-правило выбирает только подсистемы `usb`, `usbmisc`, `pci` и
+`block`.
 Фильтрации подсистем внутри `UDEVInfoCollector` нет: если список подсистем
 нужно изменить, это делается в `fic/src/scripts/udev/99-fic-devices.rules`.
 
@@ -91,7 +92,9 @@ fic/src/scripts/udev/99-fic-devices.rules
 - daemon принимает IPC-команду `udev_event` только от root peer credentials;
 - daemon добавляет, обновляет или помечает устройство отключенным;
 - daemon вычисляет effective policy и применяет USB/PCI/block enforcement с
-  несколькими короткими retry-попытками;
+  несколькими короткими retry-попытками. Для дочерних USB-функций, например
+  `/dev/usb/lp0`, USB enforcement ищет ближайший родительский sysfs-файл
+  `authorized`;
 - если обязательных переменных окружения нет, обработка завершается с ошибкой.
 
 ## Режим check-permanent
@@ -123,8 +126,15 @@ fic-dick wait-daemon [timeout_seconds]
 Для некоторых подсистем создаются специализированные коллекторы:
 
 - `usb` - `USBInfoCollector`;
+- `usbmisc` - базовый `UDEVInfoCollector` для устройств вроде `/dev/usb/lp0`;
 - `block` - `BlockInfoCollector`;
 - `pci` - `PCIInfoCollector`.
+
+`USBInfoCollector` выбирает поля идентификации по `DEVTYPE`: физическое
+USB-устройство идентифицируется отдельно от USB-интерфейсов, а интерфейсы
+дополнительно учитывают `INTERFACE` и `MODALIAS`. Это позволяет видеть функции
+составных устройств, например МФУ, отдельными узлами вместо схлопывания
+нескольких интерфейсов в один.
 
 `BlockInfoCollector` выбирает поля идентификации после получения текущего udev
 environment. Для partitions приоритет отдается `ID_PART_ENTRY_UUID`, затем

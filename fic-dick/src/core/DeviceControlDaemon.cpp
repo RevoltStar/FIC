@@ -771,6 +771,11 @@ std::unique_ptr<UDEVInfoCollector> create_collector_for_subsystem(const std::str
     if (subsystem == "pci") {
         return std::make_unique<PCIInfoCollector>();
     }
+    if (subsystem == "usbmisc") {
+        return std::make_unique<UDEVInfoCollector>(
+            std::vector<std::string>{"DEVNAME", "DEVPATH", "MAJOR", "MINOR"}
+        );
+    }
     return std::make_unique<UDEVInfoCollector>(
         std::vector<std::string>{"DEVPATH", "SUBSYSTEM", "DEVTYPE", "MODALIAS"}
     );

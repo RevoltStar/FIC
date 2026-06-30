@@ -351,11 +351,13 @@ flowchart TD
     action -->|add/change| validateUdev[check_devpath]
     validateUdev --> collectorFactory[create_collector_for_subsystem]
     collectorFactory --> usb[USBInfoCollector]
+    collectorFactory --> usbmisc[UDEVInfoCollector for usbmisc]
     collectorFactory --> block[BlockInfoCollector]
     collectorFactory --> pci[PCIInfoCollector]
     collectorFactory --> generic[UDEVInfoCollector]
 
     usb --> createDevice[create_device_config]
+    usbmisc --> createDevice
     block --> createDevice
     pci --> createDevice
     generic --> createDevice

@@ -26,6 +26,10 @@ std::unique_ptr<UDEVInfoCollector> create_collector_for_subsystem(const std::str
         return std::make_unique<BlockInfoCollector>();
     } else if(subsystem == "pci"){
         return std::make_unique<PCIInfoCollector>();
+    } else if (subsystem == "usbmisc") {
+        return std::make_unique<UDEVInfoCollector>(
+            std::vector<std::string>{"DEVNAME", "DEVPATH", "MAJOR", "MINOR"}
+        );
     }/*else if(subsystem=="net"){
         return std::make_unique<NetInfoCollector>();
     }*/
