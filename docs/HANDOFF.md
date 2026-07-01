@@ -51,8 +51,7 @@
     `ro,nodev,nosuid,noexec,umask=0077`;
   - `fstab_srv_profile`: `minimal` = `nodev,nosuid`,
     `optimal` = `nodev,nosuid,noexec`;
-  - `fstab_opt_profile`: `minimal` = `nodev`,
-    `optimal` = `ro,nodev,exec`.
+  - `fstab_opt_profile`: fixed `nodev`.
 - Удалены generic-политики `fstab_world_writable_mounts_secure_options` и
   `fstab_no_insecure_options`, чтобы не дублировать безопасное ядро.
 - Обновлены регистрация политик, `OSS.conf`, русская и английская локализации,
@@ -103,5 +102,8 @@ cmake --build /tmp/fic-build-check --target fic -j2  # повторно посл
 - `mode=1777` применяется только политикой `/dev/shm`, где ожидается tmpfs.
   Для `/tmp` и `/var/tmp` права 1777 из матрицы пока не применяются как fstab
   option, чтобы не добавить tmpfs-специфичную опцию к обычной дисковой ФС.
-- Политики для `/boot`, `/boot/efi` и `/opt` имеют `ro` только в `optimal`,
-  потому что read-only режим может мешать обновлениям.
+- Политики для `/boot` и `/boot/efi` имеют `ro` только в `optimal`, потому что
+  read-only режим может мешать обновлениям.
+- Для `/opt` не применяется `ro`: в этом проекте `/opt/fic` содержит runtime-
+  данные FIC (`config`, `log`, `db`, `notify`, `lockstatus`), и read-only mount
+  всего `/opt` ломает работу демона и сборщика устройств.

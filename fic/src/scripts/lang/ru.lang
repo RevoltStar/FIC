@@ -101,7 +101,7 @@
 [module:OSS][policy:fstab_boot_profile]=Профиль монтирования /boot
 [module:OSS][policy:fstab_boot_efi_profile]=Профиль монтирования /boot/efi
 [module:OSS][policy:fstab_srv_profile]=Профиль монтирования /srv
-[module:OSS][policy:fstab_opt_profile]=Профиль монтирования /opt
+[module:OSS][policy:fstab_opt_profile]=Безопасные параметры монтирования /opt
 
 [module:OSS][policy:disable_autologin][description]=Отключение автоматического входа
 [module:OSS][policy:screenlock_timeout][description]=Таймаут блокировки экрана
@@ -118,7 +118,7 @@
 [module:OSS][policy:fstab_boot_profile][description]=Требует отдельную запись /boot в /etc/fstab. Профиль minimal: nodev,nosuid,noexec. Профиль optimal дополнительно добавляет ro.
 [module:OSS][policy:fstab_boot_efi_profile][description]=Требует отдельную запись /boot/efi в /etc/fstab. Профиль minimal: nodev,nosuid,noexec,umask=0077. Профиль optimal дополнительно добавляет ro.
 [module:OSS][policy:fstab_srv_profile][description]=Требует отдельную запись /srv в /etc/fstab. Профиль minimal: nodev,nosuid. Профиль optimal дополнительно добавляет noexec.
-[module:OSS][policy:fstab_opt_profile][description]=Требует отдельную запись /opt в /etc/fstab. Профиль minimal: nodev. Профиль optimal: ro,nodev,exec.
+[module:OSS][policy:fstab_opt_profile][description]=Требует отдельную запись /opt в /etc/fstab и параметр nodev. Параметр ro не применяется, потому что /opt/fic содержит runtime-данные FIC: конфигурацию, логи, базу устройств и служебные файлы.
 
 Некоторые графические среды поддерживают глобальные настройки (например, MATE)
 У других - настройки индивидуальны для каждого пользователя (например, KDE)

@@ -96,7 +96,7 @@
 [module:OSS][policy:fstab_boot_profile]=/boot mount profile
 [module:OSS][policy:fstab_boot_efi_profile]=/boot/efi mount profile
 [module:OSS][policy:fstab_srv_profile]=/srv mount profile
-[module:OSS][policy:fstab_opt_profile]=/opt mount profile
+[module:OSS][policy:fstab_opt_profile]=Secure mount options for /opt
 
 [module:OSS][policy:disable_autologin][description]=Disable automatic login
 [module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
@@ -113,7 +113,7 @@
 [module:OSS][policy:fstab_boot_profile][description]=Requires a dedicated /boot entry in /etc/fstab. The minimal profile enforces nodev,nosuid,noexec. The optimal profile additionally adds ro.
 [module:OSS][policy:fstab_boot_efi_profile][description]=Requires a dedicated /boot/efi entry in /etc/fstab. The minimal profile enforces nodev,nosuid,noexec,umask=0077. The optimal profile additionally adds ro.
 [module:OSS][policy:fstab_srv_profile][description]=Requires a dedicated /srv entry in /etc/fstab. The minimal profile enforces nodev,nosuid. The optimal profile additionally adds noexec.
-[module:OSS][policy:fstab_opt_profile][description]=Requires a dedicated /opt entry in /etc/fstab. The minimal profile enforces nodev. The optimal profile enforces ro,nodev,exec.
+[module:OSS][policy:fstab_opt_profile][description]=Requires a dedicated /opt entry in /etc/fstab and enforces nodev. ro is not enforced because /opt/fic contains FIC runtime data: configuration, logs, the device database, and service files.
 
 Some desktop environments support global settings, for example MATE
 Others use per-user settings, for example KDE
