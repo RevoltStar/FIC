@@ -3,7 +3,7 @@
 
 #include "modules/oss/OSS.h"
 
-#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,9 +21,18 @@ public:
     bool apply() override;
 
 protected:
+    struct OptionProfile {
+        std::string name;
+        std::vector<std::string> options;
+    };
+
     Scope scope = Scope::ExplicitMountPoints;
     std::vector<std::string> mountPoints;
     std::vector<std::string> requiredOptions;
+    std::vector<OptionProfile> optionProfiles;
+
+    void configureFixedOptions(const std::vector<std::string>& options);
+    void configureProfiles(const std::vector<OptionProfile>& profiles);
 
 private:
     struct Entry {
@@ -31,13 +40,15 @@ private:
         std::vector<std::string> fields;
     };
 
+    std::optional<std::vector<std::string>> selectedOptions();
     std::vector<Entry> loadEntries() const;
     bool shouldProcessEntry(const Entry& entry) const;
     bool isWorldWritableDirectory(const std::string& path) const;
-    bool ensureOptions(Entry& entry) const;
+    bool ensureOptions(Entry& entry, const std::vector<std::string>& optionsToRequire) const;
     std::vector<std::string> splitOptions(const std::string& options) const;
     std::string joinOptions(const std::vector<std::string>& options) const;
-    std::string oppositeOption(const std::string& option) const;
+    std::string optionKey(const std::string& option) const;
+    std::vector<std::string> oppositeOptions(const std::string& option) const;
     std::string formatEntry(const Entry& entry) const;
 };
 

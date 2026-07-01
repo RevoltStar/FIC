@@ -7,52 +7,62 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-06-30.
+- Обновлено: 2026-07-01.
 - Ветка: `main`.
-- Базовый commit: `50ea3e2`.
-- Текущая задача: добавить политики контроля безопасных параметров
-  монтирования в `/etc/fstab` как подмодуль `Fstab` модуля `OSS`.
+- Базовый commit: `afc6ff5`.
+- Текущая задача: перевести политики контроля `/etc/fstab` на профильную модель
+  без дублирующихся уровней и ограничить набор политик безопасным ядром.
 
 ## Сделано
 
-- Добавлен подмодуль `OSS/Fstab`:
-  - базовый класс `Fstab` читает `/etc/fstab`, разбирает активные строки на
-    поля fstab и исправляет четвертое поле `options`;
-  - правки сохраняются через существующий `FileHandler::saveFile()` с
-    временным файлом, `fsync` и `rename`;
-  - runtime `mount`/`remount` не выполняется;
-  - для политик с явно заданными точками монтирования отсутствие подходящей
-    записи в `/etc/fstab` считается ошибкой применения.
-- Реализованы политики:
-  - `fstab_tmp_secure_options`: для `/tmp` требует `nodev,nosuid,noexec`;
-  - `fstab_var_tmp_secure_options`: для `/var/tmp` требует
-    `nodev,nosuid,noexec`;
-  - `fstab_dev_shm_secure_options`: для `/dev/shm` требует
-    `nodev,nosuid,noexec`;
-  - `fstab_home_secure_options`: для `/home` требует `nodev,nosuid`;
-  - `fstab_removable_media_secure_options`: для `/media`, `/mnt`,
-    `/run/media` требует `nodev,nosuid,noexec`;
-  - `fstab_world_writable_mounts_secure_options`: для записей fstab, чьи точки
-    монтирования существуют как world-writable каталоги, требует
-    `nodev,nosuid,noexec`;
-  - `fstab_no_insecure_options`: для типовых чувствительных точек заменяет
-    конфликтующие `dev,suid,exec` на `nodev,nosuid,noexec`.
-- Политики зарегистрированы в `init_policyMap()`.
-- Добавлены значения по умолчанию в `OSS.conf`.
-- Добавлены русская и английская локализации.
-- Обновлена карта модулей в `docs/architecture-diagrams.md`.
+- Подмодуль `OSS/Fstab` теперь поддерживает:
+  - фиксированный набор mount options для политик без осмысленного выбора;
+  - профильный набор options для политик, где `minimal`, `optimal` или `strict`
+    действительно отличаются по fstab-enforceable поведению;
+  - удаление конфликтующих опций `dev/nodev`, `suid/nosuid`, `exec/noexec`,
+    `rw/ro`, а также замену key-value options с тем же ключом, например
+    `umask=...` или `mode=...`;
+  - ошибку применения, если для явно заданной точки монтирования нет активной
+    записи в `/etc/fstab`;
+  - fallback к default profile, если значение профильной политики отсутствует
+    в установленном `OSS.conf`; если значение задано, но невалидно, применение
+    завершается ошибкой;
+  - атомарное сохранение через существующий `FileHandler::saveFile()`.
+- Реализовано безопасное ядро fstab-политик:
+  - `fstab_tmp_profile`: `optimal` = `rw,nodev,nosuid,noexec,relatime`,
+    `minimal` = `rw,nodev,nosuid,relatime`;
+  - `fstab_var_tmp_profile`: `optimal` = `rw,nodev,nosuid,noexec,relatime`,
+    `minimal` = `rw,nodev,nosuid,relatime`;
+  - `fstab_dev_shm_profile`: `optimal` =
+    `rw,nodev,nosuid,noexec,mode=1777`, `minimal` =
+    `rw,nodev,nosuid,mode=1777`;
+  - `fstab_home_profile`: `optimal` = `rw,nodev,nosuid,relatime`,
+    `strict` = `rw,nodev,nosuid,noexec,relatime`;
+  - `fstab_removable_media_profile`: `optimal` = `nodev,nosuid,noexec`,
+    `strict` = `ro,nodev,nosuid,noexec`;
+  - `fstab_var_log_secure_options`: fixed
+    `rw,nodev,nosuid,noexec,relatime`;
+  - `fstab_var_log_audit_secure_options`: fixed
+    `rw,nodev,nosuid,noexec,relatime`;
+  - `fstab_boot_profile`: `minimal` = `nodev,nosuid,noexec`,
+    `optimal` = `ro,nodev,nosuid,noexec`;
+  - `fstab_boot_efi_profile`: `minimal` =
+    `nodev,nosuid,noexec,umask=0077`, `optimal` =
+    `ro,nodev,nosuid,noexec,umask=0077`;
+  - `fstab_srv_profile`: `minimal` = `nodev,nosuid`,
+    `optimal` = `nodev,nosuid,noexec`;
+  - `fstab_opt_profile`: `minimal` = `nodev`,
+    `optimal` = `ro,nodev,exec`.
+- Удалены generic-политики `fstab_world_writable_mounts_secure_options` и
+  `fstab_no_insecure_options`, чтобы не дублировать безопасное ядро.
+- Обновлены регистрация политик, `OSS.conf`, русская и английская локализации,
+  а также `docs/architecture-diagrams.md`.
 
 ## Измененные файлы
 
 - `fic/src/modules/oss/submodules/Fstab.h`
 - `fic/src/modules/oss/submodules/Fstab.cpp`
-- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_tmp_secure_options.*`
-- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_var_tmp_secure_options.*`
-- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_dev_shm_secure_options.*`
-- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_home_secure_options.*`
-- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_removable_media_secure_options.*`
-- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_world_writable_mounts_secure_options.*`
-- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_no_insecure_options.*`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_*`
 - `fic/src/core/main_function.h`
 - `fic/src/core/main_function.cpp`
 - `fic/src/scripts/config/OSS.conf`
@@ -66,10 +76,9 @@
 Выполнено:
 
 ```bash
-git diff --check
 cmake -S . -B /tmp/fic-build-check
 cmake --build /tmp/fic-build-check --target fic -j2
-cmake --build /tmp/fic-build-check --target fic -j2  # повторно после изменения поведения missing mount point
+cmake --build /tmp/fic-build-check --target fic -j2  # повторно после fallback для отсутствующего profile value
 ```
 
 Результат: цель `fic` успешно собрана. `cmake -S` вывел только существующие
@@ -77,7 +86,7 @@ cmake --build /tmp/fic-build-check --target fic -j2  # повторно посл
 
 Не выполнялось:
 
-- применение новых fstab-политик;
+- применение fstab-политик;
 - запись в `/etc/fstab`;
 - `mount`, `remount`, udev trigger/retrigger;
 - сборка `fic-gui`, `fic-cli`, `fic-dick`;
@@ -85,13 +94,14 @@ cmake --build /tmp/fic-build-check --target fic -j2  # повторно посл
 
 ## Решения и риски
 
-- Если целевая точка монтирования явно заданной fstab-политики отсутствует в
-  `/etc/fstab`, политика ничего не добавляет и возвращает ошибку применения.
-- Строки fstab после исправления форматируются табами между полями; inline-
-  комментарии сохраняются как дополнительные поля, но исходное выравнивание
-  активной строки может измениться.
+- Политики предлагают только уровни, которые меняют fstab options. Если
+  строгий профиль из исходной матрицы требовал только quota, private namespace,
+  очистку или мониторинг, отдельный `strict` здесь не добавлялся.
 - Уже смонтированные файловые системы не меняются до явного remount или
   перезагрузки. Это сделано намеренно, чтобы обычная проверка политики не
   изменяла runtime-состояние хоста.
-- Политика для `/home` не включает `noexec`, чтобы не ломать пользовательские
-  сценарии запуска программ из домашнего каталога.
+- `mode=1777` применяется только политикой `/dev/shm`, где ожидается tmpfs.
+  Для `/tmp` и `/var/tmp` права 1777 из матрицы пока не применяются как fstab
+  option, чтобы не добавить tmpfs-специфичную опцию к обычной дисковой ФС.
+- Политики для `/boot`, `/boot/efi` и `/opt` имеют `ro` только в `optimal`,
+  потому что read-only режим может мешать обновлениям.

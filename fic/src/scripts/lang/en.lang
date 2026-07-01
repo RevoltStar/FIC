@@ -86,26 +86,34 @@
 [module:OSS][policy:screenlock_timeout]=Screen lock timeout
 [module:OSS][policy:disable_autologin]=Disable automatic login
 [module:OSS][policy:disable_videodisplay_when_locked]=Disable video display on the lock screen
-[module:OSS][policy:fstab_tmp_secure_options]=Secure mount options for /tmp
-[module:OSS][policy:fstab_var_tmp_secure_options]=Secure mount options for /var/tmp
-[module:OSS][policy:fstab_dev_shm_secure_options]=Secure mount options for /dev/shm
-[module:OSS][policy:fstab_home_secure_options]=Secure mount options for /home
-[module:OSS][policy:fstab_removable_media_secure_options]=Secure mount options for removable media
-[module:OSS][policy:fstab_world_writable_mounts_secure_options]=Secure mount options for world-writable mount points
-[module:OSS][policy:fstab_no_insecure_options]=Disallow insecure mount options
+[module:OSS][policy:fstab_tmp_profile]=/tmp mount profile
+[module:OSS][policy:fstab_var_tmp_profile]=/var/tmp mount profile
+[module:OSS][policy:fstab_dev_shm_profile]=/dev/shm mount profile
+[module:OSS][policy:fstab_home_profile]=/home mount profile
+[module:OSS][policy:fstab_removable_media_profile]=Removable media mount profile
+[module:OSS][policy:fstab_var_log_secure_options]=Secure mount options for /var/log
+[module:OSS][policy:fstab_var_log_audit_secure_options]=Secure mount options for /var/log/audit
+[module:OSS][policy:fstab_boot_profile]=/boot mount profile
+[module:OSS][policy:fstab_boot_efi_profile]=/boot/efi mount profile
+[module:OSS][policy:fstab_srv_profile]=/srv mount profile
+[module:OSS][policy:fstab_opt_profile]=/opt mount profile
 
 [module:OSS][policy:disable_autologin][description]=Disable automatic login
 [module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
 [module:OSS][policy:disable_videodisplay_when_locked][description]=In the SDDM display manager, the name of the enabled video adapter is shown on the lock screen by default.
 [module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
 [module:OSS][policy:lock_on_tty_switch][description]=Lock screen when switching to another terminal
-[module:OSS][policy:fstab_tmp_secure_options][description]=If /tmp has a dedicated /etc/fstab entry, adds nodev,nosuid,noexec and removes conflicting dev,suid,exec. Already mounted filesystems are not remounted automatically.
-[module:OSS][policy:fstab_var_tmp_secure_options][description]=If /var/tmp has a dedicated /etc/fstab entry, adds nodev,nosuid,noexec and removes conflicting dev,suid,exec. Already mounted filesystems are not remounted automatically.
-[module:OSS][policy:fstab_dev_shm_secure_options][description]=If /dev/shm has a dedicated /etc/fstab entry, adds nodev,nosuid,noexec and removes conflicting dev,suid,exec. Already mounted filesystems are not remounted automatically.
-[module:OSS][policy:fstab_home_secure_options][description]=If /home has a dedicated /etc/fstab entry, adds nodev,nosuid and removes conflicting dev,suid. noexec is intentionally not enforced for /home.
-[module:OSS][policy:fstab_removable_media_secure_options][description]=For /media, /mnt, and /run/media entries in /etc/fstab, adds nodev,nosuid,noexec and removes conflicting dev,suid,exec.
-[module:OSS][policy:fstab_world_writable_mounts_secure_options][description]=For /etc/fstab entries whose mount points exist as world-writable directories, adds nodev,nosuid,noexec and removes conflicting dev,suid,exec.
-[module:OSS][policy:fstab_no_insecure_options][description]=For common sensitive mount points /tmp, /var/tmp, /dev/shm, /media, /mnt, and /run/media, replaces dev,suid,exec with nodev,nosuid,noexec.
+[module:OSS][policy:fstab_tmp_profile][description]=Requires a dedicated /tmp entry in /etc/fstab. The optimal profile enforces rw,nodev,nosuid,noexec,relatime. The minimal profile enforces rw,nodev,nosuid,relatime. Already mounted filesystems are not remounted automatically.
+[module:OSS][policy:fstab_var_tmp_profile][description]=Requires a dedicated /var/tmp entry in /etc/fstab. The optimal profile enforces rw,nodev,nosuid,noexec,relatime. The minimal profile enforces rw,nodev,nosuid,relatime. Already mounted filesystems are not remounted automatically.
+[module:OSS][policy:fstab_dev_shm_profile][description]=Requires a dedicated /dev/shm entry in /etc/fstab. The optimal profile enforces rw,nodev,nosuid,noexec,mode=1777. The minimal profile enforces rw,nodev,nosuid,mode=1777.
+[module:OSS][policy:fstab_home_profile][description]=Requires a dedicated /home entry in /etc/fstab. The optimal profile enforces rw,nodev,nosuid,relatime. The strict profile additionally adds noexec.
+[module:OSS][policy:fstab_removable_media_profile][description]=For /media, /mnt, and /run/media entries in /etc/fstab. The optimal profile enforces nodev,nosuid,noexec. The strict profile additionally adds ro.
+[module:OSS][policy:fstab_var_log_secure_options][description]=Requires a dedicated /var/log entry in /etc/fstab and enforces rw,nodev,nosuid,noexec,relatime.
+[module:OSS][policy:fstab_var_log_audit_secure_options][description]=Requires a dedicated /var/log/audit entry in /etc/fstab and enforces rw,nodev,nosuid,noexec,relatime.
+[module:OSS][policy:fstab_boot_profile][description]=Requires a dedicated /boot entry in /etc/fstab. The minimal profile enforces nodev,nosuid,noexec. The optimal profile additionally adds ro.
+[module:OSS][policy:fstab_boot_efi_profile][description]=Requires a dedicated /boot/efi entry in /etc/fstab. The minimal profile enforces nodev,nosuid,noexec,umask=0077. The optimal profile additionally adds ro.
+[module:OSS][policy:fstab_srv_profile][description]=Requires a dedicated /srv entry in /etc/fstab. The minimal profile enforces nodev,nosuid. The optimal profile additionally adds noexec.
+[module:OSS][policy:fstab_opt_profile][description]=Requires a dedicated /opt entry in /etc/fstab. The minimal profile enforces nodev. The optimal profile enforces ro,nodev,exec.
 
 Some desktop environments support global settings, for example MATE
 Others use per-user settings, for example KDE

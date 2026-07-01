@@ -295,20 +295,28 @@ flowchart TB
     networkKernel --> map
     display --> map
     desktop --> map
-    fstab --> fstabTmp[fstab_tmp_secure_options]
-    fstab --> fstabVarTmp[fstab_var_tmp_secure_options]
-    fstab --> fstabDevShm[fstab_dev_shm_secure_options]
-    fstab --> fstabHome[fstab_home_secure_options]
-    fstab --> fstabMedia[fstab_removable_media_secure_options]
-    fstab --> fstabWorldWritable[fstab_world_writable_mounts_secure_options]
-    fstab --> fstabNoInsecure[fstab_no_insecure_options]
+    fstab --> fstabTmp[fstab_tmp_profile]
+    fstab --> fstabVarTmp[fstab_var_tmp_profile]
+    fstab --> fstabDevShm[fstab_dev_shm_profile]
+    fstab --> fstabHome[fstab_home_profile]
+    fstab --> fstabMedia[fstab_removable_media_profile]
+    fstab --> fstabVarLog[fstab_var_log_secure_options]
+    fstab --> fstabAudit[fstab_var_log_audit_secure_options]
+    fstab --> fstabBoot[fstab_boot_profile]
+    fstab --> fstabBootEfi[fstab_boot_efi_profile]
+    fstab --> fstabSrv[fstab_srv_profile]
+    fstab --> fstabOpt[fstab_opt_profile]
     fstabTmp --> map
     fstabVarTmp --> map
     fstabDevShm --> map
     fstabHome --> map
     fstabMedia --> map
-    fstabWorldWritable --> map
-    fstabNoInsecure --> map
+    fstabVarLog --> map
+    fstabAudit --> map
+    fstabBoot --> map
+    fstabBootEfi --> map
+    fstabSrv --> map
+    fstabOpt --> map
     ssh --> map
     systemSettings --> map
 ```

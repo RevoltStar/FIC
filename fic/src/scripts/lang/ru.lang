@@ -91,26 +91,34 @@
 [module:OSS][policy:screenlock_timeout]=Таймаут блокировки экрана
 [module:OSS][policy:disable_autologin]=Отключение автоматического входа
 [module:OSS][policy:disable_videodisplay_when_locked]=Отключение отображения видео на экране блокировки
-[module:OSS][policy:fstab_tmp_secure_options]=Безопасные параметры монтирования /tmp
-[module:OSS][policy:fstab_var_tmp_secure_options]=Безопасные параметры монтирования /var/tmp
-[module:OSS][policy:fstab_dev_shm_secure_options]=Безопасные параметры монтирования /dev/shm
-[module:OSS][policy:fstab_home_secure_options]=Безопасные параметры монтирования /home
-[module:OSS][policy:fstab_removable_media_secure_options]=Безопасные параметры монтирования съемных носителей
-[module:OSS][policy:fstab_world_writable_mounts_secure_options]=Безопасные параметры монтирования общедоступных каталогов
-[module:OSS][policy:fstab_no_insecure_options]=Запрет небезопасных параметров монтирования
+[module:OSS][policy:fstab_tmp_profile]=Профиль монтирования /tmp
+[module:OSS][policy:fstab_var_tmp_profile]=Профиль монтирования /var/tmp
+[module:OSS][policy:fstab_dev_shm_profile]=Профиль монтирования /dev/shm
+[module:OSS][policy:fstab_home_profile]=Профиль монтирования /home
+[module:OSS][policy:fstab_removable_media_profile]=Профиль монтирования съемных носителей
+[module:OSS][policy:fstab_var_log_secure_options]=Безопасные параметры монтирования /var/log
+[module:OSS][policy:fstab_var_log_audit_secure_options]=Безопасные параметры монтирования /var/log/audit
+[module:OSS][policy:fstab_boot_profile]=Профиль монтирования /boot
+[module:OSS][policy:fstab_boot_efi_profile]=Профиль монтирования /boot/efi
+[module:OSS][policy:fstab_srv_profile]=Профиль монтирования /srv
+[module:OSS][policy:fstab_opt_profile]=Профиль монтирования /opt
 
 [module:OSS][policy:disable_autologin][description]=Отключение автоматического входа
 [module:OSS][policy:screenlock_timeout][description]=Таймаут блокировки экрана
 [module:OSS][policy:disable_videodisplay_when_locked][description]=В графическом менеджере входа SDDM по умолчанию при блокировке экрана отображается название включенного видео.
 [module:OSS][policy:lock_on_tty_switch]=Блокировка экрана при переключении на другой терминал
 [module:OSS][policy:lock_on_tty_switch][description]=Блокировка экрана при переключении на другой терминал
-[module:OSS][policy:fstab_tmp_secure_options][description]=Если /tmp задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec. Уже смонтированная файловая система не перемонтируется автоматически.
-[module:OSS][policy:fstab_var_tmp_secure_options][description]=Если /var/tmp задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec. Уже смонтированная файловая система не перемонтируется автоматически.
-[module:OSS][policy:fstab_dev_shm_secure_options][description]=Если /dev/shm задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec. Уже смонтированная файловая система не перемонтируется автоматически.
-[module:OSS][policy:fstab_home_secure_options][description]=Если /home задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid и удаляет конфликтующие dev,suid. Параметр noexec для /home намеренно не устанавливается.
-[module:OSS][policy:fstab_removable_media_secure_options][description]=Для записей /media, /mnt и /run/media в /etc/fstab добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec.
-[module:OSS][policy:fstab_world_writable_mounts_secure_options][description]=Для записей /etc/fstab, чьи точки монтирования существуют как общедоступные для записи каталоги, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec.
-[module:OSS][policy:fstab_no_insecure_options][description]=Для типовых чувствительных точек монтирования /tmp, /var/tmp, /dev/shm, /media, /mnt и /run/media заменяет dev,suid,exec на nodev,nosuid,noexec.
+[module:OSS][policy:fstab_tmp_profile][description]=Требует отдельную запись /tmp в /etc/fstab. Профиль optimal: rw,nodev,nosuid,noexec,relatime. Профиль minimal: rw,nodev,nosuid,relatime. Уже смонтированная файловая система не перемонтируется автоматически.
+[module:OSS][policy:fstab_var_tmp_profile][description]=Требует отдельную запись /var/tmp в /etc/fstab. Профиль optimal: rw,nodev,nosuid,noexec,relatime. Профиль minimal: rw,nodev,nosuid,relatime. Уже смонтированная файловая система не перемонтируется автоматически.
+[module:OSS][policy:fstab_dev_shm_profile][description]=Требует отдельную запись /dev/shm в /etc/fstab. Профиль optimal: rw,nodev,nosuid,noexec,mode=1777. Профиль minimal: rw,nodev,nosuid,mode=1777.
+[module:OSS][policy:fstab_home_profile][description]=Требует отдельную запись /home в /etc/fstab. Профиль optimal: rw,nodev,nosuid,relatime. Профиль strict дополнительно добавляет noexec.
+[module:OSS][policy:fstab_removable_media_profile][description]=Для записей /media, /mnt и /run/media в /etc/fstab. Профиль optimal: nodev,nosuid,noexec. Профиль strict дополнительно добавляет ro.
+[module:OSS][policy:fstab_var_log_secure_options][description]=Требует отдельную запись /var/log в /etc/fstab и параметры rw,nodev,nosuid,noexec,relatime.
+[module:OSS][policy:fstab_var_log_audit_secure_options][description]=Требует отдельную запись /var/log/audit в /etc/fstab и параметры rw,nodev,nosuid,noexec,relatime.
+[module:OSS][policy:fstab_boot_profile][description]=Требует отдельную запись /boot в /etc/fstab. Профиль minimal: nodev,nosuid,noexec. Профиль optimal дополнительно добавляет ro.
+[module:OSS][policy:fstab_boot_efi_profile][description]=Требует отдельную запись /boot/efi в /etc/fstab. Профиль minimal: nodev,nosuid,noexec,umask=0077. Профиль optimal дополнительно добавляет ro.
+[module:OSS][policy:fstab_srv_profile][description]=Требует отдельную запись /srv в /etc/fstab. Профиль minimal: nodev,nosuid. Профиль optimal дополнительно добавляет noexec.
+[module:OSS][policy:fstab_opt_profile][description]=Требует отдельную запись /opt в /etc/fstab. Профиль minimal: nodev. Профиль optimal: ro,nodev,exec.
 
 Некоторые графические среды поддерживают глобальные настройки (например, MATE)
 У других - настройки индивидуальны для каждого пользователя (например, KDE)

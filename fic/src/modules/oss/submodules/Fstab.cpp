@@ -3,6 +3,7 @@
 #include <fic/core/FileHandler.h>
 
 #include <algorithm>
+#include <memory>
 #include <sstream>
 #include <sys/stat.h>
 
@@ -61,6 +62,25 @@ Fstab::Fstab()
     this->submoduleName = "Fstab";
 }
 
+void Fstab::configureFixedOptions(const std::vector<std::string>& options)
+{
+    this->requiredOptions = options;
+    this->optionProfiles.clear();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
+}
+
+void Fstab::configureProfiles(const std::vector<OptionProfile>& profiles)
+{
+    this->optionProfiles = profiles;
+    this->requiredOptions.clear();
+
+    std::vector<std::string> profileNames;
+    for (const auto& profile : profiles) {
+        profileNames.push_back(profile.name);
+    }
+    this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(profileNames);
+}
+
 bool Fstab::apply()
 {
     this->log("Запущена проверка политики " + this->policyName + " для /etc/fstab", logLevel::INFO);
@@ -68,6 +88,11 @@ bool Fstab::apply()
     FstabFileHandler fstab("/etc/fstab");
     if (!fstab.loadConfig()) {
         this->log("Не удалось открыть для чтения файл /etc/fstab", logLevel::ERROR);
+        return false;
+    }
+
+    auto optionsToRequire = this->selectedOptions();
+    if (!optionsToRequire.has_value()) {
         return false;
     }
 
@@ -81,7 +106,7 @@ bool Fstab::apply()
         }
 
         checked++;
-        if (this->ensureOptions(entry)) {
+        if (this->ensureOptions(entry, optionsToRequire.value())) {
             fstab.lines()[entry.lineIndex] = this->formatEntry(entry);
             changed = true;
             this->log("Исправлены параметры монтирования для " + entry.fields[1], logLevel::INFO);
@@ -117,6 +142,39 @@ bool Fstab::apply()
                      ". Для уже смонтированных файловых систем может потребоваться явный remount или перезагрузка.",
                  notifyLevel::WARN);
     return true;
+}
+
+std::optional<std::vector<std::string>> Fstab::selectedOptions()
+{
+    if (this->optionProfiles.empty()) {
+        return this->requiredOptions;
+    }
+
+    std::string selectedProfile;
+    if (this->hasConfiguredValue()) {
+        std::optional<std::string> configuredProfile = this->getValue();
+        if (!configuredProfile.has_value()) {
+            this->log("Не удалось получить профиль политики " + this->policyName, logLevel::ERROR);
+            return std::nullopt;
+        }
+        selectedProfile = configuredProfile.value();
+    } else {
+        selectedProfile = this->getDefaultValue();
+        this->log("Профиль политики " + this->policyName + " не задан. Используется значение по умолчанию: " +
+                      selectedProfile,
+                  logLevel::WARN);
+    }
+
+    for (const auto& profile : this->optionProfiles) {
+        if (profile.name == selectedProfile) {
+            return profile.options;
+        }
+    }
+
+    this->log("Неизвестный профиль '" + selectedProfile + "' для политики " +
+                  this->policyName,
+              logLevel::ERROR);
+    return std::nullopt;
 }
 
 std::vector<Fstab::Entry> Fstab::loadEntries() const
@@ -168,16 +226,26 @@ bool Fstab::isWorldWritableDirectory(const std::string& path) const
     return S_ISDIR(st.st_mode) && ((st.st_mode & S_IWOTH) != 0);
 }
 
-bool Fstab::ensureOptions(Entry& entry) const
+bool Fstab::ensureOptions(Entry& entry, const std::vector<std::string>& optionsToRequire) const
 {
     auto options = this->splitOptions(entry.fields[3]);
     bool changed = false;
 
-    for (const auto& required : this->requiredOptions) {
-        const std::string opposite = this->oppositeOption(required);
-        if (!opposite.empty()) {
+    for (const auto& required : optionsToRequire) {
+        for (const std::string& opposite : this->oppositeOptions(required)) {
             const auto oldSize = options.size();
             options.erase(std::remove(options.begin(), options.end(), opposite), options.end());
+            changed = changed || options.size() != oldSize;
+        }
+
+        const std::string requiredKey = this->optionKey(required);
+        if (required.find('=') != std::string::npos) {
+            const auto oldSize = options.size();
+            options.erase(std::remove_if(options.begin(), options.end(),
+                                         [this, &required, &requiredKey](const std::string& option) {
+                                             return option != required && this->optionKey(option) == requiredKey;
+                                         }),
+                          options.end());
             changed = changed || options.size() != oldSize;
         }
 
@@ -223,18 +291,45 @@ std::string Fstab::joinOptions(const std::vector<std::string>& options) const
     return result;
 }
 
-std::string Fstab::oppositeOption(const std::string& option) const
+std::string Fstab::optionKey(const std::string& option) const
+{
+    const size_t delimiter = option.find('=');
+    if (delimiter == std::string::npos) {
+        return option;
+    }
+    return option.substr(0, delimiter);
+}
+
+std::vector<std::string> Fstab::oppositeOptions(const std::string& option) const
 {
     if (option == "nodev") {
-        return "dev";
+        return {"dev"};
+    }
+    if (option == "dev") {
+        return {"nodev"};
     }
     if (option == "nosuid") {
-        return "suid";
+        return {"suid"};
+    }
+    if (option == "suid") {
+        return {"nosuid"};
     }
     if (option == "noexec") {
-        return "exec";
+        return {"exec"};
     }
-    return "";
+    if (option == "exec") {
+        return {"noexec"};
+    }
+    if (option == "rw") {
+        return {"ro"};
+    }
+    if (option == "ro") {
+        return {"rw"};
+    }
+    if (option == "relatime") {
+        return {"noatime", "strictatime"};
+    }
+    return {};
 }
 
 std::string Fstab::formatEntry(const Entry& entry) const
