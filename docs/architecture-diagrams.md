@@ -275,6 +275,7 @@ flowchart TB
     arr --> oss[OSS]
     oss --> display[DisplayManager]
     oss --> desktop[DesktopEnvironment]
+    oss --> fstab[Fstab]
 
     arr --> net[NET]
     net --> ssh[Ssh]
@@ -294,6 +295,20 @@ flowchart TB
     networkKernel --> map
     display --> map
     desktop --> map
+    fstab --> fstabTmp[fstab_tmp_secure_options]
+    fstab --> fstabVarTmp[fstab_var_tmp_secure_options]
+    fstab --> fstabDevShm[fstab_dev_shm_secure_options]
+    fstab --> fstabHome[fstab_home_secure_options]
+    fstab --> fstabMedia[fstab_removable_media_secure_options]
+    fstab --> fstabWorldWritable[fstab_world_writable_mounts_secure_options]
+    fstab --> fstabNoInsecure[fstab_no_insecure_options]
+    fstabTmp --> map
+    fstabVarTmp --> map
+    fstabDevShm --> map
+    fstabHome --> map
+    fstabMedia --> map
+    fstabWorldWritable --> map
+    fstabNoInsecure --> map
     ssh --> map
     systemSettings --> map
 ```

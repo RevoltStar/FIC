@@ -576,6 +576,13 @@ PolicyMap init_policyMap(){
     cafArr.push_back(std::make_unique<OSS_disable_autologin>());
     cafArr.push_back(std::make_unique<OSS_disable_videodisplay_when_locked>());
     cafArr.push_back(std::make_unique<OSS_lock_on_tty_switch>());
+    cafArr.push_back(std::make_unique<OSS_fstab_tmp_secure_options>());
+    cafArr.push_back(std::make_unique<OSS_fstab_var_tmp_secure_options>());
+    cafArr.push_back(std::make_unique<OSS_fstab_dev_shm_secure_options>());
+    cafArr.push_back(std::make_unique<OSS_fstab_home_secure_options>());
+    cafArr.push_back(std::make_unique<OSS_fstab_removable_media_secure_options>());
+    cafArr.push_back(std::make_unique<OSS_fstab_world_writable_mounts_secure_options>());
+    cafArr.push_back(std::make_unique<OSS_fstab_no_insecure_options>());
 
     //Сетевые настройки
     cafArr.push_back(std::make_unique<NET_ssh_port>());

@@ -29,6 +29,7 @@
 [module:DAC][submodule:SudoEdit]=Настройки параметров SUDO
 [module:OSS][submodule:DesktopEnvironment]=Графическое окружение
 [module:OSS][submodule:DisplayManager]=Графический менеджер входа в систему
+[module:OSS][submodule:Fstab]=Параметры монтирования /etc/fstab
 [module:OSS][submodule:SessionManagement]=Пользовательская сессия
 [module:SYSCTL][submodule:fs_kernel_protection]=Настройки файловой системы
 [module:SYSCTL][submodule:global_kernel_protection]=Общие настройки ядра
@@ -90,12 +91,26 @@
 [module:OSS][policy:screenlock_timeout]=Таймаут блокировки экрана
 [module:OSS][policy:disable_autologin]=Отключение автоматического входа
 [module:OSS][policy:disable_videodisplay_when_locked]=Отключение отображения видео на экране блокировки
+[module:OSS][policy:fstab_tmp_secure_options]=Безопасные параметры монтирования /tmp
+[module:OSS][policy:fstab_var_tmp_secure_options]=Безопасные параметры монтирования /var/tmp
+[module:OSS][policy:fstab_dev_shm_secure_options]=Безопасные параметры монтирования /dev/shm
+[module:OSS][policy:fstab_home_secure_options]=Безопасные параметры монтирования /home
+[module:OSS][policy:fstab_removable_media_secure_options]=Безопасные параметры монтирования съемных носителей
+[module:OSS][policy:fstab_world_writable_mounts_secure_options]=Безопасные параметры монтирования общедоступных каталогов
+[module:OSS][policy:fstab_no_insecure_options]=Запрет небезопасных параметров монтирования
 
 [module:OSS][policy:disable_autologin][description]=Отключение автоматического входа
 [module:OSS][policy:screenlock_timeout][description]=Таймаут блокировки экрана
 [module:OSS][policy:disable_videodisplay_when_locked][description]=В графическом менеджере входа SDDM по умолчанию при блокировке экрана отображается название включенного видео.
 [module:OSS][policy:lock_on_tty_switch]=Блокировка экрана при переключении на другой терминал
 [module:OSS][policy:lock_on_tty_switch][description]=Блокировка экрана при переключении на другой терминал
+[module:OSS][policy:fstab_tmp_secure_options][description]=Если /tmp задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec. Уже смонтированная файловая система не перемонтируется автоматически.
+[module:OSS][policy:fstab_var_tmp_secure_options][description]=Если /var/tmp задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec. Уже смонтированная файловая система не перемонтируется автоматически.
+[module:OSS][policy:fstab_dev_shm_secure_options][description]=Если /dev/shm задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec. Уже смонтированная файловая система не перемонтируется автоматически.
+[module:OSS][policy:fstab_home_secure_options][description]=Если /home задан в /etc/fstab отдельной записью, добавляет параметры nodev,nosuid и удаляет конфликтующие dev,suid. Параметр noexec для /home намеренно не устанавливается.
+[module:OSS][policy:fstab_removable_media_secure_options][description]=Для записей /media, /mnt и /run/media в /etc/fstab добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec.
+[module:OSS][policy:fstab_world_writable_mounts_secure_options][description]=Для записей /etc/fstab, чьи точки монтирования существуют как общедоступные для записи каталоги, добавляет параметры nodev,nosuid,noexec и удаляет конфликтующие dev,suid,exec.
+[module:OSS][policy:fstab_no_insecure_options][description]=Для типовых чувствительных точек монтирования /tmp, /var/tmp, /dev/shm, /media, /mnt и /run/media заменяет dev,suid,exec на nodev,nosuid,noexec.
 
 Некоторые графические среды поддерживают глобальные настройки (например, MATE)
 У других - настройки индивидуальны для каждого пользователя (например, KDE)

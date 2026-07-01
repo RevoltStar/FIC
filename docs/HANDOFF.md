@@ -7,60 +7,57 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-06-29.
+- Обновлено: 2026-06-30.
 - Ветка: `main`.
-- Базовый commit: `4afc8f4`.
-- Текущая задача: сделать первый практический шаг к function-level контролю
-  USB-МФУ: различать USB-устройство, его интерфейсы и USB printer node
-  `/dev/usb/lp*`, чтобы администратор мог отдельно видеть функцию печати и
-  функцию сканирования.
-
-## Контекст
-
-- На тестовой машине Epson L3250 появился в live udev как USB composite device:
-  физическое устройство `/usb1/1-2`, интерфейсы `1-2:1.0`, `1-2:1.1`,
-  `1-2:1.2` и printer node `/dev/usb/lp0` в subsystem `usbmisc`.
-- До этой задачи `USBInfoCollector` идентифицировал USB слишком грубо:
-  `ID_MODEL_ID`, `ID_SERIAL`, `ID_VENDOR_ID`, `TYPE`. Для `usb_interface` у
-  Epson `TYPE` был одинаковым/неинформативным, поэтому разные функции МФУ могли
-  схлопываться в один узел.
-- Udev-правило FIC ловило только `usb`, `pci`, `block`, поэтому `usbmisc/lp0`
-  вообще не попадал в БД.
-- GUI называл USB-узлы в основном по классу, поэтому `EPSON L3250` был виден в
-  атрибутах, но не был очевиден в дереве.
+- Базовый commit: `50ea3e2`.
+- Текущая задача: добавить политики контроля безопасных параметров
+  монтирования в `/etc/fstab` как подмодуль `Fstab` модуля `OSS`.
 
 ## Сделано
 
-- `USBInfoCollector` теперь выбирает поля идентификации по `DEVTYPE`:
-  - `usb_device`: `DEVTYPE`, `ID_VENDOR_ID`, `ID_MODEL_ID`, `ID_SERIAL`,
-    `PRODUCT`, `TYPE`, `ID_USB_INTERFACES`;
-  - `usb_interface`: `DEVTYPE`, `PRODUCT`, `INTERFACE`, `TYPE`, `MODALIAS`;
-  - fallback: `DEVTYPE`, `PRODUCT`, `TYPE`, `MODALIAS`, `DEVPATH`.
-- Для USB-интерфейсов добавляются атрибуты:
-  - `FIC_USB_IDENTITY_SCOPE=interface`;
-  - `FIC_USB_FUNCTION=printer|scanner|storage|hid|vendor-specific`, если
-    функцию можно вывести из `INTERFACE`.
-- В udev-правило добавлен subsystem `usbmisc`, чтобы устройства вроде
-  `/dev/usb/lp0` попадали в дерево.
-- `fic-dick --daemon` и legacy-фабрика в `fic-dick/src/main.cpp` создают для
-  `usbmisc` базовый `UDEVInfoCollector` с полями `DEVNAME`, `DEVPATH`,
-  `MAJOR`, `MINOR`.
-- GUI теперь показывает USB-узлы человеко-читаемо:
-  - `USB устройство [EPSON L3250_Series] [...]`;
-  - `USB интерфейс [Принтер] [...]`;
-  - `USB печать [/dev/usb/lp0]`.
-- Быстрый фильтр GUI `USB` теперь включает `usbmisc`.
-- Обновлены `fic-dick/README.md` и `docs/architecture-diagrams.md`.
+- Добавлен подмодуль `OSS/Fstab`:
+  - базовый класс `Fstab` читает `/etc/fstab`, разбирает активные строки на
+    поля fstab и исправляет четвертое поле `options`;
+  - правки сохраняются через существующий `FileHandler::saveFile()` с
+    временным файлом, `fsync` и `rename`;
+  - runtime `mount`/`remount` не выполняется;
+  - для политик с явно заданными точками монтирования отсутствие подходящей
+    записи в `/etc/fstab` считается ошибкой применения.
+- Реализованы политики:
+  - `fstab_tmp_secure_options`: для `/tmp` требует `nodev,nosuid,noexec`;
+  - `fstab_var_tmp_secure_options`: для `/var/tmp` требует
+    `nodev,nosuid,noexec`;
+  - `fstab_dev_shm_secure_options`: для `/dev/shm` требует
+    `nodev,nosuid,noexec`;
+  - `fstab_home_secure_options`: для `/home` требует `nodev,nosuid`;
+  - `fstab_removable_media_secure_options`: для `/media`, `/mnt`,
+    `/run/media` требует `nodev,nosuid,noexec`;
+  - `fstab_world_writable_mounts_secure_options`: для записей fstab, чьи точки
+    монтирования существуют как world-writable каталоги, требует
+    `nodev,nosuid,noexec`;
+  - `fstab_no_insecure_options`: для типовых чувствительных точек заменяет
+    конфликтующие `dev,suid,exec` на `nodev,nosuid,noexec`.
+- Политики зарегистрированы в `init_policyMap()`.
+- Добавлены значения по умолчанию в `OSS.conf`.
+- Добавлены русская и английская локализации.
+- Обновлена карта модулей в `docs/architecture-diagrams.md`.
 
 ## Измененные файлы
 
-- `fic-dick/src/modules/USBInfoCollector.h`
-- `fic-dick/src/modules/USBInfoCollector.cpp`
-- `fic-dick/src/core/DeviceControlDaemon.cpp`
-- `fic-dick/src/main.cpp`
-- `fic-gui/src/DeviceTree.cpp`
-- `fic/src/scripts/udev/99-fic-devices.rules`
-- `fic-dick/README.md`
+- `fic/src/modules/oss/submodules/Fstab.h`
+- `fic/src/modules/oss/submodules/Fstab.cpp`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_tmp_secure_options.*`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_var_tmp_secure_options.*`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_dev_shm_secure_options.*`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_home_secure_options.*`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_removable_media_secure_options.*`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_world_writable_mounts_secure_options.*`
+- `fic/src/modules/oss/submodules/Fstab/OSS_fstab_no_insecure_options.*`
+- `fic/src/core/main_function.h`
+- `fic/src/core/main_function.cpp`
+- `fic/src/scripts/config/OSS.conf`
+- `fic/src/scripts/lang/ru.lang`
+- `fic/src/scripts/lang/en.lang`
 - `docs/architecture-diagrams.md`
 - `docs/HANDOFF.md`
 
@@ -71,52 +68,30 @@
 ```bash
 git diff --check
 cmake -S . -B /tmp/fic-build-check
-cmake --build /tmp/fic-build-check --target fic-dick -j2
-cmake --build /tmp/fic-build-check --target fic-gui -j2
+cmake --build /tmp/fic-build-check --target fic -j2
+cmake --build /tmp/fic-build-check --target fic -j2  # повторно после изменения поведения missing mount point
 ```
 
-Результат: `fic-dick` и `fic-gui` успешно собраны.
-
-Замечание: при параллельной сборке в одном build-dir `gmake` один раз вывел
-`jobserver mkfifo: /tmp/GMfifo3: File exists`, но цель `fic-gui` завершилась
-успешно.
+Результат: цель `fic` успешно собрана. `cmake -S` вывел только существующие
+предупреждения о deprecated `cmake_minimum_required` в CMakeLists.
 
 Не выполнялось:
 
-- сборка deb/rpm пакетов;
-- установка пакета на тестовую машину;
-- runtime-запуск `fic-gui`;
-- udev trigger/retrigger;
-- реальные операции policy apply, lock/unlock или запись в `/opt/fic`.
-
-## Что проверить после установки
-
-1. Перезагрузить машину или выполнить контролируемый udev-retrigger штатным
-   механизмом пакета/сервиса.
-2. Подключить Epson L3250.
-3. Проверить в GUI:
-   - физический Epson должен быть заметен по vendor/model;
-   - интерфейс печати должен отображаться отдельно как `USB интерфейс [Принтер]`;
-   - `/dev/usb/lp0` должен появиться как `USB печать [/dev/usb/lp0]`, если
-     kernel создал `usbmisc/lp0`.
-4. Проверить CLI:
-
-```bash
-fic-cli device children <id родителя usb1>
-fic-cli device children <id Epson>
-```
+- применение новых fstab-политик;
+- запись в `/etc/fstab`;
+- `mount`, `remount`, udev trigger/retrigger;
+- сборка `fic-gui`, `fic-cli`, `fic-dick`;
+- сборка deb/rpm пакетов.
 
 ## Решения и риски
 
-- Схему БД не меняли и миграцию старых записей не делали. Существующие записи
-  могут остаться схлопнутыми до нового udev-события или повторного сбора.
-- Это не полный universal print/scanner enforcement. Для USB-печати отдельный
-  узел `/dev/usb/lp0` теперь виден, а существующий USB enforcement ищет
-  ближайший sysfs `authorized` вверх по дереву. Но CUPS/IPP/eSCL/network
-  backends могут потребовать отдельного слоя контроля.
-- Правило “не блокировать активное устройство” сохраняется: назначение
-  `blocked` на уже подключенную функцию всё ещё должно отклоняться daemon API.
-- Если parent USB device заблокировать целиком, дочерние функции физически не
-  появятся. Для сценария “запретить печать, разрешить сканирование” нужно
-  настраивать правило на printer interface или `/dev/usb/lp0`, а не на весь
-  Epson.
+- Если целевая точка монтирования явно заданной fstab-политики отсутствует в
+  `/etc/fstab`, политика ничего не добавляет и возвращает ошибку применения.
+- Строки fstab после исправления форматируются табами между полями; inline-
+  комментарии сохраняются как дополнительные поля, но исходное выравнивание
+  активной строки может измениться.
+- Уже смонтированные файловые системы не меняются до явного remount или
+  перезагрузки. Это сделано намеренно, чтобы обычная проверка политики не
+  изменяла runtime-состояние хоста.
+- Политика для `/home` не включает `noexec`, чтобы не ломать пользовательские
+  сценарии запуска программ из домашнего каталога.
