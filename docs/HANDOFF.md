@@ -7,7 +7,7 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-07-07.
+- Обновлено: 2026-07-08.
 - Ветка: `main`.
 - Базовый commit: `97ee9cd`.
 - Текущая задача: расширить QEMU/KVM e2e-проверки модуля "Контроль устройств"
@@ -26,6 +26,9 @@
   - `tests/device-control/suites/hierarchy.sh`;
   - `tests/device-control/suites/devices.sh`;
   - `tests/device-control/suites/enforcement.sh`;
+  - `tests/device-control/suites/persistence.sh`;
+  - `tests/device-control/suites/coldboot.sh`;
+  - `tests/device-control/suites/race.sh`;
   - `tests/device-control/suites/security.sh`.
 - Добавлен `tests/device-control/static_checks.py` для легких статических
   проверок инвариантов device-control кода и seed-базы без мутации VM.
@@ -60,6 +63,9 @@
 ./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type hierarchy
 ./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type devices
 ./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type enforcement
+./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type persistence
+./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type coldboot
+./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type race
 ./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type security
 ./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type all
 ```
@@ -105,7 +111,17 @@
   - `enforcement`: explicit `allowed`, explicit `blocked` с повторным hotplug и
     событием `block`, `ignored` на родителе поверх blocked-ребенка,
     `permanent` на подключенном устройстве с `udevadm trigger --action=change`,
-    наследование `allowed` от parent и `ignored` от grandparent.
+    наследование `allowed` от parent и `ignored` от grandparent, отказ ставить
+    `blocked` на уже подключенное устройство или его подключенного parent,
+    reset parent с проявлением явного child `blocked`;
+  - `persistence`: сохранение explicit control, disconnected blocked rule,
+    истории событий и состояния `DC/block_usb_storage` после рестарта
+    `fic-device.service`/`fic.service`;
+  - `coldboot`: enforcement для USB storage, заранее добавленного в persistent
+    libvirt domain config и присутствующего уже при старте VM; suite делает
+    reboot гостя и проверяет как DC-policy block, так и explicit device block;
+  - `race`: параллельные IPC-чтения внутри гостя, быстрые virtio attach/detach
+    циклы и hotplug при переключении `DC/block_usb_storage`.
 - Runner кладет временный Python IPC-helper в гостя (`/tmp/fic-dc-ipc.py`),
   подключает transient qcow2-диски через `virsh attach-disk --live`, а в
   `trap` пытается отключить тестовые диски, удалить helper и восстановить
@@ -160,6 +176,44 @@
   device daemon через новый режим remote helper `udev-from-sysfs`. Это
   проверяет collector/API для этих типов, не утверждая, что текущее
   установленное udev-rule уже ловит их автоматически.
+- Пользовательский `--type all` после исправления `udev-from-sysfs` завершился
+  `Summary: 47 tests, 1 failed`: падал только `virtio serial channel is
+  recorded`. Отдельная диагностика показала две причины в тестовой обвязке:
+  предыдущий неудачный прогон оставил live-channel `fic.dc.serial.0` в домене
+  как alias `channel2`, потому что detach по неполному XML не снял устройство;
+  а сам тест искал порт только в `/sys/bus/virtio-ports/devices`, тогда как в
+  этой VM реальные порты находятся под
+  `/sys/devices/.../virtio-ports/vport*`. Исправлено: cleanup снимает serial
+  fixture через `virsh detach-device-alias`, alias ищется по live XML, а тест
+  ищет `vport*` по regex в `/sys/devices` и проверяет запись в DB по точному
+  `DEVPATH`, а не по росту счетчика subsystem. Оставшийся `channel2` был
+  вручную отключен; после исправлений одиночный serial-тест прошел, и live XML
+  больше не содержал `fic.dc.serial.0`.
+- После этого пользовательский полный прогон показал падение
+  `disconnected device subtree can be deleted`: удаление отключенного
+  устройства возвращало `ok=true`, но test post-check снова искал любое
+  историческое устройство с `DEVNAME=/dev/vdb`. В накопленной истории могут
+  оставаться другие записи от прошлых прогонов с тем же `DEVNAME`, поэтому
+  проверка была шире, чем действие API. Исправлено: после `device_delete` тест
+  проверяет, что конкретный удаленный `device_id` больше не читается через
+  `device_get` и возвращает `device not found`.
+- Добавлены новые suite-ы по итогам оценки достаточности покрытия:
+  `persistence`, `coldboot` и `race`; runner `test.sh` теперь принимает эти
+  значения в `--type`, а `--type all` запускает их вместе с остальными. Для
+  `coldboot` добавлены helper-ы `attach_disk_config`, `detach_disk_config`,
+  `reboot_guest` и проверка смены `/proc/sys/kernel/random/boot_id`, чтобы SSH
+  readiness не принималась за факт завершенного reboot. Cleanup теперь
+  best-effort снимает тестовые диски и из live, и из persistent domain config.
+- Первый вариант `race` создавал 20 параллельных SSH-сессий и падал на
+  `kex_exchange_identification: Connection reset by peer`; это был лимит SSH, а
+  не daemon/socket. Исправлено: remote helper получил режим `stress-read`,
+  который создает параллельные IPC-чтения внутри гостя через Unix socket одним
+  SSH-вызовом.
+- Два новых negative enforcement-теста сначала были сформулированы как
+  `blocked parent` сценарии, но модуль корректно отказывает ставить `blocked`
+  на уже подключенное устройство/parent с сообщением
+  `operation would block an already connected device`. Тесты переписаны на
+  проверку этого отказа; расширенный `--type enforcement` после правки прошел.
 
 ## Измененные файлы
 
@@ -173,6 +227,9 @@
 - `tests/device-control/suites/hierarchy.sh`
 - `tests/device-control/suites/devices.sh`
 - `tests/device-control/suites/enforcement.sh`
+- `tests/device-control/suites/persistence.sh`
+- `tests/device-control/suites/coldboot.sh`
+- `tests/device-control/suites/race.sh`
 - `tests/device-control/suites/security.sh`
 - `docs/HANDOFF.md`
 
@@ -190,6 +247,9 @@ bash -n tests/device-control/suites/events.sh
 bash -n tests/device-control/suites/hierarchy.sh
 bash -n tests/device-control/suites/devices.sh
 bash -n tests/device-control/suites/enforcement.sh
+bash -n tests/device-control/suites/persistence.sh
+bash -n tests/device-control/suites/coldboot.sh
+bash -n tests/device-control/suites/race.sh
 bash -n tests/device-control/suites/security.sh
 python3 tests/device-control/static_checks.py .
 tests/device-control/qemu_kvm_smoke.sh --help
@@ -225,21 +285,56 @@ suite-структуры до добавления `devices`/`enforcement` за�
 завершился успешно: `Summary: 10 tests, 0 failed`. Пользовательский прогон
 `--type devices` до исправления `udev-from-sysfs` завершился результатом
 `Summary: 10 tests, 3 failed` на `input`, `net` и `tty/virtio-ports`.
+Пользовательский `--type all` после этого завершился `Summary: 47 tests,
+1 failed` на `virtio serial channel is recorded`. Агентом выполнена отдельная
+диагностика и одиночный прогон serial-теста после исправлений:
+`Summary: 5 tests, 0 failed`; затем проверено, что live XML домена больше не
+содержит `fic.dc.serial.0`. После исправления проверки удаления агентом
+выполнены `bash -n tests/device-control/suites/api.sh`,
+`python3 tests/device-control/static_checks.py .` и одиночный VM-прогон
+упавшего API-теста; результат: `Summary: 5 tests, 0 failed`.
+После добавления `persistence`/`coldboot`/`race` агентом выполнены:
+`bash -n` для `test.sh`, `lib/common.sh` и всех `suites/*.sh`,
+`python3 tests/device-control/static_checks.py .`, `test.sh --help`, а также
+отдельные VM-прогоны:
+
+```bash
+./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type persistence
+# Summary: 8 tests, 0 failed
+
+./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type race
+# первый прогон: Summary: 7 tests, 1 failed из-за параллельного SSH;
+# после stress-read исправления: Summary: 7 tests, 0 failed
+
+./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type enforcement
+# первый прогон после новых negative tests: Summary: 13 tests, 2 failed;
+# после переписывания на ожидаемый отказ connected block: Summary: 13 tests, 0 failed
+
+./tests/device-control/test.sh --yes-i-know-this-mutates-vm --type coldboot
+# Summary: 6 tests, 0 failed
+```
 
 Не выполнялось агентом напрямую:
 
 - полный VM-прогон новой suite-структуры через `test.sh --type ...`;
-- VM-прогон новых категорий `devices` и `enforcement`;
+- повторный VM-прогон `devices` после исправления serial/virtio-ports;
 - повторный VM-прогон `devices` после исправления `udev-from-sysfs`;
-- подключение или отключение устройств в QEMU/KVM;
-- `udevadm trigger` внутри гостя;
-- изменение DC-политик внутри гостя;
+- полный `--type all` после исправления serial-channel теста;
+- полный `--type all` после исправления post-check удаления disconnected
+  virtio-устройства;
+- полный `--type all` после добавления `persistence`, `coldboot` и `race`;
+- подключение или отключение всех устройств из полного сценария одним
+  прогоном; агентом выполнялись отдельные suite-ы `persistence`, `race`,
+  `enforcement`, `coldboot` и одиночный API-тест удаления disconnected virtio
+  fixture;
 - сборка CMake-целей.
 
-Полный запуск выполнялся пользователем, а не агентом. Он менял состояние
-виртуальной машины: подключал и отключал live-устройства, создавал временные
-qcow2-образы и временно менял `DC/block_usb_storage`; итоговый trap должен был
-вернуть исходное состояние политики и отключить transient-диски.
+Полные `--type all` запуски выполнялись пользователем, а не агентом. Отдельные
+suite-запуски агентом тоже меняли состояние виртуальной машины: подключали и
+отключали live/config-устройства, создавали временные qcow2-образы, временно
+меняли `DC/block_usb_storage`, рестартовали `fic.service`/`fic-device.service`
+и для `coldboot` перезагружали гостя; итоговый trap должен был вернуть
+исходное состояние политики и отключить transient-диски.
 
 ## Решения и риски
 
@@ -263,5 +358,9 @@ qcow2-образы и временно менял `DC/block_usb_storage`; ито
   `FIC_USB_BLOCKED_TARGET` и `FIC_CDROM_TARGET`.
 - Блокирующий USB-тест ожидает, что `fic-dick` успеет записать устройство и
   событие `block` до того, как enforcement деавторизует/удалит устройство.
+- `coldboot` suite добавляет тестовый диск в persistent libvirt config и
+  перезагружает гостя; cleanup снимает config-attachment best-effort, но при
+  аварийном обрыве стоит проверить `virsh dumpxml`/`detach-disk --config` для
+  target-ов `FIC_USB_ALLOWED_TARGET` и `FIC_USB_BLOCKED_TARGET`.
 - Пароль задан дефолтом из задачи для удобства лабораторного запуска; для
   других окружений лучше передавать его через переменную окружения.

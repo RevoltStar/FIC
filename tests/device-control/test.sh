@@ -9,7 +9,7 @@ MUTATION_ACK=false
 usage() {
     cat <<USAGE
 Usage:
-  $SCRIPT_NAME --yes-i-know-this-mutates-vm --type [smoke|api|events|hierarchy|devices|enforcement|security|secure|all]
+  $SCRIPT_NAME --yes-i-know-this-mutates-vm --type [smoke|api|events|hierarchy|devices|enforcement|persistence|coldboot|race|security|secure|all]
 
 Environment:
   FIC_VM_IP                 Guest IP, default: 10.88.0.250
@@ -33,6 +33,9 @@ Types:
   hierarchy  inherited effective policy checks
   devices    hotplug coverage for USB HID, input, PCI mock, CD-ROM, net, serial
   enforcement explicit allow/block/ignore/permanent enforcement and inheritance
+  persistence daemon restart and persisted DB/policy state checks
+  coldboot   configured-device enforcement across guest reboot
+  race       concurrent IPC, rapid hotplug, and policy-toggle race checks
   security   socket/API rejection checks and CLI error propagation
   all        run all suites in one VM session
 USAGE
@@ -66,7 +69,7 @@ if [[ "$MUTATION_ACK" != "true" ]]; then
 fi
 
 case "$TEST_TYPE" in
-    smoke|api|events|hierarchy|devices|enforcement|security|secure|all)
+    smoke|api|events|hierarchy|devices|enforcement|persistence|coldboot|race|security|secure|all)
         ;;
     *)
         printf 'Unknown --type: %s\n\n' "$TEST_TYPE" >&2
@@ -126,6 +129,21 @@ run_suite_file() {
             source "$SCRIPT_DIR/suites/enforcement.sh"
             run_enforcement_suite
             ;;
+        persistence)
+            # shellcheck source=suites/persistence.sh
+            source "$SCRIPT_DIR/suites/persistence.sh"
+            run_persistence_suite
+            ;;
+        coldboot)
+            # shellcheck source=suites/coldboot.sh
+            source "$SCRIPT_DIR/suites/coldboot.sh"
+            run_coldboot_suite
+            ;;
+        race)
+            # shellcheck source=suites/race.sh
+            source "$SCRIPT_DIR/suites/race.sh"
+            run_race_suite
+            ;;
         security|secure)
             # shellcheck source=suites/security.sh
             source "$SCRIPT_DIR/suites/security.sh"
@@ -146,6 +164,9 @@ if [[ "$TEST_TYPE" == "all" ]]; then
     run_suite_file hierarchy
     run_suite_file devices
     run_suite_file enforcement
+    run_suite_file persistence
+    run_suite_file coldboot
+    run_suite_file race
     run_suite_file security
 else
     run_suite_file "$TEST_TYPE"

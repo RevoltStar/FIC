@@ -188,6 +188,67 @@ test_grandparent_ignored_rule_is_inherited() {
     expect_eq "$source" "device:$grandparent_id" "ignored inheritance source must be the grandparent"
 }
 
+test_blocking_connected_device_is_rejected() {
+    ensure_enforcement_usb_allowed_fixture || return
+    local child id response ok message
+    child=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
+    id=$(printf '%s\n' "$child" | device_field id)
+    response=$(device_ipc "{\"command\":\"device_update_control_level\",\"device_id\":$id,\"control_level\":\"blocked\"}") || return
+    ok=$(printf '%s\n' "$response" | json_field ok)
+    message=$(printf '%s\n' "$response" | json_field message)
+    expect_eq "$ok" "False" "connected device block rule must be rejected" || return
+    [[ "$message" == *"operation would block an already connected device"* ]] ||
+        fail "unexpected connected device block rejection message: $message"
+}
+
+test_blocking_connected_parent_is_rejected() {
+    ensure_enforcement_usb_allowed_fixture || return
+    local child parent_id response ok message
+    child=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
+    parent_id=$(printf '%s\n' "$child" | device_field parent_id)
+    [[ -n "$parent_id" && "$parent_id" != "0" && "$parent_id" != "-1" ]] ||
+        fail "USB fixture must have a parent for connected parent block rejection test" || return
+    response=$(device_ipc "{\"command\":\"device_update_control_level\",\"device_id\":$parent_id,\"control_level\":\"blocked\"}") || return
+    ok=$(printf '%s\n' "$response" | json_field ok)
+    message=$(printf '%s\n' "$response" | json_field message)
+    expect_eq "$ok" "False" "connected parent block rule must be rejected" || return
+    [[ "$message" == *"operation would block an already connected device"* ]] ||
+        fail "unexpected connected parent block rejection message: $message"
+}
+
+test_parent_reset_reveals_child_block_rule() {
+    ensure_enforcement_usb_allowed_fixture || return
+    local child id parent_id response effective source
+    child=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
+    id=$(printf '%s\n' "$child" | device_field id)
+    parent_id=$(printf '%s\n' "$child" | device_field parent_id)
+    [[ -n "$parent_id" && "$parent_id" != "0" && "$parent_id" != "-1" ]] ||
+        fail "USB fixture must have a parent for parent reset test" || return
+
+    detach_disk "$USB_ALLOWED_TARGET"
+    remote_sudo "udevadm settle --timeout=20" || return
+    wait_for_test_disk "$USB_ALLOWED_SERIAL" "/dev/$USB_ALLOWED_TARGET" false 45 >/dev/null || return
+    remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") set $id blocked" >/dev/null || return
+    remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") set $parent_id ignored" >/dev/null || {
+        enforcement_reset_id "$id"
+        return 1
+    }
+    remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") reset $parent_id" >/dev/null || {
+        enforcement_reset_id "$id"
+        enforcement_reset_id "$parent_id"
+        return 1
+    }
+    response=$(enforcement_device_get "$id") || {
+        enforcement_reset_id "$id"
+        return 1
+    }
+    effective=$(printf '%s\n' "$response" | device_field effective_control_level)
+    source=$(printf '%s\n' "$response" | device_field effective_source)
+    enforcement_reset_id "$id"
+    expect_eq "$effective" "blocked" "parent reset must reveal explicit child blocked rule" || return
+    expect_eq "$source" "device:$id" "child blocked rule must become the effective source"
+}
+
 run_enforcement_suite() {
     run_test "explicit allowed policy is effective" test_explicit_allowed_effective_policy
     run_test "explicit blocked policy enforces block on reconnect" test_explicit_blocked_reconnect_enforces_block
@@ -195,4 +256,7 @@ run_enforcement_suite() {
     run_test "permanent device change is allowed" test_permanent_device_change_is_allowed
     run_test "parent allowed rule is inherited" test_parent_allowed_rule_is_inherited
     run_test "grandparent ignored rule is inherited" test_grandparent_ignored_rule_is_inherited
+    run_test "blocking connected device is rejected" test_blocking_connected_device_is_rejected
+    run_test "blocking connected parent is rejected" test_blocking_connected_parent_is_rejected
+    run_test "parent reset reveals explicit child block rule" test_parent_reset_reveals_child_block_rule
 }

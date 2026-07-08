@@ -123,56 +123,66 @@ test_virtio_net_device_is_recorded() {
 }
 
 test_virtio_serial_channel_is_recorded() {
-    detach_device_xml "$SERIAL_CHANNEL_XML"
-    local before tty_before after tty_after new_name baseline tty_baseline count response
-    before=$(sysfs_names /sys/bus/virtio-ports/devices) || return
+    detach_serial_channel
+    local before tty_before after tty_after new_name new_path new_devpath response subsystem
+    before=$(virtio_port_names) || return
     tty_before=$(sysfs_names /sys/class/tty) || return
-    baseline=$(count_subsystem virtio-ports true 2>/dev/null || printf '0')
-    tty_baseline=$(count_subsystem tty true 2>/dev/null || printf '0')
     attach_device_xml "$SERIAL_CHANNEL_XML" || return
     remote_sudo "udevadm settle --timeout=20" || {
-        detach_device_xml "$SERIAL_CHANNEL_XML"
+        detach_serial_channel
         return 1
     }
-    after=$(sysfs_names /sys/bus/virtio-ports/devices) || {
-        detach_device_xml "$SERIAL_CHANNEL_XML"
+    after=$(virtio_port_names) || {
+        detach_serial_channel
         return 1
     }
     if new_name=$(first_new_name "$before" "$after" 2>/dev/null); then
-        response=$(send_udev_from_sysfs add virtio-ports "/sys/bus/virtio-ports/devices/$new_name") || {
-            detach_device_xml "$SERIAL_CHANNEL_XML"
+        new_path=$(virtio_port_path "$new_name") || {
+            detach_serial_channel
+            return 1
+        }
+        response=$(send_udev_from_sysfs add virtio-ports "$new_path") || {
+            detach_serial_channel
             printf '%s\n' "$response" >&2
             return 1
         }
-        count=$(wait_for_subsystem_count_gt virtio-ports "$baseline" true 30) || {
-            detach_device_xml "$SERIAL_CHANNEL_XML"
+        new_devpath=${new_path#/sys}
+        response=$(wait_for_attr DEVPATH "$new_devpath" true 30) || {
+            detach_serial_channel
             return 1
         }
-        detach_device_xml "$SERIAL_CHANNEL_XML"
-        [[ "$count" -gt "$baseline" ]] || fail "virtio serial channel must add a connected virtio-ports device"
+        subsystem=$(printf '%s\n' "$response" | device_field subsystem)
+        detach_serial_channel
+        expect_eq "$subsystem" "virtio-ports" "virtio serial channel must be recorded as virtio-ports"
         return
     fi
 
     tty_after=$(sysfs_names /sys/class/tty) || {
-        detach_device_xml "$SERIAL_CHANNEL_XML"
+        detach_serial_channel
         return 1
     }
     new_name=$(first_new_name "$tty_before" "$tty_after") || {
-        detach_device_xml "$SERIAL_CHANNEL_XML"
+        detach_serial_channel
         fail "virtio serial channel did not create a new virtio-ports or tty sysfs entry"
         return 1
     }
-    response=$(send_udev_from_sysfs add tty "/sys/class/tty/$new_name") || {
-        detach_device_xml "$SERIAL_CHANNEL_XML"
+    new_path=$(sysfs_realpath "/sys/class/tty/$new_name") || {
+        detach_serial_channel
+        return 1
+    }
+    response=$(send_udev_from_sysfs add tty "$new_path") || {
+        detach_serial_channel
         printf '%s\n' "$response" >&2
         return 1
     }
-    count=$(wait_for_subsystem_count_gt tty "$tty_baseline" true 10) || {
-        detach_device_xml "$SERIAL_CHANNEL_XML"
+    new_devpath=${new_path#/sys}
+    response=$(wait_for_attr DEVPATH "$new_devpath" true 10) || {
+        detach_serial_channel
         return 1
     }
-    detach_device_xml "$SERIAL_CHANNEL_XML"
-    [[ "$count" -gt "$tty_baseline" ]] || fail "serial hotplug must add a connected tty or virtio-ports device"
+    subsystem=$(printf '%s\n' "$response" | device_field subsystem)
+    detach_serial_channel
+    expect_eq "$subsystem" "tty" "serial hotplug must be recorded as tty or virtio-ports device"
 }
 
 run_devices_suite() {

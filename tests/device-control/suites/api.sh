@@ -57,16 +57,18 @@ test_disconnected_device_cannot_be_permanent() {
 
 test_disconnected_device_subtree_can_be_deleted() {
     ensure_disconnected_virtio_fixture || return
-    local response id ok
+    local response id ok message
     response=$(find_device_attr DEVNAME "/dev/$VIRTIO_TARGET" false) || return
     id=$(printf '%s\n' "$response" | device_field id)
     response=$(remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") delete $id") || return
     ok=$(printf '%s\n' "$response" | json_field ok)
     expect_eq "$ok" "True" "disconnected virtio subtree delete must succeed" || return
-    if find_device_attr DEVNAME "/dev/$VIRTIO_TARGET" >/dev/null 2>&1; then
-        fail "deleted disconnected virtio device must not remain in history"
-        return
-    fi
+    response=$(device_ipc "{\"command\":\"device_get\",\"device_id\":$id}") || return
+    ok=$(printf '%s\n' "$response" | json_field ok)
+    message=$(printf '%s\n' "$response" | json_field message)
+    expect_eq "$ok" "False" "deleted disconnected virtio device id must not remain readable" || return
+    [[ "$message" == *"device not found"* ]] ||
+        fail "unexpected deleted device_get message: $message"
 }
 
 test_usb_storage_attributes_include_serial() {

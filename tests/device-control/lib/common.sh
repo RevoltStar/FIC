@@ -175,6 +175,7 @@ import os
 import subprocess
 import socket
 import sys
+import threading
 
 SOCKET = "/run/fic/fic-device.sock"
 
@@ -269,7 +270,7 @@ def udev_env_for_sysfs(sysfs_path):
 
 def main(argv):
     if len(argv) < 2:
-        print("usage: fic-dc-ipc.py <raw|invalid-json|udev-from-sysfs|find-subsystem|count-subsystem|find-attr|find-current-attr|find-any-attr|events|set|reset|reset-path|ignore|delete> ...", file=sys.stderr)
+        print("usage: fic-dc-ipc.py <raw|invalid-json|stress-read|udev-from-sysfs|find-subsystem|count-subsystem|find-attr|find-current-attr|find-any-attr|count-any-attr|events|set|reset|reset-path|ignore|delete> ...", file=sys.stderr)
         return 2
 
     mode = argv[1]
@@ -279,6 +280,47 @@ def main(argv):
 
     if mode == "invalid-json":
         print_json(request_text("{not-json}\n"))
+        return 0
+
+    if mode == "stress-read":
+        workers = int(argv[2]) if len(argv) > 2 else 8
+        iterations = int(argv[3]) if len(argv) > 3 else 5
+        errors = []
+        lock = threading.Lock()
+
+        def record_error(message):
+            with lock:
+                errors.append(message)
+
+        def worker(worker_id):
+            for iteration in range(iterations):
+                try:
+                    status = request({"command": "status"})
+                    if not status.get("ok"):
+                        raise RuntimeError("status failed")
+                    root = request({"command": "device_root"})
+                    if not root.get("ok"):
+                        raise RuntimeError("device_root failed")
+                    root_id = int(root.get("device", {}).get("id") or 0)
+                    children = request({
+                        "command": "device_children",
+                        "parent_id": root_id,
+                        "include_disconnected": True,
+                    })
+                    if not children.get("ok"):
+                        raise RuntimeError("device_children failed")
+                except Exception as exc:
+                    record_error(f"worker={worker_id} iteration={iteration}: {exc}")
+
+        threads = [threading.Thread(target=worker, args=(index,)) for index in range(workers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            print_json({"ok": False, "message": "stress read failed", "errors": errors[:10], "error_count": len(errors)})
+            return 1
+        print_json({"ok": True, "message": "stress read passed", "workers": workers, "iterations": iterations})
         return 0
 
     if mode == "udev-from-sysfs":
@@ -353,6 +395,19 @@ def main(argv):
                     print_json({"device": device, "attributes": attributes, "matched_attribute": name})
                     return 0
         return 3
+
+    if mode == "count-any-attr":
+        names, needle = argv[2].split(","), argv[3]
+        connected = argv[4].lower() == "true" if len(argv) > 4 else None
+        count = 0
+        for device in all_devices(include_disconnected=True):
+            if connected is not None and bool(device.get("connected")) != connected:
+                continue
+            attributes = attrs(device["id"])
+            if any(needle in attributes.get(name, "") for name in names):
+                count += 1
+        print(count)
+        return 0
 
     if mode == "events":
         response = request({"command": "device_events", "device_id": int(argv[2]), "limit": int(argv[3])})
@@ -464,6 +519,24 @@ count_subsystem() {
     fi
 }
 
+count_device_any_attr() {
+    local names=$1
+    local needle=$2
+    local connected=${3:-}
+    if [[ -n "$connected" ]]; then
+        remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") count-any-attr $(printf '%q' "$names") $(printf '%q' "$needle") $(printf '%q' "$connected")"
+    else
+        remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") count-any-attr $(printf '%q' "$names") $(printf '%q' "$needle")"
+    fi
+}
+
+device_event_count() {
+    local id=$1
+    local event_type=$2
+    remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") events $id 50" |
+        python3 -c 'import json,sys; data=json.load(sys.stdin); print(sum(1 for e in data.get("events", []) if e.get("event_type") == sys.argv[1]))' "$event_type"
+}
+
 send_udev_from_sysfs() {
     local action=$1
     local subsystem=$2
@@ -474,6 +547,26 @@ send_udev_from_sysfs() {
 sysfs_names() {
     local dir=$1
     remote_sudo "if test -d $(printf '%q' "$dir"); then find $(printf '%q' "$dir") -mindepth 1 -maxdepth 1 -printf '%f\n' | sort; fi"
+}
+
+sysfs_regex_names() {
+    local dir=$1
+    local regex=$2
+    remote_sudo "if test -d $(printf '%q' "$dir"); then find $(printf '%q' "$dir") -regextype posix-extended -regex $(printf '%q' "$regex") -printf '%f\n' | sort; fi"
+}
+
+sysfs_realpath() {
+    local path=$1
+    remote_sudo "realpath $(printf '%q' "$path")"
+}
+
+virtio_port_names() {
+    sysfs_regex_names /sys/devices '.*/virtio-ports/vport[0-9]+p[0-9]+$'
+}
+
+virtio_port_path() {
+    local name=$1
+    remote_sudo "find /sys/devices -regextype posix-extended -regex $(printf '%q' ".*/virtio-ports/$name$") -print -quit"
 }
 
 first_new_name() {
@@ -565,6 +658,19 @@ attach_disk() {
         --serial "$serial"
 }
 
+attach_disk_config() {
+    local image=$1
+    local target=$2
+    local bus=$3
+    local serial=$4
+    virsh_cmd attach-disk "$VM_DOMAIN" "$image" "$target" \
+        --config \
+        --driver qemu \
+        --subdriver qcow2 \
+        --targetbus "$bus" \
+        --serial "$serial"
+}
+
 attach_cdrom() {
     rm -f "$CDROM_IMAGE"
     qemu-img create -f raw "$CDROM_IMAGE" 1M >/dev/null || return
@@ -580,6 +686,11 @@ attach_cdrom() {
 detach_disk() {
     local target=$1
     virsh_cmd detach-disk "$VM_DOMAIN" "$target" --live >/dev/null 2>&1 || true
+}
+
+detach_disk_config() {
+    local target=$1
+    virsh_cmd detach-disk "$VM_DOMAIN" "$target" --config >/dev/null 2>&1 || true
 }
 
 write_device_xmls() {
@@ -611,6 +722,30 @@ detach_device_xml() {
     local xml=$1
     [[ -f "$xml" ]] || return 0
     virsh_cmd detach-device "$VM_DOMAIN" "$xml" --live >/dev/null 2>&1 || true
+}
+
+serial_channel_alias() {
+    virsh_cmd dumpxml "$VM_DOMAIN" | python3 -c '
+import re
+import sys
+xml = sys.stdin.read()
+for block in re.findall(r"<channel\b.*?</channel>", xml, flags=re.S):
+    if "fic.dc.serial.0" in block:
+        match = re.search(r"<alias\s+name=[\"\x27]([^\"\x27]+)[\"\x27]", block)
+        if match:
+            print(match.group(1))
+            raise SystemExit(0)
+raise SystemExit(1)
+'
+}
+
+detach_serial_channel() {
+    local alias=""
+    if alias=$(serial_channel_alias 2>/dev/null); then
+        virsh_cmd detach-device-alias "$VM_DOMAIN" "$alias" --live >/dev/null 2>&1 || true
+        return 0
+    fi
+    detach_device_xml "$SERIAL_CHANNEL_XML"
 }
 
 detect_net_attachment() {
@@ -669,6 +804,70 @@ restore_policy_state() {
     set_usb_storage_policy "$ORIG_BLOCK_USB_STATUS" "$ORIG_BLOCK_USB_VALUE" >/dev/null 2>&1 || true
 }
 
+restart_device_daemon() {
+    remote_sudo "systemctl restart fic-device.service" || return
+    remote_sudo "$REMOTE_FIC_DICK wait-daemon 20"
+}
+
+restart_fic_daemon() {
+    remote_sudo "systemctl restart fic.service" || return
+    remote_sudo "$REMOTE_FIC_DICK wait-daemon 20"
+}
+
+wait_for_guest_ssh() {
+    local attempts=${1:-120}
+    for _ in $(seq 1 "$attempts"); do
+        if ssh_base "true" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    fail "guest SSH did not become reachable after reboot"
+}
+
+wait_for_guest_ssh_down() {
+    local attempts=${1:-30}
+    for _ in $(seq 1 "$attempts"); do
+        if ! ssh_base "true" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 0
+}
+
+guest_boot_id() {
+    remote "cat /proc/sys/kernel/random/boot_id"
+}
+
+wait_for_guest_boot_id_change() {
+    local before=$1
+    local attempts=${2:-180}
+    local after=""
+    for _ in $(seq 1 "$attempts"); do
+        after=$(guest_boot_id 2>/dev/null || true)
+        if [[ -n "$after" && "$after" != "$before" ]]; then
+            return 0
+        fi
+        sleep 1
+    done
+    fail "guest boot_id did not change after reboot"
+}
+
+reboot_guest() {
+    local before_boot_id
+    before_boot_id=$(guest_boot_id 2>/dev/null || true)
+    remote_sudo "systemctl reboot" >/dev/null 2>&1 || true
+    wait_for_guest_ssh_down 30
+    wait_for_guest_ssh 180 || return
+    if [[ -n "$before_boot_id" ]]; then
+        wait_for_guest_boot_id_change "$before_boot_id" 180 || return
+    fi
+    install_remote_helper
+    write_device_xmls
+    remote_sudo "$REMOTE_FIC_DICK wait-daemon 30"
+}
+
 reset_device_from_response() {
     local response=$1
     local id
@@ -676,6 +875,12 @@ reset_device_from_response() {
     if [[ -n "$id" && "$id" != "0" && "$id" != "-1" ]]; then
         remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") reset-path $id" >/dev/null 2>&1 || true
     fi
+}
+
+reset_device_id_path() {
+    local id=$1
+    [[ -n "$id" && "$id" != "0" && "$id" != "-1" ]] || return 0
+    remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") reset-path $id" >/dev/null 2>&1 || true
 }
 
 reset_test_device_controls() {
@@ -696,7 +901,7 @@ cleanup() {
     reset_test_device_controls
     restore_policy_state
     detach_virtio_net
-    detach_device_xml "$SERIAL_CHANNEL_XML"
+    detach_serial_channel
     detach_device_xml "$PCI_RNG_XML"
     detach_device_xml "$USB_TABLET_XML"
     detach_device_xml "$USB_HID_XML"
@@ -704,6 +909,10 @@ cleanup() {
     detach_disk "$USB_BLOCKED_TARGET"
     detach_disk "$USB_ALLOWED_TARGET"
     detach_disk "$VIRTIO_TARGET"
+    detach_disk_config "$CDROM_TARGET"
+    detach_disk_config "$USB_BLOCKED_TARGET"
+    detach_disk_config "$USB_ALLOWED_TARGET"
+    detach_disk_config "$VIRTIO_TARGET"
     if [[ "$WORK_DIR" == /tmp/fic-device-control-* || "$WORK_DIR" == /tmp/fic-device-control-qemu ]]; then
         rm -rf "$WORK_DIR"
     fi
