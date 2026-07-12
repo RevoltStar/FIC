@@ -187,6 +187,21 @@ Where possible, a lock against modification is applied
 [module:NET][policy:ssh_port][description]=Connection port
 [module:NET][policy:ssh_root_login]=Root login policy
 [module:NET][policy:ssh_root_login][description]=Root login policy
+[module:NET][submodule:SshEdit][message:parameter_not_configured_part1]=SSH parameter is not configured for policy '
+[module:NET][submodule:SshEdit][message:parameter_not_configured_part2]='
+[module:NET][submodule:SshEdit][message:load_failed]=Failed to load sshd_config
+[module:NET][submodule:SshEdit][message:reference_value_empty_part1]=Reference value for policy '
+[module:NET][submodule:SshEdit][message:reference_value_empty_part2]=' is empty
+[module:NET][submodule:SshEdit][message:no_deviations_part1]=No deviations found for SSH parameter '
+[module:NET][submodule:SshEdit][message:no_deviations_part2]='
+[module:NET][submodule:SshEdit][message:deviation_detected_part1]=Detected deviation for SSH parameter '
+[module:NET][submodule:SshEdit][message:deviation_detected_part2]='. Current:'
+[module:NET][submodule:SshEdit][message:deviation_detected_part3]='; Expected:'
+[module:NET][submodule:SshEdit][message:deviation_detected_part4]='
+[module:NET][submodule:SshEdit][message:update_failed_part1]=Failed to update SSH parameter '
+[module:NET][submodule:SshEdit][message:update_failed_part2]='
+[module:NET][submodule:SshEdit][message:save_failed]=Failed to save sshd_config
+[module:NET][submodule:SshEdit][message:deviation_fixed]=SSH parameter deviation was fixed
 
 # Application settings
 [module:GLOBAL][policy:log_level]=Logging level

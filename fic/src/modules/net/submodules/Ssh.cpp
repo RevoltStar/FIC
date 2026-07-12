@@ -1,5 +1,7 @@
 #include "modules/net/submodules/Ssh.h"
 
+#include <fic/core/LocalizationManager.h>
+
 #include <algorithm>
 #include <cctype>
 #include <iostream>
@@ -196,12 +198,19 @@ Ssh::Ssh()
 
 bool Ssh::apply() {
     if (this->sshParameter.empty()) {
-        this->log("SSH parameter is not configured for policy " + this->policyName, logLevel::FATAL);
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:parameter_not_configured_part1]") +
+                      this->policyName +
+                      LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:parameter_not_configured_part2]"),
+                  logLevel::FATAL);
         return false;
     }
 
     if (!this->sshConfig->loadConfig()) {
-        this->log("Failed to load sshd_config", logLevel::ERROR);
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:load_failed]"),
+                  logLevel::ERROR);
         return false;
     }
 
@@ -211,29 +220,58 @@ bool Ssh::apply() {
     }
     const std::string expectedValue = *valueOpt;
     if (expectedValue.empty() || expectedValue == "[NO VALUE SET]") {
-        this->log("Reference value for policy " + this->policyName + " is empty", logLevel::ERROR);
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:reference_value_empty_part1]") +
+                      this->policyName +
+                      LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:reference_value_empty_part2]"),
+                  logLevel::ERROR);
         return false;
     }
 
     const std::string currentValue = this->sshConfig->getValue(this->sshParameter);
     if (currentValue == expectedValue) {
-        this->log("No deviations found for SSH parameter " + this->sshParameter, logLevel::INFO);
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:no_deviations_part1]") +
+                      this->sshParameter +
+                      LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:no_deviations_part2]"),
+                  logLevel::INFO);
         return true;
     }
 
-    this->log("Detected deviation for SSH parameter '" + this->sshParameter + "'. Current:'" +
-              currentValue + "' Expected:'" + expectedValue + "'", logLevel::WARN);
+    this->log(LocalizationManager::getLang(
+                  "[module:NET][submodule:SshEdit][message:deviation_detected_part1]") +
+                  this->sshParameter +
+                  LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:deviation_detected_part2]") +
+                  currentValue +
+                  LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:deviation_detected_part3]") +
+                  expectedValue +
+                  LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:deviation_detected_part4]"),
+              logLevel::WARN);
 
     if (!this->sshConfig->setValue(this->sshParameter, expectedValue)) {
-        this->log("Failed to update SSH parameter " + this->sshParameter, logLevel::ERROR);
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:update_failed_part1]") +
+                      this->sshParameter +
+                      LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:update_failed_part2]"),
+                  logLevel::ERROR);
         return false;
     }
 
     if (!this->sshConfig->saveFile()) {
-        this->log("Failed to save sshd_config", logLevel::ERROR);
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:save_failed]"),
+                  logLevel::ERROR);
         return false;
     }
 
-    this->log("SSH parameter deviation was fixed", logLevel::INFO);
+    this->log(LocalizationManager::getLang(
+                  "[module:NET][submodule:SshEdit][message:deviation_fixed]"),
+              logLevel::INFO);
     return true;
 }

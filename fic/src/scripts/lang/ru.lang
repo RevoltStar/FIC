@@ -192,6 +192,21 @@
 [module:NET][policy:ssh_port][description]=Порт для подключения
 [module:NET][policy:ssh_root_login]=Политика входа root-пользователя
 [module:NET][policy:ssh_root_login][description]=Политика входа root-пользователя
+[module:NET][submodule:SshEdit][message:parameter_not_configured_part1]=SSH-параметр не настроен для политики '
+[module:NET][submodule:SshEdit][message:parameter_not_configured_part2]='
+[module:NET][submodule:SshEdit][message:load_failed]=Не удалось загрузить sshd_config
+[module:NET][submodule:SshEdit][message:reference_value_empty_part1]=Эталонное значение политики '
+[module:NET][submodule:SshEdit][message:reference_value_empty_part2]=' пусто
+[module:NET][submodule:SshEdit][message:no_deviations_part1]=Отклонения для SSH-параметра '
+[module:NET][submodule:SshEdit][message:no_deviations_part2]=' не обнаружены
+[module:NET][submodule:SshEdit][message:deviation_detected_part1]=Обнаружено отклонение SSH-параметра '
+[module:NET][submodule:SshEdit][message:deviation_detected_part2]='. Текущее значение:'
+[module:NET][submodule:SshEdit][message:deviation_detected_part3]='; Ожидаемое значение:'
+[module:NET][submodule:SshEdit][message:deviation_detected_part4]='
+[module:NET][submodule:SshEdit][message:update_failed_part1]=Не удалось обновить SSH-параметр '
+[module:NET][submodule:SshEdit][message:update_failed_part2]='
+[module:NET][submodule:SshEdit][message:save_failed]=Не удалось сохранить sshd_config
+[module:NET][submodule:SshEdit][message:deviation_fixed]=Отклонение SSH-параметра исправлено
 
 #Настройки программы
 [module:GLOBAL][policy:log_level]=Уровень логгирования
