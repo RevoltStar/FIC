@@ -3,6 +3,67 @@
 #include <fic/core/CommandHashStore.h>
 #include <fic/core/VerifiedProcessExecutor.h>
 
+namespace {
+PolicyApplyResult executePolicy(const std::string& moduleName,
+                                const std::string& submoduleName,
+                                const std::string& policyName,
+                                Policy& policy) {
+    if (!policy.isEnabled()) {
+        return {
+            moduleName,
+            submoduleName,
+            policyName,
+            PolicyApplyStatus::Disabled,
+            "Политика отключена. Применение не будет выполнено."
+        };
+    }
+
+    Logger::ScopedCapture capture;
+    bool applied = false;
+    std::string exceptionMessage;
+    try {
+        applied = policy.apply();
+    } catch (const std::exception& e) {
+        exceptionMessage = "Исключение при применении политики: " + std::string(e.what());
+    } catch (...) {
+        exceptionMessage = "Неизвестное исключение при применении политики";
+    }
+
+    LogCaptureResult captured = capture.finish();
+    std::vector<PolicyDiagnostic> diagnostics;
+    diagnostics.reserve(captured.records.size() + (exceptionMessage.empty() ? 0 : 1));
+    for (LogRecord& record : captured.records) {
+        diagnostics.push_back({
+            std::move(record.timestamp),
+            Logger::level_to_string(record.level),
+            std::move(record.type),
+            std::move(record.message)
+        });
+    }
+
+    if (!exceptionMessage.empty()) {
+        diagnostics.push_back({
+            Logger::get_current_time(),
+            Logger::level_to_string(logLevel::ERROR),
+            "daemon",
+            exceptionMessage
+        });
+    }
+
+    return {
+        moduleName,
+        submoduleName,
+        policyName,
+        applied && exceptionMessage.empty() ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
+        exceptionMessage.empty()
+            ? (applied ? "Политика успешно применена" : "Не удалось применить политику")
+            : exceptionMessage,
+        std::move(diagnostics),
+        captured.truncated
+    };
+}
+}
+
 
 //Реализация test
 void test(){
@@ -276,25 +337,7 @@ PolicyApplyResult applyPolicy(PolicyMap& policyMap, std::string module, std::str
             continue;
         }
 
-        Policy* policyClass = policyIt->second.get();
-        if (!policyClass->isEnabled()) {
-            return {
-                module,
-                submoduleName,
-                policy,
-                PolicyApplyStatus::Disabled,
-                "Политика отключена. Применение не будет выполнено."
-            };
-        }
-
-        const bool applied = policyClass->apply();
-        return {
-            module,
-            submoduleName,
-            policy,
-            applied ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
-            applied ? "Политика успешно применена" : "Не удалось применить политику"
-        };
+        return executePolicy(module, submoduleName, policy, *policyIt->second);
     }
 
     return {module, "", policy, PolicyApplyStatus::NotFound, "Политика не существует"};
@@ -310,25 +353,7 @@ PolicyApplySummary applyModulePolicies(PolicyMap& policyMap, std::string module)
 
     for (const auto& [submoduleName, submodulePolicies] : moduleIt->second) {
         for (const auto& [policyName, policyClass] : submodulePolicies) {
-            if (!policyClass->isEnabled()) {
-                summary.add({
-                    module,
-                    submoduleName,
-                    policyName,
-                    PolicyApplyStatus::Disabled,
-                    "Политика отключена. Применение не будет выполнено."
-                });
-                continue;
-            }
-
-            const bool applied = policyClass->apply();
-            summary.add({
-                module,
-                submoduleName,
-                policyName,
-                applied ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
-                applied ? "Политика успешно применена" : "Не удалось применить политику"
-            });
+            summary.add(executePolicy(module, submoduleName, policyName, *policyClass));
         }
     }
 
@@ -340,25 +365,7 @@ PolicyApplySummary applyAllPolicies(PolicyMap& policyMap) {
     for (const auto& [moduleName, submoduleMap] : policyMap) {
         for (const auto& [submoduleName, submodulePolicies] : submoduleMap) {
             for (const auto& [policyName, policyClass] : submodulePolicies) {
-                if (!policyClass->isEnabled()) {
-                    summary.add({
-                        moduleName,
-                        submoduleName,
-                        policyName,
-                        PolicyApplyStatus::Disabled,
-                        "Политика отключена. Применение не будет выполнено."
-                    });
-                    continue;
-                }
-
-                const bool applied = policyClass->apply();
-                summary.add({
-                    moduleName,
-                    submoduleName,
-                    policyName,
-                    applied ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
-                    applied ? "Политика успешно применена" : "Не удалось применить политику"
-                });
+                summary.add(executePolicy(moduleName, submoduleName, policyName, *policyClass));
             }
         }
     }

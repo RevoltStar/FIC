@@ -14,12 +14,21 @@ enum class PolicyApplyStatus {
 
 std::string policyApplyStatusToString(PolicyApplyStatus status);
 
+struct PolicyDiagnostic {
+    std::string timestamp;
+    std::string level;
+    std::string category;
+    std::string message;
+};
+
 struct PolicyApplyResult {
     std::string moduleName;
     std::string submoduleName;
     std::string policyName;
     PolicyApplyStatus status;
     std::string message;
+    std::vector<PolicyDiagnostic> diagnostics;
+    bool diagnosticsTruncated = false;
 
     bool isApplied() const;
     bool isFailure() const;

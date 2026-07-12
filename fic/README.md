@@ -216,6 +216,37 @@ fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 {"command":"apply_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
+Все команды применения возвращают сводку и отдельный результат для каждой
+политики. В `diagnostics` находятся записи `Logger`, созданные во время
+конкретного вызова `Policy::apply()` и прошедшие текущий `GLOBAL/log_level`:
+
+```json
+{
+  "ok": false,
+  "message": "Не удалось применить политику",
+  "diagnostics_truncated": false,
+  "summary": {"total": 1, "applied": 0, "failed": 1, "disabled": 0, "not_found": 0},
+  "results": [{
+    "module": "DAC",
+    "submodule": "Sudo",
+    "policy": "sudo_timeout",
+    "status": "failed",
+    "message": "Не удалось применить политику",
+    "diagnostics": [{
+      "timestamp": "2026-07-12 12:00:00.000 +0300",
+      "level": "ERROR",
+      "category": "daemon",
+      "message": "Не удалось сохранить файл"
+    }],
+    "diagnostics_truncated": false
+  }]
+}
+```
+
+Захват ограничен 128 записями и 64 КиБ на одну политику. Общий объем
+диагностик в одном IPC-ответе ограничен 256 КиБ. Если один из лимитов
+достигнут, соответствующий флаг `diagnostics_truncated` равен `true`.
+
 ### calc_hash
 
 Пересчитывает hash для указанного пути.

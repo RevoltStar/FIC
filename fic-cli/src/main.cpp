@@ -108,6 +108,21 @@ int print_policy_apply_response(const json& response) {
                 std::cout << " - " << message;
             }
             std::cout << std::endl;
+
+            if (item.contains("diagnostics") && item["diagnostics"].is_array()) {
+                for (const auto& diagnostic : item["diagnostics"]) {
+                    std::cout << "  [" << diagnostic.value("timestamp", "") << "]"
+                              << " [" << diagnostic.value("level", "UNKNOWN") << "]";
+                    const std::string category = diagnostic.value("category", "");
+                    if (!category.empty()) {
+                        std::cout << " [" << category << "]";
+                    }
+                    std::cout << " " << diagnostic.value("message", "") << std::endl;
+                }
+            }
+            if (item.value("diagnostics_truncated", false)) {
+                std::cout << "  ... diagnostics truncated" << std::endl;
+            }
         }
     }
 

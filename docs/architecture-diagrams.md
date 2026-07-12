@@ -244,11 +244,23 @@ flowchart TD
     allModules --> enabledOnly{policy.isEnable?}
     oneModule --> enabledOnly
     onePolicy --> enabledOnly
-    enabledOnly -->|yes| caf[Policy.apply]
+    enabledOnly -->|yes| capture[Logger ScopedCapture]
     enabledOnly -->|no| skip[skip policy]
+    capture --> caf[Policy.apply]
     caf --> osChange[Изменение ОС или конфигов утилит]
     caf --> log[Logger category daemon]
+    log --> diagnostic[filtered LogRecord]
+    diagnostic --> result[PolicyApplyResult diagnostics]
+    result --> response[IPC results per policy]
 ```
+
+`ScopedCapture` действует только во время одного вызова `Policy::apply()` и
+хранится в thread-local контексте `Logger`. Записи добавляются в capture после
+проверки `GLOBAL/log_level`, поэтому файловый журнал и diagnostics используют
+одинаковую фильтрацию. Результат применения владеет копией структурированных
+полей `timestamp`, `level`, `category`, `message`; состояние не сохраняется в
+объекте `Policy`. Объем ограничивается на уровне одного capture и всего
+IPC-ответа, а усечение обозначается `diagnostics_truncated`.
 
 ## 6. Карта модулей и политик
 

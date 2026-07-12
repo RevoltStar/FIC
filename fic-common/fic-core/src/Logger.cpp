@@ -18,6 +18,61 @@ std::string normalize_level_string(std::string value) {
 }
 }
 
+class Logger::ScopedCaptureState {
+public:
+    ScopedCaptureState(std::size_t recordLimit, std::size_t byteLimit)
+        : maxRecords(recordLimit), maxBytes(byteLimit) {}
+
+    void append(const LogRecord& record) {
+        const std::size_t recordBytes = record.timestamp.size() + record.type.size() +
+            record.message.size() + 32;
+        if (records.size() >= maxRecords || recordBytes > maxBytes - capturedBytes) {
+            truncated = true;
+            return;
+        }
+
+        records.push_back(record);
+        capturedBytes += recordBytes;
+    }
+
+    std::vector<LogRecord> records;
+    ScopedCaptureState* previous = nullptr;
+    std::size_t maxRecords;
+    std::size_t maxBytes;
+    std::size_t capturedBytes = 0;
+    bool truncated = false;
+    bool active = false;
+};
+
+thread_local Logger::ScopedCaptureState* Logger::activeCapture = nullptr;
+
+Logger::ScopedCapture::ScopedCapture(std::size_t maxRecords, std::size_t maxBytes)
+    : state(std::make_unique<ScopedCaptureState>(maxRecords, maxBytes)) {
+    state->previous = Logger::activeCapture;
+    state->active = true;
+    Logger::activeCapture = state.get();
+}
+
+Logger::ScopedCapture::~ScopedCapture() {
+    if (state != nullptr && state->active) {
+        Logger::activeCapture = state->previous;
+        state->active = false;
+    }
+}
+
+LogCaptureResult Logger::ScopedCapture::finish() {
+    if (state == nullptr) {
+        return {};
+    }
+
+    if (state->active) {
+        Logger::activeCapture = state->previous;
+        state->active = false;
+    }
+
+    return {std::move(state->records), state->truncated};
+}
+
 std::string Logger::get_boot_id() {
     return SystemBootInfo::get_boot_id();
 }
@@ -142,6 +197,15 @@ bool Logger::log(const std::string& message, logLevel logLev, const std::string&
         return true;
     }
 
+    const LogRecord record{get_current_time(), logLev, type, message};
+    if (activeCapture != nullptr) {
+        try {
+            activeCapture->append(record);
+        } catch (...) {
+            // Diagnostic capture must not prevent the primary log write.
+        }
+    }
+
     static std::mutex log_mutex;
     std::lock_guard<std::mutex> lock(log_mutex);
 
@@ -157,7 +221,7 @@ bool Logger::log(const std::string& message, logLevel logLev, const std::string&
         }
 
         std::stringstream log_entry;
-        log_entry << "[" << get_current_time() << "] "
+        log_entry << "[" << record.timestamp << "] "
                   << "[" << level_to_string(logLev) << "] "
                   << message;
 

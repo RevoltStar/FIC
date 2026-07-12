@@ -390,20 +390,51 @@ json policy_value_json(
     };
 }
 
-json policy_apply_result_json(const PolicyApplyResult& result) {
+constexpr std::size_t MAX_POLICY_DIAGNOSTICS_RESPONSE_BYTES = 256 * 1024;
+
+json policy_apply_result_json(const PolicyApplyResult& result,
+                              std::size_t& remainingDiagnosticsBytes,
+                              bool& responseDiagnosticsTruncated) {
+    json diagnostics = json::array();
+    bool diagnosticsTruncated = result.diagnosticsTruncated;
+    for (const PolicyDiagnostic& diagnostic : result.diagnostics) {
+        json item = {
+            {"timestamp", diagnostic.timestamp},
+            {"level", diagnostic.level},
+            {"category", diagnostic.category},
+            {"message", diagnostic.message}
+        };
+        const std::size_t serializedSize = item.dump().size();
+        if (serializedSize > remainingDiagnosticsBytes) {
+            diagnosticsTruncated = true;
+            break;
+        }
+        remainingDiagnosticsBytes -= serializedSize;
+        diagnostics.push_back(std::move(item));
+    }
+
+    responseDiagnosticsTruncated = responseDiagnosticsTruncated || diagnosticsTruncated;
     return json{
         {"module", result.moduleName},
         {"submodule", result.submoduleName},
         {"policy", result.policyName},
         {"status", policyApplyStatusToString(result.status)},
-        {"message", result.message}
+        {"message", result.message},
+        {"diagnostics", std::move(diagnostics)},
+        {"diagnostics_truncated", diagnosticsTruncated}
     };
 }
 
 json policy_apply_summary_json(const PolicyApplySummary& summary, bool ok, const std::string& message) {
     json results = json::array();
+    std::size_t remainingDiagnosticsBytes = MAX_POLICY_DIAGNOSTICS_RESPONSE_BYTES;
+    bool responseDiagnosticsTruncated = false;
     for (const PolicyApplyResult& result : summary.getResults()) {
-        results.push_back(policy_apply_result_json(result));
+        results.push_back(policy_apply_result_json(
+            result,
+            remainingDiagnosticsBytes,
+            responseDiagnosticsTruncated
+        ));
     }
 
     return json{
@@ -416,6 +447,7 @@ json policy_apply_summary_json(const PolicyApplySummary& summary, bool ok, const
             {"disabled", summary.disabledCount()},
             {"not_found", summary.notFoundCount()}
         }},
+        {"diagnostics_truncated", responseDiagnosticsTruncated},
         {"results", results}
     };
 }

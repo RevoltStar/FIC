@@ -9,6 +9,9 @@
 #include <iomanip>
 #include <filesystem>
 #include <functional>
+#include <cstddef>
+#include <memory>
+#include <vector>
 #include <unistd.h>
 #include <mutex>
 #include <fic/core/SystemBootInfo.h>
@@ -23,14 +26,46 @@ enum class logLevel {
     FATAL = 6  // Фатальные ошибке препятсвующие работе программы.
 };
 
+struct LogRecord {
+    std::string timestamp;
+    logLevel level;
+    std::string type;
+    std::string message;
+};
+
+struct LogCaptureResult {
+    std::vector<LogRecord> records;
+    bool truncated = false;
+};
+
 class Logger {
 private:
+    class ScopedCaptureState;
+
     static std::string get_boot_id();
     static std::string get_file_path(const std::string& type);
     static void ensure_directory_exists(const std::string& path);
     static logLevel get_configured_log_level();
+    static thread_local ScopedCaptureState* activeCapture;
 
 public:
+    class ScopedCapture {
+    public:
+        explicit ScopedCapture(std::size_t maxRecords = 128,
+                               std::size_t maxBytes = 64 * 1024);
+        ~ScopedCapture();
+
+        ScopedCapture(const ScopedCapture&) = delete;
+        ScopedCapture& operator=(const ScopedCapture&) = delete;
+        ScopedCapture(ScopedCapture&&) = delete;
+        ScopedCapture& operator=(ScopedCapture&&) = delete;
+
+        LogCaptureResult finish();
+
+    private:
+        std::unique_ptr<ScopedCaptureState> state;
+    };
+
     static std::string get_current_time();
     static std::string level_to_string(logLevel level);
     static logLevel string_to_level(const std::string& levelStr);

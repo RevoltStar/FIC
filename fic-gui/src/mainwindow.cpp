@@ -73,6 +73,23 @@ QString policyApplyDetailsText(const nlohmann::json& response)
             }
 
             lines << line;
+
+            if (item.contains("diagnostics") && item["diagnostics"].is_array()) {
+                for (const auto& diagnostic : item["diagnostics"]) {
+                    QString diagnosticLine = QString("  [%1] [%2]")
+                        .arg(QString::fromStdString(diagnostic.value("timestamp", "")))
+                        .arg(QString::fromStdString(diagnostic.value("level", "UNKNOWN")));
+                    const QString category = QString::fromStdString(diagnostic.value("category", ""));
+                    if (!category.isEmpty()) {
+                        diagnosticLine += " [" + category + "]";
+                    }
+                    diagnosticLine += " " + QString::fromStdString(diagnostic.value("message", ""));
+                    lines << diagnosticLine;
+                }
+            }
+            if (item.value("diagnostics_truncated", false)) {
+                lines << "  ... diagnostics truncated";
+            }
         }
     }
 
