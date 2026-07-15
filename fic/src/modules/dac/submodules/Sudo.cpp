@@ -1,17 +1,60 @@
 #include "modules/dac/submodules/Sudo.h"
+#include "modules/dac/submodules/sudo/SudoersConfiguration.h"
+
+#include <filesystem>
+#include <mutex>
+#include <vector>
+
+namespace {
+
+std::mutex sudoersMutex;
+
+SudoersConfigurationOptions productionSudoersOptions() {
+    SudoersConfigurationOptions options;
+    const std::vector<std::string> candidates = {
+        "/usr/sbin/visudo",
+        "/usr/bin/visudo"
+    };
+    for (const std::string& candidate : candidates) {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(candidate, error) && !error) {
+            options.validatorPath = candidate;
+            break;
+        }
+    }
+    if (options.validatorPath.empty()) {
+        options.validatorPath = "/usr/sbin/visudo";
+    }
+    return options;
+}
+
+std::string defaultsPrefix(const std::string& type,
+                           const std::string& group,
+                           const std::string& scope) {
+    std::string result = type;
+    if (!group.empty()) {
+        result += ":" + group;
+    }
+    if (!scope.empty()) {
+        result += scope;
+    }
+    result += " ";
+    return result;
+}
+
+} // namespace
+
+std::string SingleDefaultsSudoersParam::getParamString() const {
+    return defaultsPrefix(sectionName_, group_, scope_) + key_;
+}
+
+std::string KeyValueDefaultsSudoersParam::getParamString() const {
+    return defaultsPrefix(sectionName_, group_, scope_) + key_ + operation_ + value_;
+}
 
 Sudo::~Sudo() {
     // Реализация деструктора
 }
-
-// Путь к sudoers
-const std::string Sudo::sudoersPath="/etc/sudoers";
-/*const std::string Sudo::sudoersPath="/home/MFC.LOCAL/poroshinmi/sudoers-test.txt";*/
-/*const std::unique_ptr<ConfigFileHandler> Sudo::sudoConfig =
-        std::make_unique<ConfigFileHandler>(Sudo::sudoersPath);*/
-
-std::unique_ptr<SudoersConfigFileHandler> Sudo::sudoConfig =
-        std::make_unique<SudoersConfigFileHandler>(Sudo::sudoersPath);
 
 Sudo::Sudo()
     : DAC(){
@@ -27,12 +70,14 @@ bool Sudo::apply() {
         return false;
     }
 
-    if(!this->sudoConfig->loadConfig()){
-        this->log("Не удалось проанализировать файл /etc/sudoers", logLevel::ERROR);
+    const std::lock_guard<std::mutex> lock(sudoersMutex);
+
+    SudoersConfiguration configuration(productionSudoersOptions());
+    std::string loadError;
+    if (!configuration.load(loadError)) {
+        this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);
         return false;
     }
-
-    const std::string valueOld = this->sudoConfig->getValue(*this->Sudo::sudoParameter);
     auto valueOpt = this->getValue();
     if(!valueOpt){
         return false;
@@ -43,25 +88,76 @@ bool Sudo::apply() {
         return false;
     }
 
+    std::string key;
+    std::string renderedLine;
+    std::string expectedValue;
+    if (const auto* parameter = dynamic_cast<const KeyValueDefaultsSudoersParam*>(
+            this->Sudo::sudoParameter.get())) {
+        key = parameter->getKey();
+        expectedValue = valueNew;
+        renderedLine = defaultsPrefix(parameter->getType(), parameter->getGroup(),
+                                      parameter->getScope()) +
+                       parameter->getKey() + parameter->getOperator() + valueNew;
+    } else if (const auto* parameter = dynamic_cast<const SingleDefaultsSudoersParam*>(
+                   this->Sudo::sudoParameter.get())) {
+        key = parameter->getKey();
+        expectedValue = valueNew;
+        renderedLine = defaultsPrefix(parameter->getType(), parameter->getGroup(),
+                                      parameter->getScope()) +
+                       (valueNew == "DISABLE" ? "!" : "") + parameter->getKey();
+    } else {
+        this->log("Тип sudoParameter не поддерживает managed override", logLevel::ERROR);
+        return false;
+    }
+
+    const SudoersValueObservation observation = configuration.inspectGlobalDefault(key);
+    const std::string valueOld = observation.found ? observation.value : "[NOT SET]";
+
     if(valueOld == valueNew){
-        this->log("Отклонений не обнаружено", logLevel::INFO);
-        return true;
+        const std::string source = observation.source.path.empty()
+            ? ""
+            : " Источник: " + observation.source.path.string() + ":" +
+                  std::to_string(observation.source.line);
+        this->log("Отклонений не обнаружено." + source, logLevel::INFO);
+    } else {
+        this->log("Обнаружено отклонение параметра: '" +
+                  this->Sudo::sudoParameter->getParamString() + "'", logLevel::WARN);
+        this->log("Фактическое:'" + valueOld + "' Ожидаемое:'" + valueNew + "'", logLevel::WARN);
     }
 
-    this->log("Обнаружено отклонение параметра: '" +
-              this->Sudo::sudoParameter->getParamString() + "'", logLevel::WARN);
-    this->log("Фактическое:'" + valueOld + "' Ожидаемое:'" + valueNew + "'", logLevel::WARN);
-
-    if(!this->sudoConfig->setValue(*this->Sudo::sudoParameter, valueNew)){
-        this->log("Не удалось обновить параметр в sudoers", logLevel::ERROR);
+    const SudoersOperationResult operation = configuration.ensureManagedGlobalDefault(
+        key, renderedLine, expectedValue);
+    for (const std::string& diagnostic : operation.diagnostics) {
+        this->log(diagnostic, operation.ok ? logLevel::INFO : logLevel::WARN);
+    }
+    if (!operation.ok) {
+        this->log(operation.message, logLevel::ERROR);
         return false;
     }
 
-    if(!this->sudoConfig->saveFile()){
-        this->log("Не удалось сохранить файл", logLevel::ERROR);
-        return false;
-    }
-
-    this->log("Отклонение было исправлено", logLevel::INFO);
+    this->log(operation.message, logLevel::INFO);
     return true;
+}
+
+bool Sudo::applyRequireAuthentication() {
+    const std::lock_guard<std::mutex> lock(sudoersMutex);
+    const auto configuredValue = this->getValue();
+    if (!configuredValue || *configuredValue != "ENABLE") {
+        this->log("Эталон политики требования аутентификации не равен ENABLE", logLevel::ERROR);
+        return false;
+    }
+
+    SudoersConfiguration configuration(productionSudoersOptions());
+    std::string loadError;
+    if (!configuration.load(loadError)) {
+        this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);
+        return false;
+    }
+
+    const SudoersOperationResult operation = configuration.enforceAuthentication();
+    for (const std::string& diagnostic : operation.diagnostics) {
+        this->log(diagnostic, operation.ok ? logLevel::WARN : logLevel::ERROR);
+    }
+    this->log(operation.message, operation.ok ? logLevel::INFO : logLevel::ERROR);
+    return operation.ok;
 }

@@ -31,6 +31,23 @@ bool command_hash_directory_exists(std::string& error) {
     }
     return true;
 }
+
+bool command_hash_file_options(FileHandlerOptions& options, std::string& error) {
+    const std::filesystem::path directory =
+        std::filesystem::path(COMMAND_HASH_FILE_PATH).parent_path();
+    struct stat directoryInfo {};
+    if (::stat(directory.c_str(), &directoryInfo) != 0) {
+        error = "could not stat command hash directory: " + directory.string();
+        return false;
+    }
+    options.writeOptions.createIfMissing = true;
+    options.writeOptions.rejectSymlink = true;
+    options.writeOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+    options.writeOptions.fileMode = 0660;
+    options.writeOptions.fileOwner = 0;
+    options.writeOptions.fileGroup = directoryInfo.st_gid;
+    return true;
+}
 } // namespace
 
 bool CommandHashStore::saveHash(const std::string& executable, std::string& error) {
@@ -46,7 +63,11 @@ bool CommandHashStore::saveHash(const std::string& executable, std::string& erro
         return false;
     }
 
-    ConfigFileHandler commandHashes(COMMAND_HASH_FILE_PATH);
+    FileHandlerOptions fileOptions;
+    if (!command_hash_file_options(fileOptions, error)) {
+        return false;
+    }
+    ConfigFileHandler commandHashes(COMMAND_HASH_FILE_PATH, "=", fileOptions);
     if (!commandHashes.loadConfig()) {
         error = "failed to load command hash file: " + std::string(COMMAND_HASH_FILE_PATH);
         return false;

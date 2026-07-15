@@ -1,0 +1,12 @@
+#ifndef DAC_SUDO_REQUIRE_AUTHENTICATION_H
+#define DAC_SUDO_REQUIRE_AUTHENTICATION_H
+
+#include "modules/dac/submodules/Sudo.h"
+
+class DAC_sudo_require_authentication : public Sudo {
+public:
+    DAC_sudo_require_authentication();
+    bool apply() override;
+};
+
+#endif // DAC_SUDO_REQUIRE_AUTHENTICATION_H

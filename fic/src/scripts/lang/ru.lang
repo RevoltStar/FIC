@@ -52,6 +52,7 @@
 [module:DAC][policy:sudo_passwd_tries]=Количество попыток аутентификации
 [module:DAC][policy:sudo_securepath]=Список каталогов, в которых будет выполняться поиск запускаемых через sudo утилит
 [module:DAC][policy:sudo_timeout]=Время между запусками sudo в минутах перед повторным запросом пароля
+[module:DAC][policy:sudo_require_authentication]=Требовать аутентификацию при выполнении команд через sudo
 [module:DAC][policy:systemcommandlock]=Блокировка системных команд для пользователей
 
 [module:DAC][policy:blocking_user_access_to_system_files][description]=Осуществляет установку безопасных прав для системных (в первую очередь, конфигурационных) файлов. Будут использоваться следующие файлы и права:
@@ -79,6 +80,7 @@
 [module:DAC][policy:sudo_passwd_tries][description]=Количество попыток аутентификации
 [module:DAC][policy:sudo_securepath][description]=Описание
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
+[module:DAC][policy:sudo_require_authentication][description]=Заменяет локальные правила NOPASSWD на PASSWD и запрещает отключение аутентификации в активных sudoers-файлах. Не учитывает действующий кэш sudo, PAM и внешние LDAP/SSSD-источники.
 [module:DAC][policy:systemcommandlock][description]=Блокировка системных команд для пользователей
     Программам ниже назначаются права 750 и владелец root:root:
     /bin/df,

@@ -52,6 +52,7 @@
 [module:DAC][policy:sudo_passwd_tries]=Number of authentication attempts
 [module:DAC][policy:sudo_securepath]=List of directories searched for commands executed through sudo
 [module:DAC][policy:sudo_timeout]=Time between sudo launches in minutes before the password is requested again
+[module:DAC][policy:sudo_require_authentication]=Require authentication when executing commands through sudo
 [module:DAC][policy:systemcommandlock]=Restrict system commands for users
 
 [module:DAC][policy:blocking_user_access_to_system_files][description]=Sets secure permissions for system files, primarily configuration files. The following files and permissions will be used:
@@ -79,6 +80,7 @@
 [module:DAC][policy:sudo_passwd_tries][description]=Number of authentication attempts
 [module:DAC][policy:sudo_securepath][description]=Description
 [module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
+[module:DAC][policy:sudo_require_authentication][description]=Replaces local NOPASSWD rules with PASSWD and prevents authentication from being disabled in active sudoers files. Existing sudo timestamps, PAM, and external LDAP/SSSD sources are out of scope.
 [module:DAC][policy:systemcommandlock][description]=Restrict system commands for users
 
 

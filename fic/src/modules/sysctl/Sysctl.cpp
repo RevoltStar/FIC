@@ -2,10 +2,23 @@
 #include <exception>
 #include <vector>
 
+namespace {
+
+FileHandlerOptions sysctlFileOptions() {
+    FileHandlerOptions options;
+    options.writeOptions.createIfMissing = true;
+    options.writeOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+    options.writeOptions.fileMode = 0644;
+    options.writeOptions.fileOwner = 0;
+    options.writeOptions.fileGroup = 0;
+    return options;
+}
+
+} // namespace
 
 std::string Sysctl::sysctlPath="/etc/sysctl.conf";
 std::unique_ptr<ConfigFileHandler> Sysctl::sysctlConfig =
-        std::make_unique<ConfigFileHandler>(Sysctl::sysctlPath);
+        std::make_unique<ConfigFileHandler>(Sysctl::sysctlPath, "=", sysctlFileOptions());
 
 Sysctl::Sysctl()
     :Policy(){

@@ -1,8 +1,10 @@
 #include <fic/core/SingleLineFileHandler.h>
 #include <algorithm>
+#include <utility>
 
-SingleLineFileHandler::SingleLineFileHandler(const std::string& filepath)
-    : FileHandler(filepath, ""), data_line_index_(-1) {}
+SingleLineFileHandler::SingleLineFileHandler(const std::string& filepath,
+                                             FileHandlerOptions options)
+    : FileHandler(filepath, "", std::move(options)), data_line_index_(-1) {}
 
 bool SingleLineFileHandler::loadConfig() {
     if (!loadFile()) {

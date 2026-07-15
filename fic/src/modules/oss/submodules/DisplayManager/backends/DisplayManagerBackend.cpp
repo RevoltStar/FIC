@@ -8,6 +8,21 @@
 #include <algorithm>
 #include <cctype>
 
+namespace {
+
+FileHandlerOptions writableDisplayManagerConfigOptions()
+{
+    FileHandlerOptions options;
+    options.writeOptions.createIfMissing = true;
+    options.writeOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+    options.writeOptions.fileMode = 0644;
+    options.writeOptions.fileOwner = 0;
+    options.writeOptions.fileGroup = 0;
+    return options;
+}
+
+} // namespace
+
 bool DisplayManagerBackend::updateConfig(
     const std::vector<DisplayManagerConfigValue>& values,
     std::string& error
@@ -18,7 +33,7 @@ bool DisplayManagerBackend::updateConfig(
         return false;
     }
 
-    SectionConfigFileHandler config(configPath());
+    SectionConfigFileHandler config(configPath(), writableDisplayManagerConfigOptions());
     if (!config.loadConfig()) {
         error = "failed to load " + std::string(name()) + " configuration: " + configPath();
         return false;

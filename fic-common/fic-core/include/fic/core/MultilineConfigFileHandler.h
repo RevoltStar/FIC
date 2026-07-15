@@ -7,7 +7,9 @@
 
 class MultilineConfigFileHandler : public ConfigFileHandler {
 public:
-    MultilineConfigFileHandler(const std::string& filepath, const std::string& delimeter = "=");
+    MultilineConfigFileHandler(const std::string& filepath,
+                               const std::string& delimeter = "=",
+                               FileHandlerOptions options = {});
 
     // Загружаем конфигурационный файл с поддержкой многострочных значений
     bool loadConfig() override;

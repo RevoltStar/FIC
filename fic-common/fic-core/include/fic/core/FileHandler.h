@@ -1,6 +1,8 @@
 #ifndef FILEHANDLER_H
 #define FILEHANDLER_H
 
+#include <fic/core/AtomicFileWriter.h>
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -13,9 +15,15 @@
 /*
 Базовый класс для работы с файлами
 */
+struct FileHandlerOptions {
+    AtomicWriteOptions writeOptions;
+};
+
 class FileHandler {
 public:
-    FileHandler(const std::string& filepath, const std::string& delimiter = "=");
+    FileHandler(const std::string& filepath,
+                const std::string& delimiter = "=",
+                FileHandlerOptions options = {});
 
     //Загрузить файл
     bool loadFile();
@@ -49,6 +57,8 @@ protected:
     std::string delimiter_;
     //Путь к файлу
     std::string filepath_;
+    //Политика создания и безопасной записи файла
+    FileHandlerOptions options_;
     // Сохраняем оригинальные строки из файла
     std::vector<std::string> original_lines_;
 };

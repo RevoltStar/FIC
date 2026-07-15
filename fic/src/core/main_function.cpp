@@ -65,20 +65,6 @@ PolicyApplyResult executePolicy(const std::string& moduleName,
 }
 
 
-//Реализация test
-void test(){
-    std::cout << "<<-- START TEST() -->>";
-    std::string p = "/home/MFC.LOCAL/poroshinmi/sudoers-test2.txt";
-    SudoersConfigFileHandler scfh = SudoersConfigFileHandler(p);
-    if(!scfh.loadConfig()){
-       std::cout << "Не удалось сгенерировать конфиг" << std::endl;
-    }
-    std::cout << "ВЫВОД:" <<std::endl;
-    scfh.printConfig();
-    std::cout << "<<-- END TEST() -->>";
-}
-
-
 /*Функции вывода справки*/
 void print_program_info(){
     std::cout << "  FREE INTEGRITY CONTROL (FIC) - программа настройки СЗИ для ОС на базе ядра Linux" << std::endl;
@@ -546,6 +532,7 @@ PolicyMap init_policyMap(){
     cafArr.push_back(std::make_unique<DAC_sudo_passwd_tries>());
     cafArr.push_back(std::make_unique<DAC_sudo_securepath>());
     cafArr.push_back(std::make_unique<DAC_sudo_timeout>());
+    cafArr.push_back(std::make_unique<DAC_sudo_require_authentication>());
 
     //Настройки ядра (SYSCTL)
     cafArr.push_back(std::make_unique<SYSCTL_buffer_overflow_protection>());

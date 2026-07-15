@@ -17,7 +17,9 @@ private:
 
 public:
     //delimiter может принимать одно из следующих специальных значений
-    ConfigFileHandler(const std::string& filepath, const std::string& delimiter = "=");
+    ConfigFileHandler(const std::string& filepath,
+                      const std::string& delimiter = "=",
+                      FileHandlerOptions options = {});
     //Загружаем конфигурационный файл
     bool loadConfig() override;
 

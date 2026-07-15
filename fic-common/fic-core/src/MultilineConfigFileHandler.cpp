@@ -1,8 +1,12 @@
 #include <fic/core/MultilineConfigFileHandler.h>
+
+#include <utility>
 #include <algorithm>
 
-MultilineConfigFileHandler::MultilineConfigFileHandler(const std::string& filepath, const std::string& delimiter)
-    : ConfigFileHandler(filepath, delimiter) {}
+MultilineConfigFileHandler::MultilineConfigFileHandler(const std::string& filepath,
+                                                       const std::string& delimiter,
+                                                       FileHandlerOptions options)
+    : ConfigFileHandler(filepath, delimiter, std::move(options)) {}
 
 bool MultilineConfigFileHandler::loadConfig() {
     if (!this->FileHandler::loadFile()) {

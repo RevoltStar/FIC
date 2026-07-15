@@ -6,7 +6,8 @@
 
 class SectionConfigFileHandler : public FileHandler {
 public:
-    SectionConfigFileHandler(const std::string& filepath);
+    SectionConfigFileHandler(const std::string& filepath,
+                             FileHandlerOptions options = {});
 
     // Загрузка конфигурации из файла
     bool loadConfig() override;

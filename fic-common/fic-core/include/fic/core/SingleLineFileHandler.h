@@ -6,7 +6,8 @@
 //Класс для работы с конфигурационным файлом, в котором параметр - первая строка
 class SingleLineFileHandler : public FileHandler {
 public:
-    SingleLineFileHandler(const std::string& filepath);
+    SingleLineFileHandler(const std::string& filepath,
+                          FileHandlerOptions options = {});
 
     // Загружаем конфигурационный файл
     bool loadConfig() override;

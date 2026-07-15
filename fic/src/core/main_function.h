@@ -19,6 +19,7 @@
 #include "modules/dac/submodules/sudo/DAC_sudo_passwd_tries.h"
 #include "modules/dac/submodules/sudo/DAC_sudo_securepath.h"
 #include "modules/dac/submodules/sudo/DAC_sudo_timeout.h"
+#include "modules/dac/submodules/sudo/DAC_sudo_require_authentication.h"
 
 //Настройки ядра
 #include "modules/sysctl/submodules/fskernelprotection/SYSCTL_fd_limits.h"
@@ -83,7 +84,6 @@
 //Контроль устройств: общие настройки
 #include "modules/dc/DC.h"
 
-void test();
 /*Функции вывода справки*/
 void print_program_info();
 void print_help_apply();

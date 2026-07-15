@@ -1,7 +1,11 @@
 #include <fic/core/ConfigFileHandler.h>
 
-ConfigFileHandler::ConfigFileHandler(const std::string& filepath, const std::string& delimiter)
-    :FileHandler(filepath, delimiter){
+#include <utility>
+
+ConfigFileHandler::ConfigFileHandler(const std::string& filepath,
+                                     const std::string& delimiter,
+                                     FileHandlerOptions options)
+    : FileHandler(filepath, delimiter, std::move(options)) {
     //Загружаем файл в переменную (плохо - может возникнуть ошибка с правами когда не надо)
     //this->FileHandler::loadFile();
     //Создаем конфигурационный файл (плохо - создается много массивов одновременно)

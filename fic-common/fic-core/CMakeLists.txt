@@ -9,6 +9,7 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(fic-core STATIC
+    src/AtomicFileWriter.cpp
     src/CommandHashStore.cpp
     src/ConfigFileHandler.cpp
     src/ExclusivePidLock.cpp

@@ -262,6 +262,53 @@ flowchart TD
 объекте `Policy`. Объем ограничивается на уровне одного capture и всего
 IPC-ответа, а усечение обозначается `diagnostics_truncated`.
 
+Запись конфигурационных файлов централизована в `fic-core`:
+
+```mermaid
+flowchart LR
+    policy[policy or subsystem] --> options[FileHandlerOptions]
+    options --> handler[FileHandler / ConfigFileHandler]
+    handler --> writer[AtomicFileWriter]
+    sudoGraph[SudoersConfiguration] --> writer
+    writer --> metadata{metadata policy}
+    metadata -->|PreserveExisting| preserve[preserve existing uid gid mode]
+    metadata -->|EnforceProvided| enforce[apply configured uid gid mode]
+    writer --> durable[temp file + fsync + rename + directory fsync]
+```
+
+Создание отсутствующего файла по умолчанию запрещено и проверяется самим
+`AtomicFileWriter`, в том числе при сохранении после чтения. Оно включается явно
+только для управляемых сценариев: `/etc/sysctl.conf`, записи конфигурации display
+manager, `/opt/fic/db/commandhash.txt` и managed sudoers-файла. Поэтому чтение
+отсутствующего системного конфига больше не имеет побочного эффекта.
+
+`SudoersConfiguration` использует тот же низкоуровневый writer напрямую,
+поскольку работает с графом файлов, а не с одним форматом `FileHandler`.
+Требуемые метаданные остаются доменным решением вызывающего компонента.
+
+Для политик `Sudo` системная конфигурация рассматривается как единый include-
+граф, а не как один `/etc/sudoers`:
+
+```mermaid
+flowchart LR
+    sudoPolicy[Sudo policy] --> graph[SudoersConfiguration]
+    graph --> mainFile[/etc/sudoers]
+    graph --> includes[include files and directories]
+    graph --> effective[effective Defaults and source locations]
+    effective --> strategy{remediation strategy}
+    strategy -->|scalar Defaults| managed[/etc/sudoers.d/zzzz-fic]
+    strategy -->|authentication bypass| origin[atomic source token replacement]
+    managed --> visudo[verified visudo validation]
+    origin --> visudo
+    visudo --> reload[reload graph and verify postcondition]
+```
+
+Клиенты не передают пути sudoers-файлов через IPC. Пути появляются только из
+фиксированного `/etc/sudoers` и доверенного include-графа. Для `Defaults`
+изменяется только managed-файл; политика `sudo_require_authentication` изменяет
+в источнике только `NOPASSWD`, `authenticate` и `exempt_group`, не расширяя
+список разрешенных команд.
+
 ## 6. Карта модулей и политик
 
 ```mermaid
@@ -278,6 +325,7 @@ flowchart TB
     sudo --> sudoPassTries[sudo_passwd_tries]
     sudo --> sudoSecurePath[sudo_securepath]
     sudo --> sudoTimeout[sudo_timeout]
+    sudo --> sudoRequireAuthentication[sudo_require_authentication]
 
     arr --> sysctl[SYSCTL]
     sysctl --> fsKernel[FSKernelProtection]
@@ -302,6 +350,7 @@ flowchart TB
     sudoPassTries --> map
     sudoSecurePath --> map
     sudoTimeout --> map
+    sudoRequireAuthentication --> map
     fsKernel --> map
     globalKernel --> map
     networkKernel --> map

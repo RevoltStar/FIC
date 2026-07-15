@@ -1,9 +1,11 @@
 #include <fic/core/SectionConfigFileHandler.h>
 #include <algorithm>
 #include <iostream>
+#include <utility>
 
-SectionConfigFileHandler::SectionConfigFileHandler(const std::string& filepath)
-    : FileHandler(filepath, "=") {}
+SectionConfigFileHandler::SectionConfigFileHandler(const std::string& filepath,
+                                                   FileHandlerOptions options)
+    : FileHandler(filepath, "=", std::move(options)) {}
 
 bool SectionConfigFileHandler::loadConfig() {
     if (!FileHandler::loadFile()) {
