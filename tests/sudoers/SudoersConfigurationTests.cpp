@@ -7,6 +7,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -214,20 +215,87 @@ void testUnsupportedMultilineRuleFailsClosed() {
     TempTree tree;
     const auto options = optionsFor(tree);
     const std::string original =
-        "alice ALL=(ALL) \\\n"
-        "    NOPASSWD: ALL\n";
+        "alice ALL=(ALL) NOPASSWD: /bin/true, \\\n"
+        "    /bin/false\n"
+        "mark ALL=(ALL) \\\n"
+        "    NOPASSWD: /usr/bin/id\n"
+        "Defaults env_reset, \\\n"
+        "    !authenticate\n"
+        "Defaults env_reset, \\\n"
+        "    exempt_group=sudo\n"
+        "bob ALL=(ALL) PASSWD: /bin/true, \\\n"
+        "    /bin/false\n";
     writeFile(options.mainPath, original);
 
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    require(configuration.authenticationViolations().size() == 1,
-            "multiline NOPASSWD rule must be reported");
+    require(configuration.authenticationViolations().size() == 4,
+            "all authentication-bypassing multiline rules must be reported");
     const auto operation = configuration.enforceAuthentication();
     require(!operation.ok && !operation.changed,
-            "unsupported multiline rule must fail without partial rewrite");
+            "unsupported multiline rules must fail without partial rewrite");
     require(readFile(options.mainPath) == original,
-            "unsupported multiline rule was partially rewritten");
+            "unsupported multiline rules were partially rewritten");
+}
+
+void testInvalidRulesFailBeforeChanges() {
+    const std::filesystem::path visudo = "/usr/sbin/visudo";
+    if (!std::filesystem::is_regular_file(visudo)) {
+        return;
+    }
+
+    const std::vector<std::string> invalidRules = {
+        "ALL,!alice ALL = ALL NOPASSWD: ALL\n",
+        "alice ALL=(ALL) NOPASSWD ALL\n",
+        "alice ALL=(ALL NOPASSWD: ALL\n",
+        "alice ALL=(ALL) NOPASSWD:\n",
+        "alice ALL=(ALL) NOPASSWD: /bin/true,\n",
+        "alice ALL=(ALL) NOPASSWD: /bin/true \\\n"
+    };
+
+    for (const std::string& invalidRule : invalidRules) {
+        TempTree tree;
+        auto options = optionsFor(tree);
+        options.validatorPath = visudo;
+        options.verifyValidatorHash = false;
+        const std::string original = "root ALL=(ALL:ALL) ALL\n" + invalidRule;
+        writeFile(options.mainPath, original);
+
+        SudoersConfiguration configuration(options);
+        std::string error;
+        require(configuration.load(error), error);
+        const auto operation = configuration.enforceAuthentication();
+        require(!operation.ok && !operation.changed,
+                "invalid sudoers rule must fail before changes");
+        require(readFile(options.mainPath) == original,
+                "invalid sudoers file was unexpectedly modified");
+    }
+
+    TempTree tree;
+    auto options = optionsFor(tree);
+    options.validatorPath = visudo;
+    options.verifyValidatorHash = false;
+    writeFile(options.mainPath,
+              "root ALL=(ALL:ALL) ALL\n"
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    const auto supported = tree.root / "sudoers.d" / "10-supported";
+    const auto invalid = tree.root / "sudoers.d" / "20-invalid";
+    const std::string supportedOriginal = "alice ALL=(ALL) NOPASSWD: /bin/true\n";
+    const std::string invalidOriginal = "ALL,!alice ALL = ALL NOPASSWD: ALL\n";
+    writeFile(supported, supportedOriginal);
+    writeFile(invalid, invalidOriginal);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto operation = configuration.enforceAuthentication();
+    require(!operation.ok && !operation.changed,
+            "invalid included rule must fail before changing other files");
+    require(readFile(supported) == supportedOriginal,
+            "valid included file changed despite invalid graph");
+    require(readFile(invalid) == invalidOriginal,
+            "invalid included file was unexpectedly modified");
 }
 
 void testUnsupportedRulePreventsChangesInOtherFiles() {
@@ -335,6 +403,7 @@ int main() {
         testIncludeCycleAndMissingInclude();
         testUnsupportedCompoundHostSpecFailsClosed();
         testUnsupportedMultilineRuleFailsClosed();
+        testInvalidRulesFailBeforeChanges();
         testUnsupportedRulePreventsChangesInOtherFiles();
         testValidationFailureRollsBackAllChangedFiles();
         testMissingMainAndSymlinkAreRejected();
