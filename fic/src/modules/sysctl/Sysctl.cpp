@@ -1,24 +1,42 @@
 #include "modules/sysctl/Sysctl.h"
-#include <exception>
-#include <vector>
+#include "modules/sysctl/SysctlConfiguration.h"
+
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <mutex>
+#include <optional>
 
 namespace {
 
-FileHandlerOptions sysctlFileOptions() {
-    FileHandlerOptions options;
-    options.writeOptions.createIfMissing = true;
-    options.writeOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
-    options.writeOptions.fileMode = 0644;
-    options.writeOptions.fileOwner = 0;
-    options.writeOptions.fileGroup = 0;
-    return options;
+std::mutex sysctlMutex;
+
+std::string trimCopy(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char c) {
+        return !std::isspace(c);
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char c) {
+        return !std::isspace(c);
+    }).base(), value.end());
+    return value;
+}
+
+std::optional<std::string> runtimeValue(const std::string& key) {
+    std::string relative = key;
+    std::replace(relative.begin(), relative.end(), '.', '/');
+    std::ifstream stream("/proc/sys/" + relative);
+    if (!stream.is_open()) {
+        return std::nullopt;
+    }
+    std::string value;
+    std::getline(stream, value);
+    if (!stream.good() && !stream.eof()) {
+        return std::nullopt;
+    }
+    return trimCopy(std::move(value));
 }
 
 } // namespace
-
-std::string Sysctl::sysctlPath="/etc/sysctl.conf";
-std::unique_ptr<ConfigFileHandler> Sysctl::sysctlConfig =
-        std::make_unique<ConfigFileHandler>(Sysctl::sysctlPath, "=", sysctlFileOptions());
 
 Sysctl::Sysctl()
     :Policy(){
@@ -28,25 +46,15 @@ Sysctl::Sysctl()
 }
 
 
-// Correct /etc/sysctl.conf according to one sysctl parameter policy.
+// Correct the effective persistent configuration for one sysctl parameter.
 bool Sysctl::apply (){
     this->log("Запущена проверка политики " + this->policyName, logLevel::INFO);
     if (this->Sysctl::sysctlParameter.empty()){
         this->log("Имя контролируемого параметра пусто", logLevel::ERROR);
         return false;
     }
-    if(!this->sysctlConfig->loadConfig()){
-        this->log("Не удалось открыть для чтения файл /etc/sysctl.conf", logLevel::ERROR);
-        return false;
-    }
-
-    std::vector<std::string> errors;
-
-    //Какой параметр контролируем
-    auto param = this->Sysctl::sysctlParameter;
-    //Какое значение у него должно быть
-    //auto value = this->Sysctl::sysctlParameterValue;
-    std::string value = ""; 
+    const std::string param = this->Sysctl::sysctlParameter;
+    std::string value;
 
     if(dynamic_cast<FixedPolicyTypeValue*>(this->policyTypeValue.get()) != nullptr){
         /*Для FIXED политики берем из класса*/
@@ -65,38 +73,49 @@ bool Sysctl::apply (){
         return false;
     }
 
-    if(this->sysctlConfig->isParameterExists(param)){
-        auto valueFact = this->sysctlConfig->getValue(param);
-
-        if(value != valueFact){
-            this->sysctlConfig->setValue(param, value);
-
-            errors.push_back("Обнаружено отклонение '"+param+
-                             "'. Фактическое значение: '"+valueFact+"'"+
-                             "Ожидаемое значение: '"+value+"'");
-            this->log(errors.back(), logLevel::INFO);
-        }
-    }else{
-        errors.push_back("Параметр " + param + " не установлен");
-        this->log("Параметр " + param + " не был установлен. Попытка добавления...", logLevel::DEBUG);
-        if(!this->sysctlConfig->setValue(param, value)){
-            this->log("Произошла ошибка при добавлении параметра " + param, logLevel::ERROR);
-        }
+    const std::lock_guard<std::mutex> lock(sysctlMutex);
+    SysctlConfiguration configuration;
+    std::string loadError;
+    if (!configuration.load(loadError)) {
+        this->log("Не удалось проанализировать конфигурацию sysctl: " + loadError,
+                  logLevel::ERROR);
+        return false;
     }
 
-    if(!errors.empty()){
-        this->log("Некоторые параметры не совпадают с эталоном для политики " + this->policyName, logLevel::WARN);
-        this->notify("Некоторые параметры не совпадают с эталоном для политики: " + this->policyName, notifyLevel::ERROR);
+    const SysctlValueObservation observation = configuration.inspect(param);
+    if (!observation.found || observation.value != value) {
+        const std::string actual = observation.found ? observation.value : "[NOT SET]";
+        const std::string source = observation.found
+            ? " Источник: " + observation.source.path.string() + ":" +
+                  std::to_string(observation.source.line)
+            : "";
+        this->log("Обнаружено отклонение '" + param + "'. Фактическое значение: '" +
+                  actual + "'. Ожидаемое значение: '" + value + "'." + source,
+                  logLevel::WARN);
+    }
 
-        bool isSave = this->sysctlConfig->saveFile();
-        if(!isSave){
-            this->log("Не удалось применить изменения", logLevel::ERROR);
-            return false;
-        }else{
-            this->log("Отклонение было исправлено", logLevel::INFO);
-        }
-    }else{
-        this->log("Отклонений не обнаружено", logLevel::INFO);
+    const SysctlOperationResult operation = configuration.ensureManagedValue(param, value);
+    for (const std::string& diagnostic : operation.diagnostics) {
+        this->log(diagnostic, operation.ok ? logLevel::INFO : logLevel::WARN);
+    }
+    if (!operation.ok) {
+        this->log(operation.message, logLevel::ERROR);
+        return false;
+    }
+    if (operation.changed) {
+        this->notify("Исправлена конфигурация sysctl для политики: " + this->policyName,
+                     notifyLevel::ERROR);
+    }
+    this->log(operation.message, logLevel::INFO);
+
+    const std::optional<std::string> current = runtimeValue(param);
+    if (!current) {
+        this->log("Не удалось прочитать текущее значение /proc/sys для " + param,
+                  logLevel::DEBUG);
+    } else if (*current != value) {
+        this->log("Конфигурация " + param + " исправлена на диске, но текущее значение ядра '" +
+                  *current + "' отличается от эталона '" + value +
+                  "'. Требуется безопасное отдельное применение sysctl.", logLevel::WARN);
     }
     return true;
 }

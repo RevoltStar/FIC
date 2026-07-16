@@ -2,15 +2,11 @@
 #define SYSCTLEDIT_H
 
 #include <fic/policy/Policy.h>
-#include <fic/core/ConfigFileHandler.h>
 #include <string>
 
-//Класс для работы с файлом /etc/sysctl
+// Base class for policies backed by the procps `sysctl --system` configuration.
 class Sysctl : public Policy
 {
-private:
-    static std::string sysctlPath;
-    static std::unique_ptr<ConfigFileHandler> sysctlConfig;
 protected:
     //Какие параметры мы контролируем?
     std::string sysctlParameter="";
@@ -18,7 +14,7 @@ protected:
     std::string sysctlParameterValue="";
 public:
 
-    //Проверить файл /etc/sysctl и исправить
+    // Check the effective persistent configuration and add a managed override.
     bool apply () override;
     Sysctl();
 };

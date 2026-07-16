@@ -270,6 +270,7 @@ flowchart LR
     options --> handler[FileHandler / ConfigFileHandler]
     handler --> writer[AtomicFileWriter]
     sudoGraph[SudoersConfiguration] --> writer
+    sysctlGraph[SysctlConfiguration] --> writer
     writer --> metadata{metadata policy}
     metadata -->|PreserveExisting| preserve[preserve existing uid gid mode]
     metadata -->|EnforceProvided| enforce[apply configured uid gid mode]
@@ -285,6 +286,12 @@ manager, `/opt/fic/db/commandhash.txt` и managed sudoers-файла. Поэто
 `SudoersConfiguration` использует тот же низкоуровневый writer напрямую,
 поскольку работает с графом файлов, а не с одним форматом `FileHandler`.
 Требуемые метаданные остаются доменным решением вызывающего компонента.
+
+`SysctlConfiguration` также является доменным обработчиком: он воспроизводит
+приоритеты procps-ng `sysctl --system`, вычисляет последнюю эффективную запись и
+записывает только managed-блок FIC в конце `/etc/sysctl.conf`. Общий
+`ConfigFileHandler` для этого не используется, поскольку его однофайловая
+модель не выражает подавление одноименных файлов и глобальную сортировку.
 
 Для политик `Sudo` системная конфигурация рассматривается как единый include-
 граф, а не как один `/etc/sudoers`:
@@ -310,6 +317,27 @@ flowchart LR
 изменяется только managed-файл; политика `sudo_require_authentication` изменяет
 в источнике только `NOPASSWD`, `authenticate` и `exempt_group`, не расширяя
 список разрешенных команд.
+
+Для политик `SYSCTL` поток выглядит так:
+
+```mermaid
+flowchart LR
+    policy[SYSCTL policy] --> loader[SysctlConfiguration]
+    loader --> roots[fixed sysctl.d roots]
+    roots --> select[same-name priority]
+    select --> order[global lexical order]
+    order --> main[/etc/sysctl.conf last]
+    main --> effective[effective exact key including globs and exclusions]
+    effective -->|matches| unchanged[no write]
+    effective -->|deviation| block[managed block at EOF]
+    block --> writer[AtomicFileWriter root:root 0644]
+    writer --> reload[reload and verify postcondition]
+    reload -->|failure| rollback[restore original main file]
+```
+
+Сторонние sysctl-файлы используются для вычисления результата и диагностики,
+но не переписываются. Runtime-значение `/proc/sys` читается отдельно; изменение
+работающего ядра в этот поток пока не входит.
 
 ## 6. Карта модулей и политик
 

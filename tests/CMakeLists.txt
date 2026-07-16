@@ -25,3 +25,13 @@ add_executable(file_handler_options_tests
 )
 target_link_libraries(file_handler_options_tests PRIVATE fic-core)
 add_test(NAME file_handler_options_tests COMMAND file_handler_options_tests)
+
+add_executable(sysctl_configuration_tests
+    sysctl/SysctlConfigurationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+)
+target_include_directories(sysctl_configuration_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
+add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
