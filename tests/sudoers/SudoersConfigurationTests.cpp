@@ -128,6 +128,7 @@ void testAuthenticationRewrite() {
               "%sudo ALL=(ALL:ALL) NOPASSWD: ALL\n"
               "ALL ALL=(ALL:ALL) NOPASSWD :ALL\n"
               "alice ALL=(ALL) CWD = /tmp NOPASSWD: /bin/true\n"
+              "mark ALL=(ALL:ALL) CWD=/tmp NOPASSWD: /usr/bin/id\n"
               "Defaults !authenticate\n"
               "Defaults env_reset, exempt_group=sudo\n"
               "alice ALL=(ALL) PASSWD: /bin/echo \"NOPASSWD:\"\n"
@@ -137,7 +138,7 @@ void testAuthenticationRewrite() {
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    require(configuration.authenticationViolations().size() == 6,
+    require(configuration.authenticationViolations().size() == 7,
             "all violating lines must be reported");
     const auto operation = configuration.enforceAuthentication();
     require(operation.ok && operation.changed, operation.message);
@@ -151,6 +152,8 @@ void testAuthenticationRewrite() {
             "ALL rule with whitespace was not rewritten");
     require(changed.find("CWD = /tmp PASSWD: /bin/true") != std::string::npos,
             "rule with a spaced command option was not rewritten");
+    require(changed.find("(ALL:ALL) CWD=/tmp PASSWD: /usr/bin/id") != std::string::npos,
+            "rule with a Runas group and command option was not rewritten");
     require(changed.find("Defaults authenticate") != std::string::npos,
             "authenticate was not enabled");
     require(changed.find("Defaults env_reset, !exempt_group") != std::string::npos,
@@ -227,6 +230,65 @@ void testUnsupportedMultilineRuleFailsClosed() {
             "unsupported multiline rule was partially rewritten");
 }
 
+void testUnsupportedRulePreventsChangesInOtherFiles() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    const auto supported = tree.root / "sudoers.d" / "10-supported";
+    const auto unsupported = tree.root / "sudoers.d" / "20-unsupported";
+    const std::string supportedOriginal =
+        "alice ALL=(ALL) NOPASSWD: /bin/true\n";
+    const std::string unsupportedOriginal =
+        "mark ALL=(ALL) \\\n"
+        "    NOPASSWD: /bin/false\n";
+    writeFile(supported, supportedOriginal);
+    writeFile(unsupported, unsupportedOriginal);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto operation = configuration.enforceAuthentication();
+    require(!operation.ok && !operation.changed,
+            "unsupported rule must fail before changing any document");
+    require(readFile(supported) == supportedOriginal,
+            "supported document was changed before graph preflight completed");
+    require(readFile(unsupported) == unsupportedOriginal,
+            "unsupported document was unexpectedly changed");
+}
+
+void testValidationFailureRollsBackAllChangedFiles() {
+    TempTree tree;
+    auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    const auto first = tree.root / "sudoers.d" / "10-first";
+    const auto second = tree.root / "sudoers.d" / "20-second";
+    const std::string firstOriginal = "alice ALL=(ALL) NOPASSWD: /bin/true\n";
+    const std::string secondOriginal = "mark ALL=(ALL) NOPASSWD: /bin/false\n";
+    writeFile(first, firstOriginal);
+    writeFile(second, secondOriginal);
+
+    const auto validator = tree.root / "validator";
+    writeFile(validator,
+              "#!/bin/sh\n"
+              "if /bin/grep -q ' PASSWD:' '" + first.string() +
+              "' && /bin/grep -q ' PASSWD:' '" + second.string() +
+              "'; then exit 1; fi\n"
+              "exit 0\n");
+    require(::chmod(validator.c_str(), 0700) == 0, "failed to make validator executable");
+    options.validatorPath = validator;
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto operation = configuration.enforceAuthentication();
+    require(!operation.ok && !operation.changed,
+            "validation failure must be reported after a complete rollback");
+    require(readFile(first) == firstOriginal, "first document was not rolled back");
+    require(readFile(second) == secondOriginal, "second document was not rolled back");
+}
+
 void testRealVisudoWhenAvailable() {
     const std::filesystem::path visudo = "/usr/sbin/visudo";
     if (!std::filesystem::is_regular_file(visudo)) {
@@ -273,6 +335,8 @@ int main() {
         testIncludeCycleAndMissingInclude();
         testUnsupportedCompoundHostSpecFailsClosed();
         testUnsupportedMultilineRuleFailsClosed();
+        testUnsupportedRulePreventsChangesInOtherFiles();
+        testValidationFailureRollsBackAllChangedFiles();
         testMissingMainAndSymlinkAreRejected();
         testRealVisudoWhenAvailable();
     } catch (const std::exception& error) {

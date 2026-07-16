@@ -32,8 +32,7 @@ file(GLOB_RECURSE HDR_FILES
 )
 
 # Исключаем тесты
-list(FILTER SRC_FILES EXCLUDE REGEX ".*test.*")
-list(FILTER SRC_FILES EXCLUDE REGEX ".*Test.*")
+list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\][^/\\\\]*[Tt]est[^/\\\\]*\\.cpp$")
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 

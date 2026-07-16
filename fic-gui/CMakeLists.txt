@@ -32,8 +32,7 @@ file(GLOB_RECURSE HDR_FILES
     "src/*/*/*.h"
 )
 
-list(FILTER SRC_FILES EXCLUDE REGEX ".*test.*")
-list(FILTER SRC_FILES EXCLUDE REGEX ".*Test.*")
+list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\][^/\\\\]*[Tt]est[^/\\\\]*\\.cpp$")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/core/.*")
 list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/modules/.*")
 list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/core/.*")

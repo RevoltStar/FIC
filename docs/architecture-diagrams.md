@@ -295,12 +295,14 @@ flowchart LR
     graph --> mainFile[/etc/sudoers]
     graph --> includes[include files and directories]
     graph --> effective[effective Defaults and source locations]
-    effective --> strategy{remediation strategy}
+    effective --> preflight[whole-graph preflight]
+    preflight --> strategy{remediation strategy}
     strategy -->|scalar Defaults| managed[/etc/sudoers.d/zzzz-fic]
     strategy -->|authentication bypass| origin[atomic source token replacement]
     managed --> visudo[verified visudo validation]
     origin --> visudo
     visudo --> reload[reload graph and verify postcondition]
+    visudo -->|failure| rollback[rollback all written sources]
 ```
 
 Клиенты не передают пути sudoers-файлов через IPC. Пути появляются только из

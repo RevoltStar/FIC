@@ -427,27 +427,63 @@ bool containsTokenFollowedByColon(const std::string& code, const std::string& to
     return false;
 }
 
+size_t findTopLevelCharacter(const std::string& text, char requested, size_t start) {
+    bool single = false;
+    bool doubleQuoted = false;
+    bool escaped = false;
+    int parenthesisDepth = 0;
+    for (size_t position = 0; position < text.size(); ++position) {
+        const char current = text[position];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (current == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (current == '\'' && !doubleQuoted) {
+            single = !single;
+            continue;
+        }
+        if (current == '"' && !single) {
+            doubleQuoted = !doubleQuoted;
+            continue;
+        }
+        if (single || doubleQuoted) {
+            continue;
+        }
+        if (current == '(') {
+            ++parenthesisDepth;
+            continue;
+        }
+        if (current == ')' && parenthesisDepth > 0) {
+            --parenthesisDepth;
+            continue;
+        }
+        if (position >= start && parenthesisDepth == 0 && current == requested) {
+            return position;
+        }
+    }
+    return std::string::npos;
+}
+
 bool hasAmbiguousAdditionalHostSpec(const std::string& code) {
     const size_t firstEquals = code.find('=');
     if (firstEquals == std::string::npos) {
         return false;
     }
 
-    size_t colon = code.find(':', firstEquals + 1);
+    size_t colon = findTopLevelCharacter(code, ':', firstEquals + 1);
     while (colon != std::string::npos) {
-        if (!outsideQuotesAt(code, colon)) {
-            colon = code.find(':', colon + 1);
-            continue;
-        }
-        const size_t additionalEquals = code.find('=', colon + 1);
+        const size_t additionalEquals = findTopLevelCharacter(code, '=', colon + 1);
         if (additionalEquals == std::string::npos) {
             return false;
         }
-        if (outsideQuotesAt(code, additionalEquals) &&
-            containsTokenFollowedByColon(code, "NOPASSWD", additionalEquals + 1)) {
+        if (containsTokenFollowedByColon(code, "NOPASSWD", additionalEquals + 1)) {
             return true;
         }
-        colon = code.find(':', colon + 1);
+        colon = findTopLevelCharacter(code, ':', colon + 1);
     }
     return false;
 }
@@ -508,6 +544,7 @@ struct RewriteResult {
     std::string content;
     std::vector<std::string> diagnostics;
     size_t changes = 0;
+    bool unsupported = false;
 };
 
 bool multilineBlockMayDisableAuthentication(
@@ -542,6 +579,7 @@ RewriteResult rewriteAuthentication(const std::filesystem::path& path,
             ++blockEnd;
         }
         if (blockEnd > index && multilineBlockMayDisableAuthentication(lines, index, blockEnd)) {
+            result.unsupported = true;
             result.diagnostics.push_back(path.string() + ":" +
                                          std::to_string(lines[index].first) +
                                          " (неподдерживаемое многострочное правило)");
@@ -567,6 +605,7 @@ RewriteResult rewriteAuthentication(const std::filesystem::path& path,
             lineChanges += disableExemptGroup(code);
         } else {
             if (hasAmbiguousAdditionalHostSpec(code)) {
+                result.unsupported = true;
                 result.diagnostics.push_back(path.string() + ":" +
                                              std::to_string(lines[index].first) +
                                              " (неподдерживаемый составной Host_Spec)");
@@ -1020,32 +1059,77 @@ SudoersOperationResult SudoersConfiguration::enforceAuthentication() {
         return result;
     }
 
+    std::vector<RewriteResult> rewrites;
+    rewrites.reserve(documents_.size());
+    bool hasUnsupportedRule = false;
+    for (const Document& document : documents_) {
+        rewrites.push_back(rewriteAuthentication(document.path, document.content));
+        hasUnsupportedRule = hasUnsupportedRule || rewrites.back().unsupported;
+    }
+    if (hasUnsupportedRule) {
+        for (const RewriteResult& rewrite : rewrites) {
+            result.diagnostics.insert(result.diagnostics.end(),
+                                      rewrite.diagnostics.begin(), rewrite.diagnostics.end());
+        }
+        result.message = "Обнаружены неподдерживаемые правила, sudoers не изменен";
+        return result;
+    }
+
+    for (const Document& document : documents_) {
+        if (!contentUnchanged(document, error)) {
+            result.message = error;
+            return result;
+        }
+    }
+
+    std::vector<std::pair<std::filesystem::path, std::string>> writtenDocuments;
+    const auto rollback = [&]() {
+        if (writtenDocuments.empty()) {
+            return true;
+        }
+        bool restored = true;
+        for (auto item = writtenDocuments.rbegin(); item != writtenDocuments.rend(); ++item) {
+            std::string restoreError;
+            if (!writeDocument(item->first, item->second, false, restoreError)) {
+                restored = false;
+                result.diagnostics.push_back("Ошибка отката " + item->first.string() +
+                                             ": " + restoreError);
+            }
+        }
+        if (restored) {
+            std::string validationError;
+            if (!validate(validationError)) {
+                restored = false;
+                result.diagnostics.push_back(
+                    "Конфигурация не прошла visudo после отката: " + validationError);
+            }
+        }
+        return restored;
+    };
+
     bool anyChange = false;
-    for (Document& document : documents_) {
-        const RewriteResult rewrite = rewriteAuthentication(document.path, document.content);
+    for (size_t index = 0; index < documents_.size(); ++index) {
+        Document& document = documents_[index];
+        const RewriteResult& rewrite = rewrites[index];
         if (rewrite.changes == 0) {
             continue;
         }
         if (!contentUnchanged(document, error)) {
             result.message = error;
-            result.changed = anyChange;
+            result.changed = !rollback();
             return result;
         }
         const std::string original = document.content;
         if (!writeDocument(document.path, rewrite.content, false, error)) {
             result.message = "Не удалось обновить " + document.path.string() + ": " + error;
-            result.changed = anyChange;
+            result.changed = !rollback();
             return result;
         }
+        writtenDocuments.emplace_back(document.path, original);
         if (!validate(error)) {
-            std::string restoreError;
-            writeDocument(document.path, original, false, restoreError);
             result.message = "Конфигурация не прошла visudo после изменения " +
                              document.path.string() + ": " + error;
-            if (!restoreError.empty()) {
-                result.diagnostics.push_back("Ошибка отката: " + restoreError);
-            }
-            result.changed = anyChange;
+            result.changed = !rollback();
             return result;
         }
         document.content = rewrite.content;
@@ -1056,14 +1140,14 @@ SudoersOperationResult SudoersConfiguration::enforceAuthentication() {
 
     if (!load(error)) {
         result.message = "Не удалось перечитать sudoers после исправления: " + error;
-        result.changed = anyChange;
+        result.changed = !rollback();
         return result;
     }
     const auto remaining = authenticationViolations();
     if (!remaining.empty()) {
         result.message = "После исправления остались способы запуска без аутентификации";
         result.diagnostics.insert(result.diagnostics.end(), remaining.begin(), remaining.end());
-        result.changed = anyChange;
+        result.changed = !rollback();
         return result;
     }
 
