@@ -27,9 +27,11 @@ struct ExclusivePidSharedLockState {
 
 class ExclusivePidLock {
 public:
-    ExclusivePidLock(const std::string& lockFilePath, bool enableDebug = true)
+    ExclusivePidLock(const std::string& lockFilePath,
+                     const std::string& debugLogFilePath,
+                     bool enableDebug = true)
         : lockFilePath_(lockFilePath), lockFileDescriptor_(-1),
-          isLocked_(false), enableDebug_(enableDebug), logFile_("/opt/fic/log/lock_log.txt") {
+          isLocked_(false), enableDebug_(enableDebug), logFile_(debugLogFilePath) {
         if (enableDebug_) {
             debugLog("ExclusivePidLock created for: " + lockFilePath);
         }

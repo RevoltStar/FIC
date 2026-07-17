@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 project(fic_dick LANGUAGES CXX)
 
 include(GNUInstallDirs)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
 
 if(NOT TARGET fic-core)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-core ${CMAKE_CURRENT_BINARY_DIR}/fic-core)
@@ -53,6 +54,17 @@ target_link_libraries(fic-dick PRIVATE
     fic-device-db
     fic-ipc
 )
-# Установка
-install(TARGETS fic-dick DESTINATION bin)
-install(DIRECTORY configs/ DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/fic)
+set(FIC_DICK_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
+file(MAKE_DIRECTORY "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service")
+foreach(service fic-device.service fic_get_device_info.service)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/scripts/service/${service}.in"
+        "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service/${service}"
+        @ONLY)
+endforeach()
+
+install(TARGETS fic-dick RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic-dick)
+install(FILES
+        "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service/fic-device.service"
+        "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service/fic_get_device_info.service"
+        DESTINATION "${FIC_SYSTEMD_UNIT_DIR}" COMPONENT fic-dick)

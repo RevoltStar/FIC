@@ -499,6 +499,20 @@ flowchart TD
 
 ## 9. Хранилища данных
 
+Production-значения путей задаются один раз в
+`cmake/FicInstallLayout.cmake`. На этапе конфигурации CMake из них создаются
+типизированные C++ defaults для `fic-core`/`fic-ipc`, а также systemd,
+tmpfiles, udev и XDG-шаблоны. Исполняемые компоненты инициализируют неизменяемый
+контекст путей при старте; общий слой базы устройств получает `DBOptions`
+явно и поэтому не знает о layout продукта.
+
+Это не единый `FIC_ROOT`: config, state, logs, static data и runtime socket
+остаются независимыми семантическими путями. Такой контракт позволяет менять
+профиль установки через CMake без строковых замен в C++ или service-файлах.
+Deb/RPM staging устанавливает именованные CMake-компоненты (`fic`, `fic-dick`,
+`fic-cli`, `fic-session-agent`, `fic-gui`) и не копирует эти файлы повторно из
+дерева исходников.
+
 ```mermaid
 flowchart LR
     daemon[fic daemon]
@@ -523,3 +537,7 @@ flowchart LR
     dick --> proc
     gui -->|только через daemon API| daemon
 ```
+
+Production IPC использует профиль `ProductionAdmin`: реальный (не symlink)
+runtime-каталог `root:fic 0770` и сокет `0660`. Явный `--socket` включает
+профиль разработки с сокетом `0600`; этот режим не ослабляет production path.

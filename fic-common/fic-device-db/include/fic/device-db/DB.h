@@ -14,6 +14,14 @@
 #include <thread>
 #include <cstring>
 #include <cerrno>
+#include <filesystem>
+
+struct DBOptions {
+    std::filesystem::path databaseFile;
+    std::filesystem::path lockFile;
+    std::filesystem::path lockDebugLogFile;
+    bool lockDebugEnabled = true;
+};
 
 class ExclusivePidLock;
 enum class logLevel;
@@ -71,7 +79,7 @@ public:
     // Методы для работы с блокировкой
     bool acquireLock();           // Блокирующий вызов, ждет пока не получит блокировку
     void releaseLock();           // Освобождает блокировку
-    DB(const std::string& db_path);
+    explicit DB(DBOptions options);
     ~DB();
     /* Основные методы */
     // Инициализация БД (если не существует)

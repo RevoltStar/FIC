@@ -1,20 +1,29 @@
 #include <fic/core/LocalizationManager.h>
 
+#include <fic/core/FicRuntimePaths.h>
 #include <fic/core/GlobalConfig.h>
 
 namespace {
 const char* kDefaultLanguage = "ru";
 const char* kGlobalLanguageParameter = "lang";
-const char* kLangDirectory = "/opt/fic/lang/";
 const char* kLangFileExtension = ".lang";
+
+std::string languageFilePath(const std::string& language)
+{
+    return (fic::core::FicRuntimePaths::get().languageDir /
+            (language + kLangFileExtension)).string();
+}
 }
 
 std::string LocalizationManager::currLang = kDefaultLanguage;
-std::string LocalizationManager::langFilePath = std::string(kLangDirectory) + LocalizationManager::currLang + kLangFileExtension;
+std::string LocalizationManager::langFilePath;
 std::unique_ptr<MultilineConfigFileHandler> LocalizationManager::langFile;
 
 bool LocalizationManager::ensureLanguageLoaded()
 {
+    if (langFilePath.empty()) {
+        langFilePath = languageFilePath(currLang);
+    }
     if (!langFile) {
         langFile = std::make_unique<MultilineConfigFileHandler>(langFilePath, "=");
         if (!langFile->loadConfig()) {
@@ -47,7 +56,7 @@ bool LocalizationManager::setCurrentLanguage(const std::string& lang)
     }
 
     currLang = lang;
-    langFilePath = std::string(kLangDirectory) + currLang + kLangFileExtension;
+    langFilePath = languageFilePath(currLang);
     langFile.reset();
     return true;
 }

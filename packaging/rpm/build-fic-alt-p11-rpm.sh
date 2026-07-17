@@ -395,8 +395,19 @@ build_project() {
     local source_dir="$1"
     local build_dir="$2"
 
-    cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+    cmake -S "$source_dir" -B "$build_dir" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DFIC_SYSTEMD_UNIT_DIR="$SYSTEMD_UNIT_DIR" \
+        -DFIC_TMPFILES_DIR="$TMPFILES_DIR"
     cmake --build "$build_dir" --parallel
+}
+
+install_cmake_component() {
+    local build_dir="$1"
+    local component="$2"
+    local package_root="$3"
+
+    DESTDIR="$package_root" cmake --install "$build_dir" --component "$component"
 }
 
 init_rpm_tree() {
@@ -803,11 +814,7 @@ build_fic_dick_package() {
     local output_rpm
 
     package_root="$(init_package_root "$package_name")"
-    mkdir -p "$package_root/opt/fic/bin"
-    mkdir -p "$package_root$SYSTEMD_UNIT_DIR"
-    install -m 0755 "$FIC_DICK_BUILD_DIR/fic-dick" "$package_root/opt/fic/bin/fic-dick"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-device.service" "$package_root$SYSTEMD_UNIT_DIR/fic-device.service"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_info.service"
+    install_cmake_component "$FIC_DICK_BUILD_DIR" fic-dick "$package_root"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
@@ -828,8 +835,8 @@ build_fic_cli_package() {
     local output_rpm
 
     package_root="$(init_package_root "$package_name")"
-    mkdir -p "$package_root/opt/fic/bin"
-    install -m 0755 "$FIC_CLI_BUILD_DIR/fic-cli" "$package_root/opt/fic/bin/fic-cli"
+    install_cmake_component "$FIC_CLI_BUILD_DIR" fic-cli "$package_root"
+    sed -i 's/\r$//' "$package_root/usr/share/bash-completion/completions/fic-cli"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
@@ -850,11 +857,7 @@ build_fic_session_agent_package() {
     local output_rpm
 
     package_root="$(init_package_root "$package_name")"
-    mkdir -p "$package_root/opt/fic/bin"
-    mkdir -p "$package_root/etc/xdg/autostart"
-
-    install -m 0755 "$FIC_SESSION_AGENT_BUILD_DIR/fic-session-agent" "$package_root/opt/fic/bin/fic-session-agent"
-    install -m 0644 "$FIC_SESSION_AGENT_SRC_DIR/fic-session-agent.desktop" "$package_root/etc/xdg/autostart/fic-session-agent.desktop"
+    install_cmake_component "$FIC_SESSION_AGENT_BUILD_DIR" fic-session-agent "$package_root"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
@@ -875,37 +878,9 @@ build_fic_package() {
     local output_rpm
 
     package_root="$(init_package_root "$package_name")"
-    mkdir -p "$package_root/opt/fic/bin"
-    mkdir -p "$package_root/opt/fic/config"
-    mkdir -p "$package_root/opt/fic/db"
-    mkdir -p "$package_root/opt/fic/share"
+    install_cmake_component "$FIC_BUILD_DIR" fic "$package_root"
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
-    mkdir -p "$package_root$SYSTEMD_UNIT_DIR"
-    mkdir -p "$package_root$TMPFILES_DIR"
-    mkdir -p "$package_root/etc/udev/rules.d"
-    mkdir -p "$package_root/usr/share/bash-completion/completions"
-
-    install -m 0755 "$FIC_BUILD_DIR/fic" "$package_root/opt/fic/bin/fic"
-    install -m 0755 "$FIC_SRC_DIR/src/scripts/notify/fic-notify-dispatcher" "$package_root/opt/fic/bin/fic-notify-dispatcher"
-    install -m 0755 "$FIC_SRC_DIR/src/scripts/service/fic-udevadm-trigger" "$package_root/opt/fic/bin/fic-udevadm-trigger"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/completion/fic" "$package_root/usr/share/bash-completion/completions/fic-cli"
-    sed -i 's/\r$//' "$package_root/usr/share/bash-completion/completions/fic-cli"
-
-    copy_tree_contents "$FIC_SRC_DIR/src/scripts/config" "$package_root/opt/fic/config"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/db/PCI_CLASS_ru.txt" "$package_root/opt/fic/db/PCI_CLASS_ru.txt"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/db/USB_CLASS_ru.txt" "$package_root/opt/fic/db/USB_CLASS_ru.txt"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/db/devices.db" "$package_root/opt/fic/share/devices.seed.db"
-    copy_tree_contents "$FIC_SRC_DIR/src/scripts/image" "$package_root/opt/fic/image"
-    copy_tree_contents "$FIC_SRC_DIR/src/scripts/lang" "$package_root/opt/fic/lang"
-
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.service" "$package_root$SYSTEMD_UNIT_DIR/fic.service"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic-notify.service" "$package_root$SYSTEMD_UNIT_DIR/fic-notify.service"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic.timer" "$package_root$SYSTEMD_UNIT_DIR/fic.timer"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/service/fic_get_device_udev_info.service" "$package_root$SYSTEMD_UNIT_DIR/fic_get_device_udev_info.service"
-    install -m 0644 "$FIC_SRC_DIR/src/scripts/tmpfiles/fic.conf" "$package_root$TMPFILES_DIR/fic.conf"
-    copy_tree_contents "$FIC_SRC_DIR/src/scripts/udev" "$package_root/etc/udev/rules.d"
-    find "$package_root/etc/udev/rules.d" -type f -exec chmod 0644 {} \;
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
@@ -927,7 +902,8 @@ build_fic_gui_package() {
 
     package_root="$(init_package_root "$package_name")"
     mkdir -p "$package_root/opt/fic/bin"
-    install -m 0755 "$FIC_GUI_BUILD_DIR/fic-gui" "$package_root/opt/fic/bin/fic-gui.real"
+    install_cmake_component "$FIC_GUI_BUILD_DIR" fic-gui "$package_root"
+    mv "$package_root/opt/fic/bin/fic-gui" "$package_root/opt/fic/bin/fic-gui.real"
     create_fic_gui_launcher "$package_root"
     create_fic_gui_qt_conf "$package_root"
     bundle_fic_gui_qt_runtime "$package_root"

@@ -1,4 +1,5 @@
 #include "DeviceControlDaemon.h"
+#include "DevicePaths.h"
 
 #include <algorithm>
 #include <atomic>
@@ -33,6 +34,7 @@
 #include <fic/core/ModuleConfigFileHandler.h>
 #include <fic/core/SystemBootInfo.h>
 #include <fic/device-db/DB.h>
+#include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
 
 #include "modules/BlockInfoCollector.h"
@@ -186,7 +188,7 @@ std::string request_audit_summary(const json& request) {
 void write_device_audit_log(const std::string& message) {
     try {
         const std::string bootId = current_boot_id();
-        const std::filesystem::path auditDir = std::filesystem::path("/opt/fic/log") /
+        const std::filesystem::path auditDir = DeviceRuntimePaths::get().logDir /
             (bootId.empty() ? "unknown_boot" : bootId) /
             "audit";
         std::filesystem::create_directories(auditDir);
@@ -812,7 +814,7 @@ json handle_udev_event(const json& request) {
             return fic::ipc::make_error_response("failed to add/update device");
         }
 
-        DB db(DEVICE_DB_PATH);
+        DB db(DeviceRuntimePaths::get().databaseOptions());
         db.initializeDatabase();
         DeviceInfo device = db.getDeviceByDevpathSubsystemAndBootId(devpath, subsystem, current_boot_id());
         if (device.id == -1) {
@@ -871,7 +873,7 @@ json handle_udev_event(const json& request) {
     }
 
     if (action == "remove") {
-        DB dbBefore(DEVICE_DB_PATH);
+        DB dbBefore(DeviceRuntimePaths::get().databaseOptions());
         dbBefore.initializeDatabase();
         DeviceInfo before = dbBefore.getDeviceByDevpathAndSubsystem(devpath, subsystem);
         std::vector<int> affectedIds;
@@ -886,7 +888,7 @@ json handle_udev_event(const json& request) {
             return fic::ipc::make_error_response("failed to mark device as removed");
         }
 
-        DB db(DEVICE_DB_PATH);
+        DB db(DeviceRuntimePaths::get().databaseOptions());
         db.initializeDatabase();
         DeviceInfo device = db.getDeviceByDevpathAndSubsystem(devpath, subsystem);
         if (device.id != -1) {
@@ -1022,7 +1024,7 @@ bool can_delete_subtree(DB& db, const DeviceInfo& device, const std::string& boo
 }
 
 json handle_db_request(const json& request) {
-    DB db(DEVICE_DB_PATH);
+    DB db(DeviceRuntimePaths::get().databaseOptions());
     if (!db.initializeDatabase()) {
         return fic::ipc::make_error_response("failed to initialize device database");
     }
@@ -1175,11 +1177,7 @@ bool serve_one_client(int clientFd) {
 }
 
 std::string get_device_socket_path_from_env() {
-    const char* envPath = std::getenv("FIC_DEVICE_SOCKET_PATH");
-    if (envPath != nullptr && envPath[0] != '\0') {
-        return envPath;
-    }
-    return fic::ipc::DEFAULT_DEVICE_SOCKET_PATH;
+    return fic::ipc::endpoint_socket_path(fic::ipc::Endpoint::DeviceDaemon);
 }
 
 bool is_missing_device_socket_error(const json& response, const std::string& socketPath) {
@@ -1193,97 +1191,15 @@ bool is_missing_device_socket_error(const json& response, const std::string& soc
            message.find("Нет такого файла", prefix.size()) != std::string::npos;
 }
 
-bool probe_existing_device_daemon(const std::string& socketPath,
-                                  int& connectError,
-                                  std::string& error) {
-    connectError = 0;
-
-    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) {
-        error = "socket() failed: " + std::string(std::strerror(errno));
-        return false;
-    }
-
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (socketPath.size() >= sizeof(addr.sun_path)) {
-        error = "device socket path is too long: " + socketPath;
-        ::close(fd);
-        return false;
-    }
-    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
-
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        connectError = errno;
-        error = std::strerror(errno);
-        ::close(fd);
-        return false;
-    }
-
-    std::string ioError;
-    const std::string requestText = json{{"command", "status"}}.dump() + "\n";
-    fic::ipc::write_all(fd, requestText, ioError);
-    ::shutdown(fd, SHUT_WR);
-
-    std::string responseText;
-    fic::ipc::read_until_eof(fd, responseText, ioError);
-    ::close(fd);
-    return true;
-}
-
-bool prepare_runtime_socket(const std::string& socketPath, int serverFd) {
-    const std::filesystem::path socket = socketPath;
-    const std::filesystem::path runtimeDir = socket.parent_path();
-    std::filesystem::create_directories(runtimeDir);
-
-    group* ficGroup = getgrnam("fic");
-    if (runtimeDir == "/run/fic" && ficGroup != nullptr) {
-        ::chown(runtimeDir.c_str(), 0, ficGroup->gr_gid);
-        ::chmod(runtimeDir.c_str(), 0770);
-    }
-
-    if (std::filesystem::exists(socketPath)) {
-        int probeConnectError = 0;
-        std::string probeError;
-        if (probe_existing_device_daemon(socketPath, probeConnectError, probeError)) {
-            std::cerr << "fic device daemon is already running, socket=" << socketPath << std::endl;
-            return false;
-        }
-        if (probeConnectError != ECONNREFUSED && probeConnectError != ENOENT) {
-            std::cerr << "device socket exists but could not verify it is stale: "
-                      << socketPath << ": " << probeError << std::endl;
-            return false;
-        }
-        ::unlink(socketPath.c_str());
-    }
-
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (socketPath.size() >= sizeof(addr.sun_path)) {
-        std::cerr << "device socket path is too long: " << socketPath << std::endl;
-        return false;
-    }
-    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
-
-    if (::bind(serverFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::cerr << "bind(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
-        return false;
-    }
-
-    if (ficGroup != nullptr) {
-        ::chown(socketPath.c_str(), geteuid(), ficGroup->gr_gid);
-    }
-    ::chmod(socketPath.c_str(), 0660);
-    return true;
-}
-
 } // namespace
 
 int run_daemon(const std::string& socketPathArg) {
-    const std::string socketPath = socketPathArg.empty() ? get_device_socket_path_from_env() : socketPathArg;
+    const std::string socketPath = socketPathArg.empty()
+        ? std::string(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH)
+        : socketPathArg;
 
     {
-        DB db(DEVICE_DB_PATH);
+        DB db(DeviceRuntimePaths::get().databaseOptions());
         if (!db.initializeDatabase()) {
             std::cerr << "failed to initialize device database" << std::endl;
             return 1;
@@ -1293,23 +1209,24 @@ int run_daemon(const std::string& socketPathArg) {
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
 
-    int serverFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (serverFd < 0) {
-        std::cerr << "socket() failed: " << std::strerror(errno) << std::endl;
+    fic::ipc::AdminSocketOptions socketOptions;
+    socketOptions.socketPath = socketPath;
+    socketOptions.security = socketPathArg.empty()
+        ? fic::ipc::AdminSocketSecurityProfile::ProductionAdmin
+        : fic::ipc::AdminSocketSecurityProfile::Development;
+    socketOptions.backlog = 16;
+    socketOptions.label = "fic device daemon socket";
+    fic::ipc::AdminSocketResult socketResult =
+        fic::ipc::create_admin_server_socket(socketOptions);
+    if (socketResult.fileDescriptor < 0) {
+        std::cerr << socketResult.error;
+        if (socketResult.existingPeerPid.has_value()) {
+            std::cerr << ", pid=" << socketResult.existingPeerPid.value();
+        }
+        std::cerr << std::endl;
         return 1;
     }
-
-    if (!prepare_runtime_socket(socketPath, serverFd)) {
-        ::close(serverFd);
-        return 1;
-    }
-
-    if (::listen(serverFd, 16) < 0) {
-        std::cerr << "listen(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
-        ::close(serverFd);
-        ::unlink(socketPath.c_str());
-        return 1;
-    }
+    const int serverFd = socketResult.fileDescriptor;
 
     log_device("fic-dick device daemon started on " + socketPath, logLevel::INFO);
 

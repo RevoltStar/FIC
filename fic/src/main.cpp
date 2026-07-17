@@ -27,8 +27,10 @@
 #include <nlohmann/json.hpp>
 
 #include "core/main_function.h"
+#include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/core/Logger.h>
+#include <fic/core/FicRuntimePaths.h>
 #include <fic/core/SystemBootInfo.h>
 
 using json = nlohmann::json;
@@ -150,7 +152,7 @@ std::string request_audit_summary(const json& request) {
 void write_audit_log(const std::string& message) {
     try {
         const std::string bootId = SystemBootInfo::get_boot_id();
-        const std::filesystem::path auditDir = std::filesystem::path("/opt/fic/log") /
+        const std::filesystem::path auditDir = fic::core::FicRuntimePaths::get().logDir /
             (bootId.empty() ? "unknown_boot" : bootId) /
             "audit";
         std::filesystem::create_directories(auditDir);
@@ -178,75 +180,6 @@ void audit_ipc_request(const PeerCredentials& peer, const json& request, const j
         " ok=" + std::string(ok ? "true" : "false") +
         " message=\"" + sanitize_log_value(responseMessage) + "\""
     );
-}
-
-std::string mode_to_octal(mode_t mode) {
-    std::ostringstream out;
-    out << "0" << std::oct << (mode & 07777);
-    return out.str();
-}
-
-bool verify_path_permissions(const std::filesystem::path& path,
-                             const std::string& label,
-                             mode_t expectedType,
-                             mode_t expectedMode,
-                             uid_t expectedUid,
-                             std::optional<gid_t> expectedGid) {
-    struct stat info {};
-    if (::lstat(path.c_str(), &info) != 0) {
-        std::cerr << "lstat(" << path << ") failed while checking " << label
-                  << ": " << std::strerror(errno) << std::endl;
-        return false;
-    }
-
-    if ((info.st_mode & S_IFMT) != expectedType) {
-        std::cerr << label << " has invalid type: " << path << std::endl;
-        return false;
-    }
-    if (info.st_uid != expectedUid) {
-        std::cerr << label << " has invalid owner: " << path
-                  << ", expected uid=" << expectedUid
-                  << ", actual uid=" << info.st_uid << std::endl;
-        return false;
-    }
-    if (expectedGid.has_value() && info.st_gid != expectedGid.value()) {
-        std::cerr << label << " has invalid group: " << path
-                  << ", expected gid=" << expectedGid.value()
-                  << ", actual gid=" << info.st_gid << std::endl;
-        return false;
-    }
-
-    const mode_t actualMode = info.st_mode & 07777;
-    if (actualMode != expectedMode) {
-        std::cerr << label << " has invalid permissions: " << path
-                  << ", expected mode=" << mode_to_octal(expectedMode)
-                  << ", actual mode=" << mode_to_octal(actualMode) << std::endl;
-        return false;
-    }
-
-    return true;
-}
-
-bool verify_runtime_socket_permissions(const std::string& socketPath, const group* ficGroup) {
-    const auto runtimeDir = std::filesystem::path(socketPath).parent_path();
-    const bool isDefaultRuntimeDir = runtimeDir == std::filesystem::path("/run/fic");
-
-    std::optional<gid_t> expectedGid;
-    if (ficGroup != nullptr) {
-        expectedGid = ficGroup->gr_gid;
-    }
-
-    if (isDefaultRuntimeDir) {
-        if (ficGroup == nullptr) {
-            std::cerr << "group 'fic' does not exist; refusing to expose default daemon socket" << std::endl;
-            return false;
-        }
-        if (!verify_path_permissions(runtimeDir, "fic runtime directory", S_IFDIR, 0770, 0, expectedGid)) {
-            return false;
-        }
-    }
-
-    return verify_path_permissions(socketPath, "fic daemon socket", S_IFSOCK, 0660, geteuid(), expectedGid);
 }
 
 std::string canonical_module_name(
@@ -468,9 +401,6 @@ std::string policy_apply_message(const PolicyApplySummary& summary,
     return failureMessage;
 }
 
-constexpr const char* LOG_BASE_PATH = "/opt/fic/log";
-constexpr const char* LOCK_STATUS_PATH = "/opt/fic/lockstatus";
-
 json log_records_json(const std::string& requestedBootId) {
     const std::string bootId = requestedBootId.empty()
         ? SystemBootInfo::get_boot_id()
@@ -482,7 +412,7 @@ json log_records_json(const std::string& requestedBootId) {
         return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
     }
 
-    const std::filesystem::path bootDir = std::filesystem::path(LOG_BASE_PATH) / bootId;
+    const std::filesystem::path bootDir = fic::core::FicRuntimePaths::get().logDir / bootId;
     if (!std::filesystem::exists(bootDir) || !std::filesystem::is_directory(bootDir)) {
         return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
     }
@@ -532,7 +462,7 @@ json log_records_json(const std::string& requestedBootId) {
 }
 
 json lock_status_json() {
-    SingleLineFileHandler lockStatus(LOCK_STATUS_PATH);
+    SingleLineFileHandler lockStatus(fic::core::FicRuntimePaths::get().lockStatusFile.string());
     if (!lockStatus.loadConfig()) {
         return fic::ipc::make_error_response("failed to read lock status");
     }
@@ -741,152 +671,23 @@ bool serve_one_client(int clientFd,
     return fic::ipc::write_all(clientFd, responseText, error);
 }
 
-bool probe_existing_daemon(const std::string& socketPath,
-                           std::optional<pid_t>& daemonPid,
-                           int& connectError,
-                           std::string& error) {
-    connectError = 0;
-
-    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) {
-        error = "socket() failed: " + std::string(std::strerror(errno));
-        return false;
-    }
-
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (socketPath.size() >= sizeof(addr.sun_path)) {
-        error = "socket path is too long: " + socketPath;
-        ::close(fd);
-        return false;
-    }
-    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
-
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        connectError = errno;
-        error = std::strerror(errno);
-        ::close(fd);
-        return false;
-    }
-
-#ifdef SO_PEERCRED
-    struct ucred credentials {};
-    socklen_t credentialsLength = sizeof(credentials);
-    if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &credentialsLength) == 0) {
-        daemonPid = credentials.pid;
-    }
-#endif
-
-    std::string ioError;
-    const std::string requestText = json{{"command", "status"}}.dump() + "\n";
-    fic::ipc::write_all(fd, requestText, ioError);
-    ::shutdown(fd, SHUT_WR);
-
-    std::string responseText;
-    fic::ipc::read_until_eof(fd, responseText, ioError);
-    ::close(fd);
-    return true;
-}
-
-int create_server_socket(const std::string& socketPath) {
-    const auto runtimeDir = std::filesystem::path(socketPath).parent_path();
-    const bool runtimeDirAlreadyExisted = std::filesystem::exists(runtimeDir);
-    std::filesystem::create_directories(runtimeDir);
-
-    group* ficGroup = ::getgrnam("fic");
-    if (runtimeDir == std::filesystem::path("/run/fic") && ficGroup == nullptr) {
-        std::cerr << "group 'fic' does not exist; refusing to expose default daemon socket" << std::endl;
-        return -1;
-    }
-
-    const bool manageRuntimeDirPermissions = !runtimeDirAlreadyExisted || runtimeDir == std::filesystem::path("/run/fic");
-    if (manageRuntimeDirPermissions) {
-        if (ficGroup != nullptr) {
-            if (::chown(runtimeDir.c_str(), static_cast<uid_t>(-1), ficGroup->gr_gid) < 0) {
-                std::cerr << "chown(" << runtimeDir << ") failed: " << std::strerror(errno) << std::endl;
-                return -1;
-            }
-        }
-        if (::chmod(runtimeDir.c_str(), 0770) < 0) {
-            std::cerr << "chmod(" << runtimeDir << ") failed: " << std::strerror(errno) << std::endl;
-            return -1;
+bool custom_socket_requested(int argc, char* argv[]) {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--socket") {
+            return true;
         }
     }
-
-    if (std::filesystem::exists(socketPath)) {
-        std::optional<pid_t> daemonPid;
-        int probeConnectError = 0;
-        std::string probeError;
-        if (probe_existing_daemon(socketPath, daemonPid, probeConnectError, probeError)) {
-            std::cerr << "fic daemon is already running, socket=" << socketPath;
-            if (daemonPid.has_value()) {
-                std::cerr << ", pid=" << daemonPid.value();
-            }
-            std::cerr << std::endl;
-            return -1;
-        }
-        if (probeConnectError != ECONNREFUSED && probeConnectError != ENOENT) {
-            std::cerr << "socket exists but could not verify it is stale: " << socketPath
-                      << ": " << probeError << std::endl;
-            return -1;
-        }
-    }
-
-    ::unlink(socketPath.c_str());
-
-    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) {
-        std::cerr << "socket() failed: " << std::strerror(errno) << std::endl;
-        return -1;
-    }
-
-    sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (socketPath.size() >= sizeof(addr.sun_path)) {
-        std::cerr << "socket path is too long: " << socketPath << std::endl;
-        ::close(fd);
-        return -1;
-    }
-    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
-
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::cerr << "bind(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
-        ::close(fd);
-        return -1;
-    }
-
-    if (ficGroup != nullptr) {
-        if (::chown(socketPath.c_str(), static_cast<uid_t>(-1), ficGroup->gr_gid) < 0) {
-            std::cerr << "chown(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
-            ::close(fd);
-            ::unlink(socketPath.c_str());
-            return -1;
-        }
-    }
-    if (::chmod(socketPath.c_str(), 0660) < 0) {
-        std::cerr << "chmod(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
-        ::close(fd);
-        ::unlink(socketPath.c_str());
-        return -1;
-    }
-
-    if (!verify_runtime_socket_permissions(socketPath, ficGroup)) {
-        ::close(fd);
-        ::unlink(socketPath.c_str());
-        return -1;
-    }
-
-    if (::listen(fd, 32) < 0) {
-        std::cerr << "listen() failed: " << std::strerror(errno) << std::endl;
-        ::close(fd);
-        return -1;
-    }
-
-    return fd;
+    return false;
 }
 } // namespace
 
 int main(int argc, char* argv[]) {
+    std::string pathError;
+    if (!fic::core::FicRuntimePaths::initializeProduction(pathError)) {
+        std::cerr << "failed to initialize FIC runtime paths: " << pathError << std::endl;
+        return 1;
+    }
+
     try {
         std::locale::global(std::locale("ru_RU.UTF-8"));
     } catch (const std::exception&) {
@@ -906,10 +707,24 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
 
-    int serverFd = create_server_socket(socketPath);
-    if (serverFd < 0) {
+    fic::ipc::AdminSocketOptions socketOptions;
+    socketOptions.socketPath = socketPath;
+    socketOptions.security = custom_socket_requested(argc, argv)
+        ? fic::ipc::AdminSocketSecurityProfile::Development
+        : fic::ipc::AdminSocketSecurityProfile::ProductionAdmin;
+    socketOptions.backlog = 32;
+    socketOptions.label = "fic daemon socket";
+    fic::ipc::AdminSocketResult socketResult =
+        fic::ipc::create_admin_server_socket(socketOptions);
+    if (socketResult.fileDescriptor < 0) {
+        std::cerr << socketResult.error;
+        if (socketResult.existingPeerPid.has_value()) {
+            std::cerr << ", pid=" << socketResult.existingPeerPid.value();
+        }
+        std::cerr << std::endl;
         return 1;
     }
+    const int serverFd = socketResult.fileDescriptor;
 
     std::cout << "fic daemon started, socket=" << socketPath
               << ", interval=" << intervalSeconds << "s" << std::endl;

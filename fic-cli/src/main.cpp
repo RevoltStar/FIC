@@ -184,7 +184,7 @@ int print_policy_value(const json& response) {
 
 fic::ipc::Client device_client()
 {
-    return fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH);
+    return fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon);
 }
 
 void print_device_item(const json& item)

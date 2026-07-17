@@ -2,7 +2,7 @@
 Description=FIC cpu/motherboard/memory info collector
 
 [Service]
-ExecStart=/opt/fic/bin/fic-dick "cpu_board_memory"
+ExecStart=@FIC_PRIVATE_BINDIR@/fic-dick "cpu_board_memory"
 Type=oneshot
 RemainAfterExit=yes
 

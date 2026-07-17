@@ -5,12 +5,13 @@
 #include <string>
 #include <fstream>
 #include <algorithm>
+#include <filesystem>
 
 class ModuleConfigFileHandler : public ConfigFileHandler {
-private:
-    const static std::string moduleFolderPath;
 public:
     ModuleConfigFileHandler(const std::string& module);
+    ModuleConfigFileHandler(const std::filesystem::path& configDirectory,
+                            const std::string& module);
 
     bool hasPolicyStatus(const std::string& policy) const;
     bool hasConfiguredValue(const std::string& policy) const;

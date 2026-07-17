@@ -1,4 +1,5 @@
 #include "InfoCollector.h"
+#include "DevicePaths.h"
 
 
 bool InfoCollector::log(std::string message, logLevel logLev){
@@ -71,6 +72,10 @@ std::string InfoCollector::get_boot_id() {
     return boot_id;
 }
 
+std::filesystem::path InfoCollector::data_directory() const {
+    return fic::device_control::DeviceRuntimePaths::get().databaseFile.parent_path();
+}
+
 
 /*Обрабатываем устройство*/
 bool InfoCollector::process_device(
@@ -89,7 +94,7 @@ bool InfoCollector::process_device(
         std::string devpath = devpath_parent + "/" + current_hash;
 
         this->log("Ждём блокировку БД", logLevel::TRACE);
-        DB db = DB("/opt/fic/db/devices.db");
+        DB db(fic::device_control::DeviceRuntimePaths::get().databaseOptions());
         this->log("Получили блокировку БД", logLevel::TRACE);
         //Существующее устройство
         DeviceInfo existing_device = db.getDeviceByHashAndSubsystem(current_hash,device_type);

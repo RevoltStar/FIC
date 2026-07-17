@@ -1,136 +1,95 @@
 # FIC 2.0: передача контекста
 
-Этот файл хранит текущее состояние работы между чатами. Он не является журналом
-всей разработки и не заменяет `AGENTS.md` или документацию компонентов.
+Этот файл хранит актуальный снимок незавершенной работы. Обязательные правила и
+границы компонентов находятся в `AGENTS.md`.
 
 ## Текущий снимок
 
-- Обновлено: 2026-07-16.
+- Обновлено: 2026-07-17.
 - Ветка: `main`.
-- Базовый commit: `d3ec70e`.
-- Текущая задача: поддержка полного набора постоянных конфигураций procps-ng
-  `sysctl --system` в политиках модуля `SYSCTL`.
+- Базовый commit: `7f73165`.
+- Текущая задача: план-оптимум рефакторинга захардкоженных product/runtime
+  путей.
 
 ## Сделано
 
-- Добавлен доменный обработчик `SysctlConfiguration`. Общий
-  `ConfigFileHandler` намеренно не расширялся: его однофайловая модель не может
-  выразить приоритеты и глобальный порядок sysctl.
-- Обрабатываются фиксированные каталоги `/etc/sysctl.d`, `/run/sysctl.d`,
-  `/usr/local/lib/sysctl.d`, `/usr/lib/sysctl.d`, `/lib/sysctl.d`, после них —
-  `/etc/sysctl.conf`.
-- Для одинаковых имен выбирается файл из первого каталога в порядке приоритета;
-  выбранные `*.conf` сортируются глобально по имени. Файлы с другими суффиксами
-  и подавленные одноименные файлы не разбираются.
-- Поддержаны комментарии `#`/`;`, повторные параметры, `-key = value`, ключи с
-  точками или slash-нотацией, glob-назначения, исключения `-key` без `=` и
-  symlink-mask на `/dev/null`. Явное назначение ключа исключает его из glob-
-  совпадений.
-- Нарушение определяется по последнему эффективному значению точного ключа.
-  Затененные более ранние строки не переписываются и сами по себе не считаются
-  нарушением.
-- Исправление записывается только в управляемый блок в конце
-  `/etc/sysctl.conf`. Значения других политик в блоке сохраняются, ключи
-  выводятся детерминированно, повторное применение идемпотентно.
-- Перед записью повторно сверяется снимок всех активных файлов. Запись идет
-  через `AtomicFileWriter`, production-файл получает `root:root 0644`. После
-  записи граф перечитывается и проверяется постусловие; при ошибке исходный
-  `/etc/sysctl.conf` восстанавливается либо созданный файл удаляется с `fsync`
-  каталога.
-- Активные файлы и их canonical target должны принадлежать root, не быть
-  доступны на запись группе/остальным и находиться в безопасном каталоге.
-  Маска `/dev/null` разрешена отдельно.
-- `Sysctl::apply()` защищен общим mutex, использует новый обработчик, сообщает
-  источник эффективного значения и отдельно читает соответствующий
-  `/proc/sys`. Несовпадение runtime журналируется, но работающий kernel runtime
-  не изменяется.
-- Добавлен CTest-набор из 13 сценариев: глобальный порядок, приоритет одинаковых
-  имен, игнорирование подавленного некорректного файла, последний
-  `/etc/sysctl.conf`, slash-нотация, glob с исключением, явное значение против
-  glob, `/dev/null` mask, отсутствие лишней записи, несколько managed-значений,
-  перенос блока в конец, malformed-блок и некорректная активная строка.
-- Тестовый бинарник получил ручные режимы `--inspect KEY` и
-  `--ensure KEY VALUE`; они не входят в production-бинарник.
-- Добавлен root-only integration-скрипт с автоматическим backup/restore
-  реальных `/etc/sysctl*`.
-- Обновлены README демона и архитектурная схема.
+- Добавлен единый build-time layout `cmake/FicInstallLayout.cmake`. Config,
+  data, logs, static assets, runtime и отдельные файлы остаются независимыми
+  семантическими параметрами; универсальный `FIC_ROOT` намеренно не вводился.
+- CMake генерирует `FicPathDefaults.h` и `FicIpcPathDefaults.h`. В C++ больше
+  нет литералов `/opt/fic` и `/run/fic`.
+- `FicProductPaths` валидирует абсолютные нормализованные пути, а
+  `FicRuntimePaths` допускает однократную инициализацию неизменяемого контекста.
+  Демоны инициализируют production layout при старте.
+- Config, localization, logs, notify spool, lock status и command hash
+  переведены на runtime paths. `ModuleConfigFileHandler` дополнительно умеет
+  принимать явный каталог.
+- `fic-device-db` больше не знает product layout. `DB` принимает `DBOptions`,
+  а `fic-dick` строит их через собственный `DevicePaths`/`DeviceRuntimePaths`.
+- Policy и device IPC получили разные endpoint-типы и переменные окружения:
+  `FIC_SOCKET_PATH` и `FIC_DEVICE_SOCKET_PATH`.
+- Создание обоих административных Unix-сокетов сведено в `FicAdminSocket`.
+  Production-профиль проверяет `root:fic 0770` и socket `0660`, не заменяет
+  чужой socket/обычный файл и удаляет только подтвержденный stale socket.
+  Явный `--socket` использует development-профиль `0600`.
+- systemd, tmpfiles, udev, notify dispatcher и XDG desktop переведены в
+  CMake-шаблоны. GUI icon встроена в Qt resource.
+- Добавлены install-компоненты `fic`, `fic-dick`, `fic-cli`,
+  `fic-session-agent`, `fic-gui`. Debian 10/11/12 и ALT p11 staging используют
+  эти компоненты вместо ручного копирования исходных integration-файлов.
+  ALT отдельно передает каталоги systemd/tmpfiles.
+- Добавлены тесты runtime layout, DBOptions, IPC endpoint и socket security, а
+  также static check против возврата абсолютных product/runtime путей в C++ и
+  обхода CMake layout упаковкой.
+- Обновлены README компонентов, packaging и архитектурная документация.
 
-## Измененные файлы
+## Основные измененные зоны
 
-- `fic/src/modules/sysctl/Sysctl.h`
-- `fic/src/modules/sysctl/Sysctl.cpp`
-- `fic/src/modules/sysctl/SysctlConfiguration.h`
-- `fic/src/modules/sysctl/SysctlConfiguration.cpp`
-- `tests/sysctl/SysctlConfigurationTests.cpp`
-- `tests/sysctl/RemoteSysctlIntegration.sh`
-- `tests/CMakeLists.txt`
-- `fic/README.md`
-- `docs/architecture-diagrams.md`
-- `docs/HANDOFF.md`
+- `cmake/FicInstallLayout.cmake`, корневой и компонентные `CMakeLists.txt`.
+- `fic-common/fic-core`: `FicRuntimePaths`, generated defaults и потребители
+  product paths.
+- `fic-common/fic-ipc`: endpoint defaults и `FicAdminSocket`.
+- `fic-common/fic-device-db`: `DBOptions`.
+- `fic`, `fic-dick`, `fic-cli`, `fic-gui`, `fic-session-agent`.
+- `fic/src/scripts/*.in`, Debian/RPM build scripts.
+- `tests/paths`, `tests/device-control/static_checks.py`.
+- README и `docs/architecture-diagrams.md`.
 
 ## Проверки
 
-Выполнено успешно:
+Успешно выполнены:
 
 ```bash
-cmake -S . -B /tmp/fic2-sysctl-build -DBUILD_TESTING=ON
-cmake --build /tmp/fic2-sysctl-build \
-  --target sudoers_configuration_tests file_handler_options_tests \
-           sysctl_configuration_tests fic -j2
-ctest --test-dir /tmp/fic2-sysctl-build --output-on-failure
+cmake -S . -B /tmp/fic2-paths-build -DBUILD_TESTING=ON
+cmake --build /tmp/fic2-paths-build -j2
+ctest --test-dir /tmp/fic2-paths-build --output-on-failure
 
-cmake -S . -B /tmp/fic2-sysctl-warnings -DBUILD_TESTING=ON \
-  -DCMAKE_CXX_FLAGS="-Wall -Wextra -Wpedantic"
-cmake --build /tmp/fic2-sysctl-warnings \
-  --target sysctl_configuration_tests fic -j2
-git diff --check
+bash -n packaging/deb/build-fic-debian10-deb.sh
+bash -n packaging/deb/build-fic-debian11-deb.sh
+bash -n packaging/deb/build-fic-debian12-deb.sh
+bash -n packaging/rpm/build-fic-alt-p11-rpm.sh
 ```
 
-Все четыре CTest-проверки прошли. Новые файлы Sysctl собрались без
-предупреждений; warnings-сборка показывает только существующие предупреждения в
-других файлах проекта.
+Собраны все цели, 7 тестов прошли. `admin_socket_tests` собран, но пропущен:
+текущий sandbox запрещает `bind(AF_UNIX)` даже во временном каталоге с
+`EPERM`. Install-компоненты `fic`, `fic-dick`, `fic-cli` и
+`fic-session-agent` установлены в `/tmp/fic2-install-check`, состав файлов и
+подстановки шаблонов проверены. Отдельная конфигурация с `/srv/fic/bin`,
+`/etc/fic/policies` и `/var/run/fic-test` подтвердила согласованную генерацию
+C++, systemd, tmpfiles и udev.
 
-Тесты работали с временными деревьями в `/tmp`. Реальные `/etc/sysctl*` и
-`/proc/sys` не изменялись, `sysctl --system` не запускался.
-
-Дополнительно изменения проверены на `172.17.1.105` (Debian 13.5, GCC 14.2,
-CMake 3.31.6, procps-ng 4.0.4):
-
-- успешно собраны `fic` и три C++ test target;
-- все 13 сценариев `sysctl_configuration_tests` прошли;
-- production-read первоначально обнаружил дефект на строках Debian вида
-  `-net.ipv4.conf.all.rp_filter`; после добавления glob/exclusion-семантики
-  значения обработчика совпали с `/usr/sbin/sysctl --dry-run --system`;
-- на реальных `/etc/sysctl.d`, `/run/sysctl.d` и `/etc/sysctl.conf` прошли
-  глобальный порядок, приоритет одинакового basename, `/dev/null` mask,
-  отсутствие записи при правильном значении, managed override, `root:root 0644`,
-  procps dry-run, идемпотентность, несколько managed-ключей, fail-closed для
-  malformed-блока и world-writable активного файла;
-- integration-скрипт восстановил исходный `/etc/sysctl.conf` размером 275 байт
-  и метаданные `root:root 0644`, удалил тестовые файлы и созданный
-  `/run/sysctl.d`; managed-маркеров после теста нет;
-- применялись только dry-run и чтение `/proc/sys`, kernel runtime не менялся;
-- удалены удаленные исходники, build-каталог и случайный pager-артефакт.
-
-Общий CTest на машине прошел 3 из 4 наборов. Единственный сбой находится в
-старом `sudoers_configuration_tests`: сценарий
-`invalid included rule must fail before changing other files`. Sysctl-набор,
-FileHandler и static checks прошли; это отдельный Sudo/visudo-сигнал и не
-вызван связями с новым Sysctl-кодом.
+Реальные политики, device mutation, udev trigger, установка пакетов и запись в
+`/opt/fic` не выполнялись. Docker-сборки deb/rpm не запускались.
 
 ## Что осталось и риски
 
-- Реализация сознательно моделирует procps-ng `sysctl --system`. Нативный
-  `systemd-sysctl` не читает `/etc/sysctl.conf`; на системах без ссылки вроде
-  `/etc/sysctl.d/99-sysctl.conf -> ../sysctl.conf` managed-блок не будет
-  применен при загрузке. Поддержка такого профиля требует отдельного
-  согласованного managed-файла в `/etc/sysctl.d` и выбора loader profile.
-- Runtime ядра пока только проверяется. Для автоматического изменения нужен
-  отдельный безопасный контракт через `VerifiedProcessExecutor`, hash
-  фактического `sysctl`, проверка результата в `/proc/sys` и определенная
-  стратегия отката disk/runtime.
-- Парсер вычисляет точные ключи текущих политик FIC с учетом glob и исключений,
-  но не разворачивает glob в полный перечень существующих `/proc/sys` узлов.
-- Совместимость `/etc/sysctl.conf` с символическими ссылками сохранена.
-  `AtomicFileWriter` разрешает canonical target перед записью; полноценной
-  фиксации inode между чтением и rename нет, как и у прежней реализации.
+- Перед merge желательно запустить `admin_socket_tests` вне sandbox и тяжелые
+  Debian 12/ALT p11 package builds. В этой сессии их отсутствие не скрывается.
+- Packaging lifecycle и Qt launcher по-прежнему относятся к фиксированному
+  production-профилю `/opt/fic`; переносимый payload и integration templates
+  управляются CMake, но создание совершенно нового дистрибутивного layout
+  потребует отдельной адаптации maintainer scripts/launcher.
+- Production socket startup теперь fail-closed, если группа `fic` отсутствует
+  или metadata runtime-каталога нельзя привести к контракту. Это намеренное
+  усиление безопасности, но старое некорректное окружение перестанет стартовать
+  молча.

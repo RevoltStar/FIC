@@ -5,7 +5,7 @@ Requires=fic.service
 
 [Service]
 Type=simple
-ExecStart=/opt/fic/bin/fic-dick --daemon
+ExecStart=@FIC_PRIVATE_BINDIR@/fic-dick --daemon
 Restart=on-failure
 
 [Install]

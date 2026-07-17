@@ -8,7 +8,26 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/device-control/static_checks.py
                 ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME path_layout_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/paths/static_checks.py
+                ${CMAKE_SOURCE_DIR}
+    )
 endif()
+
+add_executable(runtime_paths_tests paths/RuntimePathsTests.cpp)
+target_link_libraries(runtime_paths_tests PRIVATE fic-core fic-device-db)
+add_test(NAME runtime_paths_tests COMMAND runtime_paths_tests)
+
+add_executable(ipc_paths_tests paths/IpcPathsTests.cpp)
+target_link_libraries(ipc_paths_tests PRIVATE fic-ipc)
+add_test(NAME ipc_paths_tests COMMAND ipc_paths_tests)
+
+add_executable(admin_socket_tests paths/AdminSocketTests.cpp)
+target_link_libraries(admin_socket_tests PRIVATE fic-ipc)
+add_test(NAME admin_socket_tests COMMAND admin_socket_tests)
+set_tests_properties(admin_socket_tests PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(sudoers_configuration_tests
     sudoers/SudoersConfigurationTests.cpp

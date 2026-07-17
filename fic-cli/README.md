@@ -22,6 +22,10 @@ CLI является тонким клиентом над daemon API. Это з�
 FIC_SOCKET_PATH=/tmp/fic.sock fic-cli status
 ```
 
+`FIC_SOCKET_PATH` относится только к API политик. Команды дерева устройств
+используют отдельный endpoint `/run/fic/fic-device.sock`; для разработки он
+переопределяется через `FIC_DEVICE_SOCKET_PATH`.
+
 Переменная обрабатывается в общем IPC-клиенте:
 
 ```text

@@ -31,7 +31,6 @@ const std::unordered_map<notifyLevel, std::string> notifyUserStrings = {
 
 //Создание уведомления для пользователя
 class NotifyUser{
-    static const std::string NOTIFY_DIR;
     static const notifyLevel currNotifyLevel;
     static std::string enumToString(notifyLevel level) {
         return notifyUserStrings.at(level);

@@ -3,23 +3,39 @@
 #include <fic/core/ExclusivePidLock.h>
 #include <fic/core/Logger.h>
 
-DB::DB(const std::string& db_path)
-    : db_path(db_path),
+#include <stdexcept>
+
+namespace {
+std::string validatedDatabasePath(const DBOptions& options) {
+    const std::filesystem::path* paths[] = {
+        &options.databaseFile,
+        &options.lockFile,
+        &options.lockDebugLogFile
+    };
+    for (const auto* path : paths) {
+        if (path->empty() || !path->is_absolute() ||
+            path->lexically_normal() != *path) {
+            throw std::invalid_argument(
+                "DBOptions paths must be absolute and lexically normalized");
+        }
+    }
+    if (options.databaseFile == options.lockFile) {
+        throw std::invalid_argument("database and lock paths must be different");
+    }
+    return options.databaseFile.string();
+}
+} // namespace
+
+DB::DB(DBOptions options)
+    : db_path(validatedDatabasePath(options)),
       db(nullptr),
-      lock_(std::make_unique<ExclusivePidLock>("/opt/fic/log/db_lock")) {
+      lock_(std::make_unique<ExclusivePidLock>(options.lockFile.string(),
+                                               options.lockDebugLogFile.string(),
+                                               options.lockDebugEnabled)) {
 
     while(!this->acquireLock()){
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    /*
-    // Создаем путь для файла блокировки
-    lock_path = db_path + ".lock";
-
-    // Захватываем блокировку (бесконечное ожидание)
-    if (!acquireLock()) {
-        throw std::runtime_error("Failed to acquire database lock");
-    }
-    */
     // Открываем базу данных только после получения блокировки
     if (!openDatabase()) {
         releaseLock();

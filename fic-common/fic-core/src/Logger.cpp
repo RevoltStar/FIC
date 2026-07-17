@@ -1,5 +1,6 @@
 #include <fic/core/Logger.h>
 #include <fic/core/GlobalConfig.h>
+#include <fic/core/FicRuntimePaths.h>
 
 #include <algorithm>
 #include <cctype>
@@ -80,8 +81,9 @@ std::string Logger::get_boot_id() {
 std::string Logger::get_file_path(const std::string& type) {
     std::string boot_id = get_boot_id();
     pid_t process_id = getpid();
-    std::string base_dir = "/opt/fic/log/" + boot_id + "/" + type;
-    return base_dir + "/" + type + "_" + std::to_string(process_id) + ".txt";
+    const std::filesystem::path baseDir =
+        fic::core::FicRuntimePaths::get().logDir / boot_id / type;
+    return (baseDir / (type + "_" + std::to_string(process_id) + ".txt")).string();
 }
 
 void Logger::ensure_directory_exists(const std::string& path) {

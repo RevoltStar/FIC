@@ -1,9 +1,14 @@
 #include <fic/core/ModuleConfigFileHandler.h>
-
-const std::string ModuleConfigFileHandler::moduleFolderPath = "/opt/fic/config";
+#include <fic/core/FicRuntimePaths.h>
 
 ModuleConfigFileHandler::ModuleConfigFileHandler(const std::string& module)
-    : ConfigFileHandler(moduleFolderPath + "/" + module + ".conf", "=") {
+    : ModuleConfigFileHandler(fic::core::FicRuntimePaths::get().configDir, module) {
+}
+
+ModuleConfigFileHandler::ModuleConfigFileHandler(
+    const std::filesystem::path& configDirectory,
+    const std::string& module)
+    : ConfigFileHandler((configDirectory / (module + ".conf")).string(), "=") {
 }
 
 std::string ModuleConfigFileHandler::statusKey(const std::string& policy) {

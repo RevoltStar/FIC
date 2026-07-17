@@ -18,9 +18,6 @@ namespace fs = std::filesystem;
 //Собиратель информации об ОС
 class InfoCollector{
 protected:
-    //Путь к базе устройств
-    std::string dbPath = "/opt/fic/db";
-
     //Параметры устройство
     //1-Название параметра (передается в конструкторе)
     //2-Значение параметра (вычисляется в process_device_concrete)
@@ -38,6 +35,7 @@ protected:
     void trim(std::string& val);
     //Вычисляем boot_time
     std::string get_boot_id();
+    std::filesystem::path data_directory() const;
 
     //Обработка устройства (сохранение)
     bool process_device(

@@ -1,4 +1,5 @@
 #include <fic/core/NotifyUser.h>
+#include <fic/core/FicRuntimePaths.h>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -9,7 +10,6 @@
 #include <fstream>
 #include <sstream>
 
-const std::string NotifyUser::NOTIFY_DIR = "/opt/fic/notify/";
 const notifyLevel NotifyUser::currNotifyLevel = notifyLevel::NoNotify;
 
 namespace {
@@ -68,12 +68,13 @@ bool NotifyUser::notify_user(const std::string& filename, const std::string& con
     }
 
     const std::string notifyUserString = NotifyUser::enumToString(notifyLev);
+    const std::filesystem::path notifyDir = fic::core::FicRuntimePaths::get().notifyDir;
 
     try {
-        std::filesystem::create_directories(NOTIFY_DIR);
-        chmod(NOTIFY_DIR.c_str(), 02770);
+        std::filesystem::create_directories(notifyDir);
+        chmod(notifyDir.c_str(), 02770);
     } catch (const std::exception& e) {
-        std::cerr << "Failed to create notify directory " << NOTIFY_DIR << ": " << e.what() << std::endl;
+        std::cerr << "Failed to create notify directory " << notifyDir << ": " << e.what() << std::endl;
         return false;
     }
 
@@ -90,8 +91,8 @@ bool NotifyUser::notify_user(const std::string& filename, const std::string& con
              << "_" << getpid()
              << "_" << counter;
 
-    const std::string finalPath = NotifyUser::NOTIFY_DIR + baseName.str() + ".notify";
-    const std::string tempPath = NotifyUser::NOTIFY_DIR + "." + baseName.str() + ".tmp";
+    const std::string finalPath = (notifyDir / (baseName.str() + ".notify")).string();
+    const std::string tempPath = (notifyDir / ("." + baseName.str() + ".tmp")).string();
 
     std::ofstream notify_file(tempPath, std::ios::out | std::ios::trunc);
     if (!notify_file.is_open()) {

@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 project(fic LANGUAGES CXX)
 
 include(GNUInstallDirs)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
 
 if(NOT TARGET fic-ipc)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
@@ -51,21 +52,48 @@ target_link_libraries(fic PRIVATE Threads::Threads)
 target_link_libraries(fic PRIVATE fic-ipc)
 target_link_libraries(fic PRIVATE fic-core)
 target_link_libraries(fic PRIVATE fic-policy)
-# Установка
-install(TARGETS fic DESTINATION bin)
-install(PROGRAMS src/scripts/notify/fic-notify-dispatcher DESTINATION bin)
-install(DIRECTORY src/scripts/config/ DESTINATION /opt/fic/config)
-install(DIRECTORY src/scripts/lang/ DESTINATION /opt/fic/lang)
-install(FILES src/scripts/service/fic.service
-              src/scripts/service/fic-device.service
-              src/scripts/service/fic.timer
-              src/scripts/service/fic-notify.service
-              src/scripts/service/fic_get_device_info.service
-              src/scripts/service/fic_get_device_udev_info.service
-        DESTINATION /lib/systemd/system)
-install(FILES src/scripts/tmpfiles/fic.conf DESTINATION /usr/lib/tmpfiles.d)
-install(PROGRAMS src/scripts/service/fic-udevadm-trigger DESTINATION bin)
-install(DIRECTORY src/scripts/udev/
-        DESTINATION /etc/udev/rules.d
-        FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
-# Bash completion is installed by fic-cli package/component.
+set(FIC_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
+file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}")
+foreach(template
+        service/fic.service
+        service/fic-notify.service
+        service/fic_get_device_udev_info.service
+        service/fic-udevadm-trigger
+        tmpfiles/fic.conf
+        udev/99-fic-devices.rules)
+    get_filename_component(template_dir "${template}" DIRECTORY)
+    file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/${template_dir}")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/scripts/${template}.in"
+        "${FIC_GENERATED_SCRIPTS_DIR}/${template}"
+        @ONLY)
+endforeach()
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scripts/notify/fic-notify-dispatcher"
+    "${FIC_GENERATED_SCRIPTS_DIR}/notify/fic-notify-dispatcher"
+    @ONLY)
+
+install(TARGETS fic RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
+install(PROGRAMS
+        "${FIC_GENERATED_SCRIPTS_DIR}/notify/fic-notify-dispatcher"
+        "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-udevadm-trigger"
+        DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
+install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
+install(DIRECTORY src/scripts/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
+install(FILES
+        "${FIC_GENERATED_SCRIPTS_DIR}/service/fic.service"
+        "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-notify.service"
+        src/scripts/service/fic.timer
+        "${FIC_GENERATED_SCRIPTS_DIR}/service/fic_get_device_udev_info.service"
+        DESTINATION "${FIC_SYSTEMD_UNIT_DIR}" COMPONENT fic)
+install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/tmpfiles/fic.conf"
+        DESTINATION "${FIC_TMPFILES_DIR}" COMPONENT fic)
+install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/udev/99-fic-devices.rules"
+        DESTINATION "${FIC_UDEV_RULES_DIR}" COMPONENT fic
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+install(FILES src/scripts/db/PCI_CLASS_ru.txt src/scripts/db/USB_CLASS_ru.txt
+        DESTINATION "${FIC_DATA_DIR}" COMPONENT fic)
+install(FILES src/scripts/db/devices.db
+        DESTINATION "${FIC_SHARE_DIR}" RENAME devices.seed.db COMPONENT fic)
+install(DIRECTORY src/scripts/image/ DESTINATION "${FIC_IMAGE_DIR}" COMPONENT fic)

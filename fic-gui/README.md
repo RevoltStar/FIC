@@ -39,6 +39,10 @@ fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 FIC_SOCKET_PATH=/tmp/fic.sock fic-gui
 ```
 
+Для device API используется отдельная переменная `FIC_DEVICE_SOCKET_PATH`.
+Она не подменяется значением `FIC_SOCKET_PATH`, чтобы тестовый policy daemon
+нельзя было случайно принять за привилегированный device endpoint.
+
 ## Применение изменений
 
 При сохранении изменений GUI проходит по списку измененных политик и для каждой политики выполняет две операции:

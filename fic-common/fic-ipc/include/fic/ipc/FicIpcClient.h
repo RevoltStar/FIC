@@ -1,6 +1,8 @@
 #ifndef FIC_IPC_CLIENT_H
 #define FIC_IPC_CLIENT_H
 
+#include <fic/ipc/FicIpcPathDefaults.h>
+
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
@@ -16,8 +18,27 @@ namespace fic::ipc {
 
 using json = nlohmann::json;
 
-inline constexpr const char* DEFAULT_SOCKET_PATH = "/run/fic/fic.sock";
-inline constexpr const char* DEFAULT_DEVICE_SOCKET_PATH = "/run/fic/fic-device.sock";
+inline constexpr const char* DEFAULT_RUNTIME_DIR = path_defaults::RUNTIME_DIR;
+inline constexpr const char* DEFAULT_SOCKET_PATH = path_defaults::DAEMON_SOCKET;
+inline constexpr const char* DEFAULT_DEVICE_SOCKET_PATH = path_defaults::DEVICE_SOCKET;
+
+enum class Endpoint {
+    PolicyDaemon,
+    DeviceDaemon
+};
+
+inline std::string endpoint_socket_path(Endpoint endpoint) {
+    const char* environmentName = endpoint == Endpoint::PolicyDaemon
+        ? "FIC_SOCKET_PATH"
+        : "FIC_DEVICE_SOCKET_PATH";
+    const char* environmentPath = std::getenv(environmentName);
+    if (environmentPath != nullptr && environmentPath[0] != '\0') {
+        return environmentPath;
+    }
+    return endpoint == Endpoint::PolicyDaemon
+        ? DEFAULT_SOCKET_PATH
+        : DEFAULT_DEVICE_SOCKET_PATH;
+}
 
 inline json make_error_response(const std::string& message) {
     return json{{"ok", false}, {"message", message}};
@@ -69,8 +90,16 @@ inline bool read_until_eof(int fd, std::string& output, std::string& error) {
 
 class Client {
 public:
-    explicit Client(std::string socketPath = "")
-        : socketPath_(socketPath.empty() ? default_socket_path() : std::move(socketPath)) {}
+    Client()
+        : socketPath_(endpoint_socket_path(Endpoint::PolicyDaemon)) {}
+
+    explicit Client(Endpoint endpoint)
+        : socketPath_(endpoint_socket_path(endpoint)) {}
+
+    explicit Client(std::string socketPath)
+        : socketPath_(socketPath.empty()
+              ? endpoint_socket_path(Endpoint::PolicyDaemon)
+              : std::move(socketPath)) {}
 
     json request(const json& payload) const {
         int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -116,14 +145,6 @@ public:
     }
 
 private:
-    static std::string default_socket_path() {
-        const char* envPath = std::getenv("FIC_SOCKET_PATH");
-        if (envPath != nullptr && envPath[0] != '\0') {
-            return envPath;
-        }
-        return DEFAULT_SOCKET_PATH;
-    }
-
     std::string socketPath_;
 };
 

@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 project(fic_gui VERSION 0.1 LANGUAGES CXX)
 
 include(GNUInstallDirs)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
 
 if(NOT TARGET fic-ipc)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
@@ -21,6 +22,7 @@ find_package(OpenSSL REQUIRED)
 
 file(GLOB_RECURSE SRC_FILES
     "src/*.ui"
+    "src/*.qrc"
     "src/*.cpp"
     "src/*/*.cpp"
     "src/*/*/*.cpp"
@@ -76,8 +78,10 @@ set_target_properties(fic-gui PROPERTIES
 )
 
 install(TARGETS fic-gui
-    BUNDLE DESTINATION .
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic-gui
+    BUNDLE DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic-gui
+    LIBRARY DESTINATION "${FIC_PRIVATE_BINDIR}"
+    COMPONENT fic-gui)
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(fic-gui)

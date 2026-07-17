@@ -1,6 +1,7 @@
 #include "main_function.h"
 
 #include <fic/core/CommandHashStore.h>
+#include <fic/core/FicRuntimePaths.h>
 #include <fic/core/VerifiedProcessExecutor.h>
 
 namespace {
@@ -144,9 +145,10 @@ void print_help() {
 /*Собственно, функции FIC*/
 //Заблокировать компьютер
 bool lock(){
-    SingleLineFileHandler slch = SingleLineFileHandler("/opt/fic/lockstatus");
+    const std::string lockStatusPath = fic::core::FicRuntimePaths::get().lockStatusFile.string();
+    SingleLineFileHandler slch = SingleLineFileHandler(lockStatusPath);
     if(!slch.loadConfig()){
-        std::cerr << "    Не удалось прочитать файл /opt/fic/lockstatus" << std::endl;
+        std::cerr << "    Не удалось прочитать файл " << lockStatusPath << std::endl;
         return false;
     }
 
@@ -176,9 +178,10 @@ bool lock(){
 
 //Разблокировать компьютер
 bool unlock(){
-    SingleLineFileHandler slch = SingleLineFileHandler("/opt/fic/lockstatus");
+    const std::string lockStatusPath = fic::core::FicRuntimePaths::get().lockStatusFile.string();
+    SingleLineFileHandler slch = SingleLineFileHandler(lockStatusPath);
     if(!slch.loadConfig()){
-        std::cerr << "    Не удалось прочитать файл /opt/fic/lockstatus" << std::endl;
+        std::cerr << "    Не удалось прочитать файл " << lockStatusPath << std::endl;
         return false;
     }
 
@@ -196,9 +199,10 @@ bool unlock(){
 
 //Текущий статус
 bool lockstatus(){
-    SingleLineFileHandler slch = SingleLineFileHandler("/opt/fic/lockstatus");
+    const std::string lockStatusPath = fic::core::FicRuntimePaths::get().lockStatusFile.string();
+    SingleLineFileHandler slch = SingleLineFileHandler(lockStatusPath);
     if(!slch.loadConfig()){
-        std::cerr << "    Не удалось прочитать файл /opt/fic/lockstatus" << std::endl;
+        std::cerr << "    Не удалось прочитать файл " << lockStatusPath << std::endl;
         return false;
     }
     if (slch.getValue() == "0"){

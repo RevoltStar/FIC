@@ -1,5 +1,10 @@
 # FIC Debian packaging
 
+Payload бинарников, service-файлов, конфигурации и данных берется из
+именованных CMake install-компонентов. Скрипты упаковки отвечают за metadata,
+maintainer scripts и Qt runtime bundle, но не поддерживают отдельную копию
+production-путей в исходных systemd/tmpfiles/udev-файлах.
+
 This packaging flow builds five Debian packages:
 
 - `fic-dick`
@@ -45,6 +50,7 @@ requested by the target.
 
 - `/opt/fic/bin/fic-cli`
 - `/bin/fic-cli` symlink to `/opt/fic/bin/fic-cli`
+- `/usr/share/bash-completion/completions/fic-cli`
 
 `fic-gui` installs:
 

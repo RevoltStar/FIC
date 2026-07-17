@@ -1,6 +1,7 @@
 #include <fic/core/CommandHashStore.h>
 
 #include <fic/core/ConfigFileHandler.h>
+#include <fic/core/FicRuntimePaths.h>
 
 #include <filesystem>
 #include <fstream>
@@ -8,7 +9,9 @@
 #include <sys/stat.h>
 
 namespace {
-constexpr const char* COMMAND_HASH_FILE_PATH = "/opt/fic/db/commandhash.txt";
+const std::filesystem::path& command_hash_file_path() {
+    return fic::core::FicRuntimePaths::get().commandHashFile;
+}
 
 bool is_symlink(const std::string& path) {
     struct stat info {};
@@ -19,7 +22,7 @@ bool is_symlink(const std::string& path) {
 }
 
 bool command_hash_directory_exists(std::string& error) {
-    const std::filesystem::path hashFile(COMMAND_HASH_FILE_PATH);
+    const std::filesystem::path& hashFile = command_hash_file_path();
     const std::filesystem::path hashDirectory = hashFile.parent_path();
     if (!std::filesystem::exists(hashDirectory)) {
         error = "command hash directory does not exist: " + hashDirectory.string();
@@ -34,7 +37,7 @@ bool command_hash_directory_exists(std::string& error) {
 
 bool command_hash_file_options(FileHandlerOptions& options, std::string& error) {
     const std::filesystem::path directory =
-        std::filesystem::path(COMMAND_HASH_FILE_PATH).parent_path();
+        command_hash_file_path().parent_path();
     struct stat directoryInfo {};
     if (::stat(directory.c_str(), &directoryInfo) != 0) {
         error = "could not stat command hash directory: " + directory.string();
@@ -67,9 +70,10 @@ bool CommandHashStore::saveHash(const std::string& executable, std::string& erro
     if (!command_hash_file_options(fileOptions, error)) {
         return false;
     }
-    ConfigFileHandler commandHashes(COMMAND_HASH_FILE_PATH, "=", fileOptions);
+    const std::string hashFile = command_hash_file_path().string();
+    ConfigFileHandler commandHashes(hashFile, "=", fileOptions);
     if (!commandHashes.loadConfig()) {
-        error = "failed to load command hash file: " + std::string(COMMAND_HASH_FILE_PATH);
+        error = "failed to load command hash file: " + hashFile;
         return false;
     }
     if (!commandHashes.setValue(executable, hash)) {
@@ -77,7 +81,7 @@ bool CommandHashStore::saveHash(const std::string& executable, std::string& erro
         return false;
     }
     if (!commandHashes.FileHandler::saveFile()) {
-        error = "failed to save command hash file: " + std::string(COMMAND_HASH_FILE_PATH);
+        error = "failed to save command hash file: " + hashFile;
         return false;
     }
 
@@ -89,9 +93,10 @@ bool CommandHashStore::verifyHash(const std::string& executable, std::string& er
         return false;
     }
 
-    ConfigFileHandler commandHashes(COMMAND_HASH_FILE_PATH);
+    const std::string hashFile = command_hash_file_path().string();
+    ConfigFileHandler commandHashes(hashFile);
     if (!commandHashes.loadConfig()) {
-        error = "failed to load command hash file: " + std::string(COMMAND_HASH_FILE_PATH);
+        error = "failed to load command hash file: " + hashFile;
         return false;
     }
 

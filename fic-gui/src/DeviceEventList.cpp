@@ -57,7 +57,7 @@ void DeviceEventList::showDeviceEvents(int deviceId)
         return;
     }
 
-    auto response = fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH).request({
+    auto response = fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon).request({
         {"command", "device_events"},
         {"device_id", deviceId},
         {"limit", 100}

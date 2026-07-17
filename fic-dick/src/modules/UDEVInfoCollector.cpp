@@ -1,5 +1,6 @@
 // file name: UDEVInfoCollector.cpp
 #include "UDEVInfoCollector.h"
+#include "core/DevicePaths.h"
 #include <functional>
 #include <filesystem>
 
@@ -150,7 +151,7 @@ void UDEVInfoCollector::collect_udev_params() {
 //Функция должна отрабатывать рекурсивно.
 //Чтобы идентифицировать такие устройства, мы будем использовать subsystem=__virtual__
 DeviceInfo UDEVInfoCollector::create_virtual_device_config(const std::string& devpath, const std::string& boot_id){
-    DB db = DB("/opt/fic/db/devices.db");
+    DB db(fic::device_control::DeviceRuntimePaths::get().databaseOptions());
     //Пытаемся найти родительское устройство (возможно, оно тоже виртуальное)
     std::string parent_devpath = this->getParentDevpath(devpath);
     DeviceInfo parentDevice;
@@ -230,7 +231,7 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
         std::string current_hash = create_hash();
         this->log("Вычисленный хеш устройства: " + current_hash, logLevel::DEBUG);
 
-        DB db = DB("/opt/fic/db/devices.db");
+        DB db(fic::device_control::DeviceRuntimePaths::get().databaseOptions());
 
         //devpath родителя
         std::string parent_devpath = this->getParentDevpath(devpath);
@@ -419,7 +420,7 @@ bool UDEVInfoCollector::safe_remove_device(const std::string& devpath, const std
             return false;
         }
 
-        DB db = DB("/opt/fic/db/devices.db");
+        DB db(fic::device_control::DeviceRuntimePaths::get().databaseOptions());
 
         // Получаем родительский контейнер UDEV
         std::string parent_devpath = this->getParentDevpath(devpath);

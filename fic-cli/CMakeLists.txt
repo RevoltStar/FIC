@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 project(fic_cli LANGUAGES CXX)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
 
 if(NOT TARGET fic-ipc)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
@@ -15,4 +16,7 @@ add_executable(fic-cli
 
 target_link_libraries(fic-cli PRIVATE fic-ipc)
 
-install(TARGETS fic-cli DESTINATION bin)
+install(TARGETS fic-cli RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic-cli)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/scripts/completion/fic"
+        DESTINATION "${FIC_BASH_COMPLETION_DIR}"
+        RENAME fic-cli COMPONENT fic-cli)

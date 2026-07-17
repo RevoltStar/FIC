@@ -3,7 +3,7 @@ Description=FIC desktop notification dispatcher
 
 [Service]
 Type=simple
-ExecStart=/opt/fic/bin/fic-notify-dispatcher
+ExecStart=@FIC_PRIVATE_BINDIR@/fic-notify-dispatcher
 Restart=always
 RestartSec=5
 

@@ -206,7 +206,7 @@ std::string localizeDeviceClass(const std::string& subsystem, const std::string&
 
 fic::ipc::Client deviceClient()
 {
-    return fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH);
+    return fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon);
 }
 
 void fillDeviceFromJson(DeviceInfo& device, const nlohmann::json& item)

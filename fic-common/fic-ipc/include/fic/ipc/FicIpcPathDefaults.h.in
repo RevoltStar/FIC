@@ -1,0 +1,12 @@
+#ifndef FIC_IPC_PATH_DEFAULTS_H
+#define FIC_IPC_PATH_DEFAULTS_H
+
+namespace fic::ipc::path_defaults {
+
+inline constexpr const char* RUNTIME_DIR = "@FIC_RUNTIME_DIR@";
+inline constexpr const char* DAEMON_SOCKET = "@FIC_DAEMON_SOCKET_FILE@";
+inline constexpr const char* DEVICE_SOCKET = "@FIC_DEVICE_SOCKET_FILE@";
+
+} // namespace fic::ipc::path_defaults
+
+#endif // FIC_IPC_PATH_DEFAULTS_H

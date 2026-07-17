@@ -12,7 +12,7 @@ MemoryInfoCollector::MemoryInfoCollector()
 
 bool MemoryInfoCollector::process_device_concrete(){
     std::cout << "Собираем информацию об оперативной памяти..." << std::endl;
-    std::string memory_list_dir = this->dbPath + "/memory_list";
+    std::string memory_list_dir = (this->data_directory() / "memory_list").string();
 
     auto collectFromProcMeminfo = [&]() -> bool {
         std::ifstream meminfo("/proc/meminfo");

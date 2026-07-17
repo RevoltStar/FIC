@@ -14,8 +14,8 @@
    <string>Free Integrity Control</string>
   </property>
   <property name="windowIcon">
-   <iconset>
-    <normaloff>../../../../../../opt/fic/image/FIC.jpg</normaloff>../../../../../../opt/fic/image/FIC.jpg</iconset>
+   <iconset resource="resources.qrc">
+    <normaloff>:/fic/FIC.jpg</normaloff>:/fic/FIC.jpg</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="verticalLayout">
@@ -480,4 +480,7 @@
  </widget>
  <resources/>
  <connections/>
+ <resources>
+  <include location="resources.qrc"/>
+ </resources>
 </ui>

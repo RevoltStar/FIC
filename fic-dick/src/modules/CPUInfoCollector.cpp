@@ -14,7 +14,7 @@ CPUInfoCollector::CPUInfoCollector()
 bool CPUInfoCollector::process_device_concrete(){
     this->log("Собираем информацию о процессоре...", logLevel::DEBUG);
     //Папка со списком процессоров
-    std::string cpu_list_dir = this->dbPath + "/cpu_list";
+    std::string cpu_list_dir = (this->data_directory() / "cpu_list").string();
 
     ProcessOptions options;
     options.environment.emplace_back("LC_ALL", "C");

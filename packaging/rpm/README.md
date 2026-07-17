@@ -1,5 +1,10 @@
 # FIC RPM packaging for ALT p11
 
+Payload бинарников, service-файлов, конфигурации и данных берется из
+именованных CMake install-компонентов. ALT-профиль передает CMake свои каталоги
+systemd и tmpfiles; скрипт упаковки отвечает за RPM metadata, lifecycle и Qt
+runtime bundle, а не за генерацию integration-файлов.
+
 This packaging flow builds five RPM packages for ALT Linux p11:
 
 - `fic-dick`
@@ -45,6 +50,7 @@ requested by the target.
 
 - `/opt/fic/bin/fic-cli`
 - `/bin/fic-cli` symlink to `/opt/fic/bin/fic-cli`
+- `/usr/share/bash-completion/completions/fic-cli`
 
 `fic-gui` installs:
 

@@ -5,8 +5,10 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <fic/core/FicRuntimePaths.h>
 #include <fic/device-db/DB.h>
 #include "core/DeviceControlDaemon.h"
+#include "core/DevicePaths.h"
 #include "modules/UDEVInfoCollector.h"
 #include "modules/USBInfoCollector.h"
 #include "modules/PCIInfoCollector.h"
@@ -64,6 +66,19 @@ std::map<std::string, std::string> env_to_map(char* envp[]) {
 }
 
 int main(int argc, char* argv[], char* envp[]) {
+    std::string pathError;
+    if (!fic::core::FicRuntimePaths::initializeProduction(pathError)) {
+        std::cerr << "failed to initialize FIC runtime paths: " << pathError << std::endl;
+        return 1;
+    }
+    if (!fic::device_control::DeviceRuntimePaths::initialize(
+            fic::device_control::DevicePaths::fromProductPaths(
+                fic::core::FicRuntimePaths::get()),
+            pathError)) {
+        std::cerr << "failed to initialize device paths: " << pathError << std::endl;
+        return 1;
+    }
+
     if (argc > 1) {
         std::string mode(argv[1]);
 
@@ -98,7 +113,7 @@ int main(int argc, char* argv[], char* envp[]) {
         }
         // Собираем информацию о ЦПУ, м/плате, ОЗУ
         else if (mode == "cpu_board_memory") {
-            DB db = DB("/opt/fic/db/devices.db");
+            DB db(fic::device_control::DeviceRuntimePaths::get().databaseOptions());
             if (!db.initializeDatabase()) {
                 log("Ошибка инициализации базы данных", logLevel::FATAL);
                 return 1;

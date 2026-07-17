@@ -3,10 +3,10 @@ set -e
 
 for candidate in /usr/bin/udevadm /usr/sbin/udevadm /sbin/udevadm /bin/udevadm; do
     if [ -x "$candidate" ]; then
-        /opt/fic/bin/fic-dick wait-daemon 15
+        @FIC_PRIVATE_BINDIR@/fic-dick wait-daemon 15
         "$candidate" trigger --action=add
         "$candidate" settle
-        exec /opt/fic/bin/fic-dick check-permanent
+        exec @FIC_PRIVATE_BINDIR@/fic-dick check-permanent
     fi
 done
 

@@ -70,7 +70,7 @@ void DeviceAttributeList::showDeviceAttributes(int deviceId)
     clear();
 
     std::map<std::string, std::string> attributes;
-    auto response = fic::ipc::Client(fic::ipc::DEFAULT_DEVICE_SOCKET_PATH).request({
+    auto response = fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon).request({
         {"command", "device_attributes"},
         {"device_id", deviceId}
     });

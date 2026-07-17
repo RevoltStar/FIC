@@ -13,7 +13,7 @@ BoardInfoCollector::BoardInfoCollector()
 
 bool BoardInfoCollector::process_device_concrete(){
     std::cout << "Собираем информацию о материнской плате" << std::endl;
-    std::string board_list_dir = this->dbPath + "/board_list";
+    std::string board_list_dir = (this->data_directory() / "board_list").string();
 
     // Выполняем команду dmidecode -t 2 (информация о системной плате)
     ProcessResult result = VerifiedProcessExecutor::execute("/usr/sbin/dmidecode", {"-t", "2"});

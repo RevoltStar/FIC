@@ -45,11 +45,12 @@ def main():
         "udev_event requires root peer credentials",
         "peer_credentials",
         "device_audit_",
-        "probe_existing_device_daemon",
         "retry_sysfs_action",
         "collect_missing_permanent_devices",
     ]:
         require(marker in daemon_source, f"missing device daemon guard: {marker}")
+    require("create_admin_server_socket" in daemon_source,
+            "device daemon must use the shared guarded socket creator")
 
     udev_source = read_text(udev_collector)
     require("/devices/virtual/block/" in udev_source, "virtual block devices must be accepted")

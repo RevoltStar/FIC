@@ -3,7 +3,7 @@ Description=FIC policy daemon
 
 [Service]
 Type=simple
-ExecStart=/opt/fic/bin/fic --interval 1800
+ExecStart=@FIC_PRIVATE_BINDIR@/fic --interval 1800
 Restart=on-failure
 
 [Install]

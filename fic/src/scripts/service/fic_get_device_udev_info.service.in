@@ -4,7 +4,7 @@ After=fic-device.service
 Requires=fic-device.service
 
 [Service]
-ExecStart=/opt/fic/bin/fic-udevadm-trigger
+ExecStart=@FIC_PRIVATE_BINDIR@/fic-udevadm-trigger
 Type=oneshot
 RemainAfterExit=yes
 
