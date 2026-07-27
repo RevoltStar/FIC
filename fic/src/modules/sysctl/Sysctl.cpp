@@ -1,40 +1,13 @@
 #include "modules/sysctl/Sysctl.h"
 #include "modules/sysctl/SysctlConfiguration.h"
+#include "modules/sysctl/SysctlRuntime.h"
 
-#include <algorithm>
-#include <cctype>
-#include <fstream>
 #include <mutex>
 #include <optional>
 
 namespace {
 
 std::mutex sysctlMutex;
-
-std::string trimCopy(std::string value) {
-    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char c) {
-        return !std::isspace(c);
-    }));
-    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char c) {
-        return !std::isspace(c);
-    }).base(), value.end());
-    return value;
-}
-
-std::optional<std::string> runtimeValue(const std::string& key) {
-    std::string relative = key;
-    std::replace(relative.begin(), relative.end(), '.', '/');
-    std::ifstream stream("/proc/sys/" + relative);
-    if (!stream.is_open()) {
-        return std::nullopt;
-    }
-    std::string value;
-    std::getline(stream, value);
-    if (!stream.good() && !stream.eof()) {
-        return std::nullopt;
-    }
-    return trimCopy(std::move(value));
-}
 
 } // namespace
 
@@ -74,6 +47,16 @@ bool Sysctl::apply (){
     }
 
     const std::lock_guard<std::mutex> lock(sysctlMutex);
+    SysctlRuntime runtime;
+    std::string runtimeBefore;
+    std::string runtimeError;
+    if (!runtime.readValue(param, runtimeBefore, runtimeError)) {
+        this->log("Невозможно применить обязательное runtime-значение sysctl: " +
+                      runtimeError,
+                  logLevel::ERROR);
+        return false;
+    }
+
     SysctlConfiguration configuration;
     std::string loadError;
     if (!configuration.load(loadError)) {
@@ -103,19 +86,30 @@ bool Sysctl::apply (){
         return false;
     }
     if (operation.changed) {
-        this->notify("Исправлена конфигурация sysctl для политики: " + this->policyName,
-                     notifyLevel::ERROR);
+        this->log("Persistent-конфигурация sysctl исправлена; выполняется runtime-применение",
+                  logLevel::INFO);
     }
     this->log(operation.message, logLevel::INFO);
 
-    const std::optional<std::string> current = runtimeValue(param);
-    if (!current) {
-        this->log("Не удалось прочитать текущее значение /proc/sys для " + param,
-                  logLevel::DEBUG);
-    } else if (*current != value) {
-        this->log("Конфигурация " + param + " исправлена на диске, но текущее значение ядра '" +
-                  *current + "' отличается от эталона '" + value +
-                  "'. Требуется безопасное отдельное применение sysctl.", logLevel::WARN);
+    if (runtimeBefore != value) {
+        this->log("Обнаружено runtime-отклонение '" + param + "'. Фактическое значение: '" +
+                      runtimeBefore + "'. Ожидаемое значение: '" + value + "'.",
+                  logLevel::WARN);
+    }
+    const SysctlRuntimeResult runtimeOperation = runtime.ensureValue(param, value);
+    if (!runtimeOperation.ok) {
+        this->log(
+            "Persistent-конфигурация sysctl подготовлена, но обязательное runtime-применение "
+            "не завершено: " + runtimeOperation.message,
+            logLevel::ERROR
+        );
+        return false;
+    }
+    this->log(runtimeOperation.message, logLevel::INFO);
+
+    if (operation.changed || runtimeOperation.changed) {
+        this->notify("Исправлена конфигурация sysctl для политики: " + this->policyName,
+                     notifyLevel::ERROR);
     }
     return true;
 }

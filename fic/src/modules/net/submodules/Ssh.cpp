@@ -1,11 +1,54 @@
 #include "modules/net/submodules/Ssh.h"
+#include "modules/net/submodules/SshRuntime.h"
 
+#include <fic/core/AtomicFileWriter.h>
 #include <fic/core/LocalizationManager.h>
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <iostream>
 #include <sstream>
+
+namespace {
+
+bool readFileContent(const std::string& path, std::string& content) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open()) {
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    if (!stream.good() && !stream.eof()) {
+        return false;
+    }
+    content = buffer.str();
+    return true;
+}
+
+bool restoreSshConfig(const std::string& path,
+                      const std::string& content,
+                      std::string& error) {
+    AtomicWriteOptions options;
+    options.createIfMissing = false;
+    options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
+    return AtomicFileWriter::write(path, content, options, &error);
+}
+
+std::string lowerTrimmed(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), value.end());
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+} // namespace
 
 SshConfigFileHandler::SshConfigFileHandler(const std::string& filepath)
     : FileHandler(filepath, " ") {
@@ -207,7 +250,9 @@ bool Ssh::apply() {
         return false;
     }
 
-    if (!this->sshConfig->loadConfig()) {
+    std::string originalContent;
+    if (!readFileContent(this->sshPath, originalContent) ||
+        !this->sshConfig->loadConfig()) {
         this->log(LocalizationManager::getLang(
                       "[module:NET][submodule:SshEdit][message:load_failed]"),
                   logLevel::ERROR);
@@ -230,6 +275,7 @@ bool Ssh::apply() {
     }
 
     const std::string currentValue = this->sshConfig->getValue(this->sshParameter);
+    const bool changed = currentValue != expectedValue;
     if (currentValue == expectedValue) {
         this->log(LocalizationManager::getLang(
                       "[module:NET][submodule:SshEdit][message:no_deviations_part1]") +
@@ -237,41 +283,86 @@ bool Ssh::apply() {
                       LocalizationManager::getLang(
                           "[module:NET][submodule:SshEdit][message:no_deviations_part2]"),
                   logLevel::INFO);
-        return true;
-    }
-
-    this->log(LocalizationManager::getLang(
-                  "[module:NET][submodule:SshEdit][message:deviation_detected_part1]") +
-                  this->sshParameter +
-                  LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:deviation_detected_part2]") +
-                  currentValue +
-                  LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:deviation_detected_part3]") +
-                  expectedValue +
-                  LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:deviation_detected_part4]"),
-              logLevel::WARN);
-
-    if (!this->sshConfig->setValue(this->sshParameter, expectedValue)) {
+    } else {
         this->log(LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:update_failed_part1]") +
+                      "[module:NET][submodule:SshEdit][message:deviation_detected_part1]") +
                       this->sshParameter +
                       LocalizationManager::getLang(
-                          "[module:NET][submodule:SshEdit][message:update_failed_part2]"),
+                          "[module:NET][submodule:SshEdit][message:deviation_detected_part2]") +
+                      currentValue +
+                      LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:deviation_detected_part3]") +
+                      expectedValue +
+                      LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:deviation_detected_part4]"),
+                  logLevel::WARN);
+
+        if (!this->sshConfig->setValue(this->sshParameter, expectedValue)) {
+            this->log(LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:update_failed_part1]") +
+                          this->sshParameter +
+                          LocalizationManager::getLang(
+                              "[module:NET][submodule:SshEdit][message:update_failed_part2]"),
+                      logLevel::ERROR);
+            return false;
+        }
+
+        if (!this->sshConfig->saveFile()) {
+            this->log(LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:save_failed]"),
+                      logLevel::ERROR);
+            return false;
+        }
+
+        SshConfigFileHandler verification(this->sshPath);
+        if (!verification.loadConfig() ||
+            verification.getValue(this->sshParameter) != expectedValue) {
+            std::string rollbackError;
+            const bool rolledBack = restoreSshConfig(this->sshPath, originalContent, rollbackError);
+            this->log(
+                "Не удалось подтвердить записанное значение SSH-политики" +
+                    std::string(rolledBack ? "" : ". Ошибка отката: " + rollbackError),
+                logLevel::ERROR
+            );
+            return false;
+        }
+    }
+
+    SshRuntime runtime;
+    std::string effectiveValue;
+    std::string runtimeError;
+    if (!runtime.effectiveValue(this->sshParameter, effectiveValue, runtimeError) ||
+        lowerTrimmed(effectiveValue) != lowerTrimmed(expectedValue)) {
+        if (changed) {
+            std::string rollbackError;
+            if (!restoreSshConfig(this->sshPath, originalContent, rollbackError)) {
+                runtimeError += ". Ошибка отката SSH-конфигурации: " + rollbackError;
+            }
+        }
+        if (runtimeError.empty()) {
+            runtimeError = "Эффективное значение '" + effectiveValue +
+                           "' не совпадает с ожидаемым '" + expectedValue + "'";
+        }
+        this->log("Проверка effective-конфигурации sshd не пройдена: " + runtimeError,
                   logLevel::ERROR);
         return false;
     }
 
-    if (!this->sshConfig->saveFile()) {
+    const SshActivationResult activation = runtime.activateIfRunning();
+    if (!activation.ok) {
+        this->log(
+            "Persistent-конфигурация SSH подготовлена, но обязательная runtime-активация "
+            "не завершена: " + activation.message,
+            logLevel::ERROR
+        );
+        return false;
+    }
+    this->log(activation.message, logLevel::INFO);
+
+    if (changed) {
         this->log(LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:save_failed]"),
-                  logLevel::ERROR);
-        return false;
+                      "[module:NET][submodule:SshEdit][message:deviation_fixed]"),
+                  logLevel::INFO);
     }
-
-    this->log(LocalizationManager::getLang(
-                  "[module:NET][submodule:SshEdit][message:deviation_fixed]"),
-              logLevel::INFO);
     return true;
 }

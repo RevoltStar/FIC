@@ -14,7 +14,7 @@ protected:
     std::string sysctlParameterValue="";
 public:
 
-    // Check the effective persistent configuration and add a managed override.
+    // Enforce and verify both persistent configuration and the live /proc/sys value.
     bool apply () override;
     Sysctl();
 };

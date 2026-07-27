@@ -50,6 +50,22 @@ bool DisplayManagerBackend::updateConfig(
         error = "failed to save " + std::string(name()) + " configuration: " + configPath();
         return false;
     }
+
+    SectionConfigFileHandler verification(configPath());
+    if (!verification.loadConfig()) {
+        error = "failed to reload " + std::string(name()) +
+                " configuration after writing: " + configPath();
+        return false;
+    }
+    for (const DisplayManagerConfigValue& value : values) {
+        if (!verification.hasParameter(value.section, value.key) ||
+            verification.getValue(value.section, value.key) != value.value) {
+            error = "written value " + value.section + "/" + value.key +
+                    " is not effective in " + std::string(name()) + " configuration";
+            return false;
+        }
+    }
+
     error.clear();
     return true;
 }

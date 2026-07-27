@@ -104,7 +104,8 @@
 [module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
 [module:OSS][policy:disable_videodisplay_when_locked][description]=In the SDDM display manager, the name of the enabled video adapter is shown on the lock screen by default.
 [module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
-[module:OSS][policy:lock_on_tty_switch][description]=Lock screen when switching to another terminal
+[module:OSS][policy:lock_on_tty_switch][description]=This policy is not supported yet. If enabled, applying it fails instead of reporting a false success.
+[module:OSS][policy:lock_on_tty_switch][message:not_implemented]=Locking the screen on TTY switch is not implemented yet
 [module:OSS][policy:fstab_tmp_profile][description]=Requires a dedicated /tmp entry in /etc/fstab. The optimal profile enforces rw,nodev,nosuid,noexec,relatime. The minimal profile enforces rw,nodev,nosuid,relatime. Already mounted filesystems are not remounted automatically.
 [module:OSS][policy:fstab_var_tmp_profile][description]=Requires a dedicated /var/tmp entry in /etc/fstab. The optimal profile enforces rw,nodev,nosuid,noexec,relatime. The minimal profile enforces rw,nodev,nosuid,relatime. Already mounted filesystems are not remounted automatically.
 [module:OSS][policy:fstab_dev_shm_profile][description]=Requires a dedicated /dev/shm entry in /etc/fstab. The optimal profile enforces rw,nodev,nosuid,noexec,mode=1777. The minimal profile enforces rw,nodev,nosuid,mode=1777.

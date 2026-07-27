@@ -1,4 +1,5 @@
 #include "modules/sysctl/SysctlConfiguration.h"
+#include "modules/sysctl/SysctlRuntime.h"
 
 #include <filesystem>
 #include <fstream>
@@ -260,6 +261,65 @@ void testInvalidActiveConfigurationFailsLoad() {
             "parse failure must include source location");
 }
 
+void testRuntimeValueAlreadyCorrect() {
+    TemporaryTree tree;
+    writeFile(tree.root / "proc/sys/kernel/test", "expected\n");
+
+    SysctlRuntime runtime({tree.root / "proc/sys"});
+    const SysctlRuntimeResult result = runtime.ensureValue("kernel.test", "expected");
+    require(result.ok && !result.changed,
+            "matching runtime value must be successful and idempotent");
+}
+
+void testRuntimeValueIsWrittenAndVerified() {
+    TemporaryTree tree;
+    writeFile(tree.root / "proc/sys/kernel/test", "old\n");
+
+    SysctlRuntime runtime({tree.root / "proc/sys"});
+    const SysctlRuntimeResult result = runtime.ensureValue("kernel.test", "expected");
+    require(result.ok && result.changed, "runtime deviation must be corrected");
+
+    std::string value;
+    std::string error;
+    require(runtime.readValue("kernel.test", value, error), error);
+    require(value == "expected", "runtime value must be verified after writing");
+}
+
+void testRuntimeMissingParameterFails() {
+    TemporaryTree tree;
+    SysctlRuntime runtime({tree.root / "proc/sys"});
+
+    const SysctlRuntimeResult result = runtime.ensureValue("kernel.missing", "1");
+    require(!result.ok, "missing kernel parameter must not be treated as deferred success");
+}
+
+void testRuntimeRejectsUnsafeKeyAndValue() {
+    TemporaryTree tree;
+    writeFile(tree.root / "proc/sys/kernel/test", "old\n");
+    SysctlRuntime runtime({tree.root / "proc/sys"});
+
+    require(!runtime.ensureValue("../outside", "1").ok,
+            "runtime key traversal must be rejected");
+    require(!runtime.ensureValue("kernel.test", "one\ntwo").ok,
+            "multiline runtime value must be rejected");
+    require(readFile(tree.root / "proc/sys/kernel/test") == "old\n",
+            "rejected runtime input must not modify the parameter");
+}
+
+void testRuntimeRejectsSymlinkParameter() {
+    TemporaryTree tree;
+    writeFile(tree.root / "outside", "old\n");
+    std::filesystem::create_directories(tree.root / "proc/sys/kernel");
+    std::filesystem::create_symlink(tree.root / "outside",
+                                    tree.root / "proc/sys/kernel/test");
+    SysctlRuntime runtime({tree.root / "proc/sys"});
+
+    require(!runtime.ensureValue("kernel.test", "expected").ok,
+            "runtime sysctl symlink must be rejected");
+    require(readFile(tree.root / "outside") == "old\n",
+            "symlink target must remain untouched");
+}
+
 } // namespace
 
 int runManualMode(int argc, char* argv[]) {
@@ -311,7 +371,12 @@ int main(int argc, char* argv[]) {
         {"managed override", testManagedBlockOverridesAndPreservesValues},
         {"managed block moved last", testExistingManagedBlockMovesAfterAdministratorLines},
         {"malformed managed block", testMalformedManagedBlockFailsClosed},
-        {"invalid active configuration", testInvalidActiveConfigurationFailsLoad}
+        {"invalid active configuration", testInvalidActiveConfigurationFailsLoad},
+        {"runtime value already correct", testRuntimeValueAlreadyCorrect},
+        {"runtime write and verify", testRuntimeValueIsWrittenAndVerified},
+        {"runtime missing parameter", testRuntimeMissingParameterFails},
+        {"runtime unsafe input", testRuntimeRejectsUnsafeKeyAndValue},
+        {"runtime symlink", testRuntimeRejectsSymlinkParameter}
     };
 
     size_t failures = 0;

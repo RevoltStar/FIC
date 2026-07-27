@@ -1,5 +1,7 @@
 #include "modules/oss/submodules/SessionManagement/OSS_lock_on_tty_switch.h"
 
+#include <fic/core/LocalizationManager.h>
+
 OSS_lock_on_tty_switch::OSS_lock_on_tty_switch()
     : SessionManagement()
 {
@@ -9,5 +11,11 @@ OSS_lock_on_tty_switch::OSS_lock_on_tty_switch()
 
 bool OSS_lock_on_tty_switch::apply()
 {
-    return true;
+    this->log(
+        LocalizationManager::getLang(
+            "[module:OSS][policy:lock_on_tty_switch][message:not_implemented]"
+        ),
+        logLevel::ERROR
+    );
+    return false;
 }

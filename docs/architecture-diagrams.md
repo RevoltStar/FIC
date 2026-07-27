@@ -248,7 +248,12 @@ flowchart TD
     enabledOnly -->|no| skip[skip policy]
     capture --> caf[Policy.apply]
     caf --> osChange[Изменение ОС или конфигов утилит]
-    caf --> log[Logger category daemon]
+    osChange --> verify[Проверка persistent и обязательных runtime postconditions]
+    verify --> cafResult{Все обязательные эффекты достигнуты?}
+    cafResult -->|да| applied[Applied]
+    cafResult -->|нет или частично| failed[Failed]
+    applied --> log[Logger category daemon]
+    failed --> log
     log --> diagnostic[filtered LogRecord]
     diagnostic --> result[PolicyApplyResult diagnostics]
     result --> response[IPC results per policy]
@@ -261,6 +266,13 @@ flowchart TD
 полей `timestamp`, `level`, `category`, `message`; состояние не сохраняется в
 объекте `Policy`. Объем ограничивается на уровне одного capture и всего
 IPC-ответа, а усечение обозначается `diagnostics_truncated`.
+
+`Policy::apply()` сохраняет бинарный контракт. `true` означает, что
+persistent-состояние проверено и все физически возможные и безопасные без
+перезагрузки runtime-эффекты применены и подтверждены. Частичное выполнение
+возвращает `false`; подробности остаются в diagnostics. Потенциально опасная
+активация, например remount работающей файловой системы после изменения
+`/etc/fstab`, не входит в обязательные runtime-действия.
 
 Запись конфигурационных файлов централизована в `fic-core`:
 
@@ -322,7 +334,8 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    policy[SYSCTL policy] --> loader[SysctlConfiguration]
+    policy[SYSCTL policy] --> runtimePreflight[read and validate /proc/sys key]
+    runtimePreflight --> loader[SysctlConfiguration]
     loader --> roots[fixed sysctl.d roots]
     roots --> select[same-name priority]
     select --> order[global lexical order]
@@ -333,11 +346,23 @@ flowchart LR
     block --> writer[AtomicFileWriter root:root 0644]
     writer --> reload[reload and verify postcondition]
     reload -->|failure| rollback[restore original main file]
+    reload -->|success| runtimeEnsure[direct /proc/sys write when needed]
+    runtimeEnsure --> runtimeVerify[read and verify runtime value]
+    runtimeVerify -->|failure| failed[policy failed with partial diagnostics]
 ```
 
 Сторонние sysctl-файлы используются для вычисления результата и диагностики,
-но не переписываются. Runtime-значение `/proc/sys` читается отдельно; изменение
-работающего ядра в этот поток пока не входит.
+но не переписываются. Runtime-ключ строится только из внутреннего имени
+политики, проверяется и открывается без следования по symlink. Отсутствующий
+ключ и любое неподтвержденное runtime-изменение делают применение неуспешным,
+даже если persistent managed-блок уже записан.
+
+SSH-политики аналогично перечитывают записанный файл, проверяют эффективную
+конфигурацию через проверяемый `sshd -T` и выполняют reload активного
+`ssh.service`/`sshd.service` через проверяемый `systemctl`. Неуспешный reload
+считается частичным применением и возвращает ошибку. Для `/etc/fstab`
+выполняется повторный разбор записанного файла, но runtime remount намеренно
+исключен как потенциально опасное действие.
 
 ## 6. Карта модулей и политик
 

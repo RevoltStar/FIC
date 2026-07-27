@@ -48,9 +48,20 @@ add_test(NAME file_handler_options_tests COMMAND file_handler_options_tests)
 add_executable(sysctl_configuration_tests
     sysctl/SysctlConfigurationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
 )
 target_include_directories(sysctl_configuration_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
 target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
 add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
+
+add_executable(ssh_runtime_tests
+    ssh/SshRuntimeTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/submodules/SshRuntime.cpp
+)
+target_include_directories(ssh_runtime_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(ssh_runtime_tests PRIVATE fic-core)
+add_test(NAME ssh_runtime_tests COMMAND ssh_runtime_tests)

@@ -138,6 +138,36 @@ bool Fstab::apply()
         return false;
     }
 
+    const std::vector<Entry> verifiedEntries = this->loadEntries();
+    int verified = 0;
+    for (Entry entry : verifiedEntries) {
+        if (!this->shouldProcessEntry(entry)) {
+            continue;
+        }
+        ++verified;
+        if (this->ensureOptions(entry, optionsToRequire.value())) {
+            this->log(
+                "После записи /etc/fstab параметры точки монтирования " +
+                    entry.fields[1] + " не соответствуют политике",
+                logLevel::ERROR
+            );
+            return false;
+        }
+    }
+    if (this->scope == Scope::ExplicitMountPoints && verified == 0) {
+        this->log(
+            "После записи /etc/fstab не удалось подтвердить целевые точки монтирования политики " +
+                this->policyName,
+            logLevel::ERROR
+        );
+        return false;
+    }
+
+    this->log(
+        "Persistent-конфигурация /etc/fstab перечитана и соответствует политике; "
+        "runtime remount намеренно не выполняется",
+        logLevel::INFO
+    );
     this->notify("Исправлены параметры монтирования в /etc/fstab для политики " + this->policyName +
                      ". Для уже смонтированных файловых систем может потребоваться явный remount или перезагрузка.",
                  notifyLevel::WARN);

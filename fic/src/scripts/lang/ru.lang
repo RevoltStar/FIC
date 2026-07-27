@@ -109,7 +109,8 @@
 [module:OSS][policy:screenlock_timeout][description]=Таймаут блокировки экрана
 [module:OSS][policy:disable_videodisplay_when_locked][description]=В графическом менеджере входа SDDM по умолчанию при блокировке экрана отображается название включенного видео.
 [module:OSS][policy:lock_on_tty_switch]=Блокировка экрана при переключении на другой терминал
-[module:OSS][policy:lock_on_tty_switch][description]=Блокировка экрана при переключении на другой терминал
+[module:OSS][policy:lock_on_tty_switch][description]=Политика пока не поддерживается. При включении применение завершится ошибкой вместо ложного сообщения об успехе.
+[module:OSS][policy:lock_on_tty_switch][message:not_implemented]=Политика блокировки экрана при переключении TTY пока не реализована
 [module:OSS][policy:fstab_tmp_profile][description]=Требует отдельную запись /tmp в /etc/fstab. Профиль optimal: rw,nodev,nosuid,noexec,relatime. Профиль minimal: rw,nodev,nosuid,relatime. Уже смонтированная файловая система не перемонтируется автоматически.
 [module:OSS][policy:fstab_var_tmp_profile][description]=Требует отдельную запись /var/tmp в /etc/fstab. Профиль optimal: rw,nodev,nosuid,noexec,relatime. Профиль minimal: rw,nodev,nosuid,relatime. Уже смонтированная файловая система не перемонтируется автоматически.
 [module:OSS][policy:fstab_dev_shm_profile][description]=Требует отдельную запись /dev/shm в /etc/fstab. Профиль optimal: rw,nodev,nosuid,noexec,mode=1777. Профиль minimal: rw,nodev,nosuid,mode=1777.

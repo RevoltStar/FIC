@@ -1,4 +1,7 @@
 #include "modules/dac/submodules/ModeAndOwner.h"
+
+#include <algorithm>
+
 ModeAndOwner::ModeAndOwner()
     :DAC()
 {
@@ -73,6 +76,23 @@ bool ModeAndOwner::apply() {
             this->log("   Права: ОК (" + expected_stats.permToString() + ")", logLevel::DEBUG);
         }
 
+        const auto addVerificationError = [&errors](const std::string& message) {
+            if (std::find(errors.begin(), errors.end(), message) == errors.end()) {
+                errors.push_back(message);
+            }
+        };
+        FileStats verified_stats(full_path);
+        if (!verified_stats.exists) {
+            addVerificationError("Файл исчез во время контрольной проверки");
+        } else {
+            if (!verified_stats.check_owner_group(expected_stats)) {
+                addVerificationError("Контрольная проверка владельца/группы не пройдена");
+            }
+            if (!verified_stats.check_permission(expected_stats)) {
+                addVerificationError("Контрольная проверка прав не пройдена");
+            }
+        }
+
         // Итог по файлу
         if (!errors.empty()) {
             if (errors.size() == 2) {
@@ -120,5 +140,4 @@ bool ModeAndOwner::apply() {
     }
     return false;
 }
-
 

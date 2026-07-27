@@ -5,91 +5,88 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-07-17.
+- Обновлено: 2026-07-27.
 - Ветка: `main`.
-- Базовый commit: `7f73165`.
-- Текущая задача: план-оптимум рефакторинга захардкоженных product/runtime
-  путей.
+- Базовый commit: `0a06a60`.
+- Текущая задача: строгая семантика успешного применения политик без
+  усложнения публичной модели `Applied`/`Failed`.
 
 ## Сделано
 
-- Добавлен единый build-time layout `cmake/FicInstallLayout.cmake`. Config,
-  data, logs, static assets, runtime и отдельные файлы остаются независимыми
-  семантическими параметрами; универсальный `FIC_ROOT` намеренно не вводился.
-- CMake генерирует `FicPathDefaults.h` и `FicIpcPathDefaults.h`. В C++ больше
-  нет литералов `/opt/fic` и `/run/fic`.
-- `FicProductPaths` валидирует абсолютные нормализованные пути, а
-  `FicRuntimePaths` допускает однократную инициализацию неизменяемого контекста.
-  Демоны инициализируют production layout при старте.
-- Config, localization, logs, notify spool, lock status и command hash
-  переведены на runtime paths. `ModuleConfigFileHandler` дополнительно умеет
-  принимать явный каталог.
-- `fic-device-db` больше не знает product layout. `DB` принимает `DBOptions`,
-  а `fic-dick` строит их через собственный `DevicePaths`/`DeviceRuntimePaths`.
-- Policy и device IPC получили разные endpoint-типы и переменные окружения:
-  `FIC_SOCKET_PATH` и `FIC_DEVICE_SOCKET_PATH`.
-- Создание обоих административных Unix-сокетов сведено в `FicAdminSocket`.
-  Production-профиль проверяет `root:fic 0770` и socket `0660`, не заменяет
-  чужой socket/обычный файл и удаляет только подтвержденный stale socket.
-  Явный `--socket` использует development-профиль `0600`.
-- systemd, tmpfiles, udev, notify dispatcher и XDG desktop переведены в
-  CMake-шаблоны. GUI icon встроена в Qt resource.
-- Добавлены install-компоненты `fic`, `fic-dick`, `fic-cli`,
-  `fic-session-agent`, `fic-gui`. Debian 10/11/12 и ALT p11 staging используют
-  эти компоненты вместо ручного копирования исходных integration-файлов.
-  ALT отдельно передает каталоги systemd/tmpfiles.
-- Добавлены тесты runtime layout, DBOptions, IPC endpoint и socket security, а
-  также static check против возврата абсолютных product/runtime путей в C++ и
-  обхода CMake layout упаковкой.
-- Обновлены README компонентов, packaging и архитектурная документация.
+- Контракт `Policy::apply()` уточнен: `true` означает проверенное
+  persistent-состояние и все физически возможные и безопасные без перезагрузки
+  runtime-эффекты. Частичное обязательное применение возвращает `false`.
+- Добавлен `SysctlRuntime`: ключ `/proc/sys` строится только из внутреннего
+  имени политики, валидируется, открывается с `O_NOFOLLOW`, изменяется прямой
+  записью без shell и перечитывается. SYSCTL сначала проверяет наличие runtime-
+  ключа, затем исправляет persistent managed-блок и обязательно применяет и
+  проверяет runtime. Ошибка runtime после записи persistent-конфигурации
+  возвращает `Failed` с диагностикой.
+- Добавлен `SshRuntime`: effective-конфигурация проверяется через
+  `VerifiedProcessExecutor` и `sshd -T`; активный `ssh.service` или
+  `sshd.service` перезагружается проверяемым `systemctl`, после чего состояние
+  сервиса проверяется повторно. Ошибка effective-проверки откатывает изменение
+  файла; ошибка reload оставляет проверенный persistent-файл, но возвращает
+  частичный неуспех.
+- Fstab после атомарной записи перечитывается и повторно проверяет требуемые
+  параметры. Runtime remount намеренно не выполняется как опасное действие.
+- DisplayManager перечитывает записанный конфиг; ModeAndOwner выполняет
+  контрольный `stat` после `chown`/`chmod`.
+- Не реализованная политика `lock_on_tty_switch` больше не возвращает ложный
+  успех: она fail-closed с локализованной ошибкой и честным описанием в GUI.
+- Добавлены изолированные тесты SYSCTL runtime и SSH runtime; обновлены
+  `fic/README.md` и архитектурные диаграммы.
 
 ## Основные измененные зоны
 
-- `cmake/FicInstallLayout.cmake`, корневой и компонентные `CMakeLists.txt`.
-- `fic-common/fic-core`: `FicRuntimePaths`, generated defaults и потребители
-  product paths.
-- `fic-common/fic-ipc`: endpoint defaults и `FicAdminSocket`.
-- `fic-common/fic-device-db`: `DBOptions`.
-- `fic`, `fic-dick`, `fic-cli`, `fic-gui`, `fic-session-agent`.
-- `fic/src/scripts/*.in`, Debian/RPM build scripts.
-- `tests/paths`, `tests/device-control/static_checks.py`.
-- README и `docs/architecture-diagrams.md`.
+- `fic-common/fic-policy/include/fic/policy/Policy.h`.
+- `fic/src/modules/sysctl/Sysctl*`.
+- `fic/src/modules/net/submodules/Ssh*`.
+- `fic/src/modules/oss/submodules/Fstab.cpp`.
+- `fic/src/modules/oss/submodules/DisplayManager/backends/DisplayManagerBackend.cpp`.
+- `fic/src/modules/dac/submodules/ModeAndOwner.cpp`.
+- `fic/src/modules/oss/submodules/SessionManagement/OSS_lock_on_tty_switch.cpp`.
+- `fic/src/scripts/lang/{ru,en}.lang`.
+- `tests/sysctl`, `tests/ssh`, `tests/CMakeLists.txt`.
+- `fic/README.md`, `docs/architecture-diagrams.md`.
 
 ## Проверки
 
 Успешно выполнены:
 
 ```bash
-cmake -S . -B /tmp/fic2-paths-build -DBUILD_TESTING=ON
-cmake --build /tmp/fic2-paths-build -j2
-ctest --test-dir /tmp/fic2-paths-build --output-on-failure
+cmake -S . -B /tmp/fic2-apply-semantics-build -DBUILD_TESTING=ON
+cmake --build /tmp/fic2-apply-semantics-build -j2
+ctest --test-dir /tmp/fic2-apply-semantics-build --output-on-failure
 
-bash -n packaging/deb/build-fic-debian10-deb.sh
-bash -n packaging/deb/build-fic-debian11-deb.sh
-bash -n packaging/deb/build-fic-debian12-deb.sh
-bash -n packaging/rpm/build-fic-alt-p11-rpm.sh
+cmake --build /tmp/fic2-apply-semantics-build \
+  --target ssh_runtime_tests fic -j2
+ctest --test-dir /tmp/fic2-apply-semantics-build \
+  -R ssh_runtime_tests --output-on-failure
+git diff --check
 ```
 
-Собраны все цели, 7 тестов прошли. `admin_socket_tests` собран, но пропущен:
-текущий sandbox запрещает `bind(AF_UNIX)` даже во временном каталоге с
-`EPERM`. Install-компоненты `fic`, `fic-dick`, `fic-cli` и
-`fic-session-agent` установлены в `/tmp/fic2-install-check`, состав файлов и
-подстановки шаблонов проверены. Отдельная конфигурация с `/srv/fic/bin`,
-`/etc/fic/policies` и `/var/run/fic-test` подтвердила согласованную генерацию
-C++, systemd, tmpfiles и udev.
+Собраны все цели. Из 9 CTest-целей 8 прошли, `admin_socket_tests` собран, но
+пропущен из-за запрета sandbox на `bind(AF_UNIX)`. Последняя узкая пересборка
+после уточнения обработки ошибок `systemctl` также успешна.
 
-Реальные политики, device mutation, udev trigger, установка пакетов и запись в
+Реальные записи в `/proc/sys`, SSH reload, remount, изменение системных
+конфигов, policy apply, device mutation, установка пакетов и запись в
 `/opt/fic` не выполнялись. Docker-сборки deb/rpm не запускались.
 
 ## Что осталось и риски
 
+- Перед реальным применением SSH-политик администратор должен сохранить hashes
+  выбранных `sshd` и `systemctl`, обычно `/usr/sbin/sshd` и
+  `/usr/bin/systemctl`. Без них политика корректно завершится ошибкой.
+- Runtime SSH рассчитан на поддерживаемые systemd-дистрибутивы. Отдельный
+  `sshd`, запущенный вне `ssh.service`/`sshd.service`, автоматически не
+  перезагружается.
+- Нужен runtime smoke в одноразовой VM: безопасный SYSCTL-параметр,
+  `sshd -T`/reload с установленными hashes и проверка частичных отказов.
+- Для postcondition Fstab, DisplayManager и ModeAndOwner пока выполнена полная
+  компиляция, но нет отдельных изолированных unit-тестов.
+- `lock_on_tty_switch` остается не реализованной и при включении намеренно
+  возвращает `Failed`.
 - Перед merge желательно запустить `admin_socket_tests` вне sandbox и тяжелые
-  Debian 12/ALT p11 package builds. В этой сессии их отсутствие не скрывается.
-- Packaging lifecycle и Qt launcher по-прежнему относятся к фиксированному
-  production-профилю `/opt/fic`; переносимый payload и integration templates
-  управляются CMake, но создание совершенно нового дистрибутивного layout
-  потребует отдельной адаптации maintainer scripts/launcher.
-- Production socket startup теперь fail-closed, если группа `fic` отсутствует
-  или metadata runtime-каталога нельзя привести к контракту. Это намеренное
-  усиление безопасности, но старое некорректное окружение перестанет стартовать
-  молча.
+  Debian 12/ALT p11 package builds.
