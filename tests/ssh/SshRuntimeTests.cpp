@@ -2,6 +2,8 @@
 #include "modules/net/submodules/SshConfigFile.h"
 #include "modules/net/submodules/SshConfigSyntax.h"
 
+#include <fic/policy/Policy.h>
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -63,6 +65,22 @@ public:
     std::filesystem::path root;
 };
 
+class FixedPolicyUnderTest : public Policy {
+public:
+    explicit FixedPolicyUnderTest(const std::filesystem::path& configDirectory) {
+        moduleName = "NET";
+        submoduleName = "SshEdit";
+        policyName = "ssh_pubkey_auth";
+        moduleConf = std::make_unique<ModuleConfigFileHandler>(configDirectory, moduleName);
+        moduleConf->loadConfig();
+        policyTypeValue = std::make_unique<FixedPolicyTypeValue>("yes");
+    }
+
+    bool apply() override {
+        return true;
+    }
+};
+
 void require(bool condition, const std::string& message) {
     if (!condition) {
         throw std::runtime_error(message);
@@ -91,6 +109,38 @@ SshRuntimeOptions options(const TemporaryTree& tree) {
     value.sshdCandidates = {tree.executable("sshd").string()};
     value.systemctlCandidates = {tree.executable("systemctl").string()};
     return value;
+}
+
+void testFixedPubkeyValueRejectsOtherValues() {
+    FixedPolicyTypeValue type("yes");
+
+    require(type.getDefaultValue() == "yes",
+            "the fixed public-key authentication value must default to yes");
+    require(type.validate("yes"),
+            "the fixed public-key authentication value must accept yes");
+    require(!type.validate("no") && !type.validate("ENABLE"),
+            "the fixed public-key authentication value must reject other values");
+
+    const PolicyEditorSpec editor = type.getEditorSpec();
+    require(editor.editor == "label",
+            "a fixed public-key authentication value must remain read-only in clients");
+}
+
+void testFixedPubkeyValueSupportsExistingConfigs() {
+    TemporaryTree tree;
+    tree.write(
+        "config/NET.conf",
+        "ssh_port.status=DISABLE\n"
+        "ssh_port.value=22\n"
+        "ssh_pubkey_auth.status=ENABLE\n"
+    );
+
+    FixedPolicyUnderTest policy(tree.root / "config");
+    require(!policy.hasConfiguredValue(),
+            "an existing NET.conf must remain unchanged when the new value is absent");
+    const std::optional<std::string> value = policy.getValue();
+    require(value.has_value() && *value == "yes",
+            "the intrinsic public-key value must support upgraded configurations");
 }
 
 void testDirectiveSyntaxSupportsEqualsSeparators() {
@@ -301,6 +351,31 @@ void testStricterMatchOverrideIsAccepted() {
     std::string error;
     require(runtime.verifyPolicyValue("PermitRootLogin", "prohibit-password", error),
             error);
+}
+
+void testDisabledPubkeyAuthenticationInMatchIsRejected() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "PubkeyAuthentication yes\n"
+        "Match Group legacy\n"
+        "    PubkeyAuthentication no\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("pubkeyauthentication yes\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("PubkeyAuthentication", "yes", error),
+            "a Match override must not disable public-key authentication");
+    require(error.find("PubkeyAuthentication") != std::string::npos &&
+            error.find("Match Group legacy") != std::string::npos,
+            "a public-key authentication override must identify the parameter and Match");
 }
 
 void testIncludedMatchOverrideIsRejected() {
@@ -544,6 +619,8 @@ void testServiceInspectionFailureIsReported() {
 
 int main() {
     const std::vector<std::pair<const char*, void (*)()>> tests = {
+        {"fixed pubkey value", testFixedPubkeyValueRejectsOtherValues},
+        {"existing config pubkey value", testFixedPubkeyValueSupportsExistingConfigs},
         {"equals directive syntax", testDirectiveSyntaxSupportsEqualsSeparators},
         {"quoted keyword syntax", testQuotedKeywordsAreRecognized},
         {"shared config file syntax", testConfigFileHandlerUsesSharedSyntaxWithoutRewritingIncludes},
@@ -554,6 +631,7 @@ int main() {
         {"equals conditional Match", testEqualsConditionalOverrideIsRejected},
         {"quoted conditional Match", testQuotedConditionalOverrideIsRejected},
         {"stricter Match", testStricterMatchOverrideIsAccepted},
+        {"disabled pubkey Match", testDisabledPubkeyAuthenticationInMatchIsRejected},
         {"included Match", testIncludedMatchOverrideIsRejected},
         {"equals Include", testEqualsIncludeIsAudited},
         {"nested included Match", testNestedIncludedMatchOverrideIsRejected},

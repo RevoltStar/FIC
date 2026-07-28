@@ -81,9 +81,13 @@ public:
 
 //Параметр политики - фиксированное (обычно, в классе политики) значение
 class FixedPolicyTypeValue : public PolicyTypeValue{
+private:
+    std::optional<std::string> expectedValue;
 public:
     FixedPolicyTypeValue();
+    explicit FixedPolicyTypeValue(std::string expectedValue);
 
+    std::optional<std::string> getIntrinsicValue() const;
     PolicyEditorSpec getEditorSpec() const override;
     std::string getPolicyRestrictionInfo() override;
     bool validate(const std::string& value) override;

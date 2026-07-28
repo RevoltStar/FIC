@@ -590,6 +590,7 @@ PolicyMap init_policyMap(){
     cafArr.push_back(std::make_unique<NET_ssh_port>());
     cafArr.push_back(std::make_unique<NET_ssh_max_auth_tries>());
     cafArr.push_back(std::make_unique<NET_ssh_root_login>());
+    cafArr.push_back(std::make_unique<NET_ssh_pubkey_auth>());
 
     //Общие настройки контроля устройств
     cafArr.push_back(std::make_unique<DC_block_usb_storage>());

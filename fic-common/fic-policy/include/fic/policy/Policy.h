@@ -47,6 +47,15 @@ public:
     //Возвращаем nullopt, если значение не установлено или невалидно
     std::optional<std::string> getValue() {
         if (!this->moduleConf->hasConfiguredValue(this->policyName)) {
+            const auto* fixedValue =
+                dynamic_cast<const FixedPolicyTypeValue*>(this->policyTypeValue.get());
+            if (fixedValue != nullptr) {
+                const std::optional<std::string> intrinsicValue =
+                    fixedValue->getIntrinsicValue();
+                if (intrinsicValue.has_value()) {
+                    return intrinsicValue;
+                }
+            }
             this->log("Значение политики " + this->policyName + " не установлено", logLevel::ERROR);
             return std::nullopt;
         }

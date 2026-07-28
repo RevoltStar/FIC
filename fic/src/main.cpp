@@ -305,13 +305,15 @@ json policy_value_json(
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
-    if (!policyClass->hasConfiguredValue()) {
-        return fic::ipc::make_error_response("policy value is not set: " + module + " " + policy);
-    }
 
+    const bool configured = policyClass->hasConfiguredValue();
     std::optional<std::string> currentValue = policyClass->getValue();
     if (!currentValue.has_value()) {
-        return fic::ipc::make_error_response("policy value is invalid: " + module + " " + policy);
+        return fic::ipc::make_error_response(
+            configured
+                ? "policy value is invalid: " + module + " " + policy
+                : "policy value is not set: " + module + " " + policy
+        );
     }
 
     return json{

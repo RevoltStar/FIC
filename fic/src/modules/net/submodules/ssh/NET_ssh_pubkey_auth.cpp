@@ -4,7 +4,7 @@ NET_ssh_pubkey_auth::NET_ssh_pubkey_auth()
     : Ssh(){
     this->Ssh::sshParameter = "PubkeyAuthentication";
     this->policyName = "ssh_pubkey_auth";
-    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>("yes");
 }
 
 NET_ssh_pubkey_auth::~NET_ssh_pubkey_auth() {

@@ -234,8 +234,9 @@ bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
 
     for (const SshConditionalOccurrence& occurrence : occurrences) {
         if (!conditionalValueIsSafe(parameter, occurrence.value, expectedValue)) {
-            error = "conditional SSH override " + occurrence.path.string() + ":" +
-                    std::to_string(occurrence.line) + " under Match " +
+            error = "conditional SSH override for " + parameter + " at " +
+                    occurrence.path.string() + ":" + std::to_string(occurrence.line) +
+                    " under Match " +
                     occurrence.condition + " has value '" + occurrence.value +
                     "', which is weaker than or incompatible with expected value '" +
                     expectedValue + "'";

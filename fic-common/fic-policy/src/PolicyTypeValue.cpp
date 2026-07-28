@@ -4,6 +4,7 @@
 #include <cctype>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 PolicyTypeValue::PolicyTypeValue() {
 }
@@ -158,6 +159,18 @@ FixedPolicyTypeValue::FixedPolicyTypeValue(){
     this->defaultValue = "[FIXED_VALUE]";
 }
 
+FixedPolicyTypeValue::FixedPolicyTypeValue(std::string expectedValue)
+    : expectedValue(std::move(expectedValue)) {
+    if (this->expectedValue->empty()) {
+        throw std::invalid_argument("Фиксированное значение не должно быть пустым");
+    }
+    this->defaultValue = *this->expectedValue;
+}
+
+std::optional<std::string> FixedPolicyTypeValue::getIntrinsicValue() const {
+    return this->expectedValue;
+}
+
 PolicyEditorSpec FixedPolicyTypeValue::getEditorSpec() const {
     PolicyEditorSpec spec;
     spec.editor = "label";
@@ -165,7 +178,7 @@ PolicyEditorSpec FixedPolicyTypeValue::getEditorSpec() const {
 }
 
 bool FixedPolicyTypeValue::validate(const std::string& value) {
-    return true;
+    return !this->expectedValue.has_value() || value == *this->expectedValue;
 }
 
 std::string FixedPolicyTypeValue::postProcessingValue(const std::string& value) {
@@ -177,7 +190,12 @@ std::string FixedPolicyTypeValue::reverse_postProcessingValue(const std::string&
 }
 
 std::string FixedPolicyTypeValue::getPolicyRestrictionInfo() {
-    return LocalizationManager::getLang("[utils:policytypevalue][type:fixedpolicytypevalue]");
+    std::string restriction =
+        LocalizationManager::getLang("[utils:policytypevalue][type:fixedpolicytypevalue]");
+    if (this->expectedValue.has_value()) {
+        restriction += "\n" + *this->expectedValue;
+    }
+    return restriction;
 }
 
 /*

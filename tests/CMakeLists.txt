@@ -14,6 +14,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/paths/static_checks.py
                 ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME ssh_policy_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/ssh/static_checks.py
+                ${CMAKE_SOURCE_DIR}
+    )
 endif()
 
 add_executable(runtime_paths_tests paths/RuntimePathsTests.cpp)
@@ -66,5 +72,5 @@ add_executable(ssh_runtime_tests
 target_include_directories(ssh_runtime_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(ssh_runtime_tests PRIVATE fic-core)
+target_link_libraries(ssh_runtime_tests PRIVATE fic-core fic-policy)
 add_test(NAME ssh_runtime_tests COMMAND ssh_runtime_tests)

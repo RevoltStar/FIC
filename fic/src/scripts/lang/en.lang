@@ -190,6 +190,8 @@ Where possible, a lock against modification is applied
 [module:NET][policy:ssh_port][description]=Connection port
 [module:NET][policy:ssh_root_login]=Root login policy
 [module:NET][policy:ssh_root_login][description]=Root login policy
+[module:NET][policy:ssh_pubkey_auth]=SSH public-key authentication
+[module:NET][policy:ssh_pubkey_auth][description]=Enforces the global PubkeyAuthentication yes value and rejects conditional Match overrides that disable public-key authentication. It does not disable password authentication.
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part1]=SSH parameter is not configured for policy '
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part2]='
 [module:NET][submodule:SshEdit][message:load_failed]=Failed to load sshd_config

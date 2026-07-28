@@ -401,6 +401,10 @@ flowchart TB
 
     arr --> net[NET]
     net --> ssh[Ssh]
+    ssh --> sshPort[ssh_port]
+    ssh --> sshMaxAuthTries[ssh_max_auth_tries]
+    ssh --> sshRootLogin[ssh_root_login]
+    ssh --> sshPubkeyAuth[ssh_pubkey_auth]
 
     arr --> global[GLOBAL]
     global --> systemSettings[SystemSettings]
@@ -440,7 +444,10 @@ flowchart TB
     fstabBootEfi --> map
     fstabSrv --> map
     fstabOpt --> map
-    ssh --> map
+    sshPort --> map
+    sshMaxAuthTries --> map
+    sshRootLogin --> map
+    sshPubkeyAuth --> map
     systemSettings --> map
 ```
 
