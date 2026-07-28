@@ -1,8 +1,11 @@
 #include "modules/net/submodules/SshRuntime.h"
+#include "modules/net/submodules/SshConfigFile.h"
+#include "modules/net/submodules/SshConfigSyntax.h"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -49,6 +52,14 @@ public:
         return path;
     }
 
+    std::string read(const std::filesystem::path& relative) const {
+        std::ifstream stream(root / relative);
+        return {
+            std::istreambuf_iterator<char>(stream),
+            std::istreambuf_iterator<char>()
+        };
+    }
+
     std::filesystem::path root;
 };
 
@@ -80,6 +91,65 @@ SshRuntimeOptions options(const TemporaryTree& tree) {
     value.sshdCandidates = {tree.executable("sshd").string()};
     value.systemctlCandidates = {tree.executable("systemctl").string()};
     return value;
+}
+
+void testDirectiveSyntaxSupportsEqualsSeparators() {
+    const std::vector<std::string> lines = {
+        "PermitRootLogin=yes",
+        "PermitRootLogin =yes",
+        "PermitRootLogin= yes",
+        "PermitRootLogin = yes"
+    };
+
+    for (const std::string& line : lines) {
+        const SshLineParseResult parsed = parseSshConfigLine(line);
+        require(parsed.ok && parsed.hasDirective,
+                "SSH directive with '=' must be parsed: " + line);
+        require(normalizeSshKeyword(parsed.directive.keyword) == "permitrootlogin",
+                "SSH keyword must not include '='");
+        require(parsed.directive.arguments == std::vector<std::string>({"yes"}),
+                "SSH value after '=' must be preserved");
+    }
+}
+
+void testQuotedKeywordsAreRecognized() {
+    const SshLineParseResult parsed =
+        parseSshConfigLine("\"PermitRootLogin\" yes");
+    require(parsed.ok && parsed.hasDirective,
+            "a double-quoted SSH keyword must be parsed");
+    require(normalizeSshKeyword(parsed.directive.keyword) == "permitrootlogin",
+            "quotes must not remain part of the SSH keyword");
+    require(parsed.directive.arguments == std::vector<std::string>({"yes"}),
+            "arguments after a quoted SSH keyword must be preserved");
+}
+
+void testConfigFileHandlerUsesSharedSyntaxWithoutRewritingIncludes() {
+    TemporaryTree tree;
+    const std::filesystem::path config = tree.write(
+        "sshd_config",
+        "Include=sshd_config.d/01.conf\n"
+        "Include sshd_config.d/02.conf\n"
+        "PermitRootLogin=yes\n"
+        "Match=User root\n"
+        "    PermitRootLogin no\n"
+    );
+
+    SshConfigFileHandler handler(config.string());
+    require(handler.loadConfig(), "SSH configuration handler must load '=' syntax");
+    require(handler.getValue("PermitRootLogin") == "yes",
+            "global SSH value using '=' must be visible to the handler");
+    require(handler.setValue("PermitRootLogin", "prohibit-password"),
+            "global SSH value using '=' must be updatable");
+    require(handler.saveFile(), "updated SSH configuration must be saved");
+
+    const std::string content = tree.read("sshd_config");
+    require(content.find("Include=sshd_config.d/01.conf") != std::string::npos &&
+            content.find("Include sshd_config.d/02.conf") != std::string::npos,
+            "updating a policy must preserve repeated unrelated Include directives");
+    require(content.find("PermitRootLogin prohibit-password") != std::string::npos,
+            "the global SSH value must be rewritten");
+    require(content.find("    PermitRootLogin no") != std::string::npos,
+            "a conditional value after Match= must remain unchanged");
 }
 
 void testEffectiveValuesUseAllSshdOutput() {
@@ -165,6 +235,52 @@ void testWeakerMatchOverrideIsRejected() {
             "Match failure must identify the condition");
 }
 
+void testEqualsConditionalOverrideIsRejected() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "PermitRootLogin no\n"
+        "Match=User root\n"
+        "    PermitRootLogin=yes\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin no\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("PermitRootLogin", "no", error),
+            "a conditional override using '=' must not bypass verification");
+    require(error.find("Match User root") != std::string::npos,
+            "Match parsed through '=' must remain diagnostic");
+}
+
+void testQuotedConditionalOverrideIsRejected() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "PermitRootLogin no\n"
+        "\"Match\" User root\n"
+        "    \"PermitRootLogin\" yes\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin no\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("PermitRootLogin", "no", error),
+            "quoted keywords must not bypass conditional verification");
+}
+
 void testStricterMatchOverrideIsAccepted() {
     TemporaryTree tree;
     tree.write(
@@ -215,6 +331,34 @@ void testIncludedMatchOverrideIsRejected() {
             "included override failure must identify its source");
 }
 
+void testEqualsIncludeIsAudited() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "MaxAuthTries 3\n"
+        "Include=sshd_config.d/*.conf\n"
+    );
+    tree.write(
+        "sshd_config.d/override.conf",
+        "Match Address 192.0.2.0/24\n"
+        "    MaxAuthTries=5\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("maxauthtries 3\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("MaxAuthTries", "3", error),
+            "an Include using '=' must not bypass conditional auditing");
+    require(error.find("override.conf:2") != std::string::npos,
+            "override reached through Include= must identify its source");
+}
+
 void testNestedIncludedMatchOverrideIsRejected() {
     TemporaryTree tree;
     tree.write(
@@ -245,6 +389,36 @@ void testNestedIncludedMatchOverrideIsRejected() {
             "a nested included Match override must fail verification");
     require(error.find("nested/override.conf:2") != std::string::npos,
             "nested override failure must identify its source");
+}
+
+void testIncludedMatchStateDoesNotLeak() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "PermitRootLogin no\n"
+        "Include sshd_config.d/*.conf\n"
+    );
+    tree.write(
+        "sshd_config.d/01-match.conf",
+        "Match User alice\n"
+        "    MaxAuthTries 2\n"
+    );
+    tree.write(
+        "sshd_config.d/02-global.conf",
+        "PermitRootLogin yes\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin no\n");
+        }
+    );
+
+    std::string error;
+    require(runtime.verifyPolicyValue("PermitRootLogin", "no", error),
+            "Match state from one included file must not affect the next file: " + error);
 }
 
 void testMultipleScalarEffectiveValuesAreRejected() {
@@ -370,13 +544,20 @@ void testServiceInspectionFailureIsReported() {
 
 int main() {
     const std::vector<std::pair<const char*, void (*)()>> tests = {
+        {"equals directive syntax", testDirectiveSyntaxSupportsEqualsSeparators},
+        {"quoted keyword syntax", testQuotedKeywordsAreRecognized},
+        {"shared config file syntax", testConfigFileHandlerUsesSharedSyntaxWithoutRewritingIncludes},
         {"effective values", testEffectiveValuesUseAllSshdOutput},
         {"multiple ports", testMultipleEffectivePortsAreRejected},
         {"listen address port", testListenAddressPortIsVerified},
         {"weaker Match", testWeakerMatchOverrideIsRejected},
+        {"equals conditional Match", testEqualsConditionalOverrideIsRejected},
+        {"quoted conditional Match", testQuotedConditionalOverrideIsRejected},
         {"stricter Match", testStricterMatchOverrideIsAccepted},
         {"included Match", testIncludedMatchOverrideIsRejected},
+        {"equals Include", testEqualsIncludeIsAudited},
         {"nested included Match", testNestedIncludedMatchOverrideIsRejected},
+        {"included Match isolation", testIncludedMatchStateDoesNotLeak},
         {"multiple scalar values", testMultipleScalarEffectiveValuesAreRejected},
         {"recursive Include", testRecursiveIncludeFailsClosed},
         {"inactive service", testInactiveServiceDoesNotRequireReload},

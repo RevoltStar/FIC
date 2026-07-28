@@ -58,6 +58,9 @@ add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
 
 add_executable(ssh_runtime_tests
     ssh/SshRuntimeTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/submodules/SshConfigAudit.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/submodules/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/submodules/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/submodules/SshRuntime.cpp
 )
 target_include_directories(ssh_runtime_tests PRIVATE

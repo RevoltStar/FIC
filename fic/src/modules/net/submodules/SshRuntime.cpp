@@ -1,23 +1,19 @@
 #include "modules/net/submodules/SshRuntime.h"
+#include "modules/net/submodules/SshConfigAudit.h"
 
 #include <fic/core/VerifiedProcessExecutor.h>
 
 #include <algorithm>
 #include <cctype>
 #include <charconv>
-#include <fstream>
 #include <set>
 #include <sstream>
 #include <system_error>
 #include <utility>
 
-#include <glob.h>
 #include <unistd.h>
 
 namespace {
-
-constexpr std::size_t maxIncludeDepth = 16;
-constexpr std::size_t maxIncludedFiles = 256;
 
 std::string trimCopy(std::string value) {
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
@@ -34,78 +30,6 @@ std::string lowerCopy(std::string value) {
         return static_cast<char>(std::tolower(ch));
     });
     return value;
-}
-
-std::string joinTokens(const std::vector<std::string>& tokens, std::size_t start) {
-    std::string result;
-    for (std::size_t index = start; index < tokens.size(); ++index) {
-        if (!result.empty()) {
-            result += ' ';
-        }
-        result += tokens[index];
-    }
-    return result;
-}
-
-bool tokenizeSshLine(const std::string& line,
-                     std::vector<std::string>& tokens,
-                     std::string& error) {
-    tokens.clear();
-    std::string token;
-    bool tokenStarted = false;
-    bool escaped = false;
-    char quote = '\0';
-
-    for (char character : line) {
-        if (escaped) {
-            token += character;
-            tokenStarted = true;
-            escaped = false;
-            continue;
-        }
-        if (character == '\\' && quote != '\'') {
-            escaped = true;
-            tokenStarted = true;
-            continue;
-        }
-        if (quote != '\0') {
-            if (character == quote) {
-                quote = '\0';
-            } else {
-                token += character;
-            }
-            tokenStarted = true;
-            continue;
-        }
-        if (character == '\'' || character == '"') {
-            quote = character;
-            tokenStarted = true;
-            continue;
-        }
-        if (character == '#') {
-            break;
-        }
-        if (std::isspace(static_cast<unsigned char>(character))) {
-            if (tokenStarted) {
-                tokens.push_back(std::move(token));
-                token.clear();
-                tokenStarted = false;
-            }
-            continue;
-        }
-        token += character;
-        tokenStarted = true;
-    }
-
-    if (escaped || quote != '\0') {
-        error = "unterminated escape or quote";
-        return false;
-    }
-    if (tokenStarted) {
-        tokens.push_back(std::move(token));
-    }
-    error.clear();
-    return true;
 }
 
 std::string processFailure(const ProcessResult& result) {
@@ -194,146 +118,6 @@ bool conditionalValueIsSafe(const std::string& parameter,
                actualValue <= expectedValue;
     }
     return lowerCopy(trimCopy(actual)) == lowerCopy(trimCopy(expected));
-}
-
-struct ConditionalOccurrence {
-    std::filesystem::path path;
-    std::size_t line = 0;
-    std::string value;
-    std::string condition;
-};
-
-struct IncludeAuditState {
-    std::set<std::filesystem::path> activeFiles;
-    std::size_t filesRead = 0;
-    std::vector<ConditionalOccurrence> occurrences;
-};
-
-std::filesystem::path includeIdentity(const std::filesystem::path& path) {
-    std::error_code error;
-    const std::filesystem::path canonical = std::filesystem::canonical(path, error);
-    return error ? path.lexically_normal() : canonical;
-}
-
-bool auditConfigFile(const std::filesystem::path& path,
-                     const std::filesystem::path& includeBase,
-                     const std::string& expectedParameter,
-                     std::string& matchCondition,
-                     IncludeAuditState& state,
-                     std::string& error,
-                     std::size_t depth) {
-    if (depth > maxIncludeDepth) {
-        error = "SSH Include depth exceeds " + std::to_string(maxIncludeDepth);
-        return false;
-    }
-    if (++state.filesRead > maxIncludedFiles) {
-        error = "SSH Include graph exceeds " + std::to_string(maxIncludedFiles) + " files";
-        return false;
-    }
-
-    const std::filesystem::path identity = includeIdentity(path);
-    if (!state.activeFiles.insert(identity).second) {
-        error = "recursive SSH Include detected at " + path.string();
-        return false;
-    }
-
-    std::ifstream stream(path);
-    if (!stream.is_open()) {
-        state.activeFiles.erase(identity);
-        error = "failed to read SSH configuration source " + path.string();
-        return false;
-    }
-
-    std::string line;
-    std::size_t lineNumber = 0;
-    while (std::getline(stream, line)) {
-        ++lineNumber;
-        std::vector<std::string> tokens;
-        std::string tokenError;
-        if (!tokenizeSshLine(line, tokens, tokenError)) {
-            state.activeFiles.erase(identity);
-            error = path.string() + ":" + std::to_string(lineNumber) + ": " + tokenError;
-            return false;
-        }
-        if (tokens.empty()) {
-            continue;
-        }
-
-        const std::string directive = lowerCopy(tokens.front());
-        if (directive == "match") {
-            if (tokens.size() < 2) {
-                state.activeFiles.erase(identity);
-                error = path.string() + ":" + std::to_string(lineNumber) +
-                        ": empty Match condition";
-                return false;
-            }
-            matchCondition = joinTokens(tokens, 1);
-            continue;
-        }
-
-        if (directive == "include") {
-            if (tokens.size() < 2) {
-                state.activeFiles.erase(identity);
-                error = path.string() + ":" + std::to_string(lineNumber) +
-                        ": empty Include directive";
-                return false;
-            }
-            for (std::size_t index = 1; index < tokens.size(); ++index) {
-                std::filesystem::path pattern = tokens[index];
-                if (!pattern.is_absolute()) {
-                    pattern = includeBase / pattern;
-                }
-
-                glob_t matches {};
-                const int globResult = ::glob(pattern.c_str(), 0, nullptr, &matches);
-                if (globResult != 0 && globResult != GLOB_NOMATCH) {
-                    ::globfree(&matches);
-                    state.activeFiles.erase(identity);
-                    error = path.string() + ":" + std::to_string(lineNumber) +
-                            ": failed to expand SSH Include " + pattern.string();
-                    return false;
-                }
-                for (std::size_t match = 0; match < matches.gl_pathc; ++match) {
-                    if (!auditConfigFile(matches.gl_pathv[match],
-                                         includeBase,
-                                         expectedParameter,
-                                         matchCondition,
-                                         state,
-                                         error,
-                                         depth + 1)) {
-                        ::globfree(&matches);
-                        state.activeFiles.erase(identity);
-                        return false;
-                    }
-                }
-                ::globfree(&matches);
-            }
-            continue;
-        }
-
-        if (!matchCondition.empty() && directive == expectedParameter) {
-            if (tokens.size() < 2) {
-                state.activeFiles.erase(identity);
-                error = path.string() + ":" + std::to_string(lineNumber) +
-                        ": empty conditional SSH value";
-                return false;
-            }
-            state.occurrences.push_back({
-                path,
-                lineNumber,
-                joinTokens(tokens, 1),
-                matchCondition
-            });
-        }
-    }
-    if (!stream.good() && !stream.eof()) {
-        state.activeFiles.erase(identity);
-        error = "failed while reading SSH configuration source " + path.string();
-        return false;
-    }
-
-    state.activeFiles.erase(identity);
-    return true;
 }
 
 } // namespace
@@ -437,20 +221,18 @@ bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
         return false;
     }
 
-    IncludeAuditState state;
-    std::string matchCondition;
-    if (!auditConfigFile(options_.configPath,
-                         includeBase.lexically_normal(),
-                         lowerCopy(parameter),
-                         matchCondition,
-                         state,
-                         error,
-                         0)) {
+    SshConfigAuditOptions auditOptions;
+    auditOptions.configPath = options_.configPath;
+    auditOptions.includeBasePath = includeBase.lexically_normal();
+    SshConfigAudit audit(std::move(auditOptions));
+
+    std::vector<SshConditionalOccurrence> occurrences;
+    if (!audit.findConditionalOccurrences(parameter, occurrences, error)) {
         error = "failed to audit conditional SSH configuration: " + error;
         return false;
     }
 
-    for (const ConditionalOccurrence& occurrence : state.occurrences) {
+    for (const SshConditionalOccurrence& occurrence : occurrences) {
         if (!conditionalValueIsSafe(parameter, occurrence.value, expectedValue)) {
             error = "conditional SSH override " + occurrence.path.string() + ":" +
                     std::to_string(occurrence.line) + " under Match " +
