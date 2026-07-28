@@ -4,12 +4,20 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <fstream>
+#include <set>
 #include <sstream>
+#include <system_error>
 #include <utility>
 
+#include <glob.h>
 #include <unistd.h>
 
 namespace {
+
+constexpr std::size_t maxIncludeDepth = 16;
+constexpr std::size_t maxIncludedFiles = 256;
 
 std::string trimCopy(std::string value) {
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
@@ -28,6 +36,78 @@ std::string lowerCopy(std::string value) {
     return value;
 }
 
+std::string joinTokens(const std::vector<std::string>& tokens, std::size_t start) {
+    std::string result;
+    for (std::size_t index = start; index < tokens.size(); ++index) {
+        if (!result.empty()) {
+            result += ' ';
+        }
+        result += tokens[index];
+    }
+    return result;
+}
+
+bool tokenizeSshLine(const std::string& line,
+                     std::vector<std::string>& tokens,
+                     std::string& error) {
+    tokens.clear();
+    std::string token;
+    bool tokenStarted = false;
+    bool escaped = false;
+    char quote = '\0';
+
+    for (char character : line) {
+        if (escaped) {
+            token += character;
+            tokenStarted = true;
+            escaped = false;
+            continue;
+        }
+        if (character == '\\' && quote != '\'') {
+            escaped = true;
+            tokenStarted = true;
+            continue;
+        }
+        if (quote != '\0') {
+            if (character == quote) {
+                quote = '\0';
+            } else {
+                token += character;
+            }
+            tokenStarted = true;
+            continue;
+        }
+        if (character == '\'' || character == '"') {
+            quote = character;
+            tokenStarted = true;
+            continue;
+        }
+        if (character == '#') {
+            break;
+        }
+        if (std::isspace(static_cast<unsigned char>(character))) {
+            if (tokenStarted) {
+                tokens.push_back(std::move(token));
+                token.clear();
+                tokenStarted = false;
+            }
+            continue;
+        }
+        token += character;
+        tokenStarted = true;
+    }
+
+    if (escaped || quote != '\0') {
+        error = "unterminated escape or quote";
+        return false;
+    }
+    if (tokenStarted) {
+        tokens.push_back(std::move(token));
+    }
+    error.clear();
+    return true;
+}
+
 std::string processFailure(const ProcessResult& result) {
     if (!result.error.empty()) {
         return result.error;
@@ -39,6 +119,221 @@ std::string processFailure(const ProcessResult& result) {
         return trimCopy(result.standardError);
     }
     return "exit code " + std::to_string(result.exitCode);
+}
+
+bool parseDecimal(const std::string& value, int& result) {
+    const std::string trimmed = trimCopy(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+    const char* begin = trimmed.data();
+    const char* end = begin + trimmed.size();
+    const auto parsed = std::from_chars(begin, end, result);
+    return parsed.ec == std::errc() && parsed.ptr == end;
+}
+
+bool explicitListenPort(const std::string& value, int& port) {
+    std::istringstream fields(value);
+    std::string address;
+    if (!(fields >> address)) {
+        return false;
+    }
+
+    std::string portText;
+    if (!address.empty() && address.front() == '[') {
+        const std::size_t closingBracket = address.rfind(']');
+        if (closingBracket == std::string::npos ||
+            closingBracket + 1 >= address.size() ||
+            address[closingBracket + 1] != ':') {
+            return false;
+        }
+        portText = address.substr(closingBracket + 2);
+    } else {
+        const std::size_t colon = address.rfind(':');
+        if (colon == std::string::npos ||
+            address.find(':') != colon) {
+            return false;
+        }
+        portText = address.substr(colon + 1);
+    }
+    return parseDecimal(portText, port);
+}
+
+int permitRootLoginRank(std::string value) {
+    value = lowerCopy(trimCopy(std::move(value)));
+    if (value == "no") {
+        return 0;
+    }
+    if (value == "forced-commands-only") {
+        return 1;
+    }
+    if (value == "prohibit-password" || value == "without-password") {
+        return 2;
+    }
+    if (value == "yes") {
+        return 3;
+    }
+    return -1;
+}
+
+bool conditionalValueIsSafe(const std::string& parameter,
+                            const std::string& actual,
+                            const std::string& expected) {
+    const std::string normalizedParameter = lowerCopy(parameter);
+    if (normalizedParameter == "permitrootlogin") {
+        const int actualRank = permitRootLoginRank(actual);
+        const int expectedRank = permitRootLoginRank(expected);
+        return actualRank >= 0 && expectedRank >= 0 && actualRank <= expectedRank;
+    }
+    if (normalizedParameter == "maxauthtries") {
+        int actualValue = 0;
+        int expectedValue = 0;
+        return parseDecimal(actual, actualValue) &&
+               parseDecimal(expected, expectedValue) &&
+               actualValue > 0 &&
+               actualValue <= expectedValue;
+    }
+    return lowerCopy(trimCopy(actual)) == lowerCopy(trimCopy(expected));
+}
+
+struct ConditionalOccurrence {
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::string value;
+    std::string condition;
+};
+
+struct IncludeAuditState {
+    std::set<std::filesystem::path> activeFiles;
+    std::size_t filesRead = 0;
+    std::vector<ConditionalOccurrence> occurrences;
+};
+
+std::filesystem::path includeIdentity(const std::filesystem::path& path) {
+    std::error_code error;
+    const std::filesystem::path canonical = std::filesystem::canonical(path, error);
+    return error ? path.lexically_normal() : canonical;
+}
+
+bool auditConfigFile(const std::filesystem::path& path,
+                     const std::filesystem::path& includeBase,
+                     const std::string& expectedParameter,
+                     std::string& matchCondition,
+                     IncludeAuditState& state,
+                     std::string& error,
+                     std::size_t depth) {
+    if (depth > maxIncludeDepth) {
+        error = "SSH Include depth exceeds " + std::to_string(maxIncludeDepth);
+        return false;
+    }
+    if (++state.filesRead > maxIncludedFiles) {
+        error = "SSH Include graph exceeds " + std::to_string(maxIncludedFiles) + " files";
+        return false;
+    }
+
+    const std::filesystem::path identity = includeIdentity(path);
+    if (!state.activeFiles.insert(identity).second) {
+        error = "recursive SSH Include detected at " + path.string();
+        return false;
+    }
+
+    std::ifstream stream(path);
+    if (!stream.is_open()) {
+        state.activeFiles.erase(identity);
+        error = "failed to read SSH configuration source " + path.string();
+        return false;
+    }
+
+    std::string line;
+    std::size_t lineNumber = 0;
+    while (std::getline(stream, line)) {
+        ++lineNumber;
+        std::vector<std::string> tokens;
+        std::string tokenError;
+        if (!tokenizeSshLine(line, tokens, tokenError)) {
+            state.activeFiles.erase(identity);
+            error = path.string() + ":" + std::to_string(lineNumber) + ": " + tokenError;
+            return false;
+        }
+        if (tokens.empty()) {
+            continue;
+        }
+
+        const std::string directive = lowerCopy(tokens.front());
+        if (directive == "match") {
+            if (tokens.size() < 2) {
+                state.activeFiles.erase(identity);
+                error = path.string() + ":" + std::to_string(lineNumber) +
+                        ": empty Match condition";
+                return false;
+            }
+            matchCondition = joinTokens(tokens, 1);
+            continue;
+        }
+
+        if (directive == "include") {
+            if (tokens.size() < 2) {
+                state.activeFiles.erase(identity);
+                error = path.string() + ":" + std::to_string(lineNumber) +
+                        ": empty Include directive";
+                return false;
+            }
+            for (std::size_t index = 1; index < tokens.size(); ++index) {
+                std::filesystem::path pattern = tokens[index];
+                if (!pattern.is_absolute()) {
+                    pattern = includeBase / pattern;
+                }
+
+                glob_t matches {};
+                const int globResult = ::glob(pattern.c_str(), 0, nullptr, &matches);
+                if (globResult != 0 && globResult != GLOB_NOMATCH) {
+                    ::globfree(&matches);
+                    state.activeFiles.erase(identity);
+                    error = path.string() + ":" + std::to_string(lineNumber) +
+                            ": failed to expand SSH Include " + pattern.string();
+                    return false;
+                }
+                for (std::size_t match = 0; match < matches.gl_pathc; ++match) {
+                    if (!auditConfigFile(matches.gl_pathv[match],
+                                         includeBase,
+                                         expectedParameter,
+                                         matchCondition,
+                                         state,
+                                         error,
+                                         depth + 1)) {
+                        ::globfree(&matches);
+                        state.activeFiles.erase(identity);
+                        return false;
+                    }
+                }
+                ::globfree(&matches);
+            }
+            continue;
+        }
+
+        if (!matchCondition.empty() && directive == expectedParameter) {
+            if (tokens.size() < 2) {
+                state.activeFiles.erase(identity);
+                error = path.string() + ":" + std::to_string(lineNumber) +
+                        ": empty conditional SSH value";
+                return false;
+            }
+            state.occurrences.push_back({
+                path,
+                lineNumber,
+                joinTokens(tokens, 1),
+                matchCondition
+            });
+        }
+    }
+    if (!stream.good() && !stream.eof()) {
+        state.activeFiles.erase(identity);
+        error = "failed while reading SSH configuration source " + path.string();
+        return false;
+    }
+
+    state.activeFiles.erase(identity);
+    return true;
 }
 
 } // namespace
@@ -70,14 +365,8 @@ bool SshRuntime::findExecutable(const std::vector<std::string>& candidates,
     return false;
 }
 
-bool SshRuntime::effectiveValue(const std::string& parameter,
-                                std::string& value,
-                                std::string& error) const {
-    if (parameter.empty()) {
-        error = "SSH parameter is empty";
-        return false;
-    }
-
+bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuration,
+                                            std::string& error) const {
     std::string sshd;
     if (!findExecutable(options_.sshdCandidates, sshd, error)) {
         error = "sshd validation is unavailable: " + error;
@@ -96,7 +385,7 @@ bool SshRuntime::effectiveValue(const std::string& parameter,
         return false;
     }
 
-    const std::string expectedName = lowerCopy(parameter);
+    configuration.clear();
     std::istringstream lines(result.standardOutput);
     std::string line;
     while (std::getline(lines, line)) {
@@ -105,17 +394,153 @@ bool SshRuntime::effectiveValue(const std::string& parameter,
         if (!(fields >> name)) {
             continue;
         }
-        if (lowerCopy(name) != expectedName) {
-            continue;
-        }
+        std::string value;
         std::getline(fields, value);
-        value = trimCopy(std::move(value));
+        configuration[lowerCopy(name)].push_back(trimCopy(std::move(value)));
+    }
+    error.clear();
+    return true;
+}
+
+bool SshRuntime::effectiveValues(const std::string& parameter,
+                                 std::vector<std::string>& values,
+                                 std::string& error) const {
+    if (parameter.empty()) {
+        error = "SSH parameter is empty";
+        return false;
+    }
+
+    EffectiveConfiguration configuration;
+    if (!loadEffectiveConfiguration(configuration, error)) {
+        return false;
+    }
+
+    const auto found = configuration.find(lowerCopy(parameter));
+    if (found != configuration.end() && !found->second.empty()) {
+        values = found->second;
         error.clear();
         return true;
     }
-
+    values.clear();
     error = "sshd -T output does not contain parameter " + parameter;
     return false;
+}
+
+bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
+                                           const std::string& expectedValue,
+                                           std::string& error) const {
+    const std::filesystem::path includeBase = options_.includeBasePath.empty()
+        ? options_.configPath.parent_path()
+        : options_.includeBasePath;
+    if (!includeBase.is_absolute()) {
+        error = "SSH Include base path must be absolute";
+        return false;
+    }
+
+    IncludeAuditState state;
+    std::string matchCondition;
+    if (!auditConfigFile(options_.configPath,
+                         includeBase.lexically_normal(),
+                         lowerCopy(parameter),
+                         matchCondition,
+                         state,
+                         error,
+                         0)) {
+        error = "failed to audit conditional SSH configuration: " + error;
+        return false;
+    }
+
+    for (const ConditionalOccurrence& occurrence : state.occurrences) {
+        if (!conditionalValueIsSafe(parameter, occurrence.value, expectedValue)) {
+            error = "conditional SSH override " + occurrence.path.string() + ":" +
+                    std::to_string(occurrence.line) + " under Match " +
+                    occurrence.condition + " has value '" + occurrence.value +
+                    "', which is weaker than or incompatible with expected value '" +
+                    expectedValue + "'";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool SshRuntime::verifyPolicyValue(const std::string& parameter,
+                                   const std::string& expectedValue,
+                                   std::string& error) const {
+    if (parameter.empty() || expectedValue.empty()) {
+        error = "SSH parameter or expected value is empty";
+        return false;
+    }
+
+    EffectiveConfiguration configuration;
+    if (!loadEffectiveConfiguration(configuration, error)) {
+        return false;
+    }
+
+    const std::string normalizedParameter = lowerCopy(parameter);
+    const auto found = configuration.find(normalizedParameter);
+    if (found == configuration.end() || found->second.empty()) {
+        error = "sshd -T output does not contain parameter " + parameter;
+        return false;
+    }
+
+    if (normalizedParameter == "port") {
+        int expectedPort = 0;
+        if (!parseDecimal(expectedValue, expectedPort) ||
+            expectedPort < 1 || expectedPort > 65535) {
+            error = "invalid expected SSH port '" + expectedValue + "'";
+            return false;
+        }
+
+        std::set<int> effectivePorts;
+        for (const std::string& value : found->second) {
+            int port = 0;
+            if (!parseDecimal(value, port) || port < 1 || port > 65535) {
+                error = "sshd -T returned invalid port '" + value + "'";
+                return false;
+            }
+            effectivePorts.insert(port);
+        }
+        if (effectivePorts.size() != 1 || *effectivePorts.begin() != expectedPort) {
+            std::string actual;
+            for (int port : effectivePorts) {
+                if (!actual.empty()) {
+                    actual += ", ";
+                }
+                actual += std::to_string(port);
+            }
+            error = "effective SSH ports are [" + actual +
+                    "], expected the single port " + std::to_string(expectedPort);
+            return false;
+        }
+
+        const auto listenAddresses = configuration.find("listenaddress");
+        if (listenAddresses != configuration.end()) {
+            for (const std::string& value : listenAddresses->second) {
+                int listenPort = 0;
+                if (explicitListenPort(value, listenPort) && listenPort != expectedPort) {
+                    error = "effective ListenAddress '" + value +
+                            "' uses port " + std::to_string(listenPort) +
+                            ", expected " + std::to_string(expectedPort);
+                    return false;
+                }
+            }
+        }
+    } else {
+        if (found->second.size() != 1) {
+            error = "sshd -T returned " + std::to_string(found->second.size()) +
+                    " effective values for scalar parameter " + parameter;
+            return false;
+        }
+        if (lowerCopy(trimCopy(found->second.front())) !=
+            lowerCopy(trimCopy(expectedValue))) {
+            error = "effective SSH value '" + found->second.front() +
+                    "' does not match expected value '" + expectedValue + "'";
+            return false;
+        }
+    }
+
+    return auditConditionalOverrides(parameter, expectedValue, error);
 }
 
 SshActivationResult SshRuntime::activateIfRunning() const {

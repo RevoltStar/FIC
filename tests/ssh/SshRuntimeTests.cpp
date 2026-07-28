@@ -39,6 +39,16 @@ public:
         return path;
     }
 
+    std::filesystem::path write(const std::filesystem::path& relative,
+                                const std::string& content) const {
+        const std::filesystem::path path = root / relative;
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream stream(path);
+        stream << content;
+        stream.close();
+        return path;
+    }
+
     std::filesystem::path root;
 };
 
@@ -66,12 +76,13 @@ ProcessResult inactive() {
 SshRuntimeOptions options(const TemporaryTree& tree) {
     SshRuntimeOptions value;
     value.configPath = tree.root / "sshd_config";
+    value.includeBasePath = tree.root;
     value.sshdCandidates = {tree.executable("sshd").string()};
     value.systemctlCandidates = {tree.executable("systemctl").string()};
     return value;
 }
 
-void testEffectiveValueUsesSshdOutput() {
+void testEffectiveValuesUseAllSshdOutput() {
     TemporaryTree tree;
     SshRuntime runtime(
         options(tree),
@@ -80,14 +91,199 @@ void testEffectiveValueUsesSshdOutput() {
            const ProcessOptions&) {
             require(arguments.size() == 3 && arguments[0] == "-T" && arguments[1] == "-f",
                     "sshd must be invoked in extended test mode");
-            return success("port 2222\npermitrootlogin prohibit-password\n");
+            return success("port 2222\nport 22\npermitrootlogin prohibit-password\n");
         }
     );
 
-    std::string value;
+    std::vector<std::string> values;
     std::string error;
-    require(runtime.effectiveValue("Port", value, error), error);
-    require(value == "2222", "wrong effective SSH value");
+    require(runtime.effectiveValues("Port", values, error), error);
+    require(values == std::vector<std::string>({"2222", "22"}),
+            "all effective SSH values must be returned");
+}
+
+void testMultipleEffectivePortsAreRejected() {
+    TemporaryTree tree;
+    tree.write("sshd_config", "Port 2222\n");
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("port 2222\nport 22\nlistenaddress 0.0.0.0:2222\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("Port", "2222", error),
+            "an additional effective SSH port must fail verification");
+    require(error.find("2222, 22") != std::string::npos ||
+            error.find("22, 2222") != std::string::npos,
+            "port failure must identify all effective ports");
+}
+
+void testListenAddressPortIsVerified() {
+    TemporaryTree tree;
+    tree.write("sshd_config", "Port 2222\nListenAddress 127.0.0.1:22\n");
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("port 2222\nlistenaddress 127.0.0.1:22\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("Port", "2222", error),
+            "ListenAddress must not bypass the expected SSH port");
+    require(error.find("ListenAddress") != std::string::npos,
+            "ListenAddress failure must be diagnostic");
+}
+
+void testWeakerMatchOverrideIsRejected() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "PermitRootLogin no\n"
+        "Match User root\n"
+        "    PermitRootLogin yes\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin no\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("PermitRootLogin", "no", error),
+            "a weaker Match override must fail verification");
+    require(error.find("Match User root") != std::string::npos,
+            "Match failure must identify the condition");
+}
+
+void testStricterMatchOverrideIsAccepted() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "PermitRootLogin prohibit-password\n"
+        "Match User root\n"
+        "    PermitRootLogin forced-commands-only\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin prohibit-password\n");
+        }
+    );
+
+    std::string error;
+    require(runtime.verifyPolicyValue("PermitRootLogin", "prohibit-password", error),
+            error);
+}
+
+void testIncludedMatchOverrideIsRejected() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "MaxAuthTries 3\n"
+        "Include sshd_config.d/*.conf\n"
+    );
+    tree.write(
+        "sshd_config.d/override.conf",
+        "Match Address 192.0.2.0/24\n"
+        "    MaxAuthTries 5\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("maxauthtries 3\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("MaxAuthTries", "3", error),
+            "a weaker override from Include must fail verification");
+    require(error.find("override.conf:2") != std::string::npos,
+            "included override failure must identify its source");
+}
+
+void testNestedIncludedMatchOverrideIsRejected() {
+    TemporaryTree tree;
+    tree.write(
+        "sshd_config",
+        "PermitRootLogin no\n"
+        "Include sshd_config.d/first.conf\n"
+    );
+    tree.write(
+        "sshd_config.d/first.conf",
+        "Include sshd_config.d/nested/*.conf\n"
+    );
+    tree.write(
+        "sshd_config.d/nested/override.conf",
+        "Match Group administrators\n"
+        "    PermitRootLogin yes\n"
+    );
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin no\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("PermitRootLogin", "no", error),
+            "a nested included Match override must fail verification");
+    require(error.find("nested/override.conf:2") != std::string::npos,
+            "nested override failure must identify its source");
+}
+
+void testMultipleScalarEffectiveValuesAreRejected() {
+    TemporaryTree tree;
+    tree.write("sshd_config", "MaxAuthTries 3\n");
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("maxauthtries 3\nmaxauthtries 2\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("MaxAuthTries", "3", error),
+            "multiple effective values for a scalar policy must fail closed");
+    require(error.find("2 effective values") != std::string::npos,
+            "ambiguous scalar failure must be diagnostic");
+}
+
+void testRecursiveIncludeFailsClosed() {
+    TemporaryTree tree;
+    tree.write("sshd_config", "PermitRootLogin no\nInclude loop.conf\n");
+    tree.write("loop.conf", "Include sshd_config\n");
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin no\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("PermitRootLogin", "no", error),
+            "a recursive Include graph must fail closed");
+    require(error.find("recursive SSH Include") != std::string::npos,
+            "recursive Include failure must be diagnostic");
 }
 
 void testInactiveServiceDoesNotRequireReload() {
@@ -174,7 +370,15 @@ void testServiceInspectionFailureIsReported() {
 
 int main() {
     const std::vector<std::pair<const char*, void (*)()>> tests = {
-        {"effective value", testEffectiveValueUsesSshdOutput},
+        {"effective values", testEffectiveValuesUseAllSshdOutput},
+        {"multiple ports", testMultipleEffectivePortsAreRejected},
+        {"listen address port", testListenAddressPortIsVerified},
+        {"weaker Match", testWeakerMatchOverrideIsRejected},
+        {"stricter Match", testStricterMatchOverrideIsAccepted},
+        {"included Match", testIncludedMatchOverrideIsRejected},
+        {"nested included Match", testNestedIncludedMatchOverrideIsRejected},
+        {"multiple scalar values", testMultipleScalarEffectiveValuesAreRejected},
+        {"recursive Include", testRecursiveIncludeFailsClosed},
         {"inactive service", testInactiveServiceDoesNotRequireReload},
         {"active reload", testActiveServiceIsReloadedAndVerified},
         {"reload failure", testReloadFailureIsReported},

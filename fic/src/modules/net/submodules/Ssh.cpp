@@ -35,19 +35,6 @@ bool restoreSshConfig(const std::string& path,
     return AtomicFileWriter::write(path, content, options, &error);
 }
 
-std::string lowerTrimmed(std::string value) {
-    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }));
-    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }).base(), value.end());
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
 } // namespace
 
 SshConfigFileHandler::SshConfigFileHandler(const std::string& filepath)
@@ -329,19 +316,13 @@ bool Ssh::apply() {
     }
 
     SshRuntime runtime;
-    std::string effectiveValue;
     std::string runtimeError;
-    if (!runtime.effectiveValue(this->sshParameter, effectiveValue, runtimeError) ||
-        lowerTrimmed(effectiveValue) != lowerTrimmed(expectedValue)) {
+    if (!runtime.verifyPolicyValue(this->sshParameter, expectedValue, runtimeError)) {
         if (changed) {
             std::string rollbackError;
             if (!restoreSshConfig(this->sshPath, originalContent, rollbackError)) {
                 runtimeError += ". Ошибка отката SSH-конфигурации: " + rollbackError;
             }
-        }
-        if (runtimeError.empty()) {
-            runtimeError = "Эффективное значение '" + effectiveValue +
-                           "' не совпадает с ожидаемым '" + expectedValue + "'";
         }
         this->log("Проверка effective-конфигурации sshd не пройдена: " + runtimeError,
                   logLevel::ERROR);
