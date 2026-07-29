@@ -8,21 +8,29 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayName = "Debian 12";
     profile.hostCompatibility.osIds = {"debian"};
     profile.hostCompatibility.versionIds = {"12"};
-    profile.systemTools.systemctlCandidates = {
-        "/bin/systemctl",
-        "/usr/bin/systemctl"
-    };
-    profile.systemTools.loginctlCandidates = {
-        "/bin/loginctl",
-        "/usr/bin/loginctl"
+    profile.executables.entries = {
+        {
+            ExecutableId::Sshd,
+            {"/usr/sbin/sshd", "/usr/bin/sshd"}
+        },
+        {
+            ExecutableId::Systemctl,
+            {"/usr/bin/systemctl", "/bin/systemctl"}
+        },
+        {
+            ExecutableId::Loginctl,
+            {"/usr/bin/loginctl", "/bin/loginctl"}
+        },
+        {
+            ExecutableId::Visudo,
+            {"/usr/sbin/visudo"}
+        }
     };
     profile.ssh.configPath = "/etc/ssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/ssh";
-    profile.ssh.sshdCandidates = {"/usr/sbin/sshd", "/usr/bin/sshd"};
     profile.ssh.serviceUnits = {"ssh.service", "sshd.service"};
     profile.sudo.mainConfigPath = "/etc/sudoers";
     profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
-    profile.sudo.visudoCandidates = {"/usr/sbin/visudo"};
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {

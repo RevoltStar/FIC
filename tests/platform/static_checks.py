@@ -98,10 +98,12 @@ def main():
         }.items()
     }
     required_profile_sections = (
-        "systemTools.systemctlCandidates",
-        "systemTools.loginctlCandidates",
+        "profile.executables.entries",
+        "ExecutableId::Sshd",
+        "ExecutableId::Systemctl",
+        "ExecutableId::Loginctl",
+        "ExecutableId::Visudo",
         "sudo.mainConfigPath",
-        "sudo.visudoCandidates",
         "displayManager.sddmConfigPath",
         "displayManager.gdmConfigCandidates",
         "dac.protectedSystemFiles",
@@ -129,9 +131,46 @@ def main():
 
     registry = (root / "fic/src/core/main_function.cpp").read_text(encoding="utf-8")
     require(
-        "init_policyMap(const fic::platform::PlatformProfile& platform)" in registry,
-        "PolicyMap must receive the selected platform profile",
+        "const fic::platform::PlatformExecutableResolver& executables" in registry,
+        "PolicyMap and lock operations must receive the platform executable resolver",
     )
+    resolver = (
+        root / "fic/src/platform/PlatformExecutableResolver.cpp"
+    ).read_text(encoding="utf-8")
+    for executable_id in ("Sshd", "Systemctl", "Loginctl", "Visudo"):
+        require(
+            f"ExecutableId::{executable_id}" in resolver,
+            f"the resolver does not support logical executable {executable_id}",
+        )
+    require(
+        "S_ISLNK" in resolver
+        and "S_ISREG" in resolver
+        and "S_IWGRP | S_IWOTH" in resolver,
+        "the resolver must reject symlinks, non-files and writable executables",
+    )
+
+    obsolete_candidate_fields = (
+        "sshdCandidates",
+        "systemctlCandidates",
+        "loginctlCandidates",
+        "visudoCandidates",
+        "SystemToolsPlatformConfig",
+    )
+    consumer_roots = (
+        root / "fic/src/core",
+        root / "fic/src/modules",
+        root / "fic/src/session",
+    )
+    for consumer_root in consumer_roots:
+        for source_path in consumer_root.rglob("*"):
+            if source_path.suffix not in (".cpp", ".h"):
+                continue
+            source = source_path.read_text(encoding="utf-8")
+            for obsolete in obsolete_candidate_fields:
+                require(
+                    obsolete not in source,
+                    f"{source_path.relative_to(root)} still selects {obsolete} locally",
+                )
 
     deb_builder = (
         root / "packaging/deb/build-fic-debian12-deb.sh"

@@ -6,7 +6,7 @@ class OSS_disable_videodisplay_when_locked : public DisplayManager
 {
 public:
     OSS_disable_videodisplay_when_locked(
-        const fic::platform::SystemToolsPlatformConfig& systemTools,
+        const fic::platform::PlatformExecutableResolver& executables,
         const fic::platform::DisplayManagerPlatformConfig& displayManager);
 
     bool apply () override;

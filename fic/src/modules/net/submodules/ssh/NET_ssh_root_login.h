@@ -8,7 +8,7 @@ class NET_ssh_root_login : public Ssh
 public:
     explicit NET_ssh_root_login(
         const fic::platform::SshPlatformConfig& platformConfig,
-        const fic::platform::SystemToolsPlatformConfig& systemTools);
+        const fic::platform::PlatformExecutableResolver& executables);
     ~NET_ssh_root_login();
     bool apply() override;
 };

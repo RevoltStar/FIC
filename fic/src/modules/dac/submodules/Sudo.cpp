@@ -10,22 +10,21 @@ namespace {
 
 std::mutex sudoersMutex;
 
-SudoersConfigurationOptions productionSudoersOptions(
-    const fic::platform::SudoPlatformConfig& platformConfig) {
-    SudoersConfigurationOptions options;
+bool productionSudoersOptions(
+    const fic::platform::SudoPlatformConfig& platformConfig,
+    const fic::platform::PlatformExecutableResolver& executables,
+    SudoersConfigurationOptions& options,
+    std::string& error) {
     options.mainPath = platformConfig.mainConfigPath;
     options.managedPath = platformConfig.managedConfigPath;
-    for (const std::string& candidate : platformConfig.visudoCandidates) {
-        std::error_code error;
-        if (std::filesystem::is_regular_file(candidate, error) && !error) {
-            options.validatorPath = candidate;
-            break;
-        }
+    std::filesystem::path validator;
+    if (!executables.resolve(
+            fic::platform::ExecutableId::Visudo, validator, error)) {
+        return false;
     }
-    if (options.validatorPath.empty() && !platformConfig.visudoCandidates.empty()) {
-        options.validatorPath = platformConfig.visudoCandidates.front();
-    }
-    return options;
+    options.validatorPath = validator.string();
+    error.clear();
+    return true;
 }
 
 std::string defaultsPrefix(const std::string& type,
@@ -56,9 +55,12 @@ Sudo::~Sudo() {
     // Реализация деструктора
 }
 
-Sudo::Sudo(fic::platform::SudoPlatformConfig platformConfig)
+Sudo::Sudo(
+    fic::platform::SudoPlatformConfig platformConfig,
+    const fic::platform::PlatformExecutableResolver& executables)
     : DAC(),
-      platformConfig_(std::move(platformConfig)) {
+      platformConfig_(std::move(platformConfig)),
+      executables_(executables) {
     this->submoduleName = "SudoEdit";
     /*this->Check_And_Fix::postProcessingParameter = std::make_unique<PostProcessingParameter>(PostProcessingParameter::ToJsonWithColon);*/
     /*this->Check_And_Fix::postProcessingValue = std::make_unique<PostProcessingValueJSON>(",", ",");*/
@@ -73,7 +75,14 @@ bool Sudo::apply() {
 
     const std::lock_guard<std::mutex> lock(sudoersMutex);
 
-    SudoersConfiguration configuration(productionSudoersOptions(platformConfig_));
+    SudoersConfigurationOptions configurationOptions;
+    std::string resolverError;
+    if (!productionSudoersOptions(
+            platformConfig_, executables_, configurationOptions, resolverError)) {
+        this->log("Не удалось выбрать visudo: " + resolverError, logLevel::ERROR);
+        return false;
+    }
+    SudoersConfiguration configuration(std::move(configurationOptions));
     std::string loadError;
     if (!configuration.load(loadError)) {
         this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);
@@ -148,7 +157,14 @@ bool Sudo::applyRequireAuthentication() {
         return false;
     }
 
-    SudoersConfiguration configuration(productionSudoersOptions(platformConfig_));
+    SudoersConfigurationOptions configurationOptions;
+    std::string resolverError;
+    if (!productionSudoersOptions(
+            platformConfig_, executables_, configurationOptions, resolverError)) {
+        this->log("Не удалось выбрать visudo: " + resolverError, logLevel::ERROR);
+        return false;
+    }
+    SudoersConfiguration configuration(std::move(configurationOptions));
     std::string loadError;
     if (!configuration.load(loadError)) {
         this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);

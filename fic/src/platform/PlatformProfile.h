@@ -7,6 +7,23 @@
 
 namespace fic::platform {
 
+enum class ExecutableId {
+    Sshd,
+    Systemctl,
+    Loginctl,
+    Visudo
+};
+
+struct PlatformExecutableSpec {
+    ExecutableId id;
+    std::vector<std::filesystem::path> candidates;
+    bool required = true;
+};
+
+struct PlatformExecutables {
+    std::vector<PlatformExecutableSpec> entries;
+};
+
 struct HostCompatibility {
     std::vector<std::string> osIds;
     std::vector<std::string> versionIds;
@@ -16,19 +33,12 @@ struct HostCompatibility {
 struct SshPlatformConfig {
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
-    std::vector<std::string> sshdCandidates;
     std::vector<std::string> serviceUnits;
-};
-
-struct SystemToolsPlatformConfig {
-    std::vector<std::string> systemctlCandidates;
-    std::vector<std::string> loginctlCandidates;
 };
 
 struct SudoPlatformConfig {
     std::filesystem::path mainConfigPath;
     std::filesystem::path managedConfigPath;
-    std::vector<std::string> visudoCandidates;
 };
 
 struct DisplayManagerPlatformConfig {
@@ -53,7 +63,7 @@ struct PlatformProfile {
     std::string id;
     std::string displayName;
     HostCompatibility hostCompatibility;
-    SystemToolsPlatformConfig systemTools;
+    PlatformExecutables executables;
     SshPlatformConfig ssh;
     SudoPlatformConfig sudo;
     DisplayManagerPlatformConfig displayManager;

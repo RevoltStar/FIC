@@ -33,3 +33,7 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
   paths, SSH and sudo layouts, display-manager configuration paths, and the DAC
   system-file/command rule sets. Desktop-environment and kernel/FHS capability
   detection remains independent of the distribution profile.
+- Executable candidates are stored once in the profile under the typed
+  `executables` registry (`Sshd`, `Systemctl`, `Loginctl`, `Visudo`). Policies
+  request a logical executable ID from the shared resolver instead of
+  maintaining their own path lists.

@@ -132,9 +132,11 @@ flowchart TD
     build[CMake FIC_TARGET_PLATFORM] --> compiled[Compile-time PlatformProfile]
     start([fic start]) --> profile[Создать и проверить PlatformProfile]
     compiled --> profile
-    profile --> tools[systemctl / loginctl]
-    profile --> sshProfile[SSH config / sshd / units]
-    profile --> sudoProfile[sudoers / visudo]
+    profile --> executableRegistry[Typed executable registry]
+    executableRegistry --> resolver[PlatformExecutableResolver]
+    resolver --> tools[sshd / systemctl / loginctl / visudo]
+    profile --> sshProfile[SSH config / units]
+    profile --> sudoProfile[sudoers configs]
     profile --> dmProfile[SDDM / LightDM / GDM configs]
     profile --> dacProfile[DAC file and command rules]
     profile --> osRelease[Проверить /etc/os-release]
@@ -177,8 +179,10 @@ flowchart TD
 профиль, а fail-closed подтверждает, что пакет запущен на предназначенной для
 него ОС. `init_policyMap()` передает один и тот же immutable профиль политикам
 при первой и каждой последующей инициализации. Профиль владеет интеграционными
-данными systemd/login, SSH, sudo, display manager и DAC; выбор backend конкретной
-графической среды и стандартные FHS/kernel-пути остаются capability-зависимыми.
+данными systemd/login, SSH, sudo, display manager и DAC. Кандидаты команд
+хранятся в едином типизированном реестре, а политики получают выбранный путь
+через общий `PlatformExecutableResolver`; выбор backend конкретной графической
+среды и стандартные FHS/kernel-пути остаются capability-зависимыми.
 
 ## 4. IPC-запрос от CLI или GUI
 

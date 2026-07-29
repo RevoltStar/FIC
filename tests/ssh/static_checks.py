@@ -30,9 +30,9 @@ def main():
     registration = registry.find("std::make_unique<NET_ssh_pubkey_auth>(")
     require(registration >= 0, "ssh_pubkey_auth must be registered in init_policyMap")
     require(
-        "platform.ssh, platform.systemTools"
+        "platform.ssh, executables"
         in registry[registration : registration + 180],
-        "ssh_pubkey_auth must receive the selected SSH and system-tools profile",
+        "ssh_pubkey_auth must receive the selected SSH profile and executable resolver",
     )
 
     config = parse_properties(root / "fic/src/scripts/config/NET.conf")

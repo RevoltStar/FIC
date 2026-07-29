@@ -43,6 +43,7 @@ find_package(Threads REQUIRED)
 
 add_library(fic-platform STATIC
     src/platform/PlatformCompatibility.cpp
+    src/platform/PlatformExecutableResolver.cpp
     ${FIC_TARGET_PLATFORM_PROFILE_SOURCE}
 )
 target_include_directories(fic-platform PUBLIC

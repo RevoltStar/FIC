@@ -3,9 +3,9 @@
 #include "modules/oss/submodules/DisplayManager/backends/DisplayManagerBackend.h"
 
 OSS_disable_autologin::OSS_disable_autologin(
-    const fic::platform::SystemToolsPlatformConfig& systemTools,
+    const fic::platform::PlatformExecutableResolver& executables,
     const fic::platform::DisplayManagerPlatformConfig& displayManager)
-    : DisplayManager(systemTools, displayManager)
+    : DisplayManager(executables, displayManager)
 {
     this->policyName = "disable_autologin";
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();

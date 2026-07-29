@@ -6,7 +6,8 @@
 class DAC_sudo_require_authentication : public Sudo {
 public:
     explicit DAC_sudo_require_authentication(
-        const fic::platform::SudoPlatformConfig& platformConfig);
+        const fic::platform::SudoPlatformConfig& platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables);
     bool apply() override;
 };
 

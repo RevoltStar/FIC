@@ -8,7 +8,8 @@ class DAC_sudo_securepath : public Sudo
 {
 public:
     explicit DAC_sudo_securepath(
-        const fic::platform::SudoPlatformConfig& platformConfig);
+        const fic::platform::SudoPlatformConfig& platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables);
     ~DAC_sudo_securepath();
     bool apply () override;
 

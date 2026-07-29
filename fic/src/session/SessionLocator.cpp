@@ -6,18 +6,8 @@
 #include <locale>
 #include <sstream>
 #include <unordered_map>
-#include <unistd.h>
 
 namespace {
-std::string find_loginctl(const std::vector<std::string>& candidates) {
-    for (const std::string& path : candidates) {
-        if (::access(path.c_str(), X_OK) == 0) {
-            return path;
-        }
-    }
-    return "";
-}
-
 bool valid_session_id(const std::string& id) {
     if (id.empty()) {
         return false;
@@ -45,18 +35,19 @@ std::unordered_map<std::string, std::string> parse_properties(const std::string&
 } // namespace
 
 bool SessionLocator::activeGraphicalSessions(
-    const std::vector<std::string>& loginctlCandidates,
+    const fic::platform::PlatformExecutableResolver& executables,
     std::vector<UserSession>& sessions,
     std::string& error) {
     sessions.clear();
-    const std::string loginctl = find_loginctl(loginctlCandidates);
-    if (loginctl.empty()) {
-        error = "loginctl was not found";
+    std::filesystem::path loginctl;
+    if (!executables.resolve(
+            fic::platform::ExecutableId::Loginctl, loginctl, error)) {
+        error = "loginctl was not found: " + error;
         return false;
     }
 
     ProcessResult listResult = ProcessExecutor::execute(
-        loginctl,
+        loginctl.string(),
         {"list-sessions", "--no-legend", "--no-pager"}
     );
     if (!listResult.success()) {
@@ -81,7 +72,7 @@ bool SessionLocator::activeGraphicalSessions(
         session.uid = static_cast<uid_t>(uid);
 
         ProcessResult showResult = ProcessExecutor::execute(
-            loginctl,
+            loginctl.string(),
             {
                 "show-session", session.id,
                 "--property=Class",

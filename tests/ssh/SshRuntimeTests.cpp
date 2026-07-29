@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -62,7 +63,30 @@ public:
         };
     }
 
+    const fic::platform::PlatformExecutableResolver& executables() const {
+        if (!executables_) {
+            fic::platform::PlatformExecutables registry;
+            registry.entries = {
+                {
+                    fic::platform::ExecutableId::Sshd,
+                    {executable("sshd")}
+                },
+                {
+                    fic::platform::ExecutableId::Systemctl,
+                    {executable("systemctl")}
+                }
+            };
+            fic::platform::PlatformExecutableResolverOptions resolverOptions;
+            resolverOptions.enforceTrustedOwnership = false;
+            executables_ =
+                std::make_unique<fic::platform::PlatformExecutableResolver>(
+                    std::move(registry), resolverOptions);
+        }
+        return *executables_;
+    }
+
     std::filesystem::path root;
+    mutable std::unique_ptr<fic::platform::PlatformExecutableResolver> executables_;
 };
 
 class FixedPolicyUnderTest : public Policy {
@@ -106,8 +130,6 @@ SshRuntimeOptions options(const TemporaryTree& tree) {
     SshRuntimeOptions value;
     value.configPath = tree.root / "sshd_config";
     value.includeBasePath = tree.root;
-    value.sshdCandidates = {tree.executable("sshd").string()};
-    value.systemctlCandidates = {tree.executable("systemctl").string()};
     value.serviceUnits = {"ssh.service", "sshd.service"};
     return value;
 }
@@ -207,6 +229,7 @@ void testEffectiveValuesUseAllSshdOutput() {
     TemporaryTree tree;
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>& arguments,
            const ProcessOptions&) {
@@ -228,6 +251,7 @@ void testMultipleEffectivePortsAreRejected() {
     tree.write("sshd_config", "Port 2222\n");
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -248,6 +272,7 @@ void testListenAddressPortIsVerified() {
     tree.write("sshd_config", "Port 2222\nListenAddress 127.0.0.1:22\n");
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -272,6 +297,7 @@ void testWeakerMatchOverrideIsRejected() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -296,6 +322,7 @@ void testEqualsConditionalOverrideIsRejected() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -320,6 +347,7 @@ void testQuotedConditionalOverrideIsRejected() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -342,6 +370,7 @@ void testStricterMatchOverrideIsAccepted() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -359,6 +388,7 @@ void testPermitRootLoginAliasesAreEquivalent() {
     tree.write("sshd_config", "PermitRootLogin prohibit-password\n");
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -376,6 +406,7 @@ void testDifferentPermitRootLoginValuesAreNotEquivalent() {
     tree.write("sshd_config", "PermitRootLogin prohibit-password\n");
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -398,6 +429,7 @@ void testDisabledPubkeyAuthenticationInMatchIsRejected() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -427,6 +459,7 @@ void testIncludedMatchOverrideIsRejected() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -455,6 +488,7 @@ void testEqualsIncludeIsAudited() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -487,6 +521,7 @@ void testNestedIncludedMatchOverrideIsRejected() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -519,6 +554,7 @@ void testIncludedMatchStateDoesNotLeak() {
     );
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -536,6 +572,7 @@ void testMultipleScalarEffectiveValuesAreRejected() {
     tree.write("sshd_config", "MaxAuthTries 3\n");
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -556,6 +593,7 @@ void testRecursiveIncludeFailsClosed() {
     tree.write("loop.conf", "Include sshd_config\n");
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -574,6 +612,7 @@ void testInactiveServiceDoesNotRequireReload() {
     TemporaryTree tree;
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {
@@ -591,6 +630,7 @@ void testActiveServiceIsReloadedAndVerified() {
     int reloads = 0;
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [&reloads](const std::string&,
                    const std::vector<std::string>& arguments,
                    const ProcessOptions&) {
@@ -611,6 +651,7 @@ void testReloadFailureIsReported() {
     TemporaryTree tree;
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>& arguments,
            const ProcessOptions&) {
@@ -634,6 +675,7 @@ void testServiceInspectionFailureIsReported() {
     TemporaryTree tree;
     SshRuntime runtime(
         options(tree),
+        tree.executables(),
         [](const std::string&,
            const std::vector<std::string>&,
            const ProcessOptions&) {

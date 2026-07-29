@@ -8,7 +8,8 @@ class DAC_sudo_env_reset : public Sudo
 {
 public:
     explicit DAC_sudo_env_reset(
-        const fic::platform::SudoPlatformConfig& platformConfig);
+        const fic::platform::SudoPlatformConfig& platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables);
     ~DAC_sudo_env_reset();
     bool apply() override;
 };

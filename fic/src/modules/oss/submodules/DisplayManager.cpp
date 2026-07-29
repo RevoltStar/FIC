@@ -8,19 +8,8 @@
 #include <sstream>
 #include <unordered_map>
 #include <utility>
-#include <unistd.h>
 
 namespace {
-std::string find_systemctl(const std::vector<std::string>& candidates)
-{
-    for (const std::string& path : candidates) {
-        if (::access(path.c_str(), X_OK) == 0) {
-            return path;
-        }
-    }
-    return "";
-}
-
 std::unordered_map<std::string, std::string> parse_properties(const std::string& output)
 {
     std::unordered_map<std::string, std::string> properties;
@@ -55,10 +44,10 @@ std::string display_manager_name(std::string value)
 } // namespace
 
 DisplayManager::DisplayManager(
-    fic::platform::SystemToolsPlatformConfig systemTools,
+    const fic::platform::PlatformExecutableResolver& executables,
     fic::platform::DisplayManagerPlatformConfig displayManager)
     : OSS(),
-      systemTools_(std::move(systemTools)),
+      executables_(executables),
       displayManager_(std::move(displayManager))
 {
     this->submoduleName = "DisplayManager";
@@ -69,14 +58,17 @@ bool DisplayManager::apply() {
 }
 
 std::string DisplayManager::detectDisplayManager() const {
-    const std::string systemctl =
-        find_systemctl(systemTools_.systemctlCandidates);
-    if (systemctl.empty()) {
+    std::filesystem::path systemctl;
+    std::string resolverError;
+    if (!executables_.resolve(
+            fic::platform::ExecutableId::Systemctl,
+            systemctl,
+            resolverError)) {
         return "UNKNOWN";
     }
 
     const ProcessResult result = ProcessExecutor::execute(
-        systemctl,
+        systemctl.string(),
         {
             "show", "display-manager.service",
             "--property=Id",

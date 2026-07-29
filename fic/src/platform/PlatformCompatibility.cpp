@@ -1,4 +1,5 @@
 #include "platform/PlatformCompatibility.h"
+#include "platform/PlatformExecutableResolver.h"
 
 #include <algorithm>
 #include <cctype>
@@ -70,16 +71,55 @@ bool validAbsolutePath(const std::filesystem::path& path) {
     return path.is_absolute() && path == path.lexically_normal();
 }
 
-bool validateExecutableCandidates(const std::vector<std::string>& candidates,
-                                  const std::string& label,
-                                  std::string& error) {
+bool validateExecutableCandidates(
+    const std::vector<std::filesystem::path>& candidates,
+    const std::string& label,
+    std::string& error) {
     if (candidates.empty()) {
         error = label + " candidates are empty";
         return false;
     }
-    for (const std::string& candidate : candidates) {
+    std::set<std::filesystem::path> uniqueCandidates;
+    for (const std::filesystem::path& candidate : candidates) {
         if (!validAbsolutePath(candidate)) {
-            error = label + " candidate must be an absolute normalized path: " + candidate;
+            error = label + " candidate must be an absolute normalized path: " +
+                    candidate.string();
+            return false;
+        }
+        if (!uniqueCandidates.insert(candidate).second) {
+            error = label + " candidate is duplicated: " + candidate.string();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validateExecutables(const PlatformExecutables& executables,
+                         std::string& error) {
+    const std::vector<ExecutableId> supportedIds = allExecutableIds();
+    std::set<ExecutableId> uniqueIds;
+    for (const PlatformExecutableSpec& spec : executables.entries) {
+        if (std::find(supportedIds.begin(), supportedIds.end(), spec.id) ==
+            supportedIds.end()) {
+            error = "platform profile contains an unsupported executable identifier";
+            return false;
+        }
+        if (!uniqueIds.insert(spec.id).second) {
+            error = std::string("executable is duplicated in platform profile: ") +
+                    executableIdName(spec.id);
+            return false;
+        }
+        if (!validateExecutableCandidates(
+                spec.candidates, executableIdName(spec.id), error)) {
+            return false;
+        }
+    }
+    for (const ExecutableId id : supportedIds) {
+        const PlatformExecutableSpec* spec =
+            findExecutableSpec(executables, id);
+        if (spec == nullptr || !spec->required) {
+            error = std::string("platform profile must define required executable: ") +
+                    executableIdName(id);
             return false;
         }
     }
@@ -159,14 +199,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
         error = "SSH Include base path must be absolute and normalized";
         return false;
     }
-    if (!validateExecutableCandidates(
-            profile.systemTools.systemctlCandidates, "systemctl", error) ||
-        !validateExecutableCandidates(
-            profile.systemTools.loginctlCandidates, "loginctl", error) ||
-        !validateExecutableCandidates(
-            profile.ssh.sshdCandidates, "sshd", error) ||
-        !validateExecutableCandidates(
-            profile.sudo.visudoCandidates, "visudo", error)) {
+    if (!validateExecutables(profile.executables, error)) {
         return false;
     }
     if (profile.ssh.serviceUnits.empty()) {

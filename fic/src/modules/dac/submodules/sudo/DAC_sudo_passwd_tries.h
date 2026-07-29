@@ -7,7 +7,8 @@ class DAC_sudo_passwd_tries : public Sudo
 {
 public:
     explicit DAC_sudo_passwd_tries(
-        const fic::platform::SudoPlatformConfig& platformConfig);
+        const fic::platform::SudoPlatformConfig& platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables);
     ~DAC_sudo_passwd_tries();
     bool apply () override;
 };

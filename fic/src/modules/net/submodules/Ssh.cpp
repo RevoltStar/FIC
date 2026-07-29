@@ -38,14 +38,13 @@ bool restoreSshConfig(const std::string& path,
 Ssh::~Ssh() = default;
 
 Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,
-         const fic::platform::SystemToolsPlatformConfig& systemTools)
+         const fic::platform::PlatformExecutableResolver& executables)
     : Net(),
       platformConfig_(std::move(platformConfig)),
+      executables_(executables),
       runtimeOptions_(std::make_unique<SshRuntimeOptions>(SshRuntimeOptions{
           platformConfig_.configPath,
           platformConfig_.includeBasePath,
-          platformConfig_.sshdCandidates,
-          systemTools.systemctlCandidates,
           platformConfig_.serviceUnits
       })),
       sshConfig_(std::make_unique<SshConfigFileHandler>(
@@ -143,7 +142,7 @@ bool Ssh::apply() {
         }
     }
 
-    SshRuntime runtime(*runtimeOptions_);
+    SshRuntime runtime(*runtimeOptions_, executables_);
     std::string runtimeError;
     if (!runtime.verifyPolicyValue(this->sshParameter, expectedValue, runtimeError)) {
         if (changed) {

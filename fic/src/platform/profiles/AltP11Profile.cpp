@@ -8,21 +8,29 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayName = "ALT Linux p11";
     profile.hostCompatibility.osIds = {"altlinux"};
     profile.hostCompatibility.altBranchIds = {"p11"};
-    profile.systemTools.systemctlCandidates = {
-        "/usr/bin/systemctl",
-        "/bin/systemctl"
-    };
-    profile.systemTools.loginctlCandidates = {
-        "/usr/bin/loginctl",
-        "/bin/loginctl"
+    profile.executables.entries = {
+        {
+            ExecutableId::Sshd,
+            {"/usr/sbin/sshd"}
+        },
+        {
+            ExecutableId::Systemctl,
+            {"/usr/bin/systemctl", "/bin/systemctl"}
+        },
+        {
+            ExecutableId::Loginctl,
+            {"/usr/bin/loginctl", "/bin/loginctl"}
+        },
+        {
+            ExecutableId::Visudo,
+            {"/usr/sbin/visudo"}
+        }
     };
     profile.ssh.configPath = "/etc/openssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/openssh";
-    profile.ssh.sshdCandidates = {"/usr/sbin/sshd"};
     profile.ssh.serviceUnits = {"sshd.service"};
     profile.sudo.mainConfigPath = "/etc/sudoers";
     profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
-    profile.sudo.visudoCandidates = {"/usr/sbin/visudo"};
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {"/etc/gdm/custom.conf"};

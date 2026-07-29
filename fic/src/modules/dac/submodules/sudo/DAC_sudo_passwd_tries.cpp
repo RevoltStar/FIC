@@ -1,8 +1,9 @@
 #include "modules/dac/submodules/sudo/DAC_sudo_passwd_tries.h"
 
 DAC_sudo_passwd_tries::DAC_sudo_passwd_tries(
-    const fic::platform::SudoPlatformConfig& platformConfig)
-    : Sudo(platformConfig) {
+    const fic::platform::SudoPlatformConfig& platformConfig,
+    const fic::platform::PlatformExecutableResolver& executables)
+    : Sudo(platformConfig, executables) {
     //Какой параметр рассматриваем?
     /*this->Sudo::sudoParameter = "Defaults passwd_tries";*/
     this->Sudo::sudoParameter = std::make_unique<KeyValueDefaultsSudoersParam>(

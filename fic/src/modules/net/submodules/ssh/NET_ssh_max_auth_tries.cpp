@@ -2,8 +2,8 @@
 
 NET_ssh_max_auth_tries::NET_ssh_max_auth_tries(
     const fic::platform::SshPlatformConfig& platformConfig,
-    const fic::platform::SystemToolsPlatformConfig& systemTools)
-    : Ssh(platformConfig, systemTools) {
+    const fic::platform::PlatformExecutableResolver& executables)
+    : Ssh(platformConfig, executables) {
     this->Ssh::sshParameter = "MaxAuthTries";
     this->policyName = "ssh_max_auth_tries";
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 5, 3);

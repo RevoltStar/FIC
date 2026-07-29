@@ -2,8 +2,8 @@
 
 NET_ssh_pubkey_auth::NET_ssh_pubkey_auth(
     const fic::platform::SshPlatformConfig& platformConfig,
-    const fic::platform::SystemToolsPlatformConfig& systemTools)
-    : Ssh(platformConfig, systemTools) {
+    const fic::platform::PlatformExecutableResolver& executables)
+    : Ssh(platformConfig, executables) {
     this->Ssh::sshParameter = "PubkeyAuthentication";
     this->policyName = "ssh_pubkey_auth";
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>("yes");

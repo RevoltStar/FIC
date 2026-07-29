@@ -2,6 +2,7 @@
 #define DISPLAYMANAGER_H
 
 #include "modules/oss/OSS.h"
+#include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
 
 #include <string>
@@ -14,14 +15,14 @@ protected:
     const fic::platform::DisplayManagerPlatformConfig& displayManagerConfig() const;
 public:
     DisplayManager(
-        fic::platform::SystemToolsPlatformConfig systemTools,
+        const fic::platform::PlatformExecutableResolver& executables,
         fic::platform::DisplayManagerPlatformConfig displayManager);
     virtual ~DisplayManager() = default;
 
     bool apply() override;
 
 private:
-    fic::platform::SystemToolsPlatformConfig systemTools_;
+    const fic::platform::PlatformExecutableResolver& executables_;
     fic::platform::DisplayManagerPlatformConfig displayManager_;
 };
 

@@ -1,13 +1,17 @@
 #include "platform/PlatformCompatibility.h"
+#include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
 
 #include <cstdlib>
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 
@@ -59,6 +63,32 @@ bool hasRule(const std::vector<fic::platform::FileAccessRule>& rules,
         });
 }
 
+const fic::platform::PlatformExecutableSpec& executableSpec(
+    const fic::platform::PlatformProfile& profile,
+    fic::platform::ExecutableId id) {
+    const auto* spec =
+        fic::platform::findExecutableSpec(profile.executables, id);
+    if (spec == nullptr) {
+        throw std::runtime_error(
+            std::string("missing executable spec: ") +
+            fic::platform::executableIdName(id));
+    }
+    return *spec;
+}
+
+fic::platform::PlatformExecutableSpec& executableSpec(
+    fic::platform::PlatformProfile& profile,
+    fic::platform::ExecutableId id) {
+    for (auto& spec : profile.executables.entries) {
+        if (spec.id == id) {
+            return spec;
+        }
+    }
+    throw std::runtime_error(
+        std::string("missing executable spec: ") +
+        fic::platform::executableIdName(id));
+}
+
 void testSelectedProfile() {
     const fic::platform::PlatformProfile profile =
         fic::platform::makeBuildPlatformProfile();
@@ -68,9 +98,12 @@ void testSelectedProfile() {
             "sudoers main configuration path is incorrect");
     require(profile.sudo.managedConfigPath == "/etc/sudoers.d/zzzz-fic",
             "managed sudoers path is incorrect");
-    require(profile.sudo.visudoCandidates ==
-                std::vector<std::string>({"/usr/sbin/visudo"}),
+    require(executableSpec(profile, fic::platform::ExecutableId::Visudo).candidates ==
+                std::vector<std::filesystem::path>({"/usr/sbin/visudo"}),
             "visudo candidates are incorrect");
+    require(profile.executables.entries.size() ==
+                fic::platform::allExecutableIds().size(),
+            "the executable registry must contain every supported logical command");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",
             "SDDM configuration path is incorrect");
     require(profile.displayManager.lightDmConfigPath ==
@@ -161,9 +194,21 @@ void testInvalidProfileIsRejected() {
             "a relative SSH configuration path must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.ssh.sshdCandidates = {"usr/sbin/sshd"};
+    executableSpec(profile, fic::platform::ExecutableId::Sshd).candidates = {
+        "usr/sbin/sshd"
+    };
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative executable path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.executables.entries.push_back(profile.executables.entries.front());
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a duplicate executable identifier must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.executables.entries.pop_back();
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a missing required executable must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.sudo.managedConfigPath = "etc/sudoers.d/zzzz-fic";
@@ -179,6 +224,80 @@ void testInvalidProfileIsRejected() {
     profile.dac.protectedSystemFiles.front().permissions = 0;
     require(!fic::platform::validatePlatformProfile(profile, error),
             "invalid DAC permissions must be rejected");
+}
+
+void testExecutableResolver() {
+    std::string pattern = "/tmp/fic-platform-executables-XXXXXX";
+    char* created = ::mkdtemp(pattern.data());
+    require(created != nullptr, "cannot create temporary executable directory");
+    const std::filesystem::path directory = created;
+
+    try {
+        const std::filesystem::path executable = directory / "sshd";
+        std::ofstream stream(executable);
+        stream << "#!/bin/sh\nexit 0\n";
+        stream.close();
+        require(::chmod(executable.c_str(), 0755) == 0,
+                "cannot mark temporary command executable");
+
+        fic::platform::PlatformExecutables registry;
+        registry.entries = {{
+            fic::platform::ExecutableId::Sshd,
+            {directory / "missing", executable}
+        }};
+        fic::platform::PlatformExecutableResolverOptions resolverOptions;
+        resolverOptions.enforceTrustedOwnership = false;
+        fic::platform::PlatformExecutableResolver resolver(
+            std::move(registry),
+            resolverOptions);
+
+        std::filesystem::path resolved;
+        std::string error;
+        require(resolver.resolve(
+                    fic::platform::ExecutableId::Sshd, resolved, error),
+                error);
+        require(resolved == executable,
+                "resolver did not select the first usable candidate");
+
+        const std::filesystem::path replacement = directory / "missing";
+        std::ofstream replacementStream(replacement);
+        replacementStream << "#!/bin/sh\nexit 0\n";
+        replacementStream.close();
+        require(::chmod(replacement.c_str(), 0755) == 0,
+                "cannot mark replacement command executable");
+        std::filesystem::remove(executable);
+        require(resolver.resolve(
+                    fic::platform::ExecutableId::Sshd, resolved, error),
+                error);
+        require(resolved == replacement,
+                "resolver must revalidate an invalidated cached candidate");
+
+        std::ofstream restoredStream(executable);
+        restoredStream << "#!/bin/sh\nexit 0\n";
+        restoredStream.close();
+        require(::chmod(executable.c_str(), 0755) == 0,
+                "cannot restore temporary command");
+        const std::filesystem::path symlink = directory / "sshd-link";
+        std::filesystem::create_symlink(executable, symlink);
+        fic::platform::PlatformExecutables symlinkRegistry;
+        symlinkRegistry.entries = {{
+            fic::platform::ExecutableId::Sshd,
+            {symlink}
+        }};
+        fic::platform::PlatformExecutableResolver symlinkResolver(
+            std::move(symlinkRegistry),
+            resolverOptions);
+        require(!symlinkResolver.resolve(
+                    fic::platform::ExecutableId::Sshd, resolved, error),
+                "resolver must reject a symbolic-link executable candidate");
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+        throw;
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
 }
 
 void testOsReleaseParsing() {
@@ -208,6 +327,7 @@ int main() {
         testSelectedProfile();
         testCompatibilityIsFailClosed();
         testInvalidProfileIsRejected();
+        testExecutableResolver();
         testOsReleaseParsing();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

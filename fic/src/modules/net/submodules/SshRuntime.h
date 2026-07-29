@@ -1,6 +1,8 @@
 #ifndef SSHRUNTIME_H
 #define SSHRUNTIME_H
 
+#include "platform/PlatformExecutableResolver.h"
+
 #include <fic/core/ProcessExecutor.h>
 
 #include <filesystem>
@@ -12,8 +14,6 @@
 struct SshRuntimeOptions {
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
-    std::vector<std::string> sshdCandidates;
-    std::vector<std::string> systemctlCandidates;
     std::vector<std::string> serviceUnits;
 };
 
@@ -33,6 +33,7 @@ using SshCommandRunner = std::function<ProcessResult(
 class SshRuntime {
 public:
     explicit SshRuntime(SshRuntimeOptions options,
+                        const fic::platform::PlatformExecutableResolver& executables,
                         SshCommandRunner runner = {});
 
     bool effectiveValues(const std::string& parameter,
@@ -47,6 +48,7 @@ private:
     using EffectiveConfiguration = std::map<std::string, std::vector<std::string>>;
 
     SshRuntimeOptions options_;
+    const fic::platform::PlatformExecutableResolver& executables_;
     SshCommandRunner runner_;
 
     bool loadEffectiveConfiguration(EffectiveConfiguration& configuration,
@@ -54,9 +56,6 @@ private:
     bool auditConditionalOverrides(const std::string& parameter,
                                    const std::string& expectedValue,
                                    std::string& error) const;
-    bool findExecutable(const std::vector<std::string>& candidates,
-                        std::string& executable,
-                        std::string& error) const;
 };
 
 #endif // SSHRUNTIME_H

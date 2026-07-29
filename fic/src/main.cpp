@@ -33,6 +33,7 @@
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/SystemBootInfo.h>
 #include "platform/PlatformCompatibility.h"
+#include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
 
 using json = nlohmann::json;
@@ -481,7 +482,8 @@ json lock_status_json() {
 
 json handle_request(json request,
                     PolicyMap& policyMap,
-                    const fic::platform::PlatformProfile& platform) {
+                    const fic::platform::PlatformProfile& platform,
+                    const fic::platform::PlatformExecutableResolver& executables) {
     const std::string command = request.value("command", "");
     const std::string requestedModule = request.value("module", "");
     const std::string module = canonical_module_name(policyMap, requestedModule);
@@ -552,7 +554,7 @@ json handle_request(json request,
             }
             bool ok = set(policyMap, module, policy, value);
             if (ok) {
-                policyMap = init_policyMap(platform);
+                policyMap = init_policyMap(platform, executables);
             }
             return ok ? fic::ipc::make_ok_response("policy value updated")
                       : fic::ipc::make_error_response("failed to update policy value");
@@ -560,7 +562,7 @@ json handle_request(json request,
         if (command == "enable_policy") {
             bool ok = enable(policyMap, module, policy);
             if (ok) {
-                policyMap = init_policyMap(platform);
+                policyMap = init_policyMap(platform, executables);
             }
             return ok ? fic::ipc::make_ok_response("policy enabled")
                       : fic::ipc::make_error_response("failed to enable policy");
@@ -568,17 +570,17 @@ json handle_request(json request,
         if (command == "disable_policy") {
             bool ok = disable(policyMap, module, policy);
             if (ok) {
-                policyMap = init_policyMap(platform);
+                policyMap = init_policyMap(platform, executables);
             }
             return ok ? fic::ipc::make_ok_response("policy disabled")
                       : fic::ipc::make_error_response("failed to disable policy");
         }
         if (command == "reload_config") {
-            policyMap = init_policyMap(platform);
+            policyMap = init_policyMap(platform, executables);
             return fic::ipc::make_ok_response("config reloaded");
         }
         if (command == "apply_all") {
-            policyMap = init_policyMap(platform);
+            policyMap = init_policyMap(platform, executables);
             PolicyApplySummary summary = applyAllPolicies(policyMap);
             const bool ok = isPolicyApplySuccessful(summary, "all", "");
             return policy_apply_summary_json(
@@ -591,7 +593,7 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            policyMap = init_policyMap(platform);
+            policyMap = init_policyMap(platform, executables);
             PolicyApplySummary summary = applyModulePolicies(policyMap, module);
             const bool ok = isPolicyApplySuccessful(summary, module, "all");
             return policy_apply_summary_json(
@@ -604,7 +606,7 @@ json handle_request(json request,
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            policyMap = init_policyMap(platform);
+            policyMap = init_policyMap(platform, executables);
             PolicyApplySummary summary;
             summary.add(applyPolicy(policyMap, module, policy));
             const bool ok = isPolicyApplySuccessful(summary, module, policy);
@@ -629,7 +631,7 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to update command hash");
         }
         if (command == "lock") {
-            bool ok = lock(platform);
+            bool ok = lock(executables);
             return ok ? fic::ipc::make_ok_response("computer locked")
                       : fic::ipc::make_error_response("failed to lock computer");
         }
@@ -650,7 +652,8 @@ json handle_request(json request,
 
 bool serve_one_client(int clientFd,
                       PolicyMap& policyMap,
-                      const fic::platform::PlatformProfile& platform) {
+                      const fic::platform::PlatformProfile& platform,
+                      const fic::platform::PlatformExecutableResolver& executables) {
     const PeerCredentials peer = get_peer_credentials(clientFd);
     std::string requestText;
     std::string error;
@@ -666,7 +669,7 @@ bool serve_one_client(int clientFd,
     json response;
     try {
         request = json::parse(requestText);
-        response = handle_request(request, policyMap, platform);
+        response = handle_request(request, policyMap, platform, executables);
     } catch (const std::exception& e) {
         response = fic::ipc::make_error_response("invalid request: " + std::string(e.what()));
     }
@@ -718,7 +721,9 @@ int main(int argc, char* argv[]) {
     }
 
     const bool once = get_arg_value(argc, argv, 1) == "--oneshot";
-    auto policyMap = init_policyMap(platform);
+    const fic::platform::PlatformExecutableResolver executables(
+        platform.executables);
+    auto policyMap = init_policyMap(platform, executables);
 
     if (once) {
         return apply(policyMap, "all", "") ? 0 : 1;
@@ -768,14 +773,14 @@ int main(int argc, char* argv[]) {
         if (ready > 0 && FD_ISSET(serverFd, &readSet)) {
             int clientFd = ::accept(serverFd, nullptr, nullptr);
             if (clientFd >= 0) {
-                serve_one_client(clientFd, policyMap, platform);
+                serve_one_client(clientFd, policyMap, platform, executables);
                 ::close(clientFd);
             }
         }
 
         auto now = std::chrono::steady_clock::now();
         if (now >= nextPeriodicApply) {
-            policyMap = init_policyMap(platform);
+            policyMap = init_policyMap(platform, executables);
             apply(policyMap, "all", "");
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }

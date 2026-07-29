@@ -8,7 +8,8 @@ class DAC_sudo_timeout : public Sudo
 {
 public:
     explicit DAC_sudo_timeout(
-        const fic::platform::SudoPlatformConfig& platformConfig);
+        const fic::platform::SudoPlatformConfig& platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables);
     ~DAC_sudo_timeout();
     bool apply () override;
 };

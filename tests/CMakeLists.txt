@@ -78,7 +78,7 @@ add_executable(ssh_runtime_tests
 target_include_directories(ssh_runtime_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(ssh_runtime_tests PRIVATE fic-core fic-policy)
+target_link_libraries(ssh_runtime_tests PRIVATE fic-core fic-policy fic-platform)
 add_test(NAME ssh_runtime_tests COMMAND ssh_runtime_tests)
 
 add_executable(platform_profile_tests

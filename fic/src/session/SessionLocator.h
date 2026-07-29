@@ -1,6 +1,7 @@
 #ifndef SESSION_LOCATOR_H
 #define SESSION_LOCATOR_H
 
+#include "platform/PlatformExecutableResolver.h"
 #include "session/UserSession.h"
 
 #include <string>
@@ -9,7 +10,7 @@
 class SessionLocator {
 public:
     static bool activeGraphicalSessions(
-        const std::vector<std::string>& loginctlCandidates,
+        const fic::platform::PlatformExecutableResolver& executables,
         std::vector<UserSession>& sessions,
         std::string& error);
 };

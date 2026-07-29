@@ -11,8 +11,6 @@
 #include <system_error>
 #include <utility>
 
-#include <unistd.h>
-
 namespace {
 
 std::string trimCopy(std::string value) {
@@ -135,8 +133,12 @@ bool conditionalValueIsSafe(const std::string& parameter,
 
 } // namespace
 
-SshRuntime::SshRuntime(SshRuntimeOptions options, SshCommandRunner runner)
+SshRuntime::SshRuntime(
+    SshRuntimeOptions options,
+    const fic::platform::PlatformExecutableResolver& executables,
+    SshCommandRunner runner)
     : options_(std::move(options)),
+      executables_(executables),
       runner_(std::move(runner)) {
     if (!runner_) {
         runner_ = [](const std::string& executable,
@@ -147,25 +149,11 @@ SshRuntime::SshRuntime(SshRuntimeOptions options, SshCommandRunner runner)
     }
 }
 
-bool SshRuntime::findExecutable(const std::vector<std::string>& candidates,
-                                std::string& executable,
-                                std::string& error) const {
-    for (const std::string& candidate : candidates) {
-        if (!candidate.empty() && candidate.front() == '/' &&
-            ::access(candidate.c_str(), X_OK) == 0) {
-            executable = candidate;
-            error.clear();
-            return true;
-        }
-    }
-    error = "required executable is unavailable";
-    return false;
-}
-
 bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuration,
                                             std::string& error) const {
-    std::string sshd;
-    if (!findExecutable(options_.sshdCandidates, sshd, error)) {
+    std::filesystem::path sshd;
+    if (!executables_.resolve(
+            fic::platform::ExecutableId::Sshd, sshd, error)) {
         error = "sshd validation is unavailable: " + error;
         return false;
     }
@@ -173,7 +161,7 @@ bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuratio
     ProcessOptions processOptions;
     processOptions.clearEnvironment = true;
     const ProcessResult result = runner_(
-        sshd,
+        sshd.string(),
         {"-T", "-f", options_.configPath.string()},
         processOptions
     );
@@ -340,9 +328,10 @@ bool SshRuntime::verifyPolicyValue(const std::string& parameter,
 
 SshActivationResult SshRuntime::activateIfRunning() const {
     SshActivationResult activation;
-    std::string systemctl;
+    std::filesystem::path systemctl;
     std::string error;
-    if (!findExecutable(options_.systemctlCandidates, systemctl, error)) {
+    if (!executables_.resolve(
+            fic::platform::ExecutableId::Systemctl, systemctl, error)) {
         activation.message = "SSH runtime activation is unavailable: " + error;
         return activation;
     }
@@ -352,7 +341,7 @@ SshActivationResult SshRuntime::activateIfRunning() const {
     std::string activeUnit;
     for (const std::string& unit : options_.serviceUnits) {
         const ProcessResult status = runner_(
-            systemctl,
+            systemctl.string(),
             {"is-active", "--quiet", unit},
             processOptions
         );
@@ -381,7 +370,7 @@ SshActivationResult SshRuntime::activateIfRunning() const {
 
     activation.serviceActive = true;
     const ProcessResult reload = runner_(
-        systemctl,
+        systemctl.string(),
         {"reload", activeUnit},
         processOptions
     );
@@ -392,7 +381,7 @@ SshActivationResult SshRuntime::activateIfRunning() const {
     }
 
     const ProcessResult status = runner_(
-        systemctl,
+        systemctl.string(),
         {"is-active", "--quiet", activeUnit},
         processOptions
     );

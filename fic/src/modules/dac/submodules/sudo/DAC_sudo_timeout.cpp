@@ -1,7 +1,8 @@
 #include "modules/dac/submodules/sudo/DAC_sudo_timeout.h"
 DAC_sudo_timeout::DAC_sudo_timeout(
-    const fic::platform::SudoPlatformConfig& platformConfig)
-    : Sudo(platformConfig) {
+    const fic::platform::SudoPlatformConfig& platformConfig,
+    const fic::platform::PlatformExecutableResolver& executables)
+    : Sudo(platformConfig, executables) {
     //Какой параметр рассматриваем?
     this->Sudo::sudoParameter = std::make_unique<KeyValueDefaultsSudoersParam>(
         "Defaults", "", "", "timestamp_timeout", "=", "0", 0);

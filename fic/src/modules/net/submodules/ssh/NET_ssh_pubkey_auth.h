@@ -8,7 +8,7 @@ class NET_ssh_pubkey_auth : public Ssh
 public:
     explicit NET_ssh_pubkey_auth(
         const fic::platform::SshPlatformConfig& platformConfig,
-        const fic::platform::SystemToolsPlatformConfig& systemTools);
+        const fic::platform::PlatformExecutableResolver& executables);
     ~NET_ssh_pubkey_auth();
     bool apply() override;
 };
