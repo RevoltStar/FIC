@@ -134,6 +134,17 @@ write_conffiles() {
 EOF
 }
 
+write_platform_trust_triggers() {
+    local package_root="$1"
+
+    cat > "$package_root/DEBIAN/triggers" <<'EOF'
+interest-noawait /usr/bin
+interest-noawait /usr/sbin
+interest-noawait /bin
+interest-noawait /sbin
+EOF
+}
+
 copy_tree_contents() {
     local source_dir="$1"
     local target_dir="$2"
@@ -474,6 +485,10 @@ if [ -d /opt/fic ]; then
 fi
 
 ln -sfn "$target_path" "/bin/$command_name"
+
+if [ -x /opt/fic/bin/fic ]; then
+    /opt/fic/bin/fic --trust-sync-platform
+fi
 
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf || true
@@ -902,6 +917,7 @@ build_fic_package() {
 
     write_common_preinst "$package_root"
     write_conffiles "$package_root"
+    write_platform_trust_triggers "$package_root"
     write_system_integration_symlink_postinst "$package_root" "fic" "/opt/fic/bin/fic"
     write_system_integration_symlink_prerm "$package_root" "fic" "/opt/fic/bin/fic"
 

@@ -11,7 +11,10 @@ enum class ExecutableId {
     Sshd,
     Systemctl,
     Loginctl,
-    Visudo
+    Visudo,
+    Lscpu,
+    Dmidecode,
+    Udevadm
 };
 
 struct PlatformExecutableSpec {
@@ -22,6 +25,16 @@ struct PlatformExecutableSpec {
 
 struct PlatformExecutables {
     std::vector<PlatformExecutableSpec> entries;
+};
+
+enum class PackageManagerKind {
+    Dpkg,
+    Rpm
+};
+
+struct PackageManagerPlatformConfig {
+    PackageManagerKind kind = PackageManagerKind::Dpkg;
+    std::vector<std::filesystem::path> queryCandidates;
 };
 
 struct HostCompatibility {
@@ -64,6 +77,7 @@ struct PlatformProfile {
     std::string displayName;
     HostCompatibility hostCompatibility;
     PlatformExecutables executables;
+    PackageManagerPlatformConfig packageManager;
     SshPlatformConfig ssh;
     SudoPlatformConfig sudo;
     DisplayManagerPlatformConfig displayManager;

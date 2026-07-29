@@ -19,6 +19,12 @@ const char* executableIdName(ExecutableId id) {
         return "loginctl";
     case ExecutableId::Visudo:
         return "visudo";
+    case ExecutableId::Lscpu:
+        return "lscpu";
+    case ExecutableId::Dmidecode:
+        return "dmidecode";
+    case ExecutableId::Udevadm:
+        return "udevadm";
     }
     return "unknown";
 }
@@ -28,7 +34,10 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Sshd,
         ExecutableId::Systemctl,
         ExecutableId::Loginctl,
-        ExecutableId::Visudo
+        ExecutableId::Visudo,
+        ExecutableId::Lscpu,
+        ExecutableId::Dmidecode,
+        ExecutableId::Udevadm
     };
 }
 

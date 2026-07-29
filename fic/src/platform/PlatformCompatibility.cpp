@@ -202,6 +202,12 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
     if (!validateExecutables(profile.executables, error)) {
         return false;
     }
+    if (!validateExecutableCandidates(
+            profile.packageManager.queryCandidates,
+            "package manager query executable",
+            error)) {
+        return false;
+    }
     if (profile.ssh.serviceUnits.empty()) {
         error = "SSH service unit list is empty";
         return false;

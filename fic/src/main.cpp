@@ -35,6 +35,7 @@
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
+#include "trust/PackageTrustSync.h"
 
 using json = nlohmann::json;
 
@@ -714,6 +715,27 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    const bool packageTrustSync =
+        get_arg_value(argc, argv, 1) == "--trust-sync-platform";
+    const fic::platform::PlatformExecutableResolver executables(
+        platform.executables);
+    if (packageTrustSync) {
+        if (::geteuid() != 0) {
+            std::cerr << "package trust sync must be run as root" << std::endl;
+            return 1;
+        }
+        fic::trust::PackageTrustSyncResult result;
+        std::string syncError;
+        if (!fic::trust::syncPackageManagedExecutables(
+                platform, executables, result, syncError)) {
+            std::cerr << "package trust sync failed: " << syncError << std::endl;
+            return 1;
+        }
+        std::cout << "package trust sync completed: updated=" << result.updated
+                  << ", unavailable=" << result.unavailable << std::endl;
+        return 0;
+    }
+
     try {
         std::locale::global(std::locale("ru_RU.UTF-8"));
     } catch (const std::exception&) {
@@ -721,8 +743,6 @@ int main(int argc, char* argv[]) {
     }
 
     const bool once = get_arg_value(argc, argv, 1) == "--oneshot";
-    const fic::platform::PlatformExecutableResolver executables(
-        platform.executables);
     auto policyMap = init_policyMap(platform, executables);
 
     if (once) {

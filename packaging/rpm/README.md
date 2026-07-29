@@ -88,6 +88,12 @@ During installation each package:
 - applies `0660` to regular files under `/opt/fic`;
 - applies `0770` to files in `/opt/fic/bin`.
 
+The `fic` package runs `fic --trust-sync-platform` before enabling services and
+installs an RPM transaction file trigger for `/usr/bin`, `/usr/sbin`, `/bin`,
+and `/sbin`. The sync verifies every selected executable against RPM file
+digests before atomically refreshing SHA-256 references. Any mismatch fails the
+scriptlet and leaves the existing hash store unchanged.
+
 ## Bundled Qt runtime for fic-gui
 
 `fic-gui` bundles the Qt runtime inside the package to reduce dependency on the

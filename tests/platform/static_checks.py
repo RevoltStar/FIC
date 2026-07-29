@@ -103,6 +103,10 @@ def main():
         "ExecutableId::Systemctl",
         "ExecutableId::Loginctl",
         "ExecutableId::Visudo",
+        "ExecutableId::Lscpu",
+        "ExecutableId::Dmidecode",
+        "ExecutableId::Udevadm",
+        "packageManager.queryCandidates",
         "sudo.mainConfigPath",
         "displayManager.sddmConfigPath",
         "displayManager.gdmConfigCandidates",
@@ -137,7 +141,15 @@ def main():
     resolver = (
         root / "fic/src/platform/PlatformExecutableResolver.cpp"
     ).read_text(encoding="utf-8")
-    for executable_id in ("Sshd", "Systemctl", "Loginctl", "Visudo"):
+    for executable_id in (
+        "Sshd",
+        "Systemctl",
+        "Loginctl",
+        "Visudo",
+        "Lscpu",
+        "Dmidecode",
+        "Udevadm",
+    ):
         require(
             f"ExecutableId::{executable_id}" in resolver,
             f"the resolver does not support logical executable {executable_id}",
@@ -192,6 +204,24 @@ def main():
     require(
         'FIC_PACKAGING_TARGET_PLATFORM="ubuntu-24.04"' in ubuntu_builder,
         "Ubuntu package entry point does not fix the Ubuntu profile",
+    )
+    for watched_path in ("/usr/bin", "/usr/sbin", "/bin", "/sbin"):
+        require(
+            f"interest-noawait {watched_path}" in deb_builder,
+            f"Debian package does not watch {watched_path} for trust sync",
+        )
+        require(
+            watched_path in rpm_builder,
+            f"RPM package does not watch {watched_path} for trust sync",
+        )
+    require(
+        "--trust-sync-platform" in deb_builder,
+        "Debian package does not run package trust sync",
+    )
+    require(
+        "%transfiletriggerin" in rpm_builder
+        and "--trust-sync-platform" in rpm_builder,
+        "RPM package does not define a transaction file trust trigger",
     )
 
     return 0

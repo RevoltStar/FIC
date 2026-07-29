@@ -24,8 +24,22 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::Visudo,
             {"/usr/sbin/visudo"}
+        },
+        {
+            ExecutableId::Lscpu,
+            {"/usr/bin/lscpu", "/bin/lscpu"}
+        },
+        {
+            ExecutableId::Dmidecode,
+            {"/usr/sbin/dmidecode", "/sbin/dmidecode"}
+        },
+        {
+            ExecutableId::Udevadm,
+            {"/usr/bin/udevadm", "/usr/sbin/udevadm", "/bin/udevadm", "/sbin/udevadm"}
         }
     };
+    profile.packageManager.kind = PackageManagerKind::Rpm;
+    profile.packageManager.queryCandidates = {"/bin/rpm", "/usr/bin/rpm"};
     profile.ssh.configPath = "/etc/openssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/openssh";
     profile.ssh.serviceUnits = {"sshd.service"};

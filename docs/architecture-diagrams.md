@@ -327,6 +327,25 @@ manager, `/opt/fic/db/commandhash.txt` и managed sudoers-файла. Поэто
 `ConfigFileHandler` для этого не используется, поскольку его однофайловая
 модель не выражает подавление одноименных файлов и глобальную сортировку.
 
+Доверенные hashes системных команд обновляются только в границе пакетной
+транзакции:
+
+```mermaid
+flowchart LR
+    transaction[dpkg or RPM transaction] --> trigger[package file trigger]
+    install[initial fic install] --> sync[fic --trust-sync-platform]
+    trigger --> sync
+    profile[compiled platform profile] --> resolver[executable resolver]
+    resolver --> sync
+    packageDb[local package metadata and file digests] --> verify[ownership and digest verification]
+    sync --> verify
+    verify -->|all available files valid| batch[calculate SHA-256 batch]
+    batch --> atomic[one atomic commandhash.txt save]
+    verify -->|any mismatch| reject[fail without hash changes]
+    runtime[normal daemon runtime] --> checked[VerifiedProcessExecutor]
+    atomic --> checked
+```
+
 Для политик `Sudo` системная конфигурация рассматривается как единый include-
 граф, а не как один `/etc/sudoers`:
 

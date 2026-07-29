@@ -88,6 +88,13 @@ During installation each package:
 - applies `0660` to regular files under `/opt/fic`;
 - applies `0770` to files in `/opt/fic/bin`.
 
+The `fic` package runs `fic --trust-sync-platform` before enabling services and
+registers `dpkg` `interest-noawait` file triggers for `/usr/bin`, `/usr/sbin`,
+`/bin`, and `/sbin`. After package transactions, FIC verifies profile-selected
+executables against package checksums and atomically refreshes their SHA-256
+reference hashes. A failed package integrity check leaves all existing
+references unchanged and fails the maintainer-script action.
+
 ## Bundled Qt runtime for fic-gui
 
 `fic-gui` bundles the Qt runtime inside the package to reduce dependency on the

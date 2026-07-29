@@ -489,6 +489,7 @@ write_spec_file() {
     local pre_script="$8"
     local post_script="$9"
     local preun_script="${10}"
+    local extra_scriptlets="${11:-}"
 
     {
         printf 'Name: %s\n' "$package_name"
@@ -517,6 +518,9 @@ write_spec_file() {
         printf '\n%%pre\n%s\n' "$pre_script"
         printf '\n%%post\n%s\n' "$post_script"
         printf '\n%%preun\n%s\n' "$preun_script"
+        if [ -n "$extra_scriptlets" ]; then
+            printf '\n%s\n' "$extra_scriptlets"
+        fi
         printf '\n%%files -f %%{SOURCE1}\n'
         printf '%%defattr(-,root,root,-)\n'
         printf '\n%%changelog\n'
@@ -534,6 +538,7 @@ build_rpm_package() {
     local pre_script="$6"
     local post_script="$7"
     local preun_script="$8"
+    local extra_scriptlets="${9:-}"
     local source_name="${package_name}-${PACKAGE_VERSION}.tar.gz"
     local source_path="$RPM_TOPDIR/SOURCES/$source_name"
     local file_list_source="${package_name}.files"
@@ -553,7 +558,8 @@ build_rpm_package() {
         "$file_list_source" \
         "$pre_script" \
         "$post_script" \
-        "$preun_script"
+        "$preun_script" \
+        "$extra_scriptlets"
 
     if ! run_rpmbuild "$spec_path"; then
         echo "Failed to build RPM for $package_name" >&2
@@ -693,6 +699,8 @@ fi
 
 ln -sfn "$target_path" "/bin/$command_name"
 
+/opt/fic/bin/fic --trust-sync-platform || exit 1
+
 for tmpfiles_bin in /usr/bin/systemd-tmpfiles /bin/systemd-tmpfiles /usr/sbin/systemd-tmpfiles /sbin/systemd-tmpfiles; do
     if [ -x "\$tmpfiles_bin" ]; then
         "\$tmpfiles_bin" --create /usr/lib/tmpfiles.d/fic.conf >/dev/null 2>&1 || true
@@ -720,6 +728,13 @@ for udevadm_bin in /usr/bin/udevadm /usr/sbin/udevadm /sbin/udevadm /bin/udevadm
 done
 
 exit 0
+EOF
+}
+
+platform_trust_rpm_scriptlets() {
+    cat <<'EOF'
+%transfiletriggerin -- /usr/bin /usr/sbin /bin /sbin
+/opt/fic/bin/fic --trust-sync-platform || exit 1
 EOF
 }
 
@@ -896,7 +911,8 @@ build_fic_package() {
         "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify" \
         "$(common_pre_script)" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic")" \
-        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")" || return 1
+        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")" \
+        "$(platform_trust_rpm_scriptlets)")" || return 1
 
     printf '%s\n' "$output_rpm"
 }

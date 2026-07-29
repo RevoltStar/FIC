@@ -34,6 +34,10 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
   system-file/command rule sets. Desktop-environment and kernel/FHS capability
   detection remains independent of the distribution profile.
 - Executable candidates are stored once in the profile under the typed
-  `executables` registry (`Sshd`, `Systemctl`, `Loginctl`, `Visudo`). Policies
-  request a logical executable ID from the shared resolver instead of
-  maintaining their own path lists.
+  `executables` registry (`Sshd`, `Systemctl`, `Loginctl`, `Visudo`, `Lscpu`,
+  `Dmidecode`, `Udevadm`). Policies request a logical executable ID from the
+  shared resolver instead of maintaining their own path lists.
+- Package installation and package-transaction triggers run
+  `fic --trust-sync-platform`. The command verifies selected files against the
+  compiled profile's `dpkg` or RPM database before atomically updating their
+  SHA-256 reference hashes. Normal daemon runtime never accepts a new hash.

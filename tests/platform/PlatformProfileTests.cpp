@@ -104,6 +104,8 @@ void testSelectedProfile() {
     require(profile.executables.entries.size() ==
                 fic::platform::allExecutableIds().size(),
             "the executable registry must contain every supported logical command");
+    require(!profile.packageManager.queryCandidates.empty(),
+            "package manager query candidates are missing");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",
             "SDDM configuration path is incorrect");
     require(profile.displayManager.lightDmConfigPath ==
@@ -114,6 +116,9 @@ void testSelectedProfile() {
             "the selected sudoers configuration must be protected by DAC policy");
 
     if (profile.id == "alt-p11") {
+        require(profile.packageManager.kind ==
+                    fic::platform::PackageManagerKind::Rpm,
+                "ALT p11 must use the RPM package database");
         require(profile.ssh.configPath == "/etc/openssh/sshd_config",
                 "ALT p11 must use the OpenSSH configuration path");
         require(profile.ssh.serviceUnits ==
@@ -134,6 +139,9 @@ void testSelectedProfile() {
         require(hasRule(profile.dac.protectedSystemCommands, "/sbin/ip"),
                 "ALT p11 ip command path is incorrect");
     } else if (profile.id == "debian-12") {
+        require(profile.packageManager.kind ==
+                    fic::platform::PackageManagerKind::Dpkg,
+                "Debian 12 must use the dpkg package database");
         require(profile.ssh.configPath == "/etc/ssh/sshd_config",
                 "Debian 12 SSH configuration path is incorrect");
         require(profile.displayManager.gdmConfigCandidates.front() ==
@@ -147,6 +155,9 @@ void testSelectedProfile() {
         require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
                 "Debian 12 ip command path is incorrect");
     } else if (profile.id == "ubuntu-24.04") {
+        require(profile.packageManager.kind ==
+                    fic::platform::PackageManagerKind::Dpkg,
+                "Ubuntu 24.04 must use the dpkg package database");
         require(profile.ssh.configPath == "/etc/ssh/sshd_config",
                 "Ubuntu 24.04 SSH configuration path is incorrect");
         require(profile.displayManager.gdmConfigCandidates.front() ==

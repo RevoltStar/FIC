@@ -89,3 +89,10 @@ target_include_directories(platform_profile_tests PRIVATE
 )
 target_link_libraries(platform_profile_tests PRIVATE fic-platform)
 add_test(NAME platform_profile_tests COMMAND platform_profile_tests)
+
+add_executable(command_hash_batch_tests
+    trust/CommandHashBatchTests.cpp
+)
+target_link_libraries(command_hash_batch_tests PRIVATE fic-core)
+add_test(NAME command_hash_batch_tests COMMAND command_hash_batch_tests)
+set_tests_properties(command_hash_batch_tests PROPERTIES SKIP_RETURN_CODE 77)

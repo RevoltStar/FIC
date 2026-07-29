@@ -1,6 +1,7 @@
 #include <fic/core/CommandHashStore.h>
 
 #include <fic/core/ConfigFileHandler.h>
+#include <fic/core/ExclusivePidLock.h>
 #include <fic/core/FicRuntimePaths.h>
 
 #include <filesystem>
@@ -54,31 +55,53 @@ bool command_hash_file_options(FileHandlerOptions& options, std::string& error) 
 } // namespace
 
 bool CommandHashStore::saveHash(const std::string& executable, std::string& error) {
-    if (!isValidExecutablePath(executable, error)) {
-        return false;
-    }
+    return saveHashes({executable}, error);
+}
+
+bool CommandHashStore::saveHashes(
+    const std::vector<std::string>& executables,
+    std::string& error) {
     if (!command_hash_directory_exists(error)) {
         return false;
     }
 
-    const std::string hash = calculateSha256(executable, error);
-    if (hash.empty()) {
+    const std::string hashFile = command_hash_file_path().string();
+    ExclusivePidLock writeLock(
+        hashFile + ".lock",
+        fic::core::FicRuntimePaths::get().lockDebugLogFile.string(),
+        false);
+    if (!writeLock.acquire()) {
+        error = "failed to acquire command hash write lock: " + hashFile + ".lock";
         return false;
+    }
+
+    std::vector<std::pair<std::string, std::string>> hashes;
+    hashes.reserve(executables.size());
+    for (const std::string& executable : executables) {
+        if (!isValidExecutablePath(executable, error)) {
+            return false;
+        }
+        const std::string hash = calculateSha256(executable, error);
+        if (hash.empty()) {
+            return false;
+        }
+        hashes.emplace_back(executable, hash);
     }
 
     FileHandlerOptions fileOptions;
     if (!command_hash_file_options(fileOptions, error)) {
         return false;
     }
-    const std::string hashFile = command_hash_file_path().string();
     ConfigFileHandler commandHashes(hashFile, "=", fileOptions);
     if (!commandHashes.loadConfig()) {
         error = "failed to load command hash file: " + hashFile;
         return false;
     }
-    if (!commandHashes.setValue(executable, hash)) {
-        error = "failed to update command hash value: " + executable;
-        return false;
+    for (const auto& [executable, hash] : hashes) {
+        if (!commandHashes.setValue(executable, hash)) {
+            error = "failed to update command hash value: " + executable;
+            return false;
+        }
     }
     if (!commandHashes.FileHandler::saveFile()) {
         error = "failed to save command hash file: " + hashFile;
