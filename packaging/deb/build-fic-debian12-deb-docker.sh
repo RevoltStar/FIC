@@ -29,6 +29,7 @@ CONTAINER_RUN_ARGS=()
 "$CONTAINER_CMD" run --rm \
     "${CONTAINER_RUN_ARGS[@]}" \
     -e DEB_COMPRESSOR="${DEB_COMPRESSOR:-gzip}" \
+    -e FIC_PACKAGING_TARGET_PLATFORM="debian-12" \
     -e PACKAGE_DISTRO_TAG="${PACKAGE_DISTRO_TAG:-debian12}" \
     -e BUILD_ROOT="${BUILD_ROOT:-/tmp/fic-build-linux}" \
     -e DIST_DIR="${DIST_DIR:-/workspace/dist}" \

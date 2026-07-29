@@ -17,3 +17,19 @@ Access model:
 - Access to the daemon API is intentionally controlled by Unix socket permissions.
 - Members of the `fic` OS group are treated as full FIC administrators and currently have full access to all daemon API commands, including configuration changes, policy application, device database changes, lock/unlock actions, hash recalculation, and daemon shutdown.
 - Ordinary users must not be added to the `fic` group.
+
+Target platforms:
+- The privileged daemon is built for exactly one target platform.
+- Supported profiles are `debian-12`, `ubuntu-24.04`, and `alt-p11`.
+- CMake configuration must select one explicitly, for example:
+
+```bash
+cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
+```
+
+- Distribution packaging scripts select their own fixed profile. At runtime the
+  daemon checks `/etc/os-release` and refuses to start on an incompatible host.
+- The profile owns distribution integration data used by policies: system tool
+  paths, SSH and sudo layouts, display-manager configuration paths, and the DAC
+  system-file/command rule sets. Desktop-environment and kernel/FHS capability
+  detection remains independent of the distribution profile.

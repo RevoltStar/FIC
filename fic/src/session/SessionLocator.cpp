@@ -9,9 +9,9 @@
 #include <unistd.h>
 
 namespace {
-std::string find_loginctl() {
-    for (const char* path : {"/usr/bin/loginctl", "/bin/loginctl"}) {
-        if (::access(path, X_OK) == 0) {
+std::string find_loginctl(const std::vector<std::string>& candidates) {
+    for (const std::string& path : candidates) {
+        if (::access(path.c_str(), X_OK) == 0) {
             return path;
         }
     }
@@ -44,9 +44,12 @@ std::unordered_map<std::string, std::string> parse_properties(const std::string&
 }
 } // namespace
 
-bool SessionLocator::activeGraphicalSessions(std::vector<UserSession>& sessions, std::string& error) {
+bool SessionLocator::activeGraphicalSessions(
+    const std::vector<std::string>& loginctlCandidates,
+    std::vector<UserSession>& sessions,
+    std::string& error) {
     sessions.clear();
-    const std::string loginctl = find_loginctl();
+    const std::string loginctl = find_loginctl(loginctlCandidates);
     if (loginctl.empty()) {
         error = "loginctl was not found";
         return false;

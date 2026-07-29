@@ -3,27 +3,27 @@
 
 #include <filesystem>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace {
 
 std::mutex sudoersMutex;
 
-SudoersConfigurationOptions productionSudoersOptions() {
+SudoersConfigurationOptions productionSudoersOptions(
+    const fic::platform::SudoPlatformConfig& platformConfig) {
     SudoersConfigurationOptions options;
-    const std::vector<std::string> candidates = {
-        "/usr/sbin/visudo",
-        "/usr/bin/visudo"
-    };
-    for (const std::string& candidate : candidates) {
+    options.mainPath = platformConfig.mainConfigPath;
+    options.managedPath = platformConfig.managedConfigPath;
+    for (const std::string& candidate : platformConfig.visudoCandidates) {
         std::error_code error;
         if (std::filesystem::is_regular_file(candidate, error) && !error) {
             options.validatorPath = candidate;
             break;
         }
     }
-    if (options.validatorPath.empty()) {
-        options.validatorPath = "/usr/sbin/visudo";
+    if (options.validatorPath.empty() && !platformConfig.visudoCandidates.empty()) {
+        options.validatorPath = platformConfig.visudoCandidates.front();
     }
     return options;
 }
@@ -56,8 +56,9 @@ Sudo::~Sudo() {
     // Реализация деструктора
 }
 
-Sudo::Sudo()
-    : DAC(){
+Sudo::Sudo(fic::platform::SudoPlatformConfig platformConfig)
+    : DAC(),
+      platformConfig_(std::move(platformConfig)) {
     this->submoduleName = "SudoEdit";
     /*this->Check_And_Fix::postProcessingParameter = std::make_unique<PostProcessingParameter>(PostProcessingParameter::ToJsonWithColon);*/
     /*this->Check_And_Fix::postProcessingValue = std::make_unique<PostProcessingValueJSON>(",", ",");*/
@@ -72,7 +73,7 @@ bool Sudo::apply() {
 
     const std::lock_guard<std::mutex> lock(sudoersMutex);
 
-    SudoersConfiguration configuration(productionSudoersOptions());
+    SudoersConfiguration configuration(productionSudoersOptions(platformConfig_));
     std::string loadError;
     if (!configuration.load(loadError)) {
         this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);
@@ -147,7 +148,7 @@ bool Sudo::applyRequireAuthentication() {
         return false;
     }
 
-    SudoersConfiguration configuration(productionSudoersOptions());
+    SudoersConfiguration configuration(productionSudoersOptions(platformConfig_));
     std::string loadError;
     if (!configuration.load(loadError)) {
         this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);

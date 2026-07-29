@@ -10,6 +10,7 @@
 #include <fic/core/SectionConfigFileHandler.h>
 #include <fic/core/LocalizationManager.h>
 #include <fic/policy/PolicyApplyResult.h>
+#include "platform/PlatformProfile.h"
 
 //Дискреционное разграничение доступа
 #include "modules/dac/submodules/modeandowner/DAC_blocking_user_access_to_system_files.h"
@@ -106,7 +107,7 @@ void print_help();
 
 
 //Заблокировать компьютер
-bool lock();
+bool lock(const fic::platform::PlatformProfile& platform);
 //Разблокировать компьютер
 bool unlock();
 //Текущий статус
@@ -150,5 +151,5 @@ bool enable(PolicyMap& policyMap, std::string module, std::string policy);
 bool set(PolicyMap& policyMap, std::string module, std::string policy, std::string value);
 
 
-PolicyMap init_policyMap();
+PolicyMap init_policyMap(const fic::platform::PlatformProfile& platform);
 #endif // MAIN_FUNCTION_H

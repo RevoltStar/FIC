@@ -4,6 +4,8 @@
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/VerifiedProcessExecutor.h>
 
+#include <unistd.h>
+
 namespace {
 PolicyApplyResult executePolicy(const std::string& moduleName,
                                 const std::string& submoduleName,
@@ -144,7 +146,7 @@ void print_help() {
 
 /*Собственно, функции FIC*/
 //Заблокировать компьютер
-bool lock(){
+bool lock(const fic::platform::PlatformProfile& platform){
     const std::string lockStatusPath = fic::core::FicRuntimePaths::get().lockStatusFile.string();
     SingleLineFileHandler slch = SingleLineFileHandler(lockStatusPath);
     if(!slch.loadConfig()){
@@ -164,10 +166,18 @@ bool lock(){
     std::cout << "    Компьютер заблокирован" << std::endl;
 
     //Производим блокировку всех активных сессий
-    //В новых системах - /usr/bin/loginctl
-    //В старых системах (а также в некоторых новых) - /bin/loginctl
-    bool res = VerifiedProcessExecutor::execute("/usr/bin/loginctl", {"lock-sessions"}).success() ||
-            VerifiedProcessExecutor::execute("/bin/loginctl", {"lock-sessions"}).success();
+    bool res = false;
+    for (const std::string& candidate :
+         platform.systemTools.loginctlCandidates) {
+        if (::access(candidate.c_str(), X_OK) != 0) {
+            continue;
+        }
+        res = VerifiedProcessExecutor::execute(
+            candidate, {"lock-sessions"}).success();
+        if (res) {
+            break;
+        }
+    }
 
     if(!res){
         std::cerr << "    Не удалось произвести блокировку активных сессий." << std::endl;
@@ -525,18 +535,20 @@ bool set(PolicyMap& policyMap, std::string module, std::string policy, std::stri
 }
 
 /*Ининциализируем массив классов*/
-PolicyMap init_policyMap(){
+PolicyMap init_policyMap(const fic::platform::PlatformProfile& platform){
     std::vector<std::unique_ptr<Policy>> cafArr;
 
     //Дискреционное разграничение доступа (DAC)
-    cafArr.push_back(std::make_unique<DAC_systemcommandlock>());
-    cafArr.push_back(std::make_unique<DAC_blocking_user_access_to_system_files>());
+    cafArr.push_back(std::make_unique<DAC_systemcommandlock>(platform.dac));
+    cafArr.push_back(std::make_unique<DAC_blocking_user_access_to_system_files>(
+        platform.dac));
     cafArr.push_back(std::make_unique<DAC_custom_mode_and_owner>());
-    cafArr.push_back(std::make_unique<DAC_sudo_env_reset>());
-    cafArr.push_back(std::make_unique<DAC_sudo_passwd_tries>());
-    cafArr.push_back(std::make_unique<DAC_sudo_securepath>());
-    cafArr.push_back(std::make_unique<DAC_sudo_timeout>());
-    cafArr.push_back(std::make_unique<DAC_sudo_require_authentication>());
+    cafArr.push_back(std::make_unique<DAC_sudo_env_reset>(platform.sudo));
+    cafArr.push_back(std::make_unique<DAC_sudo_passwd_tries>(platform.sudo));
+    cafArr.push_back(std::make_unique<DAC_sudo_securepath>(platform.sudo));
+    cafArr.push_back(std::make_unique<DAC_sudo_timeout>(platform.sudo));
+    cafArr.push_back(std::make_unique<DAC_sudo_require_authentication>(
+        platform.sudo));
 
     //Настройки ядра (SYSCTL)
     cafArr.push_back(std::make_unique<SYSCTL_buffer_overflow_protection>());
@@ -570,9 +582,12 @@ PolicyMap init_policyMap(){
     cafArr.push_back(std::make_unique<SYSCTL_user_ns_restrict>());
 
     //Настройки операционной системы (OSS)
-    cafArr.push_back(std::make_unique<OSS_screenlock_timeout>());
-    cafArr.push_back(std::make_unique<OSS_disable_autologin>());
-    cafArr.push_back(std::make_unique<OSS_disable_videodisplay_when_locked>());
+    cafArr.push_back(std::make_unique<OSS_screenlock_timeout>(
+        platform.systemTools));
+    cafArr.push_back(std::make_unique<OSS_disable_autologin>(
+        platform.systemTools, platform.displayManager));
+    cafArr.push_back(std::make_unique<OSS_disable_videodisplay_when_locked>(
+        platform.systemTools, platform.displayManager));
     cafArr.push_back(std::make_unique<OSS_lock_on_tty_switch>());
     cafArr.push_back(std::make_unique<OSS_fstab_tmp_profile>());
     cafArr.push_back(std::make_unique<OSS_fstab_var_tmp_profile>());
@@ -587,10 +602,14 @@ PolicyMap init_policyMap(){
     cafArr.push_back(std::make_unique<OSS_fstab_opt_profile>());
 
     //Сетевые настройки
-    cafArr.push_back(std::make_unique<NET_ssh_port>());
-    cafArr.push_back(std::make_unique<NET_ssh_max_auth_tries>());
-    cafArr.push_back(std::make_unique<NET_ssh_root_login>());
-    cafArr.push_back(std::make_unique<NET_ssh_pubkey_auth>());
+    cafArr.push_back(std::make_unique<NET_ssh_port>(
+        platform.ssh, platform.systemTools));
+    cafArr.push_back(std::make_unique<NET_ssh_max_auth_tries>(
+        platform.ssh, platform.systemTools));
+    cafArr.push_back(std::make_unique<NET_ssh_root_login>(
+        platform.ssh, platform.systemTools));
+    cafArr.push_back(std::make_unique<NET_ssh_pubkey_auth>(
+        platform.ssh, platform.systemTools));
 
     //Общие настройки контроля устройств
     cafArr.push_back(std::make_unique<DC_block_usb_storage>());

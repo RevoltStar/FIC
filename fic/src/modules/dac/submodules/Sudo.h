@@ -2,6 +2,7 @@
 #define SUDOEDIT_H
 
 #include "modules/dac/DAC.h"
+#include "platform/PlatformProfile.h"
 
 #include <memory>
 #include <string>
@@ -79,11 +80,12 @@ private:
 class Sudo : public DAC {
 protected:
     std::unique_ptr<SudoersParam> sudoParameter;
+    fic::platform::SudoPlatformConfig platformConfig_;
 
     bool applyRequireAuthentication();
 
 public:
-    Sudo();
+    explicit Sudo(fic::platform::SudoPlatformConfig platformConfig);
     bool apply() override;
     ~Sudo() override;
 };

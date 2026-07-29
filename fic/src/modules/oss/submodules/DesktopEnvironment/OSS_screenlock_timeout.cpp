@@ -9,8 +9,10 @@
 #include <string>
 #include <vector>
 
-OSS_screenlock_timeout::OSS_screenlock_timeout()
-    : DesktopEnvironment()
+OSS_screenlock_timeout::OSS_screenlock_timeout(
+    const fic::platform::SystemToolsPlatformConfig& systemTools)
+    : DesktopEnvironment(),
+      loginctlCandidates_(systemTools.loginctlCandidates)
 {
     this->policyName = "screenlock_timeout";
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 20, 5);
@@ -33,7 +35,8 @@ bool OSS_screenlock_timeout::apply()
 
     std::vector<UserSession> sessions;
     std::string error;
-    if (!SessionLocator::activeGraphicalSessions(sessions, error)) {
+    if (!SessionLocator::activeGraphicalSessions(
+            loginctlCandidates_, sessions, error)) {
         this->log("Failed to enumerate graphical sessions: " + error, logLevel::ERROR);
         return false;
     }

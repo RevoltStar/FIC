@@ -296,6 +296,53 @@ ExecStart=/opt/fic/bin/fic --interval 1800
 
 ## Конфигурация и данные
 
+### Целевая платформа
+
+Daemon собирается ровно для одного дистрибутива. CMake требует явный
+`FIC_TARGET_PLATFORM`: `debian-12`, `ubuntu-24.04` или `alt-p11`. Неизвестное
+или отсутствующее значение останавливает конфигурацию CMake.
+
+Выбранный профиль создается в `fic/src/platform/profiles/` и передается в
+`init_policyMap()`. Он является единым источником системных путей, executable-
+кандидатов и имен service units. Политики не выбирают дистрибутив через
+локальные `#ifdef`.
+
+Профиль содержит независимые секции:
+
+- `systemTools`: кандидаты `systemctl` и `loginctl`;
+- `ssh`: основной конфиг, база `Include`, `sshd` и service units;
+- `sudo`: основной и managed-конфиги sudoers, кандидаты `visudo`;
+- `displayManager`: конфиги SDDM, LightDM и упорядоченные кандидаты GDM;
+- `dac`: точные наборы системных файлов и команд с владельцем, группой и
+  правами.
+
+Основные различия текущих профилей:
+
+| Профиль | SSH | GDM | shell/GRUB в DAC | `ip` в DAC |
+| --- | --- | --- | --- | --- |
+| Debian 12 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/daemon.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
+| Ubuntu 24.04 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/custom.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
+| ALT p11 | `/etc/openssh/sshd_config`, `sshd.service` | `/etc/gdm/custom.conf` | `/etc/bashrc`, `/etc/grub.cfg` | `/sbin/ip` |
+
+Если первый GDM-конфиг отсутствует, используются только следующие кандидаты из
+того же compile-time профиля. Это проверка установленного пакета внутри
+выбранного дистрибутива, а не runtime-переключение дистрибутива.
+
+При старте daemon проверяет выбранный профиль и `/etc/os-release`. Эта проверка
+не выполняет runtime-автоопределение и не переключает профиль: несовместимый
+пакет завершается с ошибкой до создания сокета и применения политик.
+`fic --version` показывает compile-time идентификатор профиля.
+
+SSH-секция определяет основной конфигурационный файл, базу относительных
+`Include`, путь `sshd` и service units; `systemctl` поступает из общей секции
+`systemTools`. Один профиль используется редактированием, rollback, `sshd -T`,
+include-аудитом и reload.
+
+Команды конкретных desktop environment (`gsettings`, `kwriteconfig`,
+`xfconf-query`, Fly), XDG-путь `/run/user`, `/etc/fstab`, `/proc/sys` и
+стандартные каталоги sysctl не являются выбором дистрибутива. Они остаются
+capability-, FHS- или kernel-зависимыми и не дублируются в профилях.
+
 Production layout определяется в `cmake/FicInstallLayout.cmake`. C++ не
 содержит собственных копий `/opt/fic` и `/run/fic`: CMake генерирует defaults,
 а демон один раз инициализирует `FicRuntimePaths` при старте. Те же переменные
@@ -427,8 +474,9 @@ fic-cli hash calc /usr/sbin/sshd
 fic-cli hash calc /usr/bin/systemctl
 ```
 
-Если дистрибутив использует другие пути, hash рассчитывается для выбранных
-production-кандидатов (`/usr/bin/sshd`, `/bin/systemctl`).
+Hash рассчитывается для executable, выбранных compile-time профилем. Например,
+ALT p11 использует `/usr/sbin/sshd`, а Debian 12 и Ubuntu 24.04 допускают
+профильные кандидаты `/usr/sbin/sshd` и `/usr/bin/sshd`.
 
 ### Работа с sysctl
 

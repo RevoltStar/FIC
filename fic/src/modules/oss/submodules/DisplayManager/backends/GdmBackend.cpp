@@ -1,21 +1,21 @@
 #include "modules/oss/submodules/DisplayManager/backends/GdmBackend.h"
 
 #include <filesystem>
+#include <utility>
 
-GdmBackend::GdmBackend(bool debianVariant)
-    : displayName(debianVariant ? "GDM3" : "GDM")
+GdmBackend::GdmBackend(
+    std::string selectedDisplayName,
+    const std::vector<std::filesystem::path>& configCandidates)
+    : displayName(std::move(selectedDisplayName))
 {
-    if (!debianVariant) {
-        path = "/etc/gdm/custom.conf";
-        return;
+    for (const std::filesystem::path& candidate : configCandidates) {
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error) && !error) {
+            path = candidate.string();
+            return;
+        }
     }
-
-    std::error_code error;
-    if (std::filesystem::exists("/etc/gdm3/daemon.conf", error)) {
-        path = "/etc/gdm3/daemon.conf";
-    } else if (std::filesystem::exists("/etc/gdm3/custom.conf", error)) {
-        path = "/etc/gdm3/custom.conf";
-    } else {
-        path = "/etc/gdm3/daemon.conf";
+    if (!configCandidates.empty()) {
+        path = configCandidates.front().string();
     }
 }

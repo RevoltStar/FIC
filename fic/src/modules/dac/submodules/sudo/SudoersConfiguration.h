@@ -25,8 +25,8 @@ struct SudoersOperationResult {
 };
 
 struct SudoersConfigurationOptions {
-    std::filesystem::path mainPath = "/etc/sudoers";
-    std::filesystem::path managedPath = "/etc/sudoers.d/zzzz-fic";
+    std::filesystem::path mainPath;
+    std::filesystem::path managedPath;
     std::string validatorPath;
     bool verifyValidatorHash = true;
     bool enforceOwnership = true;
@@ -35,7 +35,7 @@ struct SudoersConfigurationOptions {
 
 class SudoersConfiguration {
 public:
-    explicit SudoersConfiguration(SudoersConfigurationOptions options = {});
+    explicit SudoersConfiguration(SudoersConfigurationOptions options);
 
     bool load(std::string& error);
     SudoersValueObservation inspectGlobalDefault(const std::string& key) const;

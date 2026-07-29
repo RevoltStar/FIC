@@ -1,6 +1,8 @@
 #ifndef DISPLAY_MANAGER_BACKEND_H
 #define DISPLAY_MANAGER_BACKEND_H
 
+#include "platform/PlatformProfile.h"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -41,7 +43,9 @@ public:
 
 class DisplayManagerBackendFactory {
 public:
-    static std::unique_ptr<DisplayManagerBackend> create(const std::string& displayManager);
+    static std::unique_ptr<DisplayManagerBackend> create(
+        const std::string& displayManager,
+        const fic::platform::DisplayManagerPlatformConfig& platformConfig);
 };
 
 #endif // DISPLAY_MANAGER_BACKEND_H

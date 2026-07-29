@@ -7,13 +7,14 @@
 #include <filesystem>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 #include <unistd.h>
 
 namespace {
-std::string find_systemctl()
+std::string find_systemctl(const std::vector<std::string>& candidates)
 {
-    for (const char* path : {"/usr/bin/systemctl", "/bin/systemctl"}) {
-        if (::access(path, X_OK) == 0) {
+    for (const std::string& path : candidates) {
+        if (::access(path.c_str(), X_OK) == 0) {
             return path;
         }
     }
@@ -53,8 +54,12 @@ std::string display_manager_name(std::string value)
 }
 } // namespace
 
-DisplayManager::DisplayManager()
-    :OSS()
+DisplayManager::DisplayManager(
+    fic::platform::SystemToolsPlatformConfig systemTools,
+    fic::platform::DisplayManagerPlatformConfig displayManager)
+    : OSS(),
+      systemTools_(std::move(systemTools)),
+      displayManager_(std::move(displayManager))
 {
     this->submoduleName = "DisplayManager";
 }
@@ -64,7 +69,8 @@ bool DisplayManager::apply() {
 }
 
 std::string DisplayManager::detectDisplayManager() const {
-    const std::string systemctl = find_systemctl();
+    const std::string systemctl =
+        find_systemctl(systemTools_.systemctlCandidates);
     if (systemctl.empty()) {
         return "UNKNOWN";
     }
@@ -101,4 +107,9 @@ std::string DisplayManager::detectDisplayManager() const {
     }
 
     return "UNKNOWN";
+}
+
+const fic::platform::DisplayManagerPlatformConfig&
+DisplayManager::displayManagerConfig() const {
+    return displayManager_;
 }

@@ -2,7 +2,20 @@
 set -euo pipefail
 
 PACKAGE_VERSION="${1:-0.1.0}"
-PACKAGE_DISTRO_TAG="${PACKAGE_DISTRO_TAG:-debian12}"
+FIC_PACKAGING_TARGET_PLATFORM="${FIC_PACKAGING_TARGET_PLATFORM:-debian-12}"
+case "$FIC_PACKAGING_TARGET_PLATFORM" in
+    debian-12)
+        DEFAULT_PACKAGE_DISTRO_TAG="debian12"
+        ;;
+    ubuntu-24.04)
+        DEFAULT_PACKAGE_DISTRO_TAG="ubuntu2404"
+        ;;
+    *)
+        echo "Unsupported Debian-family packaging platform: $FIC_PACKAGING_TARGET_PLATFORM" >&2
+        exit 1
+        ;;
+esac
+PACKAGE_DISTRO_TAG="${PACKAGE_DISTRO_TAG:-$DEFAULT_PACKAGE_DISTRO_TAG}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 STAGING_BASE="${STAGING_BASE:-$(mktemp -d /tmp/fic-deb-XXXXXX)}"
@@ -602,8 +615,13 @@ EOF
 build_project() {
     local source_dir="$1"
     local build_dir="$2"
+    local cmake_args=(-DCMAKE_BUILD_TYPE=Release)
 
-    cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+    if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
+        cmake_args+=("-DFIC_TARGET_PLATFORM=$FIC_PACKAGING_TARGET_PLATFORM")
+    fi
+
+    cmake -S "$source_dir" -B "$build_dir" "${cmake_args[@]}"
     cmake --build "$build_dir" --parallel
 }
 

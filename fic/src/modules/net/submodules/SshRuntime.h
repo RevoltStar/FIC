@@ -10,20 +10,11 @@
 #include <vector>
 
 struct SshRuntimeOptions {
-    std::filesystem::path configPath = "/etc/ssh/sshd_config";
+    std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
-    std::vector<std::string> sshdCandidates = {
-        "/usr/sbin/sshd",
-        "/usr/bin/sshd"
-    };
-    std::vector<std::string> systemctlCandidates = {
-        "/usr/bin/systemctl",
-        "/bin/systemctl"
-    };
-    std::vector<std::string> serviceUnits = {
-        "ssh.service",
-        "sshd.service"
-    };
+    std::vector<std::string> sshdCandidates;
+    std::vector<std::string> systemctlCandidates;
+    std::vector<std::string> serviceUnits;
 };
 
 struct SshActivationResult {
@@ -41,7 +32,7 @@ using SshCommandRunner = std::function<ProcessResult(
 
 class SshRuntime {
 public:
-    explicit SshRuntime(SshRuntimeOptions options = {},
+    explicit SshRuntime(SshRuntimeOptions options,
                         SshCommandRunner runner = {});
 
     bool effectiveValues(const std::string& parameter,

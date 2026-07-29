@@ -6,6 +6,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 namespace {
 
@@ -34,16 +35,21 @@ bool restoreSshConfig(const std::string& path,
 
 } // namespace
 
-Ssh::~Ssh() {
-}
+Ssh::~Ssh() = default;
 
-const std::string Ssh::sshPath="/etc/ssh/sshd_config";
-
-std::unique_ptr<SshConfigFileHandler> Ssh::sshConfig =
-        std::make_unique<SshConfigFileHandler>(Ssh::sshPath);
-
-Ssh::Ssh()
-    : Net(){
+Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,
+         const fic::platform::SystemToolsPlatformConfig& systemTools)
+    : Net(),
+      platformConfig_(std::move(platformConfig)),
+      runtimeOptions_(std::make_unique<SshRuntimeOptions>(SshRuntimeOptions{
+          platformConfig_.configPath,
+          platformConfig_.includeBasePath,
+          platformConfig_.sshdCandidates,
+          systemTools.systemctlCandidates,
+          platformConfig_.serviceUnits
+      })),
+      sshConfig_(std::make_unique<SshConfigFileHandler>(
+          platformConfig_.configPath.string())) {
     this->submoduleName = "SshEdit";
 }
 
@@ -58,9 +64,10 @@ bool Ssh::apply() {
         return false;
     }
 
+    const std::string sshPath = platformConfig_.configPath.string();
     std::string originalContent;
-    if (!readFileContent(this->sshPath, originalContent) ||
-        !this->sshConfig->loadConfig()) {
+    if (!readFileContent(sshPath, originalContent) ||
+        !this->sshConfig_->loadConfig()) {
         this->log(LocalizationManager::getLang(
                       "[module:NET][submodule:SshEdit][message:load_failed]"),
                   logLevel::ERROR);
@@ -82,7 +89,7 @@ bool Ssh::apply() {
         return false;
     }
 
-    const std::string currentValue = this->sshConfig->getValue(this->sshParameter);
+    const std::string currentValue = this->sshConfig_->getValue(this->sshParameter);
     const bool changed = currentValue != expectedValue;
     if (currentValue == expectedValue) {
         this->log(LocalizationManager::getLang(
@@ -105,7 +112,7 @@ bool Ssh::apply() {
                           "[module:NET][submodule:SshEdit][message:deviation_detected_part4]"),
                   logLevel::WARN);
 
-        if (!this->sshConfig->setValue(this->sshParameter, expectedValue)) {
+        if (!this->sshConfig_->setValue(this->sshParameter, expectedValue)) {
             this->log(LocalizationManager::getLang(
                           "[module:NET][submodule:SshEdit][message:update_failed_part1]") +
                           this->sshParameter +
@@ -115,18 +122,18 @@ bool Ssh::apply() {
             return false;
         }
 
-        if (!this->sshConfig->saveFile()) {
+        if (!this->sshConfig_->saveFile()) {
             this->log(LocalizationManager::getLang(
                           "[module:NET][submodule:SshEdit][message:save_failed]"),
                       logLevel::ERROR);
             return false;
         }
 
-        SshConfigFileHandler verification(this->sshPath);
+        SshConfigFileHandler verification(sshPath);
         if (!verification.loadConfig() ||
             verification.getValue(this->sshParameter) != expectedValue) {
             std::string rollbackError;
-            const bool rolledBack = restoreSshConfig(this->sshPath, originalContent, rollbackError);
+            const bool rolledBack = restoreSshConfig(sshPath, originalContent, rollbackError);
             this->log(
                 "Не удалось подтвердить записанное значение SSH-политики" +
                     std::string(rolledBack ? "" : ". Ошибка отката: " + rollbackError),
@@ -136,12 +143,12 @@ bool Ssh::apply() {
         }
     }
 
-    SshRuntime runtime;
+    SshRuntime runtime(*runtimeOptions_);
     std::string runtimeError;
     if (!runtime.verifyPolicyValue(this->sshParameter, expectedValue, runtimeError)) {
         if (changed) {
             std::string rollbackError;
-            if (!restoreSshConfig(this->sshPath, originalContent, rollbackError)) {
+            if (!restoreSshConfig(sshPath, originalContent, rollbackError)) {
                 runtimeError += ". Ошибка отката SSH-конфигурации: " + rollbackError;
             }
         }

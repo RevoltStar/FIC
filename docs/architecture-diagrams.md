@@ -129,8 +129,19 @@ flowchart TB
 
 ```mermaid
 flowchart TD
-    start([fic start]) --> locale[Инициализация локали]
+    build[CMake FIC_TARGET_PLATFORM] --> compiled[Compile-time PlatformProfile]
+    start([fic start]) --> profile[Создать и проверить PlatformProfile]
+    compiled --> profile
+    profile --> tools[systemctl / loginctl]
+    profile --> sshProfile[SSH config / sshd / units]
+    profile --> sudoProfile[sudoers / visudo]
+    profile --> dmProfile[SDDM / LightDM / GDM configs]
+    profile --> dacProfile[DAC file and command rules]
+    profile --> osRelease[Проверить /etc/os-release]
+    osRelease -->|несовместим| incompatible([exit with error])
+    osRelease -->|совместим| locale[Инициализация локали]
     locale --> initMap[init_policyMap]
+    compiled --> initMap
     initMap --> oneshot{--oneshot?}
 
     oneshot -->|да| applyOnce[apply all enabled policies]
@@ -161,6 +172,13 @@ flowchart TD
     mainLoop -->|stop| cleanup[close socket и unlink]
     cleanup --> stopped([fic daemon stopped])
 ```
+
+Профиль выбирается только во время сборки. Runtime-проверка не ищет другой
+профиль, а fail-closed подтверждает, что пакет запущен на предназначенной для
+него ОС. `init_policyMap()` передает один и тот же immutable профиль политикам
+при первой и каждой последующей инициализации. Профиль владеет интеграционными
+данными systemd/login, SSH, sudo, display manager и DAC; выбор backend конкретной
+графической среды и стандартные FHS/kernel-пути остаются capability-зависимыми.
 
 ## 4. IPC-запрос от CLI или GUI
 

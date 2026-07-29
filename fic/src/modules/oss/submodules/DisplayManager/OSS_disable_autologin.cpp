@@ -2,8 +2,10 @@
 
 #include "modules/oss/submodules/DisplayManager/backends/DisplayManagerBackend.h"
 
-OSS_disable_autologin::OSS_disable_autologin()
-    : DisplayManager()
+OSS_disable_autologin::OSS_disable_autologin(
+    const fic::platform::SystemToolsPlatformConfig& systemTools,
+    const fic::platform::DisplayManagerPlatformConfig& displayManager)
+    : DisplayManager(systemTools, displayManager)
 {
     this->policyName = "disable_autologin";
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
@@ -13,7 +15,8 @@ bool OSS_disable_autologin::apply()
 {
     const std::string displayManager = this->detectDisplayManager();
     std::unique_ptr<DisplayManagerBackend> backend =
-        DisplayManagerBackendFactory::create(displayManager);
+        DisplayManagerBackendFactory::create(
+            displayManager, this->displayManagerConfig());
     if (!backend) {
         this->log("Failed to detect active display manager for disable_autologin policy", logLevel::ERROR);
         return false;

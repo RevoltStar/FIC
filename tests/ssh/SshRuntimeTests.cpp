@@ -108,6 +108,7 @@ SshRuntimeOptions options(const TemporaryTree& tree) {
     value.includeBasePath = tree.root;
     value.sshdCandidates = {tree.executable("sshd").string()};
     value.systemctlCandidates = {tree.executable("systemctl").string()};
+    value.serviceUnits = {"ssh.service", "sshd.service"};
     return value;
 }
 

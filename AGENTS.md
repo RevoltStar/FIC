@@ -33,6 +33,8 @@
 
 - Маршрутизация daemon API и ответы IPC:
   `fic/src/main.cpp`.
+- Compile-time профили дистрибутивов и runtime-проверка `/etc/os-release`:
+  `fic/src/platform/` и `cmake/FicTargetPlatform.cmake`.
 - Инициализация `PolicyMap`, применение, enable/disable/set:
   `fic/src/core/main_function.cpp` и `main_function.h`.
 - Конкретная политика:
@@ -90,9 +92,12 @@
 Проект использует CMake и C++17. Полная локальная проверка:
 
 ```bash
-cmake -S . -B build-check
+cmake -S . -B build-check -DFIC_TARGET_PLATFORM=<target>
 cmake --build build-check -j2
 ```
+
+Поддерживаемые значения `<target>`: `debian-12`, `ubuntu-24.04`, `alt-p11`.
+Профиль обязателен и должен соответствовать целевой ОС, а не ОС build-хоста.
 
 Для узкой задачи можно собирать цель:
 
@@ -107,15 +112,17 @@ cmake --build build-check --target fic-gui
 Можно собирать компонент отдельно, как описано в его README. Полная конфигурация
 требует SQLite3, OpenSSL, Threads, nlohmann/json и Qt Widgets (Qt 5 или Qt 6).
 
-Автоматизированного набора тестов и CTest-целей сейчас нет. Поэтому минимум для
-изменения — успешная сборка затронутых целей; для общих библиотек, IPC, CMake
-или packaging-sensitive кода — полная сборка. Runtime-проверки описывай
-отдельно и не выдавай их за выполненные, если они не запускались.
+В проекте есть отдельные CTest-цели для общих путей, SSH, sudoers, sysctl и
+профилей платформ. Минимум для изменения — успешная сборка затронутых целей и
+относящиеся к ним тесты; для общих библиотек, IPC, CMake или
+packaging-sensitive кода — полная сборка. Runtime-проверки описывай отдельно и
+не выдавай их за выполненные, если они не запускались.
 
 Пакеты собираются отдельными скриптами:
 
 ```bash
 ./packaging/deb/build-fic-debian12-deb-docker.sh <version>
+./packaging/deb/build-fic-ubuntu2404-deb-docker.sh <version>
 ./packaging/rpm/build-fic-alt-p11-rpm-docker.sh <version>
 ```
 

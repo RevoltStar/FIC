@@ -1,0 +1,24 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    dpkg-dev \
+    file \
+    libgl1-mesa-dev \
+    libopengl-dev \
+    libsqlite3-dev \
+    libssl-dev \
+    libxkbcommon-dev \
+    nlohmann-json3-dev \
+    pkg-config \
+    qt6-base-dev \
+    qt6-base-dev-tools \
+    qt6-qpa-plugins \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+CMD ["bash"]

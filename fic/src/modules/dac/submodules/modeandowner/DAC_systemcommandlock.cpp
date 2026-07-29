@@ -4,19 +4,20 @@
 
 
 
-DAC_systemcommandlock::DAC_systemcommandlock(){
-    //Системные утилиты
-    this->ModeAndOwner::expected = {
-        {"/bin/df", {"root", "root", 0750}},
-        {"/usr/bin/chattr", {"root", "root", 0750}},
-        {"/usr/sbin/arp", {"root", "root", 0750}},
-        {"/sbin/ip", {"root", "root", 0750}}
-    };
+DAC_systemcommandlock::DAC_systemcommandlock(
+    const fic::platform::DacPlatformConfig& platformConfig) {
+    for (const fic::platform::FileAccessRule& rule :
+         platformConfig.protectedSystemCommands) {
+        this->ModeAndOwner::expected.emplace(
+            rule.path.string(),
+            FileStats(rule.owner, rule.group, static_cast<mode_t>(rule.permissions))
+        );
+    }
     this->policyName = "systemcommandlock";
-    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
+    this->policyTypeValue = std::make_unique<FileAccessRulesPolicyTypeValue>(
+        platformConfig.protectedSystemCommands);
 }
 
 bool DAC_systemcommandlock::apply(){
     return this->ModeAndOwner::apply();
 }
-

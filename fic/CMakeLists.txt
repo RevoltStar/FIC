@@ -4,6 +4,7 @@ project(fic LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicTargetPlatform.cmake)
 
 if(NOT TARGET fic-ipc)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
@@ -34,8 +35,19 @@ file(GLOB_RECURSE HDR_FILES
 
 # Исключаем тесты
 list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\][^/\\\\]*[Tt]est[^/\\\\]*\\.cpp$")
+# Distribution profiles export the same factory symbol, so exactly one of them
+# must be selected by FicTargetPlatform.cmake.
+list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\]platform[/\\\\].*\\.cpp$")
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+
+add_library(fic-platform STATIC
+    src/platform/PlatformCompatibility.cpp
+    ${FIC_TARGET_PLATFORM_PROFILE_SOURCE}
+)
+target_include_directories(fic-platform PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
 # Создаем исполняемый файл
 add_executable(fic ${SRC_FILES} ${HDR_FILES})
@@ -52,6 +64,7 @@ target_link_libraries(fic PRIVATE Threads::Threads)
 target_link_libraries(fic PRIVATE fic-ipc)
 target_link_libraries(fic PRIVATE fic-core)
 target_link_libraries(fic PRIVATE fic-policy)
+target_link_libraries(fic PRIVATE fic-platform)
 set(FIC_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}")
 foreach(template

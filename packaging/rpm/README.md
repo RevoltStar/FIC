@@ -13,6 +13,11 @@ This packaging flow builds five RPM packages for ALT Linux p11:
 - `fic-cli`
 - `fic-gui`
 
+The packaging script always configures the daemon with
+`FIC_TARGET_PLATFORM=alt-p11`; it does not derive the profile from the build
+container. The resulting daemon validates `ID=altlinux` and
+`ALT_BRANCH_ID=p11` before starting.
+
 ## Package contents
 
 `fic-dick` installs:

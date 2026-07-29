@@ -1,11 +1,11 @@
-# FIC Debian packaging
+# FIC Debian and Ubuntu packaging
 
 Payload бинарников, service-файлов, конфигурации и данных берется из
 именованных CMake install-компонентов. Скрипты упаковки отвечают за metadata,
 maintainer scripts и Qt runtime bundle, но не поддерживают отдельную копию
 production-путей в исходных systemd/tmpfiles/udev-файлах.
 
-This packaging flow builds five Debian packages:
+This packaging flow builds five distribution-specific Debian-format packages:
 
 - `fic-dick`
 - `fic`
@@ -108,52 +108,36 @@ The launcher sets `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH`, and
 
 ## Build
 
-Run on a Debian/Ubuntu-like system or inside WSL with Debian tooling installed:
+Debian 12 and Ubuntu 24.04 use separate entry points. Each entry point fixes
+the daemon compile-time platform profile and output distribution tag:
 
 ```bash
-chmod +x packaging/deb/build-fic-debian12-deb.sh
 ./packaging/deb/build-fic-debian12-deb.sh 0.1.0
+./packaging/deb/build-fic-ubuntu2404-deb.sh 0.1.0
 ```
 
 The resulting packages are created under `dist/`. Output filenames include the
-target distribution tag, for example `fic-cli_0.1.0_debian12_amd64.deb`.
+target distribution tag, for example `fic-cli_0.1.0_debian12_amd64.deb` or
+`fic-cli_0.1.0_ubuntu2404_amd64.deb`.
 
-## Docker build for broader compatibility
+## Docker build
 
 To avoid bundling Qt libraries that were compiled against a too-new `glibc`,
-build the packages inside the provided Docker image based on Debian 12.
+build each package set inside its matching distribution image.
 
-Why Debian 12:
-
-- it provides Qt6 packages out of the box;
-- its `glibc` is older than on newer build hosts;
-- packages built there are more likely to run on newer Debian systems.
-
-Build through Docker:
+Build Debian 12 or Ubuntu 24.04 through its matching container:
 
 ```bash
-chmod +x packaging/deb/build-fic-debian12-deb-docker.sh
 ./packaging/deb/build-fic-debian12-deb-docker.sh 0.1.0
+./packaging/deb/build-fic-ubuntu2404-deb-docker.sh 0.1.0
 ```
 
-This wrapper:
+The Debian builder passes `FIC_TARGET_PLATFORM=debian-12`; the Ubuntu builder
+passes `FIC_TARGET_PLATFORM=ubuntu-24.04`. A package builder never derives the
+target from the build host. Both wrappers use a separate temporary
+`BUILD_ROOT`, and the resulting `.deb` files are written into `dist/`.
 
-- builds `packaging/deb/Dockerfile`;
-- starts a container from `debian:12`;
-- installs build dependencies for `fic`, `fic-session-agent`, `fic-cli`, `fic-dick`, and `fic-gui`;
-- runs `build-fic-debian12-deb.sh` inside that container;
-- uses a separate temporary `BUILD_ROOT` inside the container so it does not
-  conflict with host-side `build-linux/` CMake caches.
-
-The resulting `.deb` files are still written into `dist/` in the repository.
-The distribution tag can be overridden with `PACKAGE_DISTRO_TAG` if needed.
-
-## Debian 9 compatibility
-
-The build script forces `gzip` compression for the Debian package payloads so that
-older systems such as Debian 9 can install the resulting `.deb` files.
-
-If needed, the compressor can be overridden explicitly:
+The payload compressor can be overridden explicitly:
 
 ```bash
 DEB_COMPRESSOR=gzip ./packaging/deb/build-fic-debian12-deb.sh 0.1.0

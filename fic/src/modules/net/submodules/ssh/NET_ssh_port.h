@@ -6,7 +6,8 @@
 class NET_ssh_port : public Ssh
 {
 public:
-    NET_ssh_port();
+    NET_ssh_port(const fic::platform::SshPlatformConfig& platformConfig,
+                 const fic::platform::SystemToolsPlatformConfig& systemTools);
     ~NET_ssh_port();
     bool apply() override;
 };

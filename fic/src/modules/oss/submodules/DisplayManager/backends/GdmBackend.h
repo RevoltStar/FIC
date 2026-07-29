@@ -5,7 +5,8 @@
 
 class GdmBackend final : public DisplayManagerBackend {
 public:
-    explicit GdmBackend(bool debianVariant);
+    GdmBackend(std::string displayName,
+               const std::vector<std::filesystem::path>& configCandidates);
 
     DisplayManagerKind kind() const override { return DisplayManagerKind::Gdm; }
     const char* name() const override { return displayName.c_str(); }

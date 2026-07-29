@@ -394,11 +394,17 @@ bundle_fic_gui_qt_runtime() {
 build_project() {
     local source_dir="$1"
     local build_dir="$2"
+    local cmake_args=(
+        -DCMAKE_BUILD_TYPE=Release
+        "-DFIC_SYSTEMD_UNIT_DIR=$SYSTEMD_UNIT_DIR"
+        "-DFIC_TMPFILES_DIR=$TMPFILES_DIR"
+    )
 
-    cmake -S "$source_dir" -B "$build_dir" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DFIC_SYSTEMD_UNIT_DIR="$SYSTEMD_UNIT_DIR" \
-        -DFIC_TMPFILES_DIR="$TMPFILES_DIR"
+    if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
+        cmake_args+=("-DFIC_TARGET_PLATFORM=alt-p11")
+    fi
+
+    cmake -S "$source_dir" -B "$build_dir" "${cmake_args[@]}"
     cmake --build "$build_dir" --parallel
 }
 

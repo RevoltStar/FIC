@@ -6,11 +6,13 @@
 #include <sstream>
 #include <vector>
 #include "modules/dac/submodules/ModeAndOwner.h"
+#include "platform/PlatformProfile.h"
 
 class DAC_systemcommandlock : public ModeAndOwner{
 
 public:
-    DAC_systemcommandlock();
+    explicit DAC_systemcommandlock(
+        const fic::platform::DacPlatformConfig& platformConfig);
     bool apply () override;
 };
 #endif // DAC_SYSTEMCOMMANDLOCK_H

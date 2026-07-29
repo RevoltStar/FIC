@@ -8,7 +8,10 @@
 
 class SessionLocator {
 public:
-    static bool activeGraphicalSessions(std::vector<UserSession>& sessions, std::string& error);
+    static bool activeGraphicalSessions(
+        const std::vector<std::string>& loginctlCandidates,
+        std::vector<UserSession>& sessions,
+        std::string& error);
 };
 
 #endif // SESSION_LOCATOR_H

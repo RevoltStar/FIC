@@ -55,25 +55,7 @@
 [module:DAC][policy:sudo_require_authentication]=Требовать аутентификацию при выполнении команд через sudo
 [module:DAC][policy:systemcommandlock]=Блокировка системных команд для пользователей
 
-[module:DAC][policy:blocking_user_access_to_system_files][description]=Осуществляет установку безопасных прав для системных (в первую очередь, конфигурационных) файлов. Будут использоваться следующие файлы и права:
-    /etc/bashrc root:root 0644
-    /etc/crontab root:root 0600
-    /etc/fstab root:root 0640
-    /etc/hostname root:root 0644
-    /etc/hosts root:root 0644
-    /etc/hosts.allow root:root 0644
-    /etc/hosts.deny root:root 0644
-    /etc/group  root:root 0644
-    /etc/ntpd.conf root:ntp 0640
-    /etc/resolv.conf root:root 0644
-    /etc/sysctl.conf root:root 0644
-    /etc/logrotate.conf root:root 0644
-    /etc/inittab root:root 0644
-    /etc/passwd root:root 0644
-    /etc/shadow root:shadow 0640
-    /etc/sudoers root:root 0440
-    /etc/grub.cfg root:root, 0600
-    /etc/sysconfig/securetty root:root  0600
+[module:DAC][policy:blocking_user_access_to_system_files][description]=Устанавливает безопасные права для системных файлов. Точный список определяется профилем целевого дистрибутива и приведён ниже.
 [module:DAC][policy:custom_mode_and_owner][description]=Позволяет задать пользовательский список файлов и каталогов, для которых FIC будет проверять и исправлять владельца, группу и права доступа. Укажите по одному правилу на строку в формате: /путь|владелец|группа|права. Путь должен быть абсолютным, права указываются в восьмеричном виде из 3 или 4 цифр. Пример:
     /etc/example.conf|root|root|0644
     /opt/app/private|root|fic|0750
@@ -81,12 +63,8 @@
 [module:DAC][policy:sudo_securepath][description]=Описание
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:sudo_require_authentication][description]=Заменяет локальные правила NOPASSWD на PASSWD и запрещает отключение аутентификации в активных sudoers-файлах. Не учитывает действующий кэш sudo, PAM и внешние LDAP/SSSD-источники.
-[module:DAC][policy:systemcommandlock][description]=Блокировка системных команд для пользователей
-    Программам ниже назначаются права 750 и владелец root:root:
-    /bin/df,
-    /usr/bin/chattr,
-    /usr/sbin/arp,
-    /sbin/ip
+[module:DAC][policy:systemcommandlock][description]=Устанавливает безопасные права для системных команд. Точный список определяется профилем целевого дистрибутива и приведён ниже.
+[module:DAC][message:platform_access_rules]=Правила для выбранного профиля целевого дистрибутива:
 
 
 #Настройки ОС

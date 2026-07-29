@@ -7,7 +7,8 @@
 class DAC_sudo_securepath : public Sudo
 {
 public:
-    DAC_sudo_securepath();
+    explicit DAC_sudo_securepath(
+        const fic::platform::SudoPlatformConfig& platformConfig);
     ~DAC_sudo_securepath();
     bool apply () override;
 

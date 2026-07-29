@@ -6,7 +6,9 @@
 class OSS_disable_autologin : public DisplayManager
 {
 public:
-    OSS_disable_autologin();
+    OSS_disable_autologin(
+        const fic::platform::SystemToolsPlatformConfig& systemTools,
+        const fic::platform::DisplayManagerPlatformConfig& displayManager);
 
     bool apply () override;
 };

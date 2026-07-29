@@ -1,6 +1,28 @@
 #include "modules/dac/submodules/ModeAndOwner.h"
 
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include <utility>
+
+FileAccessRulesPolicyTypeValue::FileAccessRulesPolicyTypeValue(
+    std::vector<fic::platform::FileAccessRule> rules)
+    : FixedPolicyTypeValue(),
+      rules_(std::move(rules)) {
+}
+
+std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
+    std::ostringstream result;
+    result << LocalizationManager::getLang(
+        "[module:DAC][message:platform_access_rules]");
+    for (const fic::platform::FileAccessRule& rule : rules_) {
+        result << "\n" << rule.path.string() << " "
+               << rule.owner << ":" << rule.group << " "
+               << std::setfill('0') << std::setw(4) << std::oct
+               << rule.permissions << std::dec;
+    }
+    return result.str();
+}
 
 ModeAndOwner::ModeAndOwner()
     :DAC()
@@ -140,4 +162,3 @@ bool ModeAndOwner::apply() {
     }
     return false;
 }
-

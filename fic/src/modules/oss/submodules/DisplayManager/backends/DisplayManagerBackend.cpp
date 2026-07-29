@@ -93,7 +93,8 @@ bool DisplayManagerBackend::readConfig(
 }
 
 std::unique_ptr<DisplayManagerBackend> DisplayManagerBackendFactory::create(
-    const std::string& displayManager
+    const std::string& displayManager,
+    const fic::platform::DisplayManagerPlatformConfig& platformConfig
 )
 {
     std::string normalized = displayManager;
@@ -102,13 +103,16 @@ std::unique_ptr<DisplayManagerBackend> DisplayManagerBackendFactory::create(
     });
 
     if (normalized == "SDDM") {
-        return std::make_unique<SddmBackend>();
+        return std::make_unique<SddmBackend>(
+            platformConfig.sddmConfigPath.string());
     }
     if (normalized == "LIGHTDM") {
-        return std::make_unique<LightDmBackend>();
+        return std::make_unique<LightDmBackend>(
+            platformConfig.lightDmConfigPath.string());
     }
     if (normalized == "GDM" || normalized == "GDM3") {
-        return std::make_unique<GdmBackend>(normalized == "GDM3");
+        return std::make_unique<GdmBackend>(
+            normalized, platformConfig.gdmConfigCandidates);
     }
     return nullptr;
 }

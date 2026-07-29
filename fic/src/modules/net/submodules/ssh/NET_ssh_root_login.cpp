@@ -1,7 +1,9 @@
 #include "modules/net/submodules/ssh/NET_ssh_root_login.h"
 
-NET_ssh_root_login::NET_ssh_root_login()
-    : Ssh(){
+NET_ssh_root_login::NET_ssh_root_login(
+    const fic::platform::SshPlatformConfig& platformConfig,
+    const fic::platform::SystemToolsPlatformConfig& systemTools)
+    : Ssh(platformConfig, systemTools) {
     this->Ssh::sshParameter = "PermitRootLogin";
     this->policyName = "ssh_root_login";
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(

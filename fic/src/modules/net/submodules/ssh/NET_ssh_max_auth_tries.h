@@ -6,7 +6,9 @@
 class NET_ssh_max_auth_tries : public Ssh
 {
 public:
-    NET_ssh_max_auth_tries();
+    explicit NET_ssh_max_auth_tries(
+        const fic::platform::SshPlatformConfig& platformConfig,
+        const fic::platform::SystemToolsPlatformConfig& systemTools);
     ~NET_ssh_max_auth_tries();
     bool apply() override;
 };

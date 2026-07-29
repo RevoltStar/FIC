@@ -55,25 +55,7 @@
 [module:DAC][policy:sudo_require_authentication]=Require authentication when executing commands through sudo
 [module:DAC][policy:systemcommandlock]=Restrict system commands for users
 
-[module:DAC][policy:blocking_user_access_to_system_files][description]=Sets secure permissions for system files, primarily configuration files. The following files and permissions will be used:
-    /etc/bashrc root:root 0644
-    /etc/crontab root:root 0600
-    /etc/fstab root:root 0640
-    /etc/hostname root:root 0644
-    /etc/hosts root:root 0644
-    /etc/hosts.allow root:root 0644
-    /etc/hosts.deny root:root 0644
-    /etc/group  root:root 0644
-    /etc/ntpd.conf root:ntp 0640
-    /etc/resolv.conf root:root 0644
-    /etc/sysctl.conf root:root 0644
-    /etc/logrotate.conf root:root 0644
-    /etc/inittab root:root 0644
-    /etc/passwd root:root 0644
-    /etc/shadow root:shadow 0640
-    /etc/sudoers root:root 0440
-    /etc/grub.cfg root:root, 0600
-    /etc/sysconfig/securetty root:root  0600
+[module:DAC][policy:blocking_user_access_to_system_files][description]=Sets secure permissions for system files. The exact list is selected by the target distribution profile and is shown below.
 [module:DAC][policy:custom_mode_and_owner][description]=Allows setting a custom list of files and directories for which FIC will check and fix the owner, group, and access mode. Specify one rule per line in the format: /path|owner|group|mode. The path must be absolute, and the mode must be a 3- or 4-digit octal value. Example:
     /etc/example.conf|root|root|0644
     /opt/app/private|root|fic|0750
@@ -81,7 +63,8 @@
 [module:DAC][policy:sudo_securepath][description]=Description
 [module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:sudo_require_authentication][description]=Replaces local NOPASSWD rules with PASSWD and prevents authentication from being disabled in active sudoers files. Existing sudo timestamps, PAM, and external LDAP/SSSD sources are out of scope.
-[module:DAC][policy:systemcommandlock][description]=Restrict system commands for users
+[module:DAC][policy:systemcommandlock][description]=Sets secure permissions for system commands. The exact list is selected by the target distribution profile and is shown below.
+[module:DAC][message:platform_access_rules]=Rules for the selected target distribution profile:
 
 
 # OS settings

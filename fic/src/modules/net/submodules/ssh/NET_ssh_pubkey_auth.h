@@ -6,7 +6,9 @@
 class NET_ssh_pubkey_auth : public Ssh
 {
 public:
-    NET_ssh_pubkey_auth();
+    explicit NET_ssh_pubkey_auth(
+        const fic::platform::SshPlatformConfig& platformConfig,
+        const fic::platform::SystemToolsPlatformConfig& systemTools);
     ~NET_ssh_pubkey_auth();
     bool apply() override;
 };
