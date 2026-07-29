@@ -299,8 +299,8 @@ ExecStart=/opt/fic/bin/fic --interval 1800
 ### Целевая платформа
 
 Daemon собирается ровно для одного дистрибутива. CMake требует явный
-`FIC_TARGET_PLATFORM`: `debian-12`, `ubuntu-24.04` или `alt-p11`. Неизвестное
-или отсутствующее значение останавливает конфигурацию CMake.
+`FIC_TARGET_PLATFORM`: `debian-12`, `debian-13`, `ubuntu-24.04` или `alt-p11`.
+Неизвестное или отсутствующее значение останавливает конфигурацию CMake.
 
 Выбранный профиль создается в `fic/src/platform/profiles/` и передается в
 `init_policyMap()`. Он является единым источником системных путей, executable-
@@ -332,6 +332,7 @@ Daemon собирается ровно для одного дистрибути�
 | Профиль | SSH | GDM | shell/GRUB в DAC | `ip` в DAC |
 | --- | --- | --- | --- | --- |
 | Debian 12 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/daemon.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
+| Debian 13 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/daemon.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
 | Ubuntu 24.04 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/custom.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
 | ALT p11 | `/etc/openssh/sshd_config`, `sshd.service` | `/etc/gdm/custom.conf` | `/etc/bashrc`, `/etc/grub.cfg` | `/sbin/ip` |
 
@@ -473,8 +474,8 @@ OpenSSH. Повторяющиеся директивы, не относящие�
 `sshd` и `systemctl` выбираются общим platform resolver и запускаются через
 `VerifiedProcessExecutor`. Hash рассчитывается автоматически при установке и
 после пакетных транзакций для executable, выбранных compile-time профилем. Например,
-ALT p11 использует `/usr/sbin/sshd`, а Debian 12 и Ubuntu 24.04 допускают
-профильные кандидаты `/usr/sbin/sshd` и `/usr/bin/sshd`.
+ALT p11 использует `/usr/sbin/sshd`, а Debian 12, Debian 13 и Ubuntu 24.04
+допускают профильные кандидаты `/usr/sbin/sshd` и `/usr/bin/sshd`.
 
 Команда `fic --trust-sync-platform` доступна только root и не является IPC API.
 Она выбирает пути через общий resolver, требует владельца root и безопасные

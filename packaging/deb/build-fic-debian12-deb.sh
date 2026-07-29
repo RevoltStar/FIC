@@ -7,6 +7,9 @@ case "$FIC_PACKAGING_TARGET_PLATFORM" in
     debian-12)
         DEFAULT_PACKAGE_DISTRO_TAG="debian12"
         ;;
+    debian-13)
+        DEFAULT_PACKAGE_DISTRO_TAG="debian13"
+        ;;
     ubuntu-24.04)
         DEFAULT_PACKAGE_DISTRO_TAG="ubuntu2404"
         ;;

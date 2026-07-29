@@ -20,7 +20,8 @@ Access model:
 
 Target platforms:
 - The privileged daemon is built for exactly one target platform.
-- Supported profiles are `debian-12`, `ubuntu-24.04`, and `alt-p11`.
+- Supported profiles are `debian-12`, `debian-13`, `ubuntu-24.04`, and
+  `alt-p11`.
 - CMake configuration must select one explicitly, for example:
 
 ```bash

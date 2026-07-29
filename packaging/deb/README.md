@@ -115,34 +115,36 @@ The launcher sets `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH`, and
 
 ## Build
 
-Debian 12 and Ubuntu 24.04 use separate entry points. Each entry point fixes
-the daemon compile-time platform profile and output distribution tag:
+Debian 12, Debian 13, and Ubuntu 24.04 use separate entry points. Each entry
+point fixes the daemon compile-time platform profile and output distribution
+tag:
 
 ```bash
 ./packaging/deb/build-fic-debian12-deb.sh 0.1.0
+./packaging/deb/build-fic-debian13-deb.sh 0.1.0
 ./packaging/deb/build-fic-ubuntu2404-deb.sh 0.1.0
 ```
 
 The resulting packages are created under `dist/`. Output filenames include the
-target distribution tag, for example `fic-cli_0.1.0_debian12_amd64.deb` or
-`fic-cli_0.1.0_ubuntu2404_amd64.deb`.
+target distribution tag, for example `fic-cli_0.1.0_debian13_amd64.deb`.
 
 ## Docker build
 
 To avoid bundling Qt libraries that were compiled against a too-new `glibc`,
 build each package set inside its matching distribution image.
 
-Build Debian 12 or Ubuntu 24.04 through its matching container:
+Build Debian 12, Debian 13, or Ubuntu 24.04 through its matching container:
 
 ```bash
 ./packaging/deb/build-fic-debian12-deb-docker.sh 0.1.0
+./packaging/deb/build-fic-debian13-deb-docker.sh 0.1.0
 ./packaging/deb/build-fic-ubuntu2404-deb-docker.sh 0.1.0
 ```
 
-The Debian builder passes `FIC_TARGET_PLATFORM=debian-12`; the Ubuntu builder
-passes `FIC_TARGET_PLATFORM=ubuntu-24.04`. A package builder never derives the
-target from the build host. Both wrappers use a separate temporary
-`BUILD_ROOT`, and the resulting `.deb` files are written into `dist/`.
+Each builder passes its fixed `FIC_TARGET_PLATFORM` (`debian-12`, `debian-13`,
+or `ubuntu-24.04`) and never derives the target from the build host. The
+wrappers use separate temporary `BUILD_ROOT` directories, and the resulting
+`.deb` files are written into `dist/`.
 
 The payload compressor can be overridden explicitly:
 

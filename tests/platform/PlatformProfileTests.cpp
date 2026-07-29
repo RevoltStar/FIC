@@ -154,6 +154,30 @@ void testSelectedProfile() {
                 "Debian 12 GRUB configuration path is incorrect");
         require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
                 "Debian 12 ip command path is incorrect");
+    } else if (profile.id == "debian-13") {
+        require(profile.hostCompatibility.versionIds ==
+                    std::vector<std::string>({"13"}),
+                "Debian 13 must accept only VERSION_ID=13");
+        require(profile.packageManager.kind ==
+                    fic::platform::PackageManagerKind::Dpkg,
+                "Debian 13 must use the dpkg package database");
+        require(profile.ssh.configPath == "/etc/ssh/sshd_config",
+                "Debian 13 SSH configuration path is incorrect");
+        require(profile.ssh.serviceUnits ==
+                    std::vector<std::string>({"ssh.service", "sshd.service"}),
+                "Debian 13 SSH service units are incorrect");
+        require(profile.displayManager.gdmConfigCandidates.front() ==
+                    "/etc/gdm3/daemon.conf",
+                "Debian 13 primary GDM configuration path is incorrect");
+        require(hasRule(profile.dac.protectedSystemFiles, "/etc/bash.bashrc"),
+                "Debian 13 must protect /etc/bash.bashrc");
+        require(hasRule(profile.dac.protectedSystemFiles,
+                        "/boot/grub/grub.cfg"),
+                "Debian 13 GRUB configuration path is incorrect");
+        require(hasRule(profile.dac.protectedSystemCommands, "/usr/bin/df"),
+                "Debian 13 df command path must use the merged-/usr location");
+        require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
+                "Debian 13 ip command path is incorrect");
     } else if (profile.id == "ubuntu-24.04") {
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,

@@ -15,7 +15,7 @@ def main():
 
     root = Path(sys.argv[1])
     cmake = (root / "cmake/FicTargetPlatform.cmake").read_text(encoding="utf-8")
-    for profile in ("debian-12", "ubuntu-24.04", "alt-p11"):
+    for profile in ("debian-12", "debian-13", "ubuntu-24.04", "alt-p11"):
         require(profile in cmake, f"CMake does not support platform {profile}")
     require(
         "message(FATAL_ERROR" in cmake,
@@ -93,6 +93,7 @@ def main():
         ).read_text(encoding="utf-8")
         for name, filename in {
             "debian-12": "Debian12Profile.cpp",
+            "debian-13": "Debian13Profile.cpp",
             "ubuntu-24.04": "Ubuntu2404Profile.cpp",
             "alt-p11": "AltP11Profile.cpp",
         }.items()
@@ -196,6 +197,15 @@ def main():
     ubuntu_builder = (
         root / "packaging/deb/build-fic-ubuntu2404-deb.sh"
     ).read_text(encoding="utf-8")
+    debian13_builder = (
+        root / "packaging/deb/build-fic-debian13-deb.sh"
+    ).read_text(encoding="utf-8")
+    debian13_docker_builder = (
+        root / "packaging/deb/build-fic-debian13-deb-docker.sh"
+    ).read_text(encoding="utf-8")
+    debian13_dockerfile = (
+        root / "packaging/deb/Dockerfile.debian13"
+    ).read_text(encoding="utf-8")
     require(
         "-DFIC_TARGET_PLATFORM=$FIC_PACKAGING_TARGET_PLATFORM" in deb_builder,
         "Debian-family packaging does not pass its compile-time profile",
@@ -207,6 +217,22 @@ def main():
     require(
         'FIC_PACKAGING_TARGET_PLATFORM="ubuntu-24.04"' in ubuntu_builder,
         "Ubuntu package entry point does not fix the Ubuntu profile",
+    )
+    require(
+        "debian-13)" in deb_builder,
+        "Debian-family packaging does not accept the Debian 13 profile",
+    )
+    require(
+        'FIC_PACKAGING_TARGET_PLATFORM="debian-13"' in debian13_builder,
+        "Debian 13 package entry point does not fix the Debian 13 profile",
+    )
+    require(
+        "./build-fic-debian13-deb.sh" in debian13_docker_builder,
+        "Debian 13 container entry point does not use the Debian 13 builder",
+    )
+    require(
+        "FROM debian:13" in debian13_dockerfile,
+        "Debian 13 packages must be built in a Debian 13 container",
     )
     for watched_path in ("/usr/bin", "/usr/sbin", "/bin", "/sbin"):
         require(

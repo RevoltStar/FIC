@@ -96,8 +96,9 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=<target>
 cmake --build build-check -j2
 ```
 
-Поддерживаемые значения `<target>`: `debian-12`, `ubuntu-24.04`, `alt-p11`.
-Профиль обязателен и должен соответствовать целевой ОС, а не ОС build-хоста.
+Поддерживаемые значения `<target>`: `debian-12`, `debian-13`,
+`ubuntu-24.04`, `alt-p11`. Профиль обязателен и должен соответствовать целевой
+ОС, а не ОС build-хоста.
 
 Для узкой задачи можно собирать цель:
 
@@ -122,6 +123,7 @@ packaging-sensitive кода — полная сборка. Runtime-провер
 
 ```bash
 ./packaging/deb/build-fic-debian12-deb-docker.sh <version>
+./packaging/deb/build-fic-debian13-deb-docker.sh <version>
 ./packaging/deb/build-fic-ubuntu2404-deb-docker.sh <version>
 ./packaging/rpm/build-fic-alt-p11-rpm-docker.sh <version>
 ```
