@@ -190,6 +190,9 @@ def main():
     rpm_builder = (
         root / "packaging/rpm/build-fic-alt-p11-rpm.sh"
     ).read_text(encoding="utf-8")
+    rpm_file_trigger = (
+        root / "packaging/rpm/fic-trust-sync.filetrigger"
+    ).read_text(encoding="utf-8")
     ubuntu_builder = (
         root / "packaging/deb/build-fic-ubuntu2404-deb.sh"
     ).read_text(encoding="utf-8")
@@ -210,18 +213,19 @@ def main():
             f"interest-noawait {watched_path}" in deb_builder,
             f"Debian package does not watch {watched_path} for trust sync",
         )
-        require(
-            watched_path in rpm_builder,
-            f"RPM package does not watch {watched_path} for trust sync",
-        )
+    require(
+        "/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*" in rpm_file_trigger,
+        "ALT file trigger does not watch the four system binary directories",
+    )
     require(
         "--trust-sync-platform" in deb_builder,
         "Debian package does not run package trust sync",
     )
     require(
-        "%transfiletriggerin" in rpm_builder
-        and "--trust-sync-platform" in rpm_builder,
-        "RPM package does not define a transaction file trust trigger",
+        "fic-trust-sync.filetrigger" in rpm_builder
+        and "--trust-sync-platform" in rpm_file_trigger
+        and "%transfiletriggerin" not in rpm_builder,
+        "ALT package does not install its native post-transaction file trigger",
     )
 
     return 0

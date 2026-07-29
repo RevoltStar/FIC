@@ -89,10 +89,13 @@ During installation each package:
 - applies `0770` to files in `/opt/fic/bin`.
 
 The `fic` package runs `fic --trust-sync-platform` before enabling services and
-installs an RPM transaction file trigger for `/usr/bin`, `/usr/sbin`, `/bin`,
-and `/sbin`. The sync verifies every selected executable against RPM file
-digests before atomically refreshing SHA-256 references. Any mismatch fails the
-scriptlet and leaves the existing hash store unchanged.
+installs the ALT-native `/usr/lib/rpm/fic-trust-sync.filetrigger`. ALT invokes
+executable `*.filetrigger` helpers after a successful transaction and passes
+the affected file list on standard input. The helper starts trust sync only
+when that list contains `/usr/bin`, `/usr/sbin`, `/bin`, or `/sbin` entries.
+The sync verifies every selected executable against RPM file digests before
+atomically refreshing SHA-256 references. Any mismatch fails the trigger and
+leaves the existing hash store unchanged.
 
 ## Bundled Qt runtime for fic-gui
 

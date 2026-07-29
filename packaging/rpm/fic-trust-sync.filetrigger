@@ -1,0 +1,12 @@
+#!/bin/sh
+
+while IFS= read -r affected_path; do
+    case "$affected_path" in
+        /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*)
+            [ -x /opt/fic/bin/fic ] || exit 0
+            exec /opt/fic/bin/fic --trust-sync-platform
+            ;;
+    esac
+done
+
+exit 0

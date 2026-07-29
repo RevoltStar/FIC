@@ -7,10 +7,10 @@
 
 - Обновлено: 2026-07-29.
 - Ветка: `main`.
-- Базовый commit: `cdfad63`.
-- Текущая задача: package-transaction trust sync для профильного реестра
-  системных executable.
-- Реализация завершена и проверена, изменения пока не зафиксированы commit.
+- Базовый commit: `5bedbc6`.
+- Текущая задача: исправление ALT p11 package-transaction trigger после ошибки
+  сборки `Macro %transfiletriggerin not found`.
+- Исправление завершено и проверено, изменения пока не зафиксированы commit.
 
 ## Сделано
 
@@ -50,7 +50,11 @@
     `/usr/sbin`, `/bin`, `/sbin`.
 - ALT p11 `fic` package:
   - выполняет первичный sync до включения services;
-  - содержит RPM `%transfiletriggerin` для тех же каталогов.
+  - устанавливает ALT-native `/usr/lib/rpm/fic-trust-sync.filetrigger`,
+    реагирующий на изменения в тех же каталогах. Стандартная spec-секция
+    `%transfiletriggerin` намеренно не используется: ALT RPM 4.13.0.1 не
+    экспортирует этот macro, а выполняет executable `*.filetrigger` через
+    собственный post-transaction dispatcher.
 - Обычная проверка по `VerifiedProcessExecutor` не изменилась и никогда не
   принимает mismatch автоматически. `fic-cli hash calc` оставлен как явная
   административная break-glass операция.
@@ -78,19 +82,23 @@
 - `bash -n` успешен для Debian, Ubuntu и ALT packaging scripts.
 - Локальный ALT RPM 4.13 query format проверен read-only: `FILEDIGESTS` для
   `/usr/bin/lscpu` и `/usr/bin/systemctl` возвращает ожидаемые 32-hex digests.
-- `git diff --check` успешен до финального обновления HANDOFF.
+- Выполнена отдельная минимальная ALT `rpmbuild -bb` smoke-сборка пакета с
+  `/usr/lib/rpm/fic-trust-sync.filetrigger`: сборка успешна, RPM автоматически
+  добавил требование `rpmlib(PosttransFiletriggers)`.
+- Новый helper проверен с подходящим и неподходящим списком файлов на stdin;
+  `bash -n`, `platform_profile_static_checks` и `git diff --check` успешны.
 
-Реальные package builds, установка/обновление пакетов,
-`fic --trust-sync-platform` и policy apply не запускались: они изменяют
-состояние хоста.
+Полные product package builds, установка/обновление пакетов,
+`fic --trust-sync-platform` и policy apply не запускались. Выполнялась только
+изолированная smoke-сборка тестового RPM без его установки.
 
 ## Что осталось
 
-- Package builders не запускались. Первый интеграционный тест следует делать в
-  disposable Debian 12, Ubuntu 24.04 и ALT p11 VM/container: установить пакет,
-  проверить первичное заполнение `commandhash.txt`, затем обновить пакет
-  `systemd`/`openssh` и убедиться, что transaction trigger обновляет только
-  пакетно подтвержденные файлы.
+- Полный ALT package builder после исправления не перезапускался. Следует
+  повторить команду, которая ранее завершалась на `%transfiletriggerin`, затем
+  в disposable ALT p11 VM установить пакет, проверить первичное заполнение
+  `commandhash.txt`, обновить `systemd`/`openssh` и убедиться, что native
+  filetrigger обновляет только пакетно подтвержденные файлы.
 - `fic-dick` пока использует свои hardcoded пути `lscpu`/`dmidecode`, а shell
   helper самостоятельно выбирает `udevadm`; trust sync уже заполняет hashes для
   их первых профильных путей. Если сами потребители должны использовать общий
