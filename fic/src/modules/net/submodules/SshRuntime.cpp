@@ -100,6 +100,19 @@ int permitRootLoginRank(std::string value) {
     return -1;
 }
 
+bool scalarValueMatches(const std::string& parameter,
+                        const std::string& actual,
+                        const std::string& expected) {
+    if (lowerCopy(parameter) == "permitrootlogin") {
+        const int actualRank = permitRootLoginRank(actual);
+        const int expectedRank = permitRootLoginRank(expected);
+        return actualRank >= 0 &&
+               expectedRank >= 0 &&
+               actualRank == expectedRank;
+    }
+    return lowerCopy(trimCopy(actual)) == lowerCopy(trimCopy(expected));
+}
+
 bool conditionalValueIsSafe(const std::string& parameter,
                             const std::string& actual,
                             const std::string& expected) {
@@ -315,8 +328,7 @@ bool SshRuntime::verifyPolicyValue(const std::string& parameter,
                     " effective values for scalar parameter " + parameter;
             return false;
         }
-        if (lowerCopy(trimCopy(found->second.front())) !=
-            lowerCopy(trimCopy(expectedValue))) {
+        if (!scalarValueMatches(parameter, found->second.front(), expectedValue)) {
             error = "effective SSH value '" + found->second.front() +
                     "' does not match expected value '" + expectedValue + "'";
             return false;

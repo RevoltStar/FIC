@@ -353,6 +353,40 @@ void testStricterMatchOverrideIsAccepted() {
             error);
 }
 
+void testPermitRootLoginAliasesAreEquivalent() {
+    TemporaryTree tree;
+    tree.write("sshd_config", "PermitRootLogin prohibit-password\n");
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin without-password\n");
+        }
+    );
+
+    std::string error;
+    require(runtime.verifyPolicyValue("PermitRootLogin", "prohibit-password", error),
+            "OpenSSH's without-password alias must satisfy prohibit-password: " + error);
+}
+
+void testDifferentPermitRootLoginValuesAreNotEquivalent() {
+    TemporaryTree tree;
+    tree.write("sshd_config", "PermitRootLogin prohibit-password\n");
+    SshRuntime runtime(
+        options(tree),
+        [](const std::string&,
+           const std::vector<std::string>&,
+           const ProcessOptions&) {
+            return success("permitrootlogin forced-commands-only\n");
+        }
+    );
+
+    std::string error;
+    require(!runtime.verifyPolicyValue("PermitRootLogin", "prohibit-password", error),
+            "a different global PermitRootLogin restriction must not be treated as an alias");
+}
+
 void testDisabledPubkeyAuthenticationInMatchIsRejected() {
     TemporaryTree tree;
     tree.write(
@@ -631,6 +665,8 @@ int main() {
         {"equals conditional Match", testEqualsConditionalOverrideIsRejected},
         {"quoted conditional Match", testQuotedConditionalOverrideIsRejected},
         {"stricter Match", testStricterMatchOverrideIsAccepted},
+        {"PermitRootLogin aliases", testPermitRootLoginAliasesAreEquivalent},
+        {"different PermitRootLogin values", testDifferentPermitRootLoginValuesAreNotEquivalent},
         {"disabled pubkey Match", testDisabledPubkeyAuthenticationInMatchIsRejected},
         {"included Match", testIncludedMatchOverrideIsRejected},
         {"equals Include", testEqualsIncludeIsAudited},
