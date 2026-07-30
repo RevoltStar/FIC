@@ -6,9 +6,7 @@ DC::DC(const std::string& policy)
     this->moduleName = "DC";
     this->submoduleName = "DeviceControl";
     this->policyName = policy;
-    this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
-        std::vector<std::string>{"false", "true"}
-    );
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>("true");
     this->moduleConf = std::make_unique<ModuleConfigFileHandler>(this->moduleName);
     this->moduleConf->loadConfig();
 }
@@ -16,10 +14,6 @@ DC::DC(const std::string& policy)
 
 bool DC::apply (){
     if (!this->moduleConf || !this->moduleConf->loadConfig()) {
-        return false;
-    }
-
-    if (!this->moduleConf->hasConfiguredValue(this->policyName)) {
         return false;
     }
 

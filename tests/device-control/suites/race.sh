@@ -41,11 +41,11 @@ test_policy_toggle_during_usb_hotplug_keeps_daemon_responsive() {
     create_test_image "$USB_BLOCKED_DISK" || return
     local toggler response count
     (
-        set_usb_storage_policy true true >/dev/null
+        set_usb_storage_policy true >/dev/null
         sleep 1
-        set_usb_storage_policy false false >/dev/null
+        set_usb_storage_policy false >/dev/null
         sleep 1
-        set_usb_storage_policy true true >/dev/null
+        set_usb_storage_policy true >/dev/null
     ) &
     toggler=$!
 

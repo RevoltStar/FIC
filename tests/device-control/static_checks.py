@@ -21,6 +21,8 @@ def main():
     root = Path(sys.argv[1])
     db_path = root / "fic" / "src" / "scripts" / "db" / "devices.db"
     device_daemon = root / "fic-dick" / "src" / "core" / "DeviceControlDaemon.cpp"
+    dc_policy = root / "fic" / "src" / "modules" / "dc" / "DC.cpp"
+    dc_config = root / "fic" / "src" / "scripts" / "config" / "DC.conf"
     db_cpp = root / "fic-common" / "fic-device-db" / "src" / "DB.cpp"
     udev_collector = root / "fic-dick" / "src" / "modules" / "UDEVInfoCollector.cpp"
 
@@ -51,6 +53,29 @@ def main():
         require(marker in daemon_source, f"missing device daemon guard: {marker}")
     require("create_admin_server_socket" in daemon_source,
             "device daemon must use the shared guarded socket creator")
+    require("dc_policy_enabled_and_true" not in daemon_source,
+            "DC policy state must not depend on a configurable boolean value")
+    require('config.getPolicyStatus(policy) == "ENABLE"' in daemon_source,
+            "device daemon must use DC policy status as the only switch")
+
+    dc_policy_source = read_text(dc_policy)
+    require('std::make_unique<FixedPolicyTypeValue>("true")' in dc_policy_source,
+            "DC policies must expose the intrinsic fixed value true")
+    require("PossibleListPolicyTypeValue" not in dc_policy_source,
+            "DC policies must not expose a configurable true/false list")
+
+    dc_config_values = {}
+    for line in read_text(dc_config).splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            dc_config_values[key.strip()] = value.strip()
+    for policy in [
+        "block_usb_storage",
+        "block_printers_scanners",
+        "block_optical_drives",
+    ]:
+        require(dc_config_values.get(f"{policy}.value") == "true",
+                f"{policy} seed value must match its intrinsic fixed value")
 
     udev_source = read_text(udev_collector)
     require("/devices/virtual/block/" in udev_source, "virtual block devices must be accepted")

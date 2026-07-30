@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ensure_security_usb_allowed_fixture() {
-    set_usb_storage_policy false false >/dev/null || return
+    set_usb_storage_policy false >/dev/null || return
     local response
     if response=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true 2>/dev/null); then
         reset_device_from_response "$response"

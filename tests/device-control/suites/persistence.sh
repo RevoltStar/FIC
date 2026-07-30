@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ensure_persistence_usb_fixture() {
-    set_usb_storage_policy false false >/dev/null || return
+    set_usb_storage_policy false >/dev/null || return
     local response
     if response=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true 2>/dev/null); then
         reset_device_from_response "$response"
@@ -79,13 +79,13 @@ test_device_events_persist_after_device_daemon_restart() {
 }
 
 test_policy_state_persists_after_fic_daemon_restart() {
-    set_usb_storage_policy true true >/dev/null || return
+    set_usb_storage_policy true >/dev/null || return
     restart_fic_daemon || return
     local enabled value
     enabled=$(remote_sudo "$REMOTE_FIC_CLI policy isenable DC block_usb_storage" | tail -n 1 | tr -d '\r')
     value=$(remote_sudo "$REMOTE_FIC_CLI policy value DC block_usb_storage" | tail -n 1 | tr -d '\r')
     expect_eq "$enabled" "true" "DC block_usb_storage enabled state must survive fic restart" || return
-    expect_eq "$value" "true" "DC block_usb_storage value must survive fic restart"
+    expect_eq "$value" "true" "DC block_usb_storage fixed value must remain true after fic restart"
 }
 
 run_persistence_suite() {

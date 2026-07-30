@@ -12,7 +12,7 @@ ensure_event_virtio_fixture() {
 }
 
 ensure_blocked_usb_fixture() {
-    set_usb_storage_policy true true >/dev/null || return
+    set_usb_storage_policy true >/dev/null || return
     reset_test_device_controls
     detach_disk "$USB_BLOCKED_TARGET"
     create_test_image "$USB_BLOCKED_DISK" || return

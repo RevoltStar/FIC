@@ -11,7 +11,7 @@ prepare_configured_usb_disk() {
 }
 
 test_cold_boot_dc_policy_blocks_configured_usb_storage() {
-    set_usb_storage_policy true true >/dev/null || return
+    set_usb_storage_policy true >/dev/null || return
     prepare_configured_usb_disk "$USB_BLOCKED_DISK" "$USB_BLOCKED_TARGET" "$USB_BLOCKED_SERIAL" || return
     reboot_guest || return
 
@@ -32,7 +32,7 @@ test_cold_boot_dc_policy_blocks_configured_usb_storage() {
 }
 
 test_cold_boot_explicit_block_rule_blocks_configured_usb_storage() {
-    set_usb_storage_policy false false >/dev/null || return
+    set_usb_storage_policy false >/dev/null || return
     detach_disk "$USB_ALLOWED_TARGET"
     detach_disk_config "$USB_ALLOWED_TARGET"
     create_test_image "$USB_ALLOWED_DISK" || return

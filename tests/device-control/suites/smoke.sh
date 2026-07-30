@@ -64,7 +64,7 @@ test_detached_virtio_hidden_from_current_tree() {
 }
 
 test_attach_usb_storage_allowed() {
-    set_usb_storage_policy false false >/dev/null || return
+    set_usb_storage_policy false >/dev/null || return
     detach_disk "$USB_ALLOWED_TARGET"
     create_test_image "$USB_ALLOWED_DISK" || return
     attach_disk "$USB_ALLOWED_DISK" "$USB_ALLOWED_TARGET" usb "$USB_ALLOWED_SERIAL" || return
@@ -80,7 +80,7 @@ test_attach_usb_storage_allowed() {
 }
 
 test_attach_usb_storage_blocked_by_dc() {
-    set_usb_storage_policy true true >/dev/null || return
+    set_usb_storage_policy true >/dev/null || return
     reset_test_device_controls
     detach_disk "$USB_BLOCKED_TARGET"
     create_test_image "$USB_BLOCKED_DISK" || return

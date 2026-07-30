@@ -35,7 +35,6 @@ TESTS_FAILED=${TESTS_FAILED:-0}
 CURRENT_TEST=${CURRENT_TEST:-}
 
 ORIG_BLOCK_USB_STATUS=${ORIG_BLOCK_USB_STATUS:-}
-ORIG_BLOCK_USB_VALUE=${ORIG_BLOCK_USB_VALUE:-}
 
 VIRTIO_DISK="$WORK_DIR/fic-dc-virtio.qcow2"
 USB_ALLOWED_DISK="$WORK_DIR/fic-dc-usb-allowed.qcow2"
@@ -783,8 +782,6 @@ detach_virtio_net() {
 
 set_usb_storage_policy() {
     local enabled=$1
-    local value=$2
-    remote_sudo "$REMOTE_FIC_CLI policy set DC block_usb_storage $(printf '%q' "$value")"
     if [[ "$enabled" == "true" ]]; then
         remote_sudo "$REMOTE_FIC_CLI policy enable DC block_usb_storage"
     else
@@ -794,14 +791,12 @@ set_usb_storage_policy() {
 
 save_policy_state() {
     ORIG_BLOCK_USB_STATUS=$(remote_sudo "$REMOTE_FIC_CLI policy isenable DC block_usb_storage" | tail -n 1 | tr -d '\r')
-    ORIG_BLOCK_USB_VALUE=$(remote_sudo "$REMOTE_FIC_CLI policy value DC block_usb_storage" | tail -n 1 | tr -d '\r')
     expect_nonempty "$ORIG_BLOCK_USB_STATUS" "cannot read original block_usb_storage status"
-    expect_nonempty "$ORIG_BLOCK_USB_VALUE" "cannot read original block_usb_storage value"
 }
 
 restore_policy_state() {
-    [[ -n "$ORIG_BLOCK_USB_STATUS" && -n "$ORIG_BLOCK_USB_VALUE" ]] || return 0
-    set_usb_storage_policy "$ORIG_BLOCK_USB_STATUS" "$ORIG_BLOCK_USB_VALUE" >/dev/null 2>&1 || true
+    [[ -n "$ORIG_BLOCK_USB_STATUS" ]] || return 0
+    set_usb_storage_policy "$ORIG_BLOCK_USB_STATUS" >/dev/null 2>&1 || true
 }
 
 restart_device_daemon() {

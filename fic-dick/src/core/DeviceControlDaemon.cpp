@@ -18,7 +18,6 @@
 #include <set>
 #include <sstream>
 #include <string>
-#include <cctype>
 #include <thread>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -255,15 +254,8 @@ std::vector<DeviceInfo> device_path_to_root(DB& db,
     return path;
 }
 
-bool truthy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value == "1" || value == "true" || value == "yes" || value == "on" || value == "enable" || value == "enabled";
-}
-
-bool dc_policy_enabled_and_true(ModuleConfigFileHandler& config, const std::string& policy) {
-    return config.getPolicyStatus(policy) == "ENABLE" && truthy(config.getPolicyValue(policy));
+bool dc_policy_enabled(ModuleConfigFileHandler& config, const std::string& policy) {
+    return config.getPolicyStatus(policy) == "ENABLE";
 }
 
 DcSettings load_dc_settings() {
@@ -273,9 +265,9 @@ DcSettings load_dc_settings() {
         return settings;
     }
 
-    settings.blockUsbStorage = dc_policy_enabled_and_true(config, "block_usb_storage");
-    settings.blockPrintersScanners = dc_policy_enabled_and_true(config, "block_printers_scanners");
-    settings.blockOpticalDrives = dc_policy_enabled_and_true(config, "block_optical_drives");
+    settings.blockUsbStorage = dc_policy_enabled(config, "block_usb_storage");
+    settings.blockPrintersScanners = dc_policy_enabled(config, "block_printers_scanners");
+    settings.blockOpticalDrives = dc_policy_enabled(config, "block_optical_drives");
     return settings;
 }
 
