@@ -7,81 +7,43 @@
 
 - Обновлено: 2026-07-30.
 - Ветка: `main`.
-- Базовый commit: `110e4b6`.
-- Текущая задача: адаптивные ограничения ресурсов для всех package build
-  scripts после диагностики зависаний хоста.
-- Реализация и локальные проверки завершены, изменения не зафиксированы commit.
+- Базовый commit: `bf16d2e`.
+- Текущая задача: исправить нечитаемый текст журнала `fic-gui` при активной
+  тёмной теме ОС.
+- Реализация и локальная сборка завершены, изменения не зафиксированы commit.
 
 ## Сделано
 
-- Добавлен общий `packaging/lib/build-resources.sh`:
-  - учитывает доступные CPU, `MemAvailable` и cgroup v1/v2 limits;
-  - резервирует хосту 2 GiB RAM и один-два CPU;
-  - выделяет один C++ job на 2 GiB оставшейся памяти, максимум восемь jobs;
-  - поддерживает явный `BUILD_JOBS` и остальные documented overrides;
-  - понижает CPU/I/O priority сборочного процесса;
-  - формирует совместимые с Podman и Docker CPU/RAM/swap limits.
-- Общая политика подключена ко всем 12 скриптам в `packaging/deb/` и
-  `packaging/rpm/`, включая legacy Debian 10/11, поддерживаемые Debian 12/13,
-  Ubuntu 24.04 и ALT p11.
-- Все CMake package builders теперь передают явное
-  `--parallel "$BUILD_JOBS"`.
-- Все container wrappers:
-  - ограничивают CPU и RAM как image build, так и package container;
-  - по умолчанию задают равные memory и memory-plus-swap limits, поэтому
-    container swap равен нулю;
-  - передают рассчитанный `BUILD_JOBS` внутрь контейнера.
-- Добавлены `.containerignore` и `.dockerignore`, исключающие `.git`, служебные
-  каталоги Codex, `build*` и `dist` из build context.
-- Добавлен `packaging_build_resource_tests`; platform static checks теперь
-  запрещают обход общей политики любым package builder.
-- Параметры и overrides документированы в `packaging/deb/README.md` и
-  `packaging/rpm/README.md`.
+- В `LogModel` удалены фиксированные тёмные цвета для обычных записей журнала.
+- INFO и неизвестные уровни используют `QPalette::Text`.
+- DEBUG и TRACE используют системные роли `QPalette::Link` и disabled
+  `QPalette::Text`.
+- Для WARN, ERROR и FATAL выбираются контрастные оттенки в зависимости от
+  яркости текущей системной палитры.
+- Цвета вычисляются при запросе данных модели, поэтому учитывают текущую палитру
+  приложения.
 
-## Выбранные параметры
+## Измененные файлы
 
-На хосте с 12 CPU и примерно 8 GiB доступной RAM автоматический расчёт выбрал:
-
-- `BUILD_JOBS=2`;
-- `CONTAINER_CPUS=2`;
-- container memory около 5.9 GiB;
-- container swap `0`;
-- nice `10`, best-effort I/O priority `7`.
-
-Значения рассчитываются заново перед каждой сборкой. Для других хостов
-parallelism ограничивается минимумом из CPU budget, memory budget и cap 8.
+- `fic-gui/src/LogModel.cpp`
+- `docs/HANDOFF.md`
 
 ## Выполненные проверки
 
-- `bash -n` для общего helper, всех package scripts и нового теста: успешно.
-- `tests/packaging/build-resources-test.sh`: успешно.
-- `tests/platform/static_checks.py` и `tests/paths/static_checks.py`: успешно.
+- `cmake --build build-check --target fic-gui -j2` при
+  `FIC_TARGET_PLATFORM=alt-p11` и Qt 5: успешно.
 - `git diff --check`: успешно.
-- Полная конфигурация и сборка:
-
-  ```bash
-  cmake -S . -B build-check-resources -DFIC_TARGET_PLATFORM=alt-p11
-  cmake --build build-check-resources -j2
-  ```
-
-  Все цели собраны успешно.
-- `ctest --test-dir build-check-resources --output-on-failure`: 14 тестов,
-  12 passed; root-only `admin_socket_tests` и `command_hash_batch_tests`
-  штатно skipped.
-- Podman image build с рассчитанными flags использовал cache и завершился
-  успешно.
-- Одноразовый container probe подтвердил:
-  - `cpu.max=200000 100000` (2 CPU);
-  - `memory.max=6277824512` (5987 MiB);
-  - `memory.swap.max=0`.
-- `shellcheck` отсутствует на хосте и не запускался.
-- Полные `.deb`/`.rpm` package builds не запускались: они тяжёлые, а
-  компиляция, image build, resource flags и packaging tests проверены отдельно.
 
 ## Что осталось
 
-- При следующей реальной ALT p11 package build проверить отзывчивость рабочего
-  стола и сравнить PSI memory/I/O counters до и после сборки.
-- Если конкретный CI runner требует иной баланс, задать documented overrides
-  (`BUILD_JOBS`, `CONTAINER_CPUS`, `CONTAINER_MEMORY_MB`,
-  `CONTAINER_MEMORY_SWAP_MB`) без изменения скриптов.
+- Визуально проверить таблицу журнала в реальной светлой и тёмной теме ОС.
+  Автоматизированного GUI-теста палитры в проекте нет, поэтому такая проверка
+  не выполнялась.
+
+## Риски и решения
+
+- Изменение ограничено отображением текста в таблице логов и не затрагивает
+  загрузку, фильтрацию или daemon API.
+- Семантические цвета WARN/ERROR/FATAL оставлены различимыми, но для тёмной темы
+  заменены на светлые варианты, чтобы не повторять проблему тёмного текста на
+  тёмном фоне.

@@ -1,7 +1,9 @@
 #include "LogModel.h"
 
+#include <QApplication>
 #include <QColor>
 #include <QFileInfo>
+#include <QPalette>
 
 LogModel::LogModel(QObject *parent)
     : QAbstractTableModel(parent)
@@ -157,20 +159,27 @@ QString LogModel::levelText(logLevel level) const
 
 QBrush LogModel::levelBrush(logLevel level) const
 {
+    const QPalette palette = QApplication::palette();
+    const bool darkTheme =
+        palette.color(QPalette::Base).lightness() < palette.color(QPalette::Text).lightness();
+
     switch (level) {
     case logLevel::TRACE:
-        return QBrush(QColor("#7a7a7a"));
+        return palette.brush(QPalette::Disabled, QPalette::Text);
     case logLevel::DEBUG:
-        return QBrush(QColor("#1f5fbf"));
+        return palette.brush(QPalette::Link);
     case logLevel::INFO:
-        return QBrush(QColor("#202020"));
+        return palette.brush(QPalette::Text);
     case logLevel::WARN:
-        return QBrush(QColor("#b76e00"));
+        return QBrush(QColor(darkTheme ? QStringLiteral("#ffb74d")
+                                      : QStringLiteral("#9a5b00")));
     case logLevel::ERROR:
-        return QBrush(QColor("#c62828"));
+        return QBrush(QColor(darkTheme ? QStringLiteral("#ff6b6b")
+                                      : QStringLiteral("#b71c1c")));
     case logLevel::FATAL:
-        return QBrush(QColor("#7f0000"));
+        return QBrush(QColor(darkTheme ? QStringLiteral("#ff8a80")
+                                      : QStringLiteral("#7f0000")));
     default:
-        return QBrush(QColor("#202020"));
+        return palette.brush(QPalette::Text);
     }
 }
