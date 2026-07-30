@@ -27,6 +27,10 @@ ARCH="$(dpkg --print-architecture)"
 DEB_COMPRESSOR="${DEB_COMPRESSOR:-gzip}"
 GUI_QT_BUNDLE_ROOT="/opt/fic/qt"
 
+source "$ROOT_DIR/packaging/lib/build-resources.sh"
+fic_configure_build_resources
+fic_apply_build_priority
+
 FIC_SRC_DIR="$ROOT_DIR/fic"
 FIC_SESSION_AGENT_SRC_DIR="$ROOT_DIR/fic-session-agent"
 FIC_DICK_SRC_DIR="$ROOT_DIR/fic-dick"
@@ -640,7 +644,7 @@ build_project() {
     fi
 
     cmake -S "$source_dir" -B "$build_dir" "${cmake_args[@]}"
-    cmake --build "$build_dir" --parallel
+    cmake --build "$build_dir" --parallel "$BUILD_JOBS"
 }
 
 install_cmake_component() {

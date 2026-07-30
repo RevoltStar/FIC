@@ -131,3 +131,34 @@ This wrapper:
   conflict with host-side CMake caches.
 
 The resulting `.rpm` files are written into `dist/` in the repository.
+
+## Build resource policy
+
+Both the native and container entry points use
+`packaging/lib/build-resources.sh`. By default the builder reserves 2 GiB of
+currently available memory and one or two CPUs for the host, allows one C++
+compile job per 2 GiB of the remaining memory, and caps automatic parallelism
+at eight jobs. The build runs with nice level 10 and best-effort I/O priority
+7.
+
+The container wrapper applies the calculated CPU and memory limits to both
+image build and package build. Its memory and memory-plus-swap limits are equal
+by default, preventing the RPM/Qt compression stages from swapping out the
+desktop session. `.containerignore` and `.dockerignore` exclude Git metadata,
+`dist/`, and local build directories from the image build context.
+
+Selected values are printed before the build. Explicit overrides are available
+for larger build hosts and CI:
+
+```bash
+BUILD_JOBS=4 \
+CONTAINER_CPUS=4 \
+CONTAINER_MEMORY_MB=8192 \
+CONTAINER_MEMORY_SWAP_MB=8192 \
+./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 0.1.0
+```
+
+Supported tuning variables are `BUILD_JOBS`, `FIC_BUILD_MAX_JOBS`,
+`FIC_BUILD_MEMORY_PER_JOB_MB`, `FIC_HOST_MEMORY_RESERVE_MB`,
+`CONTAINER_CPUS`, `CONTAINER_MEMORY_MB`, `CONTAINER_MEMORY_SWAP_MB`,
+`FIC_BUILD_NICE`, and `FIC_BUILD_IONICE_PRIORITY`.

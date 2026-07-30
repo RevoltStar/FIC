@@ -5,70 +5,83 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-07-29.
+- Обновлено: 2026-07-30.
 - Ветка: `main`.
-- Базовый commit: `0d40820`.
-- Текущая задача: отдельный compile-time профиль и пакетирование для Debian 13.
-- Реализация завершена и локально проверена, изменения пока не зафиксированы
-  commit.
+- Базовый commit: `110e4b6`.
+- Текущая задача: адаптивные ограничения ресурсов для всех package build
+  scripts после диагностики зависаний хоста.
+- Реализация и локальные проверки завершены, изменения не зафиксированы commit.
 
 ## Сделано
 
-- Добавлен `fic/src/platform/profiles/Debian13Profile.cpp`:
-  - профиль имеет идентификатор `debian-13`;
-  - runtime compatibility требует `ID=debian` и `VERSION_ID=13`;
-  - используется пакетная база `dpkg`;
-  - SSH, sudo, display-manager и DAC paths заданы отдельно от Debian 12;
-  - для завершенного в Debian 13 merged-/usr перехода `df` задан каноническим
-    путем `/usr/bin/df`.
-- `debian-13` зарегистрирован в `cmake/FicTargetPlatform.cmake` как отдельное
-  допустимое значение `FIC_TARGET_PLATFORM`.
-- Общий Debian-family builder принимает `debian-13` и создает пакеты с тегом
-  `debian13`.
-- Добавлены отдельные entry points:
-  - `packaging/deb/build-fic-debian13-deb.sh`;
-  - `packaging/deb/build-fic-debian13-deb-docker.sh`;
-  - `packaging/deb/Dockerfile.debian13` на базе `debian:13`.
-- Статические и C++ profile tests расширены проверками регистрации,
-  пакетирования, точного `VERSION_ID`, SSH/GDM и merged-/usr путей Debian 13.
-- Обновлены `README.md`, `fic/README.md`, `packaging/deb/README.md` и
-  `AGENTS.md`.
-- Архитектурные границы и формат IPC не менялись; изменения
-  `docs/architecture-diagrams.md` не требуются.
+- Добавлен общий `packaging/lib/build-resources.sh`:
+  - учитывает доступные CPU, `MemAvailable` и cgroup v1/v2 limits;
+  - резервирует хосту 2 GiB RAM и один-два CPU;
+  - выделяет один C++ job на 2 GiB оставшейся памяти, максимум восемь jobs;
+  - поддерживает явный `BUILD_JOBS` и остальные documented overrides;
+  - понижает CPU/I/O priority сборочного процесса;
+  - формирует совместимые с Podman и Docker CPU/RAM/swap limits.
+- Общая политика подключена ко всем 12 скриптам в `packaging/deb/` и
+  `packaging/rpm/`, включая legacy Debian 10/11, поддерживаемые Debian 12/13,
+  Ubuntu 24.04 и ALT p11.
+- Все CMake package builders теперь передают явное
+  `--parallel "$BUILD_JOBS"`.
+- Все container wrappers:
+  - ограничивают CPU и RAM как image build, так и package container;
+  - по умолчанию задают равные memory и memory-plus-swap limits, поэтому
+    container swap равен нулю;
+  - передают рассчитанный `BUILD_JOBS` внутрь контейнера.
+- Добавлены `.containerignore` и `.dockerignore`, исключающие `.git`, служебные
+  каталоги Codex, `build*` и `dist` из build context.
+- Добавлен `packaging_build_resource_tests`; platform static checks теперь
+  запрещают обход общей политики любым package builder.
+- Параметры и overrides документированы в `packaging/deb/README.md` и
+  `packaging/rpm/README.md`.
 
-## Локальные проверки
+## Выбранные параметры
 
-- Полная конфигурация и сборка всех целей успешны:
+На хосте с 12 CPU и примерно 8 GiB доступной RAM автоматический расчёт выбрал:
+
+- `BUILD_JOBS=2`;
+- `CONTAINER_CPUS=2`;
+- container memory около 5.9 GiB;
+- container swap `0`;
+- nice `10`, best-effort I/O priority `7`.
+
+Значения рассчитываются заново перед каждой сборкой. Для других хостов
+parallelism ограничивается минимумом из CPU budget, memory budget и cap 8.
+
+## Выполненные проверки
+
+- `bash -n` для общего helper, всех package scripts и нового теста: успешно.
+- `tests/packaging/build-resources-test.sh`: успешно.
+- `tests/platform/static_checks.py` и `tests/paths/static_checks.py`: успешно.
+- `git diff --check`: успешно.
+- Полная конфигурация и сборка:
 
   ```bash
-  cmake -S . -B build-check-debian13 -DFIC_TARGET_PLATFORM=debian-13
-  cmake --build build-check-debian13 -j2
+  cmake -S . -B build-check-resources -DFIC_TARGET_PLATFORM=alt-p11
+  cmake --build build-check-resources -j2
   ```
 
-- `ctest --test-dir build-check-debian13 --output-on-failure`: 13 тестов,
-  11 passed; root-only `admin_socket_tests` и `command_hash_batch_tests`
-  штатно skipped (`SKIP_RETURN_CODE=77`).
-- `build-check-debian13/fic/fic --version` выводит:
-
-  ```text
-  fic 2.0 target-platform=debian-13
-  ```
-
-- `tests/platform/static_checks.py`, `bash -n` для общего и новых Debian 13
-  builders, а также `git diff --check` прошли.
-
-Полная Docker-сборка `.deb`, установка пакетов, package trust sync и реальные
-policy apply не запускались.
+  Все цели собраны успешно.
+- `ctest --test-dir build-check-resources --output-on-failure`: 14 тестов,
+  12 passed; root-only `admin_socket_tests` и `command_hash_batch_tests`
+  штатно skipped.
+- Podman image build с рассчитанными flags использовал cache и завершился
+  успешно.
+- Одноразовый container probe подтвердил:
+  - `cpu.max=200000 100000` (2 CPU);
+  - `memory.max=6277824512` (5987 MiB);
+  - `memory.swap.max=0`.
+- `shellcheck` отсутствует на хосте и не запускался.
+- Полные `.deb`/`.rpm` package builds не запускались: они тяжёлые, а
+  компиляция, image build, resource flags и packaging tests проверены отдельно.
 
 ## Что осталось
 
-- Собрать комплект командой
-  `./packaging/deb/build-fic-debian13-deb-docker.sh 0.1.0`.
-- Установить полученные пакеты в disposable Debian 13 VM и проверить:
-  - успешный `postinst` и первичный `fic --trust-sync-platform`;
-  - запуск `fic.service`, `fic-device.service` и session agent;
-  - package transaction trigger после обновления `systemd` или `openssh`;
-  - SSH/GDM/DAC policies на фактически установленном наборе пакетов.
-- Read-only проверка ранее использовавшейся VM `172.17.1.105` не выполнена:
-  в текущем `known_hosts` нет закрепленного ED25519 host key. Проверка
-  `StrictHostKeyChecking` намеренно не ослаблялась.
+- При следующей реальной ALT p11 package build проверить отзывчивость рабочего
+  стола и сравнить PSI memory/I/O counters до и после сборки.
+- Если конкретный CI runner требует иной баланс, задать documented overrides
+  (`BUILD_JOBS`, `CONTAINER_CPUS`, `CONTAINER_MEMORY_MB`,
+  `CONTAINER_MEMORY_SWAP_MB`) без изменения скриптов.

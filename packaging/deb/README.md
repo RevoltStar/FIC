@@ -151,3 +151,45 @@ The payload compressor can be overridden explicitly:
 ```bash
 DEB_COMPRESSOR=gzip ./packaging/deb/build-fic-debian12-deb.sh 0.1.0
 ```
+
+## Build resource policy
+
+All native and container entry points use
+`packaging/lib/build-resources.sh`. By default a builder:
+
+- reserves 2 GiB of currently available memory for the host;
+- reserves two CPUs on hosts with at least four CPUs, or one CPU on smaller
+  multi-core hosts;
+- allows one parallel C++ job per 2 GiB of the remaining memory;
+- caps automatic parallelism at eight jobs;
+- runs with process nice level 10 and best-effort I/O priority 7.
+
+Container wrappers apply the calculated CPU and memory limits to both image
+build and package build. The container memory and memory-plus-swap limits are
+equal by default, so a package build cannot make the host unresponsive by
+swapping out the desktop session. `.containerignore` and `.dockerignore`
+exclude Git metadata, `dist/`, and local build directories from the image build
+context.
+
+The detected values and selected limits are printed before the build. They can
+be overridden when additional throughput or a stricter CI limit is required:
+
+```bash
+BUILD_JOBS=4 \
+CONTAINER_CPUS=4 \
+CONTAINER_MEMORY_MB=8192 \
+CONTAINER_MEMORY_SWAP_MB=8192 \
+./packaging/deb/build-fic-debian13-deb-docker.sh 0.1.0
+```
+
+The tuning inputs are:
+
+- `BUILD_JOBS`: explicit CMake parallelism;
+- `FIC_BUILD_MAX_JOBS`: automatic parallelism cap, default `8`;
+- `FIC_BUILD_MEMORY_PER_JOB_MB`: memory allowance per job, default `2048`;
+- `FIC_HOST_MEMORY_RESERVE_MB`: memory kept outside the container, default
+  `2048`;
+- `CONTAINER_CPUS`, `CONTAINER_MEMORY_MB`, and
+  `CONTAINER_MEMORY_SWAP_MB`: explicit container limits;
+- `FIC_BUILD_NICE` and `FIC_BUILD_IONICE_PRIORITY`: scheduling priorities,
+  default `10` and `7`.

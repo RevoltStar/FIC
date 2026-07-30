@@ -234,6 +234,48 @@ def main():
         "FROM debian:13" in debian13_dockerfile,
         "Debian 13 packages must be built in a Debian 13 container",
     )
+
+    primary_package_builders = (
+        root / "packaging/deb/build-fic-debian10-deb.sh",
+        root / "packaging/deb/build-fic-debian11-deb.sh",
+        root / "packaging/deb/build-fic-debian12-deb.sh",
+        root / "packaging/rpm/build-fic-alt-p11-rpm.sh",
+    )
+    native_package_builders = tuple(
+        path
+        for path in (root / "packaging").glob("*/build-fic-*.sh")
+        if not path.name.endswith("-docker.sh")
+    )
+    require(native_package_builders, "no native package builders found")
+    for builder_path in native_package_builders:
+        builder = builder_path.read_text(encoding="utf-8")
+        require(
+            "packaging/lib/build-resources.sh" in builder,
+            f"{builder_path.relative_to(root)} bypasses the shared resource policy",
+        )
+
+    for builder_path in primary_package_builders:
+        builder = builder_path.read_text(encoding="utf-8")
+        require(
+            "packaging/lib/build-resources.sh" in builder
+            and '--parallel "$BUILD_JOBS"' in builder,
+            f"{builder_path.relative_to(root)} bypasses adaptive build parallelism",
+        )
+
+    container_builders = tuple(
+        (root / "packaging").glob("*/build-fic-*-docker.sh")
+    )
+    require(container_builders, "no container package builders found")
+    for builder_path in container_builders:
+        builder = builder_path.read_text(encoding="utf-8")
+        require(
+            "fic_configure_container_resources" in builder
+            and '"${FIC_CONTAINER_BUILD_ARGS[@]}"' in builder
+            and '"${FIC_CONTAINER_RUN_ARGS[@]}"' in builder
+            and '-e BUILD_JOBS="$BUILD_JOBS"' in builder,
+            f"{builder_path.relative_to(root)} bypasses container resource limits",
+        )
+
     for watched_path in ("/usr/bin", "/usr/sbin", "/bin", "/sbin"):
         require(
             f"interest-noawait {watched_path}" in deb_builder,

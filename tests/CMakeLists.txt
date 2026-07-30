@@ -28,6 +28,12 @@ if(Python3_Interpreter_FOUND)
     )
 endif()
 
+add_test(
+    NAME packaging_build_resource_tests
+    COMMAND bash
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/build-resources-test.sh
+)
+
 add_executable(runtime_paths_tests paths/RuntimePathsTests.cpp)
 target_link_libraries(runtime_paths_tests PRIVATE fic-core fic-device-db)
 add_test(NAME runtime_paths_tests COMMAND runtime_paths_tests)
