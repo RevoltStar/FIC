@@ -998,6 +998,22 @@ void DeviceTree::setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo &
     {
         icon = QStyle::SP_ComputerIcon;
     }
+    else if (device.subsystem == "cpu" || device.subsystem == "__cpu__")
+    {
+        icon = QStyle::SP_DesktopIcon;
+    }
+    else if (device.subsystem == "board" || device.subsystem == "__board__")
+    {
+        icon = QStyle::SP_ComputerIcon;
+    }
+    else if (device.subsystem == "__udev__")
+    {
+        icon = QStyle::SP_DirIcon;
+    }
+    else if (device.subsystem == "__virtual__")
+    {
+        icon = QStyle::SP_DirLinkIcon;
+    }
     else if (device.subsystem == "block")
     {
         icon = QStyle::SP_DriveHDIcon;
