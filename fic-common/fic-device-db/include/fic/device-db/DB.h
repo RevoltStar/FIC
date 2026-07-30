@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/file.h>
 #include <chrono>
+#include <cstdint>
 #include <thread>
 #include <cstring>
 #include <cerrno>
@@ -125,6 +126,7 @@ public:
     bool deleteDeviceAttribute(int device_id, const std::string& name);
 
     DeviceInfo getDeviceById(int id);
+    std::int64_t getDeviceTreeRevision();
 
     std::string getDeviceAttribute(int device_id, const std::string& attribute_name, const std::string& default_string = "");
     std::map<std::string, std::string> getDeviceAttributes(int device_id);

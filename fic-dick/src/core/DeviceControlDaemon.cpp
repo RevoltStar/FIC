@@ -1025,6 +1025,17 @@ json handle_db_request(const json& request) {
     if (command == "boot_id") {
         return json{{"ok", true}, {"message", "boot id loaded"}, {"boot_id", current_boot_id()}};
     }
+    if (command == "device_tree_revision") {
+        const std::int64_t revision = db.getDeviceTreeRevision();
+        if (revision < 0) {
+            return fic::ipc::make_error_response("failed to load device tree revision");
+        }
+        return json{
+            {"ok", true},
+            {"message", "device tree revision loaded"},
+            {"revision", revision}
+        };
+    }
     if (command == "device_root") {
         DeviceInfo root = db.getComputerRoot();
         if (root.id == -1) {

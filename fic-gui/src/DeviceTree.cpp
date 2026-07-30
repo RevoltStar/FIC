@@ -406,6 +406,27 @@ DeviceInfo DeviceTree::fetchDeviceById(int deviceId) const
     return device;
 }
 
+std::optional<std::int64_t> DeviceTree::fetchTreeRevision() const
+{
+    const auto response = deviceClient().request({{"command", "device_tree_revision"}});
+    if (!response.value("ok", false) ||
+        !response.contains("revision") ||
+        !response["revision"].is_number_integer())
+    {
+        qDebug() << "Failed to load device tree revision:"
+                 << QString::fromStdString(response.value("message", "unknown daemon error"));
+        return std::nullopt;
+    }
+
+    const std::int64_t revision = response["revision"].get<std::int64_t>();
+    if (revision < 0)
+    {
+        qDebug() << "Device tree revision is invalid:" << revision;
+        return std::nullopt;
+    }
+    return revision;
+}
+
 std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId, bool includeDisconnected) const
 {
     std::vector<DeviceInfo> children;
@@ -533,8 +554,23 @@ void DeviceTree::setupRefreshTimer()
     refreshTimer->setInterval(5000);
 
     connect(refreshTimer, &QTimer::timeout,
-            this, &DeviceTree::refreshPreservingState);
+            this, &DeviceTree::refreshIfTreeChanged);
     refreshTimer->start();
+}
+
+void DeviceTree::refreshIfTreeChanged()
+{
+    const std::optional<std::int64_t> revision = fetchTreeRevision();
+    if (!revision.has_value())
+    {
+        return;
+    }
+    if (lastTreeRevision.has_value() && revision.value() == lastTreeRevision.value())
+    {
+        return;
+    }
+
+    refreshPreservingState();
 }
 
 void DeviceTree::scheduleDeviceTreeRefresh()
@@ -1690,6 +1726,8 @@ void DeviceTree::refreshPreservingState()
 
 void DeviceTree::loadDeviceTree()
 {
+    const std::optional<std::int64_t> revisionBeforeLoad = fetchTreeRevision();
+
     treeWidget->clear();
     DeviceInfo rootDevice{};
     rootDevice.id = -1;
@@ -1724,6 +1762,11 @@ void DeviceTree::loadDeviceTree()
         treeWidget->setColumnWidth(0, 520);
     }
     applyDeviceFilter();
+
+    if (revisionBeforeLoad.has_value())
+    {
+        lastTreeRevision = revisionBeforeLoad;
+    }
 }
 
 void DeviceTree::onItemExpanded(QTreeWidgetItem *item)

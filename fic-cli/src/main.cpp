@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -31,6 +32,7 @@ void print_help() {
               << "  policy list <module|all>\n"
               << "  policy info restriction <module> <policy>\n"
               << "  module list\n"
+              << "  device revision\n"
               << "  device root\n"
               << "  device get <id>\n"
               << "  device children <parent_id> [--all]\n"
@@ -218,6 +220,9 @@ int print_device_response(const json& response)
     }
 
     std::cout << response.value("message", "OK") << std::endl;
+    if (response.contains("revision") && response["revision"].is_number_integer()) {
+        std::cout << "revision=" << response["revision"].get<std::int64_t>() << std::endl;
+    }
     if (response.contains("device") && response["device"].is_object()) {
         print_device_item(response["device"]);
     }
@@ -340,6 +345,9 @@ int main(int argc, char* argv[]) {
         const std::string action = arg(argc, argv, 2);
         fic::ipc::Client devices = device_client();
 
+        if (action == "revision") {
+            return print_device_response(devices.request({{"command", "device_tree_revision"}}));
+        }
         if (action == "root") {
             return print_device_response(devices.request({{"command", "device_root"}}));
         }

@@ -346,7 +346,52 @@ bool DB::initializeDatabase() {
         "    event_details TEXT,"
         "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
         "    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE"
-        ");";
+        ");"
+
+        "CREATE TABLE IF NOT EXISTS device_tree_state ("
+        "    id INTEGER PRIMARY KEY CHECK(id = 1),"
+        "    revision INTEGER NOT NULL DEFAULT 0"
+        ");"
+        "INSERT OR IGNORE INTO device_tree_state (id, revision) VALUES (1, 0);"
+
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_insert "
+        "AFTER INSERT ON devices BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_update "
+        "AFTER UPDATE ON devices BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_delete "
+        "AFTER DELETE ON devices BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_insert "
+        "AFTER INSERT ON device_attributes BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_update "
+        "AFTER UPDATE ON device_attributes BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_delete "
+        "AFTER DELETE ON device_attributes BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_insert "
+        "AFTER INSERT ON device_events BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_update "
+        "AFTER UPDATE ON device_events BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;"
+        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_delete "
+        "AFTER DELETE ON device_events BEGIN "
+        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+        "END;";
 
     char* err_msg = nullptr;
     int rc = sqlite3_exec(db, schema_sql, nullptr, nullptr, &err_msg);
@@ -373,6 +418,27 @@ bool DB::initializeDatabase() {
     }
 
     return true;
+}
+
+std::int64_t DB::getDeviceTreeRevision()
+{
+    const char* sql = "SELECT revision FROM device_tree_state WHERE id = 1";
+    sqlite3_stmt* stmt = nullptr;
+    const int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        this->log("Failed to prepare device tree revision query: " +
+                      std::string(sqlite3_errmsg(db)),
+                  logLevel::DEBUG);
+        return -1;
+    }
+
+    std::int64_t revision = -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        revision = sqlite3_column_int64(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    return revision;
 }
 
 DeviceInfo DB::getDeviceByPathAndBootId(const std::string& devpath, const std::string& boot_id){

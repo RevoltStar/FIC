@@ -25,10 +25,25 @@ def main():
     dc_config = root / "fic" / "src" / "scripts" / "config" / "DC.conf"
     db_cpp = root / "fic-common" / "fic-device-db" / "src" / "DB.cpp"
     udev_collector = root / "fic-dick" / "src" / "modules" / "UDEVInfoCollector.cpp"
+    gui_tree = root / "fic-gui" / "src" / "DeviceTree.cpp"
 
     with sqlite3.connect(db_path) as connection:
         columns = [row[1] for row in connection.execute("PRAGMA table_info(devices)")]
+        revision_rows = list(connection.execute(
+            "SELECT revision FROM device_tree_state WHERE id = 1"
+        ))
+        revision_triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'trigger' AND name LIKE 'device_tree_revision_%'"
+            )
+        }
     require("control_explicit" in columns, "seed devices.db must contain control_explicit")
+    require(revision_rows and revision_rows[0][0] >= 0,
+            "seed devices.db must contain a non-negative device tree revision")
+    require(len(revision_triggers) == 9,
+            "seed devices.db must contain all device tree revision triggers")
 
     db_source = read_text(db_cpp)
     forbidden_migration_markers = [
@@ -41,6 +56,14 @@ def main():
     ]
     for marker in forbidden_migration_markers:
         require(marker not in db_source, f"runtime DB migrations are not allowed: {marker}")
+    for marker in [
+        "device_tree_state",
+        "device_tree_revision_devices_insert",
+        "device_tree_revision_attributes_insert",
+        "device_tree_revision_events_insert",
+        "getDeviceTreeRevision",
+    ]:
+        require(marker in db_source, f"missing device tree revision support: {marker}")
 
     daemon_source = read_text(device_daemon)
     for marker in [
@@ -49,6 +72,7 @@ def main():
         "device_audit_",
         "retry_sysfs_action",
         "collect_missing_permanent_devices",
+        "device_tree_revision",
     ]:
         require(marker in daemon_source, f"missing device daemon guard: {marker}")
     require("create_admin_server_socket" in daemon_source,
@@ -57,6 +81,12 @@ def main():
             "DC policy state must not depend on a configurable boolean value")
     require('config.getPolicyStatus(policy) == "ENABLE"' in daemon_source,
             "device daemon must use DC policy status as the only switch")
+
+    gui_source = read_text(gui_tree)
+    require('"device_tree_revision"' in gui_source,
+            "GUI device polling must query the device tree revision")
+    require("this, &DeviceTree::refreshIfTreeChanged" in gui_source,
+            "GUI refresh timer must not rebuild the tree unconditionally")
 
     dc_policy_source = read_text(dc_policy)
     require('std::make_unique<FixedPolicyTypeValue>("true")' in dc_policy_source,

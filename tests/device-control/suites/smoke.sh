@@ -18,6 +18,16 @@ test_device_root() {
     expect_eq "$effective" "allowed" "root effective policy must be allowed"
 }
 
+test_device_tree_revision() {
+    local response ok revision
+    response=$(device_ipc '{"command":"device_tree_revision"}') || return
+    ok=$(printf '%s\n' "$response" | json_field ok)
+    revision=$(printf '%s\n' "$response" | json_field revision)
+    expect_eq "$ok" "True" "device tree revision request must be ok" || return
+    [[ "$revision" =~ ^[0-9]+$ ]] ||
+        fail "device tree revision must be a non-negative integer"
+}
+
 test_udev_trigger_pci_seen() {
     remote_sudo "udevadm trigger --subsystem-match=pci" || return
     remote_sudo "udevadm settle --timeout=20" || return
@@ -103,6 +113,7 @@ test_blocked_usb_not_visible_as_connected() {
 
 run_smoke_suite() {
     run_test "device IPC status responds" test_device_ipc_status
+    run_test "device tree revision is available" test_device_tree_revision
     run_test "device root can be read" test_device_root
     run_test "udev PCI retrigger is visible in device tree" test_udev_trigger_pci_seen
     run_test "virtio block disk is recorded as connected" test_attach_virtio_block_connected

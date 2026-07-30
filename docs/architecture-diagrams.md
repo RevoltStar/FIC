@@ -84,7 +84,7 @@ flowchart TB
 
     subgraph DeviceDaemon["fic-dick --daemon"]
         deviceIpc[Unix socket server<br/>/run/fic/fic-device.sock]
-        deviceApi[device_get / device_children / device_attributes]
+        deviceApi[device_tree_revision / device_get / device_children / device_attributes]
         devicePolicy[effective policy decision]
         deviceApply[USB / PCI / block enforcement]
     end
@@ -231,7 +231,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     deviceCommands[device command]
-    deviceCommands --> read[device_root / device_get / device_children current or include_disconnected / device_attributes / device_events]
+    deviceCommands --> read[device_tree_revision / device_root / device_get / device_children current or include_disconnected / device_attributes / device_events]
     deviceCommands --> mutate[device_update_control_level / device_update_ignore_hierarchy / device_reset_control / device_delete]
     deviceCommands --> udev[udev_event]
     deviceCommands --> permanent[device_check_permanent]
@@ -525,11 +525,16 @@ flowchart TD
 
     mainWindow --> deviceTree[DeviceTree]
     deviceTree --> deviceSock["/run/fic/fic-device.sock"]
+    deviceSock --> devRevision[device_tree_revision every 5 seconds]
     deviceSock --> devGet[device_get]
     deviceSock --> devChildren[device_children]
     deviceSock --> devAttrs[device_attributes]
     deviceSock --> devEvents[device_events]
     deviceSock --> devControl[device_update_control_level / device_update_ignore_hierarchy / device_reset_control]
+
+    devRevision --> changed{revision changed?}
+    changed -->|no| keepTree[keep current tree]
+    changed -->|yes| devChildren
 
     mainWindow --> attrList[DeviceAttributeList]
     attrList --> devAttrs

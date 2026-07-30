@@ -14,7 +14,9 @@
 #include <QHBoxLayout>
 #include <QSet>
 #include <QTimer>
+#include <cstdint>
 #include <map>
+#include <optional>
 #include <vector>
 #include <string>
 #include <fstream>
@@ -78,9 +80,11 @@ private:
     QLabel *filterStatsLabel;
     QTimer *refreshTimer;
     QTimer *filterTimer;
+    std::optional<std::int64_t> lastTreeRevision;
 
     void setupUI();
     void setupRefreshTimer();
+    void refreshIfTreeChanged();
     void refreshPreservingState();
     void collectExpandedDeviceIds(QTreeWidgetItem *item, QSet<int> &expandedIds) const;
     bool restoreExpandedDeviceIds(QTreeWidgetItem *item, const QSet<int> &expandedIds, int selectedId);
@@ -99,6 +103,7 @@ private:
     bool canDeleteDeviceSubtree(int deviceId, const std::string &currentBootId);
 
     DeviceInfo fetchDeviceById(int deviceId) const;
+    std::optional<std::int64_t> fetchTreeRevision() const;
     std::vector<DeviceInfo> fetchChildDevices(int parentId, bool includeDisconnected = false) const;
     std::map<std::string, std::string> fetchDeviceAttributes(int deviceId) const;
     std::string getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue = "") const;

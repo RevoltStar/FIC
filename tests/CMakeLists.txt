@@ -38,6 +38,15 @@ add_executable(runtime_paths_tests paths/RuntimePathsTests.cpp)
 target_link_libraries(runtime_paths_tests PRIVATE fic-core fic-device-db)
 add_test(NAME runtime_paths_tests COMMAND runtime_paths_tests)
 
+add_executable(device_tree_revision_tests
+    device-control/DeviceTreeRevisionTests.cpp
+)
+target_compile_definitions(device_tree_revision_tests PRIVATE
+    FIC_TEST_DEVICE_SEED_DB="${CMAKE_SOURCE_DIR}/fic/src/scripts/db/devices.db"
+)
+target_link_libraries(device_tree_revision_tests PRIVATE fic-device-db)
+add_test(NAME device_tree_revision_tests COMMAND device_tree_revision_tests)
+
 add_executable(ipc_paths_tests paths/IpcPathsTests.cpp)
 target_link_libraries(ipc_paths_tests PRIVATE fic-ipc)
 add_test(NAME ipc_paths_tests COMMAND ipc_paths_tests)
