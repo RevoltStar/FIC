@@ -111,6 +111,22 @@ void testSelectedProfile() {
     require(profile.displayManager.lightDmConfigPath ==
                 "/etc/lightdm/lightdm.conf",
             "LightDM configuration path is incorrect");
+    require(!profile.pam.configDirectories.empty(),
+            "PAM configuration directories are missing");
+    require(!profile.pam.moduleDirectories.empty(),
+            "PAM module directories are missing");
+    require(!profile.pam.authenticationServices.empty(),
+            "PAM authentication services are missing");
+    require(!profile.pam.passwordServices.empty(),
+            "PAM password services are missing");
+    require(profile.pam.faillockConfigPath == "/etc/security/faillock.conf",
+            "pam_faillock configuration path is incorrect");
+    require(profile.pam.passwordQualityConfigPath ==
+                "/etc/security/pwquality.conf",
+            "pam_pwquality configuration path is incorrect");
+    require(profile.pam.passwordHistoryConfigPath ==
+                "/etc/security/pwhistory.conf",
+            "pam_pwhistory configuration path is incorrect");
     require(hasRule(profile.dac.protectedSystemFiles,
                     profile.sudo.mainConfigPath),
             "the selected sudoers configuration must be protected by DAC policy");
@@ -254,6 +270,27 @@ void testInvalidProfileIsRejected() {
     profile.displayManager.gdmConfigCandidates.clear();
     require(!fic::platform::validatePlatformProfile(profile, error),
             "an empty GDM configuration path list must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.configDirectories.front() = "etc/pam.d";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative PAM configuration directory must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.authenticationServices.push_back(
+        profile.pam.authenticationServices.front());
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a duplicate PAM service must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.passwordServices = {"../passwd"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an unsafe PAM service name must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.passwordHistoryConfigPath = "etc/security/pwhistory.conf";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative PAM option file path must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.dac.protectedSystemFiles.front().permissions = 0;

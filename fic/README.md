@@ -319,6 +319,8 @@ Daemon собирается ровно для одного дистрибути�
   bootstrap query-инструмента;
 - `ssh`: основной конфиг, база `Include` и service units;
 - `sudo`: основной и managed-конфиги sudoers;
+- `pam`: каталоги PAM-конфигурации и модулей, целевые authentication/password
+  services и канонические конфиги поддерживаемых providers;
 - `displayManager`: конфиги SDDM, LightDM и упорядоченные кандидаты GDM;
 - `dac`: точные наборы системных файлов и команд с владельцем, группой и
   правами.
@@ -436,6 +438,54 @@ include-граф: если неподдерживаемое правило на�
 выполняется через `VerifiedProcessExecutor`. Эталонный hash выбранного файла
 заполняется package-transaction trust sync. Отсутствующий hash или ошибка
 `visudo` приводят к безопасному отказу без заявления об успешном применении.
+
+### Работа с PAM
+
+Модуль `AUTH` содержит пять политик:
+
+- `password_min_length` и `password_min_classes` управляют параметрами
+  `minlen` и `minclass` активного `pam_pwquality`;
+- `password_history_depth` управляет `remember` активного `pam_pwhistory`;
+- `failed_authentication_attempts` и
+  `failed_authentication_unlock_time` управляют `deny` и `unlock_time`
+  активного `pam_faillock`.
+
+Это намеренно не универсальный редактор `/etc/pam.d`. Перед записью
+`PamConfiguration` строит effective-граф каждой существующей целевой службы с
+учетом `@include`, `include` и `substack`, ограничивает глубину и размер графа и
+отклоняет циклы или неподдерживаемый синтаксис. Наборы authentication/password
+services и порядок каталогов конфигурации задаются compile-time профилем
+дистрибутива.
+
+`PamProviderInspector` сопоставляет семантическую возможность с provider.
+Например, для блокировки входа распознаются `pam_faillock`, `pam_tally2` и
+`pam_tally`; одновременное присутствие двух providers является конфликтом.
+Политики первой версии поддерживают изменение только `pam_faillock`,
+`pam_pwquality` и `pam_pwhistory`. `pam_passwdqc`, `pam_cracklib` и
+`pam_unix remember=` распознаются, но не переписываются как будто они
+эквивалентны. Миграция между providers и изменение PAM topology автоматически
+не выполняются.
+
+Для `pam_faillock` дополнительно требуется одна из двух полных непротиворечивых
+topology: `authfail` + `authsucc` (с необязательным `preauth`) либо `preauth` +
+`authfail` + вызов в группе `account`. Дубли, неполные цепочки, другой provider
+хотя бы в одной целевой службе и отсутствие provider приводят к fail-closed
+ошибке до записи.
+
+После preflight проверяются тип, владелец и права всех посещённых
+PAM service/include-файлов и используемых `.so`, аргумент `conf=` и аргументы,
+способные перекрыть управляемое значение. Затем меняется только канонический
+файл `/etc/security/faillock.conf`,
+`pwquality.conf` или `pwhistory.conf` через `AtomicFileWriter`; посторонние
+параметры и комментарии сохраняются. После записи файл и весь PAM-граф
+перечитываются. Отсутствующий канонический файл разрешено создать как
+`root:root 0644`, но только если поддерживаемый provider уже корректно включен
+во всех найденных целевых службах.
+
+`pam_pwquality minlen` — provider-native параметр, а не самостоятельное
+доказательство фактической длины пароля: на итоговую проверку могут влиять
+остальные credit-параметры libpwquality. Политика гарантирует effective
+значение `minlen`, но не выдает его за полный аудит всех правил качества.
 
 ### Работа с SSH
 

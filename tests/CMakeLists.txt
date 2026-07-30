@@ -83,6 +83,18 @@ target_include_directories(sysctl_configuration_tests PRIVATE
 target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
 add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
 
+add_executable(pam_configuration_tests
+    auth/PamConfigurationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/auth/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/auth/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/auth/pam/PamProviderInspector.cpp
+)
+target_include_directories(pam_configuration_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_configuration_tests PRIVATE fic-core)
+add_test(NAME pam_configuration_tests COMMAND pam_configuration_tests)
+
 add_executable(ssh_runtime_tests
     ssh/SshRuntimeTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/submodules/SshConfigAudit.cpp

@@ -45,6 +45,29 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.ssh.serviceUnits = {"sshd.service"};
     profile.sudo.mainConfigPath = "/etc/sudoers";
     profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
+    profile.pam.configDirectories = {
+        "/etc/pam.d",
+        "/usr/lib/pam.d",
+        "/usr/share/pam/pam.d"
+    };
+    profile.pam.moduleDirectories = {
+        "/lib/security", "/lib64/security",
+        "/usr/lib/security", "/usr/lib64/security"
+    };
+#ifdef FIC_LIBRARY_ARCHITECTURE
+    profile.pam.moduleDirectories.push_back(
+        std::filesystem::path("/lib") / FIC_LIBRARY_ARCHITECTURE / "security");
+    profile.pam.moduleDirectories.push_back(
+        std::filesystem::path("/usr/lib") / FIC_LIBRARY_ARCHITECTURE / "security");
+#endif
+    profile.pam.authenticationServices = {
+        "login", "sshd", "sudo", "su", "sddm", "gdm-password", "lightdm",
+        "system-auth"
+    };
+    profile.pam.passwordServices = {"passwd", "system-auth"};
+    profile.pam.faillockConfigPath = "/etc/security/faillock.conf";
+    profile.pam.passwordQualityConfigPath = "/etc/security/pwquality.conf";
+    profile.pam.passwordHistoryConfigPath = "/etc/security/pwhistory.conf";
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {"/etc/gdm/custom.conf"};

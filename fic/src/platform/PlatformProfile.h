@@ -54,6 +54,16 @@ struct SudoPlatformConfig {
     std::filesystem::path managedConfigPath;
 };
 
+struct PamPlatformConfig {
+    std::vector<std::filesystem::path> configDirectories;
+    std::vector<std::filesystem::path> moduleDirectories;
+    std::vector<std::string> authenticationServices;
+    std::vector<std::string> passwordServices;
+    std::filesystem::path faillockConfigPath;
+    std::filesystem::path passwordQualityConfigPath;
+    std::filesystem::path passwordHistoryConfigPath;
+};
+
 struct DisplayManagerPlatformConfig {
     std::filesystem::path sddmConfigPath;
     std::filesystem::path lightDmConfigPath;
@@ -80,6 +90,7 @@ struct PlatformProfile {
     PackageManagerPlatformConfig packageManager;
     SshPlatformConfig ssh;
     SudoPlatformConfig sudo;
+    PamPlatformConfig pam;
     DisplayManagerPlatformConfig displayManager;
     DacPlatformConfig dac;
 };

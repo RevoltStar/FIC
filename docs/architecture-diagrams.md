@@ -91,7 +91,7 @@ flowchart TB
 
     subgraph CoreStorage[Состояние системы]
         config["/opt/fic/config"]
-        modules[DAC, SYSCTL, OSS, NET, GLOBAL]
+        modules[AUTH, DAC, SYSCTL, OSS, NET, GLOBAL]
         logs["/opt/fic/log/&lt;boot_id&gt;/&lt;category&gt;/*.txt"]
         db["/opt/fic/db/devices.db"]
         lockstatus["/opt/fic/lockstatus"]
@@ -142,6 +142,7 @@ flowchart TD
     resolver --> tools[sshd / systemctl / loginctl / visudo]
     profile --> sshProfile[SSH config / units]
     profile --> sudoProfile[sudoers configs]
+    profile --> pamProfile[PAM roots / services / option files]
     profile --> dmProfile[SDDM / LightDM / GDM configs]
     profile --> dacProfile[DAC file and command rules]
     profile --> osRelease[Проверить /etc/os-release]
@@ -184,7 +185,7 @@ flowchart TD
 профиль, а fail-closed подтверждает, что пакет запущен на предназначенной для
 него ОС. `init_policyMap()` передает один и тот же immutable профиль политикам
 при первой и каждой последующей инициализации. Профиль владеет интеграционными
-данными systemd/login, SSH, sudo, display manager и DAC. Кандидаты команд
+данными systemd/login, SSH, sudo, PAM, display manager и DAC. Кандидаты команд
 хранятся в едином типизированном реестре, а политики получают выбранный путь
 через общий `PlatformExecutableResolver`; выбор backend конкретной графической
 среды и стандартные FHS/kernel-пути остаются capability-зависимыми.
@@ -422,6 +423,35 @@ SSH-политики аналогично перечитывают записа�
 выполняется повторный разбор записанного файла, но runtime remount намеренно
 исключен как потенциально опасное действие.
 
+PAM-политики разделяют намерение политики, provider и конкретный файл
+параметров:
+
+```mermaid
+flowchart TD
+    authPolicy[AUTH policy] --> profile[PAM platform profile]
+    profile --> services[target services and search roots]
+    services --> graph[PamConfiguration effective include graph]
+    graph --> providers[PamProviderInspector capability providers]
+    providers --> conflict{exactly one supported provider per service?}
+    conflict -->|no| reject[fail closed without write]
+    conflict -->|yes| topology[topology and config/module file checks]
+    topology --> overrides[conf path and argument override checks]
+    overrides --> optionFile[canonical option file]
+    optionFile --> writer[AtomicFileWriter root:root 0644]
+    writer --> reload[reparse file and PAM graphs]
+    reload --> postcondition[provider / module / value postcondition]
+```
+
+Граф учитывает `@include`, `include` и `substack`; циклы, превышение лимитов и
+неподдерживаемый синтаксис отклоняются. Capability lockout распознает
+`pam_faillock`, `pam_tally2` и `pam_tally`, quality — `pam_pwquality`,
+`pam_passwdqc` и `pam_cracklib`, history — `pam_pwhistory` и
+`pam_unix remember=`. Первая версия применяет политики только к
+`pam_faillock`, `pam_pwquality` и `pam_pwhistory`; конфликтующие или
+альтернативные providers диагностируются, но не мигрируются. PAM service-файлы
+не переписываются: меняется канонический provider-конфиг только после
+доказательства, что он уже effective во всех существующих целевых службах.
+
 ## 6. Карта модулей и политик
 
 ```mermaid
@@ -456,6 +486,16 @@ flowchart TB
     ssh --> sshMaxAuthTries[ssh_max_auth_tries]
     ssh --> sshRootLogin[ssh_root_login]
     ssh --> sshPubkeyAuth[ssh_pubkey_auth]
+
+    arr --> auth[AUTH]
+    auth --> passwordQuality[PasswordQuality]
+    passwordQuality --> passwordMinLength[password_min_length]
+    passwordQuality --> passwordMinClasses[password_min_classes]
+    auth --> passwordHistory[PasswordHistory]
+    passwordHistory --> passwordHistoryDepth[password_history_depth]
+    auth --> authenticationLockout[AuthenticationLockout]
+    authenticationLockout --> failedAttempts[failed_authentication_attempts]
+    authenticationLockout --> unlockTime[failed_authentication_unlock_time]
 
     arr --> global[GLOBAL]
     global --> systemSettings[SystemSettings]
@@ -499,6 +539,11 @@ flowchart TB
     sshMaxAuthTries --> map
     sshRootLogin --> map
     sshPubkeyAuth --> map
+    passwordMinLength --> map
+    passwordMinClasses --> map
+    passwordHistoryDepth --> map
+    failedAttempts --> map
+    unlockTime --> map
     systemSettings --> map
 ```
 

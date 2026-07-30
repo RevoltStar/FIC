@@ -109,6 +109,13 @@ def main():
         "ExecutableId::Udevadm",
         "packageManager.queryCandidates",
         "sudo.mainConfigPath",
+        "pam.configDirectories",
+        "pam.moduleDirectories",
+        "pam.authenticationServices",
+        "pam.passwordServices",
+        "pam.faillockConfigPath",
+        "pam.passwordQualityConfigPath",
+        "pam.passwordHistoryConfigPath",
         "displayManager.sddmConfigPath",
         "displayManager.gdmConfigCandidates",
         "dac.protectedSystemFiles",
@@ -139,6 +146,40 @@ def main():
         "const fic::platform::PlatformExecutableResolver& executables" in registry,
         "PolicyMap and lock operations must receive the platform executable resolver",
     )
+    for policy_class in (
+        "AUTH_password_min_length",
+        "AUTH_password_min_classes",
+        "AUTH_password_history_depth",
+        "AUTH_failed_authentication_attempts",
+        "AUTH_failed_authentication_unlock_time",
+    ):
+        require(
+            policy_class in registry,
+            f"AUTH policy {policy_class} is not registered in PolicyMap",
+        )
+    auth_config = (
+        root / "fic/src/scripts/config/AUTH.conf"
+    ).read_text(encoding="utf-8")
+    for policy_name in (
+        "password_min_length",
+        "password_min_classes",
+        "password_history_depth",
+        "failed_authentication_attempts",
+        "failed_authentication_unlock_time",
+    ):
+        require(
+            f"{policy_name}.value=" in auth_config
+            and f"{policy_name}.status=" in auth_config,
+            f"AUTH.conf does not define {policy_name}",
+        )
+        for language in ("ru", "en"):
+            localization = (
+                root / f"fic/src/scripts/lang/{language}.lang"
+            ).read_text(encoding="utf-8")
+            require(
+                f"[module:AUTH][policy:{policy_name}]" in localization,
+                f"{language} localization does not define AUTH/{policy_name}",
+            )
     resolver = (
         root / "fic/src/platform/PlatformExecutableResolver.cpp"
     ).read_text(encoding="utf-8")
@@ -219,8 +260,16 @@ def main():
         "Debian-family packaging does not pass its compile-time profile",
     )
     require(
+        "/opt/fic/config/AUTH.conf" in deb_builder,
+        "Debian-family packaging does not preserve AUTH.conf as a conffile",
+    )
+    require(
         "-DFIC_TARGET_PLATFORM=alt-p11" in rpm_builder,
         "ALT p11 packaging does not fix its compile-time profile",
+    )
+    require(
+        "/opt/fic/config/AUTH.conf" in rpm_builder,
+        "ALT p11 packaging does not preserve AUTH.conf as %config(noreplace)",
     )
     require(
         'FIC_PACKAGING_TARGET_PLATFORM="ubuntu-24.04"' in ubuntu_builder,

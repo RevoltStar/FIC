@@ -49,6 +49,10 @@ add_library(fic-platform STATIC
 target_include_directories(fic-platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+if(CMAKE_LIBRARY_ARCHITECTURE)
+    target_compile_definitions(fic-platform PRIVATE
+        FIC_LIBRARY_ARCHITECTURE="${CMAKE_LIBRARY_ARCHITECTURE}")
+endif()
 
 # Создаем исполняемый файл
 add_executable(fic ${SRC_FILES} ${HDR_FILES})

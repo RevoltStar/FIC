@@ -31,9 +31,10 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
 - Distribution packaging scripts select their own fixed profile. At runtime the
   daemon checks `/etc/os-release` and refuses to start on an incompatible host.
 - The profile owns distribution integration data used by policies: system tool
-  paths, SSH and sudo layouts, display-manager configuration paths, and the DAC
-  system-file/command rule sets. Desktop-environment and kernel/FHS capability
-  detection remains independent of the distribution profile.
+  paths, SSH and sudo layouts, PAM service/config/module locations,
+  display-manager configuration paths, and the DAC system-file/command rule
+  sets. Desktop-environment and kernel/FHS capability detection remains
+  independent of the distribution profile.
 - Executable candidates are stored once in the profile under the typed
   `executables` registry (`Sshd`, `Systemctl`, `Loginctl`, `Visudo`, `Lscpu`,
   `Dmidecode`, `Udevadm`). Policies request a logical executable ID from the

@@ -151,6 +151,31 @@ bool validatePaths(const std::vector<std::filesystem::path>& paths,
     return true;
 }
 
+bool validatePamServices(const std::vector<std::string>& services,
+                         const std::string& label,
+                         std::string& error) {
+    if (services.empty()) {
+        error = label + " list is empty";
+        return false;
+    }
+
+    std::set<std::string> uniqueServices;
+    for (const std::string& service : services) {
+        if (service.empty() ||
+            !std::all_of(service.begin(), service.end(), [](unsigned char ch) {
+                return std::isalnum(ch) != 0 || ch == '_' || ch == '-' || ch == '.';
+            })) {
+            error = label + " contains an invalid PAM service name: " + service;
+            return false;
+        }
+        if (!uniqueServices.insert(service).second) {
+            error = label + " contains a duplicated PAM service: " + service;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
                              const std::string& label,
                              std::string& error) {
@@ -214,6 +239,20 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
     }
     if (!validatePath(profile.sudo.mainConfigPath, "sudoers main path", error) ||
         !validatePath(profile.sudo.managedConfigPath, "sudoers managed path", error) ||
+        !validatePaths(profile.pam.configDirectories,
+                       "PAM configuration directory", error) ||
+        !validatePaths(profile.pam.moduleDirectories,
+                       "PAM module directory", error) ||
+        !validatePamServices(profile.pam.authenticationServices,
+                             "PAM authentication service", error) ||
+        !validatePamServices(profile.pam.passwordServices,
+                             "PAM password service", error) ||
+        !validatePath(profile.pam.faillockConfigPath,
+                      "pam_faillock configuration path", error) ||
+        !validatePath(profile.pam.passwordQualityConfigPath,
+                      "pam_pwquality configuration path", error) ||
+        !validatePath(profile.pam.passwordHistoryConfigPath,
+                      "pam_pwhistory configuration path", error) ||
         !validatePath(profile.displayManager.sddmConfigPath,
                       "SDDM configuration path", error) ||
         !validatePath(profile.displayManager.lightDmConfigPath,
