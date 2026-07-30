@@ -337,13 +337,18 @@ manager, `/opt/fic/db/commandhash.txt` и managed sudoers-файла. Поэто
 
 ```mermaid
 flowchart LR
-    transaction[dpkg or RPM transaction] --> trigger[package file trigger]
+    transaction[dpkg or RPM transaction] --> trigger[exact dpkg trigger or RPM affected path list]
     install[initial fic install] --> sync[fic --trust-sync-platform]
-    trigger --> sync
-    profile[compiled platform profile] --> resolver[executable resolver]
+    trigger --> select[match paths to profile executable candidates]
+    select -->|no matches| noop[success without package query or hash write]
+    select -->|affected executable IDs| partial[fic --trust-sync-platform-affected]
+    profile[compiled platform profile] --> select
+    profile --> resolver[executable resolver]
     resolver --> sync
+    resolver --> partial
     packageDb[local package metadata and file digests] --> verify[ownership and digest verification]
     sync --> verify
+    partial --> verify
     verify -->|all available files valid| batch[calculate SHA-256 batch]
     batch --> atomic[one atomic commandhash.txt save]
     verify -->|any mismatch| reject[fail without hash changes]

@@ -9,6 +9,9 @@ public:
     static bool saveHash(const std::string& executable, std::string& error);
     static bool saveHashes(const std::vector<std::string>& executables,
                            std::string& error);
+    static bool updateHashes(const std::vector<std::string>& executables,
+                             const std::vector<std::string>& removedExecutables,
+                             std::string& error);
     static bool verifyHash(const std::string& executable, std::string& error);
 
 private:

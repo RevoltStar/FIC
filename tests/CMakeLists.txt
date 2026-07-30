@@ -102,3 +102,12 @@ add_executable(command_hash_batch_tests
 target_link_libraries(command_hash_batch_tests PRIVATE fic-core)
 add_test(NAME command_hash_batch_tests COMMAND command_hash_batch_tests)
 set_tests_properties(command_hash_batch_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(package_trust_selection_tests
+    trust/PackageTrustSelectionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/trust/PackageTrustSelection.cpp
+)
+target_include_directories(package_trust_selection_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME package_trust_selection_tests COMMAND package_trust_selection_tests)

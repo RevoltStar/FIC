@@ -89,11 +89,13 @@ During installation each package:
 - applies `0770` to files in `/opt/fic/bin`.
 
 The `fic` package runs `fic --trust-sync-platform` before enabling services and
-registers `dpkg` `interest-noawait` file triggers for `/usr/bin`, `/usr/sbin`,
-`/bin`, and `/sbin`. After package transactions, FIC verifies profile-selected
-executables against package checksums and atomically refreshes their SHA-256
-reference hashes. A failed package integrity check leaves all existing
-references unchanged and fails the maintainer-script action.
+generates exact `dpkg` `interest-noawait` file triggers from the compiled
+platform profile's executable candidates. On a triggered maintainer-script
+run, the activated paths are passed to `fic --trust-sync-platform-affected`.
+FIC ignores unrelated paths and verifies only the affected logical executables
+against package checksums before atomically refreshing their SHA-256 references.
+A failed package integrity check leaves all existing references unchanged and
+fails the maintainer-script action.
 
 ## Bundled Qt runtime for fic-gui
 

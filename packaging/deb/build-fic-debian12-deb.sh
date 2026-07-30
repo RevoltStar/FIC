@@ -143,13 +143,21 @@ EOF
 
 write_platform_trust_triggers() {
     local package_root="$1"
+    local fic_binary="$2"
+    local candidate_path
 
-    cat > "$package_root/DEBIAN/triggers" <<'EOF'
-interest-noawait /usr/bin
-interest-noawait /usr/sbin
-interest-noawait /bin
-interest-noawait /sbin
-EOF
+    : > "$package_root/DEBIAN/triggers"
+    while IFS= read -r candidate_path; do
+        [ -n "$candidate_path" ] || continue
+        append_unique_line \
+            "$package_root/DEBIAN/triggers" \
+            "interest-noawait $candidate_path"
+    done < <("$fic_binary" --trust-list-platform-paths)
+
+    if [ ! -s "$package_root/DEBIAN/triggers" ]; then
+        echo "Compiled platform profile has no trust-sync paths" >&2
+        exit 1
+    fi
 }
 
 copy_tree_contents() {
@@ -462,6 +470,13 @@ write_system_integration_symlink_postinst() {
     cat > "$package_root/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -e
+
+if [ "\${1:-}" = "triggered" ]; then
+    shift
+    printf '%s\n' "\$@" |
+        /opt/fic/bin/fic --trust-sync-platform-affected
+    exit \$?
+fi
 
 if ! getent group fic >/dev/null 2>&1; then
     groupadd --system fic
@@ -924,7 +939,7 @@ build_fic_package() {
 
     write_common_preinst "$package_root"
     write_conffiles "$package_root"
-    write_platform_trust_triggers "$package_root"
+    write_platform_trust_triggers "$package_root" "$FIC_BUILD_DIR/fic"
     write_system_integration_symlink_postinst "$package_root" "fic" "/opt/fic/bin/fic"
     write_system_integration_symlink_prerm "$package_root" "fic" "/opt/fic/bin/fic"
 

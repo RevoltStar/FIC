@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace fic::trust {
 
@@ -17,6 +18,13 @@ struct PackageTrustSyncResult {
 bool syncPackageManagedExecutables(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
+    PackageTrustSyncResult& result,
+    std::string& error);
+
+bool syncSelectedPackageManagedExecutables(
+    const fic::platform::PlatformProfile& platform,
+    const fic::platform::PlatformExecutableResolver& executables,
+    const std::vector<fic::platform::ExecutableId>& executableIds,
     PackageTrustSyncResult& result,
     std::string& error);
 

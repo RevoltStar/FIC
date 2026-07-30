@@ -32,6 +32,9 @@ public:
     //Установить значение
     bool setValue(const std::string& parameter, const std::string& value="") override;
 
+    //Удалить значение
+    bool removeValue(const std::string& parameter);
+
     //Сохранить конфигурационный файл
     //bool saveConfig();
 

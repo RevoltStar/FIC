@@ -7,57 +7,86 @@
 
 - Обновлено: 2026-07-30.
 - Ветка: `main`.
-- Базовый commit: `f4b86ec`.
-- Текущая задача: перевести категорийные политики контроля устройств DC с
-  настраиваемого списка `false`/`true` на фиксированное значение `true`.
+- Базовый commit: `4c240a0`.
+- Текущая задача: ограничить package trust sync только executable-кандидатами
+  из скомпилированного `profile.executables.entries`.
 - Реализация и локальная проверка завершены, изменения не зафиксированы commit.
 
 ## Сделано
 
-- `block_usb_storage`, `block_printers_scanners` и `block_optical_drives`
-  используют `FixedPolicyTypeValue("true")`.
-- Статус `ENABLE`/`DISABLE` стал единственным переключателем категорийных
-  DC-правил; `fic-dick` больше не читает их `.value`.
-- Seed `DC.conf` хранит фиксированное значение `true`.
-- Поддержка и миграция конфигов прежней модели намеренно не выполняются.
-- Device-control сценарии управляют DC-политикой только через статус.
-- Статические проверки и документация обновлены под новую модель.
+- Добавлен `fic --trust-sync-platform-affected`: он читает измененные пути,
+  выбирает только совпавшие profile candidates и группирует их по
+  `ExecutableId`.
+- Посторонний список путей завершается успешно до инициализации production
+  runtime paths, обращения к пакетной базе и записи `commandhash.txt`.
+- Полная команда `fic --trust-sync-platform` сохранена для первичной установки.
+- Добавлен `fic --trust-list-platform-paths`; Debian/Ubuntu packaging генерирует
+  из него точные `dpkg interest-noawait` triggers вместо четырех каталогов.
+- Debian postinst передает имена активированных triggers в affected-режим.
+- ALT file-trigger передает FIC полный список измененных RPM-путей через stdin,
+  не потребляя первую строку в shell.
+- Для затронутых логических executable атомарно удаляются hashes всех прежних
+  candidates и записывается hash фактически выбранного resolver пути. Это
+  корректно обрабатывает удаление и переключение `/bin`/`/usr/bin` aliases.
+- Добавлены unit/static tests и обновлена документация trust-sync потока.
 
 ## Измененные файлы
 
-- `fic/src/modules/dc/DC.cpp`
-- `fic/src/scripts/config/DC.conf`
-- `fic-dick/src/core/DeviceControlDaemon.cpp`
-- `tests/device-control/static_checks.py`
-- `tests/device-control/lib/common.sh`
-- `tests/device-control/suites/*.sh`
+- `fic/src/main.cpp`
+- `fic/src/trust/PackageTrustSync.{h,cpp}`
+- `fic/src/trust/PackageTrustSelection.{h,cpp}`
+- `fic-common/fic-core/include/fic/core/CommandHashStore.h`
+- `fic-common/fic-core/src/CommandHashStore.cpp`
+- `fic-common/fic-core/include/fic/core/ConfigFileHandler.h`
+- `fic-common/fic-core/src/ConfigFileHandler.cpp`
+- `packaging/deb/build-fic-debian12-deb.sh`
+- `packaging/rpm/fic-trust-sync.filetrigger`
+- `tests/CMakeLists.txt`
+- `tests/platform/static_checks.py`
+- `tests/trust/CommandHashBatchTests.cpp`
+- `tests/trust/PackageTrustSelectionTests.cpp`
+- `tests/file-handler/FileHandlerOptionsTests.cpp`
+- `README.md`
 - `fic/README.md`
-- `fic-dick/README.md`
+- `packaging/deb/README.md`
+- `packaging/rpm/README.md`
 - `docs/architecture-diagrams.md`
 - `docs/HANDOFF.md`
 
 ## Выполненные проверки
 
-- `python3 tests/device-control/static_checks.py .`: успешно.
-- `bash -n tests/device-control/lib/common.sh tests/device-control/suites/*.sh`:
-  успешно.
-- `cmake --build build-check --target fic fic-dick fic-gui -j2` при
-  `FIC_TARGET_PLATFORM=alt-p11`: успешно.
-- `ctest --test-dir build-check --output-on-failure`: 14 тестов, ошибок нет;
-  `admin_socket_tests` и `command_hash_batch_tests` штатно пропущены.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11`: успешно.
+- `cmake --build build-check -j2`: успешно, собраны все цели.
+- `ctest --test-dir build-check --output-on-failure`: 15 тестов, ошибок нет;
+  `admin_socket_tests` и root-зависимый `command_hash_batch_tests` штатно
+  пропущены.
+- `python3 tests/platform/static_checks.py .`: успешно.
+- `bash -n` для общих Debian 12/13/Ubuntu packaging entry points, ALT builder и
+  ALT file-trigger: успешно.
+- `build-check/fic/fic --trust-list-platform-paths`: успешно, выведены
+  candidates профиля `alt-p11`.
 - `git diff --check`: успешно.
 
 ## Что осталось
 
-- Runtime-набор `tests/device-control` в VM не запускался: он выполняет реальные
-  udev/device mutations и требует подготовленного тестового окружения.
-- Пакеты deb/rpm не собирались.
+- Реальная установка постороннего и контролируемого пакета в ALT/Debian VM не
+  запускалась: это изменяет состояние хоста и требует пакетного тестового
+  окружения.
+- Deb/RPM-пакеты не собирались.
+- Root-зависимый `command_hash_batch_tests`, включая новый batch remove/update,
+  в текущем непривилегированном окружении не выполнился. Низкоуровневое
+  `ConfigFileHandler::removeValue` отдельно покрыто успешно выполненным
+  `file_handler_options_tests`.
 
 ## Риски и решения
 
-- Существующие конфиги с прежними настраиваемыми DC-значениями не
-  преобразуются. Перед использованием новой версии конфигурация должна
-  соответствовать новой модели с фиксированным `.value=true`.
-- Политики по-прежнему возвращают фиксированное значение `true` через API
-  `policy_value`, но GUI отображает их как label и не отправляет
-  `set_policy_value`.
+- ALT по-прежнему запускает небольшой file-trigger process после RPM-
+  транзакций, но посторонние пути теперь отбрасываются до production runtime
+  initialization, package query и hash-store write.
+- Exact Debian triggers генерируются запускаемым бинарником с тем же
+  compile-time профилем, поэтому список paths не дублируется в packaging.
+- Affected-режим доступен только root и предназначен для package hooks; это не
+  daemon IPC API.
+- При совпадении любого candidate синхронизируется соответствующий логический
+  `ExecutableId`, а не только строка пути: resolver может выбрать другой
+  существующий alias после завершения пакетной транзакции.

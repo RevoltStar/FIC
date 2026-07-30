@@ -35,6 +35,7 @@
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
+#include "trust/PackageTrustSelection.h"
 #include "trust/PackageTrustSync.h"
 
 using json = nlohmann::json;
@@ -703,6 +704,32 @@ int main(int argc, char* argv[]) {
         std::cout << "fic 2.0 target-platform=" << platform.id << std::endl;
         return 0;
     }
+    if (get_arg_value(argc, argv, 1) == "--trust-list-platform-paths") {
+        for (const fic::platform::PlatformExecutableSpec& spec :
+             platform.executables.entries) {
+            for (const std::filesystem::path& candidate : spec.candidates) {
+                std::cout << candidate.string() << '\n';
+            }
+        }
+        return 0;
+    }
+    const bool packageTrustSync =
+        get_arg_value(argc, argv, 1) == "--trust-sync-platform";
+    const bool affectedPackageTrustSync =
+        get_arg_value(argc, argv, 1) == "--trust-sync-platform-affected";
+    std::vector<fic::platform::ExecutableId> affectedExecutableIds;
+    if (affectedPackageTrustSync) {
+        if (::geteuid() != 0) {
+            std::cerr << "package trust sync must be run as root" << std::endl;
+            return 1;
+        }
+        affectedExecutableIds =
+            fic::trust::selectAffectedExecutableIds(
+                platform.executables, std::cin);
+        if (affectedExecutableIds.empty()) {
+            return 0;
+        }
+    }
     if (!fic::platform::validateHostCompatibility(
             platform, "/etc/os-release", platformError)) {
         std::cerr << "incompatible host platform: " << platformError << std::endl;
@@ -715,19 +742,23 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const bool packageTrustSync =
-        get_arg_value(argc, argv, 1) == "--trust-sync-platform";
     const fic::platform::PlatformExecutableResolver executables(
         platform.executables);
-    if (packageTrustSync) {
+    if (packageTrustSync || affectedPackageTrustSync) {
         if (::geteuid() != 0) {
             std::cerr << "package trust sync must be run as root" << std::endl;
             return 1;
         }
         fic::trust::PackageTrustSyncResult result;
         std::string syncError;
-        if (!fic::trust::syncPackageManagedExecutables(
-                platform, executables, result, syncError)) {
+        const bool synchronized =
+            affectedPackageTrustSync
+                ? fic::trust::syncSelectedPackageManagedExecutables(
+                      platform, executables, affectedExecutableIds,
+                      result, syncError)
+                : fic::trust::syncPackageManagedExecutables(
+                      platform, executables, result, syncError);
+        if (!synchronized) {
             std::cerr << "package trust sync failed: " << syncError << std::endl;
             return 1;
         }

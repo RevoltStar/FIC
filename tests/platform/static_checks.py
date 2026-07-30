@@ -142,6 +142,14 @@ def main():
     resolver = (
         root / "fic/src/platform/PlatformExecutableResolver.cpp"
     ).read_text(encoding="utf-8")
+    daemon_main = (root / "fic/src/main.cpp").read_text(encoding="utf-8")
+    require(
+        "--trust-list-platform-paths" in daemon_main
+        and "--trust-sync-platform-affected" in daemon_main
+        and daemon_main.index("selectAffectedExecutableIds")
+        < daemon_main.index("FicRuntimePaths::initializeProduction"),
+        "affected trust sync must filter profile paths before runtime initialization",
+    )
     for executable_id in (
         "Sshd",
         "Systemctl",
@@ -276,14 +284,11 @@ def main():
             f"{builder_path.relative_to(root)} bypasses container resource limits",
         )
 
-    for watched_path in ("/usr/bin", "/usr/sbin", "/bin", "/sbin"):
-        require(
-            f"interest-noawait {watched_path}" in deb_builder,
-            f"Debian package does not watch {watched_path} for trust sync",
-        )
     require(
-        "/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*" in rpm_file_trigger,
-        "ALT file trigger does not watch the four system binary directories",
+        "--trust-list-platform-paths" in deb_builder
+        and "interest-noawait $candidate_path" in deb_builder
+        and "--trust-sync-platform-affected" in deb_builder,
+        "Debian package does not generate exact profile trust triggers",
     )
     require(
         "--trust-sync-platform" in deb_builder,
@@ -291,9 +296,10 @@ def main():
     )
     require(
         "fic-trust-sync.filetrigger" in rpm_builder
-        and "--trust-sync-platform" in rpm_file_trigger
+        and "--trust-sync-platform-affected" in rpm_file_trigger
+        and "while IFS= read" not in rpm_file_trigger
         and "%transfiletriggerin" not in rpm_builder,
-        "ALT package does not install its native post-transaction file trigger",
+        "ALT package does not pass the complete affected path list to FIC",
     )
 
     return 0

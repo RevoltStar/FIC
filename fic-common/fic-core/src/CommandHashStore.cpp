@@ -61,6 +61,13 @@ bool CommandHashStore::saveHash(const std::string& executable, std::string& erro
 bool CommandHashStore::saveHashes(
     const std::vector<std::string>& executables,
     std::string& error) {
+    return updateHashes(executables, {}, error);
+}
+
+bool CommandHashStore::updateHashes(
+    const std::vector<std::string>& executables,
+    const std::vector<std::string>& removedExecutables,
+    std::string& error) {
     if (!command_hash_directory_exists(error)) {
         return false;
     }
@@ -87,6 +94,15 @@ bool CommandHashStore::saveHashes(
         }
         hashes.emplace_back(executable, hash);
     }
+    for (const std::string& executable : removedExecutables) {
+        if (executable.empty() || executable.front() != '/' ||
+            executable.back() == '/' ||
+            executable.find("..") != std::string::npos) {
+            error = "invalid executable path to remove from command hash store: " +
+                    executable;
+            return false;
+        }
+    }
 
     FileHandlerOptions fileOptions;
     if (!command_hash_file_options(fileOptions, error)) {
@@ -96,6 +112,12 @@ bool CommandHashStore::saveHashes(
     if (!commandHashes.loadConfig()) {
         error = "failed to load command hash file: " + hashFile;
         return false;
+    }
+    for (const std::string& executable : removedExecutables) {
+        if (!commandHashes.removeValue(executable)) {
+            error = "failed to remove command hash value: " + executable;
+            return false;
+        }
     }
     for (const auto& [executable, hash] : hashes) {
         if (!commandHashes.setValue(executable, hash)) {

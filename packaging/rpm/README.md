@@ -91,10 +91,11 @@ During installation each package:
 The `fic` package runs `fic --trust-sync-platform` before enabling services and
 installs the ALT-native `/usr/lib/rpm/fic-trust-sync.filetrigger`. ALT invokes
 executable `*.filetrigger` helpers after a successful transaction and passes
-the affected file list on standard input. The helper starts trust sync only
-when that list contains `/usr/bin`, `/usr/sbin`, `/bin`, or `/sbin` entries.
-The sync verifies every selected executable against RPM file digests before
-atomically refreshing SHA-256 references. Any mismatch fails the trigger and
+the affected file list on standard input. The helper forwards that complete
+list to `fic --trust-sync-platform-affected`; FIC matches it against
+`profile.executables.entries` and does no package query or hash write when
+there is no match. A matching transaction verifies and atomically refreshes
+only the affected logical executables. Any mismatch fails the trigger and
 leaves the existing hash store unchanged.
 
 ## Bundled Qt runtime for fic-gui

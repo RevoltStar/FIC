@@ -38,7 +38,9 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
   `executables` registry (`Sshd`, `Systemctl`, `Loginctl`, `Visudo`, `Lscpu`,
   `Dmidecode`, `Udevadm`). Policies request a logical executable ID from the
   shared resolver instead of maintaining their own path lists.
-- Package installation and package-transaction triggers run
-  `fic --trust-sync-platform`. The command verifies selected files against the
-  compiled profile's `dpkg` or RPM database before atomically updating their
-  SHA-256 reference hashes. Normal daemon runtime never accepts a new hash.
+- Initial package installation runs `fic --trust-sync-platform`. Subsequent
+  package triggers pass affected paths to
+  `fic --trust-sync-platform-affected`; only paths listed in the compiled
+  profile's `executables` registry are verified against the `dpkg` or RPM
+  database and atomically refreshed. Normal daemon runtime never accepts a new
+  hash.

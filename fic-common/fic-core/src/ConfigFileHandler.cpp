@@ -99,6 +99,28 @@ bool ConfigFileHandler::setValue(const std::string& parameter, const std::string
     return true;
 }
 
+bool ConfigFileHandler::removeValue(const std::string& parameter) {
+    if (parameter.empty()) {
+        return false;
+    }
+    config_.erase(parameter);
+    original_lines_.erase(
+        std::remove_if(
+            original_lines_.begin(),
+            original_lines_.end(),
+            [this, &parameter](const std::string& line) {
+                const size_t pos = line.find(this->delimiter_);
+                if (pos == std::string::npos) {
+                    return false;
+                }
+                std::string candidate = line.substr(0, pos);
+                this->trim(candidate);
+                return candidate == parameter;
+            }),
+        original_lines_.end());
+    return true;
+}
+
 int ConfigFileHandler::parameterCount(){
     return this->config_.size();
 }

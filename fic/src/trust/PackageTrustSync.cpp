@@ -293,28 +293,39 @@ bool anyCandidateExists(const fic::platform::PlatformExecutableSpec& spec) {
         });
 }
 
-} // namespace
-
-bool syncPackageManagedExecutables(
+bool syncPackageManagedExecutableIds(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
+    const std::vector<fic::platform::ExecutableId>& executableIds,
     PackageTrustSyncResult& result,
     std::string& error) {
     result = {};
+    if (executableIds.empty()) {
+        error.clear();
+        return true;
+    }
+
     std::filesystem::path packageQuery;
     if (!resolvePackageQuery(platform.packageManager, packageQuery, error)) {
         return false;
     }
 
     std::vector<std::string> verifiedPaths;
-    for (const fic::platform::ExecutableId id :
-         fic::platform::allExecutableIds()) {
+    std::vector<std::string> candidatePaths;
+    for (const fic::platform::ExecutableId id : executableIds) {
         const fic::platform::PlatformExecutableSpec* spec =
             fic::platform::findExecutableSpec(platform.executables, id);
         if (spec == nullptr) {
             error = std::string("platform profile has no executable entry for ") +
                     fic::platform::executableIdName(id);
             return false;
+        }
+        for (const std::filesystem::path& candidate : spec->candidates) {
+            const std::string candidatePath = candidate.string();
+            if (std::find(candidatePaths.begin(), candidatePaths.end(),
+                          candidatePath) == candidatePaths.end()) {
+                candidatePaths.push_back(candidatePath);
+            }
         }
         if (!anyCandidateExists(*spec)) {
             ++result.unavailable;
@@ -338,13 +349,34 @@ bool syncPackageManagedExecutables(
         }
     }
 
-    if (!verifiedPaths.empty() &&
-        !CommandHashStore::saveHashes(verifiedPaths, error)) {
+    if (!CommandHashStore::updateHashes(
+            verifiedPaths, candidatePaths, error)) {
         return false;
     }
     result.updated = verifiedPaths.size();
     error.clear();
     return true;
+}
+
+} // namespace
+
+bool syncPackageManagedExecutables(
+    const fic::platform::PlatformProfile& platform,
+    const fic::platform::PlatformExecutableResolver& executables,
+    PackageTrustSyncResult& result,
+    std::string& error) {
+    return syncPackageManagedExecutableIds(
+        platform, executables, fic::platform::allExecutableIds(), result, error);
+}
+
+bool syncSelectedPackageManagedExecutables(
+    const fic::platform::PlatformProfile& platform,
+    const fic::platform::PlatformExecutableResolver& executables,
+    const std::vector<fic::platform::ExecutableId>& executableIds,
+    PackageTrustSyncResult& result,
+    std::string& error) {
+    return syncPackageManagedExecutableIds(
+        platform, executables, executableIds, result, error);
 }
 
 } // namespace fic::trust

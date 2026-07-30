@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -42,6 +43,13 @@ void writeFile(const std::filesystem::path& path, const std::string& content) {
     if (!stream) {
         throw std::runtime_error("failed to write " + path.string());
     }
+}
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    return std::string(
+        std::istreambuf_iterator<char>(stream),
+        std::istreambuf_iterator<char>());
 }
 
 mode_t fileMode(const std::filesystem::path& path) {
@@ -138,6 +146,25 @@ void testDeletionBetweenLoadAndSaveDoesNotRecreateFile() {
     require(!std::filesystem::exists(path), "deleted file exists after failed save");
 }
 
+void testValueRemovalPreservesUnrelatedContent() {
+    TempTree tree;
+    const auto path = tree.root / "removal.conf";
+    writeFile(path, "first=remove\n#first=comment\nsecond=preserve\n");
+
+    ConfigFileHandler config(path.string());
+    require(config.loadConfig(), "failed to load removal fixture");
+    require(config.removeValue("first"), "failed to remove value");
+    require(config.saveFile(), "failed to save value removal");
+
+    const std::string content = readFile(path);
+    require(content.find("first=remove") == std::string::npos,
+            "active removed value is still present");
+    require(content.find("#first=comment") != std::string::npos,
+            "commented value was unexpectedly removed");
+    require(content.find("second=preserve") != std::string::npos,
+            "unrelated value was unexpectedly removed");
+}
+
 } // namespace
 
 int main() {
@@ -147,6 +174,7 @@ int main() {
         testExistingMetadataCanBePreserved();
         testSymlinkIsRejected();
         testDeletionBetweenLoadAndSaveDoesNotRecreateFile();
+        testValueRemovalPreservesUnrelatedContent();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

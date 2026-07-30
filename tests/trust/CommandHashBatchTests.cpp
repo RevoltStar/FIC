@@ -62,6 +62,14 @@ int main() {
     assert(readFile(paths.commandHashFile).find("/manual/path=preserved") !=
            std::string::npos);
 
+    assert(CommandHashStore::updateHashes(
+        {second.string()}, {first.string()}, error));
+    assert(!CommandHashStore::verifyHash(first.string(), error));
+    assert(error.find("no stored reference hash") != std::string::npos);
+    assert(CommandHashStore::verifyHash(second.string(), error));
+    assert(readFile(paths.commandHashFile).find("/manual/path=preserved") !=
+           std::string::npos);
+
     const std::string beforeFailure = readFile(paths.commandHashFile);
     assert(!CommandHashStore::saveHashes(
         {first.string(), "relative/path"}, error));
