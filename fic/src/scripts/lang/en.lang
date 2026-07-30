@@ -14,13 +14,16 @@
 
 
 # Modules
-[module:DC]=Device control
-[module:LOG]=Log analysis
+[module:DC]=Device control settings
 [module:DAC]=Discretionary access control
 [module:OSS]=OS settings
 [module:SYSCTL]=Kernel settings
 [module:NET]=Network settings
 [module:GLOBAL]=Application settings
+
+# GUI tabs
+[tab:LOG]=Log analysis
+[tab:DEVICES]=Device tree
 
 # Submodules
 [module:DAC][policy:sudo_env_reset]=Reset environment variables before executing a command via sudo
@@ -37,7 +40,6 @@
 [module:NET][submodule:SshEdit]=SSH settings
 [module:GLOBAL][submodule:system_settings]=General settings
 [module:DC][submodule:DeviceControl]=General device control rules
-[module:DC][settings]=Device control settings
 [module:DC][policy:block_usb_storage]=Block USB storage
 [module:DC][policy:block_printers_scanners]=Block printers and scanners
 [module:DC][policy:block_optical_drives]=Block optical drives

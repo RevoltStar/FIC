@@ -782,8 +782,8 @@ bool MainWindow::validatePolicyValue(const PolicyInfo& policy, const std::string
 }
 
 void MainWindow::addModules() {
-    this->ui->tab_modules->setTabText(0, QLocalizationManager::getLang("[module:DC]"));
-    this->ui->tab_modules->setTabText(1, QLocalizationManager::getLang("[module:LOG]"));
+    this->ui->tab_modules->setTabText(0, QLocalizationManager::getLang("[tab:DEVICES]"));
+    this->ui->tab_modules->setTabText(1, QLocalizationManager::getLang("[tab:LOG]"));
 
     while (this->ui->tab_modules->count() > 2) {
         QWidget* widget = this->ui->tab_modules->widget(2);
@@ -804,9 +804,8 @@ void MainWindow::addModules() {
     }
 
     for (const auto& [moduleName, modulePolicies] : policiesByModule) {
-        const QString tabTitle = moduleName == "DC"
-            ? QLocalizationManager::getLang("[module:DC][settings]")
-            : QLocalizationManager::getLang(QString::fromStdString("[module:" + moduleName + "]"));
+        const QString tabTitle =
+            QLocalizationManager::getLang(QString::fromStdString("[module:" + moduleName + "]"));
 
         ui->tab_modules->addTab(
             createPolicyPage(modulePolicies, moduleName),

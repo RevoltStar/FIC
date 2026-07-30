@@ -14,13 +14,16 @@
 
 
 #Модули
-[module:DC]=Контроль устройств
-[module:LOG]=Анализ логов
+[module:DC]=Настройки контроля устройств
 [module:DAC]=Дискреционное разграничение доступа
 [module:OSS]=Настройки ОС
 [module:SYSCTL]=Настройки ядра
 [module:NET]=Сетевые настройки
 [module:GLOBAL]=Настройки программы
+
+#Вкладки GUI
+[tab:LOG]=Анализ логов
+[tab:DEVICES]=Дерево устройств
 
 #Подмодули
 [module:DAC][policy:sudo_env_reset]=Сброс переменных окружения перед выполнением команды через sudo
@@ -37,7 +40,6 @@
 [module:NET][submodule:SshEdit]=Настройки ssh
 [module:GLOBAL][submodule:system_settings]=Общие настройки
 [module:DC][submodule:DeviceControl]=Общие правила контроля устройств
-[module:DC][settings]=Настройки контроля
 [module:DC][policy:block_usb_storage]=Запретить USB-накопители
 [module:DC][policy:block_printers_scanners]=Запретить принтеры и сканеры
 [module:DC][policy:block_optical_drives]=Запретить оптические приводы
