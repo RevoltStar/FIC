@@ -7,13 +7,20 @@
 
 - Обновлено: 2026-07-31.
 - Ветка: `main`.
-- Базовый commit: `8e09cfd`.
-- Текущая задача: заменить узкий модуль `AUTH` структурой
-  `IDENTITY_ACCESS/{PAM,SSSD,KERBEROS,NSS,COMPOSITE}`.
-- Реализация и локальная проверка завершены, изменения не зафиксированы commit.
+- Базовый commit: `d636ae4`.
+- Текущая задача: зафиксировать pre-stable политику проекта по обратной
+  совместимости и миграциям.
+- Реализация `IDENTITY_ACCESS/{PAM,SSSD,KERBEROS,NSS,COMPOSITE}` находится в
+  базовом commit. Текущие изменения документации не зафиксированы commit.
 
 ## Сделано
 
+- В `AGENTS.md` зафиксировано, что у проекта пока нет стабильных версий.
+  Миграции конфигов и схем БД, compatibility aliases, dual-read/dual-write и
+  поддержка старых API/runtime formats по умолчанию не реализуются. Вместо
+  этого все актуальные producers/consumers, seed-данные, packaging, тесты и
+  документация переводятся на новый формат одновременно. Правило действует до
+  отдельного объявления стабильной версии или явного требования задачи.
 - Модуль и runtime-конфиг переименованы из `AUTH` в `IDENTITY_ACCESS`.
   Пять существующих политик сохранены без изменения строковых имен и перенесены
   в подмодуль `PAM`:
@@ -53,24 +60,14 @@
 
 ## Основные измененные файлы
 
-- `fic/src/modules/identity_access/IdentityAccessPolicy.{h,cpp}`
-- `fic/src/modules/identity_access/submodules/{pam,sssd,kerberos,nss,composite}/`
-- `fic/src/core/main_function.{h,cpp}`
-- `fic/src/scripts/config/IDENTITY_ACCESS.conf`
-- `fic/src/scripts/lang/{ru,en}.lang`
-- `tests/identity_access/`
-- `tests/CMakeLists.txt`
-- `tests/platform/static_checks.py`
-- `packaging/deb/build-fic-debian{10,11,12}-deb.sh`
-- `packaging/rpm/build-fic-alt-p11-rpm.sh`
-- `fic/README.md`
-- `docs/architecture-diagrams.md`
-
-Старые `fic/src/modules/auth/`, `tests/auth/` и
-`fic/src/scripts/config/AUTH.conf` удалены.
+- `AGENTS.md`
+- `docs/HANDOFF.md`
 
 ## Выполненные проверки
 
+- Для текущего документационного изменения: `git diff --check`.
+- Проверки реализации `IDENTITY_ACCESS` ниже относятся к базовому commit
+  `d636ae4`:
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11`: успешно.
 - `cmake --build build-check -j2`: успешно, собраны все цели.
 - `ctest --test-dir build-check --output-on-failure`: 19 тестов, ошибок нет;
@@ -103,12 +100,11 @@
 
 ## Риски и решения
 
-- Это чистое несовместимое переименование `AUTH` -> `IDENTITY_ACCESS`: alias и
-  package migration отсутствуют. Решение принято потому, что `AUTH` появился
-  только в базовом нетегированном commit `8e09cfd`, а имеющийся ранее собранный
-  пакет его не содержит. Если этот commit все же устанавливался вне
-  репозитория, перед релизом понадобятся version-gated conffile migration для
-  deb и RPM scriptlet; простой `mv` недостаточен.
+- У проекта нет стабильных версий, поэтому `AUTH` -> `IDENTITY_ACCESS` и
+  последующие изменения форматов выполняются как чистая замена без alias и
+  миграций. Не следует добавлять совместимость с промежуточными состояниями
+  репозитория без отдельного требования. После объявления стабильной версии
+  эту стратегию необходимо пересмотреть.
 - Composite обеспечивает compensating rollback, но не crash-atomicity набора
   файлов. Падение процесса между двумя atomic rename потребует transaction
   journal и recovery при старте daemon; такого журнала пока нет.
