@@ -147,18 +147,18 @@ def main():
         "PolicyMap and lock operations must receive the platform executable resolver",
     )
     for policy_class in (
-        "AUTH_password_min_length",
-        "AUTH_password_min_classes",
-        "AUTH_password_history_depth",
-        "AUTH_failed_authentication_attempts",
-        "AUTH_failed_authentication_unlock_time",
+        "PamPasswordMinLengthPolicy",
+        "PamPasswordMinClassesPolicy",
+        "PamPasswordHistoryDepthPolicy",
+        "PamFailedAuthenticationAttemptsPolicy",
+        "PamFailedAuthenticationUnlockTimePolicy",
     ):
         require(
             policy_class in registry,
-            f"AUTH policy {policy_class} is not registered in PolicyMap",
+            f"identity-access policy {policy_class} is not registered in PolicyMap",
         )
-    auth_config = (
-        root / "fic/src/scripts/config/AUTH.conf"
+    identity_config = (
+        root / "fic/src/scripts/config/IDENTITY_ACCESS.conf"
     ).read_text(encoding="utf-8")
     for policy_name in (
         "password_min_length",
@@ -168,18 +168,67 @@ def main():
         "failed_authentication_unlock_time",
     ):
         require(
-            f"{policy_name}.value=" in auth_config
-            and f"{policy_name}.status=" in auth_config,
-            f"AUTH.conf does not define {policy_name}",
+            f"{policy_name}.value=" in identity_config
+            and f"{policy_name}.status=" in identity_config,
+            f"IDENTITY_ACCESS.conf does not define {policy_name}",
         )
         for language in ("ru", "en"):
             localization = (
                 root / f"fic/src/scripts/lang/{language}.lang"
             ).read_text(encoding="utf-8")
             require(
-                f"[module:AUTH][policy:{policy_name}]" in localization,
-                f"{language} localization does not define AUTH/{policy_name}",
+                f"[module:IDENTITY_ACCESS][policy:{policy_name}]" in localization,
+                f"{language} localization does not define "
+                f"IDENTITY_ACCESS/{policy_name}",
             )
+            for submodule in ("PAM", "SSSD", "KERBEROS", "NSS", "COMPOSITE"):
+                require(
+                    f"[module:IDENTITY_ACCESS][submodule:{submodule}]"
+                    in localization,
+                    f"{language} localization does not define identity "
+                    f"submodule {submodule}",
+                )
+
+    identity_root = root / "fic/src/modules/identity_access"
+    identity_base = (
+        identity_root / "IdentityAccessPolicy.cpp"
+    ).read_text(encoding="utf-8")
+    pam_policy = (
+        identity_root / "submodules/pam/PamPolicy.cpp"
+    ).read_text(encoding="utf-8")
+    composite_header = (
+        identity_root / "submodules/composite/CompositePolicy.h"
+    ).read_text(encoding="utf-8")
+    require(
+        'moduleName = "IDENTITY_ACCESS"' in identity_base,
+        "identity policy base does not own the IDENTITY_ACCESS module",
+    )
+    require(
+        'IdentityAccessPolicy("PAM")' in pam_policy,
+        "PAM policy base does not own the PAM submodule",
+    )
+    for relative_path, class_name, submodule_name in (
+        ("submodules/sssd/SssdPolicy.cpp", "SssdPolicy", "SSSD"),
+        ("submodules/kerberos/KerberosPolicy.cpp", "KerberosPolicy", "KERBEROS"),
+        ("submodules/nss/NssPolicy.cpp", "NssPolicy", "NSS"),
+    ):
+        source = (identity_root / relative_path).read_text(encoding="utf-8")
+        require(
+            f'{class_name}::{class_name}()' in source
+            and f'IdentityAccessPolicy("{submodule_name}")' in source,
+            f"{class_name} does not own submodule {submodule_name}",
+    )
+    require(
+        "ConfigurationParticipant" in composite_header
+        and "unique_ptr<IdentityAccessPolicy>" not in composite_header,
+        "CompositePolicy must compose configuration participants, not nested "
+        "policies",
+    )
+    require(
+        not (root / "fic/src/modules/auth").exists()
+        and not (root / "fic/src/scripts/config/AUTH.conf").exists(),
+        "obsolete AUTH module files remain after the identity-access rename",
+    )
     resolver = (
         root / "fic/src/platform/PlatformExecutableResolver.cpp"
     ).read_text(encoding="utf-8")
@@ -260,16 +309,18 @@ def main():
         "Debian-family packaging does not pass its compile-time profile",
     )
     require(
-        "/opt/fic/config/AUTH.conf" in deb_builder,
-        "Debian-family packaging does not preserve AUTH.conf as a conffile",
+        "/opt/fic/config/IDENTITY_ACCESS.conf" in deb_builder
+        and "/opt/fic/config/AUTH.conf" not in deb_builder,
+        "Debian-family packaging does not preserve IDENTITY_ACCESS.conf",
     )
     require(
         "-DFIC_TARGET_PLATFORM=alt-p11" in rpm_builder,
         "ALT p11 packaging does not fix its compile-time profile",
     )
     require(
-        "/opt/fic/config/AUTH.conf" in rpm_builder,
-        "ALT p11 packaging does not preserve AUTH.conf as %config(noreplace)",
+        "/opt/fic/config/IDENTITY_ACCESS.conf" in rpm_builder
+        and "/opt/fic/config/AUTH.conf" not in rpm_builder,
+        "ALT p11 packaging does not preserve IDENTITY_ACCESS.conf",
     )
     require(
         'FIC_PACKAGING_TARGET_PLATFORM="ubuntu-24.04"' in ubuntu_builder,

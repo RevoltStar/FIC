@@ -16,7 +16,7 @@
 #Модули
 [module:DC]=Настройки контроля устройств
 [module:DAC]=Дискреционное разграничение доступа
-[module:AUTH]=Настройки аутентификации
+[module:IDENTITY_ACCESS]=Управление идентификацией и доступом
 [module:OSS]=Настройки ОС
 [module:SYSCTL]=Настройки ядра
 [module:NET]=Сетевые настройки
@@ -31,9 +31,11 @@
 [module:DAC][policy:sudo_env_reset][description]=Рекомендуемая к использованию настройка для повышения безопасности, так как переменные окружения могут влиять на поведение утилит, запускаемых с привилегиями суперпользователя.
 [module:DAC][submodule:Mode_and_Owner]=Права и владельцы файлов и каталогов
 [module:DAC][submodule:SudoEdit]=Настройки параметров SUDO
-[module:AUTH][submodule:PasswordQuality]=Качество паролей
-[module:AUTH][submodule:PasswordHistory]=История паролей
-[module:AUTH][submodule:AuthenticationLockout]=Блокировка аутентификации
+[module:IDENTITY_ACCESS][submodule:PAM]=PAM
+[module:IDENTITY_ACCESS][submodule:SSSD]=SSSD
+[module:IDENTITY_ACCESS][submodule:KERBEROS]=Kerberos
+[module:IDENTITY_ACCESS][submodule:NSS]=NSS
+[module:IDENTITY_ACCESS][submodule:COMPOSITE]=Межсистемные политики
 [module:OSS][submodule:DesktopEnvironment]=Графическое окружение
 [module:OSS][submodule:DisplayManager]=Графический менеджер входа в систему
 [module:OSS][submodule:Fstab]=Параметры монтирования /etc/fstab
@@ -51,17 +53,17 @@
 [module:DC][policy:block_printers_scanners][description]=Запрещает подключение USB-принтеров и сканеров, если для конкретного устройства не задано более точное разрешающее правило.
 [module:DC][policy:block_optical_drives][description]=Запрещает подключение оптических приводов, если для конкретного устройства не задано более точное разрешающее правило.
 
-#Аутентификация и PAM
-[module:AUTH][policy:password_min_length]=Минимальная длина пароля
-[module:AUTH][policy:password_min_length][description]=Задаёт minlen в каноническом конфиге pam_pwquality. Применение завершается ошибкой, если pam_pwquality не включён для каждой целевой password-службы, действует другой provider или аргумент PAM перекрывает требуемое значение.
-[module:AUTH][policy:password_min_classes]=Минимальное число классов символов пароля
-[module:AUTH][policy:password_min_classes][description]=Задаёт minclass в каноническом конфиге pam_pwquality после проверки provider и effective PAM-графа.
-[module:AUTH][policy:password_history_depth]=Глубина истории паролей
-[module:AUTH][policy:password_history_depth][description]=Задаёт remember в каноническом конфиге pam_pwhistory. pam_unix remember= распознаётся как отдельный неподдерживаемый provider и автоматически не переписывается.
-[module:AUTH][policy:failed_authentication_attempts]=Неудачные PAM-аутентификации до блокировки
-[module:AUTH][policy:failed_authentication_attempts][description]=Задаёт deny в каноническом конфиге pam_faillock. Все целевые службы аутентификации должны использовать одну полную схему pam_faillock; pam_tally и pam_tally2 считаются конфликтующими providers.
-[module:AUTH][policy:failed_authentication_unlock_time]=Продолжительность блокировки аутентификации
-[module:AUTH][policy:failed_authentication_unlock_time][description]=Задаёт unlock_time в секундах в каноническом конфиге pam_faillock. Значение 0 отключает автоматическую разблокировку по времени.
+#Идентификация и доступ: PAM
+[module:IDENTITY_ACCESS][policy:password_min_length]=Минимальная длина пароля
+[module:IDENTITY_ACCESS][policy:password_min_length][description]=Задаёт minlen в каноническом конфиге pam_pwquality. Применение завершается ошибкой, если pam_pwquality не включён для каждой целевой password-службы, действует другой provider или аргумент PAM перекрывает требуемое значение.
+[module:IDENTITY_ACCESS][policy:password_min_classes]=Минимальное число классов символов пароля
+[module:IDENTITY_ACCESS][policy:password_min_classes][description]=Задаёт minclass в каноническом конфиге pam_pwquality после проверки provider и effective PAM-графа.
+[module:IDENTITY_ACCESS][policy:password_history_depth]=Глубина истории паролей
+[module:IDENTITY_ACCESS][policy:password_history_depth][description]=Задаёт remember в каноническом конфиге pam_pwhistory. pam_unix remember= распознаётся как отдельный неподдерживаемый provider и автоматически не переписывается.
+[module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Неудачные PAM-аутентификации до блокировки
+[module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Задаёт deny в каноническом конфиге pam_faillock. Все целевые службы аутентификации должны использовать одну полную схему pam_faillock; pam_tally и pam_tally2 считаются конфликтующими providers.
+[module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Продолжительность блокировки аутентификации
+[module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Задаёт unlock_time в секундах в каноническом конфиге pam_faillock. Значение 0 отключает автоматическую разблокировку по времени.
 
 
 #Дискреционное разграничение доступа

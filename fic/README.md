@@ -439,9 +439,14 @@ include-граф: если неподдерживаемое правило на�
 заполняется package-transaction trust sync. Отсутствующий hash или ошибка
 `visudo` приводят к безопасному отказу без заявления об успешном применении.
 
-### Работа с PAM
+### Identity and access
 
-Модуль `AUTH` содержит пять политик:
+Модуль `IDENTITY_ACCESS` разделён по владельцам системной конфигурации:
+`PAM`, `SSSD`, `KERBEROS`, `NSS` и `COMPOSITE`. Классы
+`PamPolicy`, `SssdPolicy`, `KerberosPolicy` и `NssPolicy` задают границу
+подмодуля и наследуются от `IdentityAccessPolicy`; парсеры и редакторы
+системных конфигураций от `Policy` не наследуются. Пока зарегистрированные
+конкретные политики есть только в подмодуле `PAM`:
 
 - `password_min_length` и `password_min_classes` управляют параметрами
   `minlen` и `minclass` активного `pam_pwquality`;
@@ -449,6 +454,25 @@ include-граф: если неподдерживаемое правило на�
 - `failed_authentication_attempts` и
   `failed_authentication_unlock_time` управляют `deny` и `unlock_time`
   активного `pam_faillock`.
+
+`CompositePolicy` предназначен для одной политики, затрагивающей несколько
+подсистем. Он не хранит и не запускает вложенные `Policy`: leaf-политика сначала
+регистрирует независимые `ConfigurationParticipant`. Каждый participant
+готовит полностью проверенный `PreparedConfigurationChange`, после чего общий
+координатор выполняет persistent commit, persistent verification, runtime
+activation и effective verification. При ошибке все начатые изменения
+откатываются в обратном порядке, runtime восстанавливается и rollback
+проверяется. Это компенсирующая транзакция; атомарные `rename` отдельных файлов
+не обеспечивают crash-atomicity всего набора. Для восстановления после падения
+между двумя commit потребуется отдельный журнал, которого в текущем каркасе
+нет.
+
+Все leaf- и composite-политики используют один identity-configuration mutex,
+чтобы анализ и изменение PAM/SSSD/Kerberos/NSS не выполнялись конкурентно
+внутри daemon. `SSSD`, `KERBEROS` и `NSS` пока являются абстрактными границами:
+фиктивные редакторы или политики для них не добавлены.
+
+### Работа с PAM
 
 Это намеренно не универсальный редактор `/etc/pam.d`. Перед записью
 `PamConfiguration` строит effective-граф каждой существующей целевой службы с

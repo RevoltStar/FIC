@@ -16,7 +16,7 @@
 # Modules
 [module:DC]=Device control settings
 [module:DAC]=Discretionary access control
-[module:AUTH]=Authentication settings
+[module:IDENTITY_ACCESS]=Identity and access management
 [module:OSS]=OS settings
 [module:SYSCTL]=Kernel settings
 [module:NET]=Network settings
@@ -31,9 +31,11 @@
 [module:DAC][policy:sudo_env_reset][description]=Recommended for enhanced security, as environment variables can affect the behavior of utilities run with superuser privileges.
 [module:DAC][submodule:Mode_and_Owner]=File and directory permissions and owners
 [module:DAC][submodule:SudoEdit]=SUDO parameter settings
-[module:AUTH][submodule:PasswordQuality]=Password quality
-[module:AUTH][submodule:PasswordHistory]=Password history
-[module:AUTH][submodule:AuthenticationLockout]=Authentication lockout
+[module:IDENTITY_ACCESS][submodule:PAM]=PAM
+[module:IDENTITY_ACCESS][submodule:SSSD]=SSSD
+[module:IDENTITY_ACCESS][submodule:KERBEROS]=Kerberos
+[module:IDENTITY_ACCESS][submodule:NSS]=NSS
+[module:IDENTITY_ACCESS][submodule:COMPOSITE]=Cross-subsystem policies
 [module:OSS][submodule:DesktopEnvironment]=Desktop environment
 [module:OSS][submodule:DisplayManager]=Display Manager
 [module:OSS][submodule:Fstab]=/etc/fstab mount options
@@ -51,17 +53,17 @@
 [module:DC][policy:block_printers_scanners][description]=Blocks USB printers and scanners unless a more specific allowing rule is assigned to the concrete device.
 [module:DC][policy:block_optical_drives][description]=Blocks optical drives unless a more specific allowing rule is assigned to the concrete device.
 
-# Authentication and PAM
-[module:AUTH][policy:password_min_length]=Minimum password length
-[module:AUTH][policy:password_min_length][description]=Sets minlen in the canonical pam_pwquality configuration. Application fails if pam_pwquality is not active for every configured password service, if another password-quality provider is active, or if a PAM argument overrides the requested value.
-[module:AUTH][policy:password_min_classes]=Minimum password character classes
-[module:AUTH][policy:password_min_classes][description]=Sets minclass in the canonical pam_pwquality configuration after provider and effective PAM graph verification.
-[module:AUTH][policy:password_history_depth]=Password history depth
-[module:AUTH][policy:password_history_depth][description]=Sets remember in the canonical pam_pwhistory configuration. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
-[module:AUTH][policy:failed_authentication_attempts]=Failed PAM authentications before lockout
-[module:AUTH][policy:failed_authentication_attempts][description]=Sets deny in the canonical pam_faillock configuration. All configured authentication services must use one complete pam_faillock topology; pam_tally and pam_tally2 are treated as conflicting providers.
-[module:AUTH][policy:failed_authentication_unlock_time]=Authentication lockout duration
-[module:AUTH][policy:failed_authentication_unlock_time][description]=Sets unlock_time in seconds in the canonical pam_faillock configuration. A value of 0 means that automatic time-based unlocking is disabled.
+# Identity and access: PAM
+[module:IDENTITY_ACCESS][policy:password_min_length]=Minimum password length
+[module:IDENTITY_ACCESS][policy:password_min_length][description]=Sets minlen in the canonical pam_pwquality configuration. Application fails if pam_pwquality is not active for every configured password service, if another password-quality provider is active, or if a PAM argument overrides the requested value.
+[module:IDENTITY_ACCESS][policy:password_min_classes]=Minimum password character classes
+[module:IDENTITY_ACCESS][policy:password_min_classes][description]=Sets minclass in the canonical pam_pwquality configuration after provider and effective PAM graph verification.
+[module:IDENTITY_ACCESS][policy:password_history_depth]=Password history depth
+[module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets remember in the canonical pam_pwhistory configuration. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
+[module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Failed PAM authentications before lockout
+[module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Sets deny in the canonical pam_faillock configuration. All configured authentication services must use one complete pam_faillock topology; pam_tally and pam_tally2 are treated as conflicting providers.
+[module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Authentication lockout duration
+[module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Sets unlock_time in seconds in the canonical pam_faillock configuration. A value of 0 means that automatic time-based unlocking is disabled.
 
 
 # Discretionary access control

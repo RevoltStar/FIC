@@ -554,13 +554,16 @@ PolicyMap init_policyMap(
     cafArr.push_back(std::make_unique<DAC_sudo_require_authentication>(
         platform.sudo, executables));
 
-    //Аутентификация и PAM
-    cafArr.push_back(std::make_unique<AUTH_password_min_length>(platform.pam));
-    cafArr.push_back(std::make_unique<AUTH_password_min_classes>(platform.pam));
-    cafArr.push_back(std::make_unique<AUTH_password_history_depth>(platform.pam));
-    cafArr.push_back(std::make_unique<AUTH_failed_authentication_attempts>(
+    // Identity and access: PAM
+    cafArr.push_back(
+        std::make_unique<PamPasswordMinLengthPolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordMinClassesPolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordHistoryDepthPolicy>(platform.pam));
+    cafArr.push_back(std::make_unique<PamFailedAuthenticationAttemptsPolicy>(
         platform.pam));
-    cafArr.push_back(std::make_unique<AUTH_failed_authentication_unlock_time>(
+    cafArr.push_back(std::make_unique<PamFailedAuthenticationUnlockTimePolicy>(
         platform.pam));
 
     //Настройки ядра (SYSCTL)

@@ -132,7 +132,7 @@ write_conffiles() {
     local package_root="$1"
 
     cat > "$package_root/DEBIAN/conffiles" <<'EOF'
-/opt/fic/config/AUTH.conf
+/opt/fic/config/IDENTITY_ACCESS.conf
 /opt/fic/config/DAC.conf
 /opt/fic/config/DC.conf
 /opt/fic/config/GLOBAL.conf

@@ -23,12 +23,12 @@
 #include "modules/dac/submodules/sudo/DAC_sudo_timeout.h"
 #include "modules/dac/submodules/sudo/DAC_sudo_require_authentication.h"
 
-//Аутентификация и PAM
-#include "modules/auth/submodules/authenticationlockout/AUTH_failed_authentication_attempts.h"
-#include "modules/auth/submodules/authenticationlockout/AUTH_failed_authentication_unlock_time.h"
-#include "modules/auth/submodules/passwordhistory/AUTH_password_history_depth.h"
-#include "modules/auth/submodules/passwordquality/AUTH_password_min_classes.h"
-#include "modules/auth/submodules/passwordquality/AUTH_password_min_length.h"
+// Identity and access: PAM policies
+#include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationAttemptsPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationUnlockTimePolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryDepthPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamPasswordMinClassesPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamPasswordMinLengthPolicy.h"
 
 //Настройки ядра
 #include "modules/sysctl/submodules/fskernelprotection/SYSCTL_fd_limits.h"

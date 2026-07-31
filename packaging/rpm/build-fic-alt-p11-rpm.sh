@@ -472,7 +472,7 @@ write_file_list() {
         path="${path#$package_root}"
         [ -n "$path" ] || continue
         case "$path" in
-            /opt/fic/config/AUTH.conf|/opt/fic/config/DAC.conf|/opt/fic/config/DC.conf|/opt/fic/config/GLOBAL.conf|/opt/fic/config/NET.conf|/opt/fic/config/OSS.conf|/opt/fic/config/SYSCTL.conf)
+            /opt/fic/config/IDENTITY_ACCESS.conf|/opt/fic/config/DAC.conf|/opt/fic/config/DC.conf|/opt/fic/config/GLOBAL.conf|/opt/fic/config/NET.conf|/opt/fic/config/OSS.conf|/opt/fic/config/SYSCTL.conf)
                 printf '%%config(noreplace) %s\n' "$path" >> "$file_list"
                 ;;
             *)

@@ -91,7 +91,7 @@ flowchart TB
 
     subgraph CoreStorage[Состояние системы]
         config["/opt/fic/config"]
-        modules[AUTH, DAC, SYSCTL, OSS, NET, GLOBAL]
+        modules[IDENTITY_ACCESS, DAC, SYSCTL, OSS, NET, GLOBAL]
         logs["/opt/fic/log/&lt;boot_id&gt;/&lt;category&gt;/*.txt"]
         db["/opt/fic/db/devices.db"]
         lockstatus["/opt/fic/lockstatus"]
@@ -428,7 +428,7 @@ PAM-политики разделяют намерение политики, pro
 
 ```mermaid
 flowchart TD
-    authPolicy[AUTH policy] --> profile[PAM platform profile]
+    authPolicy[IDENTITY_ACCESS / PAM policy] --> profile[PAM platform profile]
     profile --> services[target services and search roots]
     services --> graph[PamConfiguration effective include graph]
     graph --> providers[PamProviderInspector capability providers]
@@ -451,6 +451,38 @@ flowchart TD
 альтернативные providers диагностируются, но не мигрируются. PAM service-файлы
 не переписываются: меняется канонический provider-конфиг только после
 доказательства, что он уже effective во всех существующих целевых службах.
+
+Классы identity-модуля разделяют policy metadata и владение системной
+конфигурацией:
+
+```mermaid
+flowchart TD
+    base[IdentityAccessPolicy] --> pamBase[PamPolicy]
+    base --> sssdBase[SssdPolicy]
+    base --> krbBase[KerberosPolicy]
+    base --> nssBase[NssPolicy]
+    base --> composite[CompositePolicy]
+    pamBase --> pamConfig[PamConfiguration / PamOptionFile]
+    sssdBase -. future .-> sssdConfig[SssdConfiguration]
+    krbBase -. future .-> krbConfig[Krb5Configuration]
+    nssBase -. future .-> nssConfig[NssConfiguration]
+    composite --> participants[ConfigurationParticipant list]
+    participants --> prepared[PreparedConfigurationChange list]
+    prepared --> commit[persistent commit all]
+    commit --> verifyPersistent[verify persistent all]
+    verifyPersistent --> activate[runtime activation]
+    activate --> verifyEffective[verify effective all]
+    commit -->|failure| rollback[reverse rollback and verification]
+    verifyPersistent -->|failure| rollback
+    activate -->|failure| rollback
+    verifyEffective -->|failure| rollback
+```
+
+Вложенные `Policy` в composite не используются: только внешний объект в
+`PolicyMap` владеет `moduleConf`, `policyName` и значением. Composite владеет
+подсистемными `ConfigurationParticipant`, и все они готовят изменения до
+первой записи. Координатор является компенсирующей транзакцией, но не заявляет
+crash-atomicity нескольких файлов без transaction journal.
 
 ## 6. Карта модулей и политик
 
@@ -487,15 +519,17 @@ flowchart TB
     ssh --> sshRootLogin[ssh_root_login]
     ssh --> sshPubkeyAuth[ssh_pubkey_auth]
 
-    arr --> auth[AUTH]
-    auth --> passwordQuality[PasswordQuality]
-    passwordQuality --> passwordMinLength[password_min_length]
-    passwordQuality --> passwordMinClasses[password_min_classes]
-    auth --> passwordHistory[PasswordHistory]
-    passwordHistory --> passwordHistoryDepth[password_history_depth]
-    auth --> authenticationLockout[AuthenticationLockout]
-    authenticationLockout --> failedAttempts[failed_authentication_attempts]
-    authenticationLockout --> unlockTime[failed_authentication_unlock_time]
+    arr --> identity[IDENTITY_ACCESS]
+    identity --> pam[PAM]
+    identity -. abstract .-> sssd[SSSD]
+    identity -. abstract .-> kerberos[KERBEROS]
+    identity -. abstract .-> nss[NSS]
+    identity -. abstract .-> composite[COMPOSITE]
+    pam --> passwordMinLength[password_min_length]
+    pam --> passwordMinClasses[password_min_classes]
+    pam --> passwordHistoryDepth[password_history_depth]
+    pam --> failedAttempts[failed_authentication_attempts]
+    pam --> unlockTime[failed_authentication_unlock_time]
 
     arr --> global[GLOBAL]
     global --> systemSettings[SystemSettings]

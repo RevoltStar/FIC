@@ -84,16 +84,51 @@ target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
 add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
 
 add_executable(pam_configuration_tests
-    auth/PamConfigurationTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/auth/pam/PamConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/auth/pam/PamOptionFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/auth/pam/PamProviderInspector.cpp
+    identity_access/PamConfigurationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamProviderInspector.cpp
 )
 target_include_directories(pam_configuration_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
 target_link_libraries(pam_configuration_tests PRIVATE fic-core)
 add_test(NAME pam_configuration_tests COMMAND pam_configuration_tests)
+
+add_executable(identity_configuration_transaction_tests
+    identity_access/ConfigurationTransactionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/composite/ConfigurationTransaction.cpp
+)
+target_include_directories(identity_configuration_transaction_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(
+    NAME identity_configuration_transaction_tests
+    COMMAND identity_configuration_transaction_tests
+)
+
+add_executable(identity_policy_hierarchy_tests
+    identity_access/IdentityPolicyHierarchyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/composite/CompositePolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/composite/ConfigurationTransaction.cpp
+)
+target_include_directories(identity_policy_hierarchy_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(identity_policy_hierarchy_tests PRIVATE
+    fic-core
+    fic-policy
+    Threads::Threads
+)
+add_test(
+    NAME identity_policy_hierarchy_tests
+    COMMAND identity_policy_hierarchy_tests
+)
 
 add_executable(ssh_runtime_tests
     ssh/SshRuntimeTests.cpp
