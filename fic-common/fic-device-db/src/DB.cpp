@@ -2,7 +2,12 @@
 
 #include <fic/core/ExclusivePidLock.h>
 #include <fic/core/Logger.h>
+#include <fic/version/ProductVersion.h>
 
+#include <algorithm>
+#include <ctime>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 
 namespace {
@@ -24,11 +29,439 @@ std::string validatedDatabasePath(const DBOptions& options) {
     }
     return options.databaseFile.string();
 }
+
+bool databaseHasContent(const std::filesystem::path& path) {
+    std::error_code error;
+    return std::filesystem::exists(path, error) && !error &&
+        std::filesystem::file_size(path, error) > 0 && !error;
+}
+
+constexpr const char* SCHEMA_SQL =
+    "CREATE TABLE IF NOT EXISTS devices ("
+    "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "    device_hash TEXT NOT NULL,"
+    "    devpath TEXT,"
+    "    subsystem TEXT NOT NULL,"
+    "    device_type TEXT NOT NULL,"
+    "    parent_id INTEGER,"
+    "    control_level TEXT NOT NULL CHECK(control_level IN ('blocked', 'allowed', 'permanent', 'ignored')),"
+    "    control_explicit BOOLEAN DEFAULT 1,"
+    "    ignore_hierarchy BOOLEAN DEFAULT 0,"
+    "    boot_id TEXT,"
+    "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+    "    last_event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+    "    notes TEXT,"
+    "    FOREIGN KEY (parent_id) REFERENCES devices(id) ON DELETE CASCADE"
+    ");"
+    "CREATE TABLE IF NOT EXISTS device_attributes ("
+    "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "    device_id INTEGER NOT NULL,"
+    "    attribute_name TEXT NOT NULL,"
+    "    attribute_value TEXT,"
+    "    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,"
+    "    UNIQUE(device_id, attribute_name)"
+    ");"
+    "CREATE TABLE IF NOT EXISTS device_events ("
+    "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "    device_id INTEGER NOT NULL,"
+    "    event_type TEXT NOT NULL CHECK(event_type IN ('connect', 'disconnect', 'block', 'allow', 'lock', 'unlock')),"
+    "    event_result TEXT CHECK(event_result IN ('success', 'blocked_by_parent', 'blocked_by_policy', 'error', 'temporary_allowed')),"
+    "    event_details TEXT,"
+    "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+    "    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE"
+    ");"
+    "CREATE TABLE IF NOT EXISTS device_tree_state ("
+    "    id INTEGER PRIMARY KEY CHECK(id = 1),"
+    "    revision INTEGER NOT NULL DEFAULT 0"
+    ");"
+    "INSERT OR IGNORE INTO device_tree_state (id, revision) VALUES (1, 0);"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_insert "
+    "AFTER INSERT ON devices BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_update "
+    "AFTER UPDATE ON devices BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_delete "
+    "AFTER DELETE ON devices BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_insert "
+    "AFTER INSERT ON device_attributes BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_update "
+    "AFTER UPDATE ON device_attributes BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_delete "
+    "AFTER DELETE ON device_attributes BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_insert "
+    "AFTER INSERT ON device_events BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_update "
+    "AFTER UPDATE ON device_events BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;"
+    "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_delete "
+    "AFTER DELETE ON device_events BEGIN "
+    "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
+    "END;";
+
+constexpr const char* INDEX_SQL =
+    "CREATE INDEX IF NOT EXISTS idx_devices_hash ON devices(device_hash);"
+    "CREATE INDEX IF NOT EXISTS idx_devices_devpath ON devices(devpath);"
+    "CREATE INDEX IF NOT EXISTS idx_devices_parent ON devices(parent_id);"
+    "CREATE INDEX IF NOT EXISTS idx_devices_control ON devices(control_level);"
+    "CREATE INDEX IF NOT EXISTS idx_devices_subsystem ON devices(subsystem);";
+
+constexpr const char* BASELINE_DATA_SQL =
+    "INSERT INTO devices (device_hash,devpath,subsystem,device_type,parent_id,"
+    "control_level,control_explicit,ignore_hierarchy,boot_id,notes) "
+    "SELECT 'virtual_computer_root_sha256_placeholder','/','__computer__',"
+    "'computer',NULL,'allowed',1,0,'-1','FIC virtual computer root' "
+    "WHERE NOT EXISTS (SELECT 1 FROM devices WHERE "
+    "device_hash='virtual_computer_root_sha256_placeholder');"
+    "INSERT INTO devices (device_hash,devpath,subsystem,device_type,parent_id,"
+    "control_level,control_explicit,ignore_hierarchy,boot_id,notes) "
+    "SELECT 'virtual_container_cpu_sha256_placeholder','/cpu_list','__cpu__',"
+    "'container_cpu',id,'allowed',1,0,'-1','FIC virtual CPU container' "
+    "FROM devices WHERE device_hash='virtual_computer_root_sha256_placeholder' "
+    "AND NOT EXISTS (SELECT 1 FROM devices WHERE "
+    "device_hash='virtual_container_cpu_sha256_placeholder') LIMIT 1;"
+    "INSERT INTO devices (device_hash,devpath,subsystem,device_type,parent_id,"
+    "control_level,control_explicit,ignore_hierarchy,boot_id,notes) "
+    "SELECT 'virtual_container_memory_sha256_placeholder','/memory_list','__memory__',"
+    "'container_memory',id,'allowed',1,0,'-1','FIC virtual memory container' "
+    "FROM devices WHERE device_hash='virtual_computer_root_sha256_placeholder' "
+    "AND NOT EXISTS (SELECT 1 FROM devices WHERE "
+    "device_hash='virtual_container_memory_sha256_placeholder') LIMIT 1;"
+    "INSERT INTO devices (device_hash,devpath,subsystem,device_type,parent_id,"
+    "control_level,control_explicit,ignore_hierarchy,boot_id,notes) "
+    "SELECT 'virtual_container_board_sha256_placeholder','/board_list','__board__',"
+    "'container_board',id,'allowed',1,0,'-1','FIC virtual board container' "
+    "FROM devices WHERE device_hash='virtual_computer_root_sha256_placeholder' "
+    "AND NOT EXISTS (SELECT 1 FROM devices WHERE "
+    "device_hash='virtual_container_board_sha256_placeholder') LIMIT 1;"
+    "INSERT INTO devices (device_hash,devpath,subsystem,device_type,parent_id,"
+    "control_level,control_explicit,ignore_hierarchy,boot_id,notes) "
+    "SELECT 'virtual_container_udev_sha256_placeholder','/devices','__udev__',"
+    "'container_udev',id,'allowed',1,0,'-1','FIC virtual udev container' "
+    "FROM devices WHERE device_hash='virtual_computer_root_sha256_placeholder' "
+    "AND NOT EXISTS (SELECT 1 FROM devices WHERE "
+    "device_hash='virtual_container_udev_sha256_placeholder') LIMIT 1;"
+    "INSERT INTO devices (device_hash,devpath,subsystem,device_type,parent_id,"
+    "control_level,control_explicit,ignore_hierarchy,boot_id,notes) "
+    "SELECT 'virtual_container_pci_sha256_placeholder','/devices/pci0000:00','__pci__',"
+    "'container_pci',id,'allowed',1,0,'-1','FIC virtual PCI container' "
+    "FROM devices WHERE device_hash='virtual_container_udev_sha256_placeholder' "
+    "AND NOT EXISTS (SELECT 1 FROM devices WHERE "
+    "device_hash='virtual_container_pci_sha256_placeholder') LIMIT 1;";
+
+constexpr const char* LEGACY_CLEANUP_SQL =
+    "DROP TABLE IF EXISTS domain_policies;"
+    "DROP TABLE IF EXISTS lock_history;"
+    "DROP TABLE IF EXISTS system_settings;"
+    "DROP TABLE IF EXISTS temporary_allowances;";
+
+bool executeSql(sqlite3* database, const std::string& sql, std::string& error) {
+    char* message = nullptr;
+    const int result = sqlite3_exec(database, sql.c_str(), nullptr, nullptr, &message);
+    if (result == SQLITE_OK) {
+        return true;
+    }
+    error = message == nullptr ? sqlite3_errmsg(database) : message;
+    sqlite3_free(message);
+    return false;
+}
+
+bool readPragmaInt(sqlite3* database, const char* pragma, int& value, std::string& error) {
+    sqlite3_stmt* statement = nullptr;
+    const std::string sql = std::string("PRAGMA ") + pragma + ";";
+    if (sqlite3_prepare_v2(database, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    const int step = sqlite3_step(statement);
+    if (step != SQLITE_ROW) {
+        error = sqlite3_errmsg(database);
+        sqlite3_finalize(statement);
+        return false;
+    }
+    value = sqlite3_column_int(statement, 0);
+    sqlite3_finalize(statement);
+    return true;
+}
+
+bool hasExpectedApplicationTables(sqlite3* database,
+                                  bool allowLegacyTables,
+                                  std::string& error) {
+    constexpr const char* sql =
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%';";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    std::set<std::string> actual;
+    int step = SQLITE_OK;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
+        const unsigned char* name = sqlite3_column_text(statement, 0);
+        if (name != nullptr) {
+            actual.emplace(reinterpret_cast<const char*>(name));
+        }
+    }
+    sqlite3_finalize(statement);
+    if (step != SQLITE_DONE) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    const std::set<std::string> required = {
+        "devices", "device_attributes", "device_events", "device_tree_state"
+    };
+    std::set<std::string> allowed = required;
+    if (allowLegacyTables) {
+        allowed.insert({
+            "domain_policies", "lock_history", "system_settings",
+            "temporary_allowances"
+        });
+    }
+    if (!std::includes(actual.begin(), actual.end(),
+                       required.begin(), required.end()) ||
+        !std::includes(allowed.begin(), allowed.end(),
+                       actual.begin(), actual.end())) {
+        error = "device database contains a missing or unknown application table";
+        return false;
+    }
+    return true;
+}
+
+bool tableHasExactColumns(sqlite3* database,
+                          const char* table,
+                          const std::vector<std::string>& expected,
+                          std::string& error) {
+    const std::string sql = std::string("PRAGMA table_info('") + table + "');";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    std::vector<std::string> actual;
+    int step = SQLITE_OK;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
+        const unsigned char* name = sqlite3_column_text(statement, 1);
+        if (name == nullptr) {
+            sqlite3_finalize(statement);
+            error = std::string("invalid column metadata for ") + table;
+            return false;
+        }
+        actual.emplace_back(reinterpret_cast<const char*>(name));
+    }
+    if (step != SQLITE_DONE) {
+        error = sqlite3_errmsg(database);
+        sqlite3_finalize(statement);
+        return false;
+    }
+    sqlite3_finalize(statement);
+    if (std::set<std::string>(actual.begin(), actual.end()) !=
+        std::set<std::string>(expected.begin(), expected.end())) {
+        error = std::string("device database table has incompatible columns: ") + table;
+        return false;
+    }
+    return true;
+}
+
+bool hasExpectedTableLayout(sqlite3* database,
+                            bool allowLegacyTables,
+                            std::string& error) {
+    return hasExpectedApplicationTables(database, allowLegacyTables, error) &&
+        tableHasExactColumns(database, "devices", {
+            "id", "device_hash", "devpath", "subsystem", "device_type",
+            "parent_id", "control_level", "control_explicit",
+            "ignore_hierarchy", "boot_id", "created_at", "last_event_at",
+            "notes"
+        }, error) &&
+        tableHasExactColumns(database, "device_attributes", {
+            "id", "device_id", "attribute_name", "attribute_value"
+        }, error) &&
+        tableHasExactColumns(database, "device_events", {
+            "id", "device_id", "event_type", "event_result",
+            "event_details", "created_at"
+        }, error) &&
+        tableHasExactColumns(database, "device_tree_state", {
+            "id", "revision"
+        }, error);
+}
+
+bool hasExpectedIndexesAndTriggers(sqlite3* database, std::string& error) {
+    constexpr const char* sql =
+        "SELECT "
+        "sum(CASE WHEN type='index' AND name IN ("
+        "'idx_devices_hash','idx_devices_devpath','idx_devices_parent',"
+        "'idx_devices_control','idx_devices_subsystem') THEN 1 ELSE 0 END),"
+        "sum(CASE WHEN type='trigger' AND name IN ("
+        "'device_tree_revision_devices_insert',"
+        "'device_tree_revision_devices_update',"
+        "'device_tree_revision_devices_delete',"
+        "'device_tree_revision_attributes_insert',"
+        "'device_tree_revision_attributes_update',"
+        "'device_tree_revision_attributes_delete',"
+        "'device_tree_revision_events_insert',"
+        "'device_tree_revision_events_update',"
+        "'device_tree_revision_events_delete') THEN 1 ELSE 0 END) "
+        "FROM sqlite_master;";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    const bool valid = sqlite3_step(statement) == SQLITE_ROW &&
+        sqlite3_column_int(statement, 0) == 5 &&
+        sqlite3_column_int(statement, 1) == 9;
+    sqlite3_finalize(statement);
+    if (!valid) {
+        error = "device database is missing required indexes or revision triggers";
+    }
+    return valid;
+}
+
+bool hasRequiredBaselineRows(sqlite3* database, std::string& error) {
+    constexpr const char* sql =
+        "SELECT count(*) FROM devices d WHERE "
+        "(d.device_hash='virtual_computer_root_sha256_placeholder' "
+        " AND d.devpath='/' AND d.subsystem='__computer__' "
+        " AND d.device_type='computer' AND d.parent_id IS NULL) OR "
+        "(d.device_hash='virtual_container_cpu_sha256_placeholder' "
+        " AND d.devpath='/cpu_list' AND d.subsystem='__cpu__' "
+        " AND d.device_type='container_cpu' AND d.parent_id=(SELECT id FROM devices "
+        " WHERE device_hash='virtual_computer_root_sha256_placeholder' LIMIT 1)) OR "
+        "(d.device_hash='virtual_container_memory_sha256_placeholder' "
+        " AND d.devpath='/memory_list' AND d.subsystem='__memory__' "
+        " AND d.device_type='container_memory' AND d.parent_id=(SELECT id FROM devices "
+        " WHERE device_hash='virtual_computer_root_sha256_placeholder' LIMIT 1)) OR "
+        "(d.device_hash='virtual_container_board_sha256_placeholder' "
+        " AND d.devpath='/board_list' AND d.subsystem='__board__' "
+        " AND d.device_type='container_board' AND d.parent_id=(SELECT id FROM devices "
+        " WHERE device_hash='virtual_computer_root_sha256_placeholder' LIMIT 1)) OR "
+        "(d.device_hash='virtual_container_udev_sha256_placeholder' "
+        " AND d.devpath='/devices' AND d.subsystem='__udev__' "
+        " AND d.device_type='container_udev' AND d.parent_id=(SELECT id FROM devices "
+        " WHERE device_hash='virtual_computer_root_sha256_placeholder' LIMIT 1)) OR "
+        "(d.device_hash='virtual_container_pci_sha256_placeholder' "
+        " AND d.devpath='/devices/pci0000:00' AND d.subsystem='__pci__' "
+        " AND d.device_type='container_pci' AND d.parent_id=(SELECT id FROM devices "
+        " WHERE device_hash='virtual_container_udev_sha256_placeholder' LIMIT 1));";
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    const bool valid = sqlite3_step(statement) == SQLITE_ROW &&
+        sqlite3_column_int(statement, 0) == 6;
+    sqlite3_finalize(statement);
+    if (!valid) {
+        error = "device database is missing the canonical virtual root hierarchy";
+    }
+    return valid;
+}
+
+bool integrityChecksPass(sqlite3* database, std::string& error) {
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, "PRAGMA quick_check;", -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    const bool quickOk = sqlite3_step(statement) == SQLITE_ROW &&
+        std::string(reinterpret_cast<const char*>(sqlite3_column_text(statement, 0))) == "ok";
+    sqlite3_finalize(statement);
+    if (!quickOk) {
+        error = "SQLite quick_check failed";
+        return false;
+    }
+    if (sqlite3_prepare_v2(database, "PRAGMA foreign_key_check;", -1, &statement, nullptr) != SQLITE_OK) {
+        error = sqlite3_errmsg(database);
+        return false;
+    }
+    const bool foreignKeysOk = sqlite3_step(statement) == SQLITE_DONE;
+    sqlite3_finalize(statement);
+    if (!foreignKeysOk) {
+        error = "SQLite foreign_key_check failed";
+    }
+    return foreignKeysOk;
+}
+
+bool backupDatabase(sqlite3* source,
+                    const std::filesystem::path& backupFile,
+                    std::string& error) {
+    struct stat existing {};
+    if (::lstat(backupFile.c_str(), &existing) == 0 || errno != ENOENT) {
+        error = "refusing to overwrite an existing SQLite backup: " +
+            backupFile.string();
+        return false;
+    }
+    sqlite3* destination = nullptr;
+    if (sqlite3_open_v2(backupFile.c_str(), &destination,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_EXCLUSIVE,
+                        nullptr) != SQLITE_OK) {
+        error = destination == nullptr ? "could not create SQLite backup" : sqlite3_errmsg(destination);
+        if (destination != nullptr) {
+            sqlite3_close(destination);
+        }
+        return false;
+    }
+    sqlite3_backup* backup = sqlite3_backup_init(destination, "main", source, "main");
+    if (backup == nullptr) {
+        error = sqlite3_errmsg(destination);
+        sqlite3_close(destination);
+        return false;
+    }
+    const int step = sqlite3_backup_step(backup, -1);
+    const int finish = sqlite3_backup_finish(backup);
+    const bool ok = step == SQLITE_DONE && finish == SQLITE_OK;
+    if (!ok) {
+        error = sqlite3_errmsg(destination);
+    }
+    sqlite3_close(destination);
+    if (!ok) {
+        std::error_code removeError;
+        std::filesystem::remove(backupFile, removeError);
+        return false;
+    }
+    if (::chmod(backupFile.c_str(), 0640) != 0) {
+        error = "could not set SQLite backup permissions: " +
+            std::string(std::strerror(errno));
+        return false;
+    }
+    const int backupFd = ::open(backupFile.c_str(), O_RDONLY | O_CLOEXEC);
+    if (backupFd < 0 || ::fsync(backupFd) != 0) {
+        error = "could not fsync SQLite backup: " +
+            std::string(std::strerror(errno));
+        if (backupFd >= 0) ::close(backupFd);
+        return false;
+    }
+    ::close(backupFd);
+    const int directoryFd = ::open(
+        backupFile.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (directoryFd < 0 || ::fsync(directoryFd) != 0) {
+        error = "could not fsync SQLite backup directory: " +
+            std::string(std::strerror(errno));
+        if (directoryFd >= 0) ::close(directoryFd);
+        return false;
+    }
+    ::close(directoryFd);
+    return true;
+}
 } // namespace
 
 DB::DB(DBOptions options)
     : db_path(validatedDatabasePath(options)),
       db(nullptr),
+      databaseHadContent_(databaseHasContent(options.databaseFile)),
       lock_(std::make_unique<ExclusivePidLock>(options.lockFile.string(),
                                                options.lockDebugLogFile.string(),
                                                options.lockDebugEnabled)) {
@@ -313,120 +746,182 @@ DeviceInfo DB::resultToDeviceInfo(sqlite3_stmt* stmt) {
     return device;
 }
 
-// В методе initializeDatabase:
 bool DB::initializeDatabase() {
     log("Начало инициализации БД, PID: " + std::to_string(getpid()), logLevel::TRACE);
-    const char* schema_sql =
-        "PRAGMA foreign_keys = ON;"
-        "PRAGMA journal_mode = WAL;"
-        "PRAGMA synchronous = NORMAL;"
-
-        "CREATE TABLE IF NOT EXISTS devices ("
-        "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "    device_hash TEXT NOT NULL,"
-        "    devpath TEXT,"
-        "    subsystem TEXT NOT NULL,"
-        "    device_type TEXT NOT NULL,"
-        "    parent_id INTEGER,"
-        "    control_level TEXT NOT NULL CHECK(control_level IN ('blocked', 'allowed', 'permanent', 'ignored')),"
-        "    control_explicit BOOLEAN DEFAULT 1,"
-        "    ignore_hierarchy BOOLEAN DEFAULT 0,"
-        "    boot_id TEXT,"
-        "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-        "    last_event_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-        "    notes TEXT,"
-        "    FOREIGN KEY (parent_id) REFERENCES devices(id) ON DELETE CASCADE"
-        ");"
-
-        "CREATE TABLE IF NOT EXISTS device_attributes ("
-        "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "    device_id INTEGER NOT NULL,"
-        "    attribute_name TEXT NOT NULL,"
-        "    attribute_value TEXT,"
-        "    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,"
-        "    UNIQUE(device_id, attribute_name)"
-        ");"
-
-        "CREATE TABLE IF NOT EXISTS device_events ("
-        "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "    device_id INTEGER NOT NULL,"
-        "    event_type TEXT NOT NULL CHECK(event_type IN ('connect', 'disconnect', 'block', 'allow', 'lock', 'unlock')),"
-        "    event_result TEXT CHECK(event_result IN ('success', 'blocked_by_parent', 'blocked_by_policy', 'error', 'temporary_allowed')),"
-        "    event_details TEXT,"
-        "    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
-        "    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE"
-        ");"
-
-        "CREATE TABLE IF NOT EXISTS device_tree_state ("
-        "    id INTEGER PRIMARY KEY CHECK(id = 1),"
-        "    revision INTEGER NOT NULL DEFAULT 0"
-        ");"
-        "INSERT OR IGNORE INTO device_tree_state (id, revision) VALUES (1, 0);"
-
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_insert "
-        "AFTER INSERT ON devices BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_update "
-        "AFTER UPDATE ON devices BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_delete "
-        "AFTER DELETE ON devices BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_insert "
-        "AFTER INSERT ON device_attributes BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_update "
-        "AFTER UPDATE ON device_attributes BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_attributes_delete "
-        "AFTER DELETE ON device_attributes BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_insert "
-        "AFTER INSERT ON device_events BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_update "
-        "AFTER UPDATE ON device_events BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;"
-        "CREATE TRIGGER IF NOT EXISTS device_tree_revision_events_delete "
-        "AFTER DELETE ON device_events BEGIN "
-        "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
-        "END;";
-
-    char* err_msg = nullptr;
-    int rc = sqlite3_exec(db, schema_sql, nullptr, nullptr, &err_msg);
-
-    if (rc != SQLITE_OK) {
-        this->log("Ошибка инициализации БД:" + std::string(err_msg),logLevel::FATAL);
-        sqlite3_free(err_msg);
-        return false;
+    if (!databaseHadContent_) {
+        const std::string versionSql =
+            std::string("PRAGMA application_id=") +
+                std::to_string(fic::version::DEVICE_DB_APPLICATION_ID) + ";" +
+            "PRAGMA user_version=" +
+                std::to_string(fic::version::DEVICE_DB_SCHEMA_VERSION) + ";";
+        if (!executeSql(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", lastError_) ||
+            !executeSql(db, "BEGIN IMMEDIATE;", lastError_) ||
+            !executeSql(db, SCHEMA_SQL, lastError_) ||
+            !executeSql(db, INDEX_SQL, lastError_) ||
+            !executeSql(db, BASELINE_DATA_SQL, lastError_) ||
+            !executeSql(db, versionSql, lastError_) ||
+            !executeSql(db, "COMMIT;", lastError_)) {
+            std::string rollbackError;
+            executeSql(db, "ROLLBACK;", rollbackError);
+            log("Failed to create device database schema: " + lastError_, logLevel::FATAL);
+            return false;
+        }
+        databaseHadContent_ = true;
     }
 
-    // Создаем индексы
-    const char* index_sql =
-        "CREATE INDEX IF NOT EXISTS idx_devices_hash ON devices(device_hash);"
-        "CREATE INDEX IF NOT EXISTS idx_devices_devpath ON devices(devpath);"
-        "CREATE INDEX IF NOT EXISTS idx_devices_parent ON devices(parent_id);"
-        "CREATE INDEX IF NOT EXISTS idx_devices_control ON devices(control_level);"
-        "CREATE INDEX IF NOT EXISTS idx_devices_subsystem ON devices(subsystem);";
-
-    rc = sqlite3_exec(db, index_sql, nullptr, nullptr, &err_msg);
-    if (rc != SQLITE_OK) {
-        this->log("Ошибка создания индексов БД: " + std::string(err_msg),logLevel::FATAL);
-        sqlite3_free(err_msg);
+    if (!verifyDatabaseSchemaMetadata(lastError_)) {
+        log("Device database schema verification failed: " + lastError_, logLevel::FATAL);
         return false;
     }
-
+    if (!executeSql(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", lastError_)) {
+        log("Failed to configure device database runtime pragmas: " + lastError_, logLevel::FATAL);
+        return false;
+    }
     return true;
+}
+
+bool DB::verifyDatabaseSchemaMetadata(std::string& error) {
+    int applicationId = 0;
+    int schemaVersion = 0;
+    if (!readPragmaInt(db, "application_id", applicationId, error) ||
+        !readPragmaInt(db, "user_version", schemaVersion, error)) {
+        return false;
+    }
+    if (applicationId != static_cast<int>(fic::version::DEVICE_DB_APPLICATION_ID)) {
+        error = applicationId == 0
+            ? "unversioned device database requires offline migration"
+            : "database application_id does not identify a FIC device database";
+        return false;
+    }
+    if (schemaVersion != fic::version::DEVICE_DB_SCHEMA_VERSION) {
+        error = schemaVersion > fic::version::DEVICE_DB_SCHEMA_VERSION
+            ? "device database schema is newer than this binary"
+            : "device database schema requires offline migration";
+        return false;
+    }
+    return hasExpectedTableLayout(db, false, error) &&
+        hasExpectedIndexesAndTriggers(db, error) &&
+        hasRequiredBaselineRows(db, error);
+}
+
+bool DB::verifyDatabaseSchema(std::string& error) {
+    return verifyDatabaseSchemaMetadata(error) && integrityChecksPass(db, error);
+}
+
+bool DB::migrateDatabase(const std::filesystem::path& backupDirectory,
+                         DBMigrationResult& result,
+                         std::string& error,
+                         const std::function<bool(
+                             const std::filesystem::path&, std::string&)>&
+                             backupReady) {
+    result = {};
+    error.clear();
+    if (!databaseHadContent_) {
+        if (!initializeDatabase() || !verifyDatabaseSchema(error)) {
+            if (error.empty()) {
+                error = lastError_;
+            }
+            return false;
+        }
+        result.fromVersion = 0;
+        result.toVersion = fic::version::DEVICE_DB_SCHEMA_VERSION;
+        result.migrated = true;
+        return true;
+    }
+    int applicationId = 0;
+    int schemaVersion = 0;
+    if (!readPragmaInt(db, "application_id", applicationId, error) ||
+        !readPragmaInt(db, "user_version", schemaVersion, error)) {
+        return false;
+    }
+    result.fromVersion = schemaVersion;
+    result.toVersion = fic::version::DEVICE_DB_SCHEMA_VERSION;
+
+    if (applicationId != 0 &&
+        applicationId != static_cast<int>(fic::version::DEVICE_DB_APPLICATION_ID)) {
+        error = "database application_id does not identify a FIC device database";
+        return false;
+    }
+    if (schemaVersion > fic::version::DEVICE_DB_SCHEMA_VERSION) {
+        error = "downgrade refused: device database schema is newer than this binary";
+        return false;
+    }
+    if (schemaVersion == fic::version::DEVICE_DB_SCHEMA_VERSION) {
+        if (applicationId != static_cast<int>(fic::version::DEVICE_DB_APPLICATION_ID)) {
+            error = "current schema version has an invalid application_id";
+            return false;
+        }
+        return verifyDatabaseSchema(error);
+    }
+    if (schemaVersion != 0 || !hasExpectedTableLayout(db, true, error) ||
+        !integrityChecksPass(db, error)) {
+        if (error.empty()) {
+            error = "no migration path exists for the device database";
+        }
+        return false;
+    }
+    if (backupDirectory.empty() || !backupDirectory.is_absolute() ||
+        backupDirectory.lexically_normal() != backupDirectory) {
+        error = "database backup directory must be absolute and normalized";
+        return false;
+    }
+
+    std::error_code filesystemError;
+    std::filesystem::create_directories(backupDirectory, filesystemError);
+    if (filesystemError) {
+        error = "could not create database backup directory: " + filesystemError.message();
+        return false;
+    }
+    struct stat backupDirectoryInfo {};
+    if (::lstat(backupDirectory.c_str(), &backupDirectoryInfo) != 0 ||
+        !S_ISDIR(backupDirectoryInfo.st_mode)) {
+        error = "database backup path is not a real directory";
+        return false;
+    }
+    if (::chmod(backupDirectory.c_str(), 02750) != 0) {
+        error = "could not set database backup directory permissions: " +
+            std::string(std::strerror(errno));
+        return false;
+    }
+
+    result.backupFile = backupDirectory /
+        (std::filesystem::path(db_path).filename().string() + "-v" +
+         std::to_string(schemaVersion) + "-" +
+         std::to_string(static_cast<long long>(std::time(nullptr))) + "-" +
+         std::to_string(::getpid()) + ".db");
+    if (!backupDatabase(db, result.backupFile, error)) {
+        return false;
+    }
+    if (backupReady && !backupReady(result.backupFile, error)) {
+        return false;
+    }
+
+    const std::string versionSql =
+        std::string("PRAGMA application_id=") +
+            std::to_string(fic::version::DEVICE_DB_APPLICATION_ID) + ";" +
+        "PRAGMA user_version=" +
+            std::to_string(fic::version::DEVICE_DB_SCHEMA_VERSION) + ";";
+    if (!executeSql(db, "BEGIN IMMEDIATE;", error) ||
+        !executeSql(db, SCHEMA_SQL, error) ||
+        !executeSql(db, INDEX_SQL, error) ||
+        !executeSql(db, BASELINE_DATA_SQL, error) ||
+        !executeSql(db, LEGACY_CLEANUP_SQL, error) ||
+        !executeSql(db, versionSql, error) ||
+        !executeSql(db, "COMMIT;", error)) {
+        std::string rollbackError;
+        executeSql(db, "ROLLBACK;", rollbackError);
+        return false;
+    }
+    if (!verifyDatabaseSchema(error)) {
+        return false;
+    }
+    result.migrated = true;
+    databaseHadContent_ = true;
+    return true;
+}
+
+const std::string& DB::lastError() const {
+    return lastError_;
 }
 
 std::int64_t DB::getDeviceTreeRevision()

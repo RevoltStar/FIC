@@ -8,6 +8,7 @@ Components:
 - fic-dick: device database collector
 
 Shared libraries:
+- fic-common/fic-version: compiled product, IPC, configuration, and database schema versions
 - fic-common/fic-ipc: shared IPC client/protocol helpers used by fic, fic-cli, fic-gui, and fic-session-agent
 - fic-common/fic-core: shared low-level utilities used by fic, fic-dick, and fic-device-db
 - fic-common/fic-device-db: shared SQLite device database access layer used by fic and fic-dick
@@ -48,3 +49,11 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
   profile's `executables` registry are verified against the `dpkg` or RPM
   database and atomically refreshed. Normal daemon runtime never accepts a new
   hash.
+
+Upgrade contract:
+- Product versions are Semantic Versions embedded at build time.
+- Administrative IPC, policy configuration, and the device SQLite database
+  have independent schema/API versions.
+- Offline migrations, durable backups, downgrade refusal, package lifecycle,
+  and recovery rules are documented in
+  [`docs/upgrade-contract.md`](docs/upgrade-contract.md).

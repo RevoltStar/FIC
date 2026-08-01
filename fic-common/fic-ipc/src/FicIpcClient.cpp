@@ -209,9 +209,14 @@ Client::Client(std::string socketPath, std::chrono::milliseconds timeout)
       timeout_(timeout) {}
 
 json Client::request(const json& payload) const {
+    if (!payload.is_object()) {
+        return make_error_response("IPC request payload must be a JSON object");
+    }
+    json versionedPayload = payload;
+    versionedPayload["api_version"] = API_VERSION;
     std::string requestText;
     try {
-        requestText = payload.dump();
+        requestText = versionedPayload.dump();
     } catch (const std::exception& exception) {
         return make_error_response("could not serialize IPC request: " +
             std::string(exception.what()));
@@ -244,7 +249,18 @@ json Client::request(const json& payload) const {
     }
 
     try {
-        return json::parse(responseText);
+        json response = json::parse(responseText);
+        const bool supportedApiVersion = response.is_object() &&
+            response.contains("api_version") &&
+            ((response["api_version"].is_number_unsigned() &&
+              response["api_version"].get<std::uint64_t>() ==
+                  static_cast<std::uint64_t>(API_VERSION)) ||
+             (response["api_version"].is_number_integer() &&
+              response["api_version"].get<std::int64_t>() == API_VERSION));
+        if (!supportedApiVersion) {
+            return make_error_response("daemon response has an unsupported IPC API version");
+        }
+        return response;
     } catch (const std::exception& exception) {
         const std::string raw = responseText.substr(0, 512);
         return make_error_response("invalid daemon response: " +

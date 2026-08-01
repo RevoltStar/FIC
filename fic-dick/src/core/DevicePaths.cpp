@@ -28,7 +28,8 @@ DevicePaths DevicePaths::fromProductPaths(const fic::core::FicProductPaths& path
         paths.deviceDatabaseFile,
         paths.deviceDatabaseLockFile,
         paths.lockDebugLogFile,
-        paths.logDir
+        paths.logDir,
+        paths.stateDir
     };
 }
 
@@ -36,7 +37,8 @@ bool DevicePaths::validate(std::string& error) const {
     if (!validAbsolutePath(databaseFile) ||
         !validAbsolutePath(databaseLockFile) ||
         !validAbsolutePath(lockDebugLogFile) ||
-        !validAbsolutePath(logDir)) {
+        !validAbsolutePath(logDir) ||
+        !validAbsolutePath(stateDir)) {
         error = "device paths must be absolute and lexically normalized";
         return false;
     }

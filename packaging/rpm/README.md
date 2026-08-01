@@ -32,11 +32,11 @@ container. The resulting daemon validates `ID=altlinux` and
 - `/opt/fic/bin/fic-udevadm-trigger`
 - `/opt/fic/config`
 - `/opt/fic/db`
-- `/opt/fic/share/devices.seed.db`
 - `/opt/fic/image`
 - `/opt/fic/lang`
 - `/opt/fic/log`
 - `/opt/fic/notify`
+- `/opt/fic/state`
 - `/usr/lib/systemd/system/*` from `fic/src/scripts/service`
 - `/etc/udev/rules.d/*` from `fic/src/scripts/udev`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
@@ -80,8 +80,8 @@ During installation each package:
 
 - creates the system group `fic` if it does not already exist;
 - preserves `/opt/fic/config/*.conf` as `%config(noreplace)` files;
-- installs the seed database as `/opt/fic/share/devices.seed.db`;
-- creates `/opt/fic/db/devices.db` from the seed only when the working database does not yet exist;
+- initializes a missing `/opt/fic/db/devices.db` directly at the current schema
+  through the offline maintenance command;
 - creates `/opt/fic/lockstatus` and `/opt/fic/db/commandhash.txt` only when they do not yet exist;
 - applies `root:fic` recursively to `/opt/fic`;
 - applies `2750` to directories under `/opt/fic` so the group is inherited and
@@ -92,6 +92,23 @@ During installation each package:
 Members of `fic` mutate configuration and device state through the two
 administrative sockets. Direct access to configuration, database and binary
 files is read-only.
+
+## Upgrade lifecycle
+
+Package versions must be Semantic Versions and are embedded through
+`FIC_PRODUCT_VERSION`. The `fic-dick` and `fic` `%pre` actions stop active
+daemons before either package replaces its executable payload. The `fic`
+`%post` action then resumes or creates `/opt/fic/state/upgrade.journal`, backs up and migrates all policy
+configs, performs the SQLite migration through `fic-dick`, commits the journal,
+refreshes trusted command hashes, then starts and health-checks both
+administrative daemons. Migration, trust, start, and health-check failures are
+fatal; optional tmpfiles/udev refreshes remain best-effort.
+
+Downgrade is intentionally rejected. Normal removal disables services, leaves
+configs to RPM `%config` semantics, and never explicitly deletes the working
+database, journal, logs, or backups.
+The complete recovery and rollback policy is in
+[`docs/upgrade-contract.md`](../../docs/upgrade-contract.md).
 
 The `fic` package runs `fic --trust-sync-platform` before enabling services and
 installs the ALT-native `/usr/lib/rpm/fic-trust-sync.filetrigger`. ALT invokes

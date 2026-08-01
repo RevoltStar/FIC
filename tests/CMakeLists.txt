@@ -42,7 +42,7 @@ add_executable(device_tree_revision_tests
     device-control/DeviceTreeRevisionTests.cpp
 )
 target_compile_definitions(device_tree_revision_tests PRIVATE
-    FIC_TEST_DEVICE_SEED_DB="${CMAKE_SOURCE_DIR}/fic/src/scripts/db/devices.db"
+    FIC_TEST_LEGACY_DEVICE_DB="${CMAKE_SOURCE_DIR}/fic/src/scripts/db/devices.db"
 )
 target_link_libraries(device_tree_revision_tests PRIVATE fic-device-db)
 add_test(NAME device_tree_revision_tests COMMAND device_tree_revision_tests)
@@ -226,3 +226,13 @@ target_include_directories(package_trust_selection_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
 add_test(NAME package_trust_selection_tests COMMAND package_trust_selection_tests)
+
+add_executable(upgrade_contract_tests upgrade/UpgradeContractTests.cpp)
+target_compile_definitions(upgrade_contract_tests PRIVATE
+    FIC_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+target_link_libraries(upgrade_contract_tests PRIVATE
+    fic-core
+    fic-device-db
+)
+add_test(NAME upgrade_contract_tests COMMAND upgrade_contract_tests)

@@ -1,0 +1,16 @@
+#ifndef FIC_PRODUCT_VERSION_H
+#define FIC_PRODUCT_VERSION_H
+
+#include <cstdint>
+
+namespace fic::version {
+
+inline constexpr const char* PRODUCT_VERSION = "@FIC_PRODUCT_VERSION@";
+inline constexpr int IPC_API_VERSION = 1;
+inline constexpr int CONFIG_SCHEMA_VERSION = 1;
+inline constexpr int DEVICE_DB_SCHEMA_VERSION = 1;
+inline constexpr std::uint32_t DEVICE_DB_APPLICATION_ID = 0x46494344U; // "FICD"
+
+} // namespace fic::version
+
+#endif // FIC_PRODUCT_VERSION_H

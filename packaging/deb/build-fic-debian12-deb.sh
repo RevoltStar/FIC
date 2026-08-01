@@ -328,6 +328,31 @@ EOF
     chmod 0755 "$package_root/DEBIAN/preinst"
 }
 
+write_fic_preinst() {
+    local package_root="$1"
+
+    cat > "$package_root/DEBIAN/preinst" <<'EOF'
+#!/bin/sh
+set -e
+
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd --system fic
+fi
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    for unit in fic.service fic-device.service fic-notify.service; do
+        if systemctl is-active --quiet "$unit"; then
+            systemctl stop "$unit"
+        fi
+    done
+fi
+
+exit 0
+EOF
+
+    chmod 0755 "$package_root/DEBIAN/preinst"
+}
+
 write_common_postinst() {
     local package_root="$1"
 
@@ -340,11 +365,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/share
-
-    if [ ! -f /opt/fic/db/devices.db ] && [ -f /opt/fic/share/devices.seed.db ]; then
-        cp /opt/fic/share/devices.seed.db /opt/fic/db/devices.db
-    fi
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/state
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus
@@ -383,11 +404,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/share
-
-    if [ ! -f /opt/fic/db/devices.db ] && [ -f /opt/fic/share/devices.seed.db ]; then
-        cp /opt/fic/share/devices.seed.db /opt/fic/db/devices.db
-    fi
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus
@@ -426,11 +443,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/share
-
-    if [ ! -f /opt/fic/db/devices.db ] && [ -f /opt/fic/share/devices.seed.db ]; then
-        cp /opt/fic/share/devices.seed.db /opt/fic/db/devices.db
-    fi
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus
@@ -449,7 +462,7 @@ if [ -d /opt/fic ]; then
     fi
 fi
 
-if command -v systemctl >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
 fi
 
@@ -484,11 +497,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/share
-
-    if [ ! -f /opt/fic/db/devices.db ] && [ -f /opt/fic/share/devices.seed.db ]; then
-        cp /opt/fic/share/devices.seed.db /opt/fic/db/devices.db
-    fi
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus
@@ -509,6 +518,27 @@ fi
 
 ln -sfn "$target_path" "/bin/$command_name"
 
+unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
+mkdir -p /opt/fic/state
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    for unit in fic.service fic-device.service fic-notify.service; do
+        if systemctl is-active --quiet "\$unit"; then
+            systemctl stop "\$unit"
+        fi
+    done
+fi
+
+/opt/fic/bin/fic --maintenance begin-upgrade
+/opt/fic/bin/fic --maintenance migrate-config
+/opt/fic/bin/fic-dick --maintenance migrate-db
+/opt/fic/bin/fic --maintenance commit-upgrade
+
+chown -R root:fic /opt/fic
+find /opt/fic -type d -exec chmod 2750 {} \;
+find /opt/fic -type f -exec chmod 0640 {} \;
+find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+
 if [ -x /opt/fic/bin/fic ]; then
     /opt/fic/bin/fic --trust-sync-platform
 fi
@@ -517,12 +547,16 @@ if command -v systemd-tmpfiles >/dev/null 2>&1; then
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf || true
 fi
 
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload || true
-    systemctl enable --now fic.service || true
-    systemctl enable --now fic-device.service || true
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable --now fic.service
+    systemctl enable --now fic-device.service
     systemctl enable --now fic_get_device_udev_info.service || true
-    systemctl enable --now fic-notify.service || true
+    systemctl enable --now fic-notify.service
+    systemctl is-active --quiet fic.service
+    systemctl is-active --quiet fic-device.service
+    /opt/fic/bin/fic --maintenance wait-daemon 10
+    /opt/fic/bin/fic-dick wait-daemon 10
 fi
 
 if command -v udevadm >/dev/null 2>&1; then
@@ -653,7 +687,7 @@ EOF
 build_project() {
     local source_dir="$1"
     local build_dir="$2"
-    local cmake_args=(-DCMAKE_BUILD_TYPE=Release)
+    local cmake_args=(-DCMAKE_BUILD_TYPE=Release "-DFIC_PRODUCT_VERSION=$PACKAGE_VERSION")
 
     if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
         cmake_args+=("-DFIC_TARGET_PLATFORM=$FIC_PACKAGING_TARGET_PLATFORM")
@@ -839,7 +873,7 @@ build_fic_dick_package() {
         "$binary_depends" \
         "Free Integrity Control device collector binary"
 
-    write_common_preinst "$package_root"
+    write_fic_preinst "$package_root"
     write_fic_dick_postinst "$package_root"
     write_fic_dick_prerm "$package_root"
 
@@ -938,7 +972,7 @@ build_fic_package() {
         "Free Integrity Control daemon package with runtime data" \
         "fic-session-agent (= ${PACKAGE_VERSION})"
 
-    write_common_preinst "$package_root"
+    write_fic_preinst "$package_root"
     write_conffiles "$package_root"
     write_platform_trust_triggers "$package_root" "$FIC_BUILD_DIR/fic"
     write_system_integration_symlink_postinst "$package_root" "fic" "/opt/fic/bin/fic"

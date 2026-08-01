@@ -103,7 +103,10 @@ fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 ## IPC-протокол
 
 Клиент открывает одно `AF_UNIX/SOCK_SEQPACKET`-соединение на запрос и отправляет
-JSON одним пакетом без завершающего перевода строки. Размер запроса ограничен
+JSON одним пакетом без завершающего перевода строки. Каждый запрос обязан
+содержать целочисленное `"api_version":1`; клиент также требует ту же версию в
+ответе. Несовпадающая или отсутствующая версия отклоняется до маршрутизации
+команды. Размер запроса ограничен
 64 КиБ. JSON-ответ размером до 1 МиБ передается последовательностью пакетов с
 16-байтным заголовком `magic/total-size/offset/chunk-size` в network byte order.
 Общий клиент `fic::ipc::Client` скрывает фрейминг от CLI и GUI.
@@ -120,13 +123,13 @@ JSON одним пакетом без завершающего перевода 
 Базовый успешный ответ:
 
 ```json
-{"ok":true,"message":"OK"}
+{"ok":true,"message":"OK","api_version":1}
 ```
 
 Базовый ответ с ошибкой:
 
 ```json
-{"ok":false,"message":"error text"}
+{"ok":false,"message":"error text","api_version":1}
 ```
 
 ## Поддерживаемые команды IPC
@@ -136,7 +139,7 @@ JSON одним пакетом без завершающего перевода 
 Проверяет, что демон запущен.
 
 ```json
-{"command":"status"}
+{"api_version":1,"command":"status"}
 ```
 
 ### shutdown
@@ -144,7 +147,7 @@ JSON одним пакетом без завершающего перевода 
 Запрашивает штатную остановку демона.
 
 ```json
-{"command":"shutdown"}
+{"api_version":1,"command":"shutdown"}
 ```
 
 ### module_list
@@ -152,7 +155,7 @@ JSON одним пакетом без завершающего перевода 
 Возвращает список модулей.
 
 ```json
-{"command":"module_list"}
+{"api_version":1,"command":"module_list"}
 ```
 
 Ответ содержит поле `modules`.
@@ -162,11 +165,11 @@ JSON одним пакетом без завершающего перевода 
 Возвращает политики одного модуля или всех модулей.
 
 ```json
-{"command":"policy_list","module":"all"}
+{"api_version":1,"command":"policy_list","module":"all"}
 ```
 
 ```json
-{"command":"policy_list","module":"DAC"}
+{"api_version":1,"command":"policy_list","module":"DAC"}
 ```
 
 Ответ содержит поле `policies`. Для каждой политики возвращаются `module`, `submodule`, `policy`, `enabled`, `set`.
@@ -176,7 +179,7 @@ JSON одним пакетом без завершающего перевода 
 Изменяет значение политики в конфигурации.
 
 ```json
-{"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
+{"api_version":1,"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -186,7 +189,7 @@ JSON одним пакетом без завершающего перевода 
 Включает политику.
 
 ```json
-{"command":"enable_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":1,"command":"enable_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -196,7 +199,7 @@ JSON одним пакетом без завершающего перевода 
 Отключает политику.
 
 ```json
-{"command":"disable_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":1,"command":"disable_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -206,7 +209,7 @@ JSON одним пакетом без завершающего перевода 
 Принудительно перечитывает конфигурацию.
 
 ```json
-{"command":"reload_config"}
+{"api_version":1,"command":"reload_config"}
 ```
 
 ### apply_all
@@ -214,7 +217,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет все включенные политики.
 
 ```json
-{"command":"apply_all"}
+{"api_version":1,"command":"apply_all"}
 ```
 
 ### apply_module
@@ -222,7 +225,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет все включенные политики указанного модуля.
 
 ```json
-{"command":"apply_module","module":"DAC"}
+{"api_version":1,"command":"apply_module","module":"DAC"}
 ```
 
 ### apply_policy
@@ -230,7 +233,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет одну политику.
 
 ```json
-{"command":"apply_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":1,"command":"apply_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 Все команды применения возвращают сводку и отдельный результат для каждой
@@ -276,7 +279,7 @@ JSON одним пакетом без завершающего перевода 
 Пересчитывает hash для указанного пути.
 
 ```json
-{"command":"calc_hash","value":"/usr/bin/sudo"}
+{"api_version":1,"command":"calc_hash","value":"/usr/bin/sudo"}
 ```
 
 ### lock, unlock, lockstatus
@@ -284,15 +287,15 @@ JSON одним пакетом без завершающего перевода 
 Команды управления блокировкой.
 
 ```json
-{"command":"lock"}
+{"api_version":1,"command":"lock"}
 ```
 
 ```json
-{"command":"unlock"}
+{"api_version":1,"command":"unlock"}
 ```
 
 ```json
-{"command":"lockstatus"}
+{"api_version":1,"command":"lockstatus"}
 ```
 
 ## Systemd
@@ -362,7 +365,8 @@ Daemon собирается ровно для одного дистрибути�
 При старте daemon проверяет выбранный профиль и `/etc/os-release`. Эта проверка
 не выполняет runtime-автоопределение и не переключает профиль: несовместимый
 пакет завершается с ошибкой до создания сокета и применения политик.
-`fic --version` показывает compile-time идентификатор профиля.
+`fic --version` показывает product SemVer, compile-time идентификатор профиля,
+версию IPC API и схему конфигурации.
 
 SSH-секция определяет основной конфигурационный файл, базу относительных
 `Include` и service units; `sshd` и `systemctl` поступают из общего реестра
@@ -387,6 +391,7 @@ prefix/root, который смешивает изменяемые данные
 Основные runtime-пути:
 
 - `/opt/fic/config` - конфигурационные файлы политик;
+- `/opt/fic/state` - upgrade journal и резервные копии миграций;
 - `/opt/fic/log` - логи;
 - `/run/fic` - общий runtime-каталог IPC, создаваемый через `fic.conf` для systemd-tmpfiles;
 - `/run/fic/fic.sock` - Unix-сокет демона.
@@ -395,6 +400,13 @@ prefix/root, который смешивает изменяемые данные
 `root:fic 0770` у runtime-каталога и `0660` у сокета. `--socket PATH`
 предназначен для разработки: создаваемый сокет имеет режим `0600`, и демон не
 перенастраивает production-каталог.
+
+Каждый конфиг модуля начинается с `_schema_version=1`. Обычный daemon принимает
+только точную текущую схему и отказывается запускаться при незавершённом product
+upgrade. Offline-команды `fic --maintenance begin-upgrade`, `migrate-config`,
+`check-config` и `commit-upgrade` предназначены для root package lifecycle.
+Семантика backups, downgrade, rollback и remove зафиксирована в
+`docs/upgrade-contract.md`.
 
 ### Безопасная запись конфигурации
 

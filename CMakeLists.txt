@@ -5,6 +5,7 @@ project(fic_2_0 LANGUAGES CXX)
 include(CTest)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FicInstallLayout.cmake)
 
+add_subdirectory(fic-common/fic-version)
 add_subdirectory(fic-common/fic-ipc)
 add_subdirectory(fic-common/fic-core)
 add_subdirectory(fic-common/fic-device-db)

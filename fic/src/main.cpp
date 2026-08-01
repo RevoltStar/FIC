@@ -28,9 +28,11 @@
 #include "core/main_function.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/version/ProductVersion.h>
 #include <fic/core/Logger.h>
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/SystemBootInfo.h>
+#include <fic/core/UpgradeManager.h>
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -539,7 +541,12 @@ json handle_request(json request,
 
     try {
         if (command == "status") {
-            return fic::ipc::make_ok_response("fic daemon is running");
+            return json{
+                {"ok", true},
+                {"message", "fic daemon is running"},
+                {"product_version", fic::version::PRODUCT_VERSION},
+                {"config_schema_version", fic::version::CONFIG_SCHEMA_VERSION}
+            };
         }
         if (command == "boot_id") {
             return json{
@@ -776,6 +783,7 @@ std::string handle_client_packet(
     }
 
     audit_ipc_request(peer, request, response);
+    response["api_version"] = fic::ipc::API_VERSION;
     return response.dump();
 }
 
@@ -798,7 +806,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     if (get_arg_value(argc, argv, 1) == "--version") {
-        std::cout << "fic 2.0 target-platform=" << platform.id << std::endl;
+        std::cout << "fic " << fic::version::PRODUCT_VERSION
+                  << " target-platform=" << platform.id
+                  << " ipc-api=" << fic::version::IPC_API_VERSION
+                  << " config-schema=" << fic::version::CONFIG_SCHEMA_VERSION
+                  << std::endl;
         return 0;
     }
     if (get_arg_value(argc, argv, 1) == "--trust-list-platform-paths") {
@@ -837,6 +849,112 @@ int main(int argc, char* argv[]) {
     if (!fic::core::FicRuntimePaths::initializeProduction(pathError)) {
         std::cerr << "failed to initialize FIC runtime paths: " << pathError << std::endl;
         return 1;
+    }
+
+    if (get_arg_value(argc, argv, 1) == "--maintenance") {
+        const std::string command = get_arg_value(argc, argv, 2);
+        const auto& paths = fic::core::FicRuntimePaths::get();
+        std::string maintenanceError;
+        if (command == "begin-upgrade") {
+            fic::core::UpgradeState state;
+            if (!fic::core::UpgradeManager::begin(
+                    paths.stateDir, fic::version::PRODUCT_VERSION,
+                    state, maintenanceError)) {
+                std::cerr << "could not begin product upgrade: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "upgrade prepared: target=" << state.targetVersion
+                      << ", transaction=" << state.transactionDirectory.string()
+                      << std::endl;
+            return 0;
+        }
+        if (command == "migrate-config") {
+            fic::core::ConfigMigrationResult result;
+            if (!fic::core::UpgradeManager::migrateConfigs(
+                    paths.configDir, paths.stateDir, result,
+                    maintenanceError)) {
+                std::cerr << "configuration migration failed: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "configuration schema migrated: files="
+                      << result.migratedFiles << ", backup="
+                      << result.backupDirectory.string() << std::endl;
+            return 0;
+        }
+        if (command == "check-config") {
+            if (!fic::core::UpgradeManager::verifyConfigs(
+                    paths.configDir, maintenanceError)) {
+                std::cerr << "configuration schema check failed: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "configuration schema is current: "
+                      << fic::version::CONFIG_SCHEMA_VERSION << std::endl;
+            return 0;
+        }
+        if (command == "commit-upgrade") {
+            if (!fic::core::UpgradeManager::commit(
+                    paths.stateDir, maintenanceError)) {
+                std::cerr << "could not commit product upgrade: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "product upgrade committed: "
+                      << fic::version::PRODUCT_VERSION << std::endl;
+            return 0;
+        }
+        if (command == "wait-daemon") {
+            int timeoutSeconds = 10;
+            const std::string timeoutArgument = get_arg_value(argc, argv, 3);
+            if (!timeoutArgument.empty()) {
+                try {
+                    timeoutSeconds = std::max(0, std::stoi(timeoutArgument));
+                } catch (const std::exception&) {
+                    std::cerr << "invalid daemon readiness timeout: "
+                              << timeoutArgument << std::endl;
+                    return 1;
+                }
+            }
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(timeoutSeconds);
+            json response;
+            do {
+                response = fic::ipc::Client(
+                    std::string(fic::ipc::DEFAULT_SOCKET_PATH),
+                    std::chrono::seconds(1)).request({{"command", "status"}});
+                if (response.value("ok", false) &&
+                    response.value("product_version", "") ==
+                        fic::version::PRODUCT_VERSION &&
+                    response.value("config_schema_version", -1) ==
+                        fic::version::CONFIG_SCHEMA_VERSION) {
+                    return 0;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            } while (std::chrono::steady_clock::now() < deadline);
+            std::cerr << "fic daemon did not become version-compatible and ready: "
+                      << response.value("message", "unknown error") << std::endl;
+            return 1;
+        }
+        std::cerr << "unknown maintenance command: " << command << std::endl;
+        return 1;
+    }
+
+    if (!packageTrustSync && !affectedPackageTrustSync) {
+        std::string upgradeError;
+        if (!fic::core::UpgradeManager::requireNoIncompleteUpgrade(
+                fic::core::FicRuntimePaths::get().stateDir, upgradeError)) {
+            std::cerr << "refusing to start during incomplete product upgrade: "
+                      << upgradeError << std::endl;
+            return 1;
+        }
+        if (!fic::core::UpgradeManager::verifyConfigs(
+                fic::core::FicRuntimePaths::get().configDir, upgradeError)) {
+            std::cerr << "refusing to start with incompatible configuration: "
+                      << upgradeError << std::endl;
+            return 1;
+        }
     }
 
     const fic::platform::PlatformExecutableResolver executables(

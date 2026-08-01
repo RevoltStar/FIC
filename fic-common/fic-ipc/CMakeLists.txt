@@ -4,6 +4,10 @@ project(fic_ipc LANGUAGES CXX)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/FicInstallLayout.cmake)
 
+if(NOT TARGET fic-version)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-version ${CMAKE_CURRENT_BINARY_DIR}/fic-version)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -20,6 +24,7 @@ add_library(fic-ipc STATIC
     src/FicIpcClient.cpp
     src/FicIpcTransport.cpp
 )
+target_link_libraries(fic-ipc PUBLIC fic-version)
 
 target_include_directories(fic-ipc PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

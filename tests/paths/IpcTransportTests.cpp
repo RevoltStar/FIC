@@ -100,7 +100,11 @@ int main() {
                     const json request = json::parse(requestText);
                     if (request.value("command", "") == "large") {
                         return json{{"ok", true}, {"message", "large"},
+                                    {"api_version", fic::ipc::API_VERSION},
                                     {"data", std::string(900U * 1024U, 'x')}}.dump();
+                    }
+                    if (request.value("command", "") == "unversioned-response") {
+                        return json{{"ok", true}, {"message", "old daemon"}}.dump();
                     }
                     return fic::ipc::make_ok_response("echo").dump();
                 },
@@ -117,7 +121,12 @@ int main() {
     assert(response.value("ok", false));
     assert(response.at("data").get_ref<const std::string&>().size() == 900U * 1024U);
 
-    json exactRequest{{"command", "echo"}, {"padding", ""}};
+    response = client.request({{"command", "unversioned-response"}});
+    assert(!response.value("ok", true));
+    assert(response.value("message", "").find("IPC API version") != std::string::npos);
+
+    json exactRequest{{"api_version", fic::ipc::API_VERSION},
+                      {"command", "echo"}, {"padding", ""}};
     const std::size_t emptySize = exactRequest.dump().size();
     exactRequest["padding"] = std::string(fic::ipc::MAX_REQUEST_BYTES - emptySize, 'p');
     assert(exactRequest.dump().size() == fic::ipc::MAX_REQUEST_BYTES);
@@ -144,7 +153,8 @@ int main() {
     assert(::recv(idleFd, &idleByte, 1, 0) == 0);
 
     const int nonReadingFd = connectRaw(socketPath);
-    const std::string largeRequest = json{{"command", "large"}}.dump();
+    const std::string largeRequest =
+        json{{"api_version", 1}, {"command", "large"}}.dump();
     assert(::send(nonReadingFd, largeRequest.data(), largeRequest.size(), 0) ==
            static_cast<ssize_t>(largeRequest.size()));
     std::this_thread::sleep_for(50ms);

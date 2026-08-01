@@ -16,12 +16,20 @@
 #include <cstring>
 #include <cerrno>
 #include <filesystem>
+#include <functional>
 
 struct DBOptions {
     std::filesystem::path databaseFile;
     std::filesystem::path lockFile;
     std::filesystem::path lockDebugLogFile;
     bool lockDebugEnabled = true;
+};
+
+struct DBMigrationResult {
+    int fromVersion = -1;
+    int toVersion = -1;
+    bool migrated = false;
+    std::filesystem::path backupFile;
 };
 
 class ExclusivePidLock;
@@ -66,6 +74,8 @@ class DB {
 private:
     std::string db_path;
     sqlite3* db;
+    bool databaseHadContent_ = false;
+    std::string lastError_;
 
     DB(const DB&) = delete;
     DB& operator=(const DB&) = delete;
@@ -74,6 +84,7 @@ private:
 
     bool openDatabase();
     void closeDatabase();
+    bool verifyDatabaseSchemaMetadata(std::string& error);
 
     bool log(std::string message, logLevel logLev);
 public:
@@ -85,6 +96,14 @@ public:
     /* Основные методы */
     // Инициализация БД (если не существует)
     bool initializeDatabase();
+    bool verifyDatabaseSchema(std::string& error);
+    bool migrateDatabase(const std::filesystem::path& backupDirectory,
+                         DBMigrationResult& result,
+                         std::string& error,
+                         const std::function<bool(
+                             const std::filesystem::path&, std::string&)>&
+                             backupReady = {});
+    const std::string& lastError() const;
 
     // Получить device_id по пути
     int getDeviceIdByPath(const std::string& devpath);

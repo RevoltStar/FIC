@@ -4,6 +4,10 @@ project(fic_core LANGUAGES CXX)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/FicInstallLayout.cmake)
 
+if(NOT TARGET fic-version)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-version ${CMAKE_CURRENT_BINARY_DIR}/fic-version)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -27,6 +31,7 @@ add_library(fic-core STATIC
     src/ProcessExecutor.cpp
     src/SectionConfigFileHandler.cpp
     src/SingleLineFileHandler.cpp
+    src/UpgradeManager.cpp
     src/VerifiedProcessExecutor.cpp
 )
 
@@ -45,7 +50,7 @@ target_include_directories(fic-core
         $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(fic-core PRIVATE OpenSSL::Crypto Threads::Threads)
+target_link_libraries(fic-core PUBLIC fic-version PRIVATE OpenSSL::Crypto Threads::Threads)
 
 install(TARGETS fic-core ARCHIVE DESTINATION lib COMPONENT Development)
 install(DIRECTORY include/ DESTINATION include COMPONENT Development

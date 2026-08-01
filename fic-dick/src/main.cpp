@@ -1,12 +1,15 @@
 // file name: main.cpp
 #include <iostream>
 #include <exception>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 #include <fic/core/FicRuntimePaths.h>
+#include <fic/core/UpgradeManager.h>
 #include <fic/device-db/DB.h>
+#include <fic/version/ProductVersion.h>
 #include "core/DeviceControlDaemon.h"
 #include "core/DevicePaths.h"
 #include "modules/UDEVInfoCollector.h"
@@ -81,6 +84,94 @@ int main(int argc, char* argv[], char* envp[]) {
 
     if (argc > 1) {
         std::string mode(argv[1]);
+
+        if (mode == "--version") {
+            std::cout << "fic-dick " << fic::version::PRODUCT_VERSION
+                      << " ipc-api=" << fic::version::IPC_API_VERSION
+                      << " db-schema=" << fic::version::DEVICE_DB_SCHEMA_VERSION
+                      << std::endl;
+            return 0;
+        }
+        if (mode == "--maintenance") {
+            if (argc < 3) {
+                std::cerr << "maintenance command is required" << std::endl;
+                return 1;
+            }
+            const std::string command(argv[2]);
+            try {
+                DB db(fic::device_control::DeviceRuntimePaths::get().databaseOptions());
+                std::string error;
+                if (command == "check-db") {
+                    if (!db.verifyDatabaseSchema(error)) {
+                        std::cerr << "device database check failed: " << error << std::endl;
+                        return 1;
+                    }
+                    std::cout << "device database schema is current: "
+                              << fic::version::DEVICE_DB_SCHEMA_VERSION << std::endl;
+                    return 0;
+                }
+                if (command == "migrate-db") {
+                    DBMigrationResult result;
+                    const std::filesystem::path backupDirectory =
+                        fic::device_control::DeviceRuntimePaths::get().stateDir /
+                        "db-backups";
+                    const auto backupReady = [&](
+                        const std::filesystem::path& backup,
+                        std::string& callbackError) {
+                        return fic::core::UpgradeManager::recordDatabaseBackupIfActive(
+                            fic::device_control::DeviceRuntimePaths::get().stateDir,
+                            backup,
+                            callbackError);
+                    };
+                    if (!db.migrateDatabase(
+                            backupDirectory, result, error, backupReady)) {
+                        std::cerr << "device database migration failed: " << error << std::endl;
+                        return 1;
+                    }
+                    if (!fic::core::UpgradeManager::markDatabaseMigratedIfActive(
+                            fic::device_control::DeviceRuntimePaths::get().stateDir,
+                            result.backupFile,
+                            error)) {
+                        std::cerr << "could not advance upgrade journal: "
+                                  << error << std::endl;
+                        return 1;
+                    }
+                    std::cout << "device database schema " << result.fromVersion
+                              << " -> " << result.toVersion;
+                    if (!result.backupFile.empty()) {
+                        std::cout << ", backup=" << result.backupFile.string();
+                    } else if (result.migrated) {
+                        std::cout << ", initialized new database";
+                    } else {
+                        std::cout << ", already current";
+                    }
+                    std::cout << std::endl;
+                    return 0;
+                }
+                std::cerr << "unknown maintenance command: " << command << std::endl;
+                return 1;
+            } catch (const std::exception& exception) {
+                std::cerr << "device database maintenance failed: "
+                          << exception.what() << std::endl;
+                return 1;
+            }
+        }
+
+        std::string upgradeError;
+        if (!fic::core::UpgradeManager::requireNoIncompleteUpgrade(
+                fic::device_control::DeviceRuntimePaths::get().stateDir,
+                upgradeError)) {
+            std::cerr << "refusing to start during incomplete product upgrade: "
+                      << upgradeError << std::endl;
+            return 1;
+        }
+        if (!fic::core::UpgradeManager::verifyConfigs(
+                fic::core::FicRuntimePaths::get().configDir,
+                upgradeError)) {
+            std::cerr << "refusing to start with incompatible configuration: "
+                      << upgradeError << std::endl;
+            return 1;
+        }
 
         if (mode == "--daemon" || mode == "daemon") {
             std::string socketPath;

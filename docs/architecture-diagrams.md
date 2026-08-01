@@ -200,11 +200,11 @@ sequenceDiagram
 
     Client->>IpcClient: request(JSON payload)
     IpcClient->>Socket: connect(AF_UNIX/SOCK_SEQPACKET)
-    IpcClient->>Socket: send one JSON packet, max 64 KiB
+    IpcClient->>Socket: send one JSON packet with api_version, max 64 KiB
     Socket->>Daemon: accept client fd
     Daemon->>Router: parse JSON and route command
     Router-->>Daemon: JSON response
-    Daemon-->>Socket: nonblocking framed packets, total max 1 MiB
+    Daemon-->>Socket: nonblocking framed JSON with api_version, total max 1 MiB
     Socket-->>IpcClient: reassemble bounded response
     IpcClient-->>Client: parsed JSON
 ```
@@ -697,6 +697,27 @@ tmpfiles, udev и XDG-шаблоны. Исполняемые компонент�
 Deb/RPM staging устанавливает именованные CMake-компоненты (`fic`, `fic-dick`,
 `fic-cli`, `fic-session-agent`, `fic-gui`) и не копирует эти файлы повторно из
 дерева исходников.
+
+Product upgrade использует отдельный persistent state path и не выполняет
+неявный repair при обычном старте. Версии IPC, конфигураций и SQLite независимы;
+точные значения генерируются `fic-common/fic-version`. Package lifecycle
+останавливает сервисы, последовательно продвигает атомарный журнал, сохраняет
+конфиги и WAL-consistent SQLite backup, выполняет offline migration и только
+после проверок запускает сервисы. Полный контракт и downgrade/remove policy
+описаны в `docs/upgrade-contract.md`.
+
+```mermaid
+flowchart LR
+    stop[stop active services] --> begin[upgrade journal: prepared]
+    begin --> configBackup[backup and migrate configs]
+    configBackup --> configPhase[journal: config_migrated]
+    configPhase --> dbBackup[SQLite Backup API]
+    dbBackup --> dbMigration[transactional DB migration and checks]
+    dbMigration --> dbPhase[journal: database_migrated]
+    dbPhase --> commit[journal: committed]
+    commit --> trust[verified trust sync]
+    trust --> start[start and health-check daemons]
+```
 
 ```mermaid
 flowchart LR

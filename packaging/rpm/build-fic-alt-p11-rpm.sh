@@ -400,6 +400,7 @@ build_project() {
     local build_dir="$2"
     local cmake_args=(
         -DCMAKE_BUILD_TYPE=Release
+        "-DFIC_PRODUCT_VERSION=$PACKAGE_VERSION"
         "-DFIC_SYSTEMD_UNIT_DIR=$SYSTEMD_UNIT_DIR"
         "-DFIC_TMPFILES_DIR=$TMPFILES_DIR"
     )
@@ -589,6 +590,29 @@ exit 0
 EOF
 }
 
+system_integration_pre_script() {
+    cat <<'EOF'
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd -r fic >/dev/null 2>&1 || true
+fi
+
+if [ -d /run/systemd/system ]; then
+    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
+        if [ -x "$systemctl_bin" ]; then
+            for unit in fic.service fic-device.service fic-notify.service; do
+                if "$systemctl_bin" is-active --quiet "$unit"; then
+                    "$systemctl_bin" stop "$unit" || exit 1
+                fi
+            done
+            break
+        fi
+    done
+fi
+
+exit 0
+EOF
+}
+
 common_post_script() {
     cat <<'EOF'
 if ! getent group fic >/dev/null 2>&1; then
@@ -596,11 +620,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/share
-
-    if [ ! -f /opt/fic/db/devices.db ] && [ -f /opt/fic/share/devices.seed.db ]; then
-        cp /opt/fic/share/devices.seed.db /opt/fic/db/devices.db || true
-    fi
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus || true
@@ -633,11 +653,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/share
-
-    if [ ! -f /opt/fic/db/devices.db ] && [ -f /opt/fic/share/devices.seed.db ]; then
-        cp /opt/fic/share/devices.seed.db /opt/fic/db/devices.db || true
-    fi
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus || true
@@ -672,11 +688,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/share
-
-    if [ ! -f /opt/fic/db/devices.db ] && [ -f /opt/fic/share/devices.seed.db ]; then
-        cp /opt/fic/share/devices.seed.db /opt/fic/db/devices.db || true
-    fi
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus || true
@@ -697,6 +709,32 @@ fi
 
 ln -sfn "$target_path" "/bin/$command_name"
 
+unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
+mkdir -p /opt/fic/state || exit 1
+
+if [ -d /run/systemd/system ]; then
+    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
+        if [ -x "\$systemctl_bin" ]; then
+            for unit in fic.service fic-device.service fic-notify.service; do
+                if "\$systemctl_bin" is-active --quiet "\$unit"; then
+                    "\$systemctl_bin" stop "\$unit" || exit 1
+                fi
+            done
+            break
+        fi
+    done
+fi
+
+/opt/fic/bin/fic --maintenance begin-upgrade || exit 1
+/opt/fic/bin/fic --maintenance migrate-config || exit 1
+/opt/fic/bin/fic-dick --maintenance migrate-db || exit 1
+/opt/fic/bin/fic --maintenance commit-upgrade || exit 1
+
+chown -R root:fic /opt/fic || exit 1
+find /opt/fic -type d -exec chmod 2750 {} \; || exit 1
+find /opt/fic -type f -exec chmod 0640 {} \; || exit 1
+find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || exit 1
+
 /opt/fic/bin/fic --trust-sync-platform || exit 1
 
 for tmpfiles_bin in /usr/bin/systemd-tmpfiles /bin/systemd-tmpfiles /usr/sbin/systemd-tmpfiles /sbin/systemd-tmpfiles; do
@@ -706,17 +744,23 @@ for tmpfiles_bin in /usr/bin/systemd-tmpfiles /bin/systemd-tmpfiles /usr/sbin/sy
     fi
 done
 
-for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
-    if [ -x "\$systemctl_bin" ]; then
-        "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
-        "\$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
-        "\$systemctl_bin" enable --now fic.service >/dev/null 2>&1 || true
-        "\$systemctl_bin" enable --now fic-device.service >/dev/null 2>&1 || true
-        "\$systemctl_bin" enable --now fic_get_device_udev_info.service >/dev/null 2>&1 || true
-        "\$systemctl_bin" enable --now fic-notify.service >/dev/null 2>&1 || true
-        break
-    fi
-done
+if [ -d /run/systemd/system ]; then
+    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
+        if [ -x "\$systemctl_bin" ]; then
+            "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || exit 1
+            "\$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
+            "\$systemctl_bin" enable --now fic.service >/dev/null 2>&1 || exit 1
+            "\$systemctl_bin" enable --now fic-device.service >/dev/null 2>&1 || exit 1
+            "\$systemctl_bin" enable --now fic_get_device_udev_info.service >/dev/null 2>&1 || true
+            "\$systemctl_bin" enable --now fic-notify.service >/dev/null 2>&1 || exit 1
+            "\$systemctl_bin" is-active --quiet fic.service || exit 1
+            "\$systemctl_bin" is-active --quiet fic-device.service || exit 1
+            /opt/fic/bin/fic --maintenance wait-daemon 10 || exit 1
+            /opt/fic/bin/fic-dick wait-daemon 10 || exit 1
+            break
+        fi
+    done
+fi
 
 for udevadm_bin in /usr/bin/udevadm /usr/sbin/udevadm /sbin/udevadm /bin/udevadm; do
     if [ -x "\$udevadm_bin" ]; then
@@ -834,7 +878,7 @@ build_fic_dick_package() {
         "Free Integrity Control device collector binary" \
         "Free Integrity Control device collector binary." \
         "" \
-        "$(common_pre_script)" \
+        "$(system_integration_pre_script)" \
         "$(fic_dick_post_script)" \
         "$(fic_dick_preun_script)")" || return 1
 
@@ -904,7 +948,7 @@ build_fic_package() {
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
         "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify" \
-        "$(common_pre_script)" \
+        "$(system_integration_pre_script)" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic")" \
         "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")" || return 1
 

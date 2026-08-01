@@ -336,6 +336,76 @@ def main():
         and "/opt/fic/config/AUTH.conf" not in rpm_builder,
         "ALT p11 packaging does not preserve IDENTITY_ACCESS.conf",
     )
+    upgrade_steps = (
+        "--maintenance begin-upgrade",
+        "--maintenance migrate-config",
+        "--maintenance migrate-db",
+        "--maintenance commit-upgrade",
+        "--trust-sync-platform",
+        "--maintenance wait-daemon 10",
+        "fic-dick wait-daemon 10",
+    )
+    for builder_name, builder in (
+        ("Debian-family", deb_builder),
+        ("ALT p11", rpm_builder),
+    ):
+        require(
+            "-DFIC_PRODUCT_VERSION=$PACKAGE_VERSION" in builder,
+            f"{builder_name} packaging does not embed its product version",
+        )
+        cursor = 0
+        for step in upgrade_steps:
+            position = builder.find(step, cursor)
+            require(
+                position >= 0,
+                f"{builder_name} packaging omits upgrade step: {step}",
+            )
+            cursor = position + len(step)
+        require(
+            "/opt/fic/state" in builder
+            and "is-active --quiet fic.service" in builder,
+            f"{builder_name} packaging omits persistent state or daemon health checks",
+        )
+        require(
+            "devices.seed.db" not in builder,
+            f"{builder_name} packaging still ships the pre-contract database as a seed",
+        )
+        require(
+            "rm -rf /opt/fic" not in builder and "rm -r /opt/fic" not in builder,
+            f"{builder_name} removal can recursively destroy persistent FIC state",
+        )
+    require(
+        deb_builder.count('write_fic_preinst "$package_root"') >= 2,
+        "Debian-family daemon packages do not stop services before payload replacement",
+    )
+    require(
+        rpm_builder.count('"$(system_integration_pre_script)"') >= 2,
+        "ALT p11 daemon packages do not stop services before payload replacement",
+    )
+
+    version_contract = (
+        root / "fic-common/fic-version/include/fic/version/ProductVersion.h.in"
+    ).read_text(encoding="utf-8")
+    for constant in (
+        "PRODUCT_VERSION", "IPC_API_VERSION", "CONFIG_SCHEMA_VERSION",
+        "DEVICE_DB_SCHEMA_VERSION", "DEVICE_DB_APPLICATION_ID",
+    ):
+        require(
+            constant in version_contract,
+            f"compiled version contract omits {constant}",
+        )
+
+    for config_name in (
+        "DAC", "DC", "GLOBAL", "IDENTITY_ACCESS", "NET", "OSS", "SYSCTL"
+    ):
+        config = (root / f"fic/src/scripts/config/{config_name}.conf").read_text(
+            encoding="utf-8"
+        )
+        require(
+            config.startswith("_schema_version=1\n")
+            and config.count("_schema_version=") == 1,
+            f"{config_name}.conf does not declare exactly one schema version",
+        )
     require(
         'FIC_PACKAGING_TARGET_PLATFORM="ubuntu-24.04"' in ubuntu_builder,
         "Ubuntu package entry point does not fix the Ubuntu profile",

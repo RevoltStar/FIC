@@ -61,19 +61,19 @@ FIC_SOCKET_PATH=/tmp/fic.sock fic-gui
 1. Отправляет новое значение:
 
 ```json
-{"command":"set_policy_value","module":"<module>","policy":"<policy>","value":"<value>"}
+{"api_version":1,"command":"set_policy_value","module":"<module>","policy":"<policy>","value":"<value>"}
 ```
 
 2. Отправляет новое состояние политики:
 
 ```json
-{"command":"enable_policy","module":"<module>","policy":"<policy>"}
+{"api_version":1,"command":"enable_policy","module":"<module>","policy":"<policy>"}
 ```
 
 или:
 
 ```json
-{"command":"disable_policy","module":"<module>","policy":"<policy>"}
+{"api_version":1,"command":"disable_policy","module":"<module>","policy":"<policy>"}
 ```
 
 Если демон возвращает ошибку, GUI показывает пользователю текст ошибки и не считает изменение успешно примененным.

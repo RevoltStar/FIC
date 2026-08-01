@@ -13,6 +13,7 @@ struct FicProductPaths {
     std::filesystem::path logDir;
     std::filesystem::path notifyDir;
     std::filesystem::path dataDir;
+    std::filesystem::path stateDir;
     std::filesystem::path shareDir;
     std::filesystem::path imageDir;
     std::filesystem::path runtimeDir;

@@ -43,7 +43,7 @@ fic-cli policy set DAC sudo_timeout 10
 соответствует IPC-запросу:
 
 ```json
-{"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
+{"api_version":1,"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
 ```
 
 CLI печатает поле `message` из ответа демона. Если демон вернул `ok: false`, процесс завершается с кодом `1`.

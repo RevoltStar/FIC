@@ -203,6 +203,8 @@ def receive_response(sock):
 
 
 def request(payload):
+    payload = dict(payload)
+    payload["api_version"] = 1
     with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as sock:
         sock.connect(SOCKET)
         sock.sendall(json.dumps(payload).encode())
@@ -210,6 +212,13 @@ def request(payload):
 
 
 def request_text(text):
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict):
+            payload["api_version"] = 1
+            text = json.dumps(payload)
+    except json.JSONDecodeError:
+        pass
     with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as sock:
         sock.connect(SOCKET)
         sock.sendall(text.encode())

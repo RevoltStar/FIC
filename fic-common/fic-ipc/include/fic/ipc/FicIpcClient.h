@@ -3,6 +3,7 @@
 
 #include <fic/ipc/FicIpcPathDefaults.h>
 #include <fic/ipc/FicIpcTransport.h>
+#include <fic/version/ProductVersion.h>
 
 #include <nlohmann/json.hpp>
 
@@ -21,6 +22,7 @@
 namespace fic::ipc {
 
 using json = nlohmann::json;
+inline constexpr int API_VERSION = fic::version::IPC_API_VERSION;
 
 inline constexpr const char* DEFAULT_RUNTIME_DIR = path_defaults::RUNTIME_DIR;
 inline constexpr const char* DEFAULT_SOCKET_PATH = path_defaults::DAEMON_SOCKET;
@@ -45,11 +47,11 @@ inline std::string endpoint_socket_path(Endpoint endpoint) {
 }
 
 inline json make_error_response(const std::string& message) {
-    return json{{"ok", false}, {"message", message}};
+    return json{{"ok", false}, {"message", message}, {"api_version", API_VERSION}};
 }
 
 inline json make_ok_response(const std::string& message = "OK") {
-    return json{{"ok", true}, {"message", message}};
+    return json{{"ok", true}, {"message", message}, {"api_version", API_VERSION}};
 }
 
 inline bool validate_json_value(const json& value,
@@ -110,6 +112,17 @@ inline bool parse_request_json(const std::string& text,
         error = "request.command must be a non-empty string";
         return false;
     }
+    const auto apiVersion = request.find("api_version");
+    const bool supportedApiVersion = apiVersion != request.end() &&
+        ((apiVersion->is_number_unsigned() &&
+          apiVersion->get<std::uint64_t>() == static_cast<std::uint64_t>(API_VERSION)) ||
+         (apiVersion->is_number_integer() &&
+          apiVersion->get<std::int64_t>() == API_VERSION));
+    if (!supportedApiVersion) {
+        error = "request.api_version is unsupported; expected " +
+            std::to_string(API_VERSION);
+        return false;
+    }
     return validate_json_value(request, 0, error);
 }
 
@@ -117,6 +130,9 @@ inline bool request_has_only_fields(const json& request,
                                     std::initializer_list<const char*> allowed,
                                     std::string& error) {
     for (auto item = request.begin(); item != request.end(); ++item) {
+        if (item.key() == "api_version") {
+            continue;
+        }
         bool known = false;
         for (const char* field : allowed) {
             if (item.key() == field) {

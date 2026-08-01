@@ -98,6 +98,7 @@ install(PROGRAMS
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-udevadm-trigger"
         DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
 install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
+install(DIRECTORY DESTINATION "${FIC_STATE_DIR}" COMPONENT fic)
 install(DIRECTORY src/scripts/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
 install(FILES
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic.service"
@@ -112,6 +113,4 @@ install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/udev/99-fic-devices.rules"
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 install(FILES src/scripts/db/PCI_CLASS_ru.txt src/scripts/db/USB_CLASS_ru.txt
         DESTINATION "${FIC_DATA_DIR}" COMPONENT fic)
-install(FILES src/scripts/db/devices.db
-        DESTINATION "${FIC_SHARE_DIR}" RENAME devices.seed.db COMPONENT fic)
 install(DIRECTORY src/scripts/image/ DESTINATION "${FIC_IMAGE_DIR}" COMPONENT fic)

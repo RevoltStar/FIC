@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/version/ProductVersion.h>
 
 namespace {
 std::atomic_bool stopRequested{false};
@@ -128,7 +129,12 @@ void serve_client(int fd, const std::string& sessionId) {
 }
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc == 2 && std::string(argv[1]) == "--version") {
+        std::cout << "fic-session-agent " << fic::version::PRODUCT_VERSION
+                  << std::endl;
+        return 0;
+    }
     const std::string sessionId = environment_value("XDG_SESSION_ID");
     const std::string runtimeDirectory = environment_value("XDG_RUNTIME_DIR");
     if (!valid_session_id(sessionId) || !verify_runtime_directory(runtimeDirectory)) {

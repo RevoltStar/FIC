@@ -1135,7 +1135,12 @@ json handle_db_request(const json& request) {
 json handle_request(const json& request, const PeerCredentials& peer) {
     const std::string command = request.value("command", "");
     if (command == "status") {
-        return fic::ipc::make_ok_response("fic device daemon is running");
+        return json{
+            {"ok", true},
+            {"message", "fic device daemon is running"},
+            {"product_version", fic::version::PRODUCT_VERSION},
+            {"database_schema_version", fic::version::DEVICE_DB_SCHEMA_VERSION}
+        };
     }
     if (command == "shutdown") {
         g_stop = true;
@@ -1235,6 +1240,7 @@ std::string handle_client_packet(int clientFd, const std::string& requestText) {
     }
 
     audit_device_request(peer, request, response);
+    response["api_version"] = fic::ipc::API_VERSION;
     return response.dump();
 }
 
@@ -1352,8 +1358,14 @@ int wait_for_daemon(int timeoutSeconds) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeoutSeconds);
     json response;
     do {
-        response = fic::ipc::Client(get_device_socket_path_from_env()).request({{"command", "status"}});
-        if (response.value("ok", false)) {
+        response = fic::ipc::Client(
+            get_device_socket_path_from_env(),
+            std::chrono::seconds(1)).request({{"command", "status"}});
+        if (response.value("ok", false) &&
+            response.value("product_version", "") ==
+                fic::version::PRODUCT_VERSION &&
+            response.value("database_schema_version", -1) ==
+                fic::version::DEVICE_DB_SCHEMA_VERSION) {
             return 0;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
