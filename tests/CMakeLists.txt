@@ -114,6 +114,10 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/composite/CompositePolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/composite/ConfigurationTransaction.cpp
 )
@@ -128,6 +132,23 @@ target_link_libraries(identity_policy_hierarchy_tests PRIVATE
 add_test(
     NAME identity_policy_hierarchy_tests
     COMMAND identity_policy_hierarchy_tests
+)
+
+add_executable(identity_configuration_editors_tests
+    identity_access/IdentityConfigurationEditorsTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/composite/ConfigurationTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdConfiguration.cpp
+)
+target_include_directories(identity_configuration_editors_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(identity_configuration_editors_tests PRIVATE fic-core)
+add_test(
+    NAME identity_configuration_editors_tests
+    COMMAND identity_configuration_editors_tests
 )
 
 add_executable(ssh_runtime_tests

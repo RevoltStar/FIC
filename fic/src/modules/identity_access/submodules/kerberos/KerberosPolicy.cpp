@@ -1,9 +1,12 @@
 #include "modules/identity_access/submodules/kerberos/KerberosPolicy.h"
 
 #include <mutex>
+#include <utility>
 
-KerberosPolicy::KerberosPolicy()
-    : IdentityAccessPolicy("KERBEROS") {
+KerberosPolicy::KerberosPolicy(
+    fic::identity::kerberos::KerberosConfigurationOptions options)
+    : IdentityAccessPolicy("KERBEROS"),
+      configuration_(std::move(options)) {
 }
 
 bool KerberosPolicy::apply() {
@@ -13,5 +16,5 @@ bool KerberosPolicy::apply() {
     }
 
     const std::lock_guard<std::mutex> lock(this->configurationMutex());
-    return this->applyKerberos(*value);
+    return this->applyKerberos(configuration_, *value);
 }

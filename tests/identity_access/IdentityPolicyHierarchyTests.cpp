@@ -87,7 +87,9 @@ public:
     std::string observed;
 
 private:
-    bool applySssd(const std::string& expectedValue) override {
+    bool applySssd(
+        fic::identity::sssd::SssdConfiguration&,
+        const std::string& expectedValue) override {
         observed = expectedValue;
         return true;
     }
@@ -104,7 +106,9 @@ public:
     std::string observed;
 
 private:
-    bool applyKerberos(const std::string& expectedValue) override {
+    bool applyKerberos(
+        fic::identity::kerberos::KerberosConfiguration&,
+        const std::string& expectedValue) override {
         observed = expectedValue;
         return true;
     }
@@ -121,7 +125,9 @@ public:
     std::string observed;
 
 private:
-    bool applyNss(const std::string& expectedValue) override {
+    bool applyNss(
+        fic::identity::nss::NssConfiguration&,
+        const std::string& expectedValue) override {
         observed = expectedValue;
         return true;
     }

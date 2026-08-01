@@ -1,9 +1,11 @@
 #include "modules/identity_access/submodules/nss/NssPolicy.h"
 
 #include <mutex>
+#include <utility>
 
-NssPolicy::NssPolicy()
-    : IdentityAccessPolicy("NSS") {
+NssPolicy::NssPolicy(fic::identity::nss::NssConfigurationOptions options)
+    : IdentityAccessPolicy("NSS"),
+      configuration_(std::move(options)) {
 }
 
 bool NssPolicy::apply() {
@@ -13,5 +15,5 @@ bool NssPolicy::apply() {
     }
 
     const std::lock_guard<std::mutex> lock(this->configurationMutex());
-    return this->applyNss(*value);
+    return this->applyNss(configuration_, *value);
 }

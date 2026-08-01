@@ -5,112 +5,102 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-07-31.
+- Обновлено: 2026-08-01.
 - Ветка: `main`.
-- Базовый commit: `d636ae4`.
-- Текущая задача: зафиксировать pre-stable политику проекта по обратной
-  совместимости и миграциям.
-- Реализация `IDENTITY_ACCESS/{PAM,SSSD,KERBEROS,NSS,COMPOSITE}` находится в
-  базовом commit. Текущие изменения документации не зафиксированы commit.
+- Базовый commit: `b814b3d`.
+- Текущая задача: реализовать редакторы конфигураций SSSD, Kerberos и NSS.
+- Изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- В `AGENTS.md` зафиксировано, что у проекта пока нет стабильных версий.
-  Миграции конфигов и схем БД, compatibility aliases, dual-read/dual-write и
-  поддержка старых API/runtime formats по умолчанию не реализуются. Вместо
-  этого все актуальные producers/consumers, seed-данные, packaging, тесты и
-  документация переводятся на новый формат одновременно. Правило действует до
-  отдельного объявления стабильной версии или явного требования задачи.
-- Модуль и runtime-конфиг переименованы из `AUTH` в `IDENTITY_ACCESS`.
-  Пять существующих политик сохранены без изменения строковых имен и перенесены
-  в подмодуль `PAM`:
-  `password_min_length`, `password_min_classes`, `password_history_depth`,
-  `failed_authentication_attempts` и
-  `failed_authentication_unlock_time`.
-- Добавлен общий `IdentityAccessPolicy`, который владеет module metadata,
-  загружает `IDENTITY_ACCESS.conf` и предоставляет единый mutex для всех
-  изменений identity-конфигурации внутри daemon.
-- Добавлены template-method базы `PamPolicy`, `SssdPolicy`,
-  `KerberosPolicy` и `NssPolicy`. Их final `apply()` один раз получает и
-  валидирует policy value, берет общий mutex и передает значение typed hook.
-  Реальные редакторы и конкретные политики пока существуют только для PAM.
-- PAM infrastructure перенесена в
-  `fic/src/modules/identity_access/submodules/pam/`, namespace заменен на
-  `fic::identity::pam`. Provider-aware поведение, PAM graph verification и
-  атомарная запись канонического provider-конфига не изменены.
-- Добавлен `CompositePolicy`. Он не содержит вложенные `Policy`, а владеет
-  `ConfigurationParticipant`: каждый participant выполняет read-only preflight
-  и возвращает полностью подготовленный `PreparedConfigurationChange`.
-- `ConfigurationTransaction` последовательно выполняет commit всех persistent
-  изменений, persistent verification, runtime activation и effective
-  verification. При ошибке реально измененные и неуспешно начатые шаги
-  восстанавливаются в обратном порядке, rollback проверяется, а recovery errors
-  не скрывают первичную ошибку.
-- Для будущих participants зафиксирован контракт защиты от внешнего изменения:
-  перед commit требуется сравнение с подготовленным snapshot, а rollback не
-  должен перезаписывать более позднюю правку администратора или package tool.
-- `DomainNamePolicy` и другие фиктивные composite/SSSD/Kerberos/NSS политики не
-  добавлялись по требованию задачи.
-- Синхронизированы `PolicyMap`, `IDENTITY_ACCESS.conf`, русская и английская
-  локализация, Debian/RPM conffile manifests, README и архитектурные диаграммы.
-- Добавлены тесты hierarchy/template-method contract, composite preflight и
-  компенсирующей транзакции. Они покрывают success, no-op, commit/persistent
-  verify/activation/effective verify failures, partial attempts, reverse
-  rollback, runtime restoration, `changed=false`, recovery errors и исключения.
+- Добавлены три независимых typed editor API. Универсальный INI-редактор не
+  используется, поскольку грамматика и effective semantics у подсистем
+  различаются.
+- `SssdConfiguration` редактирует секции и options существующего основного
+  `sssd.conf`, нормализует дубликаты целевой option, сохраняет посторонние
+  строки и читает `.conf` snippets. Каталоги snippets обрабатываются в
+  заданном порядке, файлы внутри каждого — лексикографически. Определение
+  изменяемого ключа в snippet приводит к fail-closed ошибке до записи.
+- `KerberosConfiguration` редактирует scalar relations верхнего уровня,
+  сохраняет relation/section final markers и вложенные subsections. Read-only
+  preflight обходит абсолютные `include`/`includedir` с лимитами глубины и
+  числа файлов, проверяет циклы и порядок файлов. Конфликтующее определение в
+  included profile и profile `module` приводят к fail-closed ошибке.
+- `NssConfiguration` парсит и сериализует typed списки NSS services и action
+  blocks с обычными и negated status expressions, обновляет все дубликаты
+  целевой database и сохраняет комментарии и посторонние databases.
+- Общий `PreparedFileChange` читает только существующие regular files,
+  проверяет owner/group/mode/размер и запрещает symlink во всей цепочке
+  каталогов. Commit повторно сверяет snapshot, пишет через `AtomicFileWriter`,
+  проверяет результат и не затирает позднюю внешнюю правку при rollback.
+- `SssdPolicy`, `KerberosPolicy` и `NssPolicy` теперь владеют соответствующим
+  редактором и передают его в typed apply-hook. Options конструктора позволяют
+  policy/test/platform layer задавать пути и требования к metadata.
+- Добавлены тесты синтаксиса, сохранения постороннего содержимого, дубликатов,
+  SSSD snippet precedence, Kerberos include graph/final markers/module/cycles,
+  NSS actions, unsafe metadata и symlinks, no-op, snapshot race и безопасного
+  rollback.
+- Обновлены README, архитектурные диаграммы и static architecture checks.
 
 ## Основные измененные файлы
 
-- `AGENTS.md`
+- `fic/src/modules/identity_access/configuration/PreparedFileChange.{h,cpp}`
+- `fic/src/modules/identity_access/submodules/sssd/SssdConfiguration.{h,cpp}`
+- `fic/src/modules/identity_access/submodules/kerberos/KerberosConfiguration.{h,cpp}`
+- `fic/src/modules/identity_access/submodules/nss/NssConfiguration.{h,cpp}`
+- `fic/src/modules/identity_access/submodules/{sssd,kerberos,nss}/*Policy.{h,cpp}`
+- `tests/identity_access/IdentityConfigurationEditorsTests.cpp`
+- `tests/identity_access/IdentityPolicyHierarchyTests.cpp`
+- `tests/CMakeLists.txt`
+- `tests/platform/static_checks.py`
+- `fic/README.md`
+- `docs/architecture-diagrams.md`
 - `docs/HANDOFF.md`
 
 ## Выполненные проверки
 
-- Для текущего документационного изменения: `git diff --check`.
-- Проверки реализации `IDENTITY_ACCESS` ниже относятся к базовому commit
-  `d636ae4`:
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11`: успешно.
 - `cmake --build build-check -j2`: успешно, собраны все цели.
-- `ctest --test-dir build-check --output-on-failure`: 19 тестов, ошибок нет;
+- `ctest --test-dir build-check --output-on-failure`: 20 тестов, ошибок нет;
   `admin_socket_tests` и root-зависимый `command_hash_batch_tests` штатно
   пропущены.
-- Для `debian-12`, `debian-13` и `ubuntu-24.04` отдельно выполнены CMake
-  configure, сборка `fic`, `pam_configuration_tests`,
-  `identity_policy_hierarchy_tests`, `platform_profile_tests` и запуск этих
-  трех тестов: успешно для всех профилей.
 - `python3 tests/platform/static_checks.py .`: успешно.
 - `git diff --check`: успешно.
-- Архитектурный и rename/install аудит отдельными read-only ревью: блокирующих
-  замечаний после исправлений нет.
+- Для профиля `debian-13` отдельно выполнены configure, сборка `fic`,
+  `identity_configuration_editors_tests`, `identity_policy_hierarchy_tests` и
+  запуск этих двух тестов вместе с `platform_profile_tests`: успешно.
+- Реальные `/etc/sssd/sssd.conf`, `/etc/krb5.conf` и `/etc/nsswitch.conf` не
+  изменялись; тесты используют временные деревья.
+- Тяжелые deb/rpm package builds не запускались.
 
 ## Что осталось
 
-- Для SSSD, Kerberos и NSS еще нет configuration editor API и конкретных
-  политик. Нынешние классы задают границу и единый lifecycle, но не подменяют
-  будущую реализацию парсеров `/etc/sssd/sssd.conf`, `/etc/krb5.conf` и
-  `/etc/nsswitch.conf`.
-- Нет ни одной конкретной composite-политики. Первая такая политика должна
-  реализовать subsystem-specific participants, а не вызывать leaf `Policy`.
-- Реальное применение PAM-политик не выполнялось: оно изменяет
-  `/etc/security/*.conf` и требует disposable VM для каждого дистрибутива и
-  provider topology.
-- Пакеты deb/rpm не собирались: тяжелые Docker/package builds не запускались.
-- Автоматическая установка provider-пакетов, создание PAM topology и миграция
-  `pam_tally*`/`pam_passwdqc`/`pam_cracklib`/`pam_unix remember=` намеренно не
-  входят в эту версию.
+- Конкретных зарегистрированных политик SSSD, Kerberos, NSS и Composite пока
+  нет. Редакторы предоставляют основу для них, но сами не являются `Policy`.
+- File-level `set*()` не перезапускает SSSD, не инвалидирует кеши и не
+  выполняет другие runtime-действия. Runtime-sensitive composite participant
+  должен обернуть подготовленное изменение и реализовать activation/effective
+  verification/restore.
+- Kerberos API пока намеренно не редактирует вложенные dictionary relations
+  (`[realms]`, `[capaths]` и подобные структуры). Для них нужен отдельный typed
+  API, а не расширение scalar setter строковым путём.
+- SSSD snippets учитываются при effective read, но редактор не выбирает и не
+  переписывает произвольный snippet автоматически. Policy должна явно владеть
+  выбранным файлом, если появится необходимость управлять drop-in.
+- Реальные integration tests требуют disposable VM/контейнеров с SSSD и
+  Kerberos для каждого поддерживаемого дистрибутива.
 
 ## Риски и решения
 
-- У проекта нет стабильных версий, поэтому `AUTH` -> `IDENTITY_ACCESS` и
-  последующие изменения форматов выполняются как чистая замена без alias и
-  миграций. Не следует добавлять совместимость с промежуточными состояниями
-  репозитория без отдельного требования. После объявления стабильной версии
-  эту стратегию необходимо пересмотреть.
-- Composite обеспечивает compensating rollback, но не crash-atomicity набора
-  файлов. Падение процесса между двумя atomic rename потребует transaction
-  journal и recovery при старте daemon; такого журнала пока нет.
-- Общий mutex сериализует только операции текущего процесса FIC. Participants
-  обязаны сверять snapshot непосредственно перед commit/rollback, чтобы не
-  затереть конкурентную правку администратора или package manager.
-- PAM service-файлы не переписываются. Альтернативный или конфликтующий
-  provider и неверная topology по-прежнему приводят к fail-closed ошибке, а не
-  к опасной автоматической перестройке PAM stack.
+- У проекта нет стабильных версий; compatibility aliases и миграции для этой
+  реализации не добавлялись.
+- Компенсирующая транзакция не обеспечивает crash-atomicity набора файлов.
+  Падение между atomic rename требует отдельного transaction journal, которого
+  пока нет.
+- Общий mutex сериализует только операции текущего процесса FIC. Snapshot
+  checks защищают от тихого затирания внешней правки, но полная защита от
+  переименования каталогов конкурентным привилегированным процессом потребует
+  перехода всего write path на `openat`/directory descriptors.
+- Редакторы работают с форматом конфигурации, а не проверяют наличие или ABI
+  NSS/SSSD/Kerberos shared libraries. Проверка provider/package availability —
+  отдельная задача platform/provider inspector.

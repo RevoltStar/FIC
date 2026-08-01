@@ -214,10 +214,20 @@ def main():
     ):
         source = (identity_root / relative_path).read_text(encoding="utf-8")
         require(
-            f'{class_name}::{class_name}()' in source
+            f'{class_name}::{class_name}(' in source
             and f'IdentityAccessPolicy("{submodule_name}")' in source,
             f"{class_name} does not own submodule {submodule_name}",
     )
+    for relative_path, editor_name in (
+        ("submodules/sssd/SssdPolicy.h", "SssdConfiguration"),
+        ("submodules/kerberos/KerberosPolicy.h", "KerberosConfiguration"),
+        ("submodules/nss/NssPolicy.h", "NssConfiguration"),
+    ):
+        header = (identity_root / relative_path).read_text(encoding="utf-8")
+        require(
+            editor_name in header,
+            f"{relative_path} does not expose its configuration editor",
+        )
     require(
         "ConfigurationParticipant" in composite_header
         and "unique_ptr<IdentityAccessPolicy>" not in composite_header,
