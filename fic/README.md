@@ -393,7 +393,7 @@ prefix/root, который смешивает изменяемые данные
 Отсутствующие файлы по умолчанию не создаются. Явное создание с принудительными
 метаданными используется для `/etc/sysctl.conf` (`root:root`, `0644`),
 конфигурации display manager (`root:root`, `0644`), хранилища hash команд
-(`/opt/fic/db/commandhash.txt`, `root:<group of /opt/fic/db>`, `0660`) и
+(`/opt/fic/db/commandhash.txt`, `root:<group of /opt/fic/db>`, `0640`) и
 managed-файла sudoers (`root:root`, `0440`). Исходные файлы sudoers, SSH,
 `/etc/fstab`, конфигурация политик и файлы локализации при отсутствии считаются
 ошибкой и не создаются во время чтения.

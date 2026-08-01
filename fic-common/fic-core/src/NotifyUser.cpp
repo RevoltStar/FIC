@@ -72,7 +72,7 @@ bool NotifyUser::notify_user(const std::string& filename, const std::string& con
 
     try {
         std::filesystem::create_directories(notifyDir);
-        chmod(notifyDir.c_str(), 02770);
+        chmod(notifyDir.c_str(), 02750);
     } catch (const std::exception& e) {
         std::cerr << "Failed to create notify directory " << notifyDir << ": " << e.what() << std::endl;
         return false;
@@ -106,7 +106,7 @@ bool NotifyUser::notify_user(const std::string& filename, const std::string& con
                 << "message=" << escape_value(content) << "\n";
 
     notify_file.close();
-    chmod(tempPath.c_str(), 0660);
+    chmod(tempPath.c_str(), 0640);
 
     try {
         std::filesystem::rename(tempPath, finalPath);
@@ -116,6 +116,6 @@ bool NotifyUser::notify_user(const std::string& filename, const std::string& con
         return false;
     }
 
-    chmod(finalPath.c_str(), 0660);
+    chmod(finalPath.c_str(), 0640);
     return true;
 }

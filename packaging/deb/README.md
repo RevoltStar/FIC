@@ -84,9 +84,14 @@ During installation each package:
 - creates `/opt/fic/db/devices.db` from the seed only when the working database does not yet exist;
 - creates `/opt/fic/lockstatus` and `/opt/fic/db/commandhash.txt` only when they do not yet exist;
 - applies `root:fic` recursively to `/opt/fic`;
-- applies `2770` to directories under `/opt/fic` so the group is inherited and the directories remain traversable;
-- applies `0660` to regular files under `/opt/fic`;
-- applies `0770` to files in `/opt/fic/bin`.
+- applies `2750` to directories under `/opt/fic` so the group is inherited and
+  the tree remains readable and traversable without group write access;
+- applies `0640` to regular files under `/opt/fic`;
+- applies `0750` to files in `/opt/fic/bin`.
+
+Members of `fic` mutate configuration and device state through the two
+administrative sockets. Direct access to configuration, database and binary
+files is read-only.
 
 The `fic` package runs `fic --trust-sync-platform` before enabling services and
 generates exact `dpkg` `interest-noawait` file triggers from the compiled

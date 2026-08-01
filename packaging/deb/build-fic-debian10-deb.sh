@@ -320,11 +320,11 @@ if [ -d /opt/fic ]; then
     fi
 
     chown -R root:fic /opt/fic
-    find /opt/fic -type d -exec chmod 2770 {} \;
-    find /opt/fic -type f -exec chmod 0660 {} \;
+    find /opt/fic -type d -exec chmod 2750 {} \;
+    find /opt/fic -type f -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0770 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
     fi
 fi
 
@@ -363,11 +363,11 @@ if [ -d /opt/fic ]; then
     fi
 
     chown -R root:fic /opt/fic
-    find /opt/fic -type d -exec chmod 2770 {} \;
-    find /opt/fic -type f -exec chmod 0660 {} \;
+    find /opt/fic -type d -exec chmod 2750 {} \;
+    find /opt/fic -type f -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0770 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
     fi
 fi
 
@@ -406,11 +406,11 @@ if [ -d /opt/fic ]; then
     fi
 
     chown -R root:fic /opt/fic
-    find /opt/fic -type d -exec chmod 2770 {} \;
-    find /opt/fic -type f -exec chmod 0660 {} \;
+    find /opt/fic -type d -exec chmod 2750 {} \;
+    find /opt/fic -type f -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0770 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
     fi
 fi
 
@@ -457,11 +457,11 @@ if [ -d /opt/fic ]; then
     fi
 
     chown -R root:fic /opt/fic
-    find /opt/fic -type d -exec chmod 2770 {} \;
-    find /opt/fic -type f -exec chmod 0660 {} \;
+    find /opt/fic -type d -exec chmod 2750 {} \;
+    find /opt/fic -type f -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0770 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
     fi
 fi
 
@@ -565,11 +565,11 @@ fi
 
 if [ -d /opt/fic ]; then
     chown -R root:fic /opt/fic
-    find /opt/fic -type d -exec chmod 2770 {} \;
-    find /opt/fic -type f -exec chmod 0660 {} \;
+    find /opt/fic -type d -exec chmod 2750 {} \;
+    find /opt/fic -type f -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0770 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
     fi
 fi
 

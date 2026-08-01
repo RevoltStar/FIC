@@ -47,7 +47,7 @@ bool command_hash_file_options(FileHandlerOptions& options, std::string& error) 
     options.writeOptions.createIfMissing = true;
     options.writeOptions.rejectSymlink = true;
     options.writeOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
-    options.writeOptions.fileMode = 0660;
+    options.writeOptions.fileMode = 0640;
     options.writeOptions.fileOwner = 0;
     options.writeOptions.fileGroup = directoryInfo.st_gid;
     return true;

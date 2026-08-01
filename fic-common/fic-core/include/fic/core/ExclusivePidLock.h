@@ -188,7 +188,7 @@ private:
             }
         }
 
-        mode_t permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
+        mode_t permissions = S_IRUSR | S_IWUSR | S_IRGRP;
         if (!fs.change_permissions(lockFilePath_, permissions)) {
             debugLog("Failed to update permissions for lock file");
         }

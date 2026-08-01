@@ -79,6 +79,15 @@ bool DB::openDatabase() {
         return false;
     }
 
+    if (::chmod(db_path.c_str(), 0640) != 0) {
+        this->log("Cannot enforce database permissions: " +
+                      std::string(std::strerror(errno)),
+                  logLevel::FATAL);
+        sqlite3_close(db);
+        db = nullptr;
+        return false;
+    }
+
     sqlite3_busy_timeout(db, 5000);
 
     // Включаем поддержку внешних ключей

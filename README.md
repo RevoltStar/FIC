@@ -16,6 +16,9 @@ Shared libraries:
 Access model:
 - Access to the daemon API is intentionally controlled by Unix socket permissions.
 - Members of the `fic` OS group are treated as full FIC administrators and currently have full access to all daemon API commands, including configuration changes, policy application, device database changes, lock/unlock actions, hash recalculation, and daemon shutdown.
+- Members of `fic` can read and execute installed FIC files as appropriate, but
+  cannot modify `/opt/fic` directly. Policy configuration and device state
+  mutations must go through the daemon sockets.
 - Ordinary users must not be added to the `fic` group.
 
 Target platforms:

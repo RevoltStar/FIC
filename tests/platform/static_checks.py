@@ -383,6 +383,16 @@ def main():
             and '--parallel "$BUILD_JOBS"' in builder,
             f"{builder_path.relative_to(root)} bypasses adaptive build parallelism",
         )
+        require(
+            "chmod 2750" in builder
+            and "chmod 0640" in builder
+            and "chmod 0750" in builder
+            and "chmod 2770" not in builder
+            and "chmod 0660" not in builder
+            and "chmod 0770" not in builder,
+            f"{builder_path.relative_to(root)} does not keep /opt/fic "
+            "read-only for group fic",
+        )
 
     container_builders = tuple(
         (root / "packaging").glob("*/build-fic-*-docker.sh")
@@ -408,6 +418,47 @@ def main():
         "--trust-sync-platform" in deb_builder,
         "Debian package does not run package trust sync",
     )
+
+    command_hash_store = (
+        root / "fic-common/fic-core/src/CommandHashStore.cpp"
+    ).read_text(encoding="utf-8")
+    exclusive_lock = (
+        root / "fic-common/fic-core/include/fic/core/ExclusivePidLock.h"
+    ).read_text(encoding="utf-8")
+    notify_user = (
+        root / "fic-common/fic-core/src/NotifyUser.cpp"
+    ).read_text(encoding="utf-8")
+    require(
+        "fileMode = 0640" in command_hash_store
+        and "fileMode = 0660" not in command_hash_store,
+        "command hash runtime writes must preserve group read-only access",
+    )
+    require(
+        "S_IRGRP | S_IWGRP" not in exclusive_lock,
+        "runtime lock files must not be group-writable",
+    )
+    require(
+        "02750" in notify_user
+        and "0640" in notify_user
+        and "02770" not in notify_user
+        and "0660" not in notify_user,
+        "notification spool must remain group read-only",
+    )
+
+    for service_name in (
+        "fic.service.in",
+        "fic-device.service.in",
+        "fic-notify.service.in",
+        "fic_get_device_info.service.in",
+        "fic_get_device_udev_info.service.in",
+    ):
+        service = (
+            root / "fic/src/scripts/service" / service_name
+        ).read_text(encoding="utf-8")
+        require(
+            "UMask=0027" in service,
+            f"{service_name} does not protect newly created runtime files",
+        )
     require(
         "fic-trust-sync.filetrigger" in rpm_builder
         and "--trust-sync-platform-affected" in rpm_file_trigger

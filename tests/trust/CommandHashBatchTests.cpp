@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -14,6 +15,12 @@ std::string readFile(const std::filesystem::path& path) {
     std::ostringstream content;
     content << stream.rdbuf();
     return content.str();
+}
+
+mode_t fileMode(const std::filesystem::path& path) {
+    struct stat info {};
+    assert(::stat(path.c_str(), &info) == 0);
+    return info.st_mode & 07777;
 }
 } // namespace
 
@@ -59,6 +66,8 @@ int main() {
         {first.string(), second.string()}, error));
     assert(CommandHashStore::verifyHash(first.string(), error));
     assert(CommandHashStore::verifyHash(second.string(), error));
+    assert(fileMode(paths.commandHashFile) == 0640);
+    assert(fileMode(paths.commandHashFile.string() + ".lock") == 0640);
     assert(readFile(paths.commandHashFile).find("/manual/path=preserved") !=
            std::string::npos);
 

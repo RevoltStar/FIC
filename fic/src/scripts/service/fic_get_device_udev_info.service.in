@@ -7,6 +7,7 @@ Requires=fic-device.service
 ExecStart=@FIC_PRIVATE_BINDIR@/fic-udevadm-trigger
 Type=oneshot
 RemainAfterExit=yes
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target

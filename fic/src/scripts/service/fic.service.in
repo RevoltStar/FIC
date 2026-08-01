@@ -5,6 +5,7 @@ Description=FIC policy daemon
 Type=simple
 ExecStart=@FIC_PRIVATE_BINDIR@/fic --interval 1800
 Restart=on-failure
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target

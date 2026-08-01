@@ -7,6 +7,7 @@ Requires=fic.service
 Type=simple
 ExecStart=@FIC_PRIVATE_BINDIR@/fic-dick --daemon
 Restart=on-failure
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target

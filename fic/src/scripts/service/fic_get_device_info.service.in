@@ -5,6 +5,7 @@ Description=FIC cpu/motherboard/memory info collector
 ExecStart=@FIC_PRIVATE_BINDIR@/fic-dick "cpu_board_memory"
 Type=oneshot
 RemainAfterExit=yes
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target

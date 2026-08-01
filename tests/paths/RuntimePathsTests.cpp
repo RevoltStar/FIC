@@ -5,7 +5,16 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
+
+namespace {
+mode_t fileMode(const std::filesystem::path& path) {
+    struct stat info {};
+    assert(::stat(path.c_str(), &info) == 0);
+    return info.st_mode & 07777;
+}
+}
 
 int main() {
     namespace fs = std::filesystem;
@@ -57,6 +66,8 @@ int main() {
     }
     assert(fs::is_regular_file(paths.deviceDatabaseFile));
     assert(fs::is_regular_file(paths.deviceDatabaseLockFile));
+    assert(fileMode(paths.deviceDatabaseFile) == 0640);
+    assert(fileMode(paths.deviceDatabaseLockFile) == 0640);
 
     fs::remove_all(root);
     return 0;
