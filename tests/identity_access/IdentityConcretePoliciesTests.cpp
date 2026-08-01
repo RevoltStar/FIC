@@ -1,5 +1,4 @@
 #include "modules/identity_access/submodules/kerberos/policies/KerberosTicketLifetimePolicy.h"
-#include "modules/identity_access/submodules/nss/policies/NssLocalAccountsFirstPolicy.h"
 #include "modules/identity_access/submodules/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
 
 #include <fic/core/FicRuntimePaths.h>
@@ -81,9 +80,7 @@ void initializeRuntimePaths(const fs::path& root) {
         "sssd_offline_credentials_expiration.status=ENABLE\n"
         "sssd_offline_credentials_expiration.value=30\n"
         "kerberos_ticket_lifetime.status=ENABLE\n"
-        "kerberos_ticket_lifetime.value=7200\n"
-        "nss_local_accounts_first.status=ENABLE\n"
-        "nss_local_accounts_first.value=enforced\n",
+        "kerberos_ticket_lifetime.value=7200\n",
         0644);
     std::string error;
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
@@ -201,31 +198,6 @@ void testKerberosTicketLifetimePolicy(const fs::path& root) {
             "Kerberos policy wrote an unexpected duration");
 }
 
-void testNssLocalAccountsFirstPolicy(const fs::path& root) {
-    const fs::path main = root / "system/nsswitch.conf";
-    writeFile(
-        main,
-        "passwd: sss [UNAVAIL=return] files\n"
-        "group: ldap files\n"
-        "shadow: sss\n"
-        "hosts: files dns\n",
-        0644);
-    fic::identity::nss::NssConfigurationOptions options;
-    options.mainFile = secureFile(main);
-    NssLocalAccountsFirstPolicy policy(std::move(options));
-    require(policy.apply(), "NSS local accounts policy failed");
-    const std::string content = readFile(main);
-    require(content.find("passwd: files sss [UNAVAIL=return]") !=
-                std::string::npos,
-            "NSS policy lost provider actions or order");
-    require(content.find("group: files ldap") != std::string::npos,
-            "NSS policy did not reorder group providers");
-    require(content.find("shadow: files sss") != std::string::npos,
-            "NSS policy did not add the files provider");
-    require(content.find("hosts: files dns") != std::string::npos,
-            "NSS policy changed an unrelated database");
-}
-
 } // namespace
 
 int main() {
@@ -240,7 +212,6 @@ int main() {
         testSssdPolicyRollsBackAfterRestartFailure(root);
         testSssdPolicyDoesNotStartInactiveService(root);
         testKerberosTicketLifetimePolicy(root);
-        testNssLocalAccountsFirstPolicy(root);
     } catch (const std::exception& error) {
         std::cerr << "IdentityConcretePoliciesTests failed: "
                   << error.what() << '\n';

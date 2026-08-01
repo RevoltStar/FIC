@@ -165,7 +165,6 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/policies/KerberosTicketLifetimePolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssPolicy.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/policies/NssLocalAccountsFirstPolicy.cpp
 )
 target_include_directories(identity_concrete_policies_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src

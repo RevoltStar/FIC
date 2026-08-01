@@ -68,8 +68,6 @@
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Sets offline_credentials_expiration in the [pam] section of sssd.conf, in days. An active SSSD service is restarted; on failure the configuration is rolled back and the previous runtime state is restored.
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime]=Kerberos ticket lifetime
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime][description]=Sets ticket_lifetime in the [libdefaults] section of krb5.conf. The policy value is expressed in seconds; existing tickets are not reissued.
-[module:IDENTITY_ACCESS][policy:nss_local_accounts_first]=Prefer local accounts in NSS
-[module:IDENTITY_ACCESS][policy:nss_local_accounts_first][description]=Moves the files source to the beginning of the passwd, group and shadow databases while preserving other sources and their action blocks. The files source is added when absent.
 
 
 # Discretionary access control

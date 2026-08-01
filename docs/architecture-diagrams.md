@@ -469,7 +469,6 @@ flowchart TD
     krbBase --> krbConfig[KerberosConfiguration]
     krbBase --> ticketLifetime[kerberos_ticket_lifetime]
     nssBase --> nssConfig[NssConfiguration]
-    nssBase --> localFirst[nss_local_accounts_first]
     composite --> participants[ConfigurationParticipant list]
     participants --> prepared[PreparedConfigurationChange list]
     prepared --> commit[persistent commit all]
@@ -536,7 +535,6 @@ flowchart TB
     pam --> unlockTime[failed_authentication_unlock_time]
     sssd --> offlineExpiration[sssd_offline_credentials_expiration]
     kerberos --> ticketLifetimePolicy[kerberos_ticket_lifetime]
-    nss --> localAccountsFirst[nss_local_accounts_first]
 
     arr --> global[GLOBAL]
     global --> systemSettings[SystemSettings]

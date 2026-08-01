@@ -570,7 +570,6 @@ PolicyMap init_policyMap(
     cafArr.push_back(
         std::make_unique<SssdOfflineCredentialsExpirationPolicy>(executables));
     cafArr.push_back(std::make_unique<KerberosTicketLifetimePolicy>());
-    cafArr.push_back(std::make_unique<NssLocalAccountsFirstPolicy>());
 
     //Настройки ядра (SYSCTL)
     cafArr.push_back(std::make_unique<SYSCTL_buffer_overflow_protection>());
