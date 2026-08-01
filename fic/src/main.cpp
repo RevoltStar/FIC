@@ -12,14 +12,13 @@
 #include <fstream>
 #include <iostream>
 #include <locale>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
-#include <sys/select.h>
 #include <grp.h>
 #include <sys/stat.h>
-#include <sys/un.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -408,7 +407,17 @@ std::string policy_apply_message(const PolicyApplySummary& summary,
     return failureMessage;
 }
 
-json log_records_json(const std::string& requestedBootId) {
+constexpr int MAX_LOG_RECORDS_PER_PAGE = 500;
+constexpr std::size_t MAX_LOG_LINE_BYTES = 16U * 1024U;
+constexpr std::size_t MAX_LOG_PAGE_BYTES = 768U * 1024U;
+
+bool valid_boot_id(const std::string& bootId) {
+    return !bootId.empty() && std::all_of(bootId.begin(), bootId.end(), [](unsigned char ch) {
+        return std::isalnum(ch) || ch == '-' || ch == '_';
+    });
+}
+
+json log_records_json(const std::string& requestedBootId, int offset, int limit) {
     const std::string bootId = requestedBootId.empty()
         ? SystemBootInfo::get_boot_id()
         : requestedBootId;
@@ -416,12 +425,17 @@ json log_records_json(const std::string& requestedBootId) {
     json categories = json::array();
     json records = json::array();
     if (bootId.empty()) {
-        return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
+        return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId},
+                    {"categories", categories}, {"records", records}, {"has_more", false}};
+    }
+    if (!valid_boot_id(bootId)) {
+        return fic::ipc::make_error_response("invalid boot_id");
     }
 
     const std::filesystem::path bootDir = fic::core::FicRuntimePaths::get().logDir / bootId;
     if (!std::filesystem::exists(bootDir) || !std::filesystem::is_directory(bootDir)) {
-        return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
+        return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId},
+                    {"categories", categories}, {"records", records}, {"has_more", false}};
     }
 
     std::vector<std::filesystem::path> categoryDirs;
@@ -432,6 +446,9 @@ json log_records_json(const std::string& requestedBootId) {
     }
     std::sort(categoryDirs.begin(), categoryDirs.end());
 
+    std::size_t recordIndex = 0;
+    std::size_t responseBytes = 0;
+    bool hasMore = false;
     for (const auto& categoryDir : categoryDirs) {
         const std::string category = categoryDir.filename().string();
         categories.push_back(category);
@@ -455,17 +472,45 @@ json log_records_json(const std::string& requestedBootId) {
                 if (line.empty()) {
                     continue;
                 }
-                records.push_back({
+                if (recordIndex++ < static_cast<std::size_t>(offset)) {
+                    continue;
+                }
+                const std::size_t originalBytes = line.size();
+                const bool lineTruncated = line.size() > MAX_LOG_LINE_BYTES;
+                if (lineTruncated) {
+                    line.resize(MAX_LOG_LINE_BYTES);
+                }
+                json item = {
                     {"category", category},
                     {"source_file", logFile.string()},
                     {"line", line},
-                    {"byte_size", line.size()}
-                });
+                    {"byte_size", originalBytes},
+                    {"line_truncated", lineTruncated}
+                };
+                const std::size_t itemBytes = item.dump().size();
+                if (records.size() >= static_cast<std::size_t>(limit) ||
+                    responseBytes + itemBytes > MAX_LOG_PAGE_BYTES) {
+                    hasMore = true;
+                    break;
+                }
+                responseBytes += itemBytes;
+                records.push_back(std::move(item));
             }
+            if (hasMore) {
+                break;
+            }
+        }
+        if (hasMore) {
+            break;
         }
     }
 
-    return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId}, {"categories", categories}, {"records", records}};
+    json result = {{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId},
+                   {"categories", categories}, {"records", records}, {"has_more", hasMore}};
+    if (hasMore) {
+        result["next_offset"] = offset + static_cast<int>(records.size());
+    }
+    return result;
 }
 
 json lock_status_json() {
@@ -625,7 +670,10 @@ json handle_request(json request,
             );
         }
         if (command == "log_records") {
-            return log_records_json(request.value("boot_id", ""));
+            return log_records_json(
+                request.value("boot_id", ""),
+                request.value("offset", 0),
+                request.value("limit", MAX_LOG_RECORDS_PER_PAGE));
         }
         if (command == "calc_hash") {
             bool ok = calcHash(value);
@@ -652,34 +700,83 @@ json handle_request(json request,
     }
 }
 
-bool serve_one_client(int clientFd,
+bool validate_policy_request_schema(const json& request, std::string& error) {
+    for (const char* field : {"module", "policy", "value", "boot_id"}) {
+        if (request.contains(field) && !request[field].is_string()) {
+            error = std::string("request.") + field + " must be a string";
+            return false;
+        }
+    }
+    for (const char* field : {"offset", "limit"}) {
+        if (!request.contains(field)) {
+            continue;
+        }
+        const json& value = request[field];
+        const bool inRange = value.is_number_unsigned()
+            ? value.get<std::uint64_t>() <= static_cast<std::uint64_t>(std::numeric_limits<int>::max())
+            : value.is_number_integer() && value.get<std::int64_t>() >= 0 &&
+                value.get<std::int64_t>() <= std::numeric_limits<int>::max();
+        if (!inRange) {
+            error = std::string("request.") + field + " must be a non-negative 32-bit integer";
+            return false;
+        }
+    }
+    if (request.contains("limit")) {
+        const int limit = request["limit"].get<int>();
+        if (limit < 1 || limit > MAX_LOG_RECORDS_PER_PAGE) {
+            error = "request.limit must be between 1 and 500";
+            return false;
+        }
+    }
+
+    const std::string command = request.at("command").get<std::string>();
+    if (command == "shutdown" || command == "reload_config" ||
+        command == "apply_all" || command == "lock" || command == "unlock") {
+        return fic::ipc::request_has_only_fields(request, {"command"}, error);
+    }
+    if (command == "set_policy_value") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "module", "policy", "value"}, error);
+    }
+    if (command == "enable_policy" || command == "disable_policy" ||
+        command == "apply_policy") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "module", "policy"}, error);
+    }
+    if (command == "apply_module") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "module"}, error);
+    }
+    if (command == "calc_hash") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "value"}, error);
+    }
+    if (command == "log_records") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "boot_id", "offset", "limit"}, error);
+    }
+    return true;
+}
+
+std::string handle_client_packet(
+                      int clientFd,
+                      const std::string& requestText,
                       PolicyMap& policyMap,
                       const fic::platform::PlatformProfile& platform,
                       const fic::platform::PlatformExecutableResolver& executables) {
     const PeerCredentials peer = get_peer_credentials(clientFd);
-    std::string requestText;
     std::string error;
-    if (!fic::ipc::read_until_eof(clientFd, requestText, error)) {
-        json response = fic::ipc::make_error_response("read failed: " + error);
-        audit_ipc_request(peer, json{}, response);
-        std::string text = response.dump() + "\n";
-        fic::ipc::write_all(clientFd, text, error);
-        return false;
-    }
-
     json request;
     json response;
-    try {
-        request = json::parse(requestText);
+    if (fic::ipc::parse_request_json(requestText, request, error) &&
+        validate_policy_request_schema(request, error)) {
         response = handle_request(request, policyMap, platform, executables);
-    } catch (const std::exception& e) {
-        response = fic::ipc::make_error_response("invalid request: " + std::string(e.what()));
+    } else {
+        response = fic::ipc::make_error_response("invalid request: " + error);
     }
 
     audit_ipc_request(peer, request, response);
-
-    std::string responseText = response.dump() + "\n";
-    return fic::ipc::write_all(clientFd, responseText, error);
+    return response.dump();
 }
 
 bool custom_socket_requested(int argc, char* argv[]) {
@@ -804,6 +901,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     const int serverFd = socketResult.fileDescriptor;
+    fic::ipc::AdminSocketTransport transport(serverFd);
 
     std::cout << "fic daemon started, socket=" << socketPath
               << ", interval=" << intervalSeconds << "s"
@@ -812,21 +910,15 @@ int main(int argc, char* argv[]) {
     auto nextPeriodicApply = std::chrono::steady_clock::now() + std::chrono::seconds(intervalSeconds);
 
     while (!g_stop) {
-        fd_set readSet;
-        FD_ZERO(&readSet);
-        FD_SET(serverFd, &readSet);
-
-        timeval timeout{};
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
-
-        int ready = ::select(serverFd + 1, &readSet, nullptr, nullptr, &timeout);
-        if (ready > 0 && FD_ISSET(serverFd, &readSet)) {
-            int clientFd = ::accept(serverFd, nullptr, nullptr);
-            if (clientFd >= 0) {
-                serve_one_client(clientFd, policyMap, platform, executables);
-                ::close(clientFd);
-            }
+        std::string transportError;
+        if (!transport.pollOnce(1000,
+                [&](int clientFd, const std::string& requestText) {
+                    return handle_client_packet(clientFd, requestText,
+                        policyMap, platform, executables);
+                },
+                transportError)) {
+            std::cerr << transportError << std::endl;
+            break;
         }
 
         auto now = std::chrono::steady_clock::now();

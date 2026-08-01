@@ -1,6 +1,7 @@
 #include <fic/ipc/FicAdminSocket.h>
 
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <grp.h>
@@ -57,7 +58,7 @@ bool probeSocket(const std::string& socketPath,
                  int& connectError,
                  std::string& error) {
     connectError = 0;
-    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) {
         error = "socket() failed: " + std::string(std::strerror(errno));
         return false;
@@ -71,8 +72,17 @@ bool probeSocket(const std::string& socketPath,
         return false;
     }
     std::strncpy(address.sun_path, socketPath.c_str(), sizeof(address.sun_path) - 1);
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    const socklen_t addressLength = static_cast<socklen_t>(
+        offsetof(sockaddr_un, sun_path) + socketPath.size() + 1U);
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&address), addressLength) != 0) {
         connectError = errno;
+        if (connectError == EINPROGRESS || connectError == EAGAIN) {
+            // A nonblocking Unix connect can report EAGAIN when the live
+            // listener's backlog is full. It is still an active socket and
+            // must never be unlinked as stale.
+            ::close(fd);
+            return true;
+        }
         error = std::strerror(errno);
         ::close(fd);
         return false;
@@ -190,7 +200,7 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
         return result;
     }
 
-    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) {
         result.error = "socket() failed: " + std::string(std::strerror(errno));
         return result;
@@ -205,7 +215,9 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
         return result;
     }
     std::strncpy(address.sun_path, socketPath.c_str(), sizeof(address.sun_path) - 1);
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    const socklen_t addressLength = static_cast<socklen_t>(
+        offsetof(sockaddr_un, sun_path) + socketPath.size() + 1U);
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&address), addressLength) != 0) {
         result.error = "bind(" + socketPath + ") failed: " + std::strerror(errno);
         ::close(fd);
         return result;

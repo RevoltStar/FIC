@@ -173,38 +173,47 @@ import json
 import os
 import subprocess
 import socket
+import struct
 import sys
 import threading
 
 SOCKET = "/run/fic/fic-device.sock"
+RESPONSE_MAGIC = 0x46494332
+
+
+def receive_response(sock):
+    chunks = []
+    expected_total = None
+    received_total = 0
+    while expected_total is None or received_total < expected_total:
+        frame = sock.recv(65536)
+        if len(frame) < 16:
+            raise RuntimeError("short FIC IPC response frame")
+        magic, total, offset, chunk_size = struct.unpack("!IIII", frame[:16])
+        chunk = frame[16:]
+        if magic != RESPONSE_MAGIC or len(chunk) != chunk_size:
+            raise RuntimeError("invalid FIC IPC response frame")
+        if expected_total is None:
+            expected_total = total
+        if total != expected_total or offset != received_total:
+            raise RuntimeError("inconsistent FIC IPC response frames")
+        chunks.append(chunk)
+        received_total += chunk_size
+    return json.loads(b"".join(chunks).decode())
 
 
 def request(payload):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as sock:
         sock.connect(SOCKET)
-        sock.sendall((json.dumps(payload) + "\n").encode())
-        sock.shutdown(socket.SHUT_WR)
-        chunks = []
-        while True:
-            chunk = sock.recv(65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-    return json.loads(b"".join(chunks).decode())
+        sock.sendall(json.dumps(payload).encode())
+        return receive_response(sock)
 
 
 def request_text(text):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as sock:
         sock.connect(SOCKET)
         sock.sendall(text.encode())
-        sock.shutdown(socket.SHUT_WR)
-        chunks = []
-        while True:
-            chunk = sock.recv(65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-    return json.loads(b"".join(chunks).decode())
+        return receive_response(sock)
 
 
 def all_devices(include_disconnected=True):

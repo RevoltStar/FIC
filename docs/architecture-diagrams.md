@@ -161,16 +161,14 @@ flowchart TD
     signals --> createSocket[create_server_socket]
     createSocket --> mainLoop{g_stop == false}
 
-    mainLoop --> select[select socket с timeout 1 сек]
-    select --> clientReady{есть клиент?}
-    clientReady -->|да| accept[accept]
-    accept --> serve[serve_one_client]
-    serve --> readJson[read_until_eof]
-    readJson --> route[handle_request]
-    route --> writeJson[write JSON response]
-    writeJson --> periodic
+    mainLoop --> poll[AdminSocketTransport poll]
+    poll --> clients[accept/read/write до 32 клиентов]
+    clients --> ready{готов JSON-запрос?}
+    ready -->|да, не более одного за цикл| route[handle_request]
+    route --> queue[поставить фреймированный ответ в bounded queue]
+    queue --> periodic
 
-    clientReady -->|нет| periodic{пора periodic apply?}
+    ready -->|нет| periodic{пора periodic apply?}
     periodic -->|да| reload[init_policyMap]
     reload --> applyAll[apply all enabled policies]
     applyAll --> schedule[обновить nextPeriodicApply]
@@ -201,16 +199,22 @@ sequenceDiagram
     participant Router as handle_request
 
     Client->>IpcClient: request(JSON payload)
-    IpcClient->>Socket: connect(AF_UNIX/SOCK_STREAM)
-    IpcClient->>Socket: write payload + "\n"
-    IpcClient->>Socket: shutdown(SHUT_WR)
+    IpcClient->>Socket: connect(AF_UNIX/SOCK_SEQPACKET)
+    IpcClient->>Socket: send one JSON packet, max 64 KiB
     Socket->>Daemon: accept client fd
     Daemon->>Router: parse JSON and route command
     Router-->>Daemon: JSON response
-    Daemon-->>Socket: write response + "\n"
-    Socket-->>IpcClient: read_until_eof
+    Daemon-->>Socket: nonblocking framed packets, total max 1 MiB
+    Socket-->>IpcClient: reassemble bounded response
     IpcClient-->>Client: parsed JSON
 ```
+
+Transport не вызывает обработчик прямо из `accept`: ожидающие первый пакет и
+не читающие ответ клиенты остаются в неблокирующем `poll`-контуре. Первый пакет
+имеет deadline 2 секунды, запись ответа — 5 секунд, клиентский запрос целиком —
+30 секунд по умолчанию. В одном цикле исполняется не более одного запроса,
+поэтому мутации остаются последовательными, а periodic apply не блокируется
+бездействующим соединением.
 
 Основные команды IPC:
 
@@ -625,10 +629,12 @@ flowchart TD
 
     mainWindow --> logViewer[LogViewer / LogService]
     logViewer --> boot[boot_id]
-    logViewer --> records[log_records]
+    logViewer --> records[log_records pages<br/>offset / limit до 500]
 ```
 
 GUI не применяет политики к ОС напрямую. Он показывает данные, валидирует ввод на стороне интерфейса и затем отправляет изменения демону отдельными IPC-командами.
+Логи загружаются страницами не более 500 записей и 768 КиБ; GUI следует по
+`next_offset`, пока `has_more` остается истинным.
 
 ## 8. Сбор и отображение устройств
 

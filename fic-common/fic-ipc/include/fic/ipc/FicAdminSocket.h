@@ -2,6 +2,7 @@
 #define FIC_ADMIN_SOCKET_H
 
 #include <filesystem>
+#include <fic/ipc/FicIpcTransport.h>
 #include <optional>
 #include <string>
 #include <sys/types.h>

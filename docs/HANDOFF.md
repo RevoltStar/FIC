@@ -7,76 +7,93 @@
 
 - Обновлено: 2026-08-01.
 - Ветка: `main`.
-- Базовый commit: `ce93a1b`.
-- Текущая задача: исключить прямую запись группы `fic` в persistent-дерево
-  `/opt/fic`, сохранив административный доступ через сокеты.
+- Базовый commit: `89d21c9`.
+- Текущая задача: production hardening административного IPC (`fic` и
+  `fic-dick`) против idle/oversized/non-reading клиентов.
 - Изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- Production IPC-модель не ослаблена: `/run/fic` остается `root:fic 0770`,
-  сокеты `fic.sock` и `fic-device.sock` — `0660`.
-- Deb/RPM maintainer scripts теперь нормализуют `/opt/fic` как `root:fic`:
-  каталоги `2750`, обычные файлы `0640`, файлы в `/opt/fic/bin` — `0750`.
-  Группа может читать конфигурацию и БД и запускать клиенты, но не может
-  изменять persistent-файлы напрямую.
-- Изменены Debian 10/11/12 builders и ALT p11 RPM builder. Актуальные Debian 13
-  и Ubuntu 24.04 entry points используют общий Debian 12 builder и наследуют
-  новую модель.
-- Runtime writers синхронизированы с packaging: command hash store, PID-lock,
-  notification spool и SQLite database больше не получают group-write.
-- Для root systemd services добавлен `UMask=0027`, чтобы новые SQLite WAL/SHM,
-  логи и временные файлы не создавались с более широкими правами.
-- Добавлены runtime/static проверки режимов БД, lock/hash файлов, packager'ов и
-  service templates.
-- Обновлены README, архитектурная документация и инварианты `AGENTS.md`.
+- Старый `SOCK_STREAM + newline + shutdown + EOF` административный протокол
+  целиком заменен на Linux `AF_UNIX/SOCK_SEQPACKET`; compatibility-слой не
+  добавлялся, так как стабильного API у проекта пока нет.
+- Запрос передается одним JSON-пакетом до 64 КиБ. Ответ до 1 МиБ разбивается на
+  пакеты до 60 КиБ с 16-байтным network-order заголовком
+  `magic/total-size/offset/chunk-size`.
+- Общий `fic::ipc::Client` получил неблокирующие connect/send/receive и единый
+  deadline 30 секунд. Ошибки сериализации, размера, framing и timeout
+  возвращаются в стандартном `{"ok":false,"message":...}`.
+- `AdminSocketTransport` обслуживает неблокирующим `poll` до 32 соединений,
+  закрывает клиента без первого пакета через 2 секунды и клиента, не читающего
+  ответ, через 5 секунд. За один цикл обработчику передается не более одного
+  запроса; мутации остаются последовательными, а idle-клиенты не задерживают
+  periodic apply.
+- `fic` и `fic-dick` переведены на общий transport. `SO_PEERCRED`, audit и
+  socket permission model `root:fic 0770/0660` сохранены.
+- Добавлена общая проверка JSON: object, обязательный строковый `command`,
+  глубина до 16, строка до 16 КиБ, контейнер до 4096 элементов. Для полей API
+  проверяются типы и integer range; лишние поля запрещены у мутирующих команд.
+- `log_records` переведен на страницы: `offset`, `limit` 1..500,
+  `has_more/next_offset`, до 768 КиБ на страницу и 16 КиБ на строку. GUI
+  синхронно обновлен и загружает страницы. `boot_id` больше не допускает path
+  traversal. `device_events.limit` ограничен диапазоном 1..500.
+- Legacy IPC графического session-agent оставлен на отдельном root-to-user
+  `SOCK_STREAM`-контракте, но его чтение запроса теперь также ограничено 64 КиБ.
+- Python helper device-control integration tests переведен на новый wire
+  protocol; обновлены `AGENTS.md`, README и архитектурные диаграммы.
 
 ## Основные измененные файлы
 
-- `fic-common/fic-core/{include/fic/core/ExclusivePidLock.h,src/CommandHashStore.cpp,src/NotifyUser.cpp}`;
-- `fic-common/fic-device-db/src/DB.cpp`;
-- `fic/src/scripts/service/*.service.in`;
-- `packaging/deb/build-fic-debian{10,11,12}-deb.sh`;
-- `packaging/rpm/build-fic-alt-p11-rpm.sh`;
-- `tests/paths/RuntimePathsTests.cpp`;
-- `tests/trust/CommandHashBatchTests.cpp`;
-- `tests/platform/static_checks.py`;
-- `README.md`, `AGENTS.md`, `fic/README.md`,
-  `packaging/{deb,rpm}/README.md`, `docs/architecture-diagrams.md`.
+- `fic-common/fic-ipc/include/fic/ipc/{FicIpcClient,FicIpcTransport}.h`;
+- `fic-common/fic-ipc/src/{FicAdminSocket,FicIpcClient,FicIpcTransport}.cpp` и
+  внутренний `FicIpcWire.h`;
+- `fic/src/main.cpp`, `fic-dick/src/core/DeviceControlDaemon.cpp`;
+- `fic-gui/src/LogService.cpp`, `fic-session-agent/src/main.cpp`;
+- `tests/paths/{IpcProtocolValidationTests,IpcTransportTests}.cpp`;
+- `tests/device-control/lib/common.sh`, `tests/CMakeLists.txt`;
+- `AGENTS.md`, `fic/README.md`, `fic-dick/README.md`,
+  `docs/architecture-diagrams.md`.
 
 ## Выполненные проверки
 
-- `bash -n` для Debian 10/11/12/13, Ubuntu 24.04 и ALT p11 packager'ов:
-  успешно.
-- `python3 tests/platform/static_checks.py .`: успешно.
-- `python3 tests/paths/static_checks.py .`: успешно.
-- `python3 tests/device-control/static_checks.py .`: успешно.
-- `cmake -S . -B /tmp/fic-prod-audit.doO0Us -DFIC_TARGET_PLATFORM=alt-p11 -DCMAKE_BUILD_TYPE=Release`:
-  успешно.
-- `cmake --build /tmp/fic-prod-audit.doO0Us -j2`: успешно, собраны все цели.
-- `ctest --test-dir /tmp/fic-prod-audit.doO0Us --output-on-failure`: 21 тест,
-  ошибок нет; `admin_socket_tests` и root-зависимый
-  `command_hash_batch_tests` штатно пропущены.
+- Полная Release-конфигурация `alt-p11` в `/tmp/fic-ipc-build`: успешно.
+- `cmake --build /tmp/fic-ipc-build -j2`: успешно, собраны все цели, включая
+  `fic`, `fic-dick`, `fic-cli`, `fic-gui` и `fic-session-agent`.
+- `ctest --test-dir /tmp/fic-ipc-build --output-on-failure`: 23 теста, ошибок
+  нет; sandbox-зависимые `ipc_transport_tests`, `admin_socket_tests` и
+  root-зависимый `command_hash_batch_tests` штатно пропущены.
+- `/tmp/fic-ipc-build/tests/ipc_transport_tests` вне filesystem sandbox:
+  успешно. Проверены multi-frame ответ около 900 КиБ, границы запроса
+  64 КиБ/64 КиБ + 1, `MSG_TRUNC`, idle timeout, non-reading клиент и
+  отзывчивость параллельного клиента.
 - `git diff --check`: успешно.
-- Реальные `/opt/fic`, systemd services и Unix-сокеты не изменялись.
-- Тяжелые deb/rpm package builds и install/upgrade integration не запускались.
+- Реальные `/run/fic`, `/opt/fic`, службы, политики и device state не
+  изменялись.
 
 ## Что осталось
 
-- На disposable VM проверить upgrade установленного пакета: postinst должен
-  убрать group-write у существующих конфигов, БД и бинарников, после чего
-  `fic` и `fic-dick` должны продолжить принимать запросы члена группы через
-  оба сокета.
-- В root-capable CI выполнить `admin_socket_tests` и
-  `command_hash_batch_tests`, включая новые проверки `0640`.
+- На disposable VM выполнить package install/upgrade и проверить совместную
+  перезагрузку daemon/client binaries: старый и новый wire protocol намеренно
+  несовместимы.
+- В root-capable CI запускать `ipc_transport_tests`, `admin_socket_tests` и
+  `command_hash_batch_tests` без sandbox skip.
+- Добавить coverage-guided fuzzing JSON/framing boundary; текущие негативные
+  тесты детерминированы и не заменяют fuzzer.
 
 ## Риски и решения
 
-- `fic` остается высокопривилегированной административной группой daemon API:
-  она может менять политики, устройства, hashes и останавливать daemon через
-  сокет. Изменение убирает только обход API через прямую запись в `/opt/fic`.
-- Direct read SQLite во время работы daemon допускается правами, но
-  диагностические инструменты должны открывать БД read-only и не рассчитывать
-  на стабильный snapshot без SQLite transaction.
-- Compatibility alias и отдельная миграция не добавлялись: maintainer scripts
-  сразу нормализуют права текущего дерева при установке или обновлении.
+- Обработчик одной валидной команды исполняется синхронно. Это сохраняет
+  сериализацию privileged mutations; idle, oversized и non-reading клиенты его
+  больше не блокируют, но зависшая системная операция внутри самой политики
+  по-прежнему требует отдельных timeout/cancellation на уровне
+  `ProcessExecutor`/политики.
+- `log_records` использует числовой offset, а не snapshot cursor. При
+  одновременном добавлении/ротации файлов одна многостраничная загрузка может
+  кратковременно увидеть дубликат или пропуск; следующий GUI refresh перечитает
+  журнал заново.
+- Лимит 1 МиБ применяется после выполнения command handler. Известные
+  потенциально крупные log/event API ограничены до формирования ответа;
+  дальнейшие API с растущими коллекциями должны сразу проектироваться с
+  пагинацией.
+- Старый и новый IPC нельзя смешивать в работающем комплекте. Это осознанная
+  чистая замена до первого стабильного релиза, не migration bug.

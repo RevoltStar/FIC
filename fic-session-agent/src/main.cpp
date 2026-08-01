@@ -95,7 +95,8 @@ void serve_client(int fd, const std::string& sessionId) {
 
     std::string requestText;
     std::string error;
-    if (!fic::ipc::read_until_eof(fd, requestText, error)) {
+    if (!fic::ipc::read_until_eof(
+            fd, requestText, error, fic::ipc::MAX_REQUEST_BYTES)) {
         return;
     }
 

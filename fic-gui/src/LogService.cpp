@@ -120,57 +120,77 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories)
 {
     QVector<LogRecord> records;
     sequenceCounter_ = 0;
-
-    auto response = fic::ipc::Client().request({
-        {"command", "log_records"},
-        {"boot_id", bootId_.toStdString()}
-    });
-
-    if (!response.value("ok", false)) {
-        return records;
-    }
-
-    const std::string responseBootId = response.value("boot_id", "");
-    if (!responseBootId.empty()) {
-        bootId_ = QString::fromStdString(responseBootId);
-    }
-
     if (categories != nullptr) {
         categories->clear();
-        if (response.contains("categories") && response["categories"].is_array()) {
+    }
+
+    constexpr int pageSize = 500;
+    constexpr int maximumPages = 200;
+    int offset = 0;
+    for (int page = 0; page < maximumPages; ++page) {
+        auto response = fic::ipc::Client().request({
+            {"command", "log_records"},
+            {"boot_id", bootId_.toStdString()},
+            {"offset", offset},
+            {"limit", pageSize}
+        });
+
+        if (!response.value("ok", false)) {
+            break;
+        }
+
+        const std::string responseBootId = response.value("boot_id", "");
+        if (!responseBootId.empty()) {
+            bootId_ = QString::fromStdString(responseBootId);
+        }
+
+        if (categories != nullptr && response.contains("categories") &&
+            response["categories"].is_array()) {
             for (const auto &category : response["categories"]) {
                 if (category.is_string()) {
-                    categories->append(QString::fromStdString(category.get<std::string>()).trimmed());
+                    categories->append(
+                        QString::fromStdString(category.get<std::string>()).trimmed());
                 }
             }
         }
+
+        if (response.contains("records") && response["records"].is_array()) {
+            for (const auto &item : response["records"]) {
+                if (!item.is_object()) {
+                    continue;
+                }
+
+                const QString line = QString::fromStdString(item.value("line", ""));
+                const QString category = QString::fromStdString(item.value("category", ""));
+                const QString sourceFile = QString::fromStdString(item.value("source_file", ""));
+                if (line.isEmpty()) {
+                    continue;
+                }
+
+                LogRecord record;
+                if (!parseLogLine(line, category, sourceFile, &record)) {
+                    continue;
+                }
+
+                record.byteSize = static_cast<qint64>(
+                    item.value("byte_size", line.toUtf8().size()));
+                records.append(record);
+            }
+        }
+
+        if (!response.value("has_more", false)) {
+            break;
+        }
+        const int nextOffset = response.value("next_offset", offset);
+        if (nextOffset <= offset) {
+            break;
+        }
+        offset = nextOffset;
+    }
+
+    if (categories != nullptr) {
         categories->removeDuplicates();
         categories->sort();
-    }
-
-    if (!response.contains("records") || !response["records"].is_array()) {
-        return records;
-    }
-
-    for (const auto &item : response["records"]) {
-        if (!item.is_object()) {
-            continue;
-        }
-
-        const QString line = QString::fromStdString(item.value("line", ""));
-        const QString category = QString::fromStdString(item.value("category", ""));
-        const QString sourceFile = QString::fromStdString(item.value("source_file", ""));
-        if (line.isEmpty()) {
-            continue;
-        }
-
-        LogRecord record;
-        if (!parseLogLine(line, category, sourceFile, &record)) {
-            continue;
-        }
-
-        record.byteSize = static_cast<qint64>(item.value("byte_size", line.toUtf8().size()));
-        records.append(record);
     }
 
     return records;

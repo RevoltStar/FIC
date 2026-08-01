@@ -14,15 +14,14 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <thread>
-#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/un.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <vector>
@@ -1152,31 +1151,91 @@ json handle_request(const json& request, const PeerCredentials& peer) {
     return handle_db_request(request);
 }
 
-bool serve_one_client(int clientFd) {
-    const PeerCredentials peer = peer_credentials(clientFd);
-    std::string requestText;
-    std::string error;
-    if (!fic::ipc::read_until_eof(clientFd, requestText, error)) {
-        json response = fic::ipc::make_error_response("read failed: " + error);
-        audit_device_request(peer, json{}, response);
-        std::string text = response.dump() + "\n";
-        fic::ipc::write_all(clientFd, text, error);
-        return false;
+bool validate_device_request_schema(const json& request, std::string& error) {
+    for (const char* field : {"action", "devpath", "subsystem", "control_level", "event_type"}) {
+        if (request.contains(field) && !request[field].is_string()) {
+            error = std::string("request.") + field + " must be a string";
+            return false;
+        }
+    }
+    for (const char* field : {"device_id", "parent_id", "limit"}) {
+        if (!request.contains(field)) {
+            continue;
+        }
+        const json& value = request[field];
+        const bool inRange = value.is_number_unsigned()
+            ? value.get<std::uint64_t>() <= static_cast<std::uint64_t>(std::numeric_limits<int>::max())
+            : value.is_number_integer() &&
+                value.get<std::int64_t>() >= std::numeric_limits<int>::min() &&
+                value.get<std::int64_t>() <= std::numeric_limits<int>::max();
+        if (!inRange) {
+            error = std::string("request.") + field + " must be a 32-bit integer";
+            return false;
+        }
+    }
+    for (const char* field : {"include_disconnected", "ignore_hierarchy"}) {
+        if (request.contains(field) && !request[field].is_boolean()) {
+            error = std::string("request.") + field + " must be a boolean";
+            return false;
+        }
+    }
+    if (request.contains("env")) {
+        if (!request["env"].is_object()) {
+            error = "request.env must be an object";
+            return false;
+        }
+        for (auto item = request["env"].begin(); item != request["env"].end(); ++item) {
+            if (!item.value().is_string()) {
+                error = "request.env values must be strings";
+                return false;
+            }
+        }
+    }
+    if (request.contains("limit")) {
+        const int limit = request["limit"].get<int>();
+        if (limit < 1 || limit > 500) {
+            error = "request.limit must be between 1 and 500";
+            return false;
+        }
     }
 
+    const std::string command = request.at("command").get<std::string>();
+    if (command == "shutdown" || command == "device_check_permanent") {
+        return fic::ipc::request_has_only_fields(request, {"command"}, error);
+    }
+    if (command == "udev_event") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "action", "devpath", "subsystem", "env"}, error);
+    }
+    if (command == "device_update_control_level") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "device_id", "control_level", "ignore_hierarchy"}, error);
+    }
+    if (command == "device_update_ignore_hierarchy") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "device_id", "ignore_hierarchy"}, error);
+    }
+    if (command == "device_reset_control" || command == "device_delete") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "device_id"}, error);
+    }
+    return true;
+}
+
+std::string handle_client_packet(int clientFd, const std::string& requestText) {
+    const PeerCredentials peer = peer_credentials(clientFd);
+    std::string error;
     json response;
     json request;
-    try {
-        request = json::parse(requestText);
+    if (fic::ipc::parse_request_json(requestText, request, error) &&
+        validate_device_request_schema(request, error)) {
         response = handle_request(request, peer);
-    } catch (const std::exception& e) {
-        response = fic::ipc::make_error_response("invalid request: " + std::string(e.what()));
+    } else {
+        response = fic::ipc::make_error_response("invalid request: " + error);
     }
 
     audit_device_request(peer, request, response);
-
-    std::string responseText = response.dump() + "\n";
-    return fic::ipc::write_all(clientFd, responseText, error);
+    return response.dump();
 }
 
 std::string get_device_socket_path_from_env() {
@@ -1230,41 +1289,20 @@ int run_daemon(const std::string& socketPathArg) {
         return 1;
     }
     const int serverFd = socketResult.fileDescriptor;
+    fic::ipc::AdminSocketTransport transport(serverFd);
 
     log_device("fic-dick device daemon started on " + socketPath, logLevel::INFO);
 
     while (!g_stop) {
-        fd_set readSet;
-        FD_ZERO(&readSet);
-        FD_SET(serverFd, &readSet);
-
-        timeval timeout{};
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
-
-        int ready = ::select(serverFd + 1, &readSet, nullptr, nullptr, &timeout);
-        if (ready < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            std::cerr << "select(" << socketPath << ") failed: " << std::strerror(errno) << std::endl;
+        std::string transportError;
+        if (!transport.pollOnce(1000,
+                [](int clientFd, const std::string& requestText) {
+                    return handle_client_packet(clientFd, requestText);
+                },
+                transportError)) {
+            std::cerr << transportError << std::endl;
             break;
         }
-        if (ready == 0 || !FD_ISSET(serverFd, &readSet)) {
-            continue;
-        }
-
-        int clientFd = ::accept(serverFd, nullptr, nullptr);
-        if (clientFd < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            std::cerr << "accept() failed: " << std::strerror(errno) << std::endl;
-            break;
-        }
-
-        serve_one_client(clientFd);
-        ::close(clientFd);
     }
 
     ::close(serverFd);

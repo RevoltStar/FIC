@@ -51,6 +51,15 @@ add_executable(ipc_paths_tests paths/IpcPathsTests.cpp)
 target_link_libraries(ipc_paths_tests PRIVATE fic-ipc)
 add_test(NAME ipc_paths_tests COMMAND ipc_paths_tests)
 
+add_executable(ipc_protocol_validation_tests paths/IpcProtocolValidationTests.cpp)
+target_link_libraries(ipc_protocol_validation_tests PRIVATE fic-ipc)
+add_test(NAME ipc_protocol_validation_tests COMMAND ipc_protocol_validation_tests)
+
+add_executable(ipc_transport_tests paths/IpcTransportTests.cpp)
+target_link_libraries(ipc_transport_tests PRIVATE fic-ipc Threads::Threads)
+add_test(NAME ipc_transport_tests COMMAND ipc_transport_tests)
+set_tests_properties(ipc_transport_tests PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(admin_socket_tests paths/AdminSocketTests.cpp)
 target_link_libraries(admin_socket_tests PRIVATE fic-ipc)
 add_test(NAME admin_socket_tests COMMAND admin_socket_tests)

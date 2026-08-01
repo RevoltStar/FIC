@@ -15,7 +15,11 @@ configure_file(
     @ONLY
 )
 
-add_library(fic-ipc STATIC src/FicAdminSocket.cpp)
+add_library(fic-ipc STATIC
+    src/FicAdminSocket.cpp
+    src/FicIpcClient.cpp
+    src/FicIpcTransport.cpp
+)
 
 target_include_directories(fic-ipc PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

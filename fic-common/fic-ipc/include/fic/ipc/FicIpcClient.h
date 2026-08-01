@@ -2,13 +2,17 @@
 #define FIC_IPC_CLIENT_H
 
 #include <fic/ipc/FicIpcPathDefaults.h>
+#include <fic/ipc/FicIpcTransport.h>
 
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <string>
+#include <stdexcept>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -48,6 +52,86 @@ inline json make_ok_response(const std::string& message = "OK") {
     return json{{"ok", true}, {"message", message}};
 }
 
+inline bool validate_json_value(const json& value,
+                                std::size_t depth,
+                                std::string& error) {
+    if (depth > MAX_JSON_DEPTH) {
+        error = "JSON nesting exceeds the transport limit";
+        return false;
+    }
+    if (value.is_string() && value.get_ref<const std::string&>().size() > MAX_JSON_STRING_BYTES) {
+        error = "JSON string exceeds the transport limit";
+        return false;
+    }
+    if ((value.is_array() || value.is_object()) && value.size() > MAX_JSON_CONTAINER_ITEMS) {
+        error = "JSON container exceeds the transport item limit";
+        return false;
+    }
+    if (value.is_array()) {
+        for (const json& item : value) {
+            if (!validate_json_value(item, depth + 1U, error)) {
+                return false;
+            }
+        }
+    } else if (value.is_object()) {
+        for (auto item = value.begin(); item != value.end(); ++item) {
+            if (item.key().size() > MAX_JSON_STRING_BYTES ||
+                !validate_json_value(item.value(), depth + 1U, error)) {
+                if (error.empty()) {
+                    error = "JSON object key exceeds the transport limit";
+                }
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+inline bool parse_request_json(const std::string& text,
+                               json& request,
+                               std::string& error) {
+    try {
+        request = json::parse(text, [](int depth, json::parse_event_t, json&) {
+            if (depth > static_cast<int>(MAX_JSON_DEPTH)) {
+                throw std::runtime_error("JSON nesting exceeds the transport limit");
+            }
+            return true;
+        });
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        return false;
+    }
+    if (!request.is_object()) {
+        error = "request must be a JSON object";
+        return false;
+    }
+    const auto command = request.find("command");
+    if (command == request.end() || !command->is_string() || command->get_ref<const std::string&>().empty()) {
+        error = "request.command must be a non-empty string";
+        return false;
+    }
+    return validate_json_value(request, 0, error);
+}
+
+inline bool request_has_only_fields(const json& request,
+                                    std::initializer_list<const char*> allowed,
+                                    std::string& error) {
+    for (auto item = request.begin(); item != request.end(); ++item) {
+        bool known = false;
+        for (const char* field : allowed) {
+            if (item.key() == field) {
+                known = true;
+                break;
+            }
+        }
+        if (!known) {
+            error = "field is not allowed for this command: " + item.key();
+            return false;
+        }
+    }
+    return true;
+}
+
 inline bool write_all(int fd, const std::string& data, std::string& error) {
     const char* ptr = data.c_str();
     size_t left = data.size();
@@ -70,7 +154,10 @@ inline bool write_all(int fd, const std::string& data, std::string& error) {
     return true;
 }
 
-inline bool read_until_eof(int fd, std::string& output, std::string& error) {
+inline bool read_until_eof(int fd,
+                           std::string& output,
+                           std::string& error,
+                           std::size_t maximumBytes = MAX_RESPONSE_BYTES) {
     char buffer[4096];
     while (true) {
         ssize_t received = ::read(fd, buffer, sizeof(buffer));
@@ -84,68 +171,30 @@ inline bool read_until_eof(int fd, std::string& output, std::string& error) {
         if (received == 0) {
             return true;
         }
+        if (output.size() > maximumBytes ||
+            static_cast<std::size_t>(received) > maximumBytes - output.size()) {
+            error = "message exceeds " + std::to_string(maximumBytes) + " bytes";
+            return false;
+        }
         output.append(buffer, static_cast<size_t>(received));
     }
 }
 
 class Client {
 public:
-    Client()
-        : socketPath_(endpoint_socket_path(Endpoint::PolicyDaemon)) {}
+    Client();
 
-    explicit Client(Endpoint endpoint)
-        : socketPath_(endpoint_socket_path(endpoint)) {}
+    explicit Client(Endpoint endpoint);
 
-    explicit Client(std::string socketPath)
-        : socketPath_(socketPath.empty()
-              ? endpoint_socket_path(Endpoint::PolicyDaemon)
-              : std::move(socketPath)) {}
+    explicit Client(std::string socketPath);
 
-    json request(const json& payload) const {
-        int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            return make_error_response("socket() failed: " + std::string(std::strerror(errno)));
-        }
+    Client(std::string socketPath, std::chrono::milliseconds timeout);
 
-        sockaddr_un addr{};
-        addr.sun_family = AF_UNIX;
-        if (socketPath_.size() >= sizeof(addr.sun_path)) {
-            ::close(fd);
-            return make_error_response("socket path is too long: " + socketPath_);
-        }
-        std::strncpy(addr.sun_path, socketPath_.c_str(), sizeof(addr.sun_path) - 1);
-
-        if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-            std::string err = std::strerror(errno);
-            ::close(fd);
-            return make_error_response("connect(" + socketPath_ + ") failed: " + err);
-        }
-
-        std::string error;
-        std::string requestText = payload.dump() + "\n";
-        if (!write_all(fd, requestText, error)) {
-            ::close(fd);
-            return make_error_response("write failed: " + error);
-        }
-
-        ::shutdown(fd, SHUT_WR);
-
-        std::string responseText;
-        if (!read_until_eof(fd, responseText, error)) {
-            ::close(fd);
-            return make_error_response("read failed: " + error);
-        }
-        ::close(fd);
-
-        try {
-            return json::parse(responseText);
-        } catch (const std::exception& e) {
-            return make_error_response("invalid daemon response: " + std::string(e.what()) + "; raw=" + responseText);
-        }
-    }
+    json request(const json& payload) const;
 
 private:
     std::string socketPath_;
+    std::chrono::milliseconds timeout_{DEFAULT_CLIENT_TIMEOUT};
 };
 
 } // namespace fic::ipc
