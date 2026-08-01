@@ -151,6 +151,36 @@ add_test(
     COMMAND identity_configuration_editors_tests
 )
 
+add_executable(identity_concrete_policies_tests
+    identity_access/IdentityConcretePoliciesTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/composite/ConfigurationTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/policies/SssdOfflineCredentialsExpirationPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/policies/KerberosTicketLifetimePolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/policies/NssLocalAccountsFirstPolicy.cpp
+)
+target_include_directories(identity_concrete_policies_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(identity_concrete_policies_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(
+    NAME identity_concrete_policies_tests
+    COMMAND identity_concrete_policies_tests
+)
+
 add_executable(ssh_runtime_tests
     ssh/SshRuntimeTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/submodules/SshConfigAudit.cpp

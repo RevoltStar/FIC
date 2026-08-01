@@ -29,6 +29,9 @@
 #include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryDepthPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordMinClassesPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordMinLengthPolicy.h"
+#include "modules/identity_access/submodules/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
+#include "modules/identity_access/submodules/kerberos/policies/KerberosTicketLifetimePolicy.h"
+#include "modules/identity_access/submodules/nss/policies/NssLocalAccountsFirstPolicy.h"
 
 //Настройки ядра
 #include "modules/sysctl/submodules/fskernelprotection/SYSCTL_fd_limits.h"

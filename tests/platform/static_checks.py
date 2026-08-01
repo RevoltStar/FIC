@@ -152,6 +152,9 @@ def main():
         "PamPasswordHistoryDepthPolicy",
         "PamFailedAuthenticationAttemptsPolicy",
         "PamFailedAuthenticationUnlockTimePolicy",
+        "SssdOfflineCredentialsExpirationPolicy",
+        "KerberosTicketLifetimePolicy",
+        "NssLocalAccountsFirstPolicy",
     ):
         require(
             policy_class in registry,
@@ -166,6 +169,9 @@ def main():
         "password_history_depth",
         "failed_authentication_attempts",
         "failed_authentication_unlock_time",
+        "sssd_offline_credentials_expiration",
+        "kerberos_ticket_lifetime",
+        "nss_local_accounts_first",
     ):
         require(
             f"{policy_name}.value=" in identity_config

@@ -7,50 +7,45 @@
 
 - Обновлено: 2026-08-01.
 - Ветка: `main`.
-- Базовый commit: `b814b3d`.
-- Текущая задача: реализовать редакторы конфигураций SSSD, Kerberos и NSS.
+- Базовый commit: `7295322`.
+- Текущая задача: добавить конкретные политики SSSD, Kerberos и NSS поверх
+  существующих typed configuration editors.
 - Изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- Добавлены три независимых typed editor API. Универсальный INI-редактор не
-  используется, поскольку грамматика и effective semantics у подсистем
-  различаются.
-- `SssdConfiguration` редактирует секции и options существующего основного
-  `sssd.conf`, нормализует дубликаты целевой option, сохраняет посторонние
-  строки и читает `.conf` snippets. Каталоги snippets обрабатываются в
-  заданном порядке, файлы внутри каждого — лексикографически. Определение
-  изменяемого ключа в snippet приводит к fail-closed ошибке до записи.
-- `KerberosConfiguration` редактирует scalar relations верхнего уровня,
-  сохраняет relation/section final markers и вложенные subsections. Read-only
-  preflight обходит абсолютные `include`/`includedir` с лимитами глубины и
-  числа файлов, проверяет циклы и порядок файлов. Конфликтующее определение в
-  included profile и profile `module` приводят к fail-closed ошибке.
-- `NssConfiguration` парсит и сериализует typed списки NSS services и action
-  blocks с обычными и negated status expressions, обновляет все дубликаты
-  целевой database и сохраняет комментарии и посторонние databases.
-- Общий `PreparedFileChange` читает только существующие regular files,
-  проверяет owner/group/mode/размер и запрещает symlink во всей цепочке
-  каталогов. Commit повторно сверяет snapshot, пишет через `AtomicFileWriter`,
-  проверяет результат и не затирает позднюю внешнюю правку при rollback.
-- `SssdPolicy`, `KerberosPolicy` и `NssPolicy` теперь владеют соответствующим
-  редактором и передают его в typed apply-hook. Options конструктора позволяют
-  policy/test/platform layer задавать пути и требования к metadata.
-- Добавлены тесты синтаксиса, сохранения постороннего содержимого, дубликатов,
-  SSSD snippet precedence, Kerberos include graph/final markers/module/cycles,
-  NSS actions, unsafe metadata и symlinks, no-op, snapshot race и безопасного
-  rollback.
-- Обновлены README, архитектурные диаграммы и static architecture checks.
+- Добавлена и зарегистрирована политика
+  `sssd_offline_credentials_expiration`. Она принимает число дней `0..3650` и
+  задаёт `[pam]/offline_credentials_expiration` в `sssd.conf`.
+- Добавлен `SssdRuntime`. Для реально изменённого файла он через проверенный
+  `systemctl` определяет активную службу `sssd.service`. Активная служба
+  перезапускается и проверяется; неактивная не запускается. Ошибка restart
+  включает rollback исходного файла и повторный restart с восстановленной
+  конфигурацией.
+- Добавлена и зарегистрирована политика `kerberos_ticket_lifetime`. Она
+  принимает `60..86400` секунд и записывает значение с явным суффиксом `s` в
+  `[libdefaults]/ticket_lifetime`. Существующие билеты не перевыпускаются.
+- Добавлена и зарегистрирована fixed-политика `nss_local_accounts_first`. Она
+  перемещает provider `files` в начало databases `passwd`, `group` и `shadow`,
+  сохраняя порядок остальных providers и их NSS action blocks. Если `files`
+  отсутствует, он добавляется. Отсутствующая database приводит к fail-closed
+  ошибке.
+- Все политики добавлены в `PolicyMap`, `IDENTITY_ACCESS.conf`, русскую и
+  английскую локализацию, static architecture checks, README и диаграммы.
+- Добавлены `identity_concrete_policies_tests`: успешный restart SSSD,
+  compensating rollback после его ошибки, отсутствие запуска неактивного SSSD,
+  преобразование Kerberos duration и сохранение NSS providers/actions.
 
 ## Основные измененные файлы
 
-- `fic/src/modules/identity_access/configuration/PreparedFileChange.{h,cpp}`
-- `fic/src/modules/identity_access/submodules/sssd/SssdConfiguration.{h,cpp}`
-- `fic/src/modules/identity_access/submodules/kerberos/KerberosConfiguration.{h,cpp}`
-- `fic/src/modules/identity_access/submodules/nss/NssConfiguration.{h,cpp}`
-- `fic/src/modules/identity_access/submodules/{sssd,kerberos,nss}/*Policy.{h,cpp}`
-- `tests/identity_access/IdentityConfigurationEditorsTests.cpp`
-- `tests/identity_access/IdentityPolicyHierarchyTests.cpp`
+- `fic/src/modules/identity_access/submodules/sssd/SssdRuntime.{h,cpp}`
+- `fic/src/modules/identity_access/submodules/sssd/policies/SssdOfflineCredentialsExpirationPolicy.{h,cpp}`
+- `fic/src/modules/identity_access/submodules/kerberos/policies/KerberosTicketLifetimePolicy.{h,cpp}`
+- `fic/src/modules/identity_access/submodules/nss/policies/NssLocalAccountsFirstPolicy.{h,cpp}`
+- `fic/src/core/main_function.{h,cpp}`
+- `fic/src/scripts/config/IDENTITY_ACCESS.conf`
+- `fic/src/scripts/lang/{ru,en}.lang`
+- `tests/identity_access/IdentityConcretePoliciesTests.cpp`
 - `tests/CMakeLists.txt`
 - `tests/platform/static_checks.py`
 - `fic/README.md`
@@ -61,46 +56,44 @@
 
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11`: успешно.
 - `cmake --build build-check -j2`: успешно, собраны все цели.
-- `ctest --test-dir build-check --output-on-failure`: 20 тестов, ошибок нет;
+- `ctest --test-dir build-check --output-on-failure`: 21 тест, ошибок нет;
   `admin_socket_tests` и root-зависимый `command_hash_batch_tests` штатно
   пропущены.
 - `python3 tests/platform/static_checks.py .`: успешно.
 - `git diff --check`: успешно.
-- Для профиля `debian-13` отдельно выполнены configure, сборка `fic`,
-  `identity_configuration_editors_tests`, `identity_policy_hierarchy_tests` и
-  запуск этих двух тестов вместе с `platform_profile_tests`: успешно.
-- Реальные `/etc/sssd/sssd.conf`, `/etc/krb5.conf` и `/etc/nsswitch.conf` не
-  изменялись; тесты используют временные деревья.
+- Для профиля `debian-13` отдельно выполнены configure, сборка `fic` и
+  `identity_concrete_policies_tests`, затем запуск нового теста вместе с
+  `platform_profile_tests`: успешно.
+- Реальные `/etc/sssd/sssd.conf`, `/etc/krb5.conf`, `/etc/nsswitch.conf` и
+  systemd-службы не изменялись: policy tests используют временные файлы и
+  внедрённый command runner.
 - Тяжелые deb/rpm package builds не запускались.
 
 ## Что осталось
 
-- Конкретных зарегистрированных политик SSSD, Kerberos, NSS и Composite пока
-  нет. Редакторы предоставляют основу для них, но сами не являются `Policy`.
-- File-level `set*()` не перезапускает SSSD, не инвалидирует кеши и не
-  выполняет другие runtime-действия. Runtime-sensitive composite participant
-  должен обернуть подготовленное изменение и реализовать activation/effective
-  verification/restore.
-- Kerberos API пока намеренно не редактирует вложенные dictionary relations
-  (`[realms]`, `[capaths]` и подобные структуры). Для них нужен отдельный typed
-  API, а не расширение scalar setter строковым путём.
-- SSSD snippets учитываются при effective read, но редактор не выбирает и не
-  переписывает произвольный snippet автоматически. Policy должна явно владеть
-  выбранным файлом, если появится необходимость управлять drop-in.
-- Реальные integration tests требуют disposable VM/контейнеров с SSSD и
-  Kerberos для каждого поддерживаемого дистрибутива.
+- Runtime-проверка SSSD пока доказывает успешный restart и active-state, но не
+  запрашивает effective option у самого SSSD: универсального интерфейса для
+  чтения этого значения у daemon нет. Persistent postcondition проверяется
+  повторным разбором полного main+snippet представления.
+- `kerberos_ticket_lifetime` задаёт клиентский default/max request lifetime;
+  KDC может выдать билет с меньшим сроком. Проверка KDC policy не относится к
+  конфигурации локального клиента.
+- NSS policy не проверяет наличие каждого стороннего provider `.so`, потому что
+  она не добавляет и не переименовывает сторонние providers. Отдельный provider
+  inspector нужен для политик, которые будут вводить конкретный источник.
+- Реальные integration tests SSSD restart/authentication и Kerberos login
+  требуют disposable VM для каждого поддерживаемого дистрибутива.
 
 ## Риски и решения
 
-- У проекта нет стабильных версий; compatibility aliases и миграции для этой
-  реализации не добавлялись.
-- Компенсирующая транзакция не обеспечивает crash-atomicity набора файлов.
-  Падение между atomic rename требует отдельного transaction journal, которого
-  пока нет.
-- Общий mutex сериализует только операции текущего процесса FIC. Snapshot
-  checks защищают от тихого затирания внешней правки, но полная защита от
-  переименования каталогов конкурентным привилегированным процессом потребует
-  перехода всего write path на `openat`/directory descriptors.
-- Редакторы работают с форматом конфигурации, а не проверяют наличие или ABI
-  NSS/SSSD/Kerberos shared libraries. Проверка provider/package availability —
-  отдельная задача platform/provider inspector.
+- Restart SSSD кратковременно прерывает responder/backend processes. Это
+  обязательная цена немедленного применения: SSSD не перечитывает конфигурацию
+  по SIGHUP. Политика отключена по умолчанию и restart выполняется только при
+  реальном изменении активной службы.
+- Между проверкой active-state и restart остаётся внешняя systemd race. Общий
+  identity mutex защищает только FIC, а не администратора или другой daemon.
+- Компенсирующая транзакция не обеспечивает crash-atomicity между atomic rename
+  и restart. Для восстановления после падения процесса нужен transaction
+  journal, которого пока нет.
+- У проекта нет стабильных версий; compatibility aliases и миграции для новых
+  политик не добавлялись.

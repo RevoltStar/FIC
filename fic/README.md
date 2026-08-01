@@ -445,15 +445,23 @@ include-граф: если неподдерживаемое правило на�
 `PAM`, `SSSD`, `KERBEROS`, `NSS` и `COMPOSITE`. Классы
 `PamPolicy`, `SssdPolicy`, `KerberosPolicy` и `NssPolicy` задают границу
 подмодуля и наследуются от `IdentityAccessPolicy`; парсеры и редакторы
-системных конфигураций от `Policy` не наследуются. Пока зарегистрированные
-конкретные политики есть только в подмодуле `PAM`:
+системных конфигураций от `Policy` не наследуются. Зарегистрированы следующие
+конкретные политики:
 
 - `password_min_length` и `password_min_classes` управляют параметрами
   `minlen` и `minclass` активного `pam_pwquality`;
 - `password_history_depth` управляет `remember` активного `pam_pwhistory`;
 - `failed_authentication_attempts` и
   `failed_authentication_unlock_time` управляют `deny` и `unlock_time`
-  активного `pam_faillock`.
+  активного `pam_faillock`;
+- `sssd_offline_credentials_expiration` задаёт срок допустимости offline-login
+  по кешированным credentials в `[pam]`. Если `sssd.service` активен, изменение
+  применяется через restart в одной компенсирующей транзакции с записью файла;
+- `kerberos_ticket_lifetime` задаёт `ticket_lifetime` в `[libdefaults]` в
+  секундах. Уже выданные билеты политика не перевыпускает;
+- `nss_local_accounts_first` сохраняет набор NSS providers и их action blocks,
+  но переносит `files` в начало `passwd`, `group` и `shadow` либо добавляет
+  этот источник, если он отсутствует.
 
 `CompositePolicy` предназначен для одной политики, затрагивающей несколько
 подсистем. Он не хранит и не запускает вложенные `Policy`: leaf-политика сначала
@@ -471,8 +479,7 @@ activation и effective verification. При ошибке все начатые 
 чтобы анализ и изменение PAM/SSSD/Kerberos/NSS не выполнялись конкурентно
 внутри daemon. Базы `SssdPolicy`, `KerberosPolicy` и `NssPolicy` владеют
 соответствующим typed configuration editor и передают его в hook конкретной
-политики. Конкретных зарегистрированных политик для этих трёх подмодулей пока
-нет.
+политики.
 
 Редакторы намеренно различаются по грамматике и не используют общий INI
 парсер:
@@ -495,7 +502,10 @@ activation и effective verification. При ошибке все начатые 
 атомарной записью и не затирает более позднюю внешнюю правку при rollback.
 Их `set*()` выполняет только file-level transaction: перезапуск SSSD,
 инвалидация кеша и другие runtime-действия являются обязанностью конкретного
-policy participant.
+policy participant. `SssdOfflineCredentialsExpirationPolicy` выполняет это
+требование через `SssdRuntime`: неактивная служба не запускается, активная
+перезапускается, а ошибка restart вызывает rollback файла и повторный restart
+с восстановленной конфигурацией.
 
 ### Работа с PAM
 
