@@ -1,12 +1,16 @@
 cmake_minimum_required(VERSION 3.5)
 
-project(fic_gui VERSION 0.1 LANGUAGES CXX)
+project(fic_gui LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
 
 if(NOT TARGET fic-ipc)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
+endif()
+get_target_property(FIC_GUI_PRODUCT_VERSION_CORE fic-version FIC_PRODUCT_VERSION_CORE)
+if(NOT FIC_GUI_PRODUCT_VERSION_CORE)
+    message(FATAL_ERROR "fic-version does not expose FIC_PRODUCT_VERSION_CORE")
 endif()
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -71,8 +75,8 @@ target_include_directories(fic-gui PRIVATE
 
 set_target_properties(fic-gui PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER my.example.com
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
+    MACOSX_BUNDLE_BUNDLE_VERSION ${FIC_GUI_PRODUCT_VERSION_CORE}
+    MACOSX_BUNDLE_SHORT_VERSION_STRING ${FIC_GUI_PRODUCT_VERSION_CORE}
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
 )

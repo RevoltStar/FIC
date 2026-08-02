@@ -28,6 +28,7 @@
 #include "core/main_function.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 #include <fic/core/Logger.h>
 #include <fic/core/FicRuntimePaths.h>
@@ -811,6 +812,11 @@ int main(int argc, char* argv[]) {
                   << " ipc-api=" << fic::version::IPC_API_VERSION
                   << " config-schema=" << fic::version::CONFIG_SCHEMA_VERSION
                   << std::endl;
+        return 0;
+    }
+    if (get_arg_value(argc, argv, 1) == "--build-info") {
+        fic::version::writeBuildInfo(std::cout, "fic");
+        std::cout << "target_platform=" << platform.id << std::endl;
         return 0;
     }
     if (get_arg_value(argc, argv, 1) == "--trust-list-platform-paths") {

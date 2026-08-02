@@ -4,9 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_NAME="${IMAGE_NAME:-fic-deb-builder:debian13}"
 DOCKERFILE_PATH="${DOCKERFILE_PATH:-$ROOT_DIR/packaging/deb/Dockerfile.debian13}"
-PACKAGE_VERSION="${1:-0.1.0}"
 
 source "$ROOT_DIR/packaging/lib/build-resources.sh"
+source "$ROOT_DIR/packaging/lib/version-contract.sh"
+fic_configure_product_version "$@"
 fic_configure_build_resources
 fic_configure_container_resources
 fic_apply_build_priority
@@ -39,9 +40,12 @@ CONTAINER_RUN_ARGS=("${FIC_CONTAINER_RUN_ARGS[@]}")
     "${CONTAINER_RUN_ARGS[@]}" \
     -e BUILD_JOBS="$BUILD_JOBS" \
     -e DEB_COMPRESSOR="${DEB_COMPRESSOR:-gzip}" \
+    -e FIC_BUILD_COMMIT="${FIC_BUILD_COMMIT:-unknown}" \
+    -e FIC_RELEASE_TAG="${FIC_RELEASE_TAG:-none}" \
+    -e FIC_RELEASE_BUILD="${FIC_RELEASE_BUILD:-OFF}" \
     -e BUILD_ROOT="${BUILD_ROOT:-/tmp/fic-build-debian13}" \
     -e DIST_DIR="${DIST_DIR:-/workspace/dist}" \
     -v "$ROOT_DIR:/workspace" \
     -w /workspace/packaging/deb \
     "$IMAGE_NAME" \
-    ./build-fic-debian13-deb.sh "$PACKAGE_VERSION"
+    ./build-fic-debian13-deb.sh "$FIC_PRODUCT_VERSION"

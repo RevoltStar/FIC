@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PACKAGE_VERSION="${1:-0.1.0}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT_DIR/packaging/lib/version-contract.sh"
+fic_configure_product_version "$@"
+PACKAGE_VERSION="$FIC_PACKAGE_VERSION"
+FIC_BUILD_COMMIT="${FIC_BUILD_COMMIT:-unknown}"
+FIC_RELEASE_TAG="${FIC_RELEASE_TAG:-none}"
+FIC_RELEASE_BUILD="${FIC_RELEASE_BUILD:-OFF}"
+case "$FIC_RELEASE_BUILD" in
+    1|ON|on|TRUE|true|YES|yes)
+        FIC_EXPECTED_BUILD_KIND=release
+        ;;
+    *)
+        FIC_EXPECTED_BUILD_KIND=development
+        ;;
+esac
 FIC_PACKAGING_TARGET_PLATFORM="${FIC_PACKAGING_TARGET_PLATFORM:-debian-12}"
 case "$FIC_PACKAGING_TARGET_PLATFORM" in
     debian-12)
@@ -19,7 +33,6 @@ case "$FIC_PACKAGING_TARGET_PLATFORM" in
         ;;
 esac
 PACKAGE_DISTRO_TAG="${PACKAGE_DISTRO_TAG:-$DEFAULT_PACKAGE_DISTRO_TAG}"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 STAGING_BASE="${STAGING_BASE:-$(mktemp -d /tmp/fic-deb-XXXXXX)}"
 BUILD_ROOT="${BUILD_ROOT:-$ROOT_DIR/build-linux}"
@@ -52,6 +65,53 @@ trap cleanup EXIT
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
         echo "Missing required command: $1" >&2
+        exit 1
+    fi
+}
+
+verify_built_binary() {
+    local binary_path="$1"
+    local component="$2"
+    local version_output
+    local actual_component
+    local actual_version
+    local remainder
+    local build_info
+    local expected
+
+    version_output="$("$binary_path" --version)"
+    read -r actual_component actual_version remainder <<< "$version_output"
+    if [ "$actual_component" != "$component" ] ||
+       [ "$actual_version" != "$FIC_PRODUCT_VERSION" ]; then
+        echo "Version mismatch for $binary_path: $version_output" >&2
+        exit 1
+    fi
+
+    build_info="$("$binary_path" --build-info)"
+    for expected in \
+        "component=$component" \
+        "product_version=$FIC_PRODUCT_VERSION" \
+        "build_kind=$FIC_EXPECTED_BUILD_KIND" \
+        "build_commit=$FIC_BUILD_COMMIT" \
+        "release_tag=$FIC_RELEASE_TAG"; do
+        if ! grep -Fqx "$expected" <<< "$build_info"; then
+            echo "Build-info mismatch for $binary_path: missing $expected" >&2
+            exit 1
+        fi
+    done
+}
+
+verify_deb_metadata() {
+    local package_path="$1"
+    local expected_name="$2"
+    local actual_name
+    local actual_version
+
+    actual_name="$(dpkg-deb -f "$package_path" Package)"
+    actual_version="$(dpkg-deb -f "$package_path" Version)"
+    if [ "$actual_name" != "$expected_name" ] ||
+       [ "$actual_version" != "$PACKAGE_VERSION" ]; then
+        echo "DEB metadata mismatch for $package_path: $actual_name $actual_version" >&2
         exit 1
     fi
 }
@@ -687,7 +747,13 @@ EOF
 build_project() {
     local source_dir="$1"
     local build_dir="$2"
-    local cmake_args=(-DCMAKE_BUILD_TYPE=Release "-DFIC_PRODUCT_VERSION=$PACKAGE_VERSION")
+    local cmake_args=(
+        -DCMAKE_BUILD_TYPE=Release
+        "-DFIC_PRODUCT_VERSION=$FIC_PRODUCT_VERSION"
+        "-DFIC_BUILD_COMMIT=$FIC_BUILD_COMMIT"
+        "-DFIC_RELEASE_TAG=$FIC_RELEASE_TAG"
+        "-DFIC_RELEASE_BUILD=$FIC_RELEASE_BUILD"
+    )
 
     if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
         cmake_args+=("-DFIC_TARGET_PLATFORM=$FIC_PACKAGING_TARGET_PLATFORM")
@@ -702,7 +768,7 @@ install_cmake_component() {
     local component="$2"
     local package_root="$3"
 
-    DESTDIR="$package_root" cmake --install "$build_dir" --component "$component"
+    DESTDIR="$package_root" cmake --install "$build_dir" --component "$component" >&2
 }
 
 collect_bundled_runtime_closure() {
@@ -1039,6 +1105,12 @@ main() {
     build_project "$FIC_CLI_SRC_DIR" "$FIC_CLI_BUILD_DIR"
     build_project "$FIC_GUI_SRC_DIR" "$FIC_GUI_BUILD_DIR"
 
+    verify_built_binary "$FIC_DICK_BUILD_DIR/fic-dick" fic-dick
+    verify_built_binary "$FIC_BUILD_DIR/fic" fic
+    verify_built_binary "$FIC_SESSION_AGENT_BUILD_DIR/fic-session-agent" fic-session-agent
+    verify_built_binary "$FIC_CLI_BUILD_DIR/fic-cli" fic-cli
+    verify_built_binary "$FIC_GUI_BUILD_DIR/fic-gui" fic-gui
+
     local dick_deb
     local fic_deb
     local session_agent_deb
@@ -1050,6 +1122,12 @@ main() {
     session_agent_deb="$(build_fic_session_agent_package)"
     cli_deb="$(build_fic_cli_package)"
     gui_deb="$(build_fic_gui_package)"
+
+    verify_deb_metadata "$dick_deb" fic-dick
+    verify_deb_metadata "$fic_deb" fic
+    verify_deb_metadata "$session_agent_deb" fic-session-agent
+    verify_deb_metadata "$cli_deb" fic-cli
+    verify_deb_metadata "$gui_deb" fic-gui
 
     echo "Packages created:"
     echo "  $dick_deb"

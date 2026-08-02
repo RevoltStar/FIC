@@ -31,3 +31,7 @@ a dedicated daemon-side backend is implemented.
 After installing or upgrading the package, existing graphical sessions must
 be restarted or the agent must be launched manually before session-dependent
 policy apply commands can succeed.
+
+`fic-session-agent --version` and `fic-session-agent --build-info` report the
+compiled product version and build provenance without requiring a graphical
+session environment.

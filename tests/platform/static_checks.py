@@ -366,8 +366,17 @@ def main():
         ("ALT p11", rpm_builder),
     ):
         require(
-            "-DFIC_PRODUCT_VERSION=$PACKAGE_VERSION" in builder,
+            "-DFIC_PRODUCT_VERSION=$FIC_PRODUCT_VERSION" in builder
+            and "-DFIC_BUILD_COMMIT=$FIC_BUILD_COMMIT" in builder
+            and "-DFIC_RELEASE_TAG=$FIC_RELEASE_TAG" in builder
+            and "-DFIC_RELEASE_BUILD=$FIC_RELEASE_BUILD" in builder,
             f"{builder_name} packaging does not embed its product version",
+        )
+        require(
+            "packaging/lib/version-contract.sh" in builder
+            and 'fic_configure_product_version "$@"' in builder
+            and 'PACKAGE_VERSION="$FIC_PACKAGE_VERSION"' in builder,
+            f"{builder_name} packaging bypasses the native version mapping",
         )
         cursor = 0
         for step in upgrade_steps:
@@ -403,8 +412,9 @@ def main():
         root / "fic-common/fic-version/include/fic/version/ProductVersion.h.in"
     ).read_text(encoding="utf-8")
     for constant in (
-        "PRODUCT_VERSION", "IPC_API_VERSION", "CONFIG_SCHEMA_VERSION",
-        "DEVICE_DB_SCHEMA_VERSION", "DEVICE_DB_APPLICATION_ID",
+        "PRODUCT_VERSION", "BUILD_KIND", "BUILD_COMMIT", "RELEASE_TAG",
+        "IPC_API_VERSION", "CONFIG_SCHEMA_VERSION", "DEVICE_DB_SCHEMA_VERSION",
+        "DEVICE_DB_APPLICATION_ID",
     ):
         require(
             constant in version_contract,
@@ -444,8 +454,6 @@ def main():
     )
 
     primary_package_builders = (
-        root / "packaging/deb/build-fic-debian10-deb.sh",
-        root / "packaging/deb/build-fic-debian11-deb.sh",
         root / "packaging/deb/build-fic-debian12-deb.sh",
         root / "packaging/rpm/build-fic-alt-p11-rpm.sh",
     )
@@ -492,6 +500,25 @@ def main():
             and '"${FIC_CONTAINER_RUN_ARGS[@]}"' in builder
             and '-e BUILD_JOBS="$BUILD_JOBS"' in builder,
             f"{builder_path.relative_to(root)} bypasses container resource limits",
+        )
+        require(
+            "packaging/lib/version-contract.sh" in builder
+            and 'fic_configure_product_version "$@"' in builder
+            and "0.1.0" not in builder,
+            f"{builder_path.relative_to(root)} permits an implicit package version",
+        )
+
+    for unsupported_path in (
+        "packaging/deb/Dockerfile.debian10",
+        "packaging/deb/Dockerfile.debian11",
+        "packaging/deb/build-fic-debian10-deb-docker.sh",
+        "packaging/deb/build-fic-debian10-deb.sh",
+        "packaging/deb/build-fic-debian11-deb-docker.sh",
+        "packaging/deb/build-fic-debian11-deb.sh",
+    ):
+        require(
+            not (root / unsupported_path).exists(),
+            f"unsupported package entry point still exists: {unsupported_path}",
         )
 
     require(

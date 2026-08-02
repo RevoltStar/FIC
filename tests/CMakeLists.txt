@@ -34,6 +34,19 @@ add_test(
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging/build-resources-test.sh
 )
 
+add_test(
+    NAME version_contract_tests
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/version/version-contract-test.sh
+)
+add_test(
+    NAME release_contract_tests
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/version/release-contract-test.sh
+)
+
+add_executable(build_info_tests version/BuildInfoTests.cpp)
+target_link_libraries(build_info_tests PRIVATE fic-version)
+add_test(NAME build_info_tests COMMAND build_info_tests)
+
 add_executable(runtime_paths_tests paths/RuntimePathsTests.cpp)
 target_link_libraries(runtime_paths_tests PRIVATE fic-core fic-device-db)
 add_test(NAME runtime_paths_tests COMMAND runtime_paths_tests)

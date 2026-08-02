@@ -1,4 +1,12 @@
-FIC 2.0 - daemon-centered Free Integrity Control prototype
+FIC - daemon-centered Free Integrity Control
+
+Development status:
+
+- This repository contains the second-generation FIC implementation. The old
+  FIC 1.x prototype was never released and has no compatibility or migration
+  contract.
+- The current development version is `2.0.0-dev`. The first planned stable
+  release is `2.0.0`; prereleases use tags such as `v2.0.0-rc.1`.
 
 Components:
 - fic: daemon, owns policy application and /opt/fic/config mutations through /run/fic/fic.sock
@@ -51,12 +59,19 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
   hash.
 
 Upgrade contract:
-- Product versions are Semantic Versions embedded at build time.
+- Product versions are Semantic Versions. Official release versions come only
+  from exact annotated `vMAJOR.MINOR.PATCH[-prerelease]` Git tags; package
+  builders require an explicit version and have no fallback default.
+- `--version` reports the product version. `--build-info` additionally reports
+  build kind, the full source commit, release tag, and independent API/schema
+  versions without mixing the commit into SemVer.
 - Administrative IPC, policy configuration, and the device SQLite database
   have independent schema/API versions.
 - Offline migrations, durable backups, downgrade refusal, package lifecycle,
   and recovery rules are documented in
   [`docs/upgrade-contract.md`](docs/upgrade-contract.md).
+- The release gate and native package version mapping are documented in
+  [`docs/release-process.md`](docs/release-process.md).
 
 License:
 - FIC is source-available under the Sustainable Use License Version 1.0

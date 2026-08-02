@@ -9,6 +9,7 @@
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/UpgradeManager.h>
 #include <fic/device-db/DB.h>
+#include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 #include "core/DeviceControlDaemon.h"
 #include "core/DevicePaths.h"
@@ -69,6 +70,21 @@ std::map<std::string, std::string> env_to_map(char* envp[]) {
 }
 
 int main(int argc, char* argv[], char* envp[]) {
+    if (argc > 1) {
+        const std::string mode(argv[1]);
+        if (mode == "--version") {
+            std::cout << "fic-dick " << fic::version::PRODUCT_VERSION
+                      << " ipc-api=" << fic::version::IPC_API_VERSION
+                      << " db-schema=" << fic::version::DEVICE_DB_SCHEMA_VERSION
+                      << std::endl;
+            return 0;
+        }
+        if (mode == "--build-info") {
+            fic::version::writeBuildInfo(std::cout, "fic-dick");
+            return 0;
+        }
+    }
+
     std::string pathError;
     if (!fic::core::FicRuntimePaths::initializeProduction(pathError)) {
         std::cerr << "failed to initialize FIC runtime paths: " << pathError << std::endl;
@@ -85,13 +101,6 @@ int main(int argc, char* argv[], char* envp[]) {
     if (argc > 1) {
         std::string mode(argv[1]);
 
-        if (mode == "--version") {
-            std::cout << "fic-dick " << fic::version::PRODUCT_VERSION
-                      << " ipc-api=" << fic::version::IPC_API_VERSION
-                      << " db-schema=" << fic::version::DEVICE_DB_SCHEMA_VERSION
-                      << std::endl;
-            return 0;
-        }
         if (mode == "--maintenance") {
             if (argc < 3) {
                 std::cerr << "maintenance command is required" << std::endl;

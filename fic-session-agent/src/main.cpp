@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 
 namespace {
@@ -133,6 +134,10 @@ int main(int argc, char* argv[]) {
     if (argc == 2 && std::string(argv[1]) == "--version") {
         std::cout << "fic-session-agent " << fic::version::PRODUCT_VERSION
                   << std::endl;
+        return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--build-info") {
+        fic::version::writeBuildInfo(std::cout, "fic-session-agent");
         return 0;
     }
     const std::string sessionId = environment_value("XDG_SESSION_ID");

@@ -144,13 +144,19 @@ point fixes the daemon compile-time platform profile and output distribution
 tag:
 
 ```bash
-./packaging/deb/build-fic-debian12-deb.sh 0.1.0
-./packaging/deb/build-fic-debian13-deb.sh 0.1.0
-./packaging/deb/build-fic-ubuntu2404-deb.sh 0.1.0
+./packaging/deb/build-fic-debian12-deb.sh 2.0.0-dev
+./packaging/deb/build-fic-debian13-deb.sh 2.0.0-dev
+./packaging/deb/build-fic-ubuntu2404-deb.sh 2.0.0-dev
 ```
 
+The product version is mandatory and must be SemVer without build metadata.
+There is no default. Prerelease product versions remain unchanged in the
+binaries but use native package ordering: `2.0.0-rc.1` produces DEB version
+`2.0.0~rc.1`.
+
 The resulting packages are created under `dist/`. Output filenames include the
-target distribution tag, for example `fic-cli_0.1.0_debian13_amd64.deb`.
+target distribution tag, for example
+`fic-cli_2.0.0~dev_debian13_amd64.deb`.
 
 ## Docker build
 
@@ -160,9 +166,9 @@ build each package set inside its matching distribution image.
 Build Debian 12, Debian 13, or Ubuntu 24.04 through its matching container:
 
 ```bash
-./packaging/deb/build-fic-debian12-deb-docker.sh 0.1.0
-./packaging/deb/build-fic-debian13-deb-docker.sh 0.1.0
-./packaging/deb/build-fic-ubuntu2404-deb-docker.sh 0.1.0
+./packaging/deb/build-fic-debian12-deb-docker.sh 2.0.0-dev
+./packaging/deb/build-fic-debian13-deb-docker.sh 2.0.0-dev
+./packaging/deb/build-fic-ubuntu2404-deb-docker.sh 2.0.0-dev
 ```
 
 Each builder passes its fixed `FIC_TARGET_PLATFORM` (`debian-12`, `debian-13`,
@@ -173,7 +179,7 @@ wrappers use separate temporary `BUILD_ROOT` directories, and the resulting
 The payload compressor can be overridden explicitly:
 
 ```bash
-DEB_COMPRESSOR=gzip ./packaging/deb/build-fic-debian12-deb.sh 0.1.0
+DEB_COMPRESSOR=gzip ./packaging/deb/build-fic-debian12-deb.sh 2.0.0-dev
 ```
 
 ## Build resource policy
@@ -203,7 +209,7 @@ BUILD_JOBS=4 \
 CONTAINER_CPUS=4 \
 CONTAINER_MEMORY_MB=8192 \
 CONTAINER_MEMORY_SWAP_MB=8192 \
-./packaging/deb/build-fic-debian13-deb-docker.sh 0.1.0
+./packaging/deb/build-fic-debian13-deb-docker.sh 2.0.0-dev
 ```
 
 The tuning inputs are:

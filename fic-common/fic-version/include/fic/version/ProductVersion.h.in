@@ -6,6 +6,12 @@
 namespace fic::version {
 
 inline constexpr const char* PRODUCT_VERSION = "@FIC_PRODUCT_VERSION@";
+inline constexpr int PRODUCT_VERSION_MAJOR = @FIC_PRODUCT_VERSION_MAJOR@;
+inline constexpr int PRODUCT_VERSION_MINOR = @FIC_PRODUCT_VERSION_MINOR@;
+inline constexpr int PRODUCT_VERSION_PATCH = @FIC_PRODUCT_VERSION_PATCH@;
+inline constexpr const char* BUILD_KIND = "@FIC_BUILD_KIND@";
+inline constexpr const char* BUILD_COMMIT = "@FIC_BUILD_COMMIT@";
+inline constexpr const char* RELEASE_TAG = "@FIC_RELEASE_TAG@";
 inline constexpr int IPC_API_VERSION = 1;
 inline constexpr int CONFIG_SCHEMA_VERSION = 1;
 inline constexpr int DEVICE_DB_SCHEMA_VERSION = 1;

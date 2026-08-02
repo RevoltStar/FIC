@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 
 using json = nlohmann::json;
@@ -22,6 +23,7 @@ void print_help() {
     std::cout << "FREE INTEGRITY CONTROL CLI\n"
               << "Commands:\n"
               << "  --version\n"
+              << "  --build-info\n"
               << "  policy set <module> <policy> <value>\n"
               << "  policy enable <module> <policy>\n"
               << "  policy disable <module> <policy>\n"
@@ -272,6 +274,10 @@ int main(int argc, char* argv[]) {
     if (command == "--version" || command == "version") {
         std::cout << "fic-cli " << fic::version::PRODUCT_VERSION
                   << " ipc-api=" << fic::version::IPC_API_VERSION << std::endl;
+        return 0;
+    }
+    if (command == "--build-info" || command == "build-info") {
+        fic::version::writeBuildInfo(std::cout, "fic-cli");
         return 0;
     }
 

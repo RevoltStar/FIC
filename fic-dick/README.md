@@ -22,10 +22,12 @@
 Компонент запускается с обязательным аргументом режима:
 
 ```bash
-fic-dick [--daemon|udev|check-permanent|wait-daemon|cpu_board_memory]
+fic-dick [--daemon|udev|check-permanent|wait-daemon|cpu_board_memory|--version|--build-info]
 ```
 
 Если режим не указан, программа завершится с ошибкой.
+`--version` и `--build-info` не инициализируют production paths и доступны для
+проверки пакета до установки или запуска демона.
 
 ## Режим daemon
 

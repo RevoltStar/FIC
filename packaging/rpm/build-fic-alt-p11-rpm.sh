@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PACKAGE_VERSION="${1:-0.1.0}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$ROOT_DIR/packaging/lib/version-contract.sh"
+fic_configure_product_version "$@"
+PACKAGE_VERSION="$FIC_PACKAGE_VERSION"
+FIC_BUILD_COMMIT="${FIC_BUILD_COMMIT:-unknown}"
+FIC_RELEASE_TAG="${FIC_RELEASE_TAG:-none}"
+FIC_RELEASE_BUILD="${FIC_RELEASE_BUILD:-OFF}"
+case "$FIC_RELEASE_BUILD" in
+    1|ON|on|TRUE|true|YES|yes)
+        FIC_EXPECTED_BUILD_KIND=release
+        ;;
+    *)
+        FIC_EXPECTED_BUILD_KIND=development
+        ;;
+esac
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 STAGING_BASE="${STAGING_BASE:-$(mktemp -d /tmp/fic-rpm-stage-XXXXXX)}"
 BUILD_ROOT="${BUILD_ROOT:-$ROOT_DIR/build-rpm}"
@@ -43,6 +56,56 @@ trap cleanup EXIT
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
         echo "Missing required command: $1" >&2
+        exit 1
+    fi
+}
+
+verify_built_binary() {
+    local binary_path="$1"
+    local component="$2"
+    local version_output
+    local actual_component
+    local actual_version
+    local remainder
+    local build_info
+    local expected
+
+    version_output="$("$binary_path" --version)"
+    read -r actual_component actual_version remainder <<< "$version_output"
+    if [ "$actual_component" != "$component" ] ||
+       [ "$actual_version" != "$FIC_PRODUCT_VERSION" ]; then
+        echo "Version mismatch for $binary_path: $version_output" >&2
+        exit 1
+    fi
+
+    build_info="$("$binary_path" --build-info)"
+    for expected in \
+        "component=$component" \
+        "product_version=$FIC_PRODUCT_VERSION" \
+        "build_kind=$FIC_EXPECTED_BUILD_KIND" \
+        "build_commit=$FIC_BUILD_COMMIT" \
+        "release_tag=$FIC_RELEASE_TAG"; do
+        if ! grep -Fqx "$expected" <<< "$build_info"; then
+            echo "Build-info mismatch for $binary_path: missing $expected" >&2
+            exit 1
+        fi
+    done
+}
+
+verify_rpm_metadata() {
+    local package_path="$1"
+    local expected_name="$2"
+    local actual_name
+    local actual_version
+    local actual_release
+
+    actual_name="$(rpm -qp --queryformat '%{NAME}' "$package_path")"
+    actual_version="$(rpm -qp --queryformat '%{VERSION}' "$package_path")"
+    actual_release="$(rpm -qp --queryformat '%{RELEASE}' "$package_path")"
+    if [ "$actual_name" != "$expected_name" ] ||
+       [ "$actual_version" != "$PACKAGE_VERSION" ] ||
+       [ "$actual_release" != "$RPM_RELEASE" ]; then
+        echo "RPM metadata mismatch for $package_path: $actual_name $actual_version-$actual_release" >&2
         exit 1
     fi
 }
@@ -400,7 +463,10 @@ build_project() {
     local build_dir="$2"
     local cmake_args=(
         -DCMAKE_BUILD_TYPE=Release
-        "-DFIC_PRODUCT_VERSION=$PACKAGE_VERSION"
+        "-DFIC_PRODUCT_VERSION=$FIC_PRODUCT_VERSION"
+        "-DFIC_BUILD_COMMIT=$FIC_BUILD_COMMIT"
+        "-DFIC_RELEASE_TAG=$FIC_RELEASE_TAG"
+        "-DFIC_RELEASE_BUILD=$FIC_RELEASE_BUILD"
         "-DFIC_SYSTEMD_UNIT_DIR=$SYSTEMD_UNIT_DIR"
         "-DFIC_TMPFILES_DIR=$TMPFILES_DIR"
     )
@@ -418,7 +484,7 @@ install_cmake_component() {
     local component="$2"
     local package_root="$3"
 
-    DESTDIR="$package_root" cmake --install "$build_dir" --component "$component"
+    DESTDIR="$package_root" cmake --install "$build_dir" --component "$component" >&2
 }
 
 init_rpm_tree() {
@@ -1004,6 +1070,12 @@ main() {
     build_project "$FIC_CLI_SRC_DIR" "$FIC_CLI_BUILD_DIR"
     build_project "$FIC_GUI_SRC_DIR" "$FIC_GUI_BUILD_DIR"
 
+    verify_built_binary "$FIC_DICK_BUILD_DIR/fic-dick" fic-dick
+    verify_built_binary "$FIC_BUILD_DIR/fic" fic
+    verify_built_binary "$FIC_SESSION_AGENT_BUILD_DIR/fic-session-agent" fic-session-agent
+    verify_built_binary "$FIC_CLI_BUILD_DIR/fic-cli" fic-cli
+    verify_built_binary "$FIC_GUI_BUILD_DIR/fic-gui" fic-gui
+
     local dick_rpm
     local fic_rpm
     local session_agent_rpm
@@ -1015,6 +1087,12 @@ main() {
     session_agent_rpm="$(build_fic_session_agent_package)"
     cli_rpm="$(build_fic_cli_package)"
     gui_rpm="$(build_fic_gui_package)"
+
+    verify_rpm_metadata "$dick_rpm" fic-dick
+    verify_rpm_metadata "$fic_rpm" fic
+    verify_rpm_metadata "$session_agent_rpm" fic-session-agent
+    verify_rpm_metadata "$cli_rpm" fic-cli
+    verify_rpm_metadata "$gui_rpm" fic-gui
 
     echo "Packages created:"
     echo "  $dick_rpm"

@@ -1,14 +1,16 @@
 # FIC product upgrade contract
 
-This document defines the first versioned upgrade boundary. It does not declare
-`0.x` builds stable; it makes the mechanics required for a future stable release
-explicit and testable.
+This document defines the versioned upgrade boundary for the second-generation
+FIC implementation. FIC 1.x was never released and has no supported state,
+configuration, database, IPC, or package migration path. The current
+`2.0.0-dev` line is development software; the first planned stable release is
+`2.0.0`.
 
 ## Independent versions
 
 | Contract | Current version | Owner | Compatibility rule |
 |---|---:|---|---|
-| Product | CMake `FIC_PRODUCT_VERSION` | `fic-common/fic-version` | Must be SemVer. Package builders embed the package version in every binary. |
+| Product | `2.0.0-dev` | annotated Git release tag and `fic-common/fic-version` | Must be SemVer without build metadata. Official releases require an exact matching tag, full commit and clean tree. |
 | Administrative IPC | `1` | `fic-common/fic-ipc` | Every request and response contains `api_version`. A mismatch is rejected before routing. |
 | Policy configuration | `1` | `fic-core/UpgradeManager` | Every installed module config contains exactly one `_schema_version`. Normal startup accepts only the exact current schema. |
 | Device SQLite database | `1` | `fic-device-db` | `PRAGMA application_id=0x46494344` and `PRAGMA user_version=1` identify the database and schema. Normal startup never mutates an old schema. |
@@ -16,6 +18,18 @@ explicit and testable.
 The versions are deliberately independent. Changing the product version does
 not imply an IPC or storage-schema change. A breaking change increments only
 the affected contract and adds an explicit offline migration where applicable.
+
+The Git tag is the sole release-version authority. CMake defaults to the
+identifiable development version `2.0.0-dev`; package builders require the
+product version as an explicit argument. For native ordering, a prerelease such
+as `2.0.0-rc.1` remains the embedded product version but maps to package version
+`2.0.0~rc.1`. Stable `2.0.0` maps unchanged.
+
+Every executable provides `--build-info`. The output keeps the full 40-character
+source commit and release tag in separate fields rather than appending them to
+SemVer. A release build is rejected during CMake configuration unless
+`FIC_RELEASE_BUILD=ON`, `FIC_RELEASE_TAG=v<FIC_PRODUCT_VERSION>`, and a full
+lowercase commit SHA are supplied. Development builds use `release_tag=none`.
 
 ## Package upgrade sequence
 
@@ -62,6 +76,7 @@ the services are stopped:
 
 ```text
 fic --version
+fic --build-info
 fic --maintenance begin-upgrade
 fic --maintenance migrate-config
 fic --maintenance check-config
@@ -71,8 +86,9 @@ fic --maintenance commit-upgrade
 ```
 
 `status` responses from both administrative sockets expose the product and
-owned schema version. `--version` additionally exposes the IPC version, and the
-main daemon reports its compile-time platform profile.
+owned schema version. `--version` exposes concise version information;
+`--build-info` exposes provenance and all compiled contract versions. The main
+daemon also reports its compile-time platform profile.
 
 ## Downgrade, rollback, and removal policy
 
@@ -111,3 +127,7 @@ This journal covers product configuration and database upgrades. It does not
 make multi-file operating-system policy application crash-atomic; that requires
 the separate runtime policy transaction journal described in the policy
 architecture.
+
+The source/tag gate, explicit package version input, prerelease mapping and
+compiled provenance are covered separately by `version_contract_tests`,
+`release_contract_tests`, and `build_info_tests`.
