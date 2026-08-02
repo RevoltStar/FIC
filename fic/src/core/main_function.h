@@ -25,6 +25,7 @@
 
 // Identity and access: PAM policies
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationAttemptsPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationUnlockTimePolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryDepthPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordMinClassesPolicy.h"

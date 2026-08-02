@@ -289,6 +289,46 @@ void testPamArgumentOverrideFails() {
         "override diagnostic is missing");
 }
 
+void testFailIntervalArgumentOverride() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    createFaillockGraph(temp, "fail_interval=600");
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            configuration,
+            platform.authenticationServices,
+            fic::identity::pam::PamCapability::AuthenticationLockout,
+            fic::identity::pam::PamProviderKind::PamFaillock,
+            inspection,
+            error),
+        error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection,
+            platform.faillockConfigPath.string(),
+            "fail_interval",
+            "900",
+            error),
+        "conflicting fail_interval PAM argument must fail");
+    require(
+        error.find("fail_interval=600") != std::string::npos,
+        "fail_interval override diagnostic is missing");
+
+    error.clear();
+    require(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection,
+            platform.faillockConfigPath.string(),
+            "fail_interval",
+            "600",
+            error),
+        error);
+}
+
 void testWritableProviderFileFails() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -355,7 +395,9 @@ void testOptionFileUpdatesAllDefinitions() {
         path,
         "# administrator comment\n"
         "deny = 3\n"
+        "fail_interval=300\n"
         "unlock_time=300\n"
+        "fail_interval = 600 # duplicate interval\n"
         "deny=4 # duplicate\n");
 
     std::string error;
@@ -364,6 +406,22 @@ void testOptionFileUpdatesAllDefinitions() {
         error);
     require(
         fic::identity::pam::PamOptionFile::hasOnlyValue(path, "deny", "5", error),
+        error);
+    require(
+        fic::identity::pam::PamOptionFile::setValue(
+            path, "fail_interval", "900", error),
+        error);
+    require(
+        fic::identity::pam::PamOptionFile::hasOnlyValue(
+            path, "fail_interval", "900", error),
+        error);
+    require(
+        fic::identity::pam::PamOptionFile::setValue(
+            path, "unlock_time", "600", error),
+        error);
+    require(
+        fic::identity::pam::PamOptionFile::hasOnlyValue(
+            path, "unlock_time", "600", error),
         error);
 
     std::ifstream input(path);
@@ -374,11 +432,18 @@ void testOptionFileUpdatesAllDefinitions() {
         content.find("# administrator comment") != std::string::npos,
         "comments must be preserved");
     require(
-        content.find("unlock_time=300") != std::string::npos,
-        "unrelated options must be preserved");
+        content.find("deny = 5") != std::string::npos,
+        "deny value was not preserved after later updates");
     require(
-        content.find("# duplicate") != std::string::npos,
-        "inline comments must be preserved");
+        content.find("fail_interval = 900") != std::string::npos,
+        "fail_interval value was not updated");
+    require(
+        content.find("unlock_time = 600") != std::string::npos,
+        "unlock_time value was not updated");
+    require(
+        content.find("# duplicate interval") != std::string::npos &&
+            content.find("# duplicate") != std::string::npos,
+        "inline comments must be preserved across related updates");
 }
 
 void testOptionFileSymlinkFails() {
@@ -434,6 +499,7 @@ int main() {
         testIncompleteFaillockFails();
         testDuplicatePasswordProviderFails();
         testPamArgumentOverrideFails();
+        testFailIntervalArgumentOverride();
         testWritableProviderFileFails();
         testWritableConfigurationFileFails();
         testOptionFileUpdatesAllDefinitions();

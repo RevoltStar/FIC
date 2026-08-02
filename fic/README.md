@@ -478,9 +478,10 @@ include-граф: если неподдерживаемое правило на�
 - `password_min_length` и `password_min_classes` управляют параметрами
   `minlen` и `minclass` активного `pam_pwquality`;
 - `password_history_depth` управляет `remember` активного `pam_pwhistory`;
-- `failed_authentication_attempts` и
-  `failed_authentication_unlock_time` управляют `deny` и `unlock_time`
-  активного `pam_faillock`;
+- `failed_authentication_attempts`,
+  `failed_authentication_counting_period` и
+  `failed_authentication_unlock_time` управляют соответственно `deny`,
+  `fail_interval` и `unlock_time` активного `pam_faillock`;
 - `sssd_offline_credentials_expiration` задаёт срок допустимости offline-login
   по кешированным credentials в `[pam]`. Если `sssd.service` активен, изменение
   применяется через restart в одной компенсирующей транзакции с записью файла;

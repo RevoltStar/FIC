@@ -536,6 +536,7 @@ flowchart TB
     pam --> passwordMinClasses[password_min_classes]
     pam --> passwordHistoryDepth[password_history_depth]
     pam --> failedAttempts[failed_authentication_attempts]
+    pam --> countingPeriod[failed_authentication_counting_period]
     pam --> unlockTime[failed_authentication_unlock_time]
     sssd --> offlineExpiration[sssd_offline_credentials_expiration]
     kerberos --> ticketLifetimePolicy[kerberos_ticket_lifetime]

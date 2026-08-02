@@ -62,6 +62,8 @@
 [module:IDENTITY_ACCESS][policy:password_history_depth][description]=Задаёт remember в каноническом конфиге pam_pwhistory. pam_unix remember= распознаётся как отдельный неподдерживаемый provider и автоматически не переписывается.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Неудачные PAM-аутентификации до блокировки
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Задаёт deny в каноническом конфиге pam_faillock. Все целевые службы аутентификации должны использовать одну полную схему pam_faillock; pam_tally и pam_tally2 считаются конфликтующими providers.
+[module:IDENTITY_ACCESS][policy:failed_authentication_counting_period]=Период подсчёта неуспешных попыток входа
+[module:IDENTITY_ACCESS][policy:failed_authentication_counting_period][description]=Задаёт fail_interval в секундах в каноническом конфиге pam_faillock. При достижении порога deny учитываются неуспешные аутентификации, произошедшие внутри этого временного окна.
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Продолжительность блокировки аутентификации
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Задаёт unlock_time в секундах в каноническом конфиге pam_faillock. Значение 0 отключает автоматическую разблокировку по времени.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=Срок действия кешированных учётных данных SSSD

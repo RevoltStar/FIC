@@ -62,6 +62,8 @@
 [module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets remember in the canonical pam_pwhistory configuration. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Failed PAM authentications before lockout
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Sets deny in the canonical pam_faillock configuration. All configured authentication services must use one complete pam_faillock topology; pam_tally and pam_tally2 are treated as conflicting providers.
+[module:IDENTITY_ACCESS][policy:failed_authentication_counting_period]=Failed authentication counting period
+[module:IDENTITY_ACCESS][policy:failed_authentication_counting_period][description]=Sets fail_interval in seconds in the canonical pam_faillock configuration. Only authentication failures within this time window count towards the deny threshold.
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Authentication lockout duration
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Sets unlock_time in seconds in the canonical pam_faillock configuration. A value of 0 means that automatic time-based unlocking is disabled.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=SSSD cached credential lifetime

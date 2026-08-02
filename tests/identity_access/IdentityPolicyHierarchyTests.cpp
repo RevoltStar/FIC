@@ -2,6 +2,7 @@
 #include "modules/identity_access/submodules/kerberos/KerberosPolicy.h"
 #include "modules/identity_access/submodules/nss/NssPolicy.h"
 #include "modules/identity_access/submodules/pam/PamPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/submodules/sssd/SssdPolicy.h"
 
 #include <fic/core/FicRuntimePaths.h>
@@ -274,6 +275,7 @@ int main() {
         initializeRuntimePaths(root);
 
         DummyPamPolicy pam;
+        PamFailedAuthenticationCountingPeriodPolicy countingPeriod({});
         DummySssdPolicy sssd;
         DummyKerberosPolicy kerberos;
         DummyNssPolicy nss;
@@ -282,6 +284,29 @@ int main() {
         DummyCompositePolicy composite(observedValues, compositeEvents);
 
         requireLeaf(pam, "PAM");
+        require(
+            countingPeriod.moduleName == "IDENTITY_ACCESS" &&
+                countingPeriod.submoduleName == "PAM" &&
+                countingPeriod.policyName ==
+                    "failed_authentication_counting_period",
+            "counting-period policy has the wrong identity metadata");
+        require(
+            countingPeriod.getDefaultValue() == "900",
+            "counting-period policy has the wrong default");
+        const PolicyEditorSpec countingPeriodEditor =
+            countingPeriod.getPolicyTypeValue().getEditorSpec();
+        require(
+            countingPeriodEditor.editor == "spinbox" &&
+                countingPeriodEditor.min == 1 &&
+                countingPeriodEditor.max == 86400,
+            "counting-period policy has the wrong editor bounds");
+        require(
+            countingPeriod.validate("1") &&
+                countingPeriod.validate("86400") &&
+                !countingPeriod.validate("0") &&
+                !countingPeriod.validate("86401") &&
+                !countingPeriod.validate("not-a-number"),
+            "counting-period policy validation is incorrect");
         requireLeaf(sssd, "SSSD");
         requireLeaf(kerberos, "KERBEROS");
         requireLeaf(nss, "NSS");
