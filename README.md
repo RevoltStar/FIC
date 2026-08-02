@@ -57,3 +57,12 @@ Upgrade contract:
 - Offline migrations, durable backups, downgrade refusal, package lifecycle,
   and recovery rules are documented in
   [`docs/upgrade-contract.md`](docs/upgrade-contract.md).
+
+License:
+- FIC is source-available under the Sustainable Use License Version 1.0
+  (`SUL-1.0`); see [`LICENSE`](LICENSE).
+- The license permits personal and non-commercial use and a company's own
+  internal business use. Distribution is permitted only free of charge for
+  non-commercial purposes.
+- `SUL-1.0` is not an OSI-approved open-source license. Third-party components
+  retain their own license terms.
