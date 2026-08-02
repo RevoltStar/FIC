@@ -239,7 +239,8 @@ bool PamProviderInspector::verifyFlagOverrides(
     const std::string& expectedConfigPath,
     const std::string& flag,
     bool expectedEnabled,
-    std::string& error) {
+    std::string& error,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled) {
     const std::string assignmentPrefix = flag + "=";
     for (const auto& rule : inspection.providerRules) {
         const auto configuredPath = argumentValue(rule, "conf");
@@ -265,6 +266,18 @@ bool PamProviderInspector::verifyFlagOverrides(
                 ": PAM argument " + flag +
                 " overrides the requested disabled state";
             return false;
+        }
+        if (!expectedEnabled) {
+            for (const auto& option : conflictingOptionsWhenDisabled) {
+                if (hasArgument(rule, option) ||
+                    argumentValue(rule, option).has_value()) {
+                    error = rule.source.string() + ":" +
+                        std::to_string(rule.line) + ": PAM argument " +
+                        option +
+                        " conflicts with the requested disabled state";
+                    return false;
+                }
+            }
         }
     }
     return true;

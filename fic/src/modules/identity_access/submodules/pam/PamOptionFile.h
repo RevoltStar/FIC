@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace fic::identity::pam {
 
@@ -27,6 +28,11 @@ public:
                         const std::string& key,
                         bool expectedEnabled,
                         std::string& error);
+
+    static bool verifyNoActiveDirectives(
+        const std::filesystem::path& path,
+        const std::vector<std::string>& directives,
+        std::string& error);
 };
 
 } // namespace fic::identity::pam

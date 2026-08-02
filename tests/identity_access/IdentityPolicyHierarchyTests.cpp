@@ -4,6 +4,7 @@
 #include "modules/identity_access/submodules/pam/PamOptionFile.h"
 #include "modules/identity_access/submodules/pam/PamPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/submodules/sssd/SssdPolicy.h"
 
@@ -41,13 +42,17 @@ void writeFile(const std::filesystem::path& path,
 }
 
 void writeIdentityConfig(const std::filesystem::path& root,
-                         const std::string& rootHistoryValue) {
+                         const std::string& rootHistoryValue,
+                         const std::string& rootLockoutValue = "yes") {
     writeFile(
         root / "config/IDENTITY_ACCESS.conf",
         "dummy.status=ENABLE\n"
         "dummy.value=expected\n"
         "password_history_enforce_for_root.status=ENABLE\n"
-        "password_history_enforce_for_root.value=" + rootHistoryValue + "\n");
+        "password_history_enforce_for_root.value=" + rootHistoryValue + "\n"
+        "failed_authentication_enforce_for_root.status=ENABLE\n"
+        "failed_authentication_enforce_for_root.value=" + rootLockoutValue +
+            "\n");
 }
 
 void initializeRuntimePaths(const std::filesystem::path& root) {
@@ -85,6 +90,16 @@ fic::platform::PamPlatformConfig makePasswordHistoryPlatform(
     platform.passwordServices = {"passwd"};
     platform.passwordHistoryConfigPath =
         root / "security-config/pwhistory.conf";
+    return platform;
+}
+
+fic::platform::PamPlatformConfig makeAuthenticationPlatform(
+    const std::filesystem::path& root) {
+    fic::platform::PamPlatformConfig platform;
+    platform.configDirectories = {root / "pam.d"};
+    platform.moduleDirectories = {root / "security"};
+    platform.authenticationServices = {"login"};
+    platform.faillockConfigPath = root / "security-config/faillock.conf";
     return platform;
 }
 
@@ -361,6 +376,81 @@ int main() {
                 false,
                 flagError),
             flagError);
+
+        const auto authenticationPlatform =
+            makeAuthenticationPlatform(root);
+        writeFile(
+            root / "pam.d/login",
+            "auth required pam_faillock.so preauth\n"
+            "auth required pam_unix.so\n"
+            "auth [default=die] pam_faillock.so authfail\n"
+            "auth sufficient pam_faillock.so authsucc\n");
+        writeFile(root / "security/pam_faillock.so", "test", 0555);
+        writeFile(
+            authenticationPlatform.faillockConfigPath,
+            "deny = 5\n"
+            "unlock_time = 600\n");
+
+        PamFailedAuthenticationEnforceForRootPolicy rootLockoutEnabled(
+            authenticationPlatform);
+        require(
+            rootLockoutEnabled.moduleName == "IDENTITY_ACCESS" &&
+                rootLockoutEnabled.submoduleName == "PAM" &&
+                rootLockoutEnabled.policyName ==
+                    "failed_authentication_enforce_for_root",
+            "root-lockout policy has the wrong identity metadata");
+        require(
+            rootLockoutEnabled.getDefaultValue() == "yes" &&
+                rootLockoutEnabled.validate("yes") &&
+                rootLockoutEnabled.validate("no") &&
+                !rootLockoutEnabled.validate("true"),
+            "root-lockout policy value contract is incorrect");
+        const PolicyEditorSpec rootLockoutEditor =
+            rootLockoutEnabled.getPolicyTypeValue().getEditorSpec();
+        require(
+            rootLockoutEditor.editor == "combobox" &&
+                rootLockoutEditor.possibleValues ==
+                    std::vector<std::string>{"yes", "no"},
+            "root-lockout policy has the wrong editor values");
+        require(rootLockoutEnabled.apply(),
+                "root-lockout policy failed to enable the PAM flag");
+        require(
+            fic::identity::pam::PamOptionFile::hasFlag(
+                authenticationPlatform.faillockConfigPath,
+                "even_deny_root",
+                true,
+                flagError),
+            flagError);
+
+        writeIdentityConfig(root, "no", "no");
+        PamFailedAuthenticationEnforceForRootPolicy rootLockoutDisabled(
+            authenticationPlatform);
+        require(rootLockoutDisabled.apply(),
+                "root-lockout policy failed to disable the PAM flag");
+        require(
+            fic::identity::pam::PamOptionFile::hasFlag(
+                authenticationPlatform.faillockConfigPath,
+                "even_deny_root",
+                false,
+                flagError),
+            flagError);
+
+        writeFile(
+            authenticationPlatform.faillockConfigPath,
+            "deny = 5\n"
+            "root_unlock_time = 60\n");
+        PamFailedAuthenticationEnforceForRootPolicy conflictingRootLockout(
+            authenticationPlatform);
+        require(
+            !conflictingRootLockout.apply(),
+            "root_unlock_time must prevent disabling root lockout");
+        require(
+            fic::identity::pam::PamOptionFile::hasFlag(
+                authenticationPlatform.faillockConfigPath,
+                "even_deny_root",
+                false,
+                flagError),
+            "root-lockout conflict must not add even_deny_root");
 
         DummyPamPolicy pam;
         PamFailedAuthenticationCountingPeriodPolicy countingPeriod({});

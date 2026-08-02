@@ -365,4 +365,50 @@ bool PamOptionFile::hasFlag(const std::filesystem::path& path,
     return true;
 }
 
+bool PamOptionFile::verifyNoActiveDirectives(
+    const std::filesystem::path& path,
+    const std::vector<std::string>& directives,
+    std::string& error) {
+    if (std::any_of(directives.begin(), directives.end(),
+                    [](const std::string& directive) {
+                        return !validKey(directive);
+                    })) {
+        error = "invalid PAM directive";
+        return false;
+    }
+
+    bool existed = false;
+    std::string content;
+    if (!readFile(path, existed, content, error)) {
+        return false;
+    }
+    if (!existed || directives.empty()) {
+        return true;
+    }
+
+    for (const auto& line : splitLines(content)) {
+        std::string parsedKey;
+        std::string parsedValue;
+        if (parseAssignment(line, parsedKey, parsedValue) &&
+            std::find(directives.begin(), directives.end(), parsedKey) !=
+                directives.end()) {
+            error = "PAM directive " + parsedKey + " in " + path.string() +
+                " conflicts with the requested disabled state";
+            return false;
+        }
+        for (const auto& directive : directives) {
+            bool isFlag = false;
+            bool malformed = false;
+            parseFlagLine(line, directive, isFlag, malformed);
+            if (isFlag || malformed) {
+                error = "PAM directive " + directive + " in " +
+                    path.string() +
+                    " conflicts with the requested disabled state";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace fic::identity::pam

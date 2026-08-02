@@ -483,7 +483,9 @@ include-граф: если неподдерживаемое правило на�
 - `failed_authentication_attempts`,
   `failed_authentication_counting_period` и
   `failed_authentication_unlock_time` управляют соответственно `deny`,
-  `fail_interval` и `unlock_time` активного `pam_faillock`;
+  `fail_interval` и `unlock_time`, а
+  `failed_authentication_enforce_for_root` — флагом `even_deny_root` активного
+  `pam_faillock`;
 - `sssd_offline_credentials_expiration` задаёт срок допустимости offline-login
   по кешированным credentials в `[pam]`. Если `sssd.service` активен, изменение
   применяется через restart в одной компенсирующей транзакции с записью файла;
@@ -567,6 +569,11 @@ PAM service/include-файлов и используемых `.so`, аргуме
 перечитываются. Отсутствующий канонический файл разрешено создать как
 `root:root 0644`, но только если поддерживаемый provider уже корректно включен
 во всех найденных целевых службах.
+
+При отключении `failed_authentication_enforce_for_root` параметр
+`root_unlock_time` считается конфликтом, потому что в `pam_faillock` он сам
+подразумевает `even_deny_root`. FIC отказывает до записи вместо удаления
+независимой настройки администратора или заявления о неэффективном `no`.
 
 `pam_pwquality minlen` — provider-native параметр, а не самостоятельное
 доказательство фактической длины пароля: на итоговую проверку могут влиять

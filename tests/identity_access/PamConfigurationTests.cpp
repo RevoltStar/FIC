@@ -428,6 +428,58 @@ void testPasswordHistoryFlagAssignmentFails() {
         "PAM flag configuration-path diagnostic is missing");
 }
 
+void testFlagConflictingOptionFails() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    createFaillockGraph(temp, "root_unlock_time=60");
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            configuration,
+            platform.authenticationServices,
+            fic::identity::pam::PamCapability::AuthenticationLockout,
+            fic::identity::pam::PamProviderKind::PamFaillock,
+            inspection,
+            error),
+        error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+            inspection,
+            platform.faillockConfigPath.string(),
+            "even_deny_root",
+            false,
+            error,
+            {"root_unlock_time"}),
+        "root_unlock_time PAM argument must prevent disabling root lockout");
+    require(
+        error.find("root_unlock_time") != std::string::npos,
+        "conflicting PAM argument diagnostic is missing");
+
+    const auto configPath = platform.faillockConfigPath;
+    writeFile(
+        configPath,
+        "deny = 5\n"
+        "root_unlock_time = 60\n");
+    error.clear();
+    require(
+        !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
+            configPath, {"root_unlock_time"}, error),
+        "root_unlock_time config directive must be detected");
+    require(
+        error.find("root_unlock_time") != std::string::npos,
+        "conflicting config directive diagnostic is missing");
+
+    writeFile(configPath, "deny = 5\n# root_unlock_time = 60\n");
+    error.clear();
+    require(
+        fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
+            configPath, {"root_unlock_time"}, error),
+        error);
+}
+
 void testWritableProviderFileFails() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -682,6 +734,7 @@ int main() {
         testFailIntervalArgumentOverride();
         testPasswordHistoryFlagOverride();
         testPasswordHistoryFlagAssignmentFails();
+        testFlagConflictingOptionFails();
         testWritableProviderFileFails();
         testWritableConfigurationFileFails();
         testOptionFileUpdatesAllDefinitions();

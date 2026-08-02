@@ -569,6 +569,9 @@ PolicyMap init_policyMap(
     cafArr.push_back(
         std::make_unique<PamFailedAuthenticationCountingPeriodPolicy>(
             platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamFailedAuthenticationEnforceForRootPolicy>(
+            platform.pam));
     cafArr.push_back(std::make_unique<PamFailedAuthenticationUnlockTimePolicy>(
         platform.pam));
 

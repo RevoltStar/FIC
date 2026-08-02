@@ -54,7 +54,9 @@ public:
         const std::string& expectedConfigPath,
         const std::string& flag,
         bool expectedEnabled,
-        std::string& error);
+        std::string& error,
+        const std::vector<std::string>&
+            conflictingOptionsWhenDisabled = {});
 
     static bool verifyProviderFiles(
         const PamProviderInspection& inspection,

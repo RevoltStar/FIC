@@ -26,7 +26,8 @@ protected:
         std::filesystem::path optionFile,
         std::string option,
         std::vector<std::string> services,
-        PamOptionSyntax syntax = PamOptionSyntax::Assignment);
+        PamOptionSyntax syntax = PamOptionSyntax::Assignment,
+        std::vector<std::string> conflictingOptionsWhenFlagDisabled = {});
 
     bool applyPam(const std::string& expectedValue) override;
 
@@ -38,6 +39,7 @@ private:
     std::string option_;
     std::vector<std::string> services_;
     PamOptionSyntax syntax_;
+    std::vector<std::string> conflictingOptionsWhenFlagDisabled_;
 };
 
 #endif // FIC_IDENTITY_ACCESS_PAM_OPTION_POLICY_H

@@ -12,7 +12,8 @@ PamOptionPolicy::PamOptionPolicy(
     std::filesystem::path optionFile,
     std::string option,
     std::vector<std::string> services,
-    PamOptionSyntax syntax)
+    PamOptionSyntax syntax,
+    std::vector<std::string> conflictingOptionsWhenFlagDisabled)
     : PamPolicy(),
       platformConfig_(std::move(platformConfig)),
       capability_(capability),
@@ -20,7 +21,9 @@ PamOptionPolicy::PamOptionPolicy(
       optionFile_(std::move(optionFile)),
       option_(std::move(option)),
       services_(std::move(services)),
-      syntax_(syntax) {
+      syntax_(syntax),
+      conflictingOptionsWhenFlagDisabled_(
+          std::move(conflictingOptionsWhenFlagDisabled)) {
 }
 
 bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
@@ -74,11 +77,21 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
               inspection, optionFile_.string(), option_, expectedValue, error)
         : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
               inspection, optionFile_.string(), option_,
-              expectedFlagEnabled, error);
+              expectedFlagEnabled, error,
+              conflictingOptionsWhenFlagDisabled_);
     if (!overridesValid) {
         this->log(
             "PAM option override preflight failed for " + this->policyName +
                 ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
+    if (syntax_ == PamOptionSyntax::Flag && !expectedFlagEnabled &&
+        !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
+            optionFile_, conflictingOptionsWhenFlagDisabled_, error)) {
+        this->log(
+            "PAM flag dependency preflight failed for " +
+                this->policyName + ": " + error,
             logLevel::ERROR);
         return false;
     }
@@ -116,6 +129,15 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             logLevel::ERROR);
         return false;
     }
+    if (syntax_ == PamOptionSyntax::Flag && !expectedFlagEnabled &&
+        !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
+            optionFile_, conflictingOptionsWhenFlagDisabled_, error)) {
+        this->log(
+            "PAM flag dependency postcondition failed for " +
+                this->policyName + ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
 
     fic::identity::pam::PamConfiguration verification(platformConfig_);
     fic::identity::pam::PamProviderInspection verifiedInspection;
@@ -138,7 +160,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
               : fic::identity::pam::PamProviderInspector::
                     verifyFlagOverrides(
                         verifiedInspection, optionFile_.string(), option_,
-                        expectedFlagEnabled, error))) {
+                        expectedFlagEnabled, error,
+                        conflictingOptionsWhenFlagDisabled_))) {
         this->log(
             "PAM graph postcondition failed for " + this->policyName +
                 ": " + error,

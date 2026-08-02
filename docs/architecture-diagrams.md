@@ -538,6 +538,7 @@ flowchart TB
     pam --> passwordHistoryRoot[password_history_enforce_for_root]
     pam --> failedAttempts[failed_authentication_attempts]
     pam --> countingPeriod[failed_authentication_counting_period]
+    pam --> failedRoot[failed_authentication_enforce_for_root]
     pam --> unlockTime[failed_authentication_unlock_time]
     sssd --> offlineExpiration[sssd_offline_credentials_expiration]
     kerberos --> ticketLifetimePolicy[kerberos_ticket_lifetime]
