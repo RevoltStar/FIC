@@ -130,7 +130,6 @@
 Где возможно, устанавливается блокировка от изменения
 
 #Настройки ядра
-[module:SYSCTL][policy:kernel_exec_shield_enable]=Защита от переполнения буфера
 [module:SYSCTL][policy:kernel_dmesg_restrict]=Ограничение доступа к dmesg
 [module:SYSCTL][policy:fs_file_max_limit]=Ограничение системного количества открытых файлов
 [module:SYSCTL][policy:fs_protected_hardlinks]=Защита hardlink
@@ -160,7 +159,6 @@
 [module:SYSCTL][policy:kernel_threads_max_limit]=Ограничение максимального числа потоков
 [module:SYSCTL][policy:user_namespace_restriction]=Ограничение user namespace
 
-[module:SYSCTL][policy:kernel_exec_shield_enable][description]=Защита от переполнения буфера.
 [module:SYSCTL][policy:kernel_dmesg_restrict][description]=Ограничивает доступ к выводу dmesg для непривилегированных пользователей.
 [module:SYSCTL][policy:fs_file_max_limit][description]=Задает максимальное количество открытых файлов в системе. Слишком низкое значение может ограничивать высоконагруженные сервисы и снижать производительность под нагрузкой.
 [module:SYSCTL][policy:fs_protected_hardlinks][description]=Включает защиту от опасных hardlink.

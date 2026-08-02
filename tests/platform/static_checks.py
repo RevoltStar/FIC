@@ -22,6 +22,22 @@ def main():
         "an unspecified target platform must fail during CMake configuration",
     )
 
+    deprecated_exec_shield_tokens = (
+        "kernel.exec-shield",
+        "kernel_exec_shield_enable",
+        "SYSCTL_buffer_overflow_protection",
+    )
+    policy_source_suffixes = {".cpp", ".h", ".conf", ".lang"}
+    for source_path in (root / "fic").rglob("*"):
+        if not source_path.is_file() or source_path.suffix not in policy_source_suffixes:
+            continue
+        source = source_path.read_text(encoding="utf-8")
+        for token in deprecated_exec_shield_tokens:
+            require(
+                token not in source,
+                f"removed exec-shield policy remains in {source_path.relative_to(root)}",
+            )
+
     ssh = (root / "fic/src/modules/net/submodules/Ssh.cpp").read_text(
         encoding="utf-8"
     )

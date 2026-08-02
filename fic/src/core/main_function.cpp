@@ -572,7 +572,6 @@ PolicyMap init_policyMap(
     cafArr.push_back(std::make_unique<KerberosTicketLifetimePolicy>());
 
     //Настройки ядра (SYSCTL)
-    cafArr.push_back(std::make_unique<SYSCTL_buffer_overflow_protection>());
     cafArr.push_back(std::make_unique<SYSCTL_dmesg_restrict>());
     cafArr.push_back(std::make_unique<SYSCTL_fd_limits>());
     cafArr.push_back(std::make_unique<SYSCTL_fs_protection>());

@@ -130,7 +130,6 @@ Others use per-user settings, for example KDE
 Where possible, a lock against modification is applied
 
 # Kernel settings
-[module:SYSCTL][policy:kernel_exec_shield_enable]=Buffer overflow protection
 [module:SYSCTL][policy:kernel_dmesg_restrict]=Restrict access to dmesg
 [module:SYSCTL][policy:fs_file_max_limit]=System-wide open file limit
 [module:SYSCTL][policy:fs_protected_hardlinks]=Hardlink protection
@@ -160,7 +159,6 @@ Where possible, a lock against modification is applied
 [module:SYSCTL][policy:kernel_threads_max_limit]=Maximum thread limit
 [module:SYSCTL][policy:user_namespace_restriction]=Restrict user namespaces
 
-[module:SYSCTL][policy:kernel_exec_shield_enable][description]=Buffer overflow protection.
 [module:SYSCTL][policy:kernel_dmesg_restrict][description]=Restricts access to dmesg output for unprivileged users.
 [module:SYSCTL][policy:fs_file_max_limit][description]=Sets the maximum number of open files in the system. A value that is too low can limit high-load services and reduce performance under load.
 [module:SYSCTL][policy:fs_protected_hardlinks][description]=Enables protection against unsafe hardlinks.

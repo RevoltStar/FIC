@@ -55,7 +55,6 @@
 #include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_synack_retries.h"
 #include "modules/sysctl/submodules/networkkernelprotection/SYSCTL_tcp_fin_timeout.h"
 
-#include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_buffer_overflow_protection.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_dmesg_restrict.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_kernel_code_execution_restrict.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_perf_event_paranoid.h"
