@@ -329,6 +329,105 @@ void testFailIntervalArgumentOverride() {
         error);
 }
 
+void testPasswordHistoryFlagOverride() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so enforce_for_root\n");
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            configuration,
+            platform.passwordServices,
+            fic::identity::pam::PamCapability::PasswordHistory,
+            fic::identity::pam::PamProviderKind::PamPwhistory,
+            inspection,
+            error),
+        error);
+    require(
+        fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+            inspection,
+            platform.passwordHistoryConfigPath.string(),
+            "enforce_for_root",
+            true,
+            error),
+        error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+            inspection,
+            platform.passwordHistoryConfigPath.string(),
+            "enforce_for_root",
+            false,
+            error),
+        "PAM flag argument must override the requested disabled state");
+    require(
+        error.find("overrides") != std::string::npos,
+        "PAM flag override diagnostic is missing");
+}
+
+void testPasswordHistoryFlagAssignmentFails() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so enforce_for_root=yes\n");
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            configuration,
+            platform.passwordServices,
+            fic::identity::pam::PamCapability::PasswordHistory,
+            fic::identity::pam::PamProviderKind::PamPwhistory,
+            inspection,
+            error),
+        error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+            inspection,
+            platform.passwordHistoryConfigPath.string(),
+            "enforce_for_root",
+            true,
+            error),
+        "valued PAM flag argument must fail");
+    require(
+        error.find("must not have a value") != std::string::npos,
+        "valued PAM flag diagnostic is missing");
+
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=/other/pwhistory.conf\n");
+    fic::identity::pam::PamConfiguration pathConfiguration(platform);
+    fic::identity::pam::PamProviderInspection pathInspection;
+    error.clear();
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            pathConfiguration,
+            platform.passwordServices,
+            fic::identity::pam::PamCapability::PasswordHistory,
+            fic::identity::pam::PamProviderKind::PamPwhistory,
+            pathInspection,
+            error),
+        error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+            pathInspection,
+            platform.passwordHistoryConfigPath.string(),
+            "enforce_for_root",
+            true,
+            error),
+        "alternate configuration path must fail for a PAM flag policy");
+    require(
+        error.find("another configuration file") != std::string::npos,
+        "PAM flag configuration-path diagnostic is missing");
+}
+
 void testWritableProviderFileFails() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -464,6 +563,87 @@ void testOptionFileSymlinkFails() {
         "option-file symlink diagnostic is missing");
 }
 
+void testOptionFileFlagEnableDisable() {
+    TempDirectory temp;
+    const auto path = temp.path() / "security/pwhistory.conf";
+    writeFile(
+        path,
+        "# administrator header\n"
+        "remember = 5\n"
+        "enforce_for_root # keep root history\n"
+        "enforce_for_root\n"
+        "retry = 2\n");
+
+    std::string error;
+    require(
+        fic::identity::pam::PamOptionFile::hasFlag(
+            path, "enforce_for_root", true, error),
+        error);
+    require(
+        fic::identity::pam::PamOptionFile::setFlag(
+            path, "enforce_for_root", false, error),
+        error);
+    require(
+        fic::identity::pam::PamOptionFile::hasFlag(
+            path, "enforce_for_root", false, error),
+        error);
+
+    std::ifstream disabledInput(path);
+    const std::string disabledContent(
+        (std::istreambuf_iterator<char>(disabledInput)),
+        std::istreambuf_iterator<char>());
+    require(
+        disabledContent.find("# administrator header") != std::string::npos &&
+            disabledContent.find("# keep root history") != std::string::npos,
+        "disabling a PAM flag must preserve comments");
+    require(
+        disabledContent.find("remember = 5") != std::string::npos &&
+            disabledContent.find("retry = 2") != std::string::npos,
+        "disabling a PAM flag must preserve assignments");
+
+    require(
+        fic::identity::pam::PamOptionFile::setFlag(
+            path, "enforce_for_root", true, error),
+        error);
+    require(
+        fic::identity::pam::PamOptionFile::hasFlag(
+            path, "enforce_for_root", true, error),
+        error);
+}
+
+void testMalformedOptionFileFlagFailsWithoutWrite() {
+    TempDirectory temp;
+    const auto path = temp.path() / "security/pwhistory.conf";
+    const std::string original =
+        "remember = 5\n"
+        "enforce_for_root=yes\n";
+    writeFile(path, original);
+
+    std::string error;
+    require(
+        !fic::identity::pam::PamOptionFile::setFlag(
+            path, "enforce_for_root", false, error),
+        "malformed PAM flag assignment must fail");
+    require(
+        error.find("malformed") != std::string::npos,
+        "malformed PAM flag diagnostic is missing");
+    std::ifstream input(path);
+    const std::string content(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    require(content == original, "malformed PAM flag failure modified the file");
+
+    const auto missing = temp.path() / "security/missing.conf";
+    error.clear();
+    require(
+        fic::identity::pam::PamOptionFile::setFlag(
+            missing, "enforce_for_root", false, error),
+        error);
+    require(
+        !std::filesystem::exists(missing),
+        "disabling an absent PAM flag must not create a file");
+}
+
 void testPasswordHistoryAlternativeIsDetected() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -500,10 +680,14 @@ int main() {
         testDuplicatePasswordProviderFails();
         testPamArgumentOverrideFails();
         testFailIntervalArgumentOverride();
+        testPasswordHistoryFlagOverride();
+        testPasswordHistoryFlagAssignmentFails();
         testWritableProviderFileFails();
         testWritableConfigurationFileFails();
         testOptionFileUpdatesAllDefinitions();
         testOptionFileSymlinkFails();
+        testOptionFileFlagEnableDisable();
+        testMalformedOptionFileFlagFailsWithoutWrite();
         testPasswordHistoryAlternativeIsDetected();
     } catch (const std::exception& error) {
         std::cerr << "PamConfigurationTests failed: " << error.what() << '\n';

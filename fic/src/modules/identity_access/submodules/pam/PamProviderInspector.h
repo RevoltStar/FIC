@@ -49,6 +49,13 @@ public:
         const std::string& expectedValue,
         std::string& error);
 
+    static bool verifyFlagOverrides(
+        const PamProviderInspection& inspection,
+        const std::string& expectedConfigPath,
+        const std::string& flag,
+        bool expectedEnabled,
+        std::string& error);
+
     static bool verifyProviderFiles(
         const PamProviderInspection& inspection,
         const std::vector<std::filesystem::path>& moduleDirectories,
@@ -61,6 +68,9 @@ public:
     static std::optional<std::string> argumentValue(
         const PamRule& rule,
         const std::string& option);
+
+    static bool hasArgument(const PamRule& rule,
+                            const std::string& argument);
 };
 
 std::string pamProviderName(PamProviderKind provider);

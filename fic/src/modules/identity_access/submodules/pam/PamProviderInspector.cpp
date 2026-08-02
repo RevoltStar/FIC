@@ -234,6 +234,42 @@ bool PamProviderInspector::verifyOptionOverrides(
     return true;
 }
 
+bool PamProviderInspector::verifyFlagOverrides(
+    const PamProviderInspection& inspection,
+    const std::string& expectedConfigPath,
+    const std::string& flag,
+    bool expectedEnabled,
+    std::string& error) {
+    const std::string assignmentPrefix = flag + "=";
+    for (const auto& rule : inspection.providerRules) {
+        const auto configuredPath = argumentValue(rule, "conf");
+        if (configuredPath.has_value() &&
+            std::filesystem::path(*configuredPath).lexically_normal() !=
+                std::filesystem::path(expectedConfigPath).lexically_normal()) {
+            error = rule.source.string() + ":" + std::to_string(rule.line) +
+                ": provider uses another configuration file: " +
+                *configuredPath;
+            return false;
+        }
+        for (const auto& argument : rule.arguments) {
+            if (argument.compare(0, assignmentPrefix.size(),
+                                 assignmentPrefix) == 0) {
+                error = rule.source.string() + ":" +
+                    std::to_string(rule.line) + ": PAM flag " + flag +
+                    " must not have a value";
+                return false;
+            }
+        }
+        if (!expectedEnabled && hasArgument(rule, flag)) {
+            error = rule.source.string() + ":" + std::to_string(rule.line) +
+                ": PAM argument " + flag +
+                " overrides the requested disabled state";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool PamProviderInspector::verifyProviderFiles(
     const PamProviderInspection& inspection,
     const std::vector<std::filesystem::path>& moduleDirectories,
@@ -316,6 +352,13 @@ std::optional<std::string> PamProviderInspector::argumentValue(
         }
     }
     return std::nullopt;
+}
+
+bool PamProviderInspector::hasArgument(const PamRule& rule,
+                                       const std::string& argument) {
+    return std::find(
+               rule.arguments.begin(), rule.arguments.end(), argument) !=
+        rule.arguments.end();
 }
 
 std::string pamProviderName(PamProviderKind provider) {

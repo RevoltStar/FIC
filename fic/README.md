@@ -477,7 +477,9 @@ include-граф: если неподдерживаемое правило на�
 
 - `password_min_length` и `password_min_classes` управляют параметрами
   `minlen` и `minclass` активного `pam_pwquality`;
-- `password_history_depth` управляет `remember` активного `pam_pwhistory`;
+- `password_history_depth` и `password_history_enforce_for_root` управляют
+  соответственно `remember` и флагом `enforce_for_root` активного
+  `pam_pwhistory`;
 - `failed_authentication_attempts`,
   `failed_authentication_counting_period` и
   `failed_authentication_unlock_time` управляют соответственно `deny`,
@@ -561,7 +563,7 @@ PAM service/include-файлов и используемых `.so`, аргуме
 способные перекрыть управляемое значение. Затем меняется только канонический
 файл `/etc/security/faillock.conf`,
 `pwquality.conf` или `pwhistory.conf` через `AtomicFileWriter`; посторонние
-параметры и комментарии сохраняются. После записи файл и весь PAM-граф
+параметры, флаги и комментарии сохраняются. После записи файл и весь PAM-граф
 перечитываются. Отсутствующий канонический файл разрешено создать как
 `root:root 0644`, но только если поддерживаемый provider уже корректно включен
 во всех найденных целевых службах.

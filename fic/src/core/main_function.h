@@ -28,6 +28,7 @@
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationUnlockTimePolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryDepthPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordMinClassesPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordMinLengthPolicy.h"
 #include "modules/identity_access/submodules/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"

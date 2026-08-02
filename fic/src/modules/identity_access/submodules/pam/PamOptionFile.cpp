@@ -56,6 +56,34 @@ bool parseAssignment(const std::string& line,
     return validKey(key);
 }
 
+bool parseFlagLine(const std::string& line,
+                   const std::string& expectedKey,
+                   bool& isFlag,
+                   bool& malformed) {
+    isFlag = false;
+    malformed = false;
+    std::string code = line;
+    const std::size_t comment = code.find('#');
+    if (comment != std::string::npos) {
+        code.erase(comment);
+    }
+    code = trimCopy(std::move(code));
+    if (code.empty()) {
+        return true;
+    }
+    if (code == expectedKey) {
+        isFlag = true;
+        return true;
+    }
+    if (code.compare(0, expectedKey.size(), expectedKey) == 0 &&
+        code.size() > expectedKey.size()) {
+        const unsigned char delimiter =
+            static_cast<unsigned char>(code[expectedKey.size()]);
+        malformed = delimiter == '=' || std::isspace(delimiter) != 0;
+    }
+    return true;
+}
+
 bool readFile(const std::filesystem::path& path,
               bool& existed,
               std::string& content,
@@ -217,6 +245,121 @@ bool PamOptionFile::hasOnlyValue(
     }
     if (!found) {
         error = "option " + key + " was not found in " + path.string();
+        return false;
+    }
+    return true;
+}
+
+bool PamOptionFile::setFlag(const std::filesystem::path& path,
+                            const std::string& key,
+                            bool enabled,
+                            std::string& error) {
+    if (!validKey(key)) {
+        error = "invalid PAM flag";
+        return false;
+    }
+
+    bool existed = false;
+    std::string originalContent;
+    if (!readFile(path, existed, originalContent, error)) {
+        return false;
+    }
+    if (!existed && !enabled) {
+        return true;
+    }
+
+    std::vector<std::string> lines = splitLines(originalContent);
+    bool found = false;
+    for (auto& line : lines) {
+        bool isFlag = false;
+        bool malformed = false;
+        parseFlagLine(line, key, isFlag, malformed);
+        if (malformed) {
+            error = "malformed PAM flag " + key + " in " + path.string();
+            return false;
+        }
+        if (!isFlag) {
+            continue;
+        }
+        found = true;
+        const std::size_t first = line.find_first_not_of(" \t");
+        const std::string indentation =
+            first == std::string::npos ? "" : line.substr(0, first);
+        const std::size_t comment = line.find('#');
+        if (enabled) {
+            const std::string commentSuffix = comment == std::string::npos
+                ? ""
+                : " " + line.substr(comment);
+            line = indentation + key + commentSuffix;
+        } else {
+            line = comment == std::string::npos
+                ? ""
+                : indentation + line.substr(comment);
+        }
+    }
+    if (enabled && !found) {
+        lines.push_back(key);
+    }
+
+    if (!AtomicFileWriter::write(
+            path.string(), joinLines(lines), writeOptions(), &error)) {
+        return false;
+    }
+    if (hasFlag(path, key, enabled, error)) {
+        return true;
+    }
+
+    std::string rollbackError;
+    if (existed) {
+        if (!AtomicFileWriter::write(
+                path.string(), originalContent, writeOptions(), &rollbackError)) {
+            error += "; rollback failed: " + rollbackError;
+        }
+    } else {
+        std::error_code removeError;
+        std::filesystem::remove(path, removeError);
+        if (removeError) {
+            error += "; rollback failed: " + removeError.message();
+        }
+    }
+    return false;
+}
+
+bool PamOptionFile::hasFlag(const std::filesystem::path& path,
+                            const std::string& key,
+                            bool expectedEnabled,
+                            std::string& error) {
+    if (!validKey(key)) {
+        error = "invalid PAM flag";
+        return false;
+    }
+
+    bool existed = false;
+    std::string content;
+    if (!readFile(path, existed, content, error)) {
+        return false;
+    }
+    if (!existed) {
+        if (!expectedEnabled) {
+            return true;
+        }
+        error = "PAM option file does not exist: " + path.string();
+        return false;
+    }
+
+    bool found = false;
+    for (const auto& line : splitLines(content)) {
+        bool isFlag = false;
+        bool malformed = false;
+        parseFlagLine(line, key, isFlag, malformed);
+        if (malformed) {
+            error = "malformed PAM flag " + key + " in " + path.string();
+            return false;
+        }
+        found = found || isFlag;
+    }
+    if (found != expectedEnabled) {
+        error = "unexpected state for " + key + " in " + path.string();
         return false;
     }
     return true;

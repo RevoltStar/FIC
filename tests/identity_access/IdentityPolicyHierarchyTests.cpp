@@ -1,8 +1,10 @@
 #include "modules/identity_access/submodules/composite/CompositePolicy.h"
 #include "modules/identity_access/submodules/kerberos/KerberosPolicy.h"
 #include "modules/identity_access/submodules/nss/NssPolicy.h"
+#include "modules/identity_access/submodules/pam/PamOptionFile.h"
 #include "modules/identity_access/submodules/pam/PamPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/submodules/sssd/SssdPolicy.h"
 
 #include <fic/core/FicRuntimePaths.h>
@@ -15,6 +17,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -23,6 +26,28 @@ void require(bool condition, const std::string& message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+void writeFile(const std::filesystem::path& path,
+               const std::string& content,
+               mode_t mode = 0644) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    require(output.is_open(), "could not write " + path.string());
+    output << content;
+    output.close();
+    require(::chmod(path.c_str(), mode) == 0,
+            "could not chmod " + path.string());
+}
+
+void writeIdentityConfig(const std::filesystem::path& root,
+                         const std::string& rootHistoryValue) {
+    writeFile(
+        root / "config/IDENTITY_ACCESS.conf",
+        "dummy.status=ENABLE\n"
+        "dummy.value=expected\n"
+        "password_history_enforce_for_root.status=ENABLE\n"
+        "password_history_enforce_for_root.value=" + rootHistoryValue + "\n");
 }
 
 void initializeRuntimePaths(const std::filesystem::path& root) {
@@ -46,13 +71,21 @@ void initializeRuntimePaths(const std::filesystem::path& root) {
     std::filesystem::create_directories(paths.logDir);
     std::filesystem::create_directories(paths.dataDir);
 
-    std::ofstream config(paths.configDir / "IDENTITY_ACCESS.conf");
-    config << "dummy.status=ENABLE\n"
-              "dummy.value=expected\n";
-    config.close();
+    writeIdentityConfig(root, "yes");
 
     std::string error;
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+}
+
+fic::platform::PamPlatformConfig makePasswordHistoryPlatform(
+    const std::filesystem::path& root) {
+    fic::platform::PamPlatformConfig platform;
+    platform.configDirectories = {root / "pam.d"};
+    platform.moduleDirectories = {root / "security"};
+    platform.passwordServices = {"passwd"};
+    platform.passwordHistoryConfigPath =
+        root / "security-config/pwhistory.conf";
+    return platform;
 }
 
 template <typename Base>
@@ -273,6 +306,61 @@ int main() {
 
     try {
         initializeRuntimePaths(root);
+
+        const auto passwordHistoryPlatform =
+            makePasswordHistoryPlatform(root);
+        writeFile(
+            root / "pam.d/passwd",
+            "password required pam_pwhistory.so\n");
+        writeFile(root / "security/pam_pwhistory.so", "test", 0555);
+        writeFile(
+            passwordHistoryPlatform.passwordHistoryConfigPath,
+            "remember = 5\n");
+
+        PamPasswordHistoryEnforceForRootPolicy rootHistoryEnabled(
+            passwordHistoryPlatform);
+        require(
+            rootHistoryEnabled.moduleName == "IDENTITY_ACCESS" &&
+                rootHistoryEnabled.submoduleName == "PAM" &&
+                rootHistoryEnabled.policyName ==
+                    "password_history_enforce_for_root",
+            "root-history policy has the wrong identity metadata");
+        require(
+            rootHistoryEnabled.getDefaultValue() == "yes" &&
+                rootHistoryEnabled.validate("yes") &&
+                rootHistoryEnabled.validate("no") &&
+                !rootHistoryEnabled.validate("true"),
+            "root-history policy value contract is incorrect");
+        const PolicyEditorSpec rootHistoryEditor =
+            rootHistoryEnabled.getPolicyTypeValue().getEditorSpec();
+        require(
+            rootHistoryEditor.editor == "combobox" &&
+                rootHistoryEditor.possibleValues ==
+                    std::vector<std::string>{"yes", "no"},
+            "root-history policy has the wrong editor values");
+        require(rootHistoryEnabled.apply(),
+                "root-history policy failed to enable the PAM flag");
+        std::string flagError;
+        require(
+            fic::identity::pam::PamOptionFile::hasFlag(
+                passwordHistoryPlatform.passwordHistoryConfigPath,
+                "enforce_for_root",
+                true,
+                flagError),
+            flagError);
+
+        writeIdentityConfig(root, "no");
+        PamPasswordHistoryEnforceForRootPolicy rootHistoryDisabled(
+            passwordHistoryPlatform);
+        require(rootHistoryDisabled.apply(),
+                "root-history policy failed to disable the PAM flag");
+        require(
+            fic::identity::pam::PamOptionFile::hasFlag(
+                passwordHistoryPlatform.passwordHistoryConfigPath,
+                "enforce_for_root",
+                false,
+                flagError),
+            flagError);
 
         DummyPamPolicy pam;
         PamFailedAuthenticationCountingPeriodPolicy countingPeriod({});

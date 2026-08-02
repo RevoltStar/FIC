@@ -60,6 +60,8 @@
 [module:IDENTITY_ACCESS][policy:password_min_classes][description]=Задаёт minclass в каноническом конфиге pam_pwquality после проверки provider и effective PAM-графа.
 [module:IDENTITY_ACCESS][policy:password_history_depth]=Глубина истории паролей
 [module:IDENTITY_ACCESS][policy:password_history_depth][description]=Задаёт remember в каноническом конфиге pam_pwhistory. pam_unix remember= распознаётся как отдельный неподдерживаемый provider и автоматически не переписывается.
+[module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Применять историю паролей для root
+[module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Управляет флагом enforce_for_root в каноническом конфиге pam_pwhistory. Значение yes включает проверку истории при смене пароля от имени root, значение no удаляет флаг; аргумент PAM, принудительно включающий флаг, блокирует применение no.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Неудачные PAM-аутентификации до блокировки
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Задаёт deny в каноническом конфиге pam_faillock. Все целевые службы аутентификации должны использовать одну полную схему pam_faillock; pam_tally и pam_tally2 считаются конфликтующими providers.
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period]=Период подсчёта неуспешных попыток входа

@@ -7,32 +7,40 @@
 
 - Обновлено: 2026-08-02.
 - Ветка: `main`.
-- Базовый commit: `8443065e33b7f7688d81c1f860c71a70ddc2ffc1`.
-- Текущая задача: PAM-политика периода подсчёта неуспешных аутентификаций.
+- Базовый commit: `268b147cf3b7cfec9b1e56f7f74a0a7a352e8663`.
+- Текущая задача: PAM-политика применения истории паролей для root.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
 - Добавлена политика `IDENTITY_ACCESS/PAM`
-  `failed_authentication_counting_period`, которая управляет параметром
-  `fail_interval` активного `pam_faillock` через существующий
-  `PamOptionPolicy`.
-- Значение задаётся в секундах, допустимый диапазон — `1..86400`, значение по
-  умолчанию — `900`, начальный статус — `DISABLE`.
-- Политика использует существующий fail-closed preflight: проверяет effective
-  PAM-граф, полную topology `pam_faillock`, владельца и права provider/config
-  файлов, канонический `faillock.conf` и конфликтующие аргументы
-  `fail_interval=` в PAM-правилах.
-- Политика зарегистрирована в `PolicyMap`; добавлены seed-конфиг, русская и
-  английская локализации, README и архитектурная диаграмма.
-- Тесты проверяют metadata/default/range политики, конфликтующий и совпадающий
-  PAM override, обновление повторных `fail_interval` и сохранение связанных
-  `deny`/`unlock_time` и комментариев.
+  `password_history_enforce_for_root`, управляющая беззначным флагом
+  `enforce_for_root` активного `pam_pwhistory`.
+- Значение политики — `yes` или `no`, default — `yes`, начальный статус —
+  `DISABLE`. `yes` добавляет флаг в канонический `pwhistory.conf`, `no` удаляет
+  все его активные определения.
+- `PamOptionPolicy` расширен typed-режимом `Assignment`/`Flag`, поэтому status
+  политики остаётся состоянием управления FIC, а значение `no` является
+  явным требованием удалить флаг.
+- `PamOptionFile` безопасно читает, добавляет и удаляет valueless flags,
+  сохраняет соседние assignments и комментарии, отказывает на malformed
+  формах вроде `enforce_for_root=yes`, использует существующую атомарную запись
+  и rollback при непрошедшей postcondition.
+- `PamProviderInspector` проверяет flag overrides: альтернативный `conf=` и
+  valued flag отклоняются; bare-аргумент `enforce_for_root` совместим с `yes`,
+  но блокирует применение `no` до записи.
+- Политика зарегистрирована в `PolicyMap`; добавлены seed-конфиг, RU/EN
+  локализации, README, архитектурная диаграмма и static checks.
+- Добавлены unit-тесты flag parser/editor/override и end-to-end тест применения
+  `yes`, затем `no` на временном PAM-дереве.
 
 ## Измененные файлы
 
 - `fic/src/modules/identity_access/submodules/pam/policies/`
-  `PamFailedAuthenticationCountingPeriodPolicy.{h,cpp}`;
+  `PamPasswordHistoryEnforceForRootPolicy.{h,cpp}`;
+- `fic/src/modules/identity_access/submodules/pam/PamOptionFile.{h,cpp}`;
+- `fic/src/modules/identity_access/submodules/pam/PamOptionPolicy.{h,cpp}`;
+- `fic/src/modules/identity_access/submodules/pam/PamProviderInspector.{h,cpp}`;
 - `fic/src/core/main_function.{h,cpp}`;
 - `fic/src/scripts/config/IDENTITY_ACCESS.conf`;
 - `fic/src/scripts/lang/{ru,en}.lang`;
@@ -54,28 +62,26 @@
   `command_hash_batch_tests` корректно SKIP.
 - `python3 tests/platform/static_checks.py .` — успешно.
 - `git diff --check` — успешно.
-- Реальный PAM apply и изменение `/etc/security/faillock.conf` не выполнялись:
-  такие проверки изменяют состояние хоста и должны запускаться только в
-  изолированном тестовом окружении.
+- Реальный PAM apply и изменение `/etc/security/pwhistory.conf` не выполнялись:
+  тесты используют только временное PAM-дерево под `/tmp`.
 
 ## Что осталось
 
 - Обязательной незавершенной работы по реализации нет.
-- При необходимости отдельной runtime-валидации проверить в VM каждого
-  поддерживаемого профиля, что ошибки вне малого тестового `fail_interval` не
-  достигают `deny`, а порог ошибок внутри окна приводит к блокировке; после
-  проверки сбросить test tally через `faillock --reset`.
+- При необходимости отдельной runtime-валидации проверить в изолированной VM
+  каждого поддерживаемого профиля реальную смену пароля root с повторным
+  использованием предыдущего пароля при `yes` и `no`.
 
 ## Риски и решения
 
-- Политика не включает и не мигрирует PAM provider: `pam_faillock` должен уже
-  быть корректно и единообразно включен во всех существующих целевых службах.
-  `pam_tally`/`pam_tally2`, неполная topology или конфликтующий аргумент
-  `fail_interval=` приводят к отказу до записи.
-- Изменение `fail_interval` намеренно не сбрасывает существующие tally-записи;
-  их возраст интерпретирует сам `pam_faillock` при последующих аутентификациях.
-- Отключение политики останавливает последующее принудительное применение, но
-  не откатывает уже записанный `fail_interval`, что соответствует текущей
-  общей семантике disable в FIC.
+- Политика не включает и не мигрирует provider: `pam_pwhistory` должен уже быть
+  корректно и единообразно включен во всех существующих password-службах.
+  `pam_unix remember=`, другой `conf=` или небезопасные provider/config файлы
+  приводят к fail-closed отказу.
+- Если bare-флаг `enforce_for_root` задан прямо в аргументах
+  `pam_pwhistory.so`, значение `no` не может его перекрыть и намеренно
+  отклоняется без изменения канонического файла.
+- `status=DISABLE` не означает значение `no`: disable прекращает управление и
+  не откатывает ранее записанный флаг, что соответствует общей семантике FIC.
 - Формат policy-конфигурации и IPC не изменились; schema/API версии не
   увеличивались, migration и compatibility aliases не добавлялись.

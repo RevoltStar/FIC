@@ -535,6 +535,7 @@ flowchart TB
     pam --> passwordMinLength[password_min_length]
     pam --> passwordMinClasses[password_min_classes]
     pam --> passwordHistoryDepth[password_history_depth]
+    pam --> passwordHistoryRoot[password_history_enforce_for_root]
     pam --> failedAttempts[failed_authentication_attempts]
     pam --> countingPeriod[failed_authentication_counting_period]
     pam --> unlockTime[failed_authentication_unlock_time]

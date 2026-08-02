@@ -561,6 +561,9 @@ PolicyMap init_policyMap(
         std::make_unique<PamPasswordMinClassesPolicy>(platform.pam));
     cafArr.push_back(
         std::make_unique<PamPasswordHistoryDepthPolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordHistoryEnforceForRootPolicy>(
+            platform.pam));
     cafArr.push_back(std::make_unique<PamFailedAuthenticationAttemptsPolicy>(
         platform.pam));
     cafArr.push_back(

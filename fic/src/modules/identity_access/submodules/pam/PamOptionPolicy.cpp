@@ -11,17 +11,32 @@ PamOptionPolicy::PamOptionPolicy(
     fic::identity::pam::PamProviderKind provider,
     std::filesystem::path optionFile,
     std::string option,
-    std::vector<std::string> services)
+    std::vector<std::string> services,
+    PamOptionSyntax syntax)
     : PamPolicy(),
       platformConfig_(std::move(platformConfig)),
       capability_(capability),
       provider_(provider),
       optionFile_(std::move(optionFile)),
       option_(std::move(option)),
-      services_(std::move(services)) {
+      services_(std::move(services)),
+      syntax_(syntax) {
 }
 
 bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
+    bool expectedFlagEnabled = false;
+    if (syntax_ == PamOptionSyntax::Flag) {
+        if (expectedValue == "yes") {
+            expectedFlagEnabled = true;
+        } else if (expectedValue != "no") {
+            this->log(
+                "Invalid PAM flag policy value for " + this->policyName +
+                    ": " + expectedValue,
+                logLevel::ERROR);
+            return false;
+        }
+    }
+
     fic::identity::pam::PamConfiguration configuration(platformConfig_);
     fic::identity::pam::PamProviderInspection inspection;
     std::string error;
@@ -54,12 +69,13 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             logLevel::ERROR);
         return false;
     }
-    if (!fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
-            inspection,
-            optionFile_.string(),
-            option_,
-            expectedValue,
-            error)) {
+    const bool overridesValid = syntax_ == PamOptionSyntax::Assignment
+        ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+              inspection, optionFile_.string(), option_, expectedValue, error)
+        : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+              inspection, optionFile_.string(), option_,
+              expectedFlagEnabled, error);
+    if (!overridesValid) {
         this->log(
             "PAM option override preflight failed for " + this->policyName +
                 ": " + error,
@@ -67,11 +83,24 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
 
+    const auto hasExpectedState = [&](std::string& stateError) {
+        return syntax_ == PamOptionSyntax::Assignment
+            ? fic::identity::pam::PamOptionFile::hasOnlyValue(
+                  optionFile_, option_, expectedValue, stateError)
+            : fic::identity::pam::PamOptionFile::hasFlag(
+                  optionFile_, option_, expectedFlagEnabled, stateError);
+    };
+    const auto setExpectedState = [&](std::string& stateError) {
+        return syntax_ == PamOptionSyntax::Assignment
+            ? fic::identity::pam::PamOptionFile::setValue(
+                  optionFile_, option_, expectedValue, stateError)
+            : fic::identity::pam::PamOptionFile::setFlag(
+                  optionFile_, option_, expectedFlagEnabled, stateError);
+    };
+
     std::string currentError;
-    if (!fic::identity::pam::PamOptionFile::hasOnlyValue(
-            optionFile_, option_, expectedValue, currentError)) {
-        if (!fic::identity::pam::PamOptionFile::setValue(
-                optionFile_, option_, expectedValue, error)) {
+    if (!hasExpectedState(currentError)) {
+        if (!setExpectedState(error)) {
             this->log(
                 "Could not update PAM option for " + this->policyName +
                     ": " + error,
@@ -80,8 +109,7 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         }
     }
 
-    if (!fic::identity::pam::PamOptionFile::hasOnlyValue(
-            optionFile_, option_, expectedValue, error)) {
+    if (!hasExpectedState(error)) {
         this->log(
             "PAM option postcondition failed for " + this->policyName +
                 ": " + error,
@@ -102,12 +130,15 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             verifiedInspection, platformConfig_.moduleDirectories, error) ||
         !fic::identity::pam::PamProviderInspector::verifyConfigurationFiles(
             verifiedInspection, error) ||
-        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
-            verifiedInspection,
-            optionFile_.string(),
-            option_,
-            expectedValue,
-            error)) {
+        !(syntax_ == PamOptionSyntax::Assignment
+              ? fic::identity::pam::PamProviderInspector::
+                    verifyOptionOverrides(
+                        verifiedInspection, optionFile_.string(), option_,
+                        expectedValue, error)
+              : fic::identity::pam::PamProviderInspector::
+                    verifyFlagOverrides(
+                        verifiedInspection, optionFile_.string(), option_,
+                        expectedFlagEnabled, error))) {
         this->log(
             "PAM graph postcondition failed for " + this->policyName +
                 ": " + error,

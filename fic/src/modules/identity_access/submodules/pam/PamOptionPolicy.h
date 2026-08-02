@@ -9,6 +9,11 @@
 #include <string>
 #include <vector>
 
+enum class PamOptionSyntax {
+    Assignment,
+    Flag
+};
+
 class PamOptionPolicy : public PamPolicy {
 public:
     ~PamOptionPolicy() override = default;
@@ -20,7 +25,8 @@ protected:
         fic::identity::pam::PamProviderKind provider,
         std::filesystem::path optionFile,
         std::string option,
-        std::vector<std::string> services);
+        std::vector<std::string> services,
+        PamOptionSyntax syntax = PamOptionSyntax::Assignment);
 
     bool applyPam(const std::string& expectedValue) override;
 
@@ -31,6 +37,7 @@ private:
     std::filesystem::path optionFile_;
     std::string option_;
     std::vector<std::string> services_;
+    PamOptionSyntax syntax_;
 };
 
 #endif // FIC_IDENTITY_ACCESS_PAM_OPTION_POLICY_H

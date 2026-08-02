@@ -17,6 +17,16 @@ public:
                              const std::string& key,
                              const std::string& expectedValue,
                              std::string& error);
+
+    static bool setFlag(const std::filesystem::path& path,
+                        const std::string& key,
+                        bool enabled,
+                        std::string& error);
+
+    static bool hasFlag(const std::filesystem::path& path,
+                        const std::string& key,
+                        bool expectedEnabled,
+                        std::string& error);
 };
 
 } // namespace fic::identity::pam

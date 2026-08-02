@@ -138,6 +138,7 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamProviderInspector.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssPolicy.cpp
