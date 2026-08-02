@@ -38,6 +38,56 @@ def main():
                 f"removed exec-shield policy remains in {source_path.relative_to(root)}",
             )
 
+    sysrq_policy = (
+        root
+        / "fic/src/modules/sysctl/submodules/globalkernelprotection/"
+        "SYSCTL_sysrq_disable.cpp"
+    ).read_text(encoding="utf-8")
+    for token in (
+        'sysctlParameter = "kernel.sysrq"',
+        'sysctlParameterValue = "0"',
+        'policyName = "kernel_sysrq_disable"',
+        "FixedPolicyTypeValue",
+    ):
+        require(
+            token in sysrq_policy,
+            f"kernel SysRq policy is missing contract token {token}",
+        )
+    policy_registry = (
+        root / "fic/src/core/main_function.cpp"
+    ).read_text(encoding="utf-8")
+    require(
+        "SYSCTL_sysrq_disable" in policy_registry,
+        "kernel SysRq policy is not registered in PolicyMap",
+    )
+    sysctl_config = (
+        root / "fic/src/scripts/config/SYSCTL.conf"
+    ).read_text(encoding="utf-8")
+    require(
+        "kernel_sysrq_disable.status=DISABLE" in sysctl_config
+        and "kernel_sysrq_disable.value=ENABLE" in sysctl_config,
+        "SYSCTL.conf does not define kernel_sysrq_disable",
+    )
+    required_sysrq_descriptions = {
+        "ru": (
+            "При наличии параметра sysrq_always_enabled в загруженном ядре "
+            "данная политика не имеет эффекта."
+        ),
+        "en": (
+            "This policy has no effect when the loaded kernel has the "
+            "sysrq_always_enabled parameter."
+        ),
+    }
+    for language, required_text in required_sysrq_descriptions.items():
+        localization = (
+            root / f"fic/src/scripts/lang/{language}.lang"
+        ).read_text(encoding="utf-8")
+        require(
+            "[module:SYSCTL][policy:kernel_sysrq_disable]" in localization
+            and required_text in localization,
+            f"{language} localization does not fully describe kernel SysRq policy",
+        )
+
     ssh = (root / "fic/src/modules/net/submodules/Ssh.cpp").read_text(
         encoding="utf-8"
     )

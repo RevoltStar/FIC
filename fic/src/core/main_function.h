@@ -64,6 +64,7 @@
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_process_limits.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_ptrace_restrict.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_randomize_va_space.h"
+#include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_sysrq_disable.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_threads_max_limit.h"
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_user_ns_restrict.h"
 

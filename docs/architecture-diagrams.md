@@ -513,6 +513,7 @@ flowchart TB
     sysctl --> fsKernel[FSKernelProtection]
     sysctl --> globalKernel[GlobalKernelProtection]
     sysctl --> networkKernel[NetworkKernelProtection]
+    globalKernel --> sysrqDisable[kernel_sysrq_disable]
 
     arr --> oss[OSS]
     oss --> display[DisplayManager]

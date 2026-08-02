@@ -602,6 +602,7 @@ PolicyMap init_policyMap(
     cafArr.push_back(std::make_unique<SYSCTL_rp_filter_enable>());
     cafArr.push_back(std::make_unique<SYSCTL_send_redirects_disable>());
     cafArr.push_back(std::make_unique<SYSCTL_suid_dump_disable>());
+    cafArr.push_back(std::make_unique<SYSCTL_sysrq_disable>());
     cafArr.push_back(std::make_unique<SYSCTL_syn_flood_protection>());
     cafArr.push_back(std::make_unique<SYSCTL_tcp_keepalive_time>());
     cafArr.push_back(std::make_unique<SYSCTL_tcp_max_syn_backlog>());
