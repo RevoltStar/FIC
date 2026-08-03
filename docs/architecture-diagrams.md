@@ -519,6 +519,7 @@ flowchart TB
     oss --> display[DisplayManager]
     oss --> desktop[DesktopEnvironment]
     oss --> fstab[Fstab]
+    oss -. abstract .-> grub[Grub]
 
     arr --> net[NET]
     net --> ssh[Ssh]

@@ -39,6 +39,7 @@
 [module:OSS][submodule:DesktopEnvironment]=Графическое окружение
 [module:OSS][submodule:DisplayManager]=Графический менеджер входа в систему
 [module:OSS][submodule:Fstab]=Параметры монтирования /etc/fstab
+[module:OSS][submodule:Grub]=Загрузчик GRUB
 [module:OSS][submodule:SessionManagement]=Пользовательская сессия
 [module:SYSCTL][submodule:fs_kernel_protection]=Настройки файловой системы
 [module:SYSCTL][submodule:global_kernel_protection]=Общие настройки ядра

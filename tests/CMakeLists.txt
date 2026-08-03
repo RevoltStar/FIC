@@ -105,6 +105,21 @@ target_include_directories(sysctl_configuration_tests PRIVATE
 target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
 add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
 
+add_executable(grub_policy_tests
+    oss/GrubPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/Grub.cpp
+)
+target_include_directories(grub_policy_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(grub_policy_tests PRIVATE
+    fic-core
+    fic-policy
+    Threads::Threads
+)
+add_test(NAME grub_policy_tests COMMAND grub_policy_tests)
+
 add_executable(pam_configuration_tests
     identity_access/PamConfigurationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamConfiguration.cpp

@@ -39,6 +39,7 @@
 [module:OSS][submodule:DesktopEnvironment]=Desktop environment
 [module:OSS][submodule:DisplayManager]=Display Manager
 [module:OSS][submodule:Fstab]=/etc/fstab mount options
+[module:OSS][submodule:Grub]=GRUB bootloader
 [module:OSS][submodule:SessionManagement]=User Session
 [module:SYSCTL][submodule:fs_kernel_protection]=Filesystem settings
 [module:SYSCTL][submodule:global_kernel_protection]=General kernel settings

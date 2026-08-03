@@ -5,36 +5,36 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-08-02.
+- Обновлено: 2026-08-03.
 - Ветка: `main`.
-- Базовый commit: `c05a8c8` (`Реализация политики
-  failed_authentication_enforce_for_root`).
-- Текущая задача: SYSCTL-политика отключения Magic SysRq.
+- Базовый commit: `ae35dfa` (`Обновляем HANDOFF`).
+- Текущая задача: абстрактный подмодуль `OSS/Grub`.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- Добавлена fixed-policy `SYSCTL/global_kernel_protection`
-  `kernel_sysrq_disable`.
-- Политика использует существующий `Sysctl` pipeline и устанавливает
-  persistent и live-значение `kernel.sysrq = 0`: анализирует effective
-  procps-ng конфигурацию, при необходимости обновляет managed-блок FIC в конце
-  `/etc/sysctl.conf`, затем пишет и проверяет `/proc/sys/kernel/sysrq`.
-- Политика зарегистрирована в `PolicyMap`; начальный статус — `DISABLE`,
-  служебное fixed-значение в seed-конфиге — `ENABLE`.
-- В RU/EN descriptions явно указано ограничение: при наличии параметра ядра
-  `sysrq_always_enabled` политика не имеет эффекта. Наличие этого
-  предупреждения и контракт `kernel.sysrq = 0` закреплены static checks.
-- Обновлены README и архитектурная диаграмма.
+- Добавлен абстрактный класс `Grub`, наследующий `OSS` и задающий
+  `submoduleName = "Grub"`.
+- `Grub::apply()` объявлен `final`: он получает и валидирует настроенное
+  значение через общий `Policy::getValue()`, при ошибке возвращает `false` до
+  вызова hook, сериализует будущие операции GRUB единым mutex и передаёт
+  значение в чисто виртуальный `applyGrub(expectedValue)`.
+- Формат исходной конфигурации GRUB, пути, генератор `grub.cfg`, boot/runtime-
+  активация и postconditions намеренно не выбраны без конкретных политик. Это
+  обязанности будущих наследников и вспомогательной GRUB-инфраструктуры.
+- Конкретных наследников `Grub` и записей в `PolicyMap`/`OSS.conf` не добавлено.
+- Добавлены RU/EN локализации подмодуля, описание контракта в README и узел в
+  архитектурной диаграмме.
+- Добавлен `grub_policy_tests`: проверяет абстрактность класса, метаданные
+  `OSS/Grub`, передачу валидного значения в hook и отказ до hook при невалидном
+  значении.
 
 ## Измененные файлы
 
-- `fic/src/modules/sysctl/submodules/globalkernelprotection/`
-  `SYSCTL_sysrq_disable.{h,cpp}`;
-- `fic/src/core/main_function.{h,cpp}`;
-- `fic/src/scripts/config/SYSCTL.conf`;
+- `fic/src/modules/oss/submodules/Grub.{h,cpp}`;
 - `fic/src/scripts/lang/{ru,en}.lang`;
-- `tests/platform/static_checks.py`;
+- `tests/oss/GrubPolicyTests.cpp`;
+- `tests/CMakeLists.txt`;
 - `fic/README.md`;
 - `docs/architecture-diagrams.md`;
 - `docs/HANDOFF.md`.
@@ -43,35 +43,29 @@
 
 - Конфигурация `build-check` с профилем `alt-p11` и версией `2.0.0-dev` —
   успешно.
-- Сборка целей `fic` и `sysctl_configuration_tests` — успешно.
-- Целевые `platform_profile_static_checks` и
-  `sysctl_configuration_tests` — успешно.
-- `ctest --test-dir build-check --output-on-failure`: 27 из 27 без ошибок;
+- Сборка целей `fic` и `grub_policy_tests` — успешно.
+- `ctest --test-dir build-check --output-on-failure`: 28 из 28 без ошибок;
   host-dependent `ipc_transport_tests`, `admin_socket_tests` и
   `command_hash_batch_tests` корректно SKIP.
 - `python3 tests/platform/static_checks.py .` — успешно.
 - `git diff --check` — успешно.
-- Реальный `/etc/sysctl.conf` и `/proc/sys/kernel/sysrq` не изменялись; тесты
-  общего sysctl runtime используют временное дерево под `/tmp`.
+- GRUB-файлы, bootloader и состояние хоста не изменялись.
 
 ## Что осталось
 
-- Обязательной незавершенной работы по реализации нет.
-- При необходимости runtime-валидации выполнить policy apply в изолированной
-  VM и отдельно проверить ядро с параметром загрузки `sysrq_always_enabled`.
+- Обязательной незавершенной работы по текущему scaffold нет.
+- Перед первой конкретной GRUB-политикой определить её модель данных и только
+  затем спроектировать platform profile для исходных конфигов и проверяемых
+  генераторов. Генерируемый `grub.cfg` напрямую редактировать нельзя.
 
 ## Риски и решения
 
-- `sysrq_always_enabled` имеет более высокий семантический приоритет: даже
-  подтвержденное значение `kernel.sysrq = 0` не отключает Magic SysRq. По
-  требованию задачи политика сообщает об этом в description, но не анализирует
-  командную строку ядра и не меняет bootloader.
-- Если `/proc/sys/kernel/sysrq` отсутствует, недоступен для безопасной записи
-  или не возвращает `0` после записи, общий `Sysctl` pipeline завершает
-  применение ошибкой. Persistent managed-значение при runtime-ошибке может
-  остаться подготовленным — это существующий задокументированный контракт
-  SYSCTL-политик.
-- `status=DISABLE` прекращает управление и не удаляет ранее записанную строку
-  из managed-блока, что соответствует общей семантике FIC.
+- Общий mutex защищает будущие GRUB hooks внутри одного процесса, но сам по
+  себе не обеспечивает file transaction, межпроцессную блокировку или
+  rollback: эти гарантии должны появиться в общей GRUB-инфраструктуре до
+  первой политики, меняющей систему.
+- `Grub::apply()` не заявляет об успешной persistent/boot-активации сам по себе:
+  результат полностью определяется реализацией `applyGrub()` конкретного
+  наследника.
 - Формат policy-конфигурации и IPC не изменились; schema/API версии не
   увеличивались, migration и compatibility aliases не добавлялись.
