@@ -5,67 +5,63 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-08-03.
+- Обновлено: 2026-08-04.
 - Ветка: `main`.
-- Базовый commit: `ae35dfa` (`Обновляем HANDOFF`).
-- Текущая задача: абстрактный подмодуль `OSS/Grub`.
+- Базовый commit: `bf60b0b` (`Создан абстрактный подмодуль OSS/Grub`).
+- Текущая задача: исключить удаление и подмену административных Unix-сокетов
+  членами группы `fic` через group-write runtime-каталога.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- Добавлен абстрактный класс `Grub`, наследующий `OSS` и задающий
-  `submoduleName = "Grub"`.
-- `Grub::apply()` объявлен `final`: он получает и валидирует настроенное
-  значение через общий `Policy::getValue()`, при ошибке возвращает `false` до
-  вызова hook, сериализует будущие операции GRUB единым mutex и передаёт
-  значение в чисто виртуальный `applyGrub(expectedValue)`.
-- Формат исходной конфигурации GRUB, пути, генератор `grub.cfg`, boot/runtime-
-  активация и postconditions намеренно не выбраны без конкретных политик. Это
-  обязанности будущих наследников и вспомогательной GRUB-инфраструктуры.
-- Конкретных наследников `Grub` и записей в `PolicyMap`/`OSS.conf` не добавлено.
-- Добавлены RU/EN локализации подмодуля, описание контракта в README и узел в
-  архитектурной диаграмме.
-- Добавлен `grub_policy_tests`: проверяет абстрактность класса, метаданные
-  `OSS/Grub`, передачу валидного значения в hook и отказ до hook при невалидном
-  значении.
+- Production runtime-каталог теперь принудительно имеет владельца `root:root`
+  и режим `0755`; группа `fic` не может создавать, удалять или переименовывать
+  объекты в `/run/fic`.
+- Сами административные сокеты сохраняют владельца `root:fic` и режим `0660`,
+  поэтому члены группы по-прежнему могут подключаться к обоим daemon API.
+- Systemd-tmpfiles template синхронизирован с runtime-проверкой сокета.
+- `admin_socket_tests` проверяет новые production metadata при доступном root-
+  окружении и существующей группе `fic`.
+- Path static checks фиксируют metadata-инвариант даже в непривилегированном
+  build-окружении.
+- Обновлены README, архитектурная документация и агентский security-инвариант.
 
 ## Измененные файлы
 
-- `fic/src/modules/oss/submodules/Grub.{h,cpp}`;
-- `fic/src/scripts/lang/{ru,en}.lang`;
-- `tests/oss/GrubPolicyTests.cpp`;
-- `tests/CMakeLists.txt`;
+- `fic-common/fic-ipc/src/FicAdminSocket.cpp`;
+- `fic/src/scripts/tmpfiles/fic.conf.in`;
+- `tests/paths/AdminSocketTests.cpp`;
+- `tests/paths/static_checks.py`;
 - `fic/README.md`;
 - `docs/architecture-diagrams.md`;
+- `AGENTS.md`;
 - `docs/HANDOFF.md`.
 
 ## Выполненные проверки
 
-- Конфигурация `build-check` с профилем `alt-p11` и версией `2.0.0-dev` —
-  успешно.
-- Сборка целей `fic` и `grub_policy_tests` — успешно.
+- Полная сборка `cmake --build build-check -j2` с профилем `alt-p11` — успешно.
 - `ctest --test-dir build-check --output-on-failure`: 28 из 28 без ошибок;
   host-dependent `ipc_transport_tests`, `admin_socket_tests` и
   `command_hash_batch_tests` корректно SKIP.
+- Узкие `runtime_paths_tests`, `ipc_paths_tests` и
+  `ipc_protocol_validation_tests` — успешно.
+- `python3 tests/paths/static_checks.py .` — успешно, включая metadata-инвариант
+  runtime-каталога и сокета.
 - `python3 tests/platform/static_checks.py .` — успешно.
 - `git diff --check` — успешно.
-- GRUB-файлы, bootloader и состояние хоста не изменялись.
+- Реальный `/run/fic`, сокеты и состояние хоста не изменялись.
 
 ## Что осталось
 
-- Обязательной незавершенной работы по текущему scaffold нет.
-- Перед первой конкретной GRUB-политикой определить её модель данных и только
-  затем спроектировать platform profile для исходных конфигов и проверяемых
-  генераторов. Генерируемый `grub.cfg` напрямую редактировать нельзя.
+- Обязательной незавершенной работы нет.
+- Production branch `admin_socket_tests` требует root и группу `fic`; в текущем
+  sandbox тест целиком возвращает CTest SKIP до этой ветки.
 
 ## Риски и решения
 
-- Общий mutex защищает будущие GRUB hooks внутри одного процесса, но сам по
-  себе не обеспечивает file transaction, межпроцессную блокировку или
-  rollback: эти гарантии должны появиться в общей GRUB-инфраструктуре до
-  первой политики, меняющей систему.
-- `Grub::apply()` не заявляет об успешной persistent/boot-активации сам по себе:
-  результат полностью определяется реализацией `applyGrub()` конкретного
-  наследника.
-- Формат policy-конфигурации и IPC не изменились; schema/API версии не
-  увеличивались, migration и compatibility aliases не добавлялись.
+- Каталог `0755` намеренно доступен всем только для traversal/read directory;
+  право подключения продолжает определяться режимом `0660` конкретного сокета.
+- Изменение применяется и к `fic.sock`, и к `fic-device.sock`, поскольку оба
+  используют общий `ProductionAdmin` socket builder и `/run/fic`.
+- API/schema versions не менялись: wire protocol и форматы persistent state не
+  затронуты.

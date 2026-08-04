@@ -1,1 +1,1 @@
-d @FIC_RUNTIME_DIR@ 0770 root fic -
+d @FIC_RUNTIME_DIR@ 0755 root root -

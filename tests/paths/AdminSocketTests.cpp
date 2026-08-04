@@ -3,6 +3,7 @@
 #include <cassert>
 #include <filesystem>
 #include <fstream>
+#include <grp.h>
 #include <iostream>
 #include <string>
 #include <sys/stat.h>
@@ -49,6 +50,34 @@ int main() {
     });
     assert(result.fileDescriptor < 0);
     assert(fs::is_regular_file(socketPath));
+
+    if (::geteuid() == 0 && ::getgrnam("fic") != nullptr) {
+        const fs::path productionSocketPath = root / "production/admin.sock";
+        result = fic::ipc::create_admin_server_socket({
+            productionSocketPath,
+            fic::ipc::AdminSocketSecurityProfile::ProductionAdmin,
+            4,
+            "production test socket"
+        });
+        assert(result.fileDescriptor >= 0);
+
+        assert(::lstat(productionSocketPath.parent_path().c_str(), &info) == 0);
+        assert(S_ISDIR(info.st_mode));
+        assert(info.st_uid == 0);
+        assert(info.st_gid == 0);
+        assert((info.st_mode & 0777) == 0755);
+
+        const group* ficGroup = ::getgrnam("fic");
+        assert(ficGroup != nullptr);
+        assert(::lstat(productionSocketPath.c_str(), &info) == 0);
+        assert(S_ISSOCK(info.st_mode));
+        assert(info.st_uid == 0);
+        assert(info.st_gid == ficGroup->gr_gid);
+        assert((info.st_mode & 0777) == 0660);
+
+        ::close(result.fileDescriptor);
+        fs::remove(productionSocketPath);
+    }
 
     fs::remove_all(root);
     return 0;

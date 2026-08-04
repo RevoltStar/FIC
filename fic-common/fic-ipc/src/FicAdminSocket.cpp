@@ -140,7 +140,7 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
     }
 
     group* ficGroup = nullptr;
-    std::optional<gid_t> expectedGroup;
+    std::optional<gid_t> expectedSocketGroup;
     mode_t socketMode = 0600;
     if (options.security == AdminSocketSecurityProfile::ProductionAdmin) {
         ficGroup = ::getgrnam("fic");
@@ -148,14 +148,14 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
             result.error = "group 'fic' does not exist; refusing to expose production administrative socket";
             return result;
         }
-        expectedGroup = ficGroup->gr_gid;
-        if (::chown(runtimeDir.c_str(), 0, ficGroup->gr_gid) != 0 ||
-            ::chmod(runtimeDir.c_str(), 0770) != 0) {
+        expectedSocketGroup = ficGroup->gr_gid;
+        if (::chown(runtimeDir.c_str(), 0, 0) != 0 ||
+            ::chmod(runtimeDir.c_str(), 0755) != 0) {
             result.error = "failed to enforce production runtime directory metadata: " +
                 std::string(std::strerror(errno));
             return result;
         }
-        if (!verifyPath(runtimeDir, S_IFDIR, 0770, 0, expectedGroup, result.error)) {
+        if (!verifyPath(runtimeDir, S_IFDIR, 0755, 0, 0, result.error)) {
             return result;
         }
         socketMode = 0660;
@@ -223,8 +223,8 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
         return result;
     }
 
-    if (expectedGroup.has_value() &&
-        ::chown(options.socketPath.c_str(), static_cast<uid_t>(-1), expectedGroup.value()) != 0) {
+    if (expectedSocketGroup.has_value() &&
+        ::chown(options.socketPath.c_str(), static_cast<uid_t>(-1), expectedSocketGroup.value()) != 0) {
         result.error = "failed to set administrative socket group: " +
             std::string(std::strerror(errno));
         closeAndRemove(fd, options.socketPath);
@@ -237,7 +237,7 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
         return result;
     }
     if (!verifyPath(options.socketPath, S_IFSOCK, socketMode, geteuid(),
-                    expectedGroup, result.error)) {
+                    expectedSocketGroup, result.error)) {
         closeAndRemove(fd, options.socketPath);
         return result;
     }
