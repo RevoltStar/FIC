@@ -1,0 +1,49 @@
+name: Release Gate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  verify-release:
+    name: Verify release contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          tags: true
+
+      - name: Verify release contract
+        run: |
+          chmod +x ./packaging/release/build-release.sh
+          ./packaging/release/build-release.sh --verify-only
+
+  build-release:
+    name: Build release artifacts
+    needs: verify-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          tags: true
+
+      - name: Build release packages
+        run: |
+          chmod +x ./packaging/release/build-release.sh
+          ./packaging/release/build-release.sh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ github.ref_name }}
+          path: dist/release/${{ github.ref_name }}
