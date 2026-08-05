@@ -4,22 +4,28 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   verify-release:
     name: Verify release contract
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          tags: true
+          persist-credentials: false
 
       - name: Verify release contract
+        shell: bash
         run: |
           chmod +x ./packaging/release/build-release.sh
           ./packaging/release/build-release.sh --verify-only
@@ -28,22 +34,59 @@ jobs:
     name: Build release artifacts
     needs: verify-release
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          tags: true
+          persist-credentials: false
+
+      - name: Extract product version
+        id: version
+        shell: bash
+        run: |
+          case "$GITHUB_REF_NAME" in
+            v*)
+              echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Release ref must start with v" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Build release packages
+        shell: bash
         run: |
           chmod +x ./packaging/release/build-release.sh
           ./packaging/release/build-release.sh
+
+      - name: Verify release output
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          RELEASE_DIR="dist/release/$RELEASE_VERSION"
+
+          test -d "$RELEASE_DIR"
+          test -f "$RELEASE_DIR/release-manifest.json"
+
+          PACKAGE_COUNT="$(
+            find "$RELEASE_DIR" -maxdepth 1 -type f \
+              \( -name '*.deb' -o -name '*.rpm' \) |
+            wc -l
+          )"
+
+          if [ "$PACKAGE_COUNT" -ne 20 ]; then
+            echo "Expected 20 packages, found $PACKAGE_COUNT" >&2
+            exit 1
+          fi
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-artifacts-${{ github.ref_name }}
-          path: dist/release/${{ github.ref_name }}
+          path: dist/release/${{ steps.version.outputs.value }}
+          if-no-files-found: error
+          retention-days: 30
