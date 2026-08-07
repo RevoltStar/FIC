@@ -147,6 +147,7 @@ tag:
 ./packaging/deb/build-fic-debian12-deb.sh 2.0.0-dev
 ./packaging/deb/build-fic-debian13-deb.sh 2.0.0-dev
 ./packaging/deb/build-fic-ubuntu2404-deb.sh 2.0.0-dev
+./packaging/deb/build-fic-ubuntu2604-deb.sh 2.0.0-dev
 ```
 
 The product version is mandatory and must be SemVer without build metadata.
@@ -169,6 +170,7 @@ Build Debian 12, Debian 13, or Ubuntu 24.04 through its matching container:
 ./packaging/deb/build-fic-debian12-deb-docker.sh 2.0.0-dev
 ./packaging/deb/build-fic-debian13-deb-docker.sh 2.0.0-dev
 ./packaging/deb/build-fic-ubuntu2404-deb-docker.sh 2.0.0-dev
+./packaging/deb/build-fic-ubuntu2604-deb-docker.sh 2.0.0-dev
 ```
 
 Each builder passes its fixed `FIC_TARGET_PLATFORM` (`debian-12`, `debian-13`,

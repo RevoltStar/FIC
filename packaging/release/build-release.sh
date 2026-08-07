@@ -64,6 +64,7 @@ export DIST_DIR=/workspace/dist
 "$SNAPSHOT_DIR/packaging/deb/build-fic-debian12-deb-docker.sh" "$FIC_PRODUCT_VERSION"
 "$SNAPSHOT_DIR/packaging/deb/build-fic-debian13-deb-docker.sh" "$FIC_PRODUCT_VERSION"
 "$SNAPSHOT_DIR/packaging/deb/build-fic-ubuntu2404-deb-docker.sh" "$FIC_PRODUCT_VERSION"
+"$SNAPSHOT_DIR/packaging/deb/build-fic-ubuntu2604-deb-docker.sh" "$FIC_PRODUCT_VERSION"
 "$SNAPSHOT_DIR/packaging/rpm/build-fic-alt-p11-rpm-docker.sh" "$FIC_PRODUCT_VERSION"
 
 mapfile -d '' ARTIFACTS < <(

@@ -29,6 +29,7 @@ for mock_builder in \
     packaging/deb/build-fic-debian12-deb-docker.sh \
     packaging/deb/build-fic-debian13-deb-docker.sh \
     packaging/deb/build-fic-ubuntu2404-deb-docker.sh \
+    packaging/deb/build-fic-ubuntu2604-deb-docker.sh \
     packaging/rpm/build-fic-alt-p11-rpm-docker.sh; do
     printf '%s\n' \
         '#!/usr/bin/env bash' \

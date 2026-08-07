@@ -27,6 +27,9 @@ case "$FIC_PACKAGING_TARGET_PLATFORM" in
     ubuntu-24.04)
         DEFAULT_PACKAGE_DISTRO_TAG="ubuntu2404"
         ;;
+    ubuntu-26.04)
+        DEFAULT_PACKAGE_DISTRO_TAG="ubuntu2604"
+        ;;
     *)
         echo "Unsupported Debian-family packaging platform: $FIC_PACKAGING_TARGET_PLATFORM" >&2
         exit 1

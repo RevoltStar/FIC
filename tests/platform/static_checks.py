@@ -15,7 +15,7 @@ def main():
 
     root = Path(sys.argv[1])
     cmake = (root / "cmake/FicTargetPlatform.cmake").read_text(encoding="utf-8")
-    for profile in ("debian-12", "debian-13", "ubuntu-24.04", "alt-p11"):
+    for profile in ("debian-12", "debian-13", "ubuntu-24.04", "ubuntu-26.04", "alt-p11"):
         require(profile in cmake, f"CMake does not support platform {profile}")
     require(
         "message(FATAL_ERROR" in cmake,
