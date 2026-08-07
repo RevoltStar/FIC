@@ -9,7 +9,7 @@
 LogService::LogService(QObject *parent)
     : QObject(parent)
 {
-    refreshTimer_.setInterval(2000);
+    refreshTimer_.setInterval(10000);
     connect(&refreshTimer_, &QTimer::timeout, this, &LogService::refreshIncremental);
 }
 
@@ -37,8 +37,11 @@ void LogService::reloadAll()
         bootId_ = currentBootId();
     }
 
+    sequenceCounter_ = 0;
+    knownRecordCount_ = 0;
+
     QStringList categories;
-    QVector<LogRecord> records = loadRecordsFromDaemon(&categories);
+    QVector<LogRecord> records = loadRecordsFromDaemon(&categories, 0, true);
     std::sort(records.begin(), records.end(), recordLessThan);
 
     knownRecordCount_ = records.size();
@@ -62,19 +65,24 @@ void LogService::refreshIncremental()
     }
 
     QStringList categories;
-    QVector<LogRecord> records = loadRecordsFromDaemon(&categories);
-    std::sort(records.begin(), records.end(), recordLessThan);
+    QVector<LogRecord> records = loadRecordsFromDaemon(&categories, knownRecordCount_, false);
     updateCategories(categories);
 
-    if (records.size() < knownRecordCount_) {
+    if (records.isEmpty()) {
+        emit lastUpdateChanged(QDateTime::currentDateTime());
+        return;
+    }
+
+    if (knownRecordCount_ == 0) {
         knownRecordCount_ = records.size();
         emit fullReloaded(records);
-    } else if (records.size() > knownRecordCount_) {
+    } else {
         QVector<LogRecord> appendedRecords;
-        for (qsizetype i = knownRecordCount_; i < records.size(); ++i) {
-            appendedRecords.append(records.at(i));
+        appendedRecords.reserve(records.size());
+        for (const LogRecord &record : records) {
+            appendedRecords.append(record);
         }
-        knownRecordCount_ = records.size();
+        knownRecordCount_ += records.size();
         emit recordsAppended(appendedRecords);
     }
 
@@ -116,22 +124,23 @@ QString LogService::currentBootId() const
     return QString::fromStdString(response.value("boot_id", ""));
 }
 
-QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories)
+QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories,
+                                                      int offset,
+                                                      bool loadAllPages)
 {
     QVector<LogRecord> records;
-    sequenceCounter_ = 0;
     if (categories != nullptr) {
         categories->clear();
     }
 
     constexpr int pageSize = 500;
     constexpr int maximumPages = 200;
-    int offset = 0;
+    int currentOffset = offset;
     for (int page = 0; page < maximumPages; ++page) {
         auto response = fic::ipc::Client().request({
             {"command", "log_records"},
             {"boot_id", bootId_.toStdString()},
-            {"offset", offset},
+            {"offset", currentOffset},
             {"limit", pageSize}
         });
 
@@ -178,14 +187,14 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories)
             }
         }
 
-        if (!response.value("has_more", false)) {
+        if (!response.value("has_more", false) || !loadAllPages) {
             break;
         }
-        const int nextOffset = response.value("next_offset", offset);
-        if (nextOffset <= offset) {
+        const int nextOffset = response.value("next_offset", currentOffset);
+        if (nextOffset <= currentOffset) {
             break;
         }
-        offset = nextOffset;
+        currentOffset = nextOffset;
     }
 
     if (categories != nullptr) {

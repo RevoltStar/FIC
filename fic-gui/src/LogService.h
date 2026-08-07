@@ -41,7 +41,9 @@ private:
     qsizetype knownRecordCount_ = 0;
 
     QString currentBootId() const;
-    QVector<LogRecord> loadRecordsFromDaemon(QStringList *categories);
+    QVector<LogRecord> loadRecordsFromDaemon(QStringList *categories,
+                                              int offset,
+                                              bool loadAllPages);
     bool parseLogLine(const QString &line,
                       const QString &category,
                       const QString &sourceFile,
