@@ -23,7 +23,7 @@ PlatformProfile makeBuildPlatformProfile() {
         },
         {
             ExecutableId::Visudo,
-            {"/usr/sbin/visudo"}
+            {"/usr/sbin/visudo.ws", "/usr/sbin/visudo"}
         },
         {
             ExecutableId::Lscpu,
