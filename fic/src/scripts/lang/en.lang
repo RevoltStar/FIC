@@ -99,6 +99,12 @@
 
 
 # OS settings
+[module:OSS][policy:grub_timeout]=GRUB menu timeout
+[module:OSS][policy:grub_timeout][description]=Sets GRUB_TIMEOUT in /etc/default/grub — the bootloader menu selection timeout in seconds. After the change, the GRUB configuration is rebuilt with the system's standard command.
+[module:OSS][policy:grub_cmdline_linux]=Kernel command line parameters
+[module:OSS][policy:grub_cmdline_linux][description]=Sets GRUB_CMDLINE_LINUX in /etc/default/grub — the kernel command line parameters added to all normal boot entries. After the change, the GRUB configuration is rebuilt with the system's standard command.
+[module:OSS][policy:grub_disable_recovery]=Disable GRUB recovery mode
+[module:OSS][policy:grub_disable_recovery][description]=Controls GRUB_DISABLE_RECOVERY in /etc/default/grub. ENABLE forbids creating recovery/single-user entries, DISABLE allows them. After the change, the GRUB configuration is rebuilt with the system's standard command.
 [module:OSS][policy:screenlock_timeout]=Screen lock timeout
 [module:OSS][policy:disable_autologin]=Disable automatic login
 [module:OSS][policy:disable_videodisplay_when_locked]=Disable video display on the lock screen

@@ -109,6 +109,7 @@ add_executable(grub_policy_tests
     oss/GrubPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/Grub.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/GrubConfiguration.cpp
 )
 target_include_directories(grub_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -116,6 +117,7 @@ target_include_directories(grub_policy_tests PRIVATE
 target_link_libraries(grub_policy_tests PRIVATE
     fic-core
     fic-policy
+    fic-platform
     Threads::Threads
 )
 add_test(NAME grub_policy_tests COMMAND grub_policy_tests)

@@ -14,7 +14,8 @@ enum class ExecutableId {
     Visudo,
     Lscpu,
     Dmidecode,
-    Udevadm
+    Udevadm,
+    UpdateGrub
 };
 
 struct PlatformExecutableSpec {
@@ -70,6 +71,11 @@ struct DisplayManagerPlatformConfig {
     std::vector<std::filesystem::path> gdmConfigCandidates;
 };
 
+struct GrubPlatformConfig {
+    std::filesystem::path defaultsPath;
+    std::vector<std::filesystem::path> rebuildCandidates;
+};
+
 struct FileAccessRule {
     std::filesystem::path path;
     std::string owner;
@@ -92,6 +98,7 @@ struct PlatformProfile {
     SudoPlatformConfig sudo;
     PamPlatformConfig pam;
     DisplayManagerPlatformConfig displayManager;
+    GrubPlatformConfig grub;
     DacPlatformConfig dac;
 };
 

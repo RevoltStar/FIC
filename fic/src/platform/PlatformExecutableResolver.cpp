@@ -25,6 +25,8 @@ const char* executableIdName(ExecutableId id) {
         return "dmidecode";
     case ExecutableId::Udevadm:
         return "udevadm";
+    case ExecutableId::UpdateGrub:
+        return "update-grub";
     }
     return "unknown";
 }
@@ -37,7 +39,8 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Visudo,
         ExecutableId::Lscpu,
         ExecutableId::Dmidecode,
-        ExecutableId::Udevadm
+        ExecutableId::Udevadm,
+        ExecutableId::UpdateGrub
     };
 }
 

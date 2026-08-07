@@ -24,6 +24,7 @@ file(GLOB_RECURSE SRC_FILES
     "src/*.cpp"
     "src/*/*.cpp"
     "src/*/*/*.cpp"
+    "src/*/*/*/*.cpp"
 )
 
 # Собираем заголовки для IDE и MOC
@@ -31,6 +32,7 @@ file(GLOB_RECURSE HDR_FILES
     "src/*.h"
     "src/*/*.h"
     "src/*/*/*.h"
+    "src/*/*/*/*.h"
 )
 
 # Исключаем тесты

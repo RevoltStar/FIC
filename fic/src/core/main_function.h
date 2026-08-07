@@ -69,6 +69,9 @@
 #include "modules/sysctl/submodules/globalkernelprotection/SYSCTL_user_ns_restrict.h"
 
 //Настройки ОС
+#include "modules/oss/submodules/Grub/OSS_grub_timeout.h"
+#include "modules/oss/submodules/Grub/OSS_grub_cmdline_linux.h"
+#include "modules/oss/submodules/Grub/OSS_grub_disable_recovery.h"
 #include "modules/oss/submodules/DisplayManager/OSS_disable_autologin.h"
 #include "modules/oss/submodules/DisplayManager/OSS_disable_videodisplay_when_locked.h"
 #include "modules/oss/submodules/SessionManagement/OSS_lock_on_tty_switch.h"

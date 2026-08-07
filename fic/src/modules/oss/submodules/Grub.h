@@ -2,8 +2,11 @@
 #define FIC_OSS_GRUB_H
 
 #include "modules/oss/OSS.h"
+#include "platform/PlatformProfile.h"
 
+#include <functional>
 #include <string>
+#include <utility>
 
 class Grub : public OSS {
 public:
@@ -12,7 +15,15 @@ public:
     bool apply() final;
 
 protected:
-    Grub();
+    explicit Grub(fic::platform::GrubPlatformConfig platformConfig);
+
+    bool applyGrubValue(
+        const std::string& grubKey,
+        const std::string& expectedValue,
+        const std::function<std::string(const std::string&)>& normalizeExpected = {}
+    );
+
+    fic::platform::GrubPlatformConfig platformConfig_;
 
     virtual bool applyGrub(const std::string& expectedValue) = 0;
 };

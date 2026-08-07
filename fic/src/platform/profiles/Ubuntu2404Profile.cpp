@@ -36,6 +36,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::Udevadm,
             {"/usr/bin/udevadm", "/usr/sbin/udevadm", "/bin/udevadm", "/sbin/udevadm"}
+        },
+        {
+            ExecutableId::UpdateGrub,
+            {"/usr/sbin/update-grub", "/usr/bin/update-grub"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Dpkg;
@@ -72,6 +76,11 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayManager.gdmConfigCandidates = {
         "/etc/gdm3/custom.conf",
         "/etc/gdm3/daemon.conf"
+    };
+    profile.grub.defaultsPath = "/etc/default/grub";
+    profile.grub.rebuildCandidates = {
+        "/usr/sbin/update-grub",
+        "/usr/bin/update-grub"
     };
     profile.dac.protectedSystemFiles = {
         {"/etc/bash.bashrc", "root", "root", 0644},

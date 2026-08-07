@@ -99,6 +99,12 @@
 
 
 #Настройки ОС
+[module:OSS][policy:grub_timeout]=Таймаут меню GRUB
+[module:OSS][policy:grub_timeout][description]=Задаёт GRUB_TIMEOUT в /etc/default/grub — время ожидания выбора пункта меню загрузчика в секундах. После изменения конфигурация GRUB пересобирается штатной командой системы.
+[module:OSS][policy:grub_cmdline_linux]=Параметры командной строки ядра
+[module:OSS][policy:grub_cmdline_linux][description]=Задаёт GRUB_CMDLINE_LINUX в /etc/default/grub — параметры командной строки, добавляемые ко всем обычным записям загрузки. После изменения конфигурация GRUB пересобирается штатной командой системы.
+[module:OSS][policy:grub_disable_recovery]=Отключить режим восстановления GRUB
+[module:OSS][policy:grub_disable_recovery][description]=Управляет GRUB_DISABLE_RECOVERY в /etc/default/grub. Значение ENABLE запрещает создание записей recovery/single-user, значение DISABLE разрешает их. После изменения конфигурация GRUB пересобирается штатной командой системы.
 [module:OSS][policy:screenlock_timeout]=Таймаут блокировки экрана
 [module:OSS][policy:disable_autologin]=Отключение автоматического входа
 [module:OSS][policy:disable_videodisplay_when_locked]=Отключение отображения видео на экране блокировки
