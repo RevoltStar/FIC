@@ -1826,16 +1826,16 @@ int run_daemon(const std::string& socketPathArg) {
                     "device reconciliation marker consumed",
                     logLevel::WARN);
             }
-            if (eventQueue.reconciliationRequired()) {
-                if (run_device_reconciliation("event ingestion recovery")) {
-                    eventQueue.clearReconciliationRequired();
-                } else {
-                    std::this_thread::sleep_for(
+        }
+        //
+        if (eventQueue.reconciliationRequired()) {
+            if (run_device_reconciliation("event ingestion recovery")) {
+                eventQueue.clearReconciliationRequired();
+            } else {
+                std::this_thread::sleep_for(
                     std::chrono::milliseconds(250));
-                }
             }
         }
-
         for (int i = 0; i < 8; ++i) {
             if (!process_queued_event(eventQueue)) {
                 break;
