@@ -171,6 +171,29 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(
             break;
         }
 
+        const std::string responseBootId =
+        response.value("boot_id", "");
+
+        if (!responseBootId.empty()) {
+            bootId_ =
+                QString::fromStdString(responseBootId);
+        }
+
+        if (categories != nullptr &&
+            response.contains("categories") &&
+            response["categories"].is_array()) {
+
+            for (const auto& category :
+                response["categories"]) {
+
+                if (category.is_string()) {
+                    categories->append(
+                        QString::fromStdString(
+                            category.get<std::string>())
+                            .trimmed());
+                }
+            }
+        }
         if (response.contains("records") &&
             response["records"].is_array()) {
 
@@ -222,7 +245,8 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(
                 "next_offset",
                 currentOffset);
 
-        if (nextOffset < currentOffset) {
+        if (nextOffset <= currentOffset &&
+            response.value("has_more", false)) {
             break;
         }
 

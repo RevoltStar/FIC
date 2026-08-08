@@ -521,7 +521,6 @@ json log_records_json(const std::string& requestedBootId, int offset, int limit)
         {"has_more", hasMore},
         {"next_offset", nextOffset}
     };
-    return result;
 }
 
 json lock_status_json() {
