@@ -109,7 +109,7 @@ bool Sysctl::apply (){
 
     if (operation.changed || runtimeOperation.changed) {
         this->notify("Исправлена конфигурация sysctl для политики: " + this->policyName,
-                     notifyLevel::ERROR);
+                     notifyLevel::INFO);
     }
     return true;
 }
