@@ -659,6 +659,15 @@ json connected_blockers_for_override(DB& db,
     return blockers;
 }
 
+void add_deferred_block_warning(json& response, const json& blockers) {
+    if (!blockers.empty()) {
+        response["deferred_block"] = true;
+        response["deferred_blockers"] = blockers;
+        response["warning"] =
+            "connected devices were not deactivated; block will be enforced on reconnect";
+    }
+}
+
 bool permanent_satisfied(DB& db, const DeviceInfo& device, const EffectivePolicy& policy) {
     const std::string bootId = current_boot_id();
     if (bootId.empty()) {
@@ -923,21 +932,20 @@ json update_device_control(DB& db, const json& request) {
     }
 
     ControlOverride override{deviceId, controlLevel, true, ignoreHierarchy};
-    json blockers = connected_blockers_for_override(db, device, override);
-    if (!blockers.empty()) {
-        return json{
-            {"ok", false},
-            {"message", "operation would block an already connected device"},
-            {"blockers", blockers}
-        };
-    }
+    const json blockers = connected_blockers_for_override(db, device, override);
 
     if (!db.updateDeviceControl(deviceId, controlLevel, true, ignoreHierarchy)) {
         return fic::ipc::make_error_response("failed to update device control");
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
-    return json{{"ok", true}, {"message", "device control updated"}, {"device", device_to_json(db, updated)}};
+    json response = json{
+        {"ok", true},
+        {"message", "device control updated"},
+        {"device", device_to_json(db, updated)}
+    };
+    add_deferred_block_warning(response, blockers);
+    return response;
 }
 
 json update_device_ignore_hierarchy(DB& db, const json& request) {
@@ -953,21 +961,20 @@ json update_device_ignore_hierarchy(DB& db, const json& request) {
 
     const bool ignoreHierarchy = request.value("ignore_hierarchy", false);
     ControlOverride override{deviceId, device.control_level, device.control_explicit, ignoreHierarchy};
-    json blockers = connected_blockers_for_override(db, device, override);
-    if (!blockers.empty()) {
-        return json{
-            {"ok", false},
-            {"message", "operation would block an already connected device"},
-            {"blockers", blockers}
-        };
-    }
+    const json blockers = connected_blockers_for_override(db, device, override);
 
     if (!db.updateDeviceIgnoreHierarchy(deviceId, ignoreHierarchy)) {
         return fic::ipc::make_error_response("failed to update ignore_hierarchy");
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
-    return json{{"ok", true}, {"message", "ignore_hierarchy updated"}, {"device", device_to_json(db, updated)}};
+    json response = json{
+        {"ok", true},
+        {"message", "ignore_hierarchy updated"},
+        {"device", device_to_json(db, updated)}
+    };
+    add_deferred_block_warning(response, blockers);
+    return response;
 }
 
 json reset_device_control(DB& db, const json& request) {
@@ -982,21 +989,20 @@ json reset_device_control(DB& db, const json& request) {
     }
 
     ControlOverride override{deviceId, device.control_level, false, false};
-    json blockers = connected_blockers_for_override(db, device, override);
-    if (!blockers.empty()) {
-        return json{
-            {"ok", false},
-            {"message", "operation would block an already connected device"},
-            {"blockers", blockers}
-        };
-    }
+    const json blockers = connected_blockers_for_override(db, device, override);
 
     if (!db.updateDeviceControl(deviceId, device.control_level, false, false)) {
         return fic::ipc::make_error_response("failed to reset device control");
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
-    return json{{"ok", true}, {"message", "device control reset to inheritance"}, {"device", device_to_json(db, updated)}};
+    json response = json{
+        {"ok", true},
+        {"message", "device control reset to inheritance"},
+        {"device", device_to_json(db, updated)}
+    };
+    add_deferred_block_warning(response, blockers);
+    return response;
 }
 
 bool can_delete_subtree(DB& db, const DeviceInfo& device, const std::string& bootId) {

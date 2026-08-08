@@ -40,6 +40,11 @@ flowchart LR
 `block_printers_scanners`, `block_optical_drives`) имеют фиксированное значение
 `true`. Их действие определяется только статусом политики:
 `ENABLE` включает блокировку категории, `DISABLE` выключает ее.
+Ручные изменения правил устройства через device API меняют желаемое состояние
+дерева. Если правило делает уже подключенное устройство эффективным `blocked`,
+`fic-dick` не деактивирует его немедленно и возвращает предупреждение
+`deferred_block`; фактическое отключение выполняется при последующем
+подключении или переподключении через обработчик udev `add/change`.
 
 Общая IPC-логика вынесена в библиотеку `fic-common/fic-ipc`; она содержит клиентский
 код Unix socket/JSON-протокола и общие helpers ответа. Клиенты и демон
@@ -241,6 +246,12 @@ flowchart LR
     deviceCommands --> udev[udev_event]
     deviceCommands --> permanent[device_check_permanent]
 ```
+
+`device_update_control_level`, `device_update_ignore_hierarchy` и
+`device_reset_control` являются изменениями желаемого состояния. Они могут
+сделать уже подключенное устройство эффективным `blocked`, но не выполняют
+немедленную sysfs-деактивацию. В таком случае ответ содержит
+`deferred_block=true`, `deferred_blockers[]` и текстовое `warning`.
 
 ## 5. Изменение и применение политики
 

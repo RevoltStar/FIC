@@ -481,7 +481,37 @@ std::string DeviceTree::getDeviceAttribute(int deviceId, const std::string& attr
     return it->second;
 }
 
-bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage) const
+namespace {
+QString deferredBlockWarningFromResponse(const nlohmann::json& response)
+{
+    if (!response.value("deferred_block", false)) {
+        return {};
+    }
+
+    QString message = QString::fromStdString(response.value(
+        "warning",
+        "connected devices were not deactivated; block will be enforced on reconnect"));
+    if (response.contains("deferred_blockers") && response["deferred_blockers"].is_array()) {
+        message += "\n\nЗатронутые подключенные устройства:";
+        int shown = 0;
+        for (const auto& blocker : response["deferred_blockers"]) {
+            if (!blocker.is_object()) {
+                continue;
+            }
+            message += "\n- id=" + QString::number(blocker.value("device_id", 0)) +
+                       " " + QString::fromStdString(blocker.value("devpath", ""));
+            ++shown;
+            if (shown >= 5) {
+                message += "\n- ...";
+                break;
+            }
+        }
+    }
+    return message;
+}
+}
+
+bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage, QString *warningMessage) const
 {
     auto response = deviceClient().request({
         {"command", "device_update_control_level"},
@@ -496,10 +526,13 @@ bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string&
         qDebug() << "Failed to update device control level:" << message;
         return false;
     }
+    if (warningMessage != nullptr) {
+        *warningMessage = deferredBlockWarningFromResponse(response);
+    }
     return true;
 }
 
-bool DeviceTree::updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage) const
+bool DeviceTree::updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage, QString *warningMessage) const
 {
     auto response = deviceClient().request({
         {"command", "device_update_ignore_hierarchy"},
@@ -514,10 +547,13 @@ bool DeviceTree::updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHier
         qDebug() << "Failed to update ignore_hierarchy:" << message;
         return false;
     }
+    if (warningMessage != nullptr) {
+        *warningMessage = deferredBlockWarningFromResponse(response);
+    }
     return true;
 }
 
-bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage) const
+bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage, QString *warningMessage) const
 {
     auto response = deviceClient().request({
         {"command", "device_reset_control"},
@@ -530,6 +566,9 @@ bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage) c
         }
         qDebug() << "Failed to reset device control:" << message;
         return false;
+    }
+    if (warningMessage != nullptr) {
+        *warningMessage = deferredBlockWarningFromResponse(response);
     }
     return true;
 }
@@ -695,7 +734,8 @@ void DeviceTree::setDeviceControlLevel(int deviceId, const std::string &controlL
     }
 
     QString errorMessage;
-    bool updated = updateDeviceControlLevelRemote(deviceId, controlLevel, &errorMessage);
+    QString warningMessage;
+    bool updated = updateDeviceControlLevelRemote(deviceId, controlLevel, &errorMessage, &warningMessage);
     if (updated)
     {
         device.control_level = controlLevel;
@@ -712,6 +752,10 @@ void DeviceTree::setDeviceControlLevel(int deviceId, const std::string &controlL
     }
 
     refreshPreservingState();
+    if (!warningMessage.isEmpty())
+    {
+        QMessageBox::information(this, "Контроль устройств", warningMessage);
+    }
     emit deviceClicked(fetchDeviceById(deviceId));
 }
 
@@ -723,7 +767,8 @@ void DeviceTree::setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy)
     }
 
     QString errorMessage;
-    if (!updateDeviceIgnoreHierarchyRemote(deviceId, ignoreHierarchy, &errorMessage))
+    QString warningMessage;
+    if (!updateDeviceIgnoreHierarchyRemote(deviceId, ignoreHierarchy, &errorMessage, &warningMessage))
     {
         QMessageBox::warning(this,
                              "Контроль устройств",
@@ -732,6 +777,10 @@ void DeviceTree::setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy)
     }
 
     refreshPreservingState();
+    if (!warningMessage.isEmpty())
+    {
+        QMessageBox::information(this, "Контроль устройств", warningMessage);
+    }
     emit deviceClicked(fetchDeviceById(deviceId));
 }
 
@@ -743,7 +792,8 @@ void DeviceTree::resetDeviceControl(int deviceId)
     }
 
     QString errorMessage;
-    if (!resetDeviceControlRemote(deviceId, &errorMessage))
+    QString warningMessage;
+    if (!resetDeviceControlRemote(deviceId, &errorMessage, &warningMessage))
     {
         QMessageBox::warning(this,
                              "Контроль устройств",
@@ -752,6 +802,10 @@ void DeviceTree::resetDeviceControl(int deviceId)
     }
 
     refreshPreservingState();
+    if (!warningMessage.isEmpty())
+    {
+        QMessageBox::information(this, "Контроль устройств", warningMessage);
+    }
     emit deviceClicked(fetchDeviceById(deviceId));
 }
 

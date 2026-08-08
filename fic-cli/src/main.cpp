@@ -230,6 +230,20 @@ int print_device_response(const json& response)
     if (response.contains("device") && response["device"].is_object()) {
         print_device_item(response["device"]);
     }
+    if (response.value("deferred_block", false)) {
+        std::cout << "warning: " << response.value(
+            "warning",
+            "connected devices were not deactivated; block will be enforced on reconnect")
+                  << std::endl;
+        if (response.contains("deferred_blockers") && response["deferred_blockers"].is_array()) {
+            for (const auto& blocker : response["deferred_blockers"]) {
+                std::cout << "deferred_blocker: id=" << blocker.value("device_id", 0)
+                          << " source=" << blocker.value("source", "")
+                          << " devpath=" << blocker.value("devpath", "")
+                          << std::endl;
+            }
+        }
+    }
     if (response.contains("children") && response["children"].is_array()) {
         for (const auto& child : response["children"]) {
             if (child.is_object()) {

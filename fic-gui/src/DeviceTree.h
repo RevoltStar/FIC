@@ -107,9 +107,9 @@ private:
     std::vector<DeviceInfo> fetchChildDevices(int parentId, bool includeDisconnected = false) const;
     std::map<std::string, std::string> fetchDeviceAttributes(int deviceId) const;
     std::string getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue = "") const;
-    bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr) const;
-    bool updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage = nullptr) const;
-    bool resetDeviceControlRemote(int deviceId, QString *errorMessage = nullptr) const;
+    bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
+    bool updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
+    bool resetDeviceControlRemote(int deviceId, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
     bool deleteDeviceRemote(int deviceId, QString *errorMessage = nullptr) const;
 
     std::string getSystemBootId();

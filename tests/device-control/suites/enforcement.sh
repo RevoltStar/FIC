@@ -188,32 +188,44 @@ test_grandparent_ignored_rule_is_inherited() {
     expect_eq "$source" "device:$grandparent_id" "ignored inheritance source must be the grandparent"
 }
 
-test_blocking_connected_device_is_rejected() {
+test_blocking_connected_device_is_deferred() {
     ensure_enforcement_usb_allowed_fixture || return
-    local child id response ok message
+    local child id response ok message deferred effective
     child=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
     id=$(printf '%s\n' "$child" | device_field id)
     response=$(device_ipc "{\"command\":\"device_update_control_level\",\"device_id\":$id,\"control_level\":\"blocked\"}") || return
     ok=$(printf '%s\n' "$response" | json_field ok)
     message=$(printf '%s\n' "$response" | json_field message)
-    expect_eq "$ok" "False" "connected device block rule must be rejected" || return
-    [[ "$message" == *"operation would block an already connected device"* ]] ||
-        fail "unexpected connected device block rejection message: $message"
+    deferred=$(printf '%s\n' "$response" | json_field deferred_block)
+    effective=$(printf '%s\n' "$response" | device_field effective_control_level)
+    enforcement_reset_id "$id"
+    expect_eq "$ok" "True" "connected device block rule must be accepted" || return
+    expect_eq "$message" "device control updated" "connected device block update message must be stable" || return
+    expect_eq "$deferred" "True" "connected device block must be marked as deferred" || return
+    expect_eq "$effective" "blocked" "connected device effective rule must become blocked" || return
 }
 
-test_blocking_connected_parent_is_rejected() {
+test_blocking_connected_parent_is_deferred() {
     ensure_enforcement_usb_allowed_fixture || return
-    local child parent_id response ok message
+    local child parent_id response ok message deferred effective
     child=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
     parent_id=$(printf '%s\n' "$child" | device_field parent_id)
     [[ -n "$parent_id" && "$parent_id" != "0" && "$parent_id" != "-1" ]] ||
-        fail "USB fixture must have a parent for connected parent block rejection test" || return
+        fail "USB fixture must have a parent for connected parent deferred block test" || return
     response=$(device_ipc "{\"command\":\"device_update_control_level\",\"device_id\":$parent_id,\"control_level\":\"blocked\"}") || return
     ok=$(printf '%s\n' "$response" | json_field ok)
     message=$(printf '%s\n' "$response" | json_field message)
-    expect_eq "$ok" "False" "connected parent block rule must be rejected" || return
-    [[ "$message" == *"operation would block an already connected device"* ]] ||
-        fail "unexpected connected parent block rejection message: $message"
+    deferred=$(printf '%s\n' "$response" | json_field deferred_block)
+    response=$(enforcement_device_get "$(printf '%s\n' "$child" | device_field id)") || {
+        enforcement_reset_id "$parent_id"
+        return 1
+    }
+    effective=$(printf '%s\n' "$response" | device_field effective_control_level)
+    enforcement_reset_id "$parent_id"
+    expect_eq "$ok" "True" "connected parent block rule must be accepted" || return
+    expect_eq "$message" "device control updated" "connected parent block update message must be stable" || return
+    expect_eq "$deferred" "True" "connected parent block must be marked as deferred" || return
+    expect_eq "$effective" "blocked" "connected child must inherit deferred blocked state" || return
 }
 
 test_parent_reset_reveals_child_block_rule() {
@@ -256,7 +268,7 @@ run_enforcement_suite() {
     run_test "permanent device change is allowed" test_permanent_device_change_is_allowed
     run_test "parent allowed rule is inherited" test_parent_allowed_rule_is_inherited
     run_test "grandparent ignored rule is inherited" test_grandparent_ignored_rule_is_inherited
-    run_test "blocking connected device is rejected" test_blocking_connected_device_is_rejected
-    run_test "blocking connected parent is rejected" test_blocking_connected_parent_is_rejected
+    run_test "blocking connected device is deferred" test_blocking_connected_device_is_deferred
+    run_test "blocking connected parent is deferred" test_blocking_connected_parent_is_deferred
     run_test "parent reset reveals explicit child block rule" test_parent_reset_reveals_child_block_rule
 }

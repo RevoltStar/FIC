@@ -7,84 +7,57 @@
 
 - Обновлено: 2026-08-08.
 - Ветка: `main`.
-- Базовый commit: `595d241` (`Откат последнего изменения`).
-- Текущая задача: проверить и исправить `apply()` и конкретные политики
-  `OSS/Grub`.
+- Базовый commit: `1c8af81`.
+- Текущая задача: разрешить ручную блокировку уже подключенного устройства без
+  немедленной деактивации.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- `Grub::apply()` по-прежнему является общей финальной точкой валидации и
-  сериализации, но конкретное применение теперь использует общий проверяемый
-  executable registry для команды генерации GRUB.
-- Удалён ранний успешный выход при совпадающем значении `/etc/default/grub`:
-  генератор запускается всегда, чтобы исправлять потенциально устаревший
-  сгенерированный `grub.cfg`.
-- `GrubConfiguration` переписан как fail-closed редактор простых shell-
-  присваиваний: кавычки декодируются и безопасно записываются, дублирующие и
-  динамические определения отклоняются, CR/LF/NUL и небезопасные пути/metadata
-  запрещены, размер defaults-файла ограничен 1 МиБ.
-- Запись defaults-файла атомарна и защищена проверкой неизменности snapshot.
-  После записи выполняется перечитывание и проверка результата.
-- При ошибке генератора исходный defaults-файл восстанавливается и генератор
-  запускается повторно для компенсирующего восстановления `grub.cfg`.
-- Платформенный контракт разделяет логический executable и его аргументы:
-  Debian/Ubuntu используют `update-grub`, ALT p11 —
-  `grub-mkconfig -o /etc/grub.cfg`. Несовместимые кандидаты больше не
-  смешиваются.
-- `grub_cmdline_linux` хранит всю командную строку одним JSON-элементом, поэтому
-  не теряет запятые в параметрах вроде `isolcpus=1-3,5`; пустое значение имеет
-  корректное seed-представление `[]`. Ошибка JSON теперь приводит к безопасному
-  отказу `apply()`, а не выходит исключением.
-- Тесты GRUB расширены проверками конкретных наследников, кавычек, запятых,
-  дубликатов, динамических выражений, symlink, обязательной генерации,
-  аргументов команды и компенсирующего отката. Обновлены platform static/unit
-  checks и документация архитектуры.
+- `fic-dick` больше не отклоняет `device_update_control_level`,
+  `device_update_ignore_hierarchy` и `device_reset_control`, если новое правило
+  делает уже подключенное устройство эффективным `blocked`.
+- Ручное изменение правила теперь меняет желаемое состояние в `devices.db`, но
+  не вызывает `enforce_block()` для уже подключенного устройства.
+- Если есть уже подключенные затронутые устройства, ответ device API содержит
+  `deferred_block=true`, `deferred_blockers[]` и текстовое `warning`.
+- `fic-cli device set/reset/ignore-hierarchy` печатает предупреждение и список
+  `deferred_blocker`, когда блокировка отложена.
+- `fic-gui` показывает информационное сообщение после успешной операции с
+  отложенной блокировкой.
+- Device-control enforcement tests обновлены с прежнего контракта “connected
+  block is rejected” на “connected block is accepted and deferred”.
+- Документация уточняет, что ручные правила контроля устройств задают желаемое
+  состояние, а фактическое отключение выполняется при следующем udev
+  `add/change`.
 
 ## Измененные файлы
 
-- `fic/src/modules/oss/submodules/Grub.{h,cpp}`;
-- `fic/src/modules/oss/submodules/GrubConfiguration.{h,cpp}`;
-- `fic/src/modules/oss/submodules/Grub/OSS_grub_*`;
-- `fic/src/core/main_function.cpp`;
-- `fic/src/platform/PlatformProfile.h`, `PlatformCompatibility.cpp` и профили
-  Debian 12/13, Ubuntu 24.04/26.04, ALT p11;
-- `fic/src/scripts/config/OSS.conf`;
-- `tests/oss/GrubPolicyTests.cpp`, `tests/platform/*`, `tests/CMakeLists.txt`;
-- `fic/README.md`, `docs/architecture-diagrams.md`, `docs/HANDOFF.md`.
+- `fic-dick/src/core/DeviceControlDaemon.cpp`;
+- `fic-cli/src/main.cpp`;
+- `fic-gui/src/DeviceTree.h`;
+- `fic-gui/src/DeviceTree.cpp`;
+- `tests/device-control/suites/enforcement.sh`;
+- `docs/architecture-diagrams.md`;
+- `fic/README.md`;
+- `docs/HANDOFF.md`.
 
 ## Выполненные проверки
 
-- Полная сборка `cmake --build build-check -j2` с профилем `alt-p11` — успешно.
-- Узкие `grub_policy_tests`, `platform_profile_tests` и
-  `platform_profile_static_checks` — успешно.
-- `ctest --test-dir build-check --output-on-failure -E
-  '^release_contract_tests$'`: 27 из 27 без ошибок; host-dependent
-  `ipc_transport_tests`, `admin_socket_tests` и `command_hash_batch_tests`
-  корректно SKIP.
-- Полный CTest: GRUB и остальные тесты прошли, но несвязанный
-  `release_contract_tests` упал, потому что fixture уже создаёт 25 пакетов для
-  пяти платформ, а тест всё ещё ожидает 20. Этот release-дефект не исправлялся
-  в рамках GRUB-задачи.
-- `python3 tests/platform/static_checks.py .` и `git diff --check` — успешно.
-- Реальные `/etc/default/grub`, `grub.cfg` и состояние хоста не изменялись.
+- `cmake --build build-check --target fic-dick fic-cli fic-gui -j2` — успешно.
+- `bash -n tests/device-control/suites/enforcement.sh` — успешно.
+- `git diff --check` — успешно.
 
 ## Что осталось
 
-- Обязательной незавершенной работы по GRUB нет.
-- Отдельно следует исправить устаревшее ожидание числа пакетов в
-  `tests/version/release-contract-test.sh` (20 вместо 25); это не связано с
-  текущими изменениями.
+- Обязательной незавершенной работы по этой задаче нет.
+- Runtime-проверка с реальным USB/device enforcement не запускалась, потому что
+  она меняет состояние хоста и требует отдельного тестового окружения.
 
 ## Риски и решения
 
-- Изменение defaults-файла и генерация `grub.cfg` являются компенсирующей, но
-  не crash-atomic транзакцией двух файлов. При обычной ошибке генератора FIC
-  восстанавливает старый defaults и повторно строит старую загрузочную
-  конфигурацию.
-- FIC намеренно отказывает при сложных shell-выражениях и повторных назначениях
-  управляемого ключа: вычислять shell-код внутри привилегированного демона или
-  угадывать итоговое значение небезопасно.
-- Реальный policy apply не запускался, поскольку он изменяет загрузочную
-  конфигурацию хоста; поведение проверено через изолированные файлы и
-  внедрённый/фиктивный генератор.
+- Эффективное состояние уже подключенного устройства в API/GUI становится
+  `blocked` сразу после ручного правила, но фактическое устройство остается
+  активным до переподключения. Это намеренный контракт текущей задачи.
+- Категорийные политики DC сохраняют уже принятое поведение: включение политики
+  влияет на подключаемые/переподключаемые устройства, а не на уже подключенные.
