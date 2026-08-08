@@ -41,9 +41,11 @@ private:
     int logCursor_ = 0;
 
     QString currentBootId() const;
-    QVector<LogRecord> loadRecordsFromDaemon(QStringList *categories,
-                                              int offset,
-                                              bool loadAllPages);
+    QVector<LogRecord> loadRecordsFromDaemon(
+        QStringList* categories,
+        int offset,
+        bool loadAllPages,
+        int* resultingOffset);
     bool parseLogLine(const QString &line,
                       const QString &category,
                       const QString &sourceFile,
