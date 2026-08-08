@@ -172,6 +172,16 @@ def main():
         "boot helper must still wait for completed device-daemon startup",
     )
 
+    require(
+        "lastErrno == ENOENT || lastErrno == ENOTDIR" in daemon_source,
+        "missing udev event socket must be treated as daemon-unavailable startup state",
+    )
+
+    require(
+        "if (lastErrno == ENOENT || lastErrno == ENOTDIR)" in daemon_source,
+        "ENOENT/ENOTDIR handling must occur before reconciliation-marker fallback",
+    )
+
     return 0
 
 

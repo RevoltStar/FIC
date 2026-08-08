@@ -1907,54 +1907,116 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
     }
 
     const std::string socketPath = device_event_socket_path();
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    const auto deadline =
+        std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(250);
+
     std::string lastError;
+    int lastErrno = 0;
+
     while (std::chrono::steady_clock::now() < deadline) {
-        const int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        const int fd =
+        ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+
         if (fd < 0) {
-            lastError = std::strerror(errno);
+            lastErrno = errno;
+            lastError = std::strerror(lastErrno);
             break;
         }
+
         sockaddr_un address {};
         address.sun_family = AF_UNIX;
+
         if (socketPath.size() >= sizeof(address.sun_path)) {
             ::close(fd);
-            lastError = "event socket path is too long";
-            break;
+
+            log_device(
+                "udev event socket path is too long",
+                logLevel::ERROR);
+
+            return 1;
         }
-        std::strncpy(address.sun_path, socketPath.c_str(), sizeof(address.sun_path) - 1);
-        const socklen_t addressLength = static_cast<socklen_t>(
-            offsetof(sockaddr_un, sun_path) + socketPath.size() + 1U);
-        if (::connect(fd, reinterpret_cast<sockaddr*>(&address), addressLength) == 0) {
-            const ssize_t sent = ::send(fd, payloadText.data(), payloadText.size(), MSG_NOSIGNAL);
-            if (sent == static_cast<ssize_t>(payloadText.size())) {
-                ::close(fd);
-                return 0;
-            }
-            lastError = std::strerror(errno);
-        } else {
-            lastError = std::strerror(errno);
+
+        std::strncpy(
+            address.sun_path,
+            socketPath.c_str(),
+            sizeof(address.sun_path) - 1);
+
+        const socklen_t addressLength =
+            static_cast<socklen_t>(
+                offsetof(sockaddr_un, sun_path) +
+                socketPath.size() +
+                1U);
+
+        if (::connect(
+                fd,
+                reinterpret_cast<sockaddr*>(&address),
+                addressLength) == 0) {
+
+        const ssize_t sent =
+            ::send(
+                fd,
+                payloadText.data(),
+                payloadText.size(),
+                MSG_NOSIGNAL);
+
+        if (sent ==
+            static_cast<ssize_t>(payloadText.size())) {
+            ::close(fd);
+            return 0;
         }
-        ::close(fd);
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+
+        lastErrno = errno;
+        lastError = std::strerror(lastErrno);
+    } else {
+        lastErrno = errno;
+        lastError = std::strerror(lastErrno);
     }
 
-    const std::string reason =
-        "udev event delivery failed: " + lastError;
+    ::close(fd);
 
-    if (!write_reconcile_marker()) {
-        log_device(
-            "udev event delivery failed and reconciliation marker could not be created: " +
-            lastError,
-            logLevel::ERROR);
-        return 1;
+    /*
+     * ENOENT/ENOTDIR means the runtime event endpoint does not
+     * exist yet. This is normal during early boot or while the
+     * device daemon is stopped.
+     *
+     * Every fic-device daemon start performs full reconciliation
+     * from authoritative udev/sysfs state, therefore preserving
+     * this individual incremental event is unnecessary.
+     *
+     * Do not create a reconciliation marker here: /run/fic may
+     * not exist yet either, and daemon startup itself is the
+     * recovery guarantee.
+     */
+    if (lastErrno == ENOENT || lastErrno == ENOTDIR) {
+        return 0;
     }
 
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(25));
+}
+
+const std::string reason =
+    "udev event delivery failed: " + lastError;
+
+/*
+ * For failures where the runtime infrastructure exists but
+ * incremental delivery failed, explicitly request reconciliation.
+ */
+if (!write_reconcile_marker()) {
     log_device(
-        reason + "; reconciliation marked",
-        logLevel::WARN);
+        "udev event delivery failed and reconciliation marker "
+        "could not be created: " +
+        lastError,
+        logLevel::ERROR);
+    return 1;
+}
 
-    return 0;
+log_device(
+    reason + "; reconciliation marked",
+    logLevel::WARN);
+
+return 0;
 }
 
 int wait_for_daemon(int timeoutSeconds) {

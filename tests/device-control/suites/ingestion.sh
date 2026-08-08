@@ -209,6 +209,88 @@ test_boot_helper_does_not_duplicate_permanent_check() {
         fail "boot helper must not duplicate permanent check owned by reconciliation"
 }
 
+test_udev_without_event_socket_does_not_require_marker() {
+    local marker=/run/fic/fic-device-reconcile.required
+    local event_socket=/run/fic/fic-device-events.sock
+    local sysfs_path env_cmd
+
+    sysfs_path=$(ingestion_sample_sysfs)
+    [[ -n "$sysfs_path" ]] ||
+        fail "managed PCI sysfs fixture is required" ||
+        return
+
+    env_cmd=$(ingestion_env_command "$sysfs_path") || return
+
+    remote_sudo "systemctl stop fic-device.service" || return
+
+    remote_sudo "test -d /run/fic" ||
+        fail "/run/fic must remain available while fic-device is stopped" ||
+        return
+
+    remote_sudo "test ! -S '$event_socket'" ||
+        fail "event socket must be absent while fic-device is stopped" ||
+        return
+
+    remote_sudo "rm -f '$marker'" || return
+
+    remote_sudo \
+        "env $env_cmd $REMOTE_FIC_DICK udev" || {
+            remote_sudo \
+                "systemctl start fic-device.service" \
+                >/dev/null 2>&1 || true
+
+            fail \
+                "udev helper must succeed when event socket is absent; startup reconciliation is the recovery guarantee"
+            return
+        }
+
+    remote_sudo "test ! -e '$marker'" ||
+        fail \
+            "missing event socket must not create a reconciliation marker" ||
+        return
+
+    remote_sudo "systemctl start fic-device.service" || return
+    wait_for_fic_daemon || return
+}
+
+test_udev_burst_before_device_daemon_is_quiet() {
+    local marker=/run/fic/fic-device-reconcile.required
+    local sysfs_path env_cmd
+
+    sysfs_path=$(ingestion_sample_sysfs)
+    [[ -n "$sysfs_path" ]] ||
+        fail "managed PCI sysfs fixture is required" ||
+        return
+
+    env_cmd=$(ingestion_env_command "$sysfs_path") || return
+
+    remote_sudo "systemctl stop fic-device.service" || return
+
+    remote_sudo "rm -f '$marker'" || return
+
+    remote_sudo \
+        "for i in \$(seq 1 500); do
+             env $env_cmd $REMOTE_FIC_DICK udev &
+         done
+         wait" || {
+            remote_sudo \
+                "systemctl start fic-device.service" \
+                >/dev/null 2>&1 || true
+
+            fail \
+                "udev burst before device daemon startup must not fail"
+            return
+        }
+
+    remote_sudo "test ! -e '$marker'" ||
+        fail \
+            "pre-daemon ENOENT burst must not create reconciliation marker" ||
+        return
+
+    remote_sudo "systemctl start fic-device.service" || return
+    wait_for_fic_daemon || return
+}
+
 run_ingestion_suite() {
     run_test \
         "udev event burst uses event socket" \
@@ -229,4 +311,12 @@ run_ingestion_suite() {
     run_test \
         "boot helper does not duplicate permanent check" \
         test_boot_helper_does_not_duplicate_permanent_check
+
+    run_test \
+        "missing event socket uses startup reconciliation" \
+        test_udev_without_event_socket_does_not_require_marker
+
+    run_test \
+        "pre-daemon udev burst is quiet" \
+        test_udev_burst_before_device_daemon_is_quiet
 }
