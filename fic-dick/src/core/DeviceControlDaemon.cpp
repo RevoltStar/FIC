@@ -1827,7 +1827,6 @@ int run_daemon(const std::string& socketPathArg) {
                     logLevel::WARN);
             }
         }
-        //
         if (eventQueue.reconciliationRequired()) {
             if (run_device_reconciliation("event ingestion recovery")) {
                 eventQueue.clearReconciliationRequired();
