@@ -135,6 +135,43 @@ def main():
     require('RUN+="@FIC_PRIVATE_BINDIR@/fic-dick udev"' in rules_source,
             "udev rule must keep the short-lived fic-dick udev producer")
 
+    require(
+    "std::ios::app" not in daemon_source[
+        daemon_source.find("bool write_reconcile_marker"):
+        daemon_source.find("bool write_reconcile_marker") + 2500
+    ],
+    "reconciliation marker must not be an append-only event log",
+    )
+
+    require(
+        "O_NOFOLLOW" in daemon_source,
+        "reconciliation marker must reject symlink replacement",
+    )
+
+    require(
+        "ftruncate(fd, 0)" in daemon_source,
+        "reconciliation marker must remain bounded",
+    )
+
+    require(
+        "create_directories(marker.parent_path())" not in daemon_source,
+        "udev producer must not create the FIC runtime directory",
+    )
+
+    trigger_script = (
+        root / "fic/src/scripts/service/fic-udevadm-trigger.in"
+    ).read_text(encoding="utf-8")
+
+    require(
+        "check-permanent" not in trigger_script,
+        "boot helper must not duplicate permanent check already owned by reconciliation",
+    )
+
+    require(
+        "wait-daemon 15" in trigger_script,
+        "boot helper must still wait for completed device-daemon startup",
+    )
+
     return 0
 
 

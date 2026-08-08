@@ -1314,17 +1314,50 @@ std::filesystem::path device_reconcile_marker_path() {
            DEVICE_RECONCILE_MARKER_BASENAME;
 }
 
-bool write_reconcile_marker(const std::string& reason) {
+bool write_reconcile_marker() {
     try {
         const std::filesystem::path marker = device_reconcile_marker_path();
-        std::filesystem::create_directories(marker.parent_path());
-        std::ofstream out(marker, std::ios::app);
-        if (!out.is_open()) {
+
+        // Runtime directory is owned by the FIC/systemd lifecycle.
+        // The udev helper must not manufacture the IPC/runtime directory itself.
+        if (!std::filesystem::is_directory(marker.parent_path())) {
             return false;
         }
-        out << Logger::get_current_time() << " " << reason << '\n';
-        return true;
-    } catch (...) {
+
+        const int fd = ::open(
+            marker.c_str(),
+            O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+            0600);
+
+        if (fd < 0) {
+            return false;
+        }
+
+        bool ok = true;
+
+        struct stat st {};
+        if (::fstat(fd, &st) != 0 ||
+            !S_ISREG(st.st_mode) ||
+            st.st_uid != 0) {
+            ok = false;
+        }
+
+        if (ok && ::fchmod(fd, 0600) != 0) {
+            ok = false;
+        }
+
+        // The file is a boolean marker, not an event log.
+        // Keeping it empty guarantees bounded size even during an event storm.
+        if (ok && ::ftruncate(fd, 0) != 0) {
+            ok = false;
+        }
+
+        if (::close(fd) != 0) {
+            ok = false;
+        }
+
+        return ok;
+    } catch (const std::exception&) {
         return false;
     }
 }
@@ -1769,17 +1802,29 @@ int run_daemon(const std::string& socketPathArg) {
 
         const std::filesystem::path marker = device_reconcile_marker_path();
         std::error_code markerError;
-        if (std::filesystem::exists(marker, markerError) && !markerError) {
-            std::filesystem::remove(marker, markerError);
-            eventQueue.requestReconciliation();
-            log_device("device reconciliation marker consumed", logLevel::WARN);
-        }
 
-        if (eventQueue.reconciliationRequired()) {
-            if (run_device_reconciliation("event ingestion recovery")) {
-                eventQueue.clearReconciliationRequired();
+        const bool markerExists =
+            std::filesystem::exists(marker, markerError);
+
+        if (markerError) {
+            log_device(
+                "failed to inspect device reconciliation marker: " +
+                markerError.message(),
+                logLevel::ERROR);
+        } else if (markerExists) {
+            // Сам факт существования marker уже достаточен.
+            eventQueue.requestReconciliation();
+
+            std::filesystem::remove(marker, markerError);
+            if (markerError) {
+                log_device(
+                    "device reconciliation marker could not be removed: " +
+                    markerError.message(),
+                    logLevel::WARN);
             } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                log_device(
+                    "device reconciliation marker consumed",
+                    logLevel::WARN);
             }
         }
 
@@ -1837,14 +1882,20 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
         {"env", envJson}
     };
     const std::string payloadText = payload.dump();
+
     if (payloadText.empty() || payloadText.size() > MAX_DEVICE_EVENT_BYTES) {
-        const std::string reason = "oversized udev event payload";
-        if (!write_reconcile_marker(reason)) {
-            log_device("udev event not sent and reconciliation marker could not be created: " +
-                       reason, logLevel::ERROR);
+        if (!write_reconcile_marker()) {
+            log_device(
+                "udev event not sent and reconciliation marker could not be created: "
+                "payload exceeds event socket limit",
+                logLevel::ERROR);
             return 1;
         }
-        log_device("udev event not sent: payload exceeds event socket limit; reconciliation marked", logLevel::WARN);
+
+        log_device(
+            "udev event not sent: payload exceeds event socket limit; "
+            "reconciliation marked",
+            logLevel::WARN);
         return 0;
     }
 
@@ -1881,14 +1932,21 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 
-    const std::string reason = "udev event delivery failed: " + lastError;
-    if (!write_reconcile_marker(reason)) {
-        log_device("udev event delivery failed and reconciliation marker could not be created: " +
-                   lastError, logLevel::ERROR);
+    const std::string reason =
+    "udev event delivery failed: " + lastError;
+
+    if (!write_reconcile_marker()) {
+        log_device(
+            "udev event delivery failed and reconciliation marker could not be created: " +
+            lastError,
+            logLevel::ERROR);
         return 1;
     }
-    log_device("udev event delivery failed: " + lastError +
-               "; reconciliation marked", logLevel::WARN);
+
+    log_device(
+        reason + "; reconciliation marked",
+        logLevel::WARN);
+
     return 0;
 }
 

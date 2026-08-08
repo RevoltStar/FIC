@@ -1,5 +1,4 @@
 #!/bin/sh
 set -e
 
-@FIC_PRIVATE_BINDIR@/fic-dick wait-daemon 15
-exec @FIC_PRIVATE_BINDIR@/fic-dick check-permanent
+exec @FIC_PRIVATE_BINDIR@/fic-dick wait-daemon 15
