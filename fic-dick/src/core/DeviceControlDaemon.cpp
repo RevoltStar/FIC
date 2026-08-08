@@ -640,10 +640,11 @@ json connected_blockers_for_override(DB& db,
     json blockers = json::array();
 
     for (const DeviceInfo& device : affected_devices_for_override(db, target)) {
+        /* Отключаем проверку на подключение перед блокировкой
         if (!is_connected(device, bootId)) {
             continue;
         }
-
+        */
         const EffectivePolicy after = effective_policy(db, device, override);
         if (after.level != "blocked") {
             continue;
