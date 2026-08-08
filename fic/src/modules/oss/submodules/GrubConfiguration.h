@@ -1,21 +1,20 @@
 #ifndef FIC_OSS_GRUB_CONFIGURATION_H
 #define FIC_OSS_GRUB_CONFIGURATION_H
 
-#include "platform/PlatformExecutableResolver.h"
-#include "platform/PlatformProfile.h"
+#include <fic/core/ProcessExecutor.h>
 
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
 
-#include <fic/core/ProcessExecutor.h>
-
 struct GrubValueObservation {
     bool found = false;
+    bool valid = true;
     std::string value;
     std::filesystem::path source;
     size_t line = 0;
+    std::string error;
 };
 
 struct GrubOperationResult {
@@ -27,7 +26,8 @@ struct GrubOperationResult {
 
 struct GrubConfigurationOptions {
     std::filesystem::path defaultsPath = "/etc/default/grub";
-    std::vector<std::filesystem::path> rebuildCandidates;
+    std::filesystem::path rebuildExecutable;
+    std::vector<std::string> rebuildArguments;
     bool enforceOwnership = true;
 };
 
@@ -37,9 +37,10 @@ using GrubCommandRunner = std::function<ProcessResult(
     const ProcessOptions&
 )>;
 
-// Safe editor for /etc/default/grub. Reads and validates the GRUB defaults
-// file, atomically writes managed changes, and rebuilds the bootloader
-// configuration through the verified platform command.
+// Safe editor for the simple top-level assignments used by /etc/default/grub.
+// Values are decoded as shell literals and always written as escaped double-
+// quoted literals. Dynamic shell expressions and duplicate target assignments
+// are rejected instead of being evaluated or ambiguously rewritten.
 class GrubConfiguration {
 public:
     explicit GrubConfiguration(GrubConfigurationOptions options = {},
@@ -59,7 +60,6 @@ private:
     GrubConfigurationOptions options_;
     GrubCommandRunner runner_;
     Document document_;
-    bool existed_ = false;
     std::string originalContent_;
 
     bool checkFileSafety(std::string& error) const;
@@ -67,7 +67,9 @@ private:
     bool snapshotUnchanged(std::string& error) const;
     bool writeDocument(const std::string& content, std::string& error) const;
     bool restoreDocument(std::string& error) const;
+    bool verifyOriginalRestored(std::string& error) const;
     bool rebuild(std::string& error) const;
+    bool rollbackAfterRebuildFailure(std::string& error) const;
     void clear();
 };
 

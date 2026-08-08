@@ -73,7 +73,7 @@ struct DisplayManagerPlatformConfig {
 
 struct GrubPlatformConfig {
     std::filesystem::path defaultsPath;
-    std::vector<std::filesystem::path> rebuildCandidates;
+    std::vector<std::string> rebuildArguments;
 };
 
 struct FileAccessRule {

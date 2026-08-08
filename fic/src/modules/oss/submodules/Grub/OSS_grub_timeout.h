@@ -7,7 +7,9 @@
 
 class OSS_grub_timeout : public Grub {
 public:
-    explicit OSS_grub_timeout(fic::platform::GrubPlatformConfig platformConfig);
+    OSS_grub_timeout(
+        fic::platform::GrubPlatformConfig platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables);
 
     bool applyGrub(const std::string& expectedValue) override;
 };

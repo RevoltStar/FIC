@@ -3,8 +3,10 @@
 
 #include <utility>
 
-OSS_grub_timeout::OSS_grub_timeout(fic::platform::GrubPlatformConfig platformConfig)
-    : Grub(std::move(platformConfig)) {
+OSS_grub_timeout::OSS_grub_timeout(
+    fic::platform::GrubPlatformConfig platformConfig,
+    const fic::platform::PlatformExecutableResolver& executables)
+    : Grub(std::move(platformConfig), executables) {
     this->policyName = "grub_timeout";
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(0, 60, 5);
 }

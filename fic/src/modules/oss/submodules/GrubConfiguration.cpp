@@ -9,22 +9,187 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
-#include <system_error>
+#include <utility>
 
-#include <fcntl.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 namespace {
 
+constexpr std::uintmax_t kMaximumGrubDefaultsSize = 1024U * 1024U;
+
+struct ParsedTargetAssignment {
+    bool target = false;
+    bool valid = true;
+    std::string value;
+    std::string commentSuffix;
+    std::string error;
+};
+
 std::string trimCopy(std::string value) {
-    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char c) {
-        return !std::isspace(c);
-    }));
-    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char c) {
-        return !std::isspace(c);
-    }).base(), value.end());
-    return value;
+    const auto first = std::find_if_not(
+        value.begin(), value.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        });
+    if (first == value.end()) {
+        return {};
+    }
+    const auto last = std::find_if_not(
+        value.rbegin(), value.rend(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        }).base();
+    return std::string(first, last);
+}
+
+bool validKey(const std::string& key) {
+    if (key.empty() ||
+        !(std::isalpha(static_cast<unsigned char>(key.front())) != 0 ||
+          key.front() == '_')) {
+        return false;
+    }
+    return std::all_of(
+        key.begin() + 1, key.end(), [](unsigned char ch) {
+            return std::isalnum(ch) != 0 || ch == '_';
+        });
+}
+
+std::string withoutLineEnding(std::string line) {
+    if (!line.empty() && line.back() == '\n') {
+        line.pop_back();
+    }
+    if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+    }
+    return line;
+}
+
+std::vector<std::string> physicalLines(const std::string& content) {
+    std::vector<std::string> lines;
+    size_t start = 0;
+    while (start < content.size()) {
+        const size_t newline = content.find('\n', start);
+        if (newline == std::string::npos) {
+            lines.push_back(content.substr(start));
+            return lines;
+        }
+        lines.push_back(content.substr(start, newline - start + 1));
+        start = newline + 1;
+    }
+    return lines;
+}
+
+bool parseLiteral(const std::string& input,
+                  std::string& value,
+                  std::string& commentSuffix,
+                  std::string& error) {
+    const std::string text = trimCopy(input);
+    value.clear();
+    commentSuffix.clear();
+    if (text.empty()) {
+        return true;
+    }
+
+    size_t index = 0;
+    if (text.front() == '\'') {
+        const size_t closing = text.find('\'', 1);
+        if (closing == std::string::npos) {
+            error = "незакрытая одинарная кавычка";
+            return false;
+        }
+        value = text.substr(1, closing - 1);
+        index = closing + 1;
+    } else if (text.front() == '"') {
+        bool closed = false;
+        for (index = 1; index < text.size(); ++index) {
+            const char ch = text[index];
+            if (ch == '"') {
+                ++index;
+                closed = true;
+                break;
+            }
+            if (ch == '$' || ch == '`') {
+                error = "динамическое shell-выражение не поддерживается";
+                return false;
+            }
+            if (ch == '\\') {
+                if (index + 1 >= text.size()) {
+                    error = "незавершённая escape-последовательность";
+                    return false;
+                }
+                const char escaped = text[++index];
+                if (escaped == '"' || escaped == '\\' ||
+                    escaped == '$' || escaped == '`') {
+                    value.push_back(escaped);
+                } else {
+                    value.push_back('\\');
+                    value.push_back(escaped);
+                }
+                continue;
+            }
+            value.push_back(ch);
+        }
+        if (!closed) {
+            error = "незакрытая двойная кавычка";
+            return false;
+        }
+    } else {
+        for (; index < text.size(); ++index) {
+            const unsigned char ch = static_cast<unsigned char>(text[index]);
+            if (std::isspace(ch) != 0) {
+                break;
+            }
+            if (std::strchr("'\\\"$`;|&()<>*?[]{}!", ch) != nullptr) {
+                error = "неподдерживаемый shell-метасимвол";
+                return false;
+            }
+            value.push_back(static_cast<char>(ch));
+        }
+    }
+
+    const std::string trailing = trimCopy(text.substr(index));
+    if (!trailing.empty()) {
+        if (trailing.front() != '#') {
+            error = "после значения обнаружено неподдерживаемое shell-выражение";
+            return false;
+        }
+        commentSuffix = " " + trailing;
+    }
+    return true;
+}
+
+ParsedTargetAssignment parseTargetAssignment(const std::string& physicalLine,
+                                              const std::string& key) {
+    ParsedTargetAssignment result;
+    std::string line = trimCopy(withoutLineEnding(physicalLine));
+    if (line.empty() || line.front() == '#') {
+        return result;
+    }
+    if (line.compare(0, 6, "export") == 0 && line.size() > 6 &&
+        std::isspace(static_cast<unsigned char>(line[6])) != 0) {
+        line = trimCopy(line.substr(7));
+    }
+    const size_t equals = line.find('=');
+    if (equals == std::string::npos ||
+        trimCopy(line.substr(0, equals)) != key) {
+        return result;
+    }
+
+    result.target = true;
+    result.valid = parseLiteral(
+        line.substr(equals + 1), result.value, result.commentSuffix,
+        result.error);
+    return result;
+}
+
+std::string quoteLiteral(const std::string& value) {
+    std::string quoted = "\"";
+    for (const char ch : value) {
+        if (ch == '\\' || ch == '"' || ch == '$' || ch == '`') {
+            quoted.push_back('\\');
+        }
+        quoted.push_back(ch);
+    }
+    quoted.push_back('"');
+    return quoted;
 }
 
 bool readFile(const std::filesystem::path& path,
@@ -68,65 +233,73 @@ GrubConfiguration::GrubConfiguration(GrubConfigurationOptions options,
         runner_ = [](const std::string& executable,
                      const std::vector<std::string>& arguments,
                      const ProcessOptions& processOptions) {
-            return VerifiedProcessExecutor::execute(executable, arguments, processOptions);
+            return VerifiedProcessExecutor::execute(
+                executable, arguments, processOptions);
         };
     }
 }
 
 void GrubConfiguration::clear() {
     document_ = {};
-    existed_ = false;
     originalContent_.clear();
 }
 
 bool GrubConfiguration::checkFileSafety(std::string& error) const {
-    if (!options_.enforceOwnership) {
-        return true;
-    }
-    std::error_code canonicalError;
-    const std::filesystem::path canonical =
-        std::filesystem::canonical(options_.defaultsPath, canonicalError);
-    if (canonicalError) {
-        error = "Не удалось разрешить путь GRUB-конфигурации " +
-                options_.defaultsPath.string() + ": " + canonicalError.message();
+    struct stat status {};
+    if (::lstat(options_.defaultsPath.c_str(), &status) != 0) {
+        error = "Не удалось проверить GRUB-файл " +
+            options_.defaultsPath.string() + ": " + std::strerror(errno);
         return false;
     }
-    struct stat status {};
-    if (::stat(canonical.c_str(), &status) < 0) {
-        error = "Не удалось проверить GRUB-файл " + canonical.string() +
-                ": " + std::strerror(errno);
+    if (S_ISLNK(status.st_mode)) {
+        error = "GRUB-конфигурация не должна быть symbolic link: " +
+            options_.defaultsPath.string();
         return false;
     }
     if (!S_ISREG(status.st_mode)) {
-        error = "GRUB-конфигурация не является обычным файлом: " + canonical.string();
+        error = "GRUB-конфигурация не является обычным файлом: " +
+            options_.defaultsPath.string();
         return false;
+    }
+    if (static_cast<std::uintmax_t>(status.st_size) >
+        kMaximumGrubDefaultsSize) {
+        error = "GRUB-конфигурация превышает допустимый размер";
+        return false;
+    }
+    if (!options_.enforceOwnership) {
+        return true;
     }
     if (status.st_uid != 0 || (status.st_mode & 0022) != 0) {
-        error = "Небезопасные владелец или права GRUB-файла: " + canonical.string();
+        error = "Небезопасные владелец или права GRUB-файла: " +
+            options_.defaultsPath.string();
         return false;
     }
-    struct stat parentStatus {};
-    const std::filesystem::path parent = canonical.parent_path();
-    if (::stat(parent.c_str(), &parentStatus) < 0 || !S_ISDIR(parentStatus.st_mode) ||
-        parentStatus.st_uid != 0 || (parentStatus.st_mode & 0022) != 0) {
-        error = "GRUB-файл находится в небезопасном каталоге: " + canonical.string();
-        return false;
+
+    std::filesystem::path current = options_.defaultsPath.parent_path();
+    while (!current.empty()) {
+        struct stat directoryStatus {};
+        if (::lstat(current.c_str(), &directoryStatus) != 0 ||
+            S_ISLNK(directoryStatus.st_mode) ||
+            !S_ISDIR(directoryStatus.st_mode) ||
+            directoryStatus.st_uid != 0 ||
+            (directoryStatus.st_mode & 0022) != 0) {
+            error = "GRUB-файл находится в небезопасном каталоге: " +
+                current.string();
+            return false;
+        }
+        if (current == current.root_path()) {
+            break;
+        }
+        current = current.parent_path();
     }
     return true;
 }
 
 bool GrubConfiguration::readDocument(std::string& error) {
-    std::error_code existsError;
-    existed_ = std::filesystem::exists(options_.defaultsPath, existsError);
-    if (existsError) {
-        error = "Не удалось проверить " + options_.defaultsPath.string() +
-                ": " + existsError.message();
+    if (!options_.defaultsPath.is_absolute() ||
+        options_.defaultsPath != options_.defaultsPath.lexically_normal()) {
+        error = "Путь GRUB-конфигурации должен быть абсолютным и нормализованным";
         return false;
-    }
-    if (!existed_) {
-        document_ = {};
-        originalContent_.clear();
-        return true;
     }
     if (!checkFileSafety(error)) {
         return false;
@@ -152,36 +325,37 @@ bool GrubConfiguration::load(std::string& error) {
 GrubValueObservation GrubConfiguration::inspect(const std::string& key) const {
     GrubValueObservation result;
     const std::string requested = trimCopy(key);
-    if (requested.empty()) {
+    if (!validKey(requested)) {
+        result.valid = false;
+        result.error = "Некорректное имя GRUB-параметра";
         return result;
     }
 
-    std::istringstream stream(document_.content);
-    std::string line;
-    size_t lineNumber = 1;
-    while (std::getline(stream, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        const std::string trimmed = trimCopy(line);
-        if (trimmed.empty() || trimmed.front() == '#') {
-            ++lineNumber;
+    size_t lineNumber = 0;
+    for (const std::string& line : physicalLines(document_.content)) {
+        ++lineNumber;
+        const ParsedTargetAssignment parsed =
+            parseTargetAssignment(line, requested);
+        if (!parsed.target) {
             continue;
         }
-        const size_t equals = trimmed.find('=');
-        if (equals == std::string::npos) {
-            ++lineNumber;
-            continue;
-        }
-        const std::string name = trimCopy(trimmed.substr(0, equals));
-        if (name == requested) {
-            result.found = true;
-            result.value = trimCopy(trimmed.substr(equals + 1));
-            result.source = document_.path;
-            result.line = lineNumber;
+        if (!parsed.valid) {
+            result.valid = false;
+            result.error = document_.path.string() + ":" +
+                std::to_string(lineNumber) + ": " + parsed.error;
             return result;
         }
-        ++lineNumber;
+        if (result.found) {
+            result.valid = false;
+            result.error = document_.path.string() + ":" +
+                std::to_string(lineNumber) +
+                ": неоднозначное повторное определение " + requested;
+            return result;
+        }
+        result.found = true;
+        result.value = parsed.value;
+        result.source = document_.path;
+        result.line = lineNumber;
     }
     return result;
 }
@@ -191,8 +365,7 @@ bool GrubConfiguration::snapshotUnchanged(std::string& error) const {
     if (!current.load(error)) {
         return false;
     }
-    if (existed_ != current.existed_ ||
-        document_.content != current.document_.content) {
+    if (document_.content != current.document_.content) {
         error = "Файл GRUB-конфигурации изменился во время проверки";
         return false;
     }
@@ -202,49 +375,32 @@ bool GrubConfiguration::snapshotUnchanged(std::string& error) const {
 bool GrubConfiguration::writeDocument(const std::string& content,
                                       std::string& error) const {
     AtomicWriteOptions options;
-    options.createIfMissing = true;
-    options.metadataPolicy = options_.enforceOwnership
-        ? FileMetadataPolicy::EnforceProvided
-        : FileMetadataPolicy::PreserveExisting;
-    options.fileMode = 0644;
-    if (options_.enforceOwnership) {
-        options.fileOwner = 0;
-        options.fileGroup = 0;
-    }
-    return AtomicFileWriter::write(options_.defaultsPath.string(), content,
-                                   options, &error);
+    options.createIfMissing = false;
+    options.rejectSymlink = true;
+    options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
+    return AtomicFileWriter::write(
+        options_.defaultsPath.string(), content, options, &error);
 }
 
 bool GrubConfiguration::restoreDocument(std::string& error) const {
-    if (existed_) {
-        return writeDocument(originalContent_, error);
-    }
-    if (::unlink(options_.defaultsPath.c_str()) < 0) {
-        error = "Не удалось удалить созданный при откате файл " +
-                options_.defaultsPath.string() + ": " + std::strerror(errno);
+    return writeDocument(originalContent_, error);
+}
+
+bool GrubConfiguration::verifyOriginalRestored(std::string& error) const {
+    GrubConfiguration verification(options_, runner_);
+    if (!verification.load(error)) {
         return false;
     }
-    const std::filesystem::path directory = options_.defaultsPath.parent_path();
-    int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
-    if (fd < 0) {
-        error = "Не удалось открыть каталог при откате " + directory.string() +
-                ": " + std::strerror(errno);
-        return false;
-    }
-    const bool synced = ::fsync(fd) == 0;
-    const int syncError = errno;
-    const bool closed = ::close(fd) == 0;
-    if (!synced || !closed) {
-        error = "Не удалось синхронизировать каталог при откате " +
-                directory.string() + ": " +
-                std::strerror(synced ? errno : syncError);
+    if (verification.document_.content != originalContent_) {
+        error = "исходная GRUB-конфигурация не восстановлена";
         return false;
     }
     return true;
 }
 
 bool GrubConfiguration::rebuild(std::string& error) const {
-    if (options_.rebuildCandidates.empty()) {
+    if (options_.rebuildExecutable.empty() ||
+        !options_.rebuildExecutable.is_absolute()) {
         error = "Профиль платформы не задаёт команду пересборки GRUB";
         return false;
     }
@@ -252,20 +408,35 @@ bool GrubConfiguration::rebuild(std::string& error) const {
     ProcessOptions processOptions;
     processOptions.clearEnvironment = true;
     processOptions.timeout = std::chrono::seconds(60);
-
-    std::string lastFailure;
-    for (const std::filesystem::path& candidate : options_.rebuildCandidates) {
-        const ProcessResult result = runner_(
-            candidate.string(), {}, processOptions);
-        if (result.success()) {
-            error.clear();
-            return true;
-        }
-        lastFailure = processFailure(result);
+    const ProcessResult result = runner_(
+        options_.rebuildExecutable.string(), options_.rebuildArguments,
+        processOptions);
+    if (!result.success()) {
+        error = "Не удалось пересобрать конфигурацию GRUB: " +
+            processFailure(result);
+        return false;
     }
+    error.clear();
+    return true;
+}
 
-    error = "Не удалось пересобрать конфигурацию GRUB: " + lastFailure;
-    return false;
+bool GrubConfiguration::rollbackAfterRebuildFailure(std::string& error) const {
+    std::string rollbackError;
+    if (!restoreDocument(rollbackError)) {
+        error = "не удалось восстановить исходный defaults-файл: " +
+            rollbackError;
+        return false;
+    }
+    if (!verifyOriginalRestored(rollbackError)) {
+        error = rollbackError;
+        return false;
+    }
+    if (!rebuild(rollbackError)) {
+        error = "исходный defaults-файл восстановлен, но не удалось "
+            "восстановить сгенерированный grub.cfg: " + rollbackError;
+        return false;
+    }
+    return true;
 }
 
 GrubOperationResult GrubConfiguration::ensureManagedValue(
@@ -273,67 +444,55 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     const std::string& value) {
     GrubOperationResult result;
     const std::string requested = trimCopy(key);
-    if (requested.empty()) {
-        result.message = "Пустое имя GRUB-параметра";
+    if (!validKey(requested)) {
+        result.message = "Некорректное имя GRUB-параметра";
+        return result;
+    }
+    if (value.find_first_of("\r\n") != std::string::npos ||
+        value.find('\0') != std::string::npos) {
+        result.message = "Значение GRUB-параметра содержит запрещённые символы";
         return result;
     }
 
     const GrubValueObservation before = inspect(requested);
-    if (before.found && before.value == value) {
-        result.ok = true;
-        result.message = "Отклонений не обнаружено";
+    if (!before.valid) {
+        result.message = before.error;
         return result;
     }
-
-    std::string desired = document_.content;
-    if (before.found) {
-        // Replace the existing assignment in place, preserving line endings.
-        std::istringstream stream(document_.content);
-        std::ostringstream output;
-        std::string line;
-        bool replaced = false;
-        while (std::getline(stream, line)) {
-            const bool hasMore = !stream.eof();
-            std::string physical = line;
-            if (!physical.empty() && physical.back() == '\r') {
-                physical.pop_back();
-            }
-            const std::string trimmed = trimCopy(physical);
-            bool match = false;
-            if (!trimmed.empty() && trimmed.front() != '#') {
-                const size_t equals = trimmed.find('=');
-                if (equals != std::string::npos &&
-                    trimCopy(trimmed.substr(0, equals)) == requested) {
-                    match = true;
-                }
-            }
-            if (match && !replaced) {
-                output << requested << "=" << value;
-                replaced = true;
-            } else {
-                output << line;
-            }
-            if (hasMore) {
-                output << '\n';
-            }
-        }
-        if (!replaced) {
-            result.message = "Не удалось заменить GRUB-параметр " + requested;
+    if (before.found && before.value == value) {
+        std::string rebuildError;
+        if (!rebuild(rebuildError)) {
+            result.message = rebuildError;
             return result;
         }
-        desired = output.str();
-    } else {
-        // Append a new assignment at the end of the file.
-        if (!desired.empty() && desired.back() != '\n') {
-            desired += '\n';
-        }
-        desired += requested + "=" + value + "\n";
+        result.ok = true;
+        result.message =
+            "Persistent-значение GRUB соответствует политике; grub.cfg пересобран";
+        return result;
     }
 
-    if (desired == document_.content) {
-        result.ok = true;
-        result.message = "Отклонений не обнаружено";
-        return result;
+    std::string desired;
+    bool replaced = false;
+    for (const std::string& line : physicalLines(document_.content)) {
+        const ParsedTargetAssignment parsed =
+            parseTargetAssignment(line, requested);
+        if (!parsed.target) {
+            desired += line;
+            continue;
+        }
+        desired += requested + "=" + quoteLiteral(value) +
+            parsed.commentSuffix;
+        if (!line.empty() && line.back() == '\n') {
+            desired.push_back('\n');
+        }
+        replaced = true;
+    }
+    if (!replaced) {
+        desired = document_.content;
+        if (!desired.empty() && desired.back() != '\n') {
+            desired.push_back('\n');
+        }
+        desired += requested + "=" + quoteLiteral(value) + "\n";
     }
 
     std::string error;
@@ -349,7 +508,10 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     GrubConfiguration verification(options_, runner_);
     if (!verification.load(error)) {
         std::string rollbackError;
-        const bool rolledBack = restoreDocument(rollbackError);
+        bool rolledBack = restoreDocument(rollbackError);
+        if (rolledBack) {
+            rolledBack = verifyOriginalRestored(rollbackError);
+        }
         result.message = "Не удалось перечитать GRUB после записи: " + error;
         if (!rolledBack) {
             result.message += ". Ошибка отката: " + rollbackError;
@@ -357,11 +519,15 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
         return result;
     }
     const GrubValueObservation after = verification.inspect(requested);
-    if (!after.found || after.value != value) {
+    if (!after.valid || !after.found || after.value != value) {
         std::string rollbackError;
-        const bool rolledBack = restoreDocument(rollbackError);
-        result.message = "GRUB-параметр " + requested +
-                         " не стал итоговым значением после записи";
+        bool rolledBack = restoreDocument(rollbackError);
+        if (rolledBack) {
+            rolledBack = verifyOriginalRestored(rollbackError);
+        }
+        result.message = after.valid
+            ? "GRUB-параметр не стал итоговым значением после записи"
+            : after.error;
         if (!rolledBack) {
             result.message += ". Ошибка отката: " + rollbackError;
         }
@@ -370,26 +536,26 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
 
     if (!rebuild(error)) {
         std::string rollbackError;
-        const bool rolledBack = restoreDocument(rollbackError);
-        result.message = "Persistent-конфигурация GRUB записана, но пересборка "
-                         "не завершена: " + error;
+        const bool rolledBack = rollbackAfterRebuildFailure(rollbackError);
+        result.message = "Новая GRUB-конфигурация не активирована: " + error;
         if (!rolledBack) {
-            result.message += ". Ошибка отката: " + rollbackError;
+            result.message += ". Ошибка компенсирующего отката: " +
+                rollbackError;
         }
         return result;
     }
 
     result.ok = true;
     result.changed = true;
-    result.message = "Отклонение GRUB исправлено и конфигурация пересобрана";
+    result.message = "Отклонение GRUB исправлено и grub.cfg пересобран";
     if (before.found) {
-        result.diagnostics.push_back("Предыдущее значение " + requested +
-                                     " = " + before.value + " из " +
-                                     before.source.string() + ":" +
-                                     std::to_string(before.line));
+        result.diagnostics.push_back(
+            "Предыдущее значение " + requested + " = " + before.value +
+            " из " + before.source.string() + ":" +
+            std::to_string(before.line));
     } else {
-        result.diagnostics.push_back("Параметр " + requested +
-                                     " отсутствовал в GRUB-конфигурации");
+        result.diagnostics.push_back(
+            "Параметр " + requested + " отсутствовал в GRUB-конфигурации");
     }
     return result;
 }

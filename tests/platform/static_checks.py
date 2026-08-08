@@ -173,6 +173,7 @@ def main():
         "ExecutableId::Lscpu",
         "ExecutableId::Dmidecode",
         "ExecutableId::Udevadm",
+        "ExecutableId::UpdateGrub",
         "packageManager.queryCandidates",
         "sudo.mainConfigPath",
         "pam.configDirectories",
@@ -184,6 +185,8 @@ def main():
         "pam.passwordHistoryConfigPath",
         "displayManager.sddmConfigPath",
         "displayManager.gdmConfigCandidates",
+        "grub.defaultsPath",
+        "grub.rebuildArguments",
         "dac.protectedSystemFiles",
         "dac.protectedSystemCommands",
     )
@@ -193,6 +196,32 @@ def main():
                 section in source,
                 f"platform profile {name} does not define {section}",
             )
+
+    alt_profile = profiles["alt-p11"]
+    require(
+        'profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};'
+        in alt_profile,
+        "ALT p11 grub-mkconfig does not target /etc/grub.cfg",
+    )
+    require(
+        '"/usr/sbin/grub-mkconfig", "/usr/bin/grub-mkconfig"'
+        in alt_profile,
+        "ALT p11 GRUB generator candidates are incorrect",
+    )
+    require(
+        "update-grub" not in alt_profile,
+        "ALT p11 mixes incompatible GRUB generator interfaces",
+    )
+    for name in ("debian-12", "debian-13", "ubuntu-24.04"):
+        require(
+            "profile.grub.rebuildArguments = {};" in profiles[name],
+            f"{name} update-grub must not receive arguments",
+        )
+        require(
+            '"/usr/sbin/update-grub", "/usr/bin/update-grub"'
+            in profiles[name],
+            f"{name} update-grub candidates are incorrect",
+        )
 
     for language in ("ru", "en"):
         localization = (

@@ -78,10 +78,7 @@ PlatformProfile makeBuildPlatformProfile() {
         "/etc/gdm3/daemon.conf"
     };
     profile.grub.defaultsPath = "/etc/default/grub";
-    profile.grub.rebuildCandidates = {
-        "/usr/sbin/update-grub",
-        "/usr/bin/update-grub"
-    };
+    profile.grub.rebuildArguments = {};
     profile.dac.protectedSystemFiles = {
         {"/etc/bash.bashrc", "root", "root", 0644},
         {"/etc/crontab", "root", "root", 0600},

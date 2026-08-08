@@ -519,7 +519,10 @@ flowchart TB
     oss --> display[DisplayManager]
     oss --> desktop[DesktopEnvironment]
     oss --> fstab[Fstab]
-    oss -. abstract .-> grub[Grub]
+    oss --> grub[Grub]
+    grub --> grubTimeout[grub_timeout]
+    grub --> grubCmdline[grub_cmdline_linux]
+    grub --> grubRecovery[grub_disable_recovery]
 
     arr --> net[NET]
     net --> ssh[Ssh]

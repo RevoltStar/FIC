@@ -612,9 +612,12 @@ PolicyMap init_policyMap(
     cafArr.push_back(std::make_unique<SYSCTL_user_ns_restrict>());
 
     //Настройки операционной системы (OSS)
-    cafArr.push_back(std::make_unique<OSS_grub_timeout>(platform.grub));
-    cafArr.push_back(std::make_unique<OSS_grub_cmdline_linux>(platform.grub));
-    cafArr.push_back(std::make_unique<OSS_grub_disable_recovery>(platform.grub));
+    cafArr.push_back(std::make_unique<OSS_grub_timeout>(
+        platform.grub, executables));
+    cafArr.push_back(std::make_unique<OSS_grub_cmdline_linux>(
+        platform.grub, executables));
+    cafArr.push_back(std::make_unique<OSS_grub_disable_recovery>(
+        platform.grub, executables));
     cafArr.push_back(std::make_unique<OSS_screenlock_timeout>(
         executables));
     cafArr.push_back(std::make_unique<OSS_disable_autologin>(

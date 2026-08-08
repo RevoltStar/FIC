@@ -110,6 +110,9 @@ add_executable(grub_policy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/Grub.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/Grub/OSS_grub_timeout.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/Grub/OSS_grub_cmdline_linux.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/submodules/Grub/OSS_grub_disable_recovery.cpp
 )
 target_include_directories(grub_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src

@@ -39,8 +39,7 @@ PlatformProfile makeBuildPlatformProfile() {
         },
         {
             ExecutableId::UpdateGrub,
-            {"/usr/sbin/grub-mkconfig", "/usr/bin/grub-mkconfig",
-             "/usr/sbin/update-grub", "/usr/bin/update-grub"}
+            {"/usr/sbin/grub-mkconfig", "/usr/bin/grub-mkconfig"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Rpm;
@@ -77,12 +76,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {"/etc/gdm/custom.conf"};
     profile.grub.defaultsPath = "/etc/default/grub";
-    profile.grub.rebuildCandidates = {
-        "/usr/sbin/grub-mkconfig",
-        "/usr/bin/grub-mkconfig",
-        "/usr/sbin/update-grub",
-        "/usr/bin/update-grub"
-    };
+    profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};
     profile.dac.protectedSystemFiles = {
         {"/etc/bashrc", "root", "root", 0644},
         {"/etc/crontab", "root", "root", 0600},

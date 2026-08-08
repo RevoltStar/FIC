@@ -5,69 +5,86 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-08-07.
+- Обновлено: 2026-08-08.
 - Ветка: `main`.
-- Базовый commit: `bf60b0b` (`Создан абстрактный подмодуль OSS/Grub`).
-- Текущая задача: выяснить причину высокой загрузки CPU у fic-gui на удалённом хосте и устранить её в исходном коде.
+- Базовый commit: `595d241` (`Откат последнего изменения`).
+- Текущая задача: проверить и исправить `apply()` и конкретные политики
+  `OSS/Grub`.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- Production runtime-каталог теперь принудительно имеет владельца `root:root`
-  и режим `0755`; группа `fic` не может создавать, удалять или переименовывать
-  объекты в `/run/fic`.
-- Сами административные сокеты сохраняют владельца `root:fic` и режим `0660`,
-  поэтому члены группы по-прежнему могут подключаться к обоим daemon API.
-- Systemd-tmpfiles template синхронизирован с runtime-проверкой сокета.
-- `admin_socket_tests` проверяет новые production metadata при доступном root-
-  окружении и существующей группе `fic`.
-- Path static checks фиксируют metadata-инвариант даже в непривилегированном
-  build-окружении.
-- Обновлены README, архитектурная документация и агентский security-инвариант.
-- Выяснена причина высокой загрузки CPU у fic-gui: лог-панель опрашивала демон
-  каждые 2 секунды и каждый раз заново грузила/парсила всю историю логов,
-  что нагружало процессор в `LogService::parseLogLine` и `LogService::loadRecordsFromDaemon`.
-- В `fic-gui/src/LogService.cpp` и `.h` снижена частота опроса до 10 секунд и
-  изменён механизм обновления: на incremental-обновлении теперь используются
-  данные с текущего offset, а полная перезагрузка логов выполняется только при
-  необходимости.
+- `Grub::apply()` по-прежнему является общей финальной точкой валидации и
+  сериализации, но конкретное применение теперь использует общий проверяемый
+  executable registry для команды генерации GRUB.
+- Удалён ранний успешный выход при совпадающем значении `/etc/default/grub`:
+  генератор запускается всегда, чтобы исправлять потенциально устаревший
+  сгенерированный `grub.cfg`.
+- `GrubConfiguration` переписан как fail-closed редактор простых shell-
+  присваиваний: кавычки декодируются и безопасно записываются, дублирующие и
+  динамические определения отклоняются, CR/LF/NUL и небезопасные пути/metadata
+  запрещены, размер defaults-файла ограничен 1 МиБ.
+- Запись defaults-файла атомарна и защищена проверкой неизменности snapshot.
+  После записи выполняется перечитывание и проверка результата.
+- При ошибке генератора исходный defaults-файл восстанавливается и генератор
+  запускается повторно для компенсирующего восстановления `grub.cfg`.
+- Платформенный контракт разделяет логический executable и его аргументы:
+  Debian/Ubuntu используют `update-grub`, ALT p11 —
+  `grub-mkconfig -o /etc/grub.cfg`. Несовместимые кандидаты больше не
+  смешиваются.
+- `grub_cmdline_linux` хранит всю командную строку одним JSON-элементом, поэтому
+  не теряет запятые в параметрах вроде `isolcpus=1-3,5`; пустое значение имеет
+  корректное seed-представление `[]`. Ошибка JSON теперь приводит к безопасному
+  отказу `apply()`, а не выходит исключением.
+- Тесты GRUB расширены проверками конкретных наследников, кавычек, запятых,
+  дубликатов, динамических выражений, symlink, обязательной генерации,
+  аргументов команды и компенсирующего отката. Обновлены platform static/unit
+  checks и документация архитектуры.
 
 ## Измененные файлы
 
-- `fic-common/fic-ipc/src/FicAdminSocket.cpp`;
-- `fic/src/scripts/tmpfiles/fic.conf.in`;
-- `tests/paths/AdminSocketTests.cpp`;
-- `tests/paths/static_checks.py`;
-- `fic/README.md`;
-- `docs/architecture-diagrams.md`;
-- `AGENTS.md`;
-- `docs/HANDOFF.md`.
+- `fic/src/modules/oss/submodules/Grub.{h,cpp}`;
+- `fic/src/modules/oss/submodules/GrubConfiguration.{h,cpp}`;
+- `fic/src/modules/oss/submodules/Grub/OSS_grub_*`;
+- `fic/src/core/main_function.cpp`;
+- `fic/src/platform/PlatformProfile.h`, `PlatformCompatibility.cpp` и профили
+  Debian 12/13, Ubuntu 24.04/26.04, ALT p11;
+- `fic/src/scripts/config/OSS.conf`;
+- `tests/oss/GrubPolicyTests.cpp`, `tests/platform/*`, `tests/CMakeLists.txt`;
+- `fic/README.md`, `docs/architecture-diagrams.md`, `docs/HANDOFF.md`.
 
 ## Выполненные проверки
 
 - Полная сборка `cmake --build build-check -j2` с профилем `alt-p11` — успешно.
-- `ctest --test-dir build-check --output-on-failure`: 28 из 28 без ошибок;
-  host-dependent `ipc_transport_tests`, `admin_socket_tests` и
-  `command_hash_batch_tests` корректно SKIP.
-- Узкие `runtime_paths_tests`, `ipc_paths_tests` и
-  `ipc_protocol_validation_tests` — успешно.
-- `python3 tests/paths/static_checks.py .` — успешно, включая metadata-инвариант
-  runtime-каталога и сокета.
-- `python3 tests/platform/static_checks.py .` — успешно.
-- `git diff --check` — успешно.
-- Реальный `/run/fic`, сокеты и состояние хоста не изменялись.
+- Узкие `grub_policy_tests`, `platform_profile_tests` и
+  `platform_profile_static_checks` — успешно.
+- `ctest --test-dir build-check --output-on-failure -E
+  '^release_contract_tests$'`: 27 из 27 без ошибок; host-dependent
+  `ipc_transport_tests`, `admin_socket_tests` и `command_hash_batch_tests`
+  корректно SKIP.
+- Полный CTest: GRUB и остальные тесты прошли, но несвязанный
+  `release_contract_tests` упал, потому что fixture уже создаёт 25 пакетов для
+  пяти платформ, а тест всё ещё ожидает 20. Этот release-дефект не исправлялся
+  в рамках GRUB-задачи.
+- `python3 tests/platform/static_checks.py .` и `git diff --check` — успешно.
+- Реальные `/etc/default/grub`, `grub.cfg` и состояние хоста не изменялись.
 
 ## Что осталось
 
-- Обязательной незавершенной работы нет.
-- Production branch `admin_socket_tests` требует root и группу `fic`; в текущем
-  sandbox тест целиком возвращает CTest SKIP до этой ветки.
+- Обязательной незавершенной работы по GRUB нет.
+- Отдельно следует исправить устаревшее ожидание числа пакетов в
+  `tests/version/release-contract-test.sh` (20 вместо 25); это не связано с
+  текущими изменениями.
 
 ## Риски и решения
 
-- Каталог `0755` намеренно доступен всем только для traversal/read directory;
-  право подключения продолжает определяться режимом `0660` конкретного сокета.
-- Изменение применяется и к `fic.sock`, и к `fic-device.sock`, поскольку оба
-  используют общий `ProductionAdmin` socket builder и `/run/fic`.
-- API/schema versions не менялись: wire protocol и форматы persistent state не
-  затронуты.
+- Изменение defaults-файла и генерация `grub.cfg` являются компенсирующей, но
+  не crash-atomic транзакцией двух файлов. При обычной ошибке генератора FIC
+  восстанавливает старый defaults и повторно строит старую загрузочную
+  конфигурацию.
+- FIC намеренно отказывает при сложных shell-выражениях и повторных назначениях
+  управляемого ключа: вычислять shell-код внутри привилегированного демона или
+  угадывать итоговое значение небезопасно.
+- Реальный policy apply не запускался, поскольку он изменяет загрузочную
+  конфигурацию хоста; поведение проверено через изолированные файлы и
+  внедрённый/фиктивный генератор.

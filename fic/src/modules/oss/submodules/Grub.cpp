@@ -10,14 +10,28 @@ std::mutex grubConfigurationMutex;
 
 } // namespace
 
-Grub::Grub(fic::platform::GrubPlatformConfig platformConfig)
+Grub::Grub(
+    fic::platform::GrubPlatformConfig platformConfig,
+    const fic::platform::PlatformExecutableResolver& executables,
+    bool enforceOwnership)
     : OSS(),
-      platformConfig_(std::move(platformConfig)) {
+      platformConfig_(std::move(platformConfig)),
+      executables_(executables),
+      enforceOwnership_(enforceOwnership) {
     this->submoduleName = "Grub";
 }
 
 bool Grub::apply() {
-    const auto value = this->getValue();
+    std::optional<std::string> value;
+    try {
+        value = this->getValue();
+    } catch (const std::exception& error) {
+        this->log(
+            "Не удалось декодировать значение политики GRUB: " +
+                std::string(error.what()),
+            logLevel::ERROR);
+        return false;
+    }
     if (!value.has_value()) {
         return false;
     }
@@ -35,23 +49,30 @@ bool Grub::applyGrubValue(
         ? normalizeExpected(expectedValue)
         : expectedValue;
 
+    std::filesystem::path rebuildExecutable;
+    std::string resolverError;
+    if (!executables_.resolve(
+            fic::platform::ExecutableId::UpdateGrub,
+            rebuildExecutable,
+            resolverError)) {
+        this->log(
+            "Не удалось найти проверенную команду пересборки GRUB: " +
+                resolverError,
+            logLevel::ERROR);
+        return false;
+    }
+
     GrubConfiguration configuration(GrubConfigurationOptions{
         platformConfig_.defaultsPath,
-        platformConfig_.rebuildCandidates,
-        true
+        rebuildExecutable,
+        platformConfig_.rebuildArguments,
+        enforceOwnership_
     });
     std::string error;
     if (!configuration.load(error)) {
         this->log("Не удалось загрузить GRUB-конфигурацию: " + error,
                   logLevel::ERROR);
         return false;
-    }
-
-    const GrubValueObservation observation = configuration.inspect(grubKey);
-    if (observation.found && observation.value == actualExpected) {
-        this->log("Отклонений " + grubKey + " не обнаружено",
-                  logLevel::INFO);
-        return true;
     }
 
     const GrubOperationResult operation =
@@ -64,5 +85,11 @@ bool Grub::applyGrubValue(
         return false;
     }
     this->log(operation.message, logLevel::INFO);
+    if (operation.changed) {
+        this->notify(
+            "Исправлена конфигурация GRUB для политики: " +
+                this->policyName,
+            notifyLevel::WARN);
+    }
     return true;
 }

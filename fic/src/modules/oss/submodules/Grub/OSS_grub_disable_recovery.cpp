@@ -4,8 +4,9 @@
 #include <utility>
 
 OSS_grub_disable_recovery::OSS_grub_disable_recovery(
-    fic::platform::GrubPlatformConfig platformConfig)
-    : Grub(std::move(platformConfig)) {
+    fic::platform::GrubPlatformConfig platformConfig,
+    const fic::platform::PlatformExecutableResolver& executables)
+    : Grub(std::move(platformConfig), executables) {
     this->policyName = "grub_disable_recovery";
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
         std::vector<std::string>{"ENABLE", "DISABLE"});

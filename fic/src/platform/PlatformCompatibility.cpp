@@ -176,6 +176,19 @@ bool validatePamServices(const std::vector<std::string>& services,
     return true;
 }
 
+bool validateArguments(const std::vector<std::string>& arguments,
+                       const std::string& label,
+                       std::string& error) {
+    for (const std::string& argument : arguments) {
+        if (argument.empty() || argument.find_first_of("\r\n") !=
+                std::string::npos || argument.find('\0') != std::string::npos) {
+            error = label + " contains an invalid argument";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
                              const std::string& label,
                              std::string& error) {
@@ -259,6 +272,10 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                       "LightDM configuration path", error) ||
         !validatePaths(profile.displayManager.gdmConfigCandidates,
                        "GDM configuration path", error) ||
+        !validatePath(profile.grub.defaultsPath,
+                      "GRUB defaults path", error) ||
+        !validateArguments(profile.grub.rebuildArguments,
+                           "GRUB rebuild arguments", error) ||
         !validateFileAccessRules(profile.dac.protectedSystemFiles,
                                  "DAC protected system file", error) ||
         !validateFileAccessRules(profile.dac.protectedSystemCommands,

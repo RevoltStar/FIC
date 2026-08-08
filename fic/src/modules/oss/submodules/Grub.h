@@ -2,6 +2,7 @@
 #define FIC_OSS_GRUB_H
 
 #include "modules/oss/OSS.h"
+#include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
 
 #include <functional>
@@ -15,7 +16,9 @@ public:
     bool apply() final;
 
 protected:
-    explicit Grub(fic::platform::GrubPlatformConfig platformConfig);
+    Grub(fic::platform::GrubPlatformConfig platformConfig,
+         const fic::platform::PlatformExecutableResolver& executables,
+         bool enforceOwnership = true);
 
     bool applyGrubValue(
         const std::string& grubKey,
@@ -24,6 +27,8 @@ protected:
     );
 
     fic::platform::GrubPlatformConfig platformConfig_;
+    const fic::platform::PlatformExecutableResolver& executables_;
+    bool enforceOwnership_;
 
     virtual bool applyGrub(const std::string& expectedValue) = 0;
 };

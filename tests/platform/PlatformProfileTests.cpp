@@ -127,6 +127,8 @@ void testSelectedProfile() {
     require(profile.pam.passwordHistoryConfigPath ==
                 "/etc/security/pwhistory.conf",
             "pam_pwhistory configuration path is incorrect");
+    require(profile.grub.defaultsPath == "/etc/default/grub",
+            "GRUB defaults path is incorrect");
     require(hasRule(profile.dac.protectedSystemFiles,
                     profile.sudo.mainConfigPath),
             "the selected sudoers configuration must be protected by DAC policy");
@@ -154,6 +156,17 @@ void testSelectedProfile() {
                 "ALT p11 must not use the obsolete securetty path");
         require(hasRule(profile.dac.protectedSystemCommands, "/sbin/ip"),
                 "ALT p11 ip command path is incorrect");
+        require(executableSpec(
+                    profile,
+                    fic::platform::ExecutableId::UpdateGrub).candidates ==
+                    std::vector<std::filesystem::path>({
+                        "/usr/sbin/grub-mkconfig",
+                        "/usr/bin/grub-mkconfig"
+                    }),
+                "ALT p11 GRUB generator candidates are incorrect");
+        require(profile.grub.rebuildArguments ==
+                    std::vector<std::string>({"-o", "/etc/grub.cfg"}),
+                "ALT p11 grub-mkconfig must write /etc/grub.cfg");
     } else if (profile.id == "debian-12") {
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,
@@ -170,6 +183,16 @@ void testSelectedProfile() {
                 "Debian 12 GRUB configuration path is incorrect");
         require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
                 "Debian 12 ip command path is incorrect");
+        require(executableSpec(
+                    profile,
+                    fic::platform::ExecutableId::UpdateGrub).candidates ==
+                    std::vector<std::filesystem::path>({
+                        "/usr/sbin/update-grub",
+                        "/usr/bin/update-grub"
+                    }),
+                "Debian 12 update-grub candidates are incorrect");
+        require(profile.grub.rebuildArguments.empty(),
+                "Debian 12 update-grub must not receive arguments");
     } else if (profile.id == "debian-13") {
         require(profile.hostCompatibility.versionIds ==
                     std::vector<std::string>({"13"}),
@@ -194,6 +217,8 @@ void testSelectedProfile() {
                 "Debian 13 df command path must use the merged-/usr location");
         require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
                 "Debian 13 ip command path is incorrect");
+        require(profile.grub.rebuildArguments.empty(),
+                "Debian 13 update-grub must not receive arguments");
     } else if (profile.id == "ubuntu-24.04") {
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,
@@ -207,6 +232,8 @@ void testSelectedProfile() {
                 "Ubuntu 24.04 must protect /etc/bash.bashrc");
         require(hasRule(profile.dac.protectedSystemCommands, "/usr/bin/df"),
                 "Ubuntu 24.04 df command path is incorrect");
+        require(profile.grub.rebuildArguments.empty(),
+                "Ubuntu 24.04 update-grub must not receive arguments");
     } else {
         throw std::runtime_error("unexpected selected platform profile: " + profile.id);
     }
@@ -291,6 +318,16 @@ void testInvalidProfileIsRejected() {
     profile.pam.passwordHistoryConfigPath = "etc/security/pwhistory.conf";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM option file path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.grub.defaultsPath = "etc/default/grub";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative GRUB defaults path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.grub.rebuildArguments.push_back("unsafe\nargument");
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a GRUB generator argument containing a newline must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.dac.protectedSystemFiles.front().permissions = 0;
