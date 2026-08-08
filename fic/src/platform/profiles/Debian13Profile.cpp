@@ -82,7 +82,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.dac.protectedSystemFiles = {
         {"/etc/bash.bashrc", "root", "root", 0644},
         {"/etc/crontab", "root", "root", 0600},
-        {"/etc/fstab", "root", "root", 0640},
+        {"/etc/fstab", "root", "root", 0644},
         {"/etc/hostname", "root", "root", 0644},
         {"/etc/hosts", "root", "root", 0644},
         {"/etc/hosts.allow", "root", "root", 0644},
