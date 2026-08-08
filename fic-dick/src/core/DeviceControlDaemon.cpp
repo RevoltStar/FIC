@@ -640,7 +640,7 @@ json connected_blockers_for_override(DB& db,
     json blockers = json::array();
 
     for (const DeviceInfo& device : affected_devices_for_override(db, target)) {
-        /* Отключаем проверку на подключение перед блокировкой
+        /* Отключаем проверку на подключение перед блокировкой (блокировка только в БД, без реальной деактивации устройства)
         if (!is_connected(device, bootId)) {
             continue;
         }
