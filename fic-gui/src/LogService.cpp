@@ -33,22 +33,25 @@ void LogService::stop()
 
 void LogService::reloadAll()
 {
-    if (bootId_.isEmpty()) {
-        bootId_ = currentBootId();
-    }
+    logCursor_ = 0;
 
-    sequenceCounter_ = 0;
-    knownRecordCount_ = 0;
+    int newCursor = 0;
 
-    QStringList categories;
-    QVector<LogRecord> records = loadRecordsFromDaemon(&categories, 0, true);
-    std::sort(records.begin(), records.end(), recordLessThan);
+    QVector<LogRecord> records =
+    loadRecordsFromDaemon(
+        &categories,
+        0,
+        true,
+        &newCursor);
 
-    knownRecordCount_ = records.size();
-    updateCategories(categories);
+    logCursor_ = newCursor;
+
+    std::sort(
+        records.begin(),
+        records.end(),
+        recordLessThan);
 
     emit fullReloaded(records);
-    emit lastUpdateChanged(QDateTime::currentDateTime());
 }
 
 void LogService::refreshIncremental()
@@ -65,7 +68,12 @@ void LogService::refreshIncremental()
     }
 
     QStringList categories;
-    QVector<LogRecord> records = loadRecordsFromDaemon(&categories, knownRecordCount_, false);
+    QVector<LogRecord> records =
+    loadRecordsFromDaemon(
+        &categories,
+        logCursor_,
+        false,
+        &logCursor_);
     updateCategories(categories);
 
     if (records.isEmpty()) {
@@ -124,77 +132,106 @@ QString LogService::currentBootId() const
     return QString::fromStdString(response.value("boot_id", ""));
 }
 
-QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories,
-                                                      int offset,
-                                                      bool loadAllPages)
+QVector<LogRecord> LogService::loadRecordsFromDaemon(
+    QStringList* categories,
+    int offset,
+    bool loadAllPages,
+    int* resultingOffset)
 {
     QVector<LogRecord> records;
+
     if (categories != nullptr) {
         categories->clear();
     }
 
     constexpr int pageSize = 500;
     constexpr int maximumPages = 200;
+
     int currentOffset = offset;
-    for (int page = 0; page < maximumPages; ++page) {
-        auto response = fic::ipc::Client().request({
-            {"command", "log_records"},
-            {"boot_id", bootId_.toStdString()},
-            {"offset", currentOffset},
-            {"limit", pageSize}
-        });
+
+    for (int page = 0;
+         page < maximumPages;
+         ++page) {
+
+        auto response =
+            fic::ipc::Client().request({
+                {"command", "log_records"},
+                {"boot_id", bootId_.toStdString()},
+                {"offset", currentOffset},
+                {"limit", pageSize}
+            });
 
         if (!response.value("ok", false)) {
             break;
         }
 
-        const std::string responseBootId = response.value("boot_id", "");
-        if (!responseBootId.empty()) {
-            bootId_ = QString::fromStdString(responseBootId);
-        }
+        // categories...
 
-        if (categories != nullptr && response.contains("categories") &&
-            response["categories"].is_array()) {
-            for (const auto &category : response["categories"]) {
-                if (category.is_string()) {
-                    categories->append(
-                        QString::fromStdString(category.get<std::string>()).trimmed());
-                }
-            }
-        }
+        if (response.contains("records") &&
+            response["records"].is_array()) {
 
-        if (response.contains("records") && response["records"].is_array()) {
-            for (const auto &item : response["records"]) {
+            for (const auto& item :
+                 response["records"]) {
+
                 if (!item.is_object()) {
                     continue;
                 }
 
-                const QString line = QString::fromStdString(item.value("line", ""));
-                const QString category = QString::fromStdString(item.value("category", ""));
-                const QString sourceFile = QString::fromStdString(item.value("source_file", ""));
+                const QString line =
+                    QString::fromStdString(
+                        item.value("line", ""));
+
+                const QString category =
+                    QString::fromStdString(
+                        item.value("category", ""));
+
+                const QString sourceFile =
+                    QString::fromStdString(
+                        item.value("source_file", ""));
+
                 if (line.isEmpty()) {
                     continue;
                 }
 
                 LogRecord record;
-                if (!parseLogLine(line, category, sourceFile, &record)) {
+
+                if (!parseLogLine(
+                        line,
+                        category,
+                        sourceFile,
+                        &record)) {
                     continue;
                 }
 
-                record.byteSize = static_cast<qint64>(
-                    item.value("byte_size", line.toUtf8().size()));
+                record.byteSize =
+                    static_cast<qint64>(
+                        item.value(
+                            "byte_size",
+                            line.toUtf8().size()));
+
                 records.append(record);
             }
         }
 
-        if (!response.value("has_more", false) || !loadAllPages) {
+        const int nextOffset =
+            response.value(
+                "next_offset",
+                currentOffset);
+
+        if (nextOffset < currentOffset) {
             break;
         }
-        const int nextOffset = response.value("next_offset", currentOffset);
-        if (nextOffset <= currentOffset) {
-            break;
-        }
+
         currentOffset = nextOffset;
+
+        if (!response.value("has_more", false) ||
+            !loadAllPages) {
+            break;
+        }
+    }
+
+    if (resultingOffset != nullptr) {
+        *resultingOffset = currentOffset;
     }
 
     if (categories != nullptr) {
@@ -204,7 +241,6 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(QStringList *categories,
 
     return records;
 }
-
 bool LogService::parseLogLine(const QString &line,
                               const QString &category,
                               const QString &sourceFile,

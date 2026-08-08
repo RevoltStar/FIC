@@ -508,11 +508,19 @@ json log_records_json(const std::string& requestedBootId, int offset, int limit)
         }
     }
 
-    json result = {{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId},
-                   {"categories", categories}, {"records", records}, {"has_more", hasMore}};
-    if (hasMore) {
-        result["next_offset"] = offset + static_cast<int>(records.size());
-    }
+    const int nextOffset = hasMore
+    ? offset + static_cast<int>(records.size())
+    : static_cast<int>(recordIndex);
+
+    return json{
+        {"ok", true},
+        {"message", "logs loaded"},
+        {"boot_id", bootId},
+        {"categories", categories},
+        {"records", records},
+        {"has_more", hasMore},
+        {"next_offset", nextOffset}
+    };
     return result;
 }
 
