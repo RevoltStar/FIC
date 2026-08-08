@@ -33,16 +33,22 @@ void LogService::stop()
 
 void LogService::reloadAll()
 {
+    if (bootId_.isEmpty()) {
+        bootId_ = currentBootId();
+    }
+
+    sequenceCounter_ = 0;
     logCursor_ = 0;
 
+    QStringList categories;
     int newCursor = 0;
 
     QVector<LogRecord> records =
-    loadRecordsFromDaemon(
-        &categories,
-        0,
-        true,
-        &newCursor);
+        loadRecordsFromDaemon(
+            &categories,
+            0,
+            true,
+            &newCursor);
 
     logCursor_ = newCursor;
 
@@ -51,13 +57,21 @@ void LogService::reloadAll()
         records.end(),
         recordLessThan);
 
+    updateCategories(categories);
+
     emit fullReloaded(records);
+    emit lastUpdateChanged(
+        QDateTime::currentDateTime());
 }
 
 void LogService::refreshIncremental()
 {
-    const QString actualBootId = currentBootId();
-    if (!actualBootId.isEmpty() && actualBootId != bootId_) {
+    const QString actualBootId =
+        currentBootId();
+
+    if (!actualBootId.isEmpty() &&
+        actualBootId != bootId_) {
+
         bootId_ = actualBootId;
         reloadAll();
         return;
@@ -68,33 +82,25 @@ void LogService::refreshIncremental()
     }
 
     QStringList categories;
+    int newCursor = logCursor_;
+
     QVector<LogRecord> records =
-    loadRecordsFromDaemon(
-        &categories,
-        logCursor_,
-        false,
-        &logCursor_);
+        loadRecordsFromDaemon(
+            &categories,
+            logCursor_,
+            false,
+            &newCursor);
+
+    logCursor_ = newCursor;
+
     updateCategories(categories);
 
-    if (records.isEmpty()) {
-        emit lastUpdateChanged(QDateTime::currentDateTime());
-        return;
+    if (!records.isEmpty()) {
+        emit recordsAppended(records);
     }
 
-    if (knownRecordCount_ == 0) {
-        knownRecordCount_ = records.size();
-        emit fullReloaded(records);
-    } else {
-        QVector<LogRecord> appendedRecords;
-        appendedRecords.reserve(records.size());
-        for (const LogRecord &record : records) {
-            appendedRecords.append(record);
-        }
-        knownRecordCount_ += records.size();
-        emit recordsAppended(appendedRecords);
-    }
-
-    emit lastUpdateChanged(QDateTime::currentDateTime());
+    emit lastUpdateChanged(
+        QDateTime::currentDateTime());
 }
 
 QString LogService::bootId() const
@@ -164,8 +170,6 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(
         if (!response.value("ok", false)) {
             break;
         }
-
-        // categories...
 
         if (response.contains("records") &&
             response["records"].is_array()) {

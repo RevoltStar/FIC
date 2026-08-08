@@ -38,7 +38,6 @@ private:
     QStringList categories_;
     QTimer refreshTimer_;
     quint64 sequenceCounter_ = 0;
-    qsizetype knownRecordCount_ = 0;
     int logCursor_ = 0;
 
     QString currentBootId() const;
