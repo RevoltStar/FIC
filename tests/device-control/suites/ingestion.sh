@@ -291,6 +291,33 @@ test_udev_burst_before_device_daemon_is_quiet() {
     wait_for_fic_daemon || return
 }
 
+test_explicit_late_reconciliation() {
+    local response ok
+
+    wait_for_fic_daemon || return
+
+    remote_sudo "udevadm settle" || return
+
+    remote_sudo "$REMOTE_FIC_DICK reconcile" ||
+        fail "explicit late device reconciliation failed" ||
+        return
+
+    response=$(
+        device_ipc \
+            '{"command":"device_tree_revision"}'
+    ) || return
+
+    ok=$(
+        printf '%s\n' "$response" |
+            json_field ok
+    )
+
+    expect_eq \
+        "$ok" \
+        "True" \
+        "device API must remain available after explicit reconciliation"
+}
+
 run_ingestion_suite() {
     run_test \
         "udev event burst uses event socket" \
@@ -319,4 +346,8 @@ run_ingestion_suite() {
     run_test \
         "pre-daemon udev burst is quiet" \
         test_udev_burst_before_device_daemon_is_quiet
+
+    run_test \
+        "explicit late device reconciliation" \
+        test_explicit_late_reconciliation
 }

@@ -1,4 +1,18 @@
 #!/bin/sh
 set -e
 
-exec @FIC_PRIVATE_BINDIR@/fic-dick wait-daemon 15
+for candidate in \
+    /usr/bin/udevadm \
+    /usr/sbin/udevadm \
+    /sbin/udevadm \
+    /bin/udevadm
+do
+    if [ -x "$candidate" ]; then
+        "$candidate" settle
+        @FIC_PRIVATE_BINDIR@/fic-dick wait-daemon 60
+        exec @FIC_PRIVATE_BINDIR@/fic-dick reconcile
+    fi
+done
+
+echo "udevadm not found" >&2
+exit 1

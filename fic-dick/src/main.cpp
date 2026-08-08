@@ -194,22 +194,38 @@ int main(int argc, char* argv[], char* envp[]) {
 
         // Собираем устройства через UDEV
         if (mode == "udev") {
-            return fic::device_control::forward_udev_event_to_daemon(env_to_map(envp));
+            return fic::device_control::
+                forward_udev_event_to_daemon(
+                env_to_map(envp));
+            
+        }
+        else if (mode == "reconcile") {
+            return fic::device_control::
+            request_reconciliation();
         }
         else if (mode == "check-permanent") {
-            return fic::device_control::request_permanent_check();
+            return fic::device_control::
+                request_permanent_check();
         }
         else if (mode == "wait-daemon") {
             int timeoutSeconds = 10;
+
             if (argc > 2) {
                 try {
-                    timeoutSeconds = std::stoi(argv[2]);
+                    timeoutSeconds =
+                        std::stoi(argv[2]);
                 } catch (const std::exception&) {
-                    std::cerr << "Invalid wait-daemon timeout: " << argv[2] << std::endl;
+                    std::cerr
+                        << "Invalid wait-daemon timeout: "
+                        << argv[2]
+                        << std::endl;
+
                     return 1;
                 }
             }
-            return fic::device_control::wait_for_daemon(timeoutSeconds);
+
+            return fic::device_control::
+                wait_for_daemon(timeoutSeconds);
         }
         // Собираем информацию о ЦПУ, м/плате, ОЗУ
         else if (mode == "cpu_board_memory") {

@@ -1,11 +1,11 @@
 [Unit]
-Description=FIC UDEV info collector
-After=fic-device.service
+Description=FIC late UDEV device reconciliation
 Requires=fic-device.service
+After=fic-device.service systemd-udev-settle.service
 
 [Service]
-ExecStart=@FIC_PRIVATE_BINDIR@/fic-udevadm-trigger
 Type=oneshot
+ExecStart=@FIC_PRIVATE_BINDIR@/fic-udevadm-trigger
 RemainAfterExit=yes
 UMask=0027
 

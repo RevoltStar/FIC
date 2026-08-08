@@ -167,6 +167,7 @@ std::string sanitize_audit_value(std::string value) {
 
 bool is_mutating_command(const std::string& command) {
     return command == "udev_event" ||
+           command == "device_reconcile" ||
            command == "device_update_control_level" ||
            command == "device_update_ignore_hierarchy" ||
            command == "device_reset_control" ||
@@ -1173,25 +1174,109 @@ json handle_db_request(const json& request) {
     return fic::ipc::make_error_response("unknown device command: " + command);
 }
 
-json handle_request(const json& request, const PeerCredentials& peer) {
-    const std::string command = request.value("command", "");
+bool run_device_reconciliation(const std::string& reason) {
+    log_device("device reconciliation started: " + reason, logLevel::INFO);
+    const std::optional<std::string> udevadm = find_udevadm();
+    if (!udevadm.has_value()) {
+        log_device("device reconciliation failed: udevadm not found", logLevel::ERROR);
+        return false;
+    }
+
+    ProcessOptions options;
+    options.timeout = std::chrono::milliseconds(15000);
+    ProcessResult result = ProcessExecutor::execute(udevadm.value(), {"info", "--export-db"}, options);
+    if (!result.success()) {
+        log_device("device reconciliation failed: udevadm info --export-db failed: " +
+                   result.error + " " + result.standardError, logLevel::ERROR);
+        return false;
+    }
+
+    std::size_t processed = 0;
+    for (const DeviceEventEnvelope& event : parse_udevadm_export_db(result.standardOutput)) {
+        UDEVInfoCollector checker;
+        if (!checker.check_devpath(event.devpath.c_str())) {
+            continue;
+        }
+        json response = process_device_event(event);
+        if (response.value("ok", false)) {
+            ++processed;
+        } else {
+            log_device("device reconciliation event failed: " +
+                       response.value("message", "unknown error"), logLevel::ERROR);
+        }
+    }
+
+    DB db(DeviceRuntimePaths::get().databaseOptions());
+    db.initializeDatabase();
+    const std::string bootId = current_boot_id();
+    std::size_t removed = 0;
+    for (const DeviceInfo& device : db.getAllDevices()) {
+        if (device.boot_id != bootId || !is_managed_subsystem(device.subsystem) ||
+            sysfs_devpath_exists(device.devpath)) {
+            continue;
+        }
+        if (reset_subtree_boot_id(db, device.id)) {
+            add_event(db, device.id, "disconnect", "success", "device absent during reconciliation");
+            ++removed;
+        }
+    }
+
+    json permanentCheck = check_permanent_devices(db);
+    if (!permanentCheck.value("ok", true)) {
+        log_device("device reconciliation permanent check failed: " +
+                   permanentCheck.value("message", "unknown error"), logLevel::ERROR);
+    }
+    log_device("device reconciliation completed: processed=" + std::to_string(processed) +
+               " removed=" + std::to_string(removed), logLevel::INFO);
+    return true;
+}
+
+json handle_request(
+    const json& request,
+    const PeerCredentials& peer) {
+
+    const std::string command =
+        request.value("command", "");
+
     if (command == "status") {
         return json{
             {"ok", true},
             {"message", "fic device daemon is running"},
             {"product_version", fic::version::PRODUCT_VERSION},
-            {"database_schema_version", fic::version::DEVICE_DB_SCHEMA_VERSION}
+            {"database_schema_version",
+             fic::version::DEVICE_DB_SCHEMA_VERSION}
         };
     }
+
     if (command == "shutdown") {
         g_stop = true;
-        return fic::ipc::make_ok_response("shutdown requested");
+        return fic::ipc::make_ok_response(
+            "shutdown requested");
     }
+
     if (command == "udev_event") {
         if (!peer.available || peer.uid != 0) {
-            return fic::ipc::make_error_response("udev_event requires root peer credentials");
+            return fic::ipc::make_error_response(
+                "udev_event requires root peer credentials");
         }
+
         return handle_udev_event(request);
+    }
+
+    if (command == "device_reconcile") {
+        if (!peer.available || peer.uid != 0) {
+            return fic::ipc::make_error_response(
+                "device_reconcile requires root peer credentials");
+        }
+
+        if (!run_device_reconciliation(
+                "explicit reconciliation request")) {
+            return fic::ipc::make_error_response(
+                "device reconciliation failed");
+        }
+
+        return fic::ipc::make_ok_response(
+            "device reconciliation completed");
     }
 
     return handle_db_request(request);
@@ -1246,8 +1331,14 @@ bool validate_device_request_schema(const json& request, std::string& error) {
     }
 
     const std::string command = request.at("command").get<std::string>();
-    if (command == "shutdown" || command == "device_check_permanent") {
-        return fic::ipc::request_has_only_fields(request, {"command"}, error);
+    if (command == "shutdown" ||
+        command == "device_check_permanent" ||
+        command == "device_reconcile") {
+
+        return fic::ipc::request_has_only_fields(
+            request,
+            {"command"},
+            error);
     }
     if (command == "udev_event") {
         return fic::ipc::request_has_only_fields(
@@ -1684,63 +1775,6 @@ bool sysfs_devpath_exists(const std::string& devpath) {
     return std::filesystem::exists(std::filesystem::path("/sys") / devpath.substr(1), error) && !error;
 }
 
-bool run_device_reconciliation(const std::string& reason) {
-    log_device("device reconciliation started: " + reason, logLevel::INFO);
-    const std::optional<std::string> udevadm = find_udevadm();
-    if (!udevadm.has_value()) {
-        log_device("device reconciliation failed: udevadm not found", logLevel::ERROR);
-        return false;
-    }
-
-    ProcessOptions options;
-    options.timeout = std::chrono::milliseconds(15000);
-    ProcessResult result = ProcessExecutor::execute(udevadm.value(), {"info", "--export-db"}, options);
-    if (!result.success()) {
-        log_device("device reconciliation failed: udevadm info --export-db failed: " +
-                   result.error + " " + result.standardError, logLevel::ERROR);
-        return false;
-    }
-
-    std::size_t processed = 0;
-    for (const DeviceEventEnvelope& event : parse_udevadm_export_db(result.standardOutput)) {
-        UDEVInfoCollector checker;
-        if (!checker.check_devpath(event.devpath.c_str())) {
-            continue;
-        }
-        json response = process_device_event(event);
-        if (response.value("ok", false)) {
-            ++processed;
-        } else {
-            log_device("device reconciliation event failed: " +
-                       response.value("message", "unknown error"), logLevel::ERROR);
-        }
-    }
-
-    DB db(DeviceRuntimePaths::get().databaseOptions());
-    db.initializeDatabase();
-    const std::string bootId = current_boot_id();
-    std::size_t removed = 0;
-    for (const DeviceInfo& device : db.getAllDevices()) {
-        if (device.boot_id != bootId || !is_managed_subsystem(device.subsystem) ||
-            sysfs_devpath_exists(device.devpath)) {
-            continue;
-        }
-        if (reset_subtree_boot_id(db, device.id)) {
-            add_event(db, device.id, "disconnect", "success", "device absent during reconciliation");
-            ++removed;
-        }
-    }
-
-    json permanentCheck = check_permanent_devices(db);
-    if (!permanentCheck.value("ok", true)) {
-        log_device("device reconciliation permanent check failed: " +
-                   permanentCheck.value("message", "unknown error"), logLevel::ERROR);
-    }
-    log_device("device reconciliation completed: processed=" + std::to_string(processed) +
-               " removed=" + std::to_string(removed), logLevel::INFO);
-    return true;
-}
-
 } // namespace
 
 int run_daemon(const std::string& socketPathArg) {
@@ -2050,6 +2084,28 @@ int request_permanent_check() {
         log_device("permanent device check failed: " + response.value("message", "unknown error"), logLevel::ERROR);
         return 1;
     }
+    return 0;
+}
+int request_reconciliation() {
+    json response =
+        fic::ipc::Client(
+            get_device_socket_path_from_env(),
+            std::chrono::seconds(60))
+            .request({
+                {"command", "device_reconcile"}
+            });
+
+    if (!response.value("ok", false)) {
+        log_device(
+            "device reconciliation request failed: " +
+            response.value(
+                "message",
+                "unknown error"),
+            logLevel::ERROR);
+
+        return 1;
+    }
+
     return 0;
 }
 
