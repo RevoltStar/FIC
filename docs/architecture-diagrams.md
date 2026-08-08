@@ -34,7 +34,7 @@ flowchart LR
     gui -->|логи текущей загрузки| daemon
 ```
 
-Главная идея проекта: демон `fic` владеет изменением конфигурации политик и применением обычных системных политик к ОС. `fic-dick --daemon` владеет деревом устройств, `devices.db`, udev-событиями и исполнением решений контроля устройств. `fic-cli` и `fic-gui` являются клиентами обоих IPC API: `/run/fic/fic.sock` для общих политик и `/run/fic/fic-device.sock` для дерева устройств.
+Главная идея проекта: демон `fic` владеет изменением конфигурации политик и применением обычных системных политик к ОС. `fic-dick --daemon` владеет деревом устройств, `devices.db`, initial reconciliation, runtime udev-ingestion и исполнением решений контроля устройств. `fic-cli` и `fic-gui` являются клиентами административных IPC API: `/run/fic/fic.sock` для общих политик и `/run/fic/fic-device.sock` для дерева устройств. Runtime udev-события поступают в отдельный локальный endpoint `/run/fic/fic-device-events.sock`.
 
 Категорийные политики DC (`block_usb_storage`,
 `block_printers_scanners`, `block_optical_drives`) имеют фиксированное значение
@@ -89,6 +89,9 @@ flowchart TB
 
     subgraph DeviceDaemon["fic-dick --daemon"]
         deviceIpc[Unix socket server<br/>/run/fic/fic-device.sock]
+        eventIpc[Unix datagram ingress<br/>/run/fic/fic-device-events.sock]
+        reconcile[initial/full reconciliation<br/>udev/sysfs inventory]
+        eventQueue[bounded event queue<br/>coalescing + overflow dirty flag]
         deviceApi[device_tree_revision / device_get / device_children / device_attributes]
         devicePolicy[effective policy decision]
         deviceApply[USB / PCI / block enforcement]
@@ -118,6 +121,9 @@ flowchart TB
     requestRouter --> logApi
     requestRouter --> lockApi
     deviceIpc --> deviceApi
+    eventIpc --> eventQueue
+    reconcile --> eventQueue
+    eventQueue --> devicePolicy
     deviceIpc --> devicePolicy
     devicePolicy --> deviceApply
 
@@ -236,16 +242,39 @@ flowchart LR
     commands --> tools[calc_hash / lock / unlock / lockstatus]
 ```
 
-Команды дерева устройств обслуживает `fic-dick --daemon` на `/run/fic/fic-device.sock`:
+Команды дерева устройств обслуживает `fic-dick --daemon` на `/run/fic/fic-device.sock`.
+Этот socket является административным request/response API для GUI/CLI и не
+используется как hotplug event queue:
 
 ```mermaid
 flowchart LR
     deviceCommands[device command]
     deviceCommands --> read[device_tree_revision / device_root / device_get / device_children current or include_disconnected / device_attributes / device_events]
     deviceCommands --> mutate[device_update_control_level / device_update_ignore_hierarchy / device_reset_control / device_delete]
-    deviceCommands --> udev[udev_event]
+    deviceCommands --> compat[udev_event root-only compatibility/testing path]
     deviceCommands --> permanent[device_check_permanent]
 ```
+
+Runtime udev-события идут отдельно:
+
+```mermaid
+flowchart LR
+    udev[udev rule] --> helper["fic-dick udev"]
+    helper -->|bounded datagram| eventSock["/run/fic/fic-device-events.sock"]
+    eventSock --> auth[SO_PASSCRED root sender check]
+    auth --> queue[bounded RAM queue]
+    queue --> process[common process_device_event]
+    overflow[overflow / delivery failure] --> dirty[reconciliation required]
+    dirty --> reconcile[full udev/sysfs reconciliation]
+    reconcile --> process
+```
+
+Initial inventory больше не строится через `udevadm trigger --action=add`.
+При старте `fic-dick --daemon` выполняет full reconciliation текущего
+udev/sysfs состояния, затем проверяет `permanent` устройства. Udev event stream
+рассматривается как notification mechanism: событие сообщает, что состояние
+могло измениться, а authoritative состояние берется из фактического udev/sysfs
+inventory.
 
 `device_update_control_level`, `device_update_ignore_hierarchy` и
 `device_reset_control` являются изменениями желаемого состояния. Они могут

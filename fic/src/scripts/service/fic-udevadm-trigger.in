@@ -1,14 +1,5 @@
 #!/bin/sh
 set -e
 
-for candidate in /usr/bin/udevadm /usr/sbin/udevadm /sbin/udevadm /bin/udevadm; do
-    if [ -x "$candidate" ]; then
-        @FIC_PRIVATE_BINDIR@/fic-dick wait-daemon 15
-        "$candidate" trigger --action=add
-        "$candidate" settle
-        exec @FIC_PRIVATE_BINDIR@/fic-dick check-permanent
-    fi
-done
-
-echo "udevadm not found" >&2
-exit 1
+@FIC_PRIVATE_BINDIR@/fic-dick wait-daemon 15
+exec @FIC_PRIVATE_BINDIR@/fic-dick check-permanent

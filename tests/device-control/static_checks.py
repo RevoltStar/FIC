@@ -26,6 +26,8 @@ def main():
     db_cpp = root / "fic-common" / "fic-device-db" / "src" / "DB.cpp"
     udev_collector = root / "fic-dick" / "src" / "modules" / "UDEVInfoCollector.cpp"
     gui_tree = root / "fic-gui" / "src" / "DeviceTree.cpp"
+    udev_trigger = root / "fic" / "src" / "scripts" / "service" / "fic-udevadm-trigger.in"
+    udev_rules = root / "fic" / "src" / "scripts" / "udev" / "99-fic-devices.rules.in"
 
     with sqlite3.connect(db_path) as connection:
         columns = [row[1] for row in connection.execute("PRAGMA table_info(devices)")]
@@ -73,10 +75,19 @@ def main():
         "retry_sysfs_action",
         "collect_missing_permanent_devices",
         "device_tree_revision",
+        "SOCK_DGRAM",
+        "SO_PASSCRED",
+        "SCM_CREDENTIALS",
+        "MAX_DEVICE_EVENT_QUEUE",
+        "run_device_reconciliation",
+        "fic-device-events.sock",
+        "fic-device-reconcile.required",
     ]:
         require(marker in daemon_source, f"missing device daemon guard: {marker}")
     require("create_admin_server_socket" in daemon_source,
             "device daemon must use the shared guarded socket creator")
+    require('fic::ipc::Client(socketPath).request({\\n        {"command", "udev_event"}' not in daemon_source,
+            "fic-dick udev must not use synchronous administrative IPC")
     require("dc_policy_enabled_and_true" not in daemon_source,
             "DC policy state must not depend on a configurable boolean value")
     require('config.getPolicyStatus(policy) == "ENABLE"' in daemon_source,
@@ -109,6 +120,16 @@ def main():
 
     udev_source = read_text(udev_collector)
     require("/devices/virtual/block/" in udev_source, "virtual block devices must be accepted")
+
+    trigger_source = read_text(udev_trigger)
+    require("udevadm" not in trigger_source,
+            "boot device inventory must not depend on udevadm trigger")
+    require("check-permanent" in trigger_source,
+            "boot helper must still run permanent-device check")
+
+    rules_source = read_text(udev_rules)
+    require('RUN+="@FIC_PRIVATE_BINDIR@/fic-dick udev"' in rules_source,
+            "udev rule must keep the short-lived fic-dick udev producer")
 
     return 0
 

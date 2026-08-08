@@ -42,9 +42,11 @@ container. The resulting daemon validates `ID=altlinux` and
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`
-are enabled and started automatically. The coldplug device scan service
-`fic_get_device_udev_info.service` is enabled and runs through systemd when
-requested by the target.
+are enabled and started automatically. `fic-device.service` performs initial
+device reconciliation itself from current udev/sysfs inventory. The
+`fic_get_device_udev_info.service` helper no longer runs a mass
+`udevadm trigger`; it waits for the device daemon and then runs the
+permanent-device check.
 
 `fic-session-agent` installs:
 

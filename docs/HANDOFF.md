@@ -7,57 +7,82 @@
 
 - Обновлено: 2026-08-08.
 - Ветка: `main`.
-- Базовый commit: `1c8af81`.
-- Текущая задача: разрешить ручную блокировку уже подключенного устройства без
-  немедленной деактивации.
+- Базовый commit: `5932377`.
+- Текущая задача: архитектурно исправить обработку udev-событий и boot device
+  inventory в компоненте контроля устройств.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
 
-- `fic-dick` больше не отклоняет `device_update_control_level`,
-  `device_update_ignore_hierarchy` и `device_reset_control`, если новое правило
-  делает уже подключенное устройство эффективным `blocked`.
-- Ручное изменение правила теперь меняет желаемое состояние в `devices.db`, но
-  не вызывает `enforce_block()` для уже подключенного устройства.
-- Если есть уже подключенные затронутые устройства, ответ device API содержит
-  `deferred_block=true`, `deferred_blockers[]` и текстовое `warning`.
-- `fic-cli device set/reset/ignore-hierarchy` печатает предупреждение и список
-  `deferred_blocker`, когда блокировка отложена.
-- `fic-gui` показывает информационное сообщение после успешной операции с
-  отложенной блокировкой.
-- Device-control enforcement tests обновлены с прежнего контракта “connected
-  block is rejected” на “connected block is accepted and deferred”.
-- Документация уточняет, что ручные правила контроля устройств задают желаемое
-  состояние, а фактическое отключение выполняется при следующем udev
-  `add/change`.
+- `fic-dick --daemon` выполняет initial/full reconciliation текущего
+  udev/sysfs inventory самостоятельно через `udevadm info --export-db`.
+- Boot inventory больше не строится через массовый `udevadm trigger --action=add`.
+- Общая обработка одного устройства сведена к `process_device_event()`, которую
+  используют и compatibility/admin `udev_event`, и initial reconciliation, и
+  runtime event queue.
+- Добавлен отдельный runtime endpoint `/run/fic/fic-device-events.sock` для
+  udev ingress:
+  - `AF_UNIX/SOCK_DGRAM`;
+  - `SO_PASSCRED`;
+  - root sender credentials check через `SCM_CREDENTIALS`;
+  - socket mode `0600`;
+  - bounded payload `64 KiB`.
+- `fic-dick udev` больше не использует административный request/response IPC.
+  Он отправляет один bounded datagram и быстро завершается.
+- Добавлена bounded in-memory queue для device events (`MAX_DEVICE_EVENT_QUEUE`),
+  coalescing redundant `change` по `SUBSYSTEM + DEVPATH`, overflow dirty flag и
+  forced reconciliation.
+- Если helper не может доставить event datagram, он пишет runtime marker
+  `/run/fic/fic-device-reconcile.required`; daemon забирает marker и выполняет
+  reconciliation.
+- При daemon restart reconciliation выполняется автоматически, поэтому события,
+  потерянные во время downtime, не оставляют БД постоянно рассинхронизированной.
+- `fic-udevadm-trigger` теперь только ждёт готовности device daemon и запускает
+  `check-permanent`; `udevadm trigger`/`udevadm settle` удалены.
+- Документация разделяет initial reconciliation и runtime event ingestion и
+  фиксирует, что udev stream является notification mechanism, а не единственным
+  source of truth.
+- Добавлен runtime shell suite `ingestion` и расширены static checks.
 
 ## Измененные файлы
 
 - `fic-dick/src/core/DeviceControlDaemon.cpp`;
-- `fic-cli/src/main.cpp`;
-- `fic-gui/src/DeviceTree.h`;
-- `fic-gui/src/DeviceTree.cpp`;
-- `tests/device-control/suites/enforcement.sh`;
+- `fic/src/scripts/service/fic-udevadm-trigger.in`;
+- `fic-dick/README.md`;
 - `docs/architecture-diagrams.md`;
-- `fic/README.md`;
+- `packaging/deb/README.md`;
+- `packaging/rpm/README.md`;
+- `tests/device-control/static_checks.py`;
+- `tests/device-control/test.sh`;
+- `tests/device-control/suites/ingestion.sh`;
 - `docs/HANDOFF.md`.
 
 ## Выполненные проверки
 
-- `cmake --build build-check --target fic-dick fic-cli fic-gui -j2` — успешно.
-- `bash -n tests/device-control/suites/enforcement.sh` — успешно.
+- `cmake --build build-check --target fic-dick fic -j2` — успешно.
+- `python3 tests/device-control/static_checks.py .` — успешно.
+- `python3 tests/platform/static_checks.py .` — успешно.
+- `bash -n tests/device-control/test.sh tests/device-control/suites/ingestion.sh`
+  — успешно.
 - `git diff --check` — успешно.
 
 ## Что осталось
 
-- Обязательной незавершенной работы по этой задаче нет.
-- Runtime-проверка с реальным USB/device enforcement не запускалась, потому что
-  она меняет состояние хоста и требует отдельного тестового окружения.
+- Runtime suite `tests/device-control/test.sh --yes-i-know-this-mutates-vm
+  --type ingestion` не запускался локально, потому что он требует управляемый VM
+  стенд и меняет состояние тестовой машины.
+- Полный device-control VM test matrix не запускался.
 
 ## Риски и решения
 
-- Эффективное состояние уже подключенного устройства в API/GUI становится
-  `blocked` сразу после ручного правила, но фактическое устройство остается
-  активным до переподключения. Это намеренный контракт текущей задачи.
-- Категорийные политики DC сохраняют уже принятое поведение: включение политики
-  влияет на подключаемые/переподключаемые устройства, а не на уже подключенные.
+- Initial reconciliation использует `udevadm info --export-db`, а не libudev API.
+  Это сознательный выбор для минимального изменения: проект уже полагается на
+  udev environment и `udevadm`, а collectors остаются единым местом
+  идентификации устройств.
+- Во время самой initial reconciliation event socket уже создан, но daemon
+  обрабатывает очередь после reconciliation. Если producer не может доставить
+  datagram, он ставит reconciliation marker. Если datagram доставлен, он будет
+  обработан после initial pass.
+- Compatibility/admin IPC-команда `udev_event` оставлена root-only для
+  существующих тестов и отладочных сценариев, но production udev rule больше не
+  использует этот путь.

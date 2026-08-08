@@ -7,6 +7,8 @@
 #include <chrono>
 #include <csignal>
 #include <cstring>
+#include <deque>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -16,13 +18,16 @@
 #include <memory>
 #include <limits>
 #include <optional>
+#include <poll.h>
 #include <set>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <unistd.h>
 #include <vector>
 
@@ -30,6 +35,7 @@
 
 #include <fic/core/Logger.h>
 #include <fic/core/ModuleConfigFileHandler.h>
+#include <fic/core/ProcessExecutor.h>
 #include <fic/core/SystemBootInfo.h>
 #include <fic/device-db/DB.h>
 #include <fic/ipc/FicAdminSocket.h>
@@ -81,6 +87,19 @@ struct PermanentViolation {
     std::string devpath;
     std::string source;
 };
+
+struct DeviceEventEnvelope {
+    std::string action;
+    std::string devpath;
+    std::string subsystem;
+    std::map<std::string, std::string> env;
+};
+
+inline constexpr std::size_t MAX_DEVICE_EVENT_BYTES = 64U * 1024U;
+inline constexpr std::size_t MAX_DEVICE_EVENT_QUEUE = 256U;
+inline constexpr const char* DEVICE_EVENT_SOCKET_BASENAME = "fic-device-events.sock";
+inline constexpr const char* DEVICE_RECONCILE_MARKER_BASENAME = "fic-device-reconcile.required";
+const std::set<std::string> MANAGED_UDEV_SUBSYSTEMS = {"usb", "usbmisc", "pci", "block"};
 
 void handle_signal(int) {
     g_stop = true;
@@ -782,22 +801,35 @@ std::unique_ptr<UDEVInfoCollector> create_collector_for_subsystem(const std::str
     );
 }
 
-json handle_udev_event(const json& request) {
-    const std::string action = request.value("action", "");
-    const std::string devpath = request.value("devpath", "");
-    const std::string subsystem = request.value("subsystem", "");
+bool is_managed_subsystem(const std::string& subsystem) {
+    return MANAGED_UDEV_SUBSYSTEMS.find(subsystem) != MANAGED_UDEV_SUBSYSTEMS.end();
+}
+
+DeviceEventEnvelope envelope_from_request(const json& request) {
+    DeviceEventEnvelope event;
+    event.action = request.value("action", "");
+    event.devpath = request.value("devpath", "");
+    event.subsystem = request.value("subsystem", "");
+    if (request.contains("env") && request["env"].is_object()) {
+        for (auto it = request["env"].begin(); it != request["env"].end(); ++it) {
+            if (it.value().is_string()) {
+                event.env[it.key()] = it.value().get<std::string>();
+            }
+        }
+    }
+    return event;
+}
+
+json process_device_event(const DeviceEventEnvelope& event) {
+    const std::string& action = event.action;
+    const std::string& devpath = event.devpath;
+    const std::string& subsystem = event.subsystem;
 
     if (action.empty() || devpath.empty() || subsystem.empty()) {
         return fic::ipc::make_error_response("action, devpath and subsystem are required");
     }
-
-    std::map<std::string, std::string> env;
-    if (request.contains("env") && request["env"].is_object()) {
-        for (auto it = request["env"].begin(); it != request["env"].end(); ++it) {
-            if (it.value().is_string()) {
-                env[it.key()] = it.value().get<std::string>();
-            }
-        }
+    if (!is_managed_subsystem(subsystem)) {
+        return fic::ipc::make_ok_response("udev event ignored: unmanaged subsystem");
     }
 
     UDEVInfoCollector baseCollector;
@@ -806,7 +838,7 @@ json handle_udev_event(const json& request) {
     }
 
     std::unique_ptr<UDEVInfoCollector> collector = create_collector_for_subsystem(subsystem);
-    collector->set_udev_env(env);
+    collector->set_udev_env(event.env);
 
     if (action == "add" || action == "change") {
         if (!collector->create_device_config(devpath, subsystem)) {
@@ -911,6 +943,10 @@ json handle_udev_event(const json& request) {
     }
 
     return fic::ipc::make_error_response("unsupported udev action: " + action);
+}
+
+json handle_udev_event(const json& request) {
+    return process_device_event(envelope_from_request(request));
 }
 
 json update_device_control(DB& db, const json& request) {
@@ -1264,6 +1300,414 @@ bool is_missing_device_socket_error(const json& response, const std::string& soc
            message.find("Нет такого файла", prefix.size()) != std::string::npos;
 }
 
+std::string device_event_socket_path() {
+    const char* environmentPath = std::getenv("FIC_DEVICE_EVENT_SOCKET_PATH");
+    if (environmentPath != nullptr && environmentPath[0] != '\0') {
+        return environmentPath;
+    }
+    return (std::filesystem::path(fic::ipc::DEFAULT_RUNTIME_DIR) /
+            DEVICE_EVENT_SOCKET_BASENAME).string();
+}
+
+std::filesystem::path device_reconcile_marker_path() {
+    return std::filesystem::path(fic::ipc::DEFAULT_RUNTIME_DIR) /
+           DEVICE_RECONCILE_MARKER_BASENAME;
+}
+
+bool write_reconcile_marker(const std::string& reason) {
+    try {
+        const std::filesystem::path marker = device_reconcile_marker_path();
+        std::filesystem::create_directories(marker.parent_path());
+        std::ofstream out(marker, std::ios::app);
+        if (!out.is_open()) {
+            return false;
+        }
+        out << Logger::get_current_time() << " " << reason << '\n';
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::string event_key(const DeviceEventEnvelope& event) {
+    return event.subsystem + "\n" + event.devpath;
+}
+
+bool parse_event_payload(const std::string& payload,
+                         DeviceEventEnvelope& event,
+                         std::string& error) {
+    json request;
+    try {
+        request = json::parse(payload);
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        return false;
+    }
+    if (!request.is_object()) {
+        error = "event payload must be a JSON object";
+        return false;
+    }
+    for (const char* field : {"action", "devpath", "subsystem"}) {
+        if (!request.contains(field) || !request[field].is_string() ||
+            request[field].get_ref<const std::string&>().empty()) {
+            error = std::string("event.") + field + " must be a non-empty string";
+            return false;
+        }
+    }
+    if (request["devpath"].get_ref<const std::string&>().size() > 4096 ||
+        request["subsystem"].get_ref<const std::string&>().size() > 64 ||
+        request["action"].get_ref<const std::string&>().size() > 32) {
+        error = "event header exceeds size limit";
+        return false;
+    }
+    if (request.contains("env")) {
+        if (!request["env"].is_object() || request["env"].size() > 4096) {
+            error = "event.env must be a bounded object";
+            return false;
+        }
+        for (auto item = request["env"].begin(); item != request["env"].end(); ++item) {
+            if (item.key().size() > 1024 || !item.value().is_string() ||
+                item.value().get_ref<const std::string&>().size() > 16U * 1024U) {
+                error = "event.env contains an invalid key or value";
+                return false;
+            }
+        }
+    }
+    event = envelope_from_request(request);
+    if (!is_managed_subsystem(event.subsystem)) {
+        error = "event subsystem is unmanaged";
+        return false;
+    }
+    return true;
+}
+
+int create_event_socket(const std::string& socketPath, std::string& error) {
+    const std::filesystem::path path(socketPath);
+    if (path.empty() || !path.is_absolute() || path.lexically_normal() != path) {
+        error = "device event socket path must be absolute and normalized";
+        return -1;
+    }
+    std::error_code fsError;
+    std::filesystem::create_directories(path.parent_path(), fsError);
+    if (fsError) {
+        error = "could not create event socket runtime directory: " + fsError.message();
+        return -1;
+    }
+    if (::chown(path.parent_path().c_str(), 0, 0) != 0 ||
+        ::chmod(path.parent_path().c_str(), 0755) != 0) {
+        error = "failed to enforce event socket runtime directory metadata: " +
+                std::string(std::strerror(errno));
+        return -1;
+    }
+
+    struct stat existing {};
+    if (::lstat(socketPath.c_str(), &existing) == 0) {
+        if (!S_ISSOCK(existing.st_mode) || existing.st_uid != geteuid()) {
+            error = "refusing to replace unsafe device event socket path";
+            return -1;
+        }
+        if (::unlink(socketPath.c_str()) != 0) {
+            error = "could not remove stale device event socket: " +
+                    std::string(std::strerror(errno));
+            return -1;
+        }
+    } else if (errno != ENOENT) {
+        error = "lstat event socket failed: " + std::string(std::strerror(errno));
+        return -1;
+    }
+
+    const int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        error = "event socket() failed: " + std::string(std::strerror(errno));
+        return -1;
+    }
+    const int enable = 1;
+    if (::setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &enable, sizeof(enable)) != 0) {
+        error = "SO_PASSCRED failed: " + std::string(std::strerror(errno));
+        ::close(fd);
+        return -1;
+    }
+
+    sockaddr_un address {};
+    address.sun_family = AF_UNIX;
+    if (socketPath.size() >= sizeof(address.sun_path)) {
+        error = "event socket path is too long";
+        ::close(fd);
+        return -1;
+    }
+    std::strncpy(address.sun_path, socketPath.c_str(), sizeof(address.sun_path) - 1);
+    const socklen_t addressLength = static_cast<socklen_t>(
+        offsetof(sockaddr_un, sun_path) + socketPath.size() + 1U);
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&address), addressLength) != 0) {
+        error = "bind event socket failed: " + std::string(std::strerror(errno));
+        ::close(fd);
+        return -1;
+    }
+    if (::chmod(socketPath.c_str(), 0600) != 0) {
+        error = "chmod event socket failed: " + std::string(std::strerror(errno));
+        ::close(fd);
+        ::unlink(socketPath.c_str());
+        return -1;
+    }
+    return fd;
+}
+
+class DeviceEventQueue {
+public:
+    bool enqueue(DeviceEventEnvelope event) {
+        const std::string key = event_key(event);
+        if (event.action == "change") {
+            auto it = pendingChangeByKey_.find(key);
+            if (it != pendingChangeByKey_.end() && it->second < queue_.size() &&
+                queue_[it->second].action == "change") {
+                queue_[it->second] = std::move(event);
+                ++coalesced_;
+                return true;
+            }
+        }
+        if (queue_.size() >= MAX_DEVICE_EVENT_QUEUE) {
+            reconciliationRequired_ = true;
+            ++overflowed_;
+            return false;
+        }
+        queue_.push_back(std::move(event));
+        if (queue_.back().action == "change") {
+            pendingChangeByKey_[key] = queue_.size() - 1;
+        }
+        return true;
+    }
+
+    bool pop(DeviceEventEnvelope& event) {
+        if (queue_.empty()) {
+            return false;
+        }
+        event = std::move(queue_.front());
+        queue_.pop_front();
+        rebuildChangeIndex();
+        return true;
+    }
+
+    bool reconciliationRequired() const {
+        return reconciliationRequired_;
+    }
+
+    void requestReconciliation() {
+        reconciliationRequired_ = true;
+    }
+
+    void clearReconciliationRequired() {
+        reconciliationRequired_ = false;
+    }
+
+    std::size_t coalesced() const {
+        return coalesced_;
+    }
+
+    std::size_t overflowed() const {
+        return overflowed_;
+    }
+
+private:
+    void rebuildChangeIndex() {
+        pendingChangeByKey_.clear();
+        for (std::size_t i = 0; i < queue_.size(); ++i) {
+            if (queue_[i].action == "change") {
+                pendingChangeByKey_[event_key(queue_[i])] = i;
+            }
+        }
+    }
+
+    std::deque<DeviceEventEnvelope> queue_;
+    std::unordered_map<std::string, std::size_t> pendingChangeByKey_;
+    bool reconciliationRequired_ = false;
+    std::size_t coalesced_ = 0;
+    std::size_t overflowed_ = 0;
+};
+
+bool receive_event_datagrams(int eventFd, DeviceEventQueue& queue) {
+    bool receivedAny = false;
+    while (true) {
+        std::vector<char> buffer(MAX_DEVICE_EVENT_BYTES + 1U);
+        char control[CMSG_SPACE(sizeof(struct ucred))] {};
+        iovec iov {buffer.data(), buffer.size()};
+        msghdr message {};
+        message.msg_iov = &iov;
+        message.msg_iovlen = 1;
+        message.msg_control = control;
+        message.msg_controllen = sizeof(control);
+        const ssize_t received = ::recvmsg(eventFd, &message, 0);
+        if (received < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return receivedAny;
+            }
+            log_device("device event socket recvmsg failed: " + std::string(std::strerror(errno)), logLevel::ERROR);
+            return receivedAny;
+        }
+        receivedAny = true;
+        if ((message.msg_flags & MSG_TRUNC) != 0 ||
+            received <= 0 ||
+            static_cast<std::size_t>(received) > MAX_DEVICE_EVENT_BYTES) {
+            queue.requestReconciliation();
+            log_device("device event ingestion received oversized payload; reconciliation scheduled", logLevel::WARN);
+            continue;
+        }
+        bool trustedRoot = false;
+        for (cmsghdr* cmsg = CMSG_FIRSTHDR(&message); cmsg != nullptr; cmsg = CMSG_NXTHDR(&message, cmsg)) {
+            if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_CREDENTIALS &&
+                cmsg->cmsg_len >= CMSG_LEN(sizeof(struct ucred))) {
+                auto* credentials = reinterpret_cast<struct ucred*>(CMSG_DATA(cmsg));
+                trustedRoot = credentials != nullptr && credentials->uid == 0;
+            }
+        }
+        if (!trustedRoot) {
+            log_device("device event rejected: sender is not root", logLevel::WARN);
+            continue;
+        }
+        DeviceEventEnvelope event;
+        std::string error;
+        if (!parse_event_payload(std::string(buffer.data(), static_cast<std::size_t>(received)), event, error)) {
+            queue.requestReconciliation();
+            log_device("device event rejected: " + error + "; reconciliation scheduled", logLevel::WARN);
+            continue;
+        }
+        if (!queue.enqueue(std::move(event))) {
+            log_device("device event queue overflow; reconciliation scheduled", logLevel::WARN);
+        }
+    }
+}
+
+bool process_queued_event(DeviceEventQueue& queue) {
+    DeviceEventEnvelope event;
+    if (!queue.pop(event)) {
+        return false;
+    }
+    json result = process_device_event(event);
+    if (!result.value("ok", false)) {
+        queue.requestReconciliation();
+        log_device("queued udev event failed: " + result.value("message", "unknown error") +
+                   "; reconciliation scheduled", logLevel::ERROR);
+    }
+    return true;
+}
+
+std::vector<DeviceEventEnvelope> parse_udevadm_export_db(const std::string& text) {
+    std::vector<DeviceEventEnvelope> events;
+    DeviceEventEnvelope current;
+    auto flush = [&]() {
+        if (!current.devpath.empty()) {
+            if (current.env.count("DEVPATH") == 0) {
+                current.env["DEVPATH"] = current.devpath;
+            }
+            if (current.env.count("SUBSYSTEM") > 0) {
+                current.subsystem = current.env["SUBSYSTEM"];
+            }
+            current.action = "add";
+            if (is_managed_subsystem(current.subsystem)) {
+                events.push_back(current);
+            }
+        }
+        current = DeviceEventEnvelope{};
+    };
+
+    std::istringstream input(text);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            flush();
+            continue;
+        }
+        if (line.rfind("P: ", 0) == 0) {
+            current.devpath = line.substr(3);
+            current.env["DEVPATH"] = current.devpath;
+        } else if (line.rfind("E: ", 0) == 0) {
+            const std::string entry = line.substr(3);
+            const std::size_t separator = entry.find('=');
+            if (separator != std::string::npos && separator > 0) {
+                current.env[entry.substr(0, separator)] = entry.substr(separator + 1);
+            }
+        }
+    }
+    flush();
+    return events;
+}
+
+std::optional<std::string> find_udevadm() {
+    for (const char* candidate : {"/usr/bin/udevadm", "/usr/sbin/udevadm", "/sbin/udevadm", "/bin/udevadm"}) {
+        if (::access(candidate, X_OK) == 0) {
+            return std::string(candidate);
+        }
+    }
+    return std::nullopt;
+}
+
+bool sysfs_devpath_exists(const std::string& devpath) {
+    if (devpath.empty() || devpath[0] != '/') {
+        return false;
+    }
+    std::error_code error;
+    return std::filesystem::exists(std::filesystem::path("/sys") / devpath.substr(1), error) && !error;
+}
+
+bool run_device_reconciliation(const std::string& reason) {
+    log_device("device reconciliation started: " + reason, logLevel::INFO);
+    const std::optional<std::string> udevadm = find_udevadm();
+    if (!udevadm.has_value()) {
+        log_device("device reconciliation failed: udevadm not found", logLevel::ERROR);
+        return false;
+    }
+
+    ProcessOptions options;
+    options.timeout = std::chrono::milliseconds(15000);
+    ProcessResult result = ProcessExecutor::execute(udevadm.value(), {"info", "--export-db"}, options);
+    if (!result.success()) {
+        log_device("device reconciliation failed: udevadm info --export-db failed: " +
+                   result.error + " " + result.standardError, logLevel::ERROR);
+        return false;
+    }
+
+    std::size_t processed = 0;
+    for (const DeviceEventEnvelope& event : parse_udevadm_export_db(result.standardOutput)) {
+        UDEVInfoCollector checker;
+        if (!checker.check_devpath(event.devpath.c_str())) {
+            continue;
+        }
+        json response = process_device_event(event);
+        if (response.value("ok", false)) {
+            ++processed;
+        } else {
+            log_device("device reconciliation event failed: " +
+                       response.value("message", "unknown error"), logLevel::ERROR);
+        }
+    }
+
+    DB db(DeviceRuntimePaths::get().databaseOptions());
+    db.initializeDatabase();
+    const std::string bootId = current_boot_id();
+    std::size_t removed = 0;
+    for (const DeviceInfo& device : db.getAllDevices()) {
+        if (device.boot_id != bootId || !is_managed_subsystem(device.subsystem) ||
+            sysfs_devpath_exists(device.devpath)) {
+            continue;
+        }
+        if (reset_subtree_boot_id(db, device.id)) {
+            add_event(db, device.id, "disconnect", "success", "device absent during reconciliation");
+            ++removed;
+        }
+    }
+
+    json permanentCheck = check_permanent_devices(db);
+    if (!permanentCheck.value("ok", true)) {
+        log_device("device reconciliation permanent check failed: " +
+                   permanentCheck.value("message", "unknown error"), logLevel::ERROR);
+    }
+    log_device("device reconciliation completed: processed=" + std::to_string(processed) +
+               " removed=" + std::to_string(removed), logLevel::INFO);
+    return true;
+}
+
 } // namespace
 
 int run_daemon(const std::string& socketPathArg) {
@@ -1302,11 +1746,51 @@ int run_daemon(const std::string& socketPathArg) {
     const int serverFd = socketResult.fileDescriptor;
     fic::ipc::AdminSocketTransport transport(serverFd);
 
-    log_device("fic-dick device daemon started on " + socketPath, logLevel::INFO);
+    std::string eventSocketError;
+    const std::string eventSocketPath = device_event_socket_path();
+    const int eventFd = create_event_socket(eventSocketPath, eventSocketError);
+    if (eventFd < 0) {
+        std::cerr << eventSocketError << std::endl;
+        ::close(serverFd);
+        ::unlink(socketPath.c_str());
+        return 1;
+    }
+
+    DeviceEventQueue eventQueue;
+
+    log_device("fic-dick device daemon started on " + socketPath +
+               ", event_socket=" + eventSocketPath, logLevel::INFO);
+    if (!run_device_reconciliation("daemon startup")) {
+        eventQueue.requestReconciliation();
+    }
 
     while (!g_stop) {
+        receive_event_datagrams(eventFd, eventQueue);
+
+        const std::filesystem::path marker = device_reconcile_marker_path();
+        std::error_code markerError;
+        if (std::filesystem::exists(marker, markerError) && !markerError) {
+            std::filesystem::remove(marker, markerError);
+            eventQueue.requestReconciliation();
+            log_device("device reconciliation marker consumed", logLevel::WARN);
+        }
+
+        if (eventQueue.reconciliationRequired()) {
+            if (run_device_reconciliation("event ingestion recovery")) {
+                eventQueue.clearReconciliationRequired();
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+        }
+
+        for (int i = 0; i < 8; ++i) {
+            if (!process_queued_event(eventQueue)) {
+                break;
+            }
+        }
+
         std::string transportError;
-        if (!transport.pollOnce(1000,
+        if (!transport.pollOnce(50,
                 [](int clientFd, const std::string& requestText) {
                     return handle_client_packet(clientFd, requestText);
                 },
@@ -1316,6 +1800,8 @@ int run_daemon(const std::string& socketPathArg) {
         }
     }
 
+    ::close(eventFd);
+    ::unlink(eventSocketPath.c_str());
     ::close(serverFd);
     ::unlink(socketPath.c_str());
     log_device("fic-dick device daemon stopped", logLevel::INFO);
@@ -1328,30 +1814,71 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
         return it == env.end() ? std::string() : it->second;
     };
 
+    const std::string action = value("ACTION");
+    const std::string devpath = value("DEVPATH");
+    const std::string subsystem = value("SUBSYSTEM");
+    if (action.empty() || devpath.empty() || subsystem.empty()) {
+        log_device("udev event not sent: ACTION, DEVPATH and SUBSYSTEM are required", logLevel::ERROR);
+        return 1;
+    }
+    if (!is_managed_subsystem(subsystem)) {
+        return 0;
+    }
+
     json envJson = json::object();
     for (const auto& [key, val] : env) {
         envJson[key] = val;
     }
 
-    const std::string socketPath = get_device_socket_path_from_env();
-    json response = fic::ipc::Client(socketPath).request({
-        {"command", "udev_event"},
-        {"action", value("ACTION")},
-        {"devpath", value("DEVPATH")},
-        {"subsystem", value("SUBSYSTEM")},
+    json payload = {
+        {"action", action},
+        {"devpath", devpath},
+        {"subsystem", subsystem},
         {"env", envJson}
-    });
-
-    if (!response.value("ok", false)) {
-        if (is_missing_device_socket_error(response, socketPath)) {
-            log_device("udev event skipped: device daemon socket is not ready; scheduled boot retrigger will rescan devices", logLevel::TRACE);
-            return 0;
-        }
-
-        log_device("udev event failed: " + response.value("message", "unknown error"), logLevel::ERROR);
-        return 1;
+    };
+    const std::string payloadText = payload.dump();
+    if (payloadText.empty() || payloadText.size() > MAX_DEVICE_EVENT_BYTES) {
+        write_reconcile_marker("oversized udev event payload");
+        log_device("udev event not sent: payload exceeds event socket limit; reconciliation marked", logLevel::WARN);
+        return 0;
     }
 
+    const std::string socketPath = device_event_socket_path();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    std::string lastError;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        if (fd < 0) {
+            lastError = std::strerror(errno);
+            break;
+        }
+        sockaddr_un address {};
+        address.sun_family = AF_UNIX;
+        if (socketPath.size() >= sizeof(address.sun_path)) {
+            ::close(fd);
+            lastError = "event socket path is too long";
+            break;
+        }
+        std::strncpy(address.sun_path, socketPath.c_str(), sizeof(address.sun_path) - 1);
+        const socklen_t addressLength = static_cast<socklen_t>(
+            offsetof(sockaddr_un, sun_path) + socketPath.size() + 1U);
+        if (::connect(fd, reinterpret_cast<sockaddr*>(&address), addressLength) == 0) {
+            const ssize_t sent = ::send(fd, payloadText.data(), payloadText.size(), MSG_NOSIGNAL);
+            if (sent == static_cast<ssize_t>(payloadText.size())) {
+                ::close(fd);
+                return 0;
+            }
+            lastError = std::strerror(errno);
+        } else {
+            lastError = std::strerror(errno);
+        }
+        ::close(fd);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    write_reconcile_marker("udev event delivery failed: " + lastError);
+    log_device("udev event delivery failed: " + lastError +
+               "; reconciliation marked", logLevel::WARN);
     return 0;
 }
 

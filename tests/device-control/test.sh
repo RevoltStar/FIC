@@ -9,7 +9,7 @@ MUTATION_ACK=false
 usage() {
     cat <<USAGE
 Usage:
-  $SCRIPT_NAME --yes-i-know-this-mutates-vm --type [smoke|api|events|hierarchy|devices|enforcement|persistence|coldboot|race|security|secure|all]
+  $SCRIPT_NAME --yes-i-know-this-mutates-vm --type [smoke|api|events|hierarchy|devices|enforcement|persistence|coldboot|race|ingestion|security|secure|all]
 
 Environment:
   FIC_VM_IP                 Guest IP, default: 10.88.0.250
@@ -36,6 +36,7 @@ Types:
   persistence daemon restart and persisted DB/policy state checks
   coldboot   configured-device enforcement across guest reboot
   race       concurrent IPC, rapid hotplug, and policy-toggle race checks
+  ingestion  udev event socket burst, restart reconciliation, and admin responsiveness
   security   socket/API rejection checks and CLI error propagation
   all        run all suites in one VM session
 USAGE
@@ -69,7 +70,7 @@ if [[ "$MUTATION_ACK" != "true" ]]; then
 fi
 
 case "$TEST_TYPE" in
-    smoke|api|events|hierarchy|devices|enforcement|persistence|coldboot|race|security|secure|all)
+    smoke|api|events|hierarchy|devices|enforcement|persistence|coldboot|race|ingestion|security|secure|all)
         ;;
     *)
         printf 'Unknown --type: %s\n\n' "$TEST_TYPE" >&2
@@ -144,6 +145,11 @@ run_suite_file() {
             source "$SCRIPT_DIR/suites/race.sh"
             run_race_suite
             ;;
+        ingestion)
+            # shellcheck source=suites/ingestion.sh
+            source "$SCRIPT_DIR/suites/ingestion.sh"
+            run_ingestion_suite
+            ;;
         security|secure)
             # shellcheck source=suites/security.sh
             source "$SCRIPT_DIR/suites/security.sh"
@@ -167,6 +173,7 @@ if [[ "$TEST_TYPE" == "all" ]]; then
     run_suite_file persistence
     run_suite_file coldboot
     run_suite_file race
+    run_suite_file ingestion
     run_suite_file security
 else
     run_suite_file "$TEST_TYPE"

@@ -15,7 +15,12 @@
 с путями базы, lock-файла и debug-log. Это позволяет тестам и нестандартным
 сборкам использовать изолированное хранилище без глобальных констант.
 
-Демон `fic` применяет обычные политики ОС, а `fic-dick --daemon` является владельцем дерева устройств, `devices.db`, udev-событий и исполнения решений контроля устройств. GUI и CLI обращаются к дереву устройств через `/run/fic/fic-device.sock`.
+Демон `fic` применяет обычные политики ОС, а `fic-dick --daemon` является
+владельцем дерева устройств, `devices.db`, initial reconciliation, runtime
+udev-ingestion и исполнения решений контроля устройств. GUI и CLI обращаются к
+дереву устройств через `/run/fic/fic-device.sock`. Runtime udev-события
+поступают отдельно через `/run/fic/fic-device-events.sock` и не конкурируют с
+административным API.
 
 ## Основные режимы запуска
 
@@ -102,16 +107,34 @@ fic/src/scripts/udev/99-fic-devices.rules
 
 Поддерживаемая логика:
 
-- helper пересылает `ACTION`, `DEVPATH`, `SUBSYSTEM` и udev environment в `fic-dick --daemon`;
-- helper делает одну IPC-попытку и быстро завершается, если device daemon еще не готов;
-- отсутствие `/run/fic/fic-device.sock` во время раннего coldplug не считается ошибкой helper: boot-time `fic-udevadm-trigger` позже выполнит контролируемый retrigger после `wait-daemon`;
-- daemon принимает IPC-команду `udev_event` только от root peer credentials;
-- daemon добавляет, обновляет или помечает устройство отключенным;
+- helper сериализует `ACTION`, `DEVPATH`, `SUBSYSTEM` и udev environment в один
+  bounded JSON datagram;
+- datagram отправляется в отдельный Unix socket
+  `/run/fic/fic-device-events.sock`;
+- socket создается device daemon как `SOCK_DGRAM`, включает `SO_PASSCRED` и
+  принимает события только от root sender credentials;
+- helper не ждет завершения DB/sysfs/enforcement обработки и быстро
+  завершается;
+- если событие невозможно доставить, helper оставляет bounded runtime marker
+  `/run/fic/fic-device-reconcile.required`; после восстановления daemon
+  выполняет full reconciliation;
+- daemon кладет валидные события в bounded RAM queue, coalesce'ит redundant
+  `change` для одного `SUBSYSTEM + DEVPATH`, а тяжелую обработку выполняет
+  последовательно;
+- при overflow queue daemon не теряет состояние молча: выставляет
+  reconciliation-required и перечитывает фактическое состояние устройств;
+- daemon добавляет, обновляет или помечает устройство отключенным через тот же
+  processing pipeline, который используется initial reconciliation;
 - daemon вычисляет effective policy и применяет USB/PCI/block enforcement с
   несколькими короткими retry-попытками. Для дочерних USB-функций, например
   `/dev/usb/lp0`, USB enforcement ищет ближайший родительский sysfs-файл
   `authorized`;
 - если обязательных переменных окружения нет, обработка завершается с ошибкой.
+
+Udev event stream не является единственным источником истины. Событие означает,
+что состояние устройства могло измениться; authoritative состояние берется из
+текущего udev/sysfs inventory. Поэтому потеря runtime event во время downtime
+или overflow восстанавливается full reconciliation.
 
 ## Режим check-permanent
 
@@ -133,9 +156,9 @@ fic-dick wait-daemon [timeout_seconds]
 ```
 
 Ожидает готовности `/run/fic/fic-device.sock`, отправляя daemon команду
-`status`. Режим используется `fic-udevadm-trigger` перед `udevadm trigger`,
-чтобы boot-time udev-события не терялись из-за запуска раньше готовности
-`fic-dick --daemon`.
+`status`. Режим используется `fic-udevadm-trigger` перед `check-permanent`.
+Boot inventory больше не строится через массовый `udevadm trigger`; device
+daemon сам выполняет initial reconciliation при старте.
 
 ## Поддерживаемые подсистемы
 
@@ -289,7 +312,8 @@ cmake --build build-fic-dick
 - `/opt/fic/share/devices.seed.db` - seed-база, устанавливаемая пакетом;
 - `/etc/udev/rules.d/99-fic-devices.rules` - правило обработки udev-событий;
 - `fic_get_device_info.service` - сбор CPU/board/memory;
-- `fic_get_device_udev_info.service` - запуск udev-trigger.
+- `fic_get_device_udev_info.service` - ожидание initial reconciliation и
+  проверка `permanent` устройств.
 
 ## Типовой сценарий проверки
 
@@ -305,7 +329,7 @@ ls -l /opt/fic/db/devices.db
 sudo /opt/fic/bin/fic-dick cpu_board_memory
 ```
 
-3. Запустить повторную генерацию udev-событий:
+3. Проверить готовность device daemon и обязательные устройства:
 
 ```bash
 sudo /opt/fic/bin/fic-udevadm-trigger
