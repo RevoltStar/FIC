@@ -1838,7 +1838,12 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
     };
     const std::string payloadText = payload.dump();
     if (payloadText.empty() || payloadText.size() > MAX_DEVICE_EVENT_BYTES) {
-        write_reconcile_marker("oversized udev event payload");
+        const std::string reason = "oversized udev event payload";
+        if (!write_reconcile_marker(reason)) {
+            log_device("udev event not sent and reconciliation marker could not be created: " +
+                       reason, logLevel::ERROR);
+            return 1;
+        }
         log_device("udev event not sent: payload exceeds event socket limit; reconciliation marked", logLevel::WARN);
         return 0;
     }
@@ -1876,7 +1881,12 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 
-    write_reconcile_marker("udev event delivery failed: " + lastError);
+    const std::string reason = "udev event delivery failed: " + lastError;
+    if (!write_reconcile_marker(reason)) {
+        log_device("udev event delivery failed and reconciliation marker could not be created: " +
+                   lastError, logLevel::ERROR);
+        return 1;
+    }
     log_device("udev event delivery failed: " + lastError +
                "; reconciliation marked", logLevel::WARN);
     return 0;

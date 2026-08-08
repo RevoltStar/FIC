@@ -35,6 +35,10 @@
 - Если helper не может доставить event datagram, он пишет runtime marker
   `/run/fic/fic-device-reconcile.required`; daemon забирает marker и выполняет
   reconciliation.
+- Если helper не может доставить event datagram или payload слишком велик, а
+  reconciliation marker создать не удалось, `fic-dick udev` возвращает `1`.
+  Успешный exit code `0` означает, что event реально доставлен или
+  reconciliation реально запланирована.
 - При daemon restart reconciliation выполняется автоматически, поэтому события,
   потерянные во время downtime, не оставляют БД постоянно рассинхронизированной.
 - `fic-udevadm-trigger` теперь только ждёт готовности device daemon и запускает
@@ -86,3 +90,6 @@
 - Compatibility/admin IPC-команда `udev_event` оставлена root-only для
   существующих тестов и отладочных сценариев, но production udev rule больше не
   использует этот путь.
+- В producer path запрещён silent success: при недоставленном событии и
+  невозможности создать marker helper должен завершиться ошибкой, чтобы udev не
+  считал обработку успешной без гарантии дальнейшего reconciliation.

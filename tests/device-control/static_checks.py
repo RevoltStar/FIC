@@ -88,6 +88,10 @@ def main():
             "device daemon must use the shared guarded socket creator")
     require('fic::ipc::Client(socketPath).request({\\n        {"command", "udev_event"}' not in daemon_source,
             "fic-dick udev must not use synchronous administrative IPC")
+    require("reconciliation marker could not be created" in daemon_source,
+            "fic-dick udev must fail when an undelivered event cannot mark reconciliation")
+    require("write_reconcile_marker(reason)" in daemon_source,
+            "reconciliation marker result must be checked before udev helper returns success")
     require("dc_policy_enabled_and_true" not in daemon_source,
             "DC policy state must not depend on a configurable boolean value")
     require('config.getPolicyStatus(policy) == "ENABLE"' in daemon_source,
