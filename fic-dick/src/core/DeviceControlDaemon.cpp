@@ -1826,6 +1826,14 @@ int run_daemon(const std::string& socketPathArg) {
                     "device reconciliation marker consumed",
                     logLevel::WARN);
             }
+            if (eventQueue.reconciliationRequired()) {
+                if (run_device_reconciliation("event ingestion recovery")) {
+                    eventQueue.clearReconciliationRequired();
+                } else {
+                    std::this_thread::sleep_for(
+                    std::chrono::milliseconds(250));
+                }
+            }
         }
 
         for (int i = 0; i < 8; ++i) {
@@ -1933,7 +1941,7 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
     }
 
     const std::string reason =
-    "udev event delivery failed: " + lastError;
+        "udev event delivery failed: " + lastError;
 
     if (!write_reconcile_marker()) {
         log_device(
