@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPoint>
+#include <QIcon>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSet>
@@ -117,7 +118,7 @@ private:
     void setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo& device);
     void setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo& device);
     void setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo& device);
-
+    QIcon deviceIcon(const DeviceInfo& device) const;
     std::string generateNodeName(const DeviceInfo& device);
 };
 

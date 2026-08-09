@@ -4,6 +4,7 @@
 #include <QClipboard>
 #include <QDebug>
 #include <QDir>
+#include <QIcon>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QMenu>
@@ -1066,62 +1067,715 @@ void DeviceTree::applyDeviceFilter()
     }
 }
 
-void DeviceTree::setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo &device)
+QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
+{
+    auto themeIcon = [](std::initializer_list<const char *> names) -> QIcon
+    {
+        for (const char *name : names)
+        {
+            if (QIcon::hasThemeIcon(QString::fromLatin1(name)))
+            {
+                return QIcon::fromTheme(QString::fromLatin1(name));
+            }
+        }
+
+        return QIcon();
+    };
+
+    auto attributeIsTrue = [this, &device](const std::string &name) -> bool
+    {
+        const std::string value = getDeviceAttribute(device.id, name, "");
+
+        return value == "1" ||
+               value == "true" ||
+               value == "yes";
+    };
+
+    /*
+     * Специальные виртуальные узлы FIC.
+     */
+
+    if (device.subsystem == "__computer__")
+    {
+        QIcon icon = themeIcon({
+            "computer",
+            "computer-desktop",
+            "preferences-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_ComputerIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "__cpu__" || device.subsystem == "cpu")
+    {
+        QIcon icon = themeIcon({
+            "cpu",
+            "processor",
+            "computer",
+            "preferences-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DesktopIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "__board__" || device.subsystem == "board")
+    {
+        QIcon icon = themeIcon({
+            "computer",
+            "computer-desktop",
+            "preferences-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_ComputerIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "__memory__" || device.subsystem == "memory")
+    {
+        QIcon icon = themeIcon({
+            "memory",
+            "computer",
+            "preferences-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DriveFDIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "__udev__")
+    {
+        QIcon icon = themeIcon({
+            "folder",
+            "applications-system",
+            "preferences-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DirIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "__virtual__")
+    {
+        QIcon icon = themeIcon({
+            "computer-symbolic",
+            "computer",
+            "folder-remote"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DirLinkIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "__pci__")
+    {
+        QIcon icon = themeIcon({
+            "computer",
+            "preferences-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_ComputerIcon)
+            : icon;
+    }
+
+    /*
+     * Input.
+     *
+     * Для input-устройств имя subsystem само по себе недостаточно:
+     * мышь, клавиатура, touchpad и gamepad все будут subsystem=input.
+     *
+     * Поэтому используем свойства udev.
+     */
+
+    if (device.subsystem == "input")
+    {
+        if (attributeIsTrue("ID_INPUT_MOUSE"))
+        {
+            QIcon icon = themeIcon({
+                "input-mouse",
+                "preferences-desktop-mouse",
+                "mouse"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (attributeIsTrue("ID_INPUT_TOUCHPAD"))
+        {
+            QIcon icon = themeIcon({
+                "input-touchpad",
+                "preferences-desktop-touchpad",
+                "input-mouse"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (attributeIsTrue("ID_INPUT_KEYBOARD"))
+        {
+            QIcon icon = themeIcon({
+                "input-keyboard",
+                "preferences-desktop-keyboard",
+                "keyboard"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (attributeIsTrue("ID_INPUT_JOYSTICK"))
+        {
+            QIcon icon = themeIcon({
+                "input-gaming",
+                "applications-games",
+                "gamepad"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (attributeIsTrue("ID_INPUT_TABLET"))
+        {
+            QIcon icon = themeIcon({
+                "input-tablet",
+                "preferences-desktop-tablet"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (attributeIsTrue("ID_INPUT_TOUCHSCREEN"))
+        {
+            QIcon icon = themeIcon({
+                "input-touchscreen",
+                "input-tablet",
+                "input-mouse"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        QIcon icon = themeIcon({
+            "input-mouse",
+            "input-keyboard",
+            "preferences-desktop-peripherals"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_FileIcon)
+            : icon;
+    }
+
+    /*
+     * Block devices.
+     */
+
+    if (device.subsystem == "block")
+    {
+        const std::string devtype =
+            getDeviceAttribute(device.id, "DEVTYPE", "");
+
+        const std::string bus =
+            getDeviceAttribute(device.id, "ID_BUS", "");
+
+        const std::string driveFlash =
+            getDeviceAttribute(device.id, "ID_DRIVE_FLASH", "");
+
+        const std::string driveThumb =
+            getDeviceAttribute(device.id, "ID_DRIVE_THUMB", "");
+
+        const std::string cdrom =
+            getDeviceAttribute(device.id, "ID_CDROM", "");
+
+        if (cdrom == "1")
+        {
+            QIcon icon = themeIcon({
+                "drive-optical",
+                "media-optical",
+                "media-optical-dvd"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (bus == "usb" ||
+            driveFlash == "1" ||
+            driveThumb == "1")
+        {
+            QIcon icon = themeIcon({
+                "drive-removable-media-usb",
+                "drive-removable-media",
+                "media-flash"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (devtype == "partition")
+        {
+            QIcon icon = themeIcon({
+                "drive-harddisk",
+                "media-flash"
+            });
+
+            return icon.isNull()
+                ? style()->standardIcon(QStyle::SP_DriveHDIcon)
+                : icon;
+        }
+
+        QIcon icon = themeIcon({
+            "drive-harddisk",
+            "drive-harddisk-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DriveHDIcon)
+            : icon;
+    }
+
+    /*
+     * USB.
+     */
+
+    if (device.subsystem == "usb" ||
+        device.subsystem == "usbmisc")
+    {
+        /*
+         * У тебя generateNodeName() уже использует USB class/interface
+         * для определения printer/scanner/storage/HID.
+         */
+
+        const std::string devtype =
+            getDeviceAttribute(device.id, "DEVTYPE", "");
+
+        const std::string interfaceClass =
+            getDeviceAttribute(device.id, "ID_USB_INTERFACE_NUM", "");
+
+        const std::string usbInterfaces =
+            getDeviceAttribute(device.id, "ID_USB_INTERFACES", "");
+
+        const std::string devname =
+            getDeviceAttribute(device.id, "DEVNAME", "");
+
+        /*
+         * USB printer.
+         *
+         * usbmisc /dev/usb/lp* у тебя уже отдельно распознаётся
+         * при генерации названия.
+         */
+        if (devname.rfind("/dev/usb/lp", 0) == 0)
+        {
+            QIcon icon = themeIcon({
+                "printer",
+                "printer-network"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        /*
+         * ID_USB_INTERFACES имеет вид наподобие:
+         *
+         * :030101:
+         * :080650:
+         *
+         * 03 = HID
+         * 07 = printer
+         * 08 = storage
+         */
+
+        if (usbInterfaces.find(":07") != std::string::npos)
+        {
+            QIcon icon = themeIcon({
+                "printer",
+                "printer-network"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (usbInterfaces.find(":08") != std::string::npos)
+        {
+            QIcon icon = themeIcon({
+                "drive-removable-media-usb",
+                "drive-removable-media"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (usbInterfaces.find(":03") != std::string::npos)
+        {
+            QIcon icon = themeIcon({
+                "input-mouse",
+                "input-keyboard",
+                "preferences-desktop-peripherals"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        Q_UNUSED(devtype);
+        Q_UNUSED(interfaceClass);
+
+        QIcon icon = themeIcon({
+            "drive-removable-media-usb",
+            "usb",
+            "media-removable"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DriveNetIcon)
+            : icon;
+    }
+
+    /*
+     * Network.
+     */
+
+    if (device.subsystem == "net")
+    {
+        const std::string type =
+            getDeviceAttribute(device.id, "ID_NET_DRIVER", "");
+
+        const std::string wlan =
+            getDeviceAttribute(device.id, "DEVTYPE", "");
+
+        if (wlan == "wlan" ||
+            type.find("wifi") != std::string::npos ||
+            type.find("wlan") != std::string::npos)
+        {
+            QIcon icon = themeIcon({
+                "network-wireless",
+                "network-wireless-signal-excellent",
+                "network-transmit-receive"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        QIcon icon = themeIcon({
+            "network-wired",
+            "network-transmit-receive",
+            "network-workgroup"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DriveNetIcon)
+            : icon;
+    }
+
+    /*
+     * Sound.
+     */
+
+    if (device.subsystem == "sound")
+    {
+        QIcon icon = themeIcon({
+            "audio-card",
+            "audio-speakers",
+            "multimedia-volume-control"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_FileIcon)
+            : icon;
+    }
+
+    /*
+     * Camera / video.
+     */
+
+    if (device.subsystem == "video4linux")
+    {
+        QIcon icon = themeIcon({
+            "camera-web",
+            "camera-video",
+            "camera-photo"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_FileIcon)
+            : icon;
+    }
+
+    /*
+     * Bluetooth.
+     */
+
+    if (device.subsystem == "bluetooth")
+    {
+        QIcon icon = themeIcon({
+            "bluetooth",
+            "preferences-system-bluetooth"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_FileIcon)
+            : icon;
+    }
+
+    /*
+     * HID raw.
+     */
+
+    if (device.subsystem == "hidraw" ||
+        device.subsystem == "hid")
+    {
+        QIcon icon = themeIcon({
+            "input-mouse",
+            "input-keyboard",
+            "preferences-desktop-peripherals"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_FileIcon)
+            : icon;
+    }
+
+    /*
+     * PCI.
+     */
+
+    if (device.subsystem == "pci")
+    {
+        const std::string pciClass =
+            getDeviceAttribute(device.id, "PCI_CLASS", "");
+
+        /*
+         * PCI class:
+         * 01xxxx = mass storage
+         * 02xxxx = network
+         * 03xxxx = display
+         * 04xxxx = multimedia
+         * 0C03xx = USB controller
+         */
+
+        std::string normalized = pciClass;
+
+        if (normalized.rfind("0x", 0) == 0 ||
+            normalized.rfind("0X", 0) == 0)
+        {
+            normalized.erase(0, 2);
+        }
+
+        if (normalized.rfind("01", 0) == 0)
+        {
+            QIcon icon = themeIcon({
+                "drive-harddisk",
+                "drive-harddisk-system"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (normalized.rfind("02", 0) == 0)
+        {
+            QIcon icon = themeIcon({
+                "network-wired",
+                "network-workgroup"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (normalized.rfind("03", 0) == 0)
+        {
+            QIcon icon = themeIcon({
+                "video-display",
+                "computer"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (normalized.rfind("04", 0) == 0)
+        {
+            QIcon icon = themeIcon({
+                "audio-card",
+                "multimedia-volume-control"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        if (normalized.rfind("0C03", 0) == 0 ||
+            normalized.rfind("0c03", 0) == 0)
+        {
+            QIcon icon = themeIcon({
+                "drive-removable-media-usb",
+                "usb"
+            });
+
+            if (!icon.isNull())
+            {
+                return icon;
+            }
+        }
+
+        QIcon icon = themeIcon({
+            "computer",
+            "preferences-system"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_ComputerIcon)
+            : icon;
+    }
+
+    /*
+     * Остальные распространённые subsystem.
+     */
+
+    if (device.subsystem == "tty")
+    {
+        QIcon icon = themeIcon({
+            "utilities-terminal",
+            "computer"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_FileIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "scsi")
+    {
+        QIcon icon = themeIcon({
+            "drive-harddisk",
+            "drive-removable-media"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_DriveHDIcon)
+            : icon;
+    }
+
+    if (device.subsystem == "drm")
+    {
+        QIcon icon = themeIcon({
+            "video-display",
+            "computer"
+        });
+
+        return icon.isNull()
+            ? style()->standardIcon(QStyle::SP_ComputerIcon)
+            : icon;
+    }
+
+    /*
+     * Универсальный fallback.
+     */
+
+    QIcon icon = themeIcon({
+        "device-notifier",
+        "preferences-desktop-peripherals",
+        "computer"
+    });
+
+    return icon.isNull()
+        ? style()->standardIcon(QStyle::SP_FileIcon)
+        : icon;
+}
+
+void DeviceTree::setupTreeItemMetadata(
+    QTreeWidgetItem *item,
+    const DeviceInfo &device)
 {
     if (item == nullptr)
     {
         return;
     }
 
-    const std::string effectiveLevel = device.effective_control_level.empty()
-        ? device.control_level
-        : device.effective_control_level;
+    const std::string effectiveLevel =
+        device.effective_control_level.empty()
+            ? device.control_level
+            : device.effective_control_level;
 
-    item->setData(0, RoleSubsystem, QString::fromStdString(device.subsystem));
-    item->setData(0, RoleDevpath, QString::fromStdString(device.devpath));
-    item->setData(0, RoleEffectiveControl, QString::fromStdString(effectiveLevel));
-    item->setData(0, RoleConnected, device.connected);
-    item->setData(0, RoleBootValid, isDeviceBootIdValid(device));
+    item->setData(
+        0,
+        RoleSubsystem,
+        QString::fromStdString(device.subsystem));
 
-    QStyle::StandardPixmap icon = QStyle::SP_FileIcon;
-    if (device.subsystem == "__computer__")
-    {
-        icon = QStyle::SP_ComputerIcon;
-    }
-    else if (device.subsystem == "cpu" || device.subsystem == "__cpu__")
-    {
-        icon = QStyle::SP_DesktopIcon;
-    }
-    else if (device.subsystem == "board" || device.subsystem == "__board__")
-    {
-        icon = QStyle::SP_ComputerIcon;
-    }
-    else if (device.subsystem == "__udev__")
-    {
-        icon = QStyle::SP_DirIcon;
-    }
-    else if (device.subsystem == "__virtual__")
-    {
-        icon = QStyle::SP_DirLinkIcon;
-    }
-    else if (device.subsystem == "block")
-    {
-        icon = QStyle::SP_DriveHDIcon;
-    }
-    else if (device.subsystem == "usb" || device.subsystem == "usbmisc")
-    {
-        icon = QStyle::SP_DriveNetIcon;
-    }
-    else if (device.subsystem == "pci" || device.subsystem == "__pci__")
-    {
-        icon = QStyle::SP_ComputerIcon;
-    }
-    else if (device.subsystem == "memory" || device.subsystem == "__memory__")
-    {
-        icon = QStyle::SP_DriveFDIcon;
-    }
+    item->setData(
+        0,
+        RoleDevpath,
+        QString::fromStdString(device.devpath));
 
-    item->setIcon(0, style()->standardIcon(icon));
+    item->setData(
+        0,
+        RoleEffectiveControl,
+        QString::fromStdString(effectiveLevel));
+
+    item->setData(
+        0,
+        RoleConnected,
+        device.connected);
+
+    item->setData(
+        0,
+        RoleBootValid,
+        isDeviceBootIdValid(device));
+
+    item->setIcon(0, deviceIcon(device));
 }
 
 std::string DeviceTree::generateNodeName(const DeviceInfo &device)
