@@ -189,6 +189,15 @@ void audit_ipc_request(const PeerCredentials& peer, const json& request, const j
     );
 }
 
+bool should_audit_ipc_request(const json& request) {
+    if (!request.is_object()) {
+        return true;
+    }
+
+    const std::string command = request.value("command", "");
+    return command != "boot_id" && command != "log_records";
+}
+
 std::string canonical_module_name(
     const PolicyMap& policyMap,
     const std::string& module
@@ -820,7 +829,9 @@ std::string handle_client_packet(
         response = fic::ipc::make_error_response("invalid request: " + error);
     }
 
-    audit_ipc_request(peer, request, response);
+    if (should_audit_ipc_request(request)) {
+        audit_ipc_request(peer, request, response);
+    }
     response["api_version"] = fic::ipc::API_VERSION;
     return response.dump();
 }

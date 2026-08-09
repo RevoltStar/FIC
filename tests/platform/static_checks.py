@@ -22,6 +22,14 @@ def main():
         "an unspecified target platform must fail during CMake configuration",
     )
 
+    daemon_main = (root / "fic/src/main.cpp").read_text(encoding="utf-8")
+    require(
+        "bool should_audit_ipc_request(const json& request)" in daemon_main
+        and 'command != "boot_id" && command != "log_records"' in daemon_main
+        and "if (should_audit_ipc_request(request))" in daemon_main,
+        "log polling IPC commands must not write audit records into the paginated log stream",
+    )
+
     deprecated_exec_shield_tokens = (
         "kernel.exec-shield",
         "kernel_exec_shield_enable",

@@ -8,8 +8,7 @@
 - Обновлено: 2026-08-09.
 - Ветка: `main`.
 - Базовый commit: `d693cd7`.
-- Текущая задача: добавить стартовое применение политик при запуске `fic.service`
-  и сохранить дальнейший контроль по `--interval`.
+- Текущая задача: исправить дублирование записей во вкладке логов GUI.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
@@ -58,6 +57,16 @@
   pass вместо CLI-ориентированного `apply(policyMap, "all", "")`.
 - Результаты daemon enforcement pass пишутся в stdout/stderr и audit log с
   причиной (`startup` или `periodic`) и агрегированными счетчиками.
+- На машине `172.17.1.150` подтверждено: запись
+  `net.ipv4.tcp_synack_retries` в `daemon_1392.txt` присутствовала один раз, но
+  GUI показывал ее многократно. Причина была не в записи daemon log, а в
+  чтении логов: `boot_id` и `log_records` сами писали audit-записи в тот же
+  каталог `/opt/fic/log/<boot_id>`, который затем читался offset-пагинацией.
+  Новые audit-записи появлялись перед daemon-файлом и сдвигали cursor, поэтому
+  GUI повторно получал уже прочитанные строки.
+- `boot_id` и `log_records` исключены из IPC audit path, чтобы polling/read path
+  LogViewer был read-only относительно читаемого журнала.
+- Добавлена static check, фиксирующая этот контракт.
 
 ## Измененные файлы
 
@@ -68,6 +77,7 @@
 - `docs/architecture-diagrams.md`;
 - `packaging/deb/README.md`;
 - `packaging/rpm/README.md`;
+- `tests/platform/static_checks.py`;
 - `tests/device-control/static_checks.py`;
 - `tests/device-control/test.sh`;
 - `tests/device-control/suites/ingestion.sh`;
@@ -77,6 +87,7 @@
 
 - `cmake --build build-check --target fic-dick fic -j2` — успешно.
 - `cmake --build build-check --target fic -j2` — успешно.
+- `cmake --build build-check --target fic-gui -j2` — успешно.
 - `python3 tests/device-control/static_checks.py .` — успешно.
 - `python3 tests/platform/static_checks.py .` — успешно.
 - `bash -n tests/device-control/test.sh tests/device-control/suites/ingestion.sh`
