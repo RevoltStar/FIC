@@ -1064,11 +1064,12 @@ int main(int argc, char* argv[]) {
     const int serverFd = socketResult.fileDescriptor;
     fic::ipc::AdminSocketTransport transport(serverFd);
 
-    if (!run_daemon_apply_all_pass(policyMap, platform, executables, "startup")) {
-        ::close(serverFd);
-        ::unlink(socketPath.c_str());
-        std::cerr << "fic daemon startup policy apply failed" << std::endl;
-        return 1;
+    const bool startupApplyOk =
+        run_daemon_apply_all_pass(policyMap, platform, executables, "startup");
+    if (!startupApplyOk) {
+        std::cerr << "fic daemon startup policy apply completed with errors; "
+                     "daemon will continue running"
+                  << std::endl;
     }
 
     std::cout << "fic daemon started, socket=" << socketPath
