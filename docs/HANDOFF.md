@@ -8,7 +8,8 @@
 - Обновлено: 2026-08-09.
 - Ветка: `main`.
 - Базовый commit: `d693cd7`.
-- Текущая задача: исправить дублирование записей во вкладке логов GUI.
+- Текущая задача: переработать SYSCTL persistent-конфигурацию под
+  platform-selected loader semantics и FIC-owned managed file.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
@@ -67,20 +68,52 @@
 - `boot_id` и `log_records` исключены из IPC audit path, чтобы polling/read path
   LogViewer был read-only относительно читаемого журнала.
 - Добавлена static check, фиксирующая этот контракт.
+- `PlatformProfile` расширен `SysctlPlatformConfig`: профиль явно задает loader
+  (`SystemdSysctl`) и FIC-owned managed path `/etc/sysctl.d/zzzz-fic.conf`.
+- Все поддерживаемые профили (`debian-12`, `debian-13`, `ubuntu-24.04`,
+  `ubuntu-26.04`, `alt-p11`) настроены на `SystemdSysctl`.
+- `SysctlConfiguration` больше не пишет policy values в `/etc/sysctl.conf`.
+  Для systemd-профилей boot-effective значение считается по `sysctl.d/*.conf`,
+  с приоритетом одинаковых имен по каталогам, глобальной лексикографической
+  сортировкой, glob/exclusion semantics и source location.
+- `/etc/sysctl.conf` больше не считается boot-effective source для
+  `SystemdSysctl`; он не исправляется и не используется как FIC-owned файл.
+- Remediation пишет только `/etc/sysctl.d/zzzz-fic.conf`; если корректное
+  значение уже задано чужим active `sysctl.d` файлом, FIC не создает дубль.
+- Если после записи managed-файла другой later source перекрывает значение,
+  операция завершается conflict/failure с диагностикой `expected/actual/path:line`
+  и откатом managed-файла. Чужие sysctl-файлы не изменяются.
+- `Sysctl::apply()` получает SYSCTL platform config из `init_policyMap()` и
+  сохраняет отдельную runtime remediation через `SysctlRuntime`.
 
 ## Измененные файлы
 
 - `fic-dick/src/core/DeviceControlDaemon.cpp`;
 - `fic/src/main.cpp`;
 - `fic/src/scripts/service/fic-udevadm-trigger.in`;
+- `fic/src/core/main_function.cpp`;
+- `fic/src/modules/sysctl/Sysctl.cpp`;
+- `fic/src/modules/sysctl/Sysctl.h`;
+- `fic/src/modules/sysctl/SysctlConfiguration.cpp`;
+- `fic/src/modules/sysctl/SysctlConfiguration.h`;
+- `fic/src/platform/PlatformCompatibility.cpp`;
+- `fic/src/platform/PlatformProfile.h`;
+- `fic/src/platform/profiles/AltP11Profile.cpp`;
+- `fic/src/platform/profiles/Debian12Profile.cpp`;
+- `fic/src/platform/profiles/Debian13Profile.cpp`;
+- `fic/src/platform/profiles/Ubuntu2404Profile.cpp`;
+- `fic/src/platform/profiles/Ubuntu2604Profile.cpp`;
 - `fic-dick/README.md`;
 - `docs/architecture-diagrams.md`;
 - `packaging/deb/README.md`;
 - `packaging/rpm/README.md`;
+- `tests/platform/PlatformProfileTests.cpp`;
 - `tests/platform/static_checks.py`;
 - `tests/device-control/static_checks.py`;
 - `tests/device-control/test.sh`;
 - `tests/device-control/suites/ingestion.sh`;
+- `tests/sysctl/SysctlConfigurationTests.cpp`;
+- `tests/sysctl/RemoteSysctlIntegration.sh`;
 - `docs/HANDOFF.md`.
 
 ## Выполненные проверки
@@ -88,6 +121,23 @@
 - `cmake --build build-check --target fic-dick fic -j2` — успешно.
 - `cmake --build build-check --target fic -j2` — успешно.
 - `cmake --build build-check --target fic-gui -j2` — успешно.
+- `cmake --build build-check --target sysctl_configuration_tests -j2` — успешно.
+- `./build-check/tests/sysctl_configuration_tests` — успешно.
+- `cmake --build build-check --target platform_profile_tests -j2` — успешно.
+- `./build-check/tests/platform_profile_tests` — успешно.
+- `bash -n tests/sysctl/RemoteSysctlIntegration.sh` — успешно.
+- `cmake -S . -B /tmp/fic-build-debian12 -DFIC_TARGET_PLATFORM=debian-12`
+  + `cmake --build /tmp/fic-build-debian12 --target fic-platform -j2` —
+  успешно.
+- `cmake -S . -B /tmp/fic-build-debian13 -DFIC_TARGET_PLATFORM=debian-13`
+  + `cmake --build /tmp/fic-build-debian13 --target fic-platform -j2` —
+  успешно.
+- `cmake -S . -B /tmp/fic-build-ubuntu2404 -DFIC_TARGET_PLATFORM=ubuntu-24.04`
+  + `cmake --build /tmp/fic-build-ubuntu2404 --target fic-platform -j2` —
+  успешно.
+- `cmake -S . -B /tmp/fic-build-ubuntu2604 -DFIC_TARGET_PLATFORM=ubuntu-26.04`
+  + `cmake --build /tmp/fic-build-ubuntu2604 --target fic-platform -j2` —
+  успешно.
 - `python3 tests/device-control/static_checks.py .` — успешно.
 - `python3 tests/platform/static_checks.py .` — успешно.
 - `bash -n tests/device-control/test.sh tests/device-control/suites/ingestion.sh`

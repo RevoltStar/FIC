@@ -29,6 +29,33 @@ def main():
         and "if (should_audit_ipc_request(request))" in daemon_main,
         "log polling IPC commands must not write audit records into the paginated log stream",
     )
+    platform_profile = (root / "fic/src/platform/PlatformProfile.h").read_text(
+        encoding="utf-8"
+    )
+    require(
+        "enum class SysctlLoaderKind" in platform_profile
+        and "struct SysctlPlatformConfig" in platform_profile
+        and "SysctlPlatformConfig sysctl" in platform_profile,
+        "PlatformProfile must carry platform-specific SYSCTL loader configuration",
+    )
+    for profile_path in (root / "fic/src/platform/profiles").glob("*.cpp"):
+        profile_source = profile_path.read_text(encoding="utf-8")
+        require(
+            "profile.sysctl.loader = SysctlLoaderKind::SystemdSysctl" in profile_source
+            and 'profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf"'
+            in profile_source,
+            f"{profile_path.relative_to(root)} does not configure systemd-sysctl managed path",
+        )
+    sysctl_configuration = (
+        root / "fic/src/modules/sysctl/SysctlConfiguration.cpp"
+    ).read_text(encoding="utf-8")
+    require(
+        "writeManaged(" in sysctl_configuration
+        and "writeMain(" not in sysctl_configuration
+        and "restoreMain(" not in sysctl_configuration
+        and "options_.platform.managedConfigPath" in sysctl_configuration,
+        "SYSCTL remediation must write only the platform managed sysctl file",
+    )
 
     deprecated_exec_shield_tokens = (
         "kernel.exec-shield",

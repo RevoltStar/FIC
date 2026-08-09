@@ -49,6 +49,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.ssh.serviceUnits = {"sshd.service"};
     profile.sudo.mainConfigPath = "/etc/sudoers";
     profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
+    profile.sysctl.loader = SysctlLoaderKind::SystemdSysctl;
+    profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
     profile.pam.configDirectories = {
         "/etc/pam.d",
         "/usr/lib/pam.d",

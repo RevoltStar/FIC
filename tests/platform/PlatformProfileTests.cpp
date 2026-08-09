@@ -98,6 +98,10 @@ void testSelectedProfile() {
             "sudoers main configuration path is incorrect");
     require(profile.sudo.managedConfigPath == "/etc/sudoers.d/zzzz-fic",
             "managed sudoers path is incorrect");
+    require(profile.sysctl.loader == fic::platform::SysctlLoaderKind::SystemdSysctl,
+            "SYSCTL loader kind is incorrect");
+    require(profile.sysctl.managedConfigPath == "/etc/sysctl.d/zzzz-fic.conf",
+            "managed sysctl path is incorrect");
     require(executableSpec(profile, fic::platform::ExecutableId::Visudo).candidates ==
                 std::vector<std::filesystem::path>({"/usr/sbin/visudo"}),
             "visudo candidates are incorrect");
@@ -292,6 +296,16 @@ void testInvalidProfileIsRejected() {
     profile.sudo.managedConfigPath = "etc/sudoers.d/zzzz-fic";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative sudoers path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.sysctl.managedConfigPath = "etc/sysctl.d/zzzz-fic.conf";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative sysctl managed path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a sysctl managed path without .conf suffix must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.displayManager.gdmConfigCandidates.clear();

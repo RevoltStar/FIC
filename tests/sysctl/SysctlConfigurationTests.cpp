@@ -35,6 +35,8 @@ public:
 
     SysctlConfigurationOptions options() const {
         SysctlConfigurationOptions value;
+        value.platform.loader = fic::platform::SysctlLoaderKind::SystemdSysctl;
+        value.platform.managedConfigPath = root / "etc/sysctl.d/zzzz-fic.conf";
         value.directories = {
             root / "etc/sysctl.d",
             root / "run/sysctl.d",
@@ -42,7 +44,7 @@ public:
             root / "usr/lib/sysctl.d",
             root / "lib/sysctl.d"
         };
-        value.mainPath = root / "etc/sysctl.conf";
+        value.procpsMainPath = root / "etc/sysctl.conf";
         value.enforceOwnership = false;
         return value;
     }
@@ -116,18 +118,41 @@ void testSuppressedInvalidFileIsNotParsed() {
             "a suppressed same-name file must not be parsed");
 }
 
-void testMainFileIsLast() {
+void testProcpsMainFileIsLastOnlyForProcpsLoader() {
     TemporaryTree tree;
+    SysctlConfigurationOptions options = tree.options();
+    options.platform.loader = fic::platform::SysctlLoaderKind::ProcpsSystem;
     writeFile(tree.root / "etc/sysctl.d/zzzz.conf", "kernel.test = snippet\n");
     writeFile(tree.root / "etc/sysctl.conf",
               "kernel.test = first\n; comment\nkernel.test = main\n");
 
-    const auto observation = loaded(tree.options()).inspect("kernel.test");
+    const auto observation = loaded(options).inspect("kernel.test");
     require(observation.found && observation.value == "main",
-            "/etc/sysctl.conf must override every sysctl.d file");
+            "/etc/sysctl.conf must override sysctl.d only for procps-system semantics");
     require(observation.source.path == tree.root / "etc/sysctl.conf" &&
                 observation.source.line == 3,
             "wrong location for last assignment in main file");
+}
+
+void testSystemdIgnoresSysctlConfForBootEffectiveValue() {
+    TemporaryTree tree;
+    writeFile(tree.root / "etc/sysctl.conf", "net.ipv4.ip_forward = 1\n");
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf", "net.ipv4.ip_forward = 0\n");
+
+    SysctlConfiguration configuration = loaded(tree.options());
+    const auto observation = configuration.inspect("net.ipv4.ip_forward");
+    require(observation.found && observation.value == "0",
+            "systemd-sysctl boot-effective value must ignore /etc/sysctl.conf");
+    require(observation.source.path == tree.root / "etc/sysctl.d/zzzz-fic.conf",
+            "systemd-sysctl source must be the managed sysctl.d file");
+
+    const std::string before = readFile(tree.root / "etc/sysctl.conf");
+    const SysctlOperationResult result =
+        configuration.ensureManagedValue("net.ipv4.ip_forward", "0");
+    require(result.ok && !result.changed,
+            "matching systemd boot-effective value must be idempotent");
+    require(readFile(tree.root / "etc/sysctl.conf") == before,
+            "/etc/sysctl.conf must remain untouched under systemd semantics");
 }
 
 void testSlashNotationAndIgnoredFailurePrefix() {
@@ -174,18 +199,18 @@ void testDevNullMaskSuppressesVendorFile() {
     require(!observation.found, "a higher-priority /dev/null mask must suppress vendor file");
 }
 
-void testCorrectEffectiveValueDoesNotCreateMainFile() {
+void testCorrectEffectiveValueDoesNotCreateManagedFile() {
     TemporaryTree tree;
     writeFile(tree.root / "usr/lib/sysctl.d/10-vendor.conf", "kernel.test = expected\n");
     SysctlConfiguration configuration = loaded(tree.options());
 
     const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
     require(result.ok && !result.changed, "already effective value must be idempotent");
-    require(!std::filesystem::exists(tree.root / "etc/sysctl.conf"),
-            "correct effective value must not create /etc/sysctl.conf");
+    require(!std::filesystem::exists(tree.root / "etc/sysctl.d/zzzz-fic.conf"),
+            "correct foreign effective value must not create FIC managed file");
 }
 
-void testManagedBlockOverridesAndPreservesValues() {
+void testManagedFileOverridesAndPreservesValues() {
     TemporaryTree tree;
     writeFile(tree.root / "usr/lib/sysctl.d/90-vendor.conf", "kernel.alpha = wrong\n");
     writeFile(tree.root / "etc/sysctl.conf", "# administrator content\nkernel.alpha = old\n");
@@ -198,15 +223,12 @@ void testManagedBlockOverridesAndPreservesValues() {
     const SysctlOperationResult secondResult = second.ensureManagedValue("kernel.beta", "two");
     require(secondResult.ok && secondResult.changed, "second managed value must be added");
 
-    const std::string content = readFile(tree.root / "etc/sysctl.conf");
-    require(content.find("# administrator content") != std::string::npos,
-            "administrator content must be preserved");
+    const std::string content = readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf");
+    require(readFile(tree.root / "etc/sysctl.conf") == "# administrator content\nkernel.alpha = old\n",
+            "/etc/sysctl.conf must remain untouched during remediation");
     require(content.find("kernel.alpha = one") != std::string::npos &&
                 content.find("kernel.beta = two") != std::string::npos,
-            "managed block must preserve values from other policies");
-    require(content.rfind("# END FIC MANAGED SYSCTL\n") ==
-                content.size() - std::string("# END FIC MANAGED SYSCTL\n").size(),
-            "managed block must be the final content of /etc/sysctl.conf");
+            "managed file must preserve values from other policies");
 
     SysctlConfiguration verification = loaded(tree.options());
     require(verification.inspect("kernel.alpha").value == "one" &&
@@ -218,36 +240,38 @@ void testManagedBlockOverridesAndPreservesValues() {
         verification.ensureManagedValue("kernel.beta", "two");
     require(idempotent.ok && !idempotent.changed,
             "reapplying a managed value must be idempotent");
-    require(readFile(tree.root / "etc/sysctl.conf") == before,
+    require(readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf") == before,
             "idempotent application must not rewrite content");
 }
 
-void testExistingManagedBlockMovesAfterAdministratorLines() {
+void testConflictingLaterSourceRollsBackManagedFile() {
     TemporaryTree tree;
-    writeFile(tree.root / "etc/sysctl.conf",
-              "# BEGIN FIC MANAGED SYSCTL\n"
-              "kernel.test = stale\n"
-              "# END FIC MANAGED SYSCTL\n"
-              "kernel.test = administrator\n");
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf", "kernel.test = stale\n");
+    writeFile(tree.root / "etc/sysctl.d/zzzzz-local.conf", "kernel.test = administrator\n");
+    const std::string beforeManaged = readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf");
+    const std::string beforeForeign = readFile(tree.root / "etc/sysctl.d/zzzzz-local.conf");
 
     SysctlConfiguration configuration = loaded(tree.options());
     const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
-    require(result.ok && result.changed, "managed block before later lines must be repaired");
-    require(loaded(tree.options()).inspect("kernel.test").value == "expected",
-            "moved managed block must become effective");
+    require(!result.ok, "later source must be reported as conflict");
+    require(result.message.find("zzzzz-local.conf:1") != std::string::npos,
+            "conflict diagnostics must include overriding source location");
+    require(readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf") == beforeManaged,
+            "managed file must be rolled back after conflict");
+    require(readFile(tree.root / "etc/sysctl.d/zzzzz-local.conf") == beforeForeign,
+            "foreign conflicting file must remain untouched");
 }
 
-void testMalformedManagedBlockFailsClosed() {
+void testMalformedManagedFileFailsClosed() {
     TemporaryTree tree;
-    const std::string original =
-        "# BEGIN FIC MANAGED SYSCTL\nkernel.test = value\n";
-    writeFile(tree.root / "etc/sysctl.conf", original);
+    const std::string original = "kernel.test = value\nthis is not valid\n";
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf", original);
 
-    SysctlConfiguration configuration = loaded(tree.options());
-    const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
-    require(!result.ok, "unclosed managed block must fail closed");
-    require(readFile(tree.root / "etc/sysctl.conf") == original,
-            "malformed managed block must remain untouched");
+    SysctlConfiguration configuration(tree.options());
+    std::string error;
+    require(!configuration.load(error), "invalid managed file must fail loading");
+    require(readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf") == original,
+            "malformed managed file must remain untouched");
 }
 
 void testInvalidActiveConfigurationFailsLoad() {
@@ -362,15 +386,16 @@ int main(int argc, char* argv[]) {
         {"global lexical order", testGlobalLexicalOrder},
         {"same-name directory priority", testSameNameUsesHigherPriorityDirectory},
         {"suppressed invalid file", testSuppressedInvalidFileIsNotParsed},
-        {"main file last", testMainFileIsLast},
+        {"procps main file last", testProcpsMainFileIsLastOnlyForProcpsLoader},
+        {"systemd ignores sysctl.conf", testSystemdIgnoresSysctlConfForBootEffectiveValue},
         {"slash notation", testSlashNotationAndIgnoredFailurePrefix},
         {"glob and exclusion", testGlobAssignmentAndExclusion},
         {"explicit beats glob", testExplicitAssignmentIsNotOverriddenByGlob},
         {"dev-null mask", testDevNullMaskSuppressesVendorFile},
-        {"correct value no write", testCorrectEffectiveValueDoesNotCreateMainFile},
-        {"managed override", testManagedBlockOverridesAndPreservesValues},
-        {"managed block moved last", testExistingManagedBlockMovesAfterAdministratorLines},
-        {"malformed managed block", testMalformedManagedBlockFailsClosed},
+        {"correct value no managed write", testCorrectEffectiveValueDoesNotCreateManagedFile},
+        {"managed file override", testManagedFileOverridesAndPreservesValues},
+        {"later source conflict rollback", testConflictingLaterSourceRollsBackManagedFile},
+        {"malformed managed file", testMalformedManagedFileFailsClosed},
         {"invalid active configuration", testInvalidActiveConfigurationFailsLoad},
         {"runtime value already correct", testRuntimeValueAlreadyCorrect},
         {"runtime write and verify", testRuntimeValueIsWrittenAndVerified},

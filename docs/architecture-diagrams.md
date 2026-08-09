@@ -366,19 +366,26 @@ flowchart LR
 
 Создание отсутствующего файла по умолчанию запрещено и проверяется самим
 `AtomicFileWriter`, в том числе при сохранении после чтения. Оно включается явно
-только для управляемых сценариев: `/etc/sysctl.conf`, записи конфигурации display
-manager, `/opt/fic/db/commandhash.txt` и managed sudoers-файла. Поэтому чтение
+только для управляемых сценариев: `/etc/sysctl.d/zzzz-fic.conf`, записи
+конфигурации display manager, `/opt/fic/db/commandhash.txt` и managed
+sudoers-файла. Поэтому чтение
 отсутствующего системного конфига больше не имеет побочного эффекта.
 
 `SudoersConfiguration` использует тот же низкоуровневый writer напрямую,
 поскольку работает с графом файлов, а не с одним форматом `FileHandler`.
 Требуемые метаданные остаются доменным решением вызывающего компонента.
 
-`SysctlConfiguration` также является доменным обработчиком: он воспроизводит
-приоритеты procps-ng `sysctl --system`, вычисляет последнюю эффективную запись и
-записывает только managed-блок FIC в конце `/etc/sysctl.conf`. Общий
-`ConfigFileHandler` для этого не используется, поскольку его однофайловая
-модель не выражает подавление одноименных файлов и глобальную сортировку.
+`SysctlConfiguration` также является доменным обработчиком. Он различает
+runtime-состояние `/proc/sys`, boot-effective persistent-конфигурацию выбранного
+platform loader и представление ручного `procps sysctl --system`. Для
+поддерживаемых systemd-профилей boot-effective значение считается по
+`systemd-sysctl`/`sysctl.d/*.conf`: приоритет каталогов для одинаковых имен,
+глобальная лексикографическая сортировка, glob/exclusion-правила и source
+location. FIC владеет только `/etc/sysctl.d/zzzz-fic.conf`; `/etc/sysctl.conf`
+и чужие `sysctl.d` файлы используются для диагностики, но не переписываются.
+Общий `ConfigFileHandler` для этого не используется, поскольку его однофайловая
+модель не выражает подавление одноименных файлов, глобальную сортировку и
+отдельный FIC-owned managed file.
 
 Доверенные hashes системных команд обновляются только в границе пакетной
 транзакции:
@@ -435,26 +442,31 @@ flowchart LR
 flowchart LR
     policy[SYSCTL policy] --> runtimePreflight[read and validate /proc/sys key]
     runtimePreflight --> loader[SysctlConfiguration]
-    loader --> roots[fixed sysctl.d roots]
+    loader --> platform[PlatformProfile sysctl loader]
+    platform --> roots[systemd sysctl.d roots]
     roots --> select[same-name priority]
     select --> order[global lexical order]
-    order --> main[/etc/sysctl.conf last]
-    main --> effective[effective exact key including globs and exclusions]
+    order --> effective[boot-effective exact key including globs and exclusions]
     effective -->|matches| unchanged[no write]
-    effective -->|deviation| block[managed block at EOF]
-    block --> writer[AtomicFileWriter root:root 0644]
+    effective -->|deviation| managed[/etc/sysctl.d/zzzz-fic.conf]
+    managed --> writer[AtomicFileWriter root:root 0644]
     writer --> reload[reload and verify postcondition]
-    reload -->|failure| rollback[restore original main file]
+    reload -->|overridden| conflict[conflict with overriding source path:line]
+    conflict --> rollback[restore original managed file]
+    reload -->|failure| rollback
     reload -->|success| runtimeEnsure[direct /proc/sys write when needed]
     runtimeEnsure --> runtimeVerify[read and verify runtime value]
     runtimeVerify -->|failure| failed[policy failed with partial diagnostics]
 ```
 
 Сторонние sysctl-файлы используются для вычисления результата и диагностики,
-но не переписываются. Runtime-ключ строится только из внутреннего имени
+но не переписываются. Если после записи managed-файла другой boot-effective
+source перекрывает значение, policy apply завершается ошибкой с указанием
+ожидаемого значения, фактического значения и перекрывающего `path:line`, а
+managed-файл откатывается. Runtime-ключ строится только из внутреннего имени
 политики, проверяется и открывается без следования по symlink. Отсутствующий
 ключ и любое неподтвержденное runtime-изменение делают применение неуспешным,
-даже если persistent managed-блок уже записан.
+даже если persistent managed-файл уже подготовлен.
 
 SSH-политики аналогично перечитывают записанный файл, получают все эффективные
 значения через проверяемый `sshd -T`, а затем отдельно аудируют полный граф

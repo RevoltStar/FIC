@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "platform/PlatformProfile.h"
+
 struct SysctlSourceLocation {
     std::filesystem::path path;
     size_t line = 0;
@@ -24,6 +26,7 @@ struct SysctlOperationResult {
 };
 
 struct SysctlConfigurationOptions {
+    fic::platform::SysctlPlatformConfig platform;
     std::vector<std::filesystem::path> directories = {
         "/etc/sysctl.d",
         "/run/sysctl.d",
@@ -31,11 +34,11 @@ struct SysctlConfigurationOptions {
         "/usr/lib/sysctl.d",
         "/lib/sysctl.d"
     };
-    std::filesystem::path mainPath = "/etc/sysctl.conf";
+    std::filesystem::path procpsMainPath = "/etc/sysctl.conf";
     bool enforceOwnership = true;
 };
 
-// Models the file ordering used by procps-ng `sysctl --system`.
+// Models the boot-effective sysctl loader selected by the platform profile.
 class SysctlConfiguration {
 public:
     explicit SysctlConfiguration(SysctlConfigurationOptions options = {});
@@ -49,7 +52,7 @@ private:
     struct Document {
         std::filesystem::path path;
         std::string content;
-        bool mainFile = false;
+        bool allowDevNullMask = true;
     };
 
     struct Assignment {
@@ -63,13 +66,14 @@ private:
     SysctlConfigurationOptions options_;
     std::vector<Document> documents_;
     std::vector<Assignment> assignments_;
-    bool mainExisted_ = false;
-    std::string mainContent_;
+    bool managedExisted_ = false;
+    std::string managedContent_;
 
     bool loadDirectoryDocuments(std::string& error);
-    bool loadMainDocument(std::string& error);
+    bool loadProcpsMainDocument(std::string& error);
+    bool loadManagedDocument(std::string& error);
     bool addDocument(const std::filesystem::path& path,
-                     bool mainFile,
+                     bool allowDevNullMask,
                      std::string& error);
     bool parseDocument(const Document& document, std::string& error);
     bool checkDirectorySafety(const std::filesystem::path& path,
@@ -78,8 +82,8 @@ private:
                          bool allowDevNull,
                          std::string& error) const;
     bool snapshotUnchanged(std::string& error) const;
-    bool writeMain(const std::string& content, std::string& error) const;
-    bool restoreMain(std::string& error) const;
+    bool writeManaged(const std::string& content, std::string& error) const;
+    bool restoreManaged(std::string& error) const;
     void clear();
 };
 

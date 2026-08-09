@@ -4,6 +4,7 @@
 
 #include <mutex>
 #include <optional>
+#include <utility>
 
 namespace {
 
@@ -16,6 +17,10 @@ Sysctl::Sysctl()
     this->moduleName = "SYSCTL";
     this->moduleConf = std::make_unique<ModuleConfigFileHandler>(this->moduleName);
     this->moduleConf->loadConfig();
+}
+
+void Sysctl::setPlatformConfig(fic::platform::SysctlPlatformConfig platformConfig) {
+    platformConfig_ = std::move(platformConfig);
 }
 
 
@@ -47,6 +52,10 @@ bool Sysctl::apply (){
     }
 
     const std::lock_guard<std::mutex> lock(sysctlMutex);
+    if (!platformConfig_.has_value()) {
+        this->log("Не задана platform SYSCTL configuration", logLevel::ERROR);
+        return false;
+    }
     SysctlRuntime runtime;
     std::string runtimeBefore;
     std::string runtimeError;
@@ -57,7 +66,9 @@ bool Sysctl::apply (){
         return false;
     }
 
-    SysctlConfiguration configuration;
+    SysctlConfigurationOptions configurationOptions;
+    configurationOptions.platform = platformConfig_.value();
+    SysctlConfiguration configuration(configurationOptions);
     std::string loadError;
     if (!configuration.load(loadError)) {
         this->log("Не удалось проанализировать конфигурацию sysctl: " + loadError,

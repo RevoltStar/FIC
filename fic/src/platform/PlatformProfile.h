@@ -55,6 +55,16 @@ struct SudoPlatformConfig {
     std::filesystem::path managedConfigPath;
 };
 
+enum class SysctlLoaderKind {
+    SystemdSysctl,
+    ProcpsSystem
+};
+
+struct SysctlPlatformConfig {
+    SysctlLoaderKind loader = SysctlLoaderKind::SystemdSysctl;
+    std::filesystem::path managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
+};
+
 struct PamPlatformConfig {
     std::vector<std::filesystem::path> configDirectories;
     std::vector<std::filesystem::path> moduleDirectories;
@@ -96,6 +106,7 @@ struct PlatformProfile {
     PackageManagerPlatformConfig packageManager;
     SshPlatformConfig ssh;
     SudoPlatformConfig sudo;
+    SysctlPlatformConfig sysctl;
     PamPlatformConfig pam;
     DisplayManagerPlatformConfig displayManager;
     GrubPlatformConfig grub;

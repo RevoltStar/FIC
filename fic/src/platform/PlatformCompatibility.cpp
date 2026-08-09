@@ -252,6 +252,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
     }
     if (!validatePath(profile.sudo.mainConfigPath, "sudoers main path", error) ||
         !validatePath(profile.sudo.managedConfigPath, "sudoers managed path", error) ||
+        !validatePath(profile.sysctl.managedConfigPath, "sysctl managed path", error) ||
         !validatePaths(profile.pam.configDirectories,
                        "PAM configuration directory", error) ||
         !validatePaths(profile.pam.moduleDirectories,
@@ -280,6 +281,10 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                                  "DAC protected system file", error) ||
         !validateFileAccessRules(profile.dac.protectedSystemCommands,
                                  "DAC protected system command", error)) {
+        return false;
+    }
+    if (profile.sysctl.managedConfigPath.extension() != ".conf") {
+        error = "sysctl managed path must use .conf extension";
         return false;
     }
     error.clear();

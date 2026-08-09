@@ -659,6 +659,9 @@ PolicyMap init_policyMap(
     PolicyMap policyMap;
 
     for (auto& policyClass : cafArr) {
+            if (auto* sysctlPolicy = dynamic_cast<Sysctl*>(policyClass.get())) {
+                sysctlPolicy->setPlatformConfig(platform.sysctl);
+            }
             //std::cout << policyClass->moduleName << std::endl;
             //std::cout << policyClass->submoduleName << std::endl;
             //std::cout << policyClass->policyName << std::endl;
