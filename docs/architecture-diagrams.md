@@ -170,7 +170,10 @@ flowchart TD
     socketPath --> interval["Выбор interval<br/>--interval или 1800 сек"]
     interval --> signals[Регистрация SIGTERM/SIGINT]
     signals --> createSocket[create_server_socket]
-    createSocket --> mainLoop{g_stop == false}
+    createSocket --> startupApply[init_policyMap + apply all enabled policies]
+    startupApply -->|ошибка| startupFail([exit 1])
+    startupApply -->|успешно| started[fic daemon started]
+    started --> mainLoop{g_stop == false}
 
     mainLoop --> poll[AdminSocketTransport poll]
     poll --> clients[accept/read/write до 32 клиентов]

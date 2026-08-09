@@ -410,6 +410,36 @@ std::string policy_apply_message(const PolicyApplySummary& summary,
     return failureMessage;
 }
 
+std::string policy_apply_summary_text(const PolicyApplySummary& summary) {
+    return "total=" + std::to_string(summary.totalCount()) +
+           " applied=" + std::to_string(summary.appliedCount()) +
+           " failed=" + std::to_string(summary.failedCount()) +
+           " disabled=" + std::to_string(summary.disabledCount()) +
+           " not_found=" + std::to_string(summary.notFoundCount());
+}
+
+bool run_daemon_apply_all_pass(
+    PolicyMap& policyMap,
+    const fic::platform::PlatformProfile& platform,
+    const fic::platform::PlatformExecutableResolver& executables,
+    const std::string& reason
+) {
+    policyMap = init_policyMap(platform, executables);
+    const PolicyApplySummary summary = applyAllPolicies(policyMap);
+    const bool ok = isPolicyApplySuccessful(summary, "all", "");
+    const std::string message = "policy apply pass reason=" + sanitize_log_value(reason) +
+        " ok=" + std::string(ok ? "true" : "false") +
+        " " + policy_apply_summary_text(summary);
+
+    if (ok) {
+        std::cout << message << std::endl;
+    } else {
+        std::cerr << message << std::endl;
+    }
+    write_audit_log(message);
+    return ok;
+}
+
 constexpr int MAX_LOG_RECORDS_PER_PAGE = 500;
 constexpr std::size_t MAX_LOG_LINE_BYTES = 16U * 1024U;
 constexpr std::size_t MAX_LOG_PAGE_BYTES = 768U * 1024U;
@@ -1034,6 +1064,13 @@ int main(int argc, char* argv[]) {
     const int serverFd = socketResult.fileDescriptor;
     fic::ipc::AdminSocketTransport transport(serverFd);
 
+    if (!run_daemon_apply_all_pass(policyMap, platform, executables, "startup")) {
+        ::close(serverFd);
+        ::unlink(socketPath.c_str());
+        std::cerr << "fic daemon startup policy apply failed" << std::endl;
+        return 1;
+    }
+
     std::cout << "fic daemon started, socket=" << socketPath
               << ", interval=" << intervalSeconds << "s"
               << ", target-platform=" << platform.id << std::endl;
@@ -1054,8 +1091,7 @@ int main(int argc, char* argv[]) {
 
         auto now = std::chrono::steady_clock::now();
         if (now >= nextPeriodicApply) {
-            policyMap = init_policyMap(platform, executables);
-            apply(policyMap, "all", "");
+            run_daemon_apply_all_pass(policyMap, platform, executables, "periodic");
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }
     }

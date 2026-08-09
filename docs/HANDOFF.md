@@ -5,11 +5,11 @@
 
 ## Текущий снимок
 
-- Обновлено: 2026-08-08.
+- Обновлено: 2026-08-09.
 - Ветка: `main`.
-- Базовый commit: `5932377`.
-- Текущая задача: архитектурно исправить обработку udev-событий и boot device
-  inventory в компоненте контроля устройств.
+- Базовый commit: `d693cd7`.
+- Текущая задача: добавить стартовое применение политик при запуске `fic.service`
+  и сохранить дальнейший контроль по `--interval`.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
@@ -47,10 +47,22 @@
   фиксирует, что udev stream является notification mechanism, а не единственным
   source of truth.
 - Добавлен runtime shell suite `ingestion` и расширены static checks.
+- `fic` daemon выполняет отдельный daemon enforcement pass:
+  `init_policyMap()` + `applyAllPolicies()` + `isPolicyApplySuccessful()` для
+  причин `startup` и `periodic`.
+- После создания административного socket, но до сообщения `fic daemon started`,
+  выполняется стартовое применение всех включенных политик.
+- Ошибка стартового применения является fail-closed: daemon закрывает и удаляет
+  socket, пишет ошибку и завершается с кодом `1`.
+- Периодический контроль по `--interval` использует тот же daemon enforcement
+  pass вместо CLI-ориентированного `apply(policyMap, "all", "")`.
+- Результаты daemon enforcement pass пишутся в stdout/stderr и audit log с
+  причиной (`startup` или `periodic`) и агрегированными счетчиками.
 
 ## Измененные файлы
 
 - `fic-dick/src/core/DeviceControlDaemon.cpp`;
+- `fic/src/main.cpp`;
 - `fic/src/scripts/service/fic-udevadm-trigger.in`;
 - `fic-dick/README.md`;
 - `docs/architecture-diagrams.md`;
@@ -64,6 +76,7 @@
 ## Выполненные проверки
 
 - `cmake --build build-check --target fic-dick fic -j2` — успешно.
+- `cmake --build build-check --target fic -j2` — успешно.
 - `python3 tests/device-control/static_checks.py .` — успешно.
 - `python3 tests/platform/static_checks.py .` — успешно.
 - `bash -n tests/device-control/test.sh tests/device-control/suites/ingestion.sh`
