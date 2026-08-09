@@ -76,12 +76,12 @@ bool parseAssignmentLine(const std::string& physicalLine,
         if (line.front() != '-') {
             return false;
         }
-        key = fic::sysctl::canonicalSysctlPath(line.substr(1));
+        key = fic::sysctl::systemdConfigKeyToCanonicalPath(line.substr(1));
         exclusion = true;
         pattern = key.find_first_of("*?[") != std::string::npos;
         return !key.empty();
     }
-    key = fic::sysctl::canonicalSysctlPath(line.substr(0, equals));
+    key = fic::sysctl::systemdConfigKeyToCanonicalPath(line.substr(0, equals));
     value = trimCopy(line.substr(equals + 1));
     pattern = key.find_first_of("*?[") != std::string::npos;
     return !key.empty();
@@ -459,7 +459,7 @@ bool SysctlConfiguration::load(std::string& error) {
 
 SysctlValueObservation SysctlConfiguration::inspect(const std::string& key) const {
     SysctlValueObservation result;
-    const std::string requested = fic::sysctl::canonicalSysctlPath(key);
+    const std::string requested = fic::sysctl::internalKeyToCanonicalPath(key);
     bool excludedFromGlobs = false;
     for (const Assignment& assignment : assignments_) {
         if (assignment.exclusion &&
@@ -582,7 +582,7 @@ bool SysctlConfiguration::restoreManaged(std::string& error) const {
 SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string& key,
                                                               const std::string& value) {
     SysctlOperationResult result;
-    const std::string requested = fic::sysctl::canonicalSysctlPath(key);
+    const std::string requested = fic::sysctl::internalKeyToCanonicalPath(key);
     if (requested.empty()) {
         result.message = "Пустое имя sysctl-параметра";
         return result;

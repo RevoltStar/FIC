@@ -7,9 +7,10 @@
 
 - Обновлено: 2026-08-09.
 - Ветка: `main`.
-- Базовый commit: `1d0c1bc`.
-- Текущая задача: исправить дефекты последнего SYSCTL commit без отката
-  architecture-модели `SystemdSysctl` + FIC-owned managed file.
+- Базовый commit: `1102d9e`.
+- Текущая задача: исправить смешение SYSCTL key semantics после commit
+  `1102d9e`, сохранив architecture-модель `SystemdSysctl` + FIC-owned managed
+  file.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
@@ -90,9 +91,23 @@
   читается, symlink на dangling/non-regular/unsafe target отвергается.
 - Managed SYSCTL file FIC остается strict non-symlink: `loadManagedDocument()`,
   `writeManaged()` и удаление managed-файла не следуют symlink.
-- Добавлен общий `SysctlKey.h` для persistent и runtime преобразования ключей в
-  относительный `/proc/sys` path; исправлены dotted interface keys вроде
-  `net.ipv4.conf.enp3s0.200.forwarding`.
+- `SysctlKey.h` разделяет три операции преобразования:
+  `systemdConfigKeyToCanonicalPath()` для внешних `sysctl.d` строк,
+  `internalKeyToCanonicalPath()` для FIC API/runtime и
+  `configKeyFromCanonicalPath()` для генерации managed-файла.
+- Внутренний canonical SYSCTL representation — относительный `/proc/sys` path:
+  `kernel/pid_max`, `net/ipv4/ip_forward`,
+  `net/ipv4/conf/enp3s0.200/forwarding`.
+- Parser внешних `sysctl.d` keys больше не использует network-specific
+  эвристику. Fully dotted `net.ipv4.conf.enp3s0.200.forwarding` трактуется по
+  systemd semantics как `net/ipv4/conf/enp3s0/200/forwarding`, а dotted
+  interface должен задаваться однозначно:
+  `net/ipv4/conf/enp3s0.200/forwarding` или
+  `net.ipv4.conf.enp3s0/200.forwarding`.
+- `configKeyFromCanonicalPath()` сохраняет привычную dotted форму для простых
+  keys, но для canonical paths с literal dot внутри компонента генерирует
+  slash-first syntax, который round-trip'ится через systemd parser без потери
+  literal dot.
 - Если boot-effective SYSCTL value уже соответствует политике, но FIC managed
   file содержит устаревшее противоречащее назначение, оно удаляется атомарно,
   затем effective value перечитывается; при ошибке выполняется rollback.
@@ -101,47 +116,24 @@
 
 ## Измененные файлы
 
-- `fic-dick/src/core/DeviceControlDaemon.cpp`;
-- `fic/src/main.cpp`;
-- `fic/src/scripts/service/fic-udevadm-trigger.in`;
-- `fic/src/core/main_function.cpp`;
-- `fic/src/modules/sysctl/Sysctl.cpp`;
-- `fic/src/modules/sysctl/Sysctl.h`;
 - `fic/src/modules/sysctl/SysctlConfiguration.cpp`;
-- `fic/src/modules/sysctl/SysctlConfiguration.h`;
 - `fic/src/modules/sysctl/SysctlKey.h`;
 - `fic/src/modules/sysctl/SysctlRuntime.cpp`;
-- `fic/src/platform/PlatformCompatibility.cpp`;
-- `fic/src/platform/PlatformProfile.h`;
-- `fic/src/platform/profiles/AltP11Profile.cpp`;
-- `fic/src/platform/profiles/Debian12Profile.cpp`;
-- `fic/src/platform/profiles/Debian13Profile.cpp`;
-- `fic/src/platform/profiles/Ubuntu2404Profile.cpp`;
-- `fic/src/platform/profiles/Ubuntu2604Profile.cpp`;
-- `fic-dick/README.md`;
-- `docs/architecture-diagrams.md`;
-- `packaging/deb/README.md`;
-- `packaging/rpm/README.md`;
-- `tests/platform/PlatformProfileTests.cpp`;
-- `tests/platform/static_checks.py`;
-- `tests/device-control/static_checks.py`;
-- `tests/device-control/test.sh`;
-- `tests/device-control/suites/ingestion.sh`;
 - `tests/sysctl/SysctlConfigurationTests.cpp`;
-- `tests/sysctl/RemoteSysctlIntegration.sh`;
 - `docs/HANDOFF.md`.
 
 ## Выполненные проверки
 
-- `cmake --build build-check --target fic-dick fic -j2` — успешно.
-- `cmake --build build-check --target fic -j2` — успешно.
-- `cmake --build build-check --target fic-gui -j2` — успешно.
-- `cmake --build build-check --target sysctl_configuration_tests -j2` — успешно.
+- `cmake --build build-check --target sysctl_configuration_tests -j2` —
+  успешно.
+- `./build-check/tests/sysctl_configuration_tests` — успешно.
 - `ctest --test-dir build-check -R sysctl_configuration_tests --output-on-failure`
   — успешно.
-- `./build-check/tests/sysctl_configuration_tests` — успешно.
+- `cmake --build build-check --target fic -j2` — успешно.
 - `cmake --build build-check --target platform_profile_tests -j2` — успешно.
 - `./build-check/tests/platform_profile_tests` — успешно.
+- `python3 tests/platform/static_checks.py .` — успешно.
+- `bash -n tests/sysctl/RemoteSysctlIntegration.sh` — успешно.
 - `cmake -S . -B /tmp/fic-build-debian12 -DFIC_TARGET_PLATFORM=debian-12`
   + `cmake --build /tmp/fic-build-debian12 --target fic-platform -j2` —
   успешно.
@@ -154,12 +146,9 @@
 - `cmake -S . -B /tmp/fic-build-ubuntu2604 -DFIC_TARGET_PLATFORM=ubuntu-26.04`
   + `cmake --build /tmp/fic-build-ubuntu2604 --target fic-platform -j2` —
   успешно.
-- `python3 tests/device-control/static_checks.py .` — успешно.
-- `python3 tests/platform/static_checks.py .` — успешно.
-- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=debian-12` — успешно.
-- `bash -n tests/device-control/test.sh tests/device-control/suites/ingestion.sh`
-  — успешно.
-- `bash -n tests/sysctl/RemoteSysctlIntegration.sh` — успешно.
+- `cmake -S . -B /tmp/fic-build-altp11 -DFIC_TARGET_PLATFORM=alt-p11`
+  + `cmake --build /tmp/fic-build-altp11 --target fic-platform -j2` —
+  успешно.
 - `git diff --check` — успешно.
 
 ## Что осталось

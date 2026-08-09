@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -36,21 +35,7 @@ inline std::vector<std::string> splitKey(const std::string& value, char separato
     return result;
 }
 
-inline std::string joinKeyParts(const std::vector<std::string>& parts,
-                                std::size_t first,
-                                std::size_t lastExclusive,
-                                char separator) {
-    std::string result;
-    for (std::size_t index = first; index < lastExclusive; ++index) {
-        if (!result.empty()) {
-            result += separator;
-        }
-        result += parts[index];
-    }
-    return result;
-}
-
-inline std::string canonicalSysctlPath(std::string key) {
+inline std::string stripSysctlDecorations(std::string key) {
     key = trimKey(std::move(key));
     if (!key.empty() && key.front() == '-') {
         key.erase(key.begin());
@@ -63,6 +48,11 @@ inline std::string canonicalSysctlPath(std::string key) {
     while (!key.empty() && key.front() == '/') {
         key.erase(key.begin());
     }
+    return key;
+}
+
+inline std::string systemdConfigKeyToCanonicalPath(std::string key) {
+    key = stripSysctlDecorations(std::move(key));
     if (key.empty()) {
         return {};
     }
@@ -74,17 +64,6 @@ inline std::string canonicalSysctlPath(std::string key) {
         return key;
     }
 
-    if (firstSlash == std::string::npos) {
-        const std::vector<std::string> parts = splitKey(key, '.');
-        if (parts.size() >= 5 && parts[0] == "net" &&
-            (parts[1] == "ipv4" || parts[1] == "ipv6") &&
-            (parts[2] == "conf" || parts[2] == "neigh")) {
-            return parts[0] + "/" + parts[1] + "/" + parts[2] + "/" +
-                   joinKeyParts(parts, 3, parts.size() - 1, '.') + "/" +
-                   parts.back();
-        }
-    }
-
     for (char& ch : key) {
         if (ch == '.') {
             ch = '/';
@@ -92,6 +71,18 @@ inline std::string canonicalSysctlPath(std::string key) {
             ch = '.';
         }
     }
+    return key;
+}
+
+inline std::string internalKeyToCanonicalPath(std::string key) {
+    key = stripSysctlDecorations(std::move(key));
+    if (key.empty()) {
+        return {};
+    }
+    if (key.find('/') != std::string::npos) {
+        return key;
+    }
+    std::replace(key.begin(), key.end(), '.', '/');
     return key;
 }
 

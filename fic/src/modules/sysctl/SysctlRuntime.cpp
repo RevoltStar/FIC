@@ -75,7 +75,7 @@ bool SysctlRuntime::parameterPath(const std::string& key,
         return false;
     }
 
-    const std::string relative = fic::sysctl::canonicalSysctlPath(key);
+    const std::string relative = fic::sysctl::internalKeyToCanonicalPath(key);
     if (relative.empty()) {
         error = "Недопустимое имя runtime sysctl-параметра: " + key;
         return false;

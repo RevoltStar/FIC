@@ -1,4 +1,5 @@
 #include "modules/sysctl/SysctlConfiguration.h"
+#include "modules/sysctl/SysctlKey.h"
 #include "modules/sysctl/SysctlRuntime.h"
 
 #include <filesystem>
@@ -8,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -178,6 +180,17 @@ void testGlobAssignmentAndExclusion() {
             "an exclusion without '=' must suppress matching glob assignments");
 }
 
+void testNormalDottedKeyUsesCanonicalPath() {
+    TemporaryTree tree;
+    writeFile(tree.root / "usr/lib/sysctl.d/20-kernel.conf", "kernel.pid_max = 65536\n");
+
+    SysctlConfiguration configuration = loaded(tree.options());
+    require(configuration.inspect("kernel.pid_max").value == "65536",
+            "ordinary dotted config key must be visible through FIC-style key");
+    require(configuration.inspect("kernel/pid_max").value == "65536",
+            "ordinary dotted config key must map to canonical slash representation");
+}
+
 void testExplicitAssignmentIsNotOverriddenByGlob() {
     TemporaryTree tree;
     writeFile(tree.root / "usr/lib/sysctl.d/10-explicit.conf",
@@ -236,6 +249,61 @@ void testUnsafeForeignSymlinkIsRejected() {
     std::string error;
     require(!configuration.load(error),
             "foreign sysctl.d symlink to a directory must be rejected");
+}
+
+void testDanglingForeignSymlinkIsRejected() {
+    TemporaryTree tree;
+    std::filesystem::create_symlink(tree.root / "missing-target.conf",
+                                    tree.root / "etc/sysctl.d/70-linked.conf");
+
+    SysctlConfiguration configuration(tree.options());
+    std::string error;
+    require(!configuration.load(error),
+            "foreign sysctl.d dangling symlink must be rejected");
+}
+
+void testUnsafeForeignSymlinkTargetFileIsRejectedWhenRoot() {
+    if (::geteuid() != 0) {
+        return;
+    }
+    TemporaryTree tree;
+    writeFile(tree.root / "target.conf", "kernel.test = unsafe\n");
+    std::filesystem::create_symlink(tree.root / "target.conf",
+                                    tree.root / "etc/sysctl.d/70-linked.conf");
+    ::chmod(tree.root.c_str(), 0755);
+    ::chmod((tree.root / "etc").c_str(), 0755);
+    ::chmod((tree.root / "etc/sysctl.d").c_str(), 0755);
+    ::chmod((tree.root / "target.conf").c_str(), 0666);
+
+    SysctlConfigurationOptions options = tree.options();
+    options.enforceOwnership = true;
+    SysctlConfiguration configuration(options);
+    std::string error;
+    require(!configuration.load(error),
+            "foreign sysctl.d symlink to unsafe target file must be rejected");
+}
+
+void testUnsafeForeignSymlinkTargetDirectoryIsRejectedWhenRoot() {
+    if (::geteuid() != 0) {
+        return;
+    }
+    TemporaryTree tree;
+    std::filesystem::create_directories(tree.root / "unsafe-dir");
+    writeFile(tree.root / "unsafe-dir/target.conf", "kernel.test = unsafe\n");
+    std::filesystem::create_symlink(tree.root / "unsafe-dir/target.conf",
+                                    tree.root / "etc/sysctl.d/70-linked.conf");
+    ::chmod(tree.root.c_str(), 0755);
+    ::chmod((tree.root / "etc").c_str(), 0755);
+    ::chmod((tree.root / "etc/sysctl.d").c_str(), 0755);
+    ::chmod((tree.root / "unsafe-dir").c_str(), 0777);
+    ::chmod((tree.root / "unsafe-dir/target.conf").c_str(), 0644);
+
+    SysctlConfigurationOptions options = tree.options();
+    options.enforceOwnership = true;
+    SysctlConfiguration configuration(options);
+    std::string error;
+    require(!configuration.load(error),
+            "foreign sysctl.d symlink to file in unsafe target directory must be rejected");
 }
 
 void testManagedSymlinkIsRejectedAndTargetUnchanged() {
@@ -372,16 +440,71 @@ void testInvalidActiveConfigurationFailsLoad() {
             "parse failure must include source location");
 }
 
-void testDottedInterfacePersistentKey() {
+void testSlashFirstDottedInterfacePersistentKey() {
+    TemporaryTree tree;
+    writeFile(tree.root / "usr/lib/sysctl.d/20-interface.conf",
+              "net/ipv4/conf/enp3s0.200/forwarding = 1\n");
+
+    SysctlConfiguration configuration = loaded(tree.options());
+    require(configuration.inspect("net/ipv4/conf/enp3s0.200/forwarding").value == "1",
+            "slash-first config key must preserve dotted network interface names");
+}
+
+void testSystemdMixedDottedInterfacePersistentKey() {
+    TemporaryTree tree;
+    writeFile(tree.root / "usr/lib/sysctl.d/20-interface.conf",
+              "net.ipv4.conf.enp3s0/200.forwarding = 1\n");
+
+    SysctlConfiguration configuration = loaded(tree.options());
+    require(configuration.inspect("net/ipv4/conf/enp3s0.200/forwarding").value == "1",
+            "systemd mixed notation must preserve dotted network interface names");
+}
+
+void testFullyDottedInterfaceConfigUsesSystemdSemantics() {
     TemporaryTree tree;
     writeFile(tree.root / "usr/lib/sysctl.d/20-interface.conf",
               "net.ipv4.conf.enp3s0.200.forwarding = 1\n");
 
     SysctlConfiguration configuration = loaded(tree.options());
-    require(configuration.inspect("net/ipv4/conf/enp3s0.200/forwarding").value == "1",
-            "persistent parser must preserve dotted network interface names");
-    require(configuration.inspect("net.ipv4.conf.enp3s0/200.forwarding").value == "1",
-            "systemd slash/dot notation must match dotted interface names");
+    require(!configuration.inspect("net/ipv4/conf/enp3s0.200/forwarding").found,
+            "fully dotted config key must not use FIC network interface heuristic");
+    require(configuration.inspect("net/ipv4/conf/enp3s0/200/forwarding").value == "1",
+            "fully dotted config key must follow systemd dot-to-slash semantics");
+}
+
+void testSysctlKeyRoundTrip() {
+    const std::vector<std::string> paths = {
+        "kernel/pid_max",
+        "net/ipv4/ip_forward",
+        "net/ipv4/conf/all/rp_filter",
+        "net/ipv4/conf/enp3s0.200/forwarding"
+    };
+    for (const std::string& path : paths) {
+        const std::string generated = fic::sysctl::configKeyFromCanonicalPath(path);
+        require(fic::sysctl::systemdConfigKeyToCanonicalPath(generated) == path,
+                "generated sysctl config key must round-trip through systemd parser: " + path);
+    }
+}
+
+void testManagedDottedInterfaceUsesUnambiguousConfigSyntax() {
+    TemporaryTree tree;
+    SysctlConfiguration configuration = loaded(tree.options());
+    const SysctlOperationResult result =
+        configuration.ensureManagedValue("net/ipv4/conf/enp3s0.200/forwarding", "1");
+    require(result.ok && result.changed,
+            "managed dotted interface key must be written and verified");
+
+    const std::string content = readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf");
+    require(content.find("net/ipv4/conf/enp3s0.200/forwarding = 1") != std::string::npos,
+            "managed file must use unambiguous slash-first syntax for dotted interface key");
+    require(fic::sysctl::systemdConfigKeyToCanonicalPath(
+                fic::sysctl::configKeyFromCanonicalPath("net/ipv4/conf/enp3s0.200/forwarding")) ==
+                "net/ipv4/conf/enp3s0.200/forwarding",
+            "managed dotted interface generated key must parse back to the same canonical path");
+
+    SysctlConfiguration verification = loaded(tree.options());
+    require(verification.inspect("net/ipv4/conf/enp3s0.200/forwarding").value == "1",
+            "managed dotted interface value must reload through systemd parser");
 }
 
 void testRuntimeValueAlreadyCorrect() {
@@ -450,10 +573,22 @@ void testRuntimeDottedInterfacePath() {
 
     std::string value;
     std::string error;
-    require(runtime.readValue("net.ipv4.conf.enp3s0.200.forwarding", value, error), error);
+    require(runtime.readValue("net/ipv4/conf/enp3s0.200/forwarding", value, error), error);
     require(value == "1", "runtime dotted interface key must resolve to one path component");
-    require(runtime.readValue("net.ipv4.conf.enp3s0/200.forwarding", value, error), error);
-    require(value == "1", "runtime slash/dot notation must resolve dotted interface key");
+}
+
+void testRuntimeBackwardCompatiblePolicyKeys() {
+    TemporaryTree tree;
+    writeFile(tree.root / "proc/sys/kernel/pid_max", "65536\n");
+    writeFile(tree.root / "proc/sys/net/ipv4/ip_forward", "0\n");
+    SysctlRuntime runtime({tree.root / "proc/sys"});
+
+    std::string value;
+    std::string error;
+    require(runtime.readValue("kernel.pid_max", value, error), error);
+    require(value == "65536", "runtime must preserve ordinary dotted kernel policy keys");
+    require(runtime.readValue("net.ipv4.ip_forward", value, error), error);
+    require(value == "0", "runtime must preserve ordinary dotted network policy keys");
 }
 
 } // namespace
@@ -502,11 +637,15 @@ int main(int argc, char* argv[]) {
         {"systemd ignores sysctl.conf", testSystemdIgnoresSysctlConfForBootEffectiveValue},
         {"slash notation", testSlashNotationAndIgnoredFailurePrefix},
         {"glob and exclusion", testGlobAssignmentAndExclusion},
+        {"normal dotted key", testNormalDottedKeyUsesCanonicalPath},
         {"explicit beats glob", testExplicitAssignmentIsNotOverriddenByGlob},
         {"dev-null mask", testDevNullMaskSuppressesVendorFile},
         {"regular foreign symlink", testRegularForeignSymlinkIsParsed},
         {"sysctl.conf symlink overridden", testSystemdSysctlConfSymlinkIsOverriddenByFic},
         {"unsafe foreign symlink", testUnsafeForeignSymlinkIsRejected},
+        {"dangling foreign symlink", testDanglingForeignSymlinkIsRejected},
+        {"unsafe foreign symlink target file", testUnsafeForeignSymlinkTargetFileIsRejectedWhenRoot},
+        {"unsafe foreign symlink target directory", testUnsafeForeignSymlinkTargetDirectoryIsRejectedWhenRoot},
         {"managed symlink", testManagedSymlinkIsRejectedAndTargetUnchanged},
         {"correct value no managed write", testCorrectEffectiveValueDoesNotCreateManagedFile},
         {"managed file override", testManagedFileOverridesAndPreservesValues},
@@ -515,13 +654,18 @@ int main(int argc, char* argv[]) {
         {"later source conflict rollback", testConflictingLaterSourceRollsBackManagedFile},
         {"malformed managed file", testMalformedManagedFileFailsClosed},
         {"invalid active configuration", testInvalidActiveConfigurationFailsLoad},
-        {"dotted interface persistent key", testDottedInterfacePersistentKey},
+        {"slash-first dotted interface persistent key", testSlashFirstDottedInterfacePersistentKey},
+        {"systemd mixed dotted interface persistent key", testSystemdMixedDottedInterfacePersistentKey},
+        {"fully dotted interface config systemd semantics", testFullyDottedInterfaceConfigUsesSystemdSemantics},
+        {"sysctl key round trip", testSysctlKeyRoundTrip},
+        {"managed dotted interface", testManagedDottedInterfaceUsesUnambiguousConfigSyntax},
         {"runtime value already correct", testRuntimeValueAlreadyCorrect},
         {"runtime write and verify", testRuntimeValueIsWrittenAndVerified},
         {"runtime missing parameter", testRuntimeMissingParameterFails},
         {"runtime unsafe input", testRuntimeRejectsUnsafeKeyAndValue},
         {"runtime symlink", testRuntimeRejectsSymlinkParameter},
-        {"runtime dotted interface path", testRuntimeDottedInterfacePath}
+        {"runtime dotted interface path", testRuntimeDottedInterfacePath},
+        {"runtime backward-compatible policy keys", testRuntimeBackwardCompatiblePolicyKeys}
     };
 
     size_t failures = 0;
