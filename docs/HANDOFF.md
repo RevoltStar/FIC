@@ -7,9 +7,9 @@
 
 - Обновлено: 2026-08-09.
 - Ветка: `main`.
-- Базовый commit: `d693cd7`.
-- Текущая задача: переработать SYSCTL persistent-конфигурацию под
-  platform-selected loader semantics и FIC-owned managed file.
+- Базовый commit: `1d0c1bc`.
+- Текущая задача: исправить дефекты последнего SYSCTL commit без отката
+  architecture-модели `SystemdSysctl` + FIC-owned managed file.
 - Реализация завершена, изменения рабочей копии не зафиксированы commit.
 
 ## Сделано
@@ -85,6 +85,19 @@
   и откатом managed-файла. Чужие sysctl-файлы не изменяются.
 - `Sysctl::apply()` получает SYSCTL platform config из `init_policyMap()` и
   сохраняет отдельную runtime remediation через `SysctlRuntime`.
+- SYSCTL foreign `sysctl.d/*.conf` symlink теперь обрабатываются по семантике
+  systemd-sysctl: `/dev/null` остается mask, symlink на обычный безопасный файл
+  читается, symlink на dangling/non-regular/unsafe target отвергается.
+- Managed SYSCTL file FIC остается strict non-symlink: `loadManagedDocument()`,
+  `writeManaged()` и удаление managed-файла не следуют symlink.
+- Добавлен общий `SysctlKey.h` для persistent и runtime преобразования ключей в
+  относительный `/proc/sys` path; исправлены dotted interface keys вроде
+  `net.ipv4.conf.enp3s0.200.forwarding`.
+- Если boot-effective SYSCTL value уже соответствует политике, но FIC managed
+  file содержит устаревшее противоречащее назначение, оно удаляется атомарно,
+  затем effective value перечитывается; при ошибке выполняется rollback.
+- Диагностика source location для symlinked foreign sysctl-файлов показывает
+  `link -> resolved-target:line`.
 
 ## Измененные файлы
 
@@ -96,6 +109,8 @@
 - `fic/src/modules/sysctl/Sysctl.h`;
 - `fic/src/modules/sysctl/SysctlConfiguration.cpp`;
 - `fic/src/modules/sysctl/SysctlConfiguration.h`;
+- `fic/src/modules/sysctl/SysctlKey.h`;
+- `fic/src/modules/sysctl/SysctlRuntime.cpp`;
 - `fic/src/platform/PlatformCompatibility.cpp`;
 - `fic/src/platform/PlatformProfile.h`;
 - `fic/src/platform/profiles/AltP11Profile.cpp`;
@@ -122,10 +137,11 @@
 - `cmake --build build-check --target fic -j2` — успешно.
 - `cmake --build build-check --target fic-gui -j2` — успешно.
 - `cmake --build build-check --target sysctl_configuration_tests -j2` — успешно.
+- `ctest --test-dir build-check -R sysctl_configuration_tests --output-on-failure`
+  — успешно.
 - `./build-check/tests/sysctl_configuration_tests` — успешно.
 - `cmake --build build-check --target platform_profile_tests -j2` — успешно.
 - `./build-check/tests/platform_profile_tests` — успешно.
-- `bash -n tests/sysctl/RemoteSysctlIntegration.sh` — успешно.
 - `cmake -S . -B /tmp/fic-build-debian12 -DFIC_TARGET_PLATFORM=debian-12`
   + `cmake --build /tmp/fic-build-debian12 --target fic-platform -j2` —
   успешно.
@@ -140,8 +156,10 @@
   успешно.
 - `python3 tests/device-control/static_checks.py .` — успешно.
 - `python3 tests/platform/static_checks.py .` — успешно.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=debian-12` — успешно.
 - `bash -n tests/device-control/test.sh tests/device-control/suites/ingestion.sh`
   — успешно.
+- `bash -n tests/sysctl/RemoteSysctlIntegration.sh` — успешно.
 - `git diff --check` — успешно.
 
 ## Что осталось

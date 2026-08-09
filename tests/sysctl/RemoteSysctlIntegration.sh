@@ -38,6 +38,7 @@ test_files=(
     "$run_dir/55-fic-remote-same.conf"
     "$etc_dir/56-fic-remote-mask.conf"
     "$run_dir/56-fic-remote-mask.conf"
+    "$etc_dir/57-fic-remote-symlink.conf"
     "$etc_dir/98-fic-remote-unsafe.conf"
 )
 
@@ -92,6 +93,12 @@ printf '%s\n' 'kernel.hostname = must-not-be-visible' > \
 ln -s /dev/null "$etc_dir/56-fic-remote-mask.conf"
 assert_value kernel.hostname NOT_SET
 echo 'PASS: /dev/null mask suppresses lower-priority file'
+
+printf '%s\n' 'kernel.fic_remote_symlink = 1' > "$backup/fic-remote-symlink-target.conf"
+chmod 0644 "$backup/fic-remote-symlink-target.conf"
+ln -s "$backup/fic-remote-symlink-target.conf" "$etc_dir/57-fic-remote-symlink.conf"
+assert_value kernel.fic_remote_symlink 1
+echo 'PASS: regular foreign sysctl.d symlink is parsed'
 
 baseline=$($driver --inspect kernel.pid_max | cut -f1)
 main_before=$(sha256sum "$main" | cut -d' ' -f1)

@@ -199,6 +199,58 @@ void testDevNullMaskSuppressesVendorFile() {
     require(!observation.found, "a higher-priority /dev/null mask must suppress vendor file");
 }
 
+void testRegularForeignSymlinkIsParsed() {
+    TemporaryTree tree;
+    writeFile(tree.root / "target.conf", "kernel.test = symlink\n");
+    std::filesystem::create_symlink(tree.root / "target.conf",
+                                    tree.root / "etc/sysctl.d/70-linked.conf");
+
+    const auto observation = loaded(tree.options()).inspect("kernel.test");
+    require(observation.found && observation.value == "symlink",
+            "regular foreign sysctl.d symlink target must be parsed");
+    require(observation.source.displayPath.find(" -> ") != std::string::npos,
+            "symlink diagnostics must show resolved target");
+}
+
+void testSystemdSysctlConfSymlinkIsOverriddenByFic() {
+    TemporaryTree tree;
+    writeFile(tree.root / "etc/sysctl.conf", "net.ipv4.ip_forward = 1\n");
+    std::filesystem::create_symlink(tree.root / "etc/sysctl.conf",
+                                    tree.root / "etc/sysctl.d/99-sysctl.conf");
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf", "net.ipv4.ip_forward = 0\n");
+
+    const auto observation = loaded(tree.options()).inspect("net.ipv4.ip_forward");
+    require(observation.found && observation.value == "0",
+            "FIC managed file must override active sysctl.conf symlink under systemd semantics");
+    require(readFile(tree.root / "etc/sysctl.conf") == "net.ipv4.ip_forward = 1\n",
+            "sysctl.conf target of foreign symlink must remain untouched");
+}
+
+void testUnsafeForeignSymlinkIsRejected() {
+    TemporaryTree tree;
+    std::filesystem::create_directories(tree.root / "linked-directory");
+    std::filesystem::create_symlink(tree.root / "linked-directory",
+                                    tree.root / "etc/sysctl.d/70-linked.conf");
+
+    SysctlConfiguration configuration(tree.options());
+    std::string error;
+    require(!configuration.load(error),
+            "foreign sysctl.d symlink to a directory must be rejected");
+}
+
+void testManagedSymlinkIsRejectedAndTargetUnchanged() {
+    TemporaryTree tree;
+    writeFile(tree.root / "target.conf", "kernel.test = target\n");
+    std::filesystem::create_symlink(tree.root / "target.conf",
+                                    tree.root / "etc/sysctl.d/zzzz-fic.conf");
+
+    SysctlConfiguration configuration(tree.options());
+    std::string error;
+    require(!configuration.load(error), "managed sysctl file symlink must be rejected");
+    require(readFile(tree.root / "target.conf") == "kernel.test = target\n",
+            "managed symlink target must not be altered");
+}
+
 void testCorrectEffectiveValueDoesNotCreateManagedFile() {
     TemporaryTree tree;
     writeFile(tree.root / "usr/lib/sysctl.d/10-vendor.conf", "kernel.test = expected\n");
@@ -244,6 +296,41 @@ void testManagedFileOverridesAndPreservesValues() {
             "idempotent application must not rewrite content");
 }
 
+void testStaleManagedAssignmentIsRemoved() {
+    TemporaryTree tree;
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf",
+              "kernel.test = stale\nkernel.keep = value\n");
+    writeFile(tree.root / "etc/sysctl.d/zzzzz-local.conf", "kernel.test = expected\n");
+
+    SysctlConfiguration configuration = loaded(tree.options());
+    const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
+    require(result.ok && result.changed,
+            "stale managed assignment must be removed when effective value is already correct");
+
+    const std::string managed = readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf");
+    require(managed.find("kernel.test") == std::string::npos &&
+                managed.find("kernel.keep = value") != std::string::npos,
+            "stale key must be removed without deleting unrelated managed values");
+}
+
+void testStaleManagedAssignmentRemovalRollback() {
+    TemporaryTree tree;
+    SysctlConfigurationOptions options = tree.options();
+    options.platform.managedConfigPath = tree.root / "etc/sysctl.d/40-same.conf";
+    writeFile(options.platform.managedConfigPath, "kernel.test = stale\n");
+    std::filesystem::create_symlink(tree.root / "missing-target.conf",
+                                    tree.root / "usr/lib/sysctl.d/40-same.conf");
+    writeFile(tree.root / "etc/sysctl.d/99-local.conf", "kernel.test = expected\n");
+    const std::string before = readFile(options.platform.managedConfigPath);
+
+    SysctlConfiguration configuration = loaded(options);
+    const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
+    require(!result.ok,
+            "stale cleanup must fail if removing managed file activates invalid lower-priority source");
+    require(readFile(options.platform.managedConfigPath) == before,
+            "failed stale cleanup must restore managed file");
+}
+
 void testConflictingLaterSourceRollsBackManagedFile() {
     TemporaryTree tree;
     writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf", "kernel.test = stale\n");
@@ -283,6 +370,18 @@ void testInvalidActiveConfigurationFailsLoad() {
     require(!configuration.load(error), "invalid active sysctl line must fail loading");
     require(error.find("50-invalid.conf:1") != std::string::npos,
             "parse failure must include source location");
+}
+
+void testDottedInterfacePersistentKey() {
+    TemporaryTree tree;
+    writeFile(tree.root / "usr/lib/sysctl.d/20-interface.conf",
+              "net.ipv4.conf.enp3s0.200.forwarding = 1\n");
+
+    SysctlConfiguration configuration = loaded(tree.options());
+    require(configuration.inspect("net/ipv4/conf/enp3s0.200/forwarding").value == "1",
+            "persistent parser must preserve dotted network interface names");
+    require(configuration.inspect("net.ipv4.conf.enp3s0/200.forwarding").value == "1",
+            "systemd slash/dot notation must match dotted interface names");
 }
 
 void testRuntimeValueAlreadyCorrect() {
@@ -344,6 +443,19 @@ void testRuntimeRejectsSymlinkParameter() {
             "symlink target must remain untouched");
 }
 
+void testRuntimeDottedInterfacePath() {
+    TemporaryTree tree;
+    writeFile(tree.root / "proc/sys/net/ipv4/conf/enp3s0.200/forwarding", "1\n");
+    SysctlRuntime runtime({tree.root / "proc/sys"});
+
+    std::string value;
+    std::string error;
+    require(runtime.readValue("net.ipv4.conf.enp3s0.200.forwarding", value, error), error);
+    require(value == "1", "runtime dotted interface key must resolve to one path component");
+    require(runtime.readValue("net.ipv4.conf.enp3s0/200.forwarding", value, error), error);
+    require(value == "1", "runtime slash/dot notation must resolve dotted interface key");
+}
+
 } // namespace
 
 int runManualMode(int argc, char* argv[]) {
@@ -392,16 +504,24 @@ int main(int argc, char* argv[]) {
         {"glob and exclusion", testGlobAssignmentAndExclusion},
         {"explicit beats glob", testExplicitAssignmentIsNotOverriddenByGlob},
         {"dev-null mask", testDevNullMaskSuppressesVendorFile},
+        {"regular foreign symlink", testRegularForeignSymlinkIsParsed},
+        {"sysctl.conf symlink overridden", testSystemdSysctlConfSymlinkIsOverriddenByFic},
+        {"unsafe foreign symlink", testUnsafeForeignSymlinkIsRejected},
+        {"managed symlink", testManagedSymlinkIsRejectedAndTargetUnchanged},
         {"correct value no managed write", testCorrectEffectiveValueDoesNotCreateManagedFile},
         {"managed file override", testManagedFileOverridesAndPreservesValues},
+        {"stale managed removal", testStaleManagedAssignmentIsRemoved},
+        {"stale cleanup rollback", testStaleManagedAssignmentRemovalRollback},
         {"later source conflict rollback", testConflictingLaterSourceRollsBackManagedFile},
         {"malformed managed file", testMalformedManagedFileFailsClosed},
         {"invalid active configuration", testInvalidActiveConfigurationFailsLoad},
+        {"dotted interface persistent key", testDottedInterfacePersistentKey},
         {"runtime value already correct", testRuntimeValueAlreadyCorrect},
         {"runtime write and verify", testRuntimeValueIsWrittenAndVerified},
         {"runtime missing parameter", testRuntimeMissingParameterFails},
         {"runtime unsafe input", testRuntimeRejectsUnsafeKeyAndValue},
-        {"runtime symlink", testRuntimeRejectsSymlinkParameter}
+        {"runtime symlink", testRuntimeRejectsSymlinkParameter},
+        {"runtime dotted interface path", testRuntimeDottedInterfacePath}
     };
 
     size_t failures = 0;

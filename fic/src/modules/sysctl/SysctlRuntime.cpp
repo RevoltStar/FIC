@@ -1,5 +1,7 @@
 #include "modules/sysctl/SysctlRuntime.h"
 
+#include "modules/sysctl/SysctlKey.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -28,7 +30,7 @@ bool validComponent(const std::string& component) {
         return false;
     }
     return std::all_of(component.begin(), component.end(), [](unsigned char ch) {
-        return std::isalnum(ch) || ch == '_' || ch == '-';
+        return std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.';
     });
 }
 
@@ -73,12 +75,11 @@ bool SysctlRuntime::parameterPath(const std::string& key,
         return false;
     }
 
-    std::string relative = key;
-    constexpr const char* procPrefix = "/proc/sys/";
-    if (relative.compare(0, std::char_traits<char>::length(procPrefix), procPrefix) == 0) {
-        relative.erase(0, std::char_traits<char>::length(procPrefix));
+    const std::string relative = fic::sysctl::canonicalSysctlPath(key);
+    if (relative.empty()) {
+        error = "Недопустимое имя runtime sysctl-параметра: " + key;
+        return false;
     }
-    std::replace(relative.begin(), relative.end(), '.', '/');
 
     std::filesystem::path result = options_.root;
     std::size_t start = 0;

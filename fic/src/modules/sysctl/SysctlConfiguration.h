@@ -9,6 +9,7 @@
 
 struct SysctlSourceLocation {
     std::filesystem::path path;
+    std::string displayPath;
     size_t line = 0;
 };
 
@@ -51,6 +52,7 @@ public:
 private:
     struct Document {
         std::filesystem::path path;
+        std::string displayPath;
         std::string content;
         bool allowDevNullMask = true;
     };
@@ -83,6 +85,7 @@ private:
                          std::string& error) const;
     bool snapshotUnchanged(std::string& error) const;
     bool writeManaged(const std::string& content, std::string& error) const;
+    bool deleteManaged(std::string& error) const;
     bool restoreManaged(std::string& error) const;
     void clear();
 };

@@ -1,5 +1,7 @@
 #include "modules/sysctl/SysctlConfiguration.h"
 
+#include "modules/sysctl/SysctlKey.h"
+
 #include <fic/core/AtomicFileWriter.h>
 
 #include <algorithm>
@@ -56,23 +58,6 @@ bool readFile(const std::filesystem::path& path,
     return true;
 }
 
-std::string normalizedKey(std::string key) {
-    key = trimCopy(std::move(key));
-    if (!key.empty() && key.front() == '-') {
-        key.erase(key.begin());
-        key = trimCopy(std::move(key));
-    }
-    constexpr const char* procPrefix = "/proc/sys/";
-    if (key.compare(0, std::char_traits<char>::length(procPrefix), procPrefix) == 0) {
-        key.erase(0, std::char_traits<char>::length(procPrefix));
-    }
-    std::replace(key.begin(), key.end(), '/', '.');
-    while (!key.empty() && key.front() == '.') {
-        key.erase(key.begin());
-    }
-    return key;
-}
-
 bool parseAssignmentLine(const std::string& physicalLine,
                          std::string& key,
                          std::string& value,
@@ -91,12 +76,12 @@ bool parseAssignmentLine(const std::string& physicalLine,
         if (line.front() != '-') {
             return false;
         }
-        key = normalizedKey(line.substr(1));
+        key = fic::sysctl::canonicalSysctlPath(line.substr(1));
         exclusion = true;
         pattern = key.find_first_of("*?[") != std::string::npos;
         return !key.empty();
     }
-    key = normalizedKey(line.substr(0, equals));
+    key = fic::sysctl::canonicalSysctlPath(line.substr(0, equals));
     value = trimCopy(line.substr(equals + 1));
     pattern = key.find_first_of("*?[") != std::string::npos;
     return !key.empty();
@@ -162,9 +147,16 @@ std::string renderManagedContent(const std::string& original,
     std::string base = managedHeader;
     base += '\n';
     for (const auto& [key, value] : values) {
-        base += key + " = " + value + "\n";
+        base += fic::sysctl::configKeyFromCanonicalPath(key) + " = " + value + "\n";
     }
     return base;
+}
+
+std::string sourceText(const SysctlSourceLocation& source) {
+    const std::string path = source.displayPath.empty()
+        ? source.path.string()
+        : source.displayPath;
+    return path + ":" + std::to_string(source.line);
 }
 
 bool removeAndSync(const std::filesystem::path& path, std::string& error) {
@@ -230,21 +222,26 @@ bool SysctlConfiguration::checkFileSafety(const std::filesystem::path& path,
                 ": " + std::strerror(errno);
         return false;
     }
+    std::filesystem::path canonical;
     if (S_ISLNK(linkStatus.st_mode)) {
         std::error_code canonicalError;
-        const std::filesystem::path canonical = std::filesystem::canonical(path, canonicalError);
+        canonical = std::filesystem::canonical(path, canonicalError);
+        if (canonicalError) {
+            error = "Не удалось разрешить symlink sysctl-файла " + path.string() +
+                    ": " + canonicalError.message();
+            return false;
+        }
         if (allowDevNull && !canonicalError && canonical == "/dev/null") {
             return true;
         }
-        error = "Sysctl-файл не должен быть symlink: " + path.string();
-        return false;
-    }
-    std::error_code canonicalError;
-    const std::filesystem::path canonical = std::filesystem::canonical(path, canonicalError);
-    if (canonicalError) {
-        error = "Не удалось разрешить путь sysctl-файла " + path.string() +
-                ": " + canonicalError.message();
-        return false;
+    } else {
+        std::error_code canonicalError;
+        canonical = std::filesystem::canonical(path, canonicalError);
+        if (canonicalError) {
+            error = "Не удалось разрешить путь sysctl-файла " + path.string() +
+                    ": " + canonicalError.message();
+            return false;
+        }
     }
     if (allowDevNull && canonical == "/dev/null") {
         return true;
@@ -276,6 +273,18 @@ bool SysctlConfiguration::checkFileSafety(const std::filesystem::path& path,
     return true;
 }
 
+std::string documentDisplayPath(const std::filesystem::path& path) {
+    struct stat linkStatus {};
+    if (::lstat(path.c_str(), &linkStatus) == 0 && S_ISLNK(linkStatus.st_mode)) {
+        std::error_code error;
+        const std::filesystem::path canonical = std::filesystem::canonical(path, error);
+        if (!error) {
+            return path.string() + " -> " + canonical.string();
+        }
+    }
+    return path.string();
+}
+
 bool SysctlConfiguration::addDocument(const std::filesystem::path& path,
                                       bool allowDevNullMask,
                                       std::string& error) {
@@ -286,7 +295,7 @@ bool SysctlConfiguration::addDocument(const std::filesystem::path& path,
     if (!readFile(path, content, error)) {
         return false;
     }
-    documents_.push_back({path, std::move(content), allowDevNullMask});
+    documents_.push_back({path, documentDisplayPath(path), std::move(content), allowDevNullMask});
     return parseDocument(documents_.back(), error);
 }
 
@@ -304,13 +313,14 @@ bool SysctlConfiguration::parseDocument(const Document& document, std::string& e
         bool exclusion = false;
         bool pattern = false;
         if (!parseAssignmentLine(line, key, value, ignored, exclusion, pattern)) {
-            error = "Некорректная строка sysctl " + document.path.string() + ":" +
+            error = "Некорректная строка sysctl " + document.displayPath + ":" +
                     std::to_string(lineNumber);
             return false;
         }
         if (!ignored) {
             assignments_.push_back({std::move(key), std::move(value),
-                                    {document.path, lineNumber}, pattern, exclusion});
+                                    {document.path, document.displayPath, lineNumber},
+                                    pattern, exclusion});
         }
         ++lineNumber;
     }
@@ -407,16 +417,21 @@ bool SysctlConfiguration::loadManagedDocument(std::string& error) {
         error = "Не задан managed sysctl-файл FIC";
         return false;
     }
-    std::error_code existsError;
-    managedExisted_ = std::filesystem::exists(path, existsError);
-    if (existsError) {
-        error = "Не удалось проверить " + path.string() +
-                ": " + existsError.message();
+    struct stat linkStatus {};
+    if (::lstat(path.c_str(), &linkStatus) < 0) {
+        if (errno == ENOENT) {
+            managedExisted_ = false;
+            managedContent_.clear();
+            return true;
+        }
+        error = "Не удалось проверить managed sysctl-файл FIC " + path.string() +
+                ": " + std::strerror(errno);
         return false;
     }
-    if (!managedExisted_) {
-        managedContent_.clear();
-        return true;
+    managedExisted_ = true;
+    if (S_ISLNK(linkStatus.st_mode)) {
+        error = "Managed sysctl-файл FIC не должен быть symlink: " + path.string();
+        return false;
     }
     if (!checkFileSafety(path, false, error)) {
         return false;
@@ -444,7 +459,7 @@ bool SysctlConfiguration::load(std::string& error) {
 
 SysctlValueObservation SysctlConfiguration::inspect(const std::string& key) const {
     SysctlValueObservation result;
-    const std::string requested = normalizedKey(key);
+    const std::string requested = fic::sysctl::canonicalSysctlPath(key);
     bool excludedFromGlobs = false;
     for (const Assignment& assignment : assignments_) {
         if (assignment.exclusion &&
@@ -485,6 +500,7 @@ bool SysctlConfiguration::snapshotUnchanged(std::string& error) const {
     }
     for (size_t i = 0; i < documents_.size(); ++i) {
         if (documents_[i].path != current.documents_[i].path ||
+            documents_[i].displayPath != current.documents_[i].displayPath ||
             documents_[i].content != current.documents_[i].content) {
             error = "Sysctl-файл изменился во время проверки: " + documents_[i].path.string();
             return false;
@@ -526,6 +542,7 @@ bool SysctlConfiguration::writeManaged(const std::string& content, std::string& 
     }
     AtomicWriteOptions options;
     options.createIfMissing = true;
+    options.rejectSymlink = true;
     options.metadataPolicy = options_.enforceOwnership
         ? FileMetadataPolicy::EnforceProvided
         : FileMetadataPolicy::PreserveExisting;
@@ -537,17 +554,35 @@ bool SysctlConfiguration::writeManaged(const std::string& content, std::string& 
     return AtomicFileWriter::write(path.string(), content, options, &error);
 }
 
+bool SysctlConfiguration::deleteManaged(std::string& error) const {
+    const std::filesystem::path& path = options_.platform.managedConfigPath;
+    struct stat linkStatus {};
+    if (::lstat(path.c_str(), &linkStatus) < 0) {
+        if (errno == ENOENT) {
+            return true;
+        }
+        error = "Не удалось проверить managed sysctl-файл FIC перед удалением " +
+                path.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    if (S_ISLNK(linkStatus.st_mode) || !S_ISREG(linkStatus.st_mode)) {
+        error = "Managed sysctl-файл FIC должен быть обычным файлом: " + path.string();
+        return false;
+    }
+    return removeAndSync(path, error);
+}
+
 bool SysctlConfiguration::restoreManaged(std::string& error) const {
     if (managedExisted_) {
         return writeManaged(managedContent_, error);
     }
-    return removeAndSync(options_.platform.managedConfigPath, error);
+    return deleteManaged(error);
 }
 
 SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string& key,
                                                               const std::string& value) {
     SysctlOperationResult result;
-    const std::string requested = normalizedKey(key);
+    const std::string requested = fic::sysctl::canonicalSysctlPath(key);
     if (requested.empty()) {
         result.message = "Пустое имя sysctl-параметра";
         return result;
@@ -563,6 +598,54 @@ SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string&
 
     const SysctlValueObservation before = inspect(requested);
     if (before.found && before.value == value) {
+        const auto managedValue = managed.values.find(requested);
+        if (managedValue != managed.values.end() && managedValue->second != value) {
+            managed.values.erase(managedValue);
+            if (!snapshotUnchanged(error)) {
+                result.message = error;
+                return result;
+            }
+            const bool persisted = managed.values.empty()
+                ? deleteManaged(error)
+                : writeManaged(renderManagedContent(managedContent_, managed.values), error);
+            if (!persisted) {
+                result.message = "Не удалось удалить устаревшее значение из managed sysctl-файла FIC: " +
+                                 error;
+                return result;
+            }
+            SysctlConfiguration verification(options_);
+            if (!verification.load(error)) {
+                std::string rollbackError;
+                const bool rolledBack = restoreManaged(rollbackError);
+                result.message = "Не удалось перечитать sysctl после удаления устаревшего значения: " +
+                                 error;
+                if (!rolledBack) {
+                    result.message += ". Ошибка отката: " + rollbackError;
+                }
+                return result;
+            }
+            const SysctlValueObservation after = verification.inspect(requested);
+            if (!after.found || after.value != value) {
+                std::string rollbackError;
+                const bool rolledBack = restoreManaged(rollbackError);
+                const std::string actual = after.found ? after.value : "[NOT SET]";
+                const std::string source = after.found
+                    ? sourceText(after.source)
+                    : "[NO SOURCE]";
+                result.message = "Удаление устаревшего managed sysctl-значения нарушило boot-effective значение " +
+                                 requested + ". Ожидается: " + value +
+                                 ". Получено: " + actual +
+                                 ". Источник: " + source;
+                if (!rolledBack) {
+                    result.message += ". Ошибка отката: " + rollbackError;
+                }
+                return result;
+            }
+            result.ok = true;
+            result.changed = true;
+            result.message = "Удалено устаревшее managed sysctl-значение FIC";
+            return result;
+        }
         result.ok = true;
         result.message = "Отклонений не обнаружено";
         return result;
@@ -573,7 +656,7 @@ SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string&
     if (desired == managedContent_) {
         const std::string actual = before.found ? before.value : "[NOT SET]";
         const std::string source = before.found
-            ? before.source.path.string() + ":" + std::to_string(before.source.line)
+            ? sourceText(before.source)
             : "[NO SOURCE]";
         result.message = "Не удалось установить boot-effective значение " + requested +
                          ". Ожидается: " + value + ". Получено: " + actual +
@@ -605,7 +688,7 @@ SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string&
         const bool rolledBack = restoreManaged(rollbackError);
         const std::string actual = after.found ? after.value : "[NOT SET]";
         const std::string source = after.found
-            ? after.source.path.string() + ":" + std::to_string(after.source.line)
+            ? sourceText(after.source)
             : "[NO SOURCE]";
         result.message = "Не удалось установить boot-effective значение " + requested +
                          ". Ожидается: " + value + ". Получено: " + actual +
@@ -622,8 +705,7 @@ SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string&
     if (before.found) {
         result.diagnostics.push_back("Предыдущее эффективное значение " + requested +
                                      " = " + before.value + " из " +
-                                     before.source.path.string() + ":" +
-                                     std::to_string(before.source.line));
+                                     sourceText(before.source));
     } else {
         result.diagnostics.push_back("Параметр " + requested +
                                      " отсутствовал в активной конфигурации sysctl");

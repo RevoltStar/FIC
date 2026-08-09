@@ -80,7 +80,10 @@ bool Sysctl::apply (){
     if (!observation.found || observation.value != value) {
         const std::string actual = observation.found ? observation.value : "[NOT SET]";
         const std::string source = observation.found
-            ? " Источник: " + observation.source.path.string() + ":" +
+            ? " Источник: " +
+                  (observation.source.displayPath.empty()
+                       ? observation.source.path.string()
+                       : observation.source.displayPath) + ":" +
                   std::to_string(observation.source.line)
             : "";
         this->log("Обнаружено отклонение '" + param + "'. Фактическое значение: '" +
