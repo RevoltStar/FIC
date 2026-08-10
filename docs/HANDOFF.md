@@ -40,6 +40,10 @@
 - Изменения категорийных DC-политик в `fic` передают полное состояние в
   root-only `device_regenerate_policy`; compiler читает его только из SQLite.
 - IPC/CLI/GUI получили `children_control`; CLI также показывает policy status.
+- GUI Device Control больше не помещает policy editors в read-only строку
+  текущего состояния: для них создана отдельная двухстрочная секция. Жесткие
+  минимумы дерева 640/660 px удалены, обе колонки страницы растягиваются 1:1,
+  а узкое дерево использует горизонтальную прокрутку без наложения на детали.
 - Bootstrap rules теперь принадлежит install-компоненту/package `fic-dick`.
 - Документация архитектуры и Device Control README обновлены; README содержит
   пример generated rules для дерева из ТЗ.
@@ -77,6 +81,8 @@
 - `device_tree_revision_tests` и `upgrade_contract_tests`, включая миграции
   v0 и v1 в v2 — успешно.
 - `python3 tests/device-control/static_checks.py .` — успешно.
+- Static checks фиксируют отдельную строку policy editor и отсутствие старых
+  жестких минимумов, приводивших к пересечению колонок GUI.
 - `bash -n` для измененных device-control shell suites — успешно.
 - Staged install компонента `fic-dick` через `DESTDIR` — bootstrap udev rule
   установлен с режимом `0644` — успешно.

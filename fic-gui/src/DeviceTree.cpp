@@ -248,6 +248,7 @@ DeviceTree::~DeviceTree()
 void DeviceTree::setupUI()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
 
     QHBoxLayout *filterLayout = new QHBoxLayout();
     searchEdit = new QLineEdit(this);
@@ -262,6 +263,8 @@ void DeviceTree::setupUI()
     btnClearFilter = new QPushButton("Сбросить", this);
     filterStatsLabel = new QLabel(this);
     filterStatsLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    filterStatsLabel->setMinimumWidth(
+        filterStatsLabel->fontMetrics().horizontalAdvance("9999/9999"));
 
     filterLayout->addWidget(searchEdit, 1);
     filterLayout->addWidget(quickFilterCombo);
@@ -292,9 +295,9 @@ void DeviceTree::setupUI()
     treeWidget->setWordWrap(false);
     treeWidget->setIndentation(14);
     treeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
-    treeWidget->setMinimumWidth(640);
-    setMinimumWidth(660);
-    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    treeWidget->setMinimumWidth(0);
+    setMinimumWidth(420);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     treeWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     treeWidget->header()->setStretchLastSection(false);
     treeWidget->header()->setSectionResizeMode(0, QHeaderView::Interactive);

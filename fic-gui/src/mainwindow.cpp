@@ -125,8 +125,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Добавляем виджет в gridLayoutTreeView
     ui->gridLayoutTreeView->addWidget(deviceTree, 0, 0);
-    ui->gridLayout_3->setColumnMinimumWidth(0, 660);
-    ui->gridLayout_3->setColumnStretch(0, 2);
+    ui->gridLayout_3->setColumnMinimumWidth(0, 420);
+    ui->gridLayout_3->setColumnMinimumWidth(1, 430);
+    ui->gridLayout_3->setColumnStretch(0, 1);
     ui->gridLayout_3->setColumnStretch(1, 1);
 
     auto stabilizeValueLabel = [](QLabel *label) {
@@ -215,11 +216,20 @@ void MainWindow::setupDeviceDetailsPanel()
     copyDevpathButton->setEnabled(false);
     copyDeviceSummaryButton->setEnabled(false);
 
-    ui->gridLayout_11->addWidget(deviceControlCombo, 0, 1);
-    ui->gridLayout_11->addWidget(deviceGlobalRuleCheck, 0, 2);
-    ui->gridLayout_11->addWidget(deviceResetControlButton, 0, 3);
-    ui->gridLayout_11->addWidget(new QLabel("Потомки:", this), 1, 0);
-    ui->gridLayout_11->addWidget(deviceChildrenControlCombo, 1, 1, 1, 2);
+    QWidget *policyEditor = new QWidget(this);
+    QGridLayout *policyEditorLayout = new QGridLayout(policyEditor);
+    policyEditorLayout->setContentsMargins(0, 0, 0, 0);
+    policyEditorLayout->setHorizontalSpacing(6);
+    policyEditorLayout->setVerticalSpacing(4);
+    policyEditorLayout->addWidget(new QLabel("Устройство:", policyEditor), 0, 0);
+    policyEditorLayout->addWidget(deviceControlCombo, 0, 1);
+    policyEditorLayout->addWidget(deviceGlobalRuleCheck, 0, 2);
+    policyEditorLayout->addWidget(deviceResetControlButton, 0, 3);
+    policyEditorLayout->addWidget(new QLabel("Потомки:", policyEditor), 1, 0);
+    policyEditorLayout->addWidget(deviceChildrenControlCombo, 1, 1, 1, 2);
+    policyEditorLayout->setColumnStretch(1, 1);
+    ui->gridLayoutListView->addWidget(policyEditor, 0, 0);
+
     ui->gridLayout_6->addWidget(copyDevpathButton, 0, 1);
     ui->gridLayout_6->addWidget(copyDeviceSummaryButton, 0, 2);
 
