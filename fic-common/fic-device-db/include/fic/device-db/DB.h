@@ -32,6 +32,12 @@ struct DBMigrationResult {
     std::filesystem::path backupFile;
 };
 
+struct DeviceCategoryPolicyState {
+    bool block_usb_storage = false;
+    bool block_printers_scanners = false;
+    bool block_optical_drives = false;
+};
+
 class ExclusivePidLock;
 enum class logLevel;
 
@@ -50,6 +56,7 @@ struct DeviceInfo {
     std::string created_at;
     std::string last_event_at;
     std::string notes;
+    std::string children_control = "inherit";
 };
 
 // Атрибуты устройства
@@ -114,8 +121,10 @@ public:
     bool updateDeviceControl(int device_id,
                              const std::string& control_level,
                              bool control_explicit,
-                             bool ignore_hierarchy);
+                             bool ignore_hierarchy,
+                             const std::string& children_control);
     bool updateDeviceIgnoreHierarchy(int device_id, bool ignore_hierarchy);
+    bool updateDeviceChildrenControl(int device_id, const std::string& children_control);
     bool deleteDevice(int device_id);
     DeviceInfo getDeviceByHash(const std::string& device_hash);
     DeviceInfo getDeviceByPath(const std::string& devpath);
@@ -146,6 +155,11 @@ public:
 
     DeviceInfo getDeviceById(int id);
     std::int64_t getDeviceTreeRevision();
+    std::int64_t getDesiredPolicyRevision();
+    std::int64_t getActivePolicyRevision();
+    bool setActivePolicyRevision(std::int64_t revision);
+    DeviceCategoryPolicyState getDeviceCategoryPolicyState();
+    bool updateDeviceCategoryPolicyState(const DeviceCategoryPolicyState& state);
 
     std::string getDeviceAttribute(int device_id, const std::string& attribute_name, const std::string& default_string = "");
     std::map<std::string, std::string> getDeviceAttributes(int device_id);

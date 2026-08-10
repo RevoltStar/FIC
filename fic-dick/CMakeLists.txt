@@ -54,17 +54,29 @@ target_link_libraries(fic-dick PRIVATE
     fic-device-db
     fic-ipc
 )
+target_compile_definitions(fic-dick PRIVATE
+    FIC_PRIVATE_BINDIR="${FIC_PRIVATE_BINDIR}"
+    FIC_UDEV_RULES_DIR="${FIC_UDEV_RULES_DIR}"
+)
 set(FIC_DICK_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
 file(MAKE_DIRECTORY "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service")
+file(MAKE_DIRECTORY "${FIC_DICK_GENERATED_SCRIPTS_DIR}/udev")
 foreach(service fic-device.service fic_get_device_info.service)
     configure_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/scripts/service/${service}.in"
         "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service/${service}"
         @ONLY)
 endforeach()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/scripts/udev/99-fic-devices.rules.in"
+    "${FIC_DICK_GENERATED_SCRIPTS_DIR}/udev/99-fic-devices.rules"
+    @ONLY)
 
 install(TARGETS fic-dick RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic-dick)
 install(FILES
         "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service/fic-device.service"
         "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service/fic_get_device_info.service"
         DESTINATION "${FIC_SYSTEMD_UNIT_DIR}" COMPONENT fic-dick)
+install(FILES "${FIC_DICK_GENERATED_SCRIPTS_DIR}/udev/99-fic-devices.rules"
+        DESTINATION "${FIC_UDEV_RULES_DIR}" COMPONENT fic-dick
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)

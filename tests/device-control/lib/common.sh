@@ -473,6 +473,15 @@ def main(argv):
         print_json(response)
         return 0 if response.get("ok") else 1
 
+    if mode == "children":
+        response = request({
+            "command": "device_update_children_control",
+            "device_id": int(argv[2]),
+            "children_control": argv[3],
+        })
+        print_json(response)
+        return 0 if response.get("ok") else 1
+
     if mode == "delete":
         response = request({"command": "device_delete", "device_id": int(argv[2])})
         print_json(response)

@@ -42,6 +42,8 @@ void print_help() {
               << "  device children <parent_id> [--all]\n"
               << "  device set <id> <blocked|allowed|permanent|ignored>\n"
               << "  device ignore-hierarchy <id> <true|false>\n"
+              << "  device children-control <id> <allow|deny|inherit>\n"
+              << "  device policy-status\n"
               << "  device reset <id>\n"
               << "  device check-permanent\n"
               << "  hash calc <path>\n"
@@ -202,6 +204,7 @@ void print_device_item(const json& item)
               << (item.value("control_explicit", true) ? "(explicit)" : "(inherited)")
               << " effective=" << item.value("effective_control_level", "")
               << " ignore_hierarchy=" << (item.value("ignore_hierarchy", false) ? "true" : "false")
+              << " children_control=" << item.value("children_control", "inherit")
               << " connected=" << (item.value("connected", false) ? "true" : "false")
               << " devpath=" << item.value("devpath", "")
               << std::endl;
@@ -226,6 +229,15 @@ int print_device_response(const json& response)
     std::cout << response.value("message", "OK") << std::endl;
     if (response.contains("revision") && response["revision"].is_number_integer()) {
         std::cout << "revision=" << response["revision"].get<std::int64_t>() << std::endl;
+    }
+    if (response.contains("desired_policy_revision")) {
+        std::cout << "desired_policy_revision="
+                  << response.value("desired_policy_revision", -1) << '\n'
+                  << "active_policy_revision="
+                  << response.value("active_policy_revision", -1) << '\n'
+                  << "policy_active="
+                  << (response.value("policy_active", false) ? "true" : "false")
+                  << std::endl;
     }
     if (response.contains("device") && response["device"].is_object()) {
         print_device_item(response["device"]);
@@ -376,6 +388,9 @@ int main(int argc, char* argv[]) {
         if (action == "revision") {
             return print_device_response(devices.request({{"command", "device_tree_revision"}}));
         }
+        if (action == "policy-status") {
+            return print_device_response(devices.request({{"command", "device_policy_status"}}));
+        }
         if (action == "root") {
             return print_device_response(devices.request({{"command", "device_root"}}));
         }
@@ -422,6 +437,20 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             return print_device_response(devices.request({{"command", "device_update_ignore_hierarchy"}, {"device_id", std::stoi(id)}, {"ignore_hierarchy", ignoreHierarchy}}));
+        }
+        if (action == "children-control") {
+            const std::string id = arg(argc, argv, 3);
+            const std::string level = arg(argc, argv, 4);
+            if (id.empty() ||
+                (level != "allow" && level != "deny" && level != "inherit")) {
+                print_help();
+                return 1;
+            }
+            return print_device_response(devices.request({
+                {"command", "device_update_children_control"},
+                {"device_id", std::stoi(id)},
+                {"children_control", level}
+            }));
         }
         if (action == "reset") {
             const std::string id = arg(argc, argv, 3);

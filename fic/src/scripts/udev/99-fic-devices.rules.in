@@ -1,4 +1,6 @@
-ACTION=="add|change|remove", SUBSYSTEM=="usb", ENV{DEVPATH}!="", RUN+="@FIC_PRIVATE_BINDIR@/fic-dick udev"
+# FIC Device Control bootstrap rule.
+# fic-dick --daemon atomically replaces this file with policy compiled from devices.db.
 ACTION=="add|change|remove", SUBSYSTEM=="usbmisc", ENV{DEVPATH}!="", RUN+="@FIC_PRIVATE_BINDIR@/fic-dick udev"
+ACTION=="add|change|remove", SUBSYSTEM=="usb", ENV{DEVPATH}!="", RUN+="@FIC_PRIVATE_BINDIR@/fic-dick udev"
 ACTION=="add|change|remove", SUBSYSTEM=="pci", ENV{DEVPATH}!="", RUN+="@FIC_PRIVATE_BINDIR@/fic-dick udev"
 ACTION=="add|change|remove", SUBSYSTEM=="block", ENV{DEVPATH}!="", RUN+="@FIC_PRIVATE_BINDIR@/fic-dick udev"

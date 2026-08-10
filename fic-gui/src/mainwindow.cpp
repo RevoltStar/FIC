@@ -196,6 +196,13 @@ void MainWindow::setupDeviceDetailsPanel()
     deviceGlobalRuleCheck = new QCheckBox("Во всей системе", this);
     deviceGlobalRuleCheck->setToolTip("Применять правило к этой идентичности независимо от положения в дереве");
 
+    deviceChildrenControlCombo = new QComboBox(this);
+    deviceChildrenControlCombo->addItem("Наследовать", "inherit");
+    deviceChildrenControlCombo->addItem("Разрешать", "allow");
+    deviceChildrenControlCombo->addItem("Запрещать", "deny");
+    deviceChildrenControlCombo->setToolTip(
+        "Политика для потомков без собственного прямого правила");
+
     deviceResetControlButton = new QPushButton("Сбросить", this);
     deviceResetControlButton->setToolTip("Сбросить явное правило до наследования");
 
@@ -203,6 +210,7 @@ void MainWindow::setupDeviceDetailsPanel()
     copyDeviceSummaryButton = new QPushButton("Копировать сведения", this);
     deviceControlCombo->setEnabled(false);
     deviceGlobalRuleCheck->setEnabled(false);
+    deviceChildrenControlCombo->setEnabled(false);
     deviceResetControlButton->setEnabled(false);
     copyDevpathButton->setEnabled(false);
     copyDeviceSummaryButton->setEnabled(false);
@@ -210,6 +218,8 @@ void MainWindow::setupDeviceDetailsPanel()
     ui->gridLayout_11->addWidget(deviceControlCombo, 0, 1);
     ui->gridLayout_11->addWidget(deviceGlobalRuleCheck, 0, 2);
     ui->gridLayout_11->addWidget(deviceResetControlButton, 0, 3);
+    ui->gridLayout_11->addWidget(new QLabel("Потомки:", this), 1, 0);
+    ui->gridLayout_11->addWidget(deviceChildrenControlCombo, 1, 1, 1, 2);
     ui->gridLayout_6->addWidget(copyDevpathButton, 0, 1);
     ui->gridLayout_6->addWidget(copyDeviceSummaryButton, 0, 2);
 
@@ -240,6 +250,13 @@ void MainWindow::setupDeviceDetailsPanel()
                 }
                 deviceTree->applyIgnoreHierarchyToCurrentDevice(checked);
             });
+    connect(deviceChildrenControlCombo, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int index) {
+                if (currentDevice.id > 0) {
+                    deviceTree->applyChildrenControlToCurrentDevice(
+                        deviceChildrenControlCombo->itemData(index).toString());
+                }
+            });
     connect(deviceResetControlButton, &QPushButton::clicked,
             this, [this]() {
                 if (currentDevice.id > 0) {
@@ -261,14 +278,15 @@ void MainWindow::setupDeviceDetailsPanel()
 QString MainWindow::deviceSummaryText(const DeviceInfo& device) const
 {
     return QString("id: %1\nsubsystem: %2\ncontrol_level: %3\neffective_control_level: %4\n"
-                   "effective_source: %5\nignore_hierarchy: %6\nconnected: %7\n"
-                   "devpath: %8\nboot_id: %9\nlast_event_at: %10")
+                   "effective_source: %5\nignore_hierarchy: %6\nchildren_control: %7\nconnected: %8\n"
+                   "devpath: %9\nboot_id: %10\nlast_event_at: %11")
         .arg(device.id)
         .arg(QString::fromStdString(device.subsystem))
         .arg(QString::fromStdString(device.control_level))
         .arg(QString::fromStdString(device.effective_control_level))
         .arg(QString::fromStdString(device.effective_source))
         .arg(device.ignore_hierarchy ? "true" : "false")
+        .arg(QString::fromStdString(device.children_control))
         .arg(device.connected ? "true" : "false")
         .arg(QString::fromStdString(device.devpath))
         .arg(QString::fromStdString(device.boot_id))
@@ -308,6 +326,13 @@ void MainWindow::onDeviceClicked(const DeviceInfo& device)
         QSignalBlocker checkBlocker(deviceGlobalRuleCheck);
         deviceGlobalRuleCheck->setChecked(device.ignore_hierarchy);
         deviceGlobalRuleCheck->setEnabled(device.id > 0);
+    }
+    {
+        QSignalBlocker childrenBlocker(deviceChildrenControlCombo);
+        const int index = deviceChildrenControlCombo->findData(
+            QString::fromStdString(device.children_control));
+        deviceChildrenControlCombo->setCurrentIndex(index >= 0 ? index : 0);
+        deviceChildrenControlCombo->setEnabled(device.id > 0);
     }
     deviceResetControlButton->setEnabled(device.id > 0 && device.control_explicit);
     copyDevpathButton->setEnabled(!device.devpath.empty());

@@ -69,7 +69,7 @@ test_cold_boot_explicit_block_rule_blocks_configured_usb_storage() {
     detach_disk "$USB_ALLOWED_TARGET"
     detach_disk_config "$USB_ALLOWED_TARGET"
     expect_eq "$effective" "blocked" "explicit rule must block configured USB storage during cold boot" || return
-    expect_eq "$source" "device:$id" "cold boot explicit block source must be the device itself" || return
+    expect_eq "$source" "placement:$id" "cold boot explicit block source must be the device placement" || return
     expect_eq "$connected" "False" "explicitly blocked cold boot USB storage must be disconnected"
 }
 

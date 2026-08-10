@@ -317,13 +317,14 @@ bool UDEVInfoCollector::create_device_config(const std::string& devpath, const s
                        subsystem,                 // Меняем на реальную подсистему
                        subsystem,                 // Меняем на реальный тип
                        parent_device.id,          // Родитель остается тем же
-                       parent_device.control_level, // Наследуем от родителя
-                       false,                    // Это унаследованное значение, не явное правило администратора
-                       false,                     // Это физическое устройство
+                       existing_virtual_device.control_level,
+                       existing_virtual_device.control_explicit,
+                       existing_virtual_device.ignore_hierarchy,
                        boot_id,                   // Обновляем boot_id
                        existing_virtual_device.created_at, // Сохраняем время создания
                        "",                        // last_event_at обновится
-                       "Обновлено из виртуального: " + devpath + device_note_suffix()
+                       "Обновлено из виртуального: " + devpath + device_note_suffix(),
+                       existing_virtual_device.children_control
                    };
 
                    if (!db.updateDevice(updated_device, existing_virtual_device.id)) {

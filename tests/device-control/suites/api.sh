@@ -109,6 +109,29 @@ test_invalid_ignore_hierarchy_is_rejected() {
         fail "unexpected ignore_hierarchy rejection message: $message"
 }
 
+test_children_control_can_be_set_and_reset() {
+    ensure_usb_allowed_fixture || return
+    local response id children
+    response=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
+    id=$(printf '%s\n' "$response" | device_field id)
+    response=$(remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") children $id deny") || return
+    children=$(printf '%s\n' "$response" | device_field children_control)
+    expect_eq "$children" "deny" "children_control must be persisted" || return
+    response=$(remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") reset $id") || return
+    children=$(printf '%s\n' "$response" | device_field children_control)
+    expect_eq "$children" "inherit" "reset must restore children_control=inherit"
+}
+
+test_invalid_children_control_is_rejected() {
+    ensure_usb_allowed_fixture || return
+    local response id ok
+    response=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
+    id=$(printf '%s\n' "$response" | device_field id)
+    response=$(device_ipc "{\"command\":\"device_update_children_control\",\"device_id\":$id,\"children_control\":\"invalid\"}") || return
+    ok=$(printf '%s\n' "$response" | json_field ok)
+    expect_eq "$ok" "False" "invalid children_control must be rejected"
+}
+
 test_connected_device_can_be_marked_permanent_and_reset() {
     ensure_usb_allowed_fixture || return
     local response id explicit effective reset_response
@@ -149,6 +172,8 @@ run_api_suite() {
     run_test "USB storage attributes include the test serial" test_usb_storage_attributes_include_serial
     run_test "invalid device control level is rejected" test_invalid_control_level_is_rejected
     run_test "invalid ignore_hierarchy payload is rejected" test_invalid_ignore_hierarchy_is_rejected
+    run_test "children control can be set and reset" test_children_control_can_be_set_and_reset
+    run_test "invalid children control is rejected" test_invalid_children_control_is_rejected
     run_test "connected device can be marked permanent and reset" test_connected_device_can_be_marked_permanent_and_reset
     run_test "missing device id errors are clear" test_missing_device_id_errors_are_clear
     run_test "unknown device command is rejected" test_unknown_device_command_is_rejected

@@ -66,6 +66,7 @@ private:
     QTabWidget *deviceDetailsTabs;
     QComboBox *deviceControlCombo;
     QCheckBox *deviceGlobalRuleCheck;
+    QComboBox *deviceChildrenControlCombo;
     QPushButton *deviceResetControlButton;
     QPushButton *copyDevpathButton;
     QPushButton *copyDeviceSummaryButton;

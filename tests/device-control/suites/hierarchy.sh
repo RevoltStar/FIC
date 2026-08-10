@@ -21,7 +21,7 @@ reset_device_id_best_effort() {
     remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") reset $id" >/dev/null 2>&1 || true
 }
 
-test_ignored_parent_is_inherited_by_child() {
+test_parent_children_deny_is_inherited_by_child() {
     ensure_hierarchy_usb_allowed_fixture || return
     local child parent_id response effective ok
     child=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
@@ -29,11 +29,11 @@ test_ignored_parent_is_inherited_by_child() {
     [[ -n "$parent_id" && "$parent_id" != "0" && "$parent_id" != "-1" ]] ||
         fail "USB allowed fixture must have a parent_id"
 
-    response=$(remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") set $parent_id ignored") || return
+    response=$(remote_sudo "python3 $(printf '%q' "$REMOTE_HELPER") children $parent_id deny") || return
     ok=$(printf '%s\n' "$response" | json_field ok)
     if [[ "$ok" != "True" ]]; then
         reset_device_id_best_effort "$parent_id"
-        fail "failed to mark parent ignored: $(printf '%s\n' "$response" | json_field message)"
+        fail "failed to set parent children deny: $(printf '%s\n' "$response" | json_field message)"
         return
     fi
 
@@ -43,7 +43,7 @@ test_ignored_parent_is_inherited_by_child() {
     }
     effective=$(printf '%s\n' "$response" | device_field effective_control_level)
     reset_device_id_best_effort "$parent_id"
-    expect_eq "$effective" "ignored" "child must inherit ignored effective policy from parent"
+    expect_eq "$effective" "blocked" "child must inherit deny policy from parent"
 }
 
 test_parent_reset_restores_child_default_effective_policy() {
@@ -55,6 +55,6 @@ test_parent_reset_restores_child_default_effective_policy() {
 }
 
 run_hierarchy_suite() {
-    run_test "ignored parent policy is inherited by child" test_ignored_parent_is_inherited_by_child
+    run_test "parent children deny is inherited by child" test_parent_children_deny_is_inherited_by_child
     run_test "parent reset restores child default effective policy" test_parent_reset_restores_child_default_effective_policy
 }

@@ -16,8 +16,8 @@
 сборкам использовать изолированное хранилище без глобальных констант.
 
 Демон `fic` применяет обычные политики ОС, а `fic-dick --daemon` является
-владельцем дерева устройств, `devices.db`, initial reconciliation, runtime
-udev-ingestion и исполнения решений контроля устройств. GUI и CLI обращаются к
+владельцем дерева устройств, desired policy в `devices.db`, компиляции active
+udev policy, initial reconciliation и runtime udev-ingestion. GUI и CLI обращаются к
 дереву устройств через `/run/fic/fic-device.sock`. Runtime udev-события
 поступают отдельно через `/run/fic/fic-device-events.sock` и не конкурируют с
 административным API.
@@ -27,7 +27,7 @@ udev-ingestion и исполнения решений контроля устр�
 Компонент запускается с обязательным аргументом режима:
 
 ```bash
-fic-dick [--daemon|udev|check-permanent|wait-daemon|cpu_board_memory|--version|--build-info]
+fic-dick [--daemon|udev|enforce|reconcile|check-permanent|wait-daemon|cpu_board_memory|--version|--build-info]
 ```
 
 Если режим не указан, программа завершится с ошибкой.
@@ -50,7 +50,8 @@ Daemon слушает Unix-сокет:
 
 Через него обслуживаются команды дерева устройств: чтение корня, детей и
 атрибутов, назначение `blocked`/`allowed`/`permanent`/`ignored`, переключение
-`ignore_hierarchy`, сброс правила до наследования, удаление отключенных
+`ignore_hierarchy`, изменение `children_control=allow|deny|inherit`, сброс
+правила до наследования, удаление отключенных
 исторических поддеревьев и проверка отсутствующих `permanent` устройств.
 
 Read-only команда `device_tree_revision` возвращает целочисленную ревизию
@@ -66,6 +67,68 @@ Read-only команда `device_tree_revision` возвращает целоч�
 
 Каждая из этих политик имеет фиксированное внутреннее значение `true`;
 единственным переключателем поведения является ее статус `ENABLE`/`DISABLE`.
+После изменения статуса `fic` синхронно передает полное состояние категорий в
+device API. `fic-dick` сохраняет его в `device_policy_state`, после чего
+compiler читает desired policy только из SQLite.
+
+## Компиляция и активация policy
+
+`DevicePolicyCompiler` читает один snapshot `devices.db` и детерминированно
+генерирует `/etc/udev/rules.d/99-fic-devices.rules`. Приоритет решения:
+
+1. direct identity для `ignore_hierarchy=true`;
+2. direct placement по точному `ENV{DEVPATH}`;
+3. категорийная DC policy;
+4. ближайший explicit `children_control` предка;
+5. global default `ALLOW`.
+
+`PERMANENT` и `IGNORE` разрешают подключение; `PERMANENT` дополнительно
+проверяется daemon при исчезновении identity. `IGNORE` не распространяется на
+потомков. Для `children_control=inherit` правило не генерируется.
+
+`DevicePolicyActivator` полностью пишет `99-fic-devices.rules.tmp`, выполняет
+`fsync`, атомарный `rename` и `udevadm control --reload-rules`. При ошибке
+reload предыдущий файл восстанавливается. SQLite хранит `desired_revision` и
+`active_revision`; ошибка compilation/activation оставляет предыдущую active
+revision и возвращается административному клиенту.
+
+Direct identity компилируется только из достаточно узких стабильных полей:
+USB device требует vendor, product и serial; block использует UUID/WWN/serial
+из существующей identity-модели. Для USB interface, PCI и других weak identity
+compiler отклоняет `ignore_hierarchy=true`, не создавая широкий wildcard.
+
+Для дерева из прототипного ТЗ фрагмент реально генерируемого body выглядит так
+(ID в `FIC_POLICY_SOURCE` зависят от конкретной БД):
+
+```udev
+# DEFAULT ENV VARIABLES
+ENV{FIC_DEVICE_LEVEL}="UNKNOWN", ENV{FIC_INHERITED_LEVEL}="UNKNOWN", ENV{FIC_DIRECT_MATCH}="0", ENV{FIC_POLICY_SOURCE}="global-default"
+
+# INHERITED RULES
+ENV{DEVPATH}=="/devices/pci0000:00/*", ENV{FIC_INHERITED_LEVEL}="DENY", ENV{FIC_POLICY_SOURCE}="children:6"
+ENV{DEVPATH}=="/devices/pci0000:00/0000:00:02.1/*", ENV{FIC_INHERITED_LEVEL}="ALLOW", ENV{FIC_POLICY_SOURCE}="children:20"
+ENV{DEVPATH}=="/devices/pci0000:00/0000:00:02.1/0000:02:00.0/usb1/*", ENV{FIC_INHERITED_LEVEL}="DENY", ENV{FIC_POLICY_SOURCE}="children:23"
+
+# DIRECT PLACEMENT RULES
+ENV{DEVPATH}=="/devices/pci0000:00/0000:00:02.1/0000:02:00.0", ENV{FIC_DIRECT_MATCH}="1", ENV{FIC_DEVICE_LEVEL}="DENY", ENV{FIC_POLICY_SOURCE}="placement:21"
+ENV{DEVPATH}=="/devices/pci0000:00/0000:00:02.1/0000:02:00.0/usb1/1-1", ENV{FIC_DIRECT_MATCH}="1", ENV{FIC_DEVICE_LEVEL}="ALLOW", ENV{FIC_POLICY_SOURCE}="placement:24"
+
+# POLICY DECISION
+ENV{FIC_DIRECT_MATCH}=="1", ENV{FIC_EFFECTIVE_LEVEL}="$env{FIC_DEVICE_LEVEL}"
+ENV{FIC_DIRECT_MATCH}!="1", ENV{FIC_INHERITED_LEVEL}!="UNKNOWN", ENV{FIC_EFFECTIVE_LEVEL}="$env{FIC_INHERITED_LEVEL}"
+ENV{FIC_EFFECTIVE_LEVEL}=="", ENV{FIC_EFFECTIVE_LEVEL}="ALLOW", ENV{FIC_POLICY_SOURCE}="global-default"
+ENV{FIC_CONNECTION_LEVEL}=="", ENV{FIC_CONNECTION_LEVEL}="$env{FIC_EFFECTIVE_LEVEL}"
+
+# SUBSYSTEM ENFORCEMENT
+ENV{FIC_CONNECTION_LEVEL}=="DENY", RUN+="/opt/fic/bin/fic-dick enforce"
+
+# NOTIFY FIC-DICK
+RUN+="/opt/fic/bin/fic-dick udev"
+```
+
+В этом примере `/`, `/devices` не превращаются в опасные direct `/*` rules;
+interface `.../1-1:1.0` наследует DENY от `usb1`, а direct ALLOW для `1-1`
+имеет приоритет над inherited policy.
 
 `device_children` по умолчанию возвращает только актуальное дерево текущей
 загрузки: системные контейнеры и устройства с текущим `boot_id`. Исторические
@@ -82,7 +145,7 @@ Read-only команда `device_tree_revision` возвращает целоч�
 fic-dick udev
 ```
 
-Обычно этот режим запускается не вручную, а из udev-правила:
+Обычно этот режим запускается не вручную, а из сгенерированного udev-правила:
 
 ```text
 fic/src/scripts/udev/99-fic-devices.rules
@@ -94,8 +157,9 @@ fic/src/scripts/udev/99-fic-devices.rules
 /opt/fic/bin/fic-dick udev
 ```
 
-Пакетное udev-правило выбирает только подсистемы `usb`, `usbmisc`, `pci` и
-`block`.
+Пакет устанавливает только bootstrap rule. При старте daemon заменяет его
+policy, скомпилированной из БД. Generated rule выбирает только подсистемы
+`usb`, `usbmisc`, `pci` и `block`.
 Фильтрации подсистем внутри `UDEVInfoCollector` нет: если список подсистем
 нужно изменить, это делается в `fic/src/scripts/udev/99-fic-devices.rules`.
 
@@ -125,16 +189,21 @@ fic/src/scripts/udev/99-fic-devices.rules
   reconciliation-required и перечитывает фактическое состояние устройств;
 - daemon добавляет, обновляет или помечает устройство отключенным через тот же
   processing pipeline, который используется initial reconciliation;
-- daemon вычисляет effective policy и применяет USB/PCI/block enforcement с
-  несколькими короткими retry-попытками. Для дочерних USB-функций, например
-  `/dev/usb/lp0`, USB enforcement ищет ближайший родительский sysfs-файл
-  `authorized`;
+- до запуска inventory helper generated rule уже вычисляет effective policy;
+- при DENY rule сначала запускает `fic-dick enforce`, который не открывает
+  SQLite: USB/usbmisc пишет `authorized=0`, PCI пишет в ближайший `remove`,
+  block использует SCSI `device/delete` или `remove`;
+- затем `fic-dick udev` передает environment с `FIC_EFFECTIVE_LEVEL` и
+  `FIC_POLICY_SOURCE` daemon для inventory, history и PERMANENT handling;
 - если обязательных переменных окружения нет, обработка завершается с ошибкой.
 
 Udev event stream не является единственным источником истины. Событие означает,
 что состояние устройства могло измениться; authoritative состояние берется из
 текущего udev/sysfs inventory. Поэтому потеря runtime event во время downtime
 или overflow восстанавливается full reconciliation.
+
+Изменение policy не деактивирует уже подключённое устройство. Новый generated
+файл гарантированно используется при следующем подходящем `add/change`.
 
 ## Режим check-permanent
 
@@ -156,7 +225,7 @@ fic-dick wait-daemon [timeout_seconds]
 ```
 
 Ожидает готовности `/run/fic/fic-device.sock`, отправляя daemon команду
-`status`. Режим используется `fic-udevadm-trigger` перед `check-permanent`.
+`status`. Режим используется `fic-udevadm-trigger` перед reconciliation.
 Boot inventory больше не строится через массовый `udevadm trigger`; device
 daemon сам выполняет initial reconciliation при старте.
 
@@ -235,7 +304,9 @@ Unit вызывает:
 
 Если база не может быть инициализирована, компонент пишет ошибку в лог и завершает работу с кодом `1`.
 Существующая база идентифицируется через SQLite `application_id=0x46494344`, а
-версия схемы хранится в `user_version`. Обычный runtime принимает только точную
+версия схемы хранится в `user_version`. Схема v2 добавляет `children_control` и
+`device_policy_state` с desired/active revisions и статусами DC-категорий.
+Обычный runtime принимает только точную
 текущую версию и ничего не ремонтирует. Offline migration выполняется только
 явной root-командой `fic-dick --maintenance migrate-db`: перед транзакцией она
 создаёт SQLite Backup API-копию в `/opt/fic/state/db-backups`, затем проверяет

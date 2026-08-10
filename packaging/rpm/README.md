@@ -25,6 +25,7 @@ container. The resulting daemon validates `ID=altlinux` and
 - `/opt/fic/bin/fic-dick`
 - `/usr/lib/systemd/system/fic-device.service`
 - `/usr/lib/systemd/system/fic_get_device_info.service`
+- `/etc/udev/rules.d/99-fic-devices.rules` (bootstrap, затем active generated policy)
 
 `fic` installs:
 
@@ -38,7 +39,6 @@ container. The resulting daemon validates `ID=altlinux` and
 - `/opt/fic/notify`
 - `/opt/fic/state`
 - `/usr/lib/systemd/system/*` from `fic/src/scripts/service`
-- `/etc/udev/rules.d/*` from `fic/src/scripts/udev`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`

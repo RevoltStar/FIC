@@ -60,6 +60,19 @@ target_compile_definitions(device_tree_revision_tests PRIVATE
 target_link_libraries(device_tree_revision_tests PRIVATE fic-device-db)
 add_test(NAME device_tree_revision_tests COMMAND device_tree_revision_tests)
 
+add_executable(device_policy_compiler_tests
+    device-control/DevicePolicyCompilerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/core/DevicePolicyCompiler.cpp
+)
+target_include_directories(device_policy_compiler_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+target_link_libraries(device_policy_compiler_tests PRIVATE
+    fic-core
+    fic-device-db
+)
+add_test(NAME device_policy_compiler_tests COMMAND device_policy_compiler_tests)
+
 add_executable(ipc_paths_tests paths/IpcPathsTests.cpp)
 target_link_libraries(ipc_paths_tests PRIVATE fic-ipc)
 add_test(NAME ipc_paths_tests COMMAND ipc_paths_tests)

@@ -586,6 +586,28 @@ json handle_request(json request,
     const std::string policy = request.value("policy", "");
     const std::string value = request.value("value", "");
 
+    auto regenerateDevicePolicyIfNeeded = [&](bool required) -> std::optional<json> {
+        if (!required) {
+            return std::nullopt;
+        }
+        auto enabled = [&](const std::string& name) {
+            Policy* devicePolicy = getPolicyClass(policyMap, "DC", name);
+            return devicePolicy != nullptr && devicePolicy->isEnabled();
+        };
+        const json response = fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon).request({
+            {"command", "device_regenerate_policy"},
+            {"block_usb_storage", enabled("block_usb_storage")},
+            {"block_printers_scanners", enabled("block_printers_scanners")},
+            {"block_optical_drives", enabled("block_optical_drives")}
+        });
+        if (response.value("ok", false)) {
+            return std::nullopt;
+        }
+        return fic::ipc::make_error_response(
+            "DC configuration was saved, but generated device policy was not activated: " +
+            response.value("message", "unknown device daemon error"));
+    };
+
     try {
         if (command == "status") {
             return json{
@@ -656,6 +678,9 @@ json handle_request(json request,
             bool ok = set(policyMap, module, policy, value);
             if (ok) {
                 policyMap = init_policyMap(platform, executables);
+                if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
+                    return failure.value();
+                }
             }
             return ok ? fic::ipc::make_ok_response("policy value updated")
                       : fic::ipc::make_error_response("failed to update policy value");
@@ -664,6 +689,9 @@ json handle_request(json request,
             bool ok = enable(policyMap, module, policy);
             if (ok) {
                 policyMap = init_policyMap(platform, executables);
+                if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
+                    return failure.value();
+                }
             }
             return ok ? fic::ipc::make_ok_response("policy enabled")
                       : fic::ipc::make_error_response("failed to enable policy");
@@ -672,12 +700,18 @@ json handle_request(json request,
             bool ok = disable(policyMap, module, policy);
             if (ok) {
                 policyMap = init_policyMap(platform, executables);
+                if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
+                    return failure.value();
+                }
             }
             return ok ? fic::ipc::make_ok_response("policy disabled")
                       : fic::ipc::make_error_response("failed to disable policy");
         }
         if (command == "reload_config") {
             policyMap = init_policyMap(platform, executables);
+            if (auto failure = regenerateDevicePolicyIfNeeded(true)) {
+                return failure.value();
+            }
             return fic::ipc::make_ok_response("config reloaded");
         }
         if (command == "apply_all") {

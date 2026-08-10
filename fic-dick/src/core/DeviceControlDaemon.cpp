@@ -1,5 +1,6 @@
 #include "DeviceControlDaemon.h"
 #include "DevicePaths.h"
+#include "DevicePolicyCompiler.h"
 
 #include <algorithm>
 #include <atomic>
@@ -11,7 +12,6 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <grp.h>
 #include <iostream>
 #include <map>
@@ -34,7 +34,6 @@
 #include <nlohmann/json.hpp>
 
 #include <fic/core/Logger.h>
-#include <fic/core/ModuleConfigFileHandler.h>
 #include <fic/core/ProcessExecutor.h>
 #include <fic/core/SystemBootInfo.h>
 #include <fic/device-db/DB.h>
@@ -65,12 +64,7 @@ struct ControlOverride {
     std::string controlLevel;
     bool controlExplicit = false;
     bool ignoreHierarchy = false;
-};
-
-struct DcSettings {
-    bool blockUsbStorage = false;
-    bool blockPrintersScanners = false;
-    bool blockOpticalDrives = false;
+    std::string childrenControl = "inherit";
 };
 
 struct PeerCredentials {
@@ -134,6 +128,10 @@ bool is_valid_control_level(const std::string& level) {
     return level == "blocked" || level == "allowed" || level == "permanent" || level == "ignored";
 }
 
+bool is_valid_children_control(const std::string& level) {
+    return level == "allow" || level == "deny" || level == "inherit";
+}
+
 PeerCredentials peer_credentials(int fd) {
     PeerCredentials peer;
 #ifdef SO_PEERCRED
@@ -170,6 +168,8 @@ bool is_mutating_command(const std::string& command) {
            command == "device_reconcile" ||
            command == "device_update_control_level" ||
            command == "device_update_ignore_hierarchy" ||
+           command == "device_update_children_control" ||
+           command == "device_regenerate_policy" ||
            command == "device_reset_control" ||
            command == "device_delete" ||
            command == "device_check_permanent" ||
@@ -182,7 +182,9 @@ std::string request_audit_summary(const json& request) {
     }
 
     std::string summary = "command=" + sanitize_audit_value(request.value("command", ""));
-    const std::vector<std::string> stringFields = {"action", "devpath", "subsystem", "control_level"};
+    const std::vector<std::string> stringFields = {
+        "action", "devpath", "subsystem", "control_level", "children_control"
+    };
     for (const std::string& field : stringFields) {
         if (request.contains(field) && request[field].is_string()) {
             summary += " " + field + "=" + sanitize_audit_value(request[field].get<std::string>());
@@ -198,6 +200,13 @@ std::string request_audit_summary(const json& request) {
 
     if (request.contains("ignore_hierarchy") && request["ignore_hierarchy"].is_boolean()) {
         summary += std::string(" ignore_hierarchy=") + (request["ignore_hierarchy"].get<bool>() ? "true" : "false");
+    }
+    for (const char* field : {
+             "block_usb_storage", "block_printers_scanners", "block_optical_drives"}) {
+        if (request.contains(field) && request[field].is_boolean()) {
+            summary += std::string(" ") + field + "=" +
+                (request[field].get<bool>() ? "true" : "false");
+        }
     }
 
     return summary;
@@ -248,6 +257,7 @@ DeviceInfo with_override(DeviceInfo device, const std::optional<ControlOverride>
         device.control_level = override->controlLevel;
         device.control_explicit = override->controlExplicit;
         device.ignore_hierarchy = override->ignoreHierarchy;
+        device.children_control = override->childrenControl;
     }
     return device;
 }
@@ -273,21 +283,53 @@ std::vector<DeviceInfo> device_path_to_root(DB& db,
     return path;
 }
 
-bool dc_policy_enabled(ModuleConfigFileHandler& config, const std::string& policy) {
-    return config.getPolicyStatus(policy) == "ENABLE";
+std::optional<std::string> find_udevadm();
+
+bool regenerate_device_policy(DB& db, const std::string& reason, std::string& error) {
+    log_device("device policy compilation started: " + reason, logLevel::INFO);
+    DevicePolicyCompiler compiler({
+        std::string(FIC_PRIVATE_BINDIR) + "/fic-dick"
+    });
+    const DevicePolicyCompilation compilation = compiler.compile(db);
+    if (!compilation.ok) {
+        error = compilation.error;
+        log_device("device policy compilation failed: " + error, logLevel::ERROR);
+        return false;
+    }
+    log_device("device policy compilation succeeded", logLevel::INFO);
+
+    const std::optional<std::string> udevadm = find_udevadm();
+    if (!udevadm.has_value()) {
+        error = "udevadm not found";
+        log_device("device policy activation failed: " + error, logLevel::ERROR);
+        return false;
+    }
+    DevicePolicyActivator activator({
+        std::filesystem::path(FIC_UDEV_RULES_DIR) / "99-fic-devices.rules",
+        udevadm.value()
+    });
+    if (!activator.activate(compilation.rules, error)) {
+        log_device("device policy activation failed: " + error, logLevel::ERROR);
+        return false;
+    }
+    log_device("device policy activation and udev reload succeeded", logLevel::INFO);
+
+    const std::int64_t desiredRevision = db.getDesiredPolicyRevision();
+    if (desiredRevision < 0 || !db.setActivePolicyRevision(desiredRevision)) {
+        error = "active udev rules were published but active policy revision could not be recorded";
+        log_device(error, logLevel::ERROR);
+        return false;
+    }
+    return true;
 }
 
-DcSettings load_dc_settings() {
-    DcSettings settings;
-    ModuleConfigFileHandler config("DC");
-    if (!config.loadConfig()) {
-        return settings;
-    }
-
-    settings.blockUsbStorage = dc_policy_enabled(config, "block_usb_storage");
-    settings.blockPrintersScanners = dc_policy_enabled(config, "block_printers_scanners");
-    settings.blockOpticalDrives = dc_policy_enabled(config, "block_optical_drives");
-    return settings;
+json policy_activation_error(DB& db, const std::string& operation, const std::string& error) {
+    return json{
+        {"ok", false},
+        {"message", operation + " was saved as desired policy, but udev policy activation failed: " + error},
+        {"desired_policy_revision", db.getDesiredPolicyRevision()},
+        {"active_policy_revision", db.getActivePolicyRevision()}
+    };
 }
 
 std::string attribute_value(const std::map<std::string, std::string>& attributes,
@@ -350,19 +392,20 @@ bool is_optical_drive(const DeviceInfo& device,
 }
 
 std::optional<EffectivePolicy> dc_category_policy(DB& db, const DeviceInfo& device) {
-    const DcSettings settings = load_dc_settings();
-    if (!settings.blockUsbStorage && !settings.blockPrintersScanners && !settings.blockOpticalDrives) {
+    const DeviceCategoryPolicyState settings = db.getDeviceCategoryPolicyState();
+    if (!settings.block_usb_storage && !settings.block_printers_scanners &&
+        !settings.block_optical_drives) {
         return std::nullopt;
     }
 
     const std::map<std::string, std::string> attributes = db.getDeviceAttributes(device.id);
-    if (settings.blockUsbStorage && is_usb_storage_device(device, attributes)) {
+    if (settings.block_usb_storage && is_usb_storage_device(device, attributes)) {
         return EffectivePolicy{"blocked", "dc:block_usb_storage", device.id, "USB storage is blocked by DC settings"};
     }
-    if (settings.blockPrintersScanners && is_printer_or_scanner(device, attributes)) {
+    if (settings.block_printers_scanners && is_printer_or_scanner(device, attributes)) {
         return EffectivePolicy{"blocked", "dc:block_printers_scanners", device.id, "printers/scanners are blocked by DC settings"};
     }
-    if (settings.blockOpticalDrives && is_optical_drive(device, attributes)) {
+    if (settings.block_optical_drives && is_optical_drive(device, attributes)) {
         return EffectivePolicy{"blocked", "dc:block_optical_drives", device.id, "optical drives are blocked by DC settings"};
     }
 
@@ -379,21 +422,8 @@ EffectivePolicy effective_policy(DB& db,
 
     const std::vector<DeviceInfo> path = device_path_to_root(db, device, override);
 
-    for (const DeviceInfo& pathDevice : path) {
-        if (pathDevice.control_explicit && pathDevice.control_level == "ignored") {
-            return EffectivePolicy{"ignored", "device:" + std::to_string(pathDevice.id), pathDevice.id, "ignored subtree"};
-        }
-    }
-
-    if (device.control_explicit) {
-        return EffectivePolicy{device.control_level, "device:" + std::to_string(device.id), device.id, "explicit device rule"};
-    }
-
     for (DeviceInfo candidate : db.getDevicesByHashAndSubsystem(device.device_hash, device.subsystem)) {
         candidate = with_override(candidate, override);
-        if (candidate.id == device.id) {
-            continue;
-        }
         if (candidate.control_explicit && candidate.ignore_hierarchy) {
             return EffectivePolicy{candidate.control_level,
                                    "identity:" + std::to_string(candidate.id),
@@ -402,68 +432,28 @@ EffectivePolicy effective_policy(DB& db,
         }
     }
 
+    if (device.control_explicit) {
+        return EffectivePolicy{device.control_level,
+                               "placement:" + std::to_string(device.id),
+                               device.id,
+                               "explicit placement rule"};
+    }
+
     if (std::optional<EffectivePolicy> categoryPolicy = dc_category_policy(db, device)) {
         return categoryPolicy.value();
     }
 
     for (std::size_t i = 1; i < path.size(); ++i) {
         const DeviceInfo& parent = path[i];
-        if (parent.control_explicit) {
-            return EffectivePolicy{parent.control_level,
-                                   "parent:" + std::to_string(parent.id),
+        if (parent.children_control != "inherit") {
+            return EffectivePolicy{parent.children_control == "deny" ? "blocked" : "allowed",
+                                   "children:" + std::to_string(parent.id),
                                    parent.id,
-                                   "nearest explicit parent rule"};
+                                   "nearest explicit ancestor children rule"};
         }
     }
 
     return EffectivePolicy{"allowed", "default", -1, "default allow"};
-}
-
-bool write_sysfs_value(const std::filesystem::path& path,
-                       const std::string& value,
-                       std::string& error) {
-    std::ofstream out(path);
-    if (!out.is_open()) {
-        error = "failed to open " + path.string() + ": " + std::strerror(errno);
-        return false;
-    }
-
-    out << value;
-    if (!out.good()) {
-        error = "failed to write " + path.string();
-        return false;
-    }
-
-    return true;
-}
-
-bool retry_sysfs_action(const std::string& actionName,
-                        const std::function<bool(std::string&)>& action,
-                        std::string& details) {
-    const std::vector<int> delaysMs = {0, 100, 250};
-    std::string lastError;
-
-    for (std::size_t attempt = 0; attempt < delaysMs.size(); ++attempt) {
-        if (delaysMs[attempt] > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(delaysMs[attempt]));
-        }
-
-        std::string attemptDetails;
-        if (action(attemptDetails)) {
-            details = actionName + " succeeded on attempt " + std::to_string(attempt + 1);
-            if (!attemptDetails.empty()) {
-                details += ": " + attemptDetails;
-            }
-            return true;
-        }
-        lastError = attemptDetails;
-    }
-
-    details = actionName + " failed after " + std::to_string(delaysMs.size()) + " attempts";
-    if (!lastError.empty()) {
-        details += ": " + lastError;
-    }
-    return false;
 }
 
 std::optional<std::filesystem::path> find_parent_sysfs_file(const std::string& devpath,
@@ -484,75 +474,31 @@ std::optional<std::filesystem::path> find_parent_sysfs_file(const std::string& d
     return std::nullopt;
 }
 
-bool sysfs_file_exists_for_device(const DeviceInfo& device, const std::string& filename) {
-    return find_parent_sysfs_file(device.devpath, filename).has_value();
-}
-
-bool authorize_usb(const DeviceInfo& device, bool authorize, std::string& details) {
-    std::optional<std::filesystem::path> authorized = find_parent_sysfs_file(device.devpath, "authorized");
-    if (!authorized.has_value()) {
-        details = "USB authorized sysfs file not found";
-        return false;
+bool deny_enforcement_observed(const DeviceInfo& device, std::string& details) {
+    const std::filesystem::path sysDevice =
+        std::filesystem::path("/sys") / device.devpath.substr(1);
+    std::error_code error;
+    if (!std::filesystem::exists(sysDevice, error) && !error) {
+        details = "device sysfs path is absent after udev enforcement";
+        return true;
     }
-
-    return retry_sysfs_action(authorize ? "USB authorize" : "USB deauthorize",
-                              [&](std::string& error) {
-                                  return write_sysfs_value(authorized.value(), authorize ? "1" : "0", error);
-                              },
-                              details);
-}
-
-bool remove_via_sysfs(const DeviceInfo& device, std::string& details) {
-    std::filesystem::path sysDevice = std::filesystem::path("/sys") / device.devpath.substr(1);
-    const std::filesystem::path scsiDelete = sysDevice / "device" / "delete";
-    if (std::filesystem::exists(scsiDelete)) {
-        return retry_sysfs_action("sysfs delete",
-                                  [&](std::string& error) {
-                                      return write_sysfs_value(scsiDelete, "1", error);
-                                  },
-                                  details);
-    }
-
-    std::optional<std::filesystem::path> remove = find_parent_sysfs_file(device.devpath, "remove");
-    if (remove.has_value()) {
-        return retry_sysfs_action("sysfs remove",
-                                  [&](std::string& error) {
-                                      return write_sysfs_value(remove.value(), "1", error);
-                                  },
-                                  details);
-    }
-
-    details = "no supported sysfs remove/delete file found";
-    return false;
-}
-
-bool enforce_allow(const DeviceInfo& device, std::string& details) {
-    if (sysfs_file_exists_for_device(device, "authorized")) {
-        return authorize_usb(device, true, details);
-    }
-
-    if (device.subsystem == "usb") {
-        details = "USB authorized sysfs file not found";
-        return false;
-    }
-
-    details = "no allow action required";
-    return true;
-}
-
-bool enforce_block(const DeviceInfo& device, std::string& details) {
-    if (device.subsystem == "usb" || sysfs_file_exists_for_device(device, "authorized")) {
-        if (authorize_usb(device, false, details)) {
-            details = "USB device deauthorized";
+    if (device.subsystem == "usb" || device.subsystem == "usbmisc") {
+        const auto authorized = find_parent_sysfs_file(device.devpath, "authorized");
+        if (!authorized.has_value()) {
+            details = "USB authorized state is unavailable after udev enforcement";
+            return false;
+        }
+        std::ifstream input(authorized.value());
+        std::string value;
+        input >> value;
+        if (value == "0") {
+            details = "USB authorized=0 observed after udev enforcement";
             return true;
         }
+        details = "USB remains authorized after generated deny rule";
+        return false;
     }
-
-    if (device.subsystem == "block" || device.subsystem == "pci") {
-        return remove_via_sysfs(device, details);
-    }
-
-    details = "unsupported subsystem for active enforcement: " + device.subsystem;
+    details = "device sysfs path still exists after generated deny rule";
     return false;
 }
 
@@ -609,6 +555,7 @@ json device_to_json(DB& db, const DeviceInfo& device) {
         {"control_level", device.control_level},
         {"control_explicit", device.control_explicit},
         {"ignore_hierarchy", device.ignore_hierarchy},
+        {"children_control", device.children_control},
         {"effective_control_level", policy.level},
         {"effective_source", policy.source},
         {"effective_source_device_id", policy.sourceDeviceId},
@@ -856,17 +803,21 @@ json process_device_event(const DeviceEventEnvelope& event) {
             return fic::ipc::make_error_response("device was updated but cannot be found in database");
         }
 
-        const EffectivePolicy policy = effective_policy(db, device);
-        add_event(db, device.id, "connect", "success", "effective=" + policy.level + "; source=" + policy.source);
+        const std::string generatedLevel = attribute_value(event.env, "FIC_EFFECTIVE_LEVEL");
+        const std::string generatedSource = attribute_value(event.env, "FIC_POLICY_SOURCE");
+        const std::string effectiveLevel = generatedLevel.empty() ? "ALLOW" : generatedLevel;
+        const std::string effectiveSource = generatedSource.empty() ? "bootstrap-rule" : generatedSource;
+        add_event(db, device.id, "connect", "success",
+                  "generated_effective=" + effectiveLevel + "; source=" + effectiveSource);
 
-        std::string enforcementDetails;
-        if (policy.level == "blocked") {
-            const bool enforced = enforce_block(device, enforcementDetails);
+        if (effectiveLevel == "DENY") {
+            std::string enforcementDetails;
+            const bool enforced = deny_enforcement_observed(device, enforcementDetails);
             add_event(db,
                       device.id,
                       "block",
                       enforced ? "success" : "error",
-                      enforcementDetails + "; source=" + policy.source);
+                      enforcementDetails + "; source=" + effectiveSource);
             if (enforced) {
                 reset_subtree_boot_id(db, device.id);
                 device = db.getDeviceById(device.id);
@@ -879,28 +830,13 @@ json process_device_event(const DeviceEventEnvelope& event) {
             };
         }
 
-        if (policy.level == "allowed" || policy.level == "permanent") {
-            const bool allowed = enforce_allow(device, enforcementDetails);
-            add_event(db,
-                      device.id,
-                      "allow",
-                      allowed ? "success" : "error",
-                      enforcementDetails + "; source=" + policy.source);
-            if (!allowed) {
-                return json{
-                    {"ok", false},
-                    {"message", "device is allowed but allow enforcement failed"},
-                    {"device", device_to_json(db, device)},
-                    {"enforcement", enforcementDetails}
-                };
-            }
-        }
+        add_event(db, device.id, "allow", "success",
+                  "no deny enforcement requested; source=" + effectiveSource);
 
         return json{
             {"ok", true},
             {"message", "device accepted"},
-            {"device", device_to_json(db, device)},
-            {"enforcement", enforcementDetails}
+            {"device", device_to_json(db, device)}
         };
     }
 
@@ -968,18 +904,28 @@ json update_device_control(DB& db, const json& request) {
         return fic::ipc::make_error_response("cannot mark absent device as permanent");
     }
 
-    ControlOverride override{deviceId, controlLevel, true, ignoreHierarchy};
+    ControlOverride override{
+        deviceId, controlLevel, true, ignoreHierarchy, device.children_control
+    };
     const json blockers = connected_blockers_for_override(db, device, override);
 
-    if (!db.updateDeviceControl(deviceId, controlLevel, true, ignoreHierarchy)) {
+    if (!db.updateDeviceControl(
+            deviceId, controlLevel, true, ignoreHierarchy, device.children_control)) {
         return fic::ipc::make_error_response("failed to update device control");
+    }
+
+    std::string activationError;
+    if (!regenerate_device_policy(db, "device control update", activationError)) {
+        return policy_activation_error(db, "device control update", activationError);
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
     json response = json{
         {"ok", true},
         {"message", "device control updated"},
-        {"device", device_to_json(db, updated)}
+        {"device", device_to_json(db, updated)},
+        {"desired_policy_revision", db.getDesiredPolicyRevision()},
+        {"active_policy_revision", db.getActivePolicyRevision()}
     };
     add_deferred_block_warning(response, blockers);
     return response;
@@ -997,18 +943,70 @@ json update_device_ignore_hierarchy(DB& db, const json& request) {
     }
 
     const bool ignoreHierarchy = request.value("ignore_hierarchy", false);
-    ControlOverride override{deviceId, device.control_level, device.control_explicit, ignoreHierarchy};
+    ControlOverride override{
+        deviceId,
+        device.control_level,
+        device.control_explicit,
+        ignoreHierarchy,
+        device.children_control
+    };
     const json blockers = connected_blockers_for_override(db, device, override);
 
     if (!db.updateDeviceIgnoreHierarchy(deviceId, ignoreHierarchy)) {
         return fic::ipc::make_error_response("failed to update ignore_hierarchy");
     }
 
+    std::string activationError;
+    if (!regenerate_device_policy(db, "ignore_hierarchy update", activationError)) {
+        return policy_activation_error(db, "ignore_hierarchy update", activationError);
+    }
+
     DeviceInfo updated = db.getDeviceById(deviceId);
     json response = json{
         {"ok", true},
         {"message", "ignore_hierarchy updated"},
-        {"device", device_to_json(db, updated)}
+        {"device", device_to_json(db, updated)},
+        {"desired_policy_revision", db.getDesiredPolicyRevision()},
+        {"active_policy_revision", db.getActivePolicyRevision()}
+    };
+    add_deferred_block_warning(response, blockers);
+    return response;
+}
+
+json update_device_children_control(DB& db, const json& request) {
+    const int deviceId = request.value("device_id", 0);
+    const std::string childrenControl = request.value("children_control", "");
+    if (deviceId <= 0 || !is_valid_children_control(childrenControl)) {
+        return fic::ipc::make_error_response(
+            "valid device_id and children_control are required");
+    }
+    DeviceInfo device = db.getDeviceById(deviceId);
+    if (device.id == -1) {
+        return fic::ipc::make_error_response("device not found");
+    }
+
+    ControlOverride override{
+        deviceId,
+        device.control_level,
+        device.control_explicit,
+        device.ignore_hierarchy,
+        childrenControl
+    };
+    const json blockers = connected_blockers_for_override(db, device, override);
+    if (!db.updateDeviceChildrenControl(deviceId, childrenControl)) {
+        return fic::ipc::make_error_response("failed to update children_control");
+    }
+    std::string activationError;
+    if (!regenerate_device_policy(db, "children_control update", activationError)) {
+        return policy_activation_error(db, "children_control update", activationError);
+    }
+
+    json response = json{
+        {"ok", true},
+        {"message", "children_control updated"},
+        {"device", device_to_json(db, db.getDeviceById(deviceId))},
+        {"desired_policy_revision", db.getDesiredPolicyRevision()},
+        {"active_policy_revision", db.getActivePolicyRevision()}
     };
     add_deferred_block_warning(response, blockers);
     return response;
@@ -1025,18 +1023,25 @@ json reset_device_control(DB& db, const json& request) {
         return fic::ipc::make_error_response("device not found");
     }
 
-    ControlOverride override{deviceId, device.control_level, false, false};
+    ControlOverride override{deviceId, device.control_level, false, false, "inherit"};
     const json blockers = connected_blockers_for_override(db, device, override);
 
-    if (!db.updateDeviceControl(deviceId, device.control_level, false, false)) {
+    if (!db.updateDeviceControl(deviceId, device.control_level, false, false, "inherit")) {
         return fic::ipc::make_error_response("failed to reset device control");
+    }
+
+    std::string activationError;
+    if (!regenerate_device_policy(db, "device policy reset", activationError)) {
+        return policy_activation_error(db, "device policy reset", activationError);
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
     json response = json{
         {"ok", true},
         {"message", "device control reset to inheritance"},
-        {"device", device_to_json(db, updated)}
+        {"device", device_to_json(db, updated)},
+        {"desired_policy_revision", db.getDesiredPolicyRevision()},
+        {"active_policy_revision", db.getActivePolicyRevision()}
     };
     add_deferred_block_warning(response, blockers);
     return response;
@@ -1075,6 +1080,20 @@ json handle_db_request(const json& request) {
             {"ok", true},
             {"message", "device tree revision loaded"},
             {"revision", revision}
+        };
+    }
+    if (command == "device_policy_status") {
+        const std::int64_t desired = db.getDesiredPolicyRevision();
+        const std::int64_t active = db.getActivePolicyRevision();
+        if (desired < 0 || active < 0) {
+            return fic::ipc::make_error_response("failed to load device policy revisions");
+        }
+        return json{
+            {"ok", true},
+            {"message", "device policy status loaded"},
+            {"desired_policy_revision", desired},
+            {"active_policy_revision", active},
+            {"policy_active", desired == active}
         };
     }
     if (command == "device_root") {
@@ -1133,6 +1152,9 @@ json handle_db_request(const json& request) {
     if (command == "device_update_ignore_hierarchy") {
         return update_device_ignore_hierarchy(db, request);
     }
+    if (command == "device_update_children_control") {
+        return update_device_children_control(db, request);
+    }
     if (command == "device_reset_control") {
         return reset_device_control(db, request);
     }
@@ -1148,9 +1170,14 @@ json handle_db_request(const json& request) {
         if (!can_delete_subtree(db, device, current_boot_id())) {
             return fic::ipc::make_error_response("only disconnected non-system device subtrees can be deleted");
         }
-        return db.deleteDevice(deviceId)
-            ? fic::ipc::make_ok_response("device deleted")
-            : fic::ipc::make_error_response("failed to delete device");
+        if (!db.deleteDevice(deviceId)) {
+            return fic::ipc::make_error_response("failed to delete device");
+        }
+        std::string activationError;
+        if (!regenerate_device_policy(db, "device policy deletion", activationError)) {
+            return policy_activation_error(db, "device deletion", activationError);
+        }
+        return fic::ipc::make_ok_response("device deleted and udev policy regenerated");
     }
     if (command == "device_events") {
         const int deviceId = request.value("device_id", 0);
@@ -1222,11 +1249,41 @@ json handle_request(
             "device reconciliation completed");
     }
 
+    if (command == "device_regenerate_policy") {
+        if (!peer.available || peer.uid != 0) {
+            return fic::ipc::make_error_response(
+                "device_regenerate_policy requires root peer credentials");
+        }
+        DB db(DeviceRuntimePaths::get().databaseOptions());
+        const DeviceCategoryPolicyState categories{
+            request.value("block_usb_storage", false),
+            request.value("block_printers_scanners", false),
+            request.value("block_optical_drives", false)
+        };
+        if (!db.initializeDatabase() ||
+            !db.updateDeviceCategoryPolicyState(categories)) {
+            return fic::ipc::make_error_response(
+                "failed to save category policy state in device database");
+        }
+        std::string activationError;
+        if (!regenerate_device_policy(db, "DC configuration changed", activationError)) {
+            return policy_activation_error(db, "DC configuration update", activationError);
+        }
+        return json{
+            {"ok", true},
+            {"message", "device policy regenerated"},
+            {"desired_policy_revision", db.getDesiredPolicyRevision()},
+            {"active_policy_revision", db.getActivePolicyRevision()}
+        };
+    }
+
     return handle_db_request(request);
 }
 
 bool validate_device_request_schema(const json& request, std::string& error) {
-    for (const char* field : {"action", "devpath", "subsystem", "control_level", "event_type"}) {
+    for (const char* field : {
+             "action", "devpath", "subsystem", "control_level",
+             "children_control", "event_type"}) {
         if (request.contains(field) && !request[field].is_string()) {
             error = std::string("request.") + field + " must be a string";
             return false;
@@ -1247,7 +1304,9 @@ bool validate_device_request_schema(const json& request, std::string& error) {
             return false;
         }
     }
-    for (const char* field : {"include_disconnected", "ignore_hierarchy"}) {
+    for (const char* field : {
+             "include_disconnected", "ignore_hierarchy", "block_usb_storage",
+             "block_printers_scanners", "block_optical_drives"}) {
         if (request.contains(field) && !request[field].is_boolean()) {
             error = std::string("request.") + field + " must be a boolean";
             return false;
@@ -1283,6 +1342,21 @@ bool validate_device_request_schema(const json& request, std::string& error) {
             {"command"},
             error);
     }
+    if (command == "device_regenerate_policy") {
+        for (const char* field : {
+                 "block_usb_storage", "block_printers_scanners",
+                 "block_optical_drives"}) {
+            if (!request.contains(field) || !request[field].is_boolean()) {
+                error = std::string("request.") + field + " must be present and boolean";
+                return false;
+            }
+        }
+        return fic::ipc::request_has_only_fields(
+            request,
+            {"command", "block_usb_storage", "block_printers_scanners",
+             "block_optical_drives"},
+            error);
+    }
     if (command == "udev_event") {
         return fic::ipc::request_has_only_fields(
             request, {"command", "action", "devpath", "subsystem", "env"}, error);
@@ -1294,6 +1368,10 @@ bool validate_device_request_schema(const json& request, std::string& error) {
     if (command == "device_update_ignore_hierarchy") {
         return fic::ipc::request_has_only_fields(
             request, {"command", "device_id", "ignore_hierarchy"}, error);
+    }
+    if (command == "device_update_children_control") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "device_id", "children_control"}, error);
     }
     if (command == "device_reset_control" || command == "device_delete") {
         return fic::ipc::request_has_only_fields(
@@ -1787,6 +1865,11 @@ int run_daemon(const std::string& socketPathArg) {
             std::cerr << "failed to initialize device database" << std::endl;
             return 1;
         }
+        std::string activationError;
+        if (!regenerate_device_policy(db, "daemon startup", activationError)) {
+            std::cerr << "failed to activate device policy: " << activationError << std::endl;
+            return 1;
+        }
     }
 
     std::signal(SIGINT, handle_signal);
@@ -2017,7 +2100,7 @@ int forward_udev_event_to_daemon(const std::map<std::string, std::string>& env) 
      * from authoritative udev/sysfs state, therefore preserving
      * this individual incremental event is unnecessary.
      *
-     * Do not create a reconciliation marker here: /run/fic may
+     * Do not create a reconciliation marker here: the runtime directory may
      * not exist yet either, and daemon startup itself is the
      * recovery guarantee.
      */

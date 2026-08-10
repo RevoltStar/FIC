@@ -68,6 +68,12 @@ int main()
 
         const DeviceInfo computer = database.getComputerRoot();
         assert(computer.id > 0);
+        assert(computer.children_control == "allow");
+        const DeviceCategoryPolicyState categories =
+            database.getDeviceCategoryPolicyState();
+        assert(!categories.block_usb_storage);
+        assert(!categories.block_printers_scanners);
+        assert(!categories.block_optical_drives);
         assert(database.getDeviceTreeRevision() == initialRevision);
 
         DeviceInfo device;
@@ -104,7 +110,7 @@ int main()
         const std::int64_t afterEventInsert = database.getDeviceTreeRevision();
         assert(afterEventInsert > afterAttributeUpdate);
 
-        assert(database.updateDeviceControl(deviceId, "blocked", true, false));
+        assert(database.updateDeviceControl(deviceId, "blocked", true, false, "inherit"));
         const std::int64_t afterDeviceUpdate = database.getDeviceTreeRevision();
         assert(afterDeviceUpdate > afterEventInsert);
 

@@ -9,3 +9,6 @@ first planned stable release is 2.0.0.
 ## [Unreleased]
 
 - Initial release engineering and compatibility contract for FIC 2.0.
+- Device Control now compiles desired policy from `devices.db` into atomically
+  activated udev rules, with direct/children policy, identity matching and
+  SQLite-free hotplug enforcement.

@@ -221,6 +221,7 @@ void fillDeviceFromJson(DeviceInfo& device, const nlohmann::json& item)
     device.control_level = item.value("control_level", "");
     device.control_explicit = item.value("control_explicit", true);
     device.ignore_hierarchy = item.value("ignore_hierarchy", false);
+    device.children_control = item.value("children_control", "inherit");
     device.effective_control_level = item.value("effective_control_level", device.control_level);
     device.effective_source = item.value("effective_source", "");
     device.effective_source_device_id = item.value("effective_source_device_id", -1);
@@ -378,6 +379,14 @@ void DeviceTree::applyIgnoreHierarchyToCurrentDevice(bool ignoreHierarchy)
     }
 
     setDeviceIgnoreHierarchy(deviceId, ignoreHierarchy);
+}
+
+void DeviceTree::applyChildrenControlToCurrentDevice(const QString &childrenControl)
+{
+    const int deviceId = currentDeviceId();
+    if (deviceId > 0) {
+        setDeviceChildrenControl(deviceId, childrenControl.toStdString());
+    }
 }
 
 void DeviceTree::resetCurrentDeviceControl()
@@ -554,6 +563,30 @@ bool DeviceTree::updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHier
     return true;
 }
 
+bool DeviceTree::updateDeviceChildrenControlRemote(int deviceId,
+                                                   const std::string& childrenControl,
+                                                   QString *errorMessage,
+                                                   QString *warningMessage) const
+{
+    auto response = deviceClient().request({
+        {"command", "device_update_children_control"},
+        {"device_id", deviceId},
+        {"children_control", childrenControl}
+    });
+    if (!response.value("ok", false)) {
+        const QString message = QString::fromStdString(
+            response.value("message", "unknown daemon error"));
+        if (errorMessage != nullptr) {
+            *errorMessage = message;
+        }
+        return false;
+    }
+    if (warningMessage != nullptr) {
+        *warningMessage = deferredBlockWarningFromResponse(response);
+    }
+    return true;
+}
+
 bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage, QString *warningMessage) const
 {
     auto response = deviceClient().request({
@@ -698,6 +731,19 @@ void DeviceTree::showControlLevelContextMenu(const QPoint &position)
         setDeviceIgnoreHierarchy(deviceId, checked);
     });
 
+    QMenu *childrenMenu = menu.addMenu("Политика потомков");
+    auto addChildrenAction = [&](const QString& title, const std::string& level) {
+        QAction *action = childrenMenu->addAction(title);
+        action->setCheckable(true);
+        action->setChecked(device.children_control == level);
+        connect(action, &QAction::triggered, this, [this, deviceId, level]() {
+            setDeviceChildrenControl(deviceId, level);
+        });
+    };
+    addChildrenAction("Разрешать", "allow");
+    addChildrenAction("Запрещать", "deny");
+    addChildrenAction("Наследовать", "inherit");
+
     QAction *resetControlAction = menu.addAction("Сбросить до наследования");
     resetControlAction->setEnabled(device.control_explicit);
     connect(resetControlAction, &QAction::triggered, this, [this, deviceId]() {
@@ -780,6 +826,30 @@ void DeviceTree::setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy)
     refreshPreservingState();
     if (!warningMessage.isEmpty())
     {
+        QMessageBox::information(this, "Контроль устройств", warningMessage);
+    }
+    emit deviceClicked(fetchDeviceById(deviceId));
+}
+
+void DeviceTree::setDeviceChildrenControl(int deviceId, const std::string &childrenControl)
+{
+    if (deviceId <= 0) {
+        return;
+    }
+    QString errorMessage;
+    QString warningMessage;
+    if (!updateDeviceChildrenControlRemote(
+            deviceId, childrenControl, &errorMessage, &warningMessage)) {
+        QMessageBox::warning(
+            this,
+            "Контроль устройств",
+            errorMessage.isEmpty()
+                ? "Не удалось обновить политику потомков."
+                : errorMessage);
+        return;
+    }
+    refreshPreservingState();
+    if (!warningMessage.isEmpty()) {
         QMessageBox::information(this, "Контроль устройств", warningMessage);
     }
     emit deviceClicked(fetchDeviceById(deviceId));

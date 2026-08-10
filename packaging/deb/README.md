@@ -20,6 +20,7 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - `/opt/fic/bin/fic-dick`
 - `/lib/systemd/system/fic-device.service`
 - `/lib/systemd/system/fic_get_device_info.service`
+- `/etc/udev/rules.d/99-fic-devices.rules` (bootstrap, затем active generated policy)
 
 `fic` installs:
 
@@ -33,7 +34,6 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - `/opt/fic/notify`
 - `/opt/fic/state`
 - `/lib/systemd/system/*` from `fic/src/scripts/service`
-- `/etc/udev/rules.d/*` from `fic/src/scripts/udev`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`

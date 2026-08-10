@@ -7,11 +7,13 @@
 #include <string>
 #include <vector>
 #include <fic/core/FicRuntimePaths.h>
+#include <fic/core/ModuleConfigFileHandler.h>
 #include <fic/core/UpgradeManager.h>
 #include <fic/device-db/DB.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 #include "core/DeviceControlDaemon.h"
+#include "core/DeviceEnforcer.h"
 #include "core/DevicePaths.h"
 #include "modules/UDEVInfoCollector.h"
 #include "modules/USBInfoCollector.h"
@@ -137,6 +139,17 @@ int main(int argc, char* argv[], char* envp[]) {
                         std::cerr << "device database migration failed: " << error << std::endl;
                         return 1;
                     }
+                    ModuleConfigFileHandler dcConfig("DC");
+                    if (!dcConfig.loadConfig() ||
+                        !db.updateDeviceCategoryPolicyState({
+                            dcConfig.getPolicyStatus("block_usb_storage") == "ENABLE",
+                            dcConfig.getPolicyStatus("block_printers_scanners") == "ENABLE",
+                            dcConfig.getPolicyStatus("block_optical_drives") == "ENABLE"
+                        })) {
+                        std::cerr << "failed to import DC category policy into device database"
+                                  << std::endl;
+                        return 1;
+                    }
                     if (!fic::core::UpgradeManager::markDatabaseMigratedIfActive(
                             fic::device_control::DeviceRuntimePaths::get().stateDir,
                             result.backupFile,
@@ -197,7 +210,9 @@ int main(int argc, char* argv[], char* envp[]) {
             return fic::device_control::
                 forward_udev_event_to_daemon(
                 env_to_map(envp));
-            
+        }
+        else if (mode == "enforce") {
+            return fic::device_control::enforce_udev_device();
         }
         else if (mode == "reconcile") {
             return fic::device_control::

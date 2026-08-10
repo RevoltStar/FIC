@@ -23,18 +23,21 @@ flowchart LR
     daemon -->|пишет| logs["/opt/fic/log"]
     daemon -->|читает и меняет| lockstatus["/opt/fic/lockstatus"]
     deviceDaemon -->|читает и меняет| db[(devices.db)]
+    deviceDaemon -->|компилирует desired policy| rules[99-fic-devices.rules]
 
-    udev[udev events] --> dickUdev[fic-dick udev]
+    udev[udev events] --> rules
+    rules -->|ALLOW / DENY| deviceEnforce[fic-dick enforce / sysfs]
+    rules --> dickUdev[fic-dick udev]
     systemd[systemd service] --> dickStatic[fic-dick cpu_board_memory]
     dickUdev -->|пересылает событие| deviceDaemon
     dickStatic -->|CPU, board, memory| db
 
     deviceDaemon -->|permanent violation| daemon
-    deviceDaemon -->|USB / PCI / block sysfs enforcement| os
+    deviceEnforce --> os
     gui -->|логи текущей загрузки| daemon
 ```
 
-Главная идея проекта: демон `fic` владеет изменением конфигурации политик и применением обычных системных политик к ОС. `fic-dick --daemon` владеет деревом устройств, `devices.db`, initial reconciliation, runtime udev-ingestion и исполнением решений контроля устройств. `fic-cli` и `fic-gui` являются клиентами административных IPC API: `/run/fic/fic.sock` для общих политик и `/run/fic/fic-device.sock` для дерева устройств. Runtime udev-события поступают в отдельный локальный endpoint `/run/fic/fic-device-events.sock`.
+Главная идея проекта: демон `fic` владеет изменением общей конфигурации политик и применением обычных системных политик к ОС. `fic-dick --daemon` владеет деревом устройств, desired policy в `devices.db`, компиляцией active udev rules, initial reconciliation и runtime udev-ingestion. Hotplug ALLOW/DENY определяется generated rules до обращения к daemon/SQLite. `fic-cli` и `fic-gui` являются клиентами административных IPC API: `/run/fic/fic.sock` для общих политик и `/run/fic/fic-device.sock` для дерева устройств. Runtime udev-события после enforcement поступают в отдельный локальный endpoint `/run/fic/fic-device-events.sock`.
 
 Категорийные политики DC (`block_usb_storage`,
 `block_printers_scanners`, `block_optical_drives`) имеют фиксированное значение
@@ -93,8 +96,9 @@ flowchart TB
         reconcile[initial/full reconciliation<br/>udev/sysfs inventory]
         eventQueue[bounded event queue<br/>coalescing + overflow dirty flag]
         deviceApi[device_tree_revision / device_get / device_children / device_attributes]
-        devicePolicy[effective policy decision]
-        deviceApply[USB / PCI / block enforcement]
+        deviceCompiler[DevicePolicyCompiler]
+        deviceActivator[atomic rules activation]
+        devicePolicy[effective policy diagnostics / PERMANENT]
     end
 
     subgraph CoreStorage[Состояние системы]
@@ -125,7 +129,8 @@ flowchart TB
     reconcile --> eventQueue
     eventQueue --> devicePolicy
     deviceIpc --> devicePolicy
-    devicePolicy --> deviceApply
+    deviceApi --> deviceCompiler
+    deviceCompiler --> deviceActivator
 
     policyMap --> modules
     policyOps --> config
@@ -133,6 +138,7 @@ flowchart TB
     logApi --> logs
     deviceApi --> db
     devicePolicy --> db
+    deviceCompiler --> db
     lockApi --> lockstatus
     devicePolicy --> lockApi
 
@@ -253,7 +259,8 @@ flowchart LR
 flowchart LR
     deviceCommands[device command]
     deviceCommands --> read[device_tree_revision / device_root / device_get / device_children current or include_disconnected / device_attributes / device_events]
-    deviceCommands --> mutate[device_update_control_level / device_update_ignore_hierarchy / device_reset_control / device_delete]
+    deviceCommands --> mutate[device_update_control_level / device_update_ignore_hierarchy / device_update_children_control / device_reset_control / device_delete]
+    deviceCommands --> policyStatus[device_policy_status / desired and active revision]
     deviceCommands --> compat[udev_event root-only compatibility/testing path]
     deviceCommands --> permanent[device_check_permanent]
 ```
@@ -262,7 +269,12 @@ Runtime udev-события идут отдельно:
 
 ```mermaid
 flowchart LR
-    udev[udev rule] --> helper["fic-dick udev"]
+    db[(devices.db desired policy)] --> compiler[DevicePolicyCompiler]
+    compiler --> active[99-fic-devices.rules]
+    udev[udev add/change] --> active
+    active --> decision[direct / inherited / default decision]
+    decision --> enforcer["fic-dick enforce: sysfs, no SQLite"]
+    decision --> helper["fic-dick udev"]
     helper -->|bounded datagram| eventSock["/run/fic/fic-device-events.sock"]
     eventSock --> auth[SO_PASSCRED root sender check]
     auth --> queue[bounded RAM queue]
@@ -279,8 +291,10 @@ udev/sysfs состояния, затем проверяет `permanent` уст�
 могло измениться, а authoritative состояние берется из фактического udev/sysfs
 inventory.
 
-`device_update_control_level`, `device_update_ignore_hierarchy` и
-`device_reset_control` являются изменениями желаемого состояния. Они могут
+`device_update_control_level`, `device_update_ignore_hierarchy`,
+`device_update_children_control` и `device_reset_control` являются изменениями
+желаемого состояния. После commit они синхронно компилируют candidate,
+атомарно публикуют rules и выполняют udev reload. Они могут
 сделать уже подключенное устройство эффективным `blocked`, но не выполняют
 немедленную sysfs-деактивацию. В таком случае ответ содержит
 `deferred_block=true`, `deferred_blockers[]` и текстовое `warning`.
@@ -681,7 +695,7 @@ flowchart TD
     deviceSock --> devChildren[device_children]
     deviceSock --> devAttrs[device_attributes]
     deviceSock --> devEvents[device_events]
-    deviceSock --> devControl[device_update_control_level / device_update_ignore_hierarchy / device_reset_control]
+    deviceSock --> devControl[device_update_control_level / device_update_ignore_hierarchy / device_update_children_control / device_reset_control]
 
     devRevision --> changed{revision changed?}
     changed -->|no| keepTree[keep current tree]
@@ -709,8 +723,12 @@ flowchart TD
     event{Источник запуска} -->|udev rule| udevEnv[ACTION / DEVPATH / SUBSYSTEM]
     event -->|systemd service| staticRun[fic-dick cpu_board_memory]
 
-    udevEnv --> ficDickUdev[fic-dick udev]
-    ficDickUdev --> initDb[DB.initializeDatabase]
+    udevEnv --> generatedRules[99-fic-devices.rules]
+    generatedRules --> decision[ALLOW / DENY]
+    decision -->|DENY| sysfs[fic-dick enforce / sysfs]
+    decision --> ficDickUdev[fic-dick udev]
+    ficDickUdev --> eventSocket[device event datagram]
+    eventSocket --> initDb[DB.initializeDatabase]
     initDb --> action{ACTION}
 
     action -->|add/change| validateUdev[check_devpath]
@@ -795,17 +813,18 @@ flowchart LR
     lang["/opt/fic/lang<br/>локализация"]
     logs["/opt/fic/log<br/>логи по boot_id и категории"]
     lockstatus["/opt/fic/lockstatus<br/>0 или 1"]
-    db["/opt/fic/db/devices.db<br/>устройства, атрибуты, события"]
+    db["/opt/fic/db/devices.db<br/>desired policy, runtime inventory, события"]
+    rules["/etc/udev/rules.d/99-fic-devices.rules<br/>active compiled policy"]
     proc["/proc/sys/kernel/random/boot_id"]
 
     daemon --> config
     daemon --> lang
     daemon --> logs
     daemon --> lockstatus
-    daemon --> db
     daemon --> proc
 
     dick --> db
+    dick --> rules
     dick --> proc
     gui -->|только через daemon API| daemon
 ```

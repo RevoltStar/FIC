@@ -79,8 +79,7 @@ foreach(template
         service/fic-notify.service
         service/fic_get_device_udev_info.service
         service/fic-udevadm-trigger
-        tmpfiles/fic.conf
-        udev/99-fic-devices.rules)
+        tmpfiles/fic.conf)
     get_filename_component(template_dir "${template}" DIRECTORY)
     file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/${template_dir}")
     configure_file(
@@ -110,9 +109,6 @@ install(FILES
         DESTINATION "${FIC_SYSTEMD_UNIT_DIR}" COMPONENT fic)
 install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/tmpfiles/fic.conf"
         DESTINATION "${FIC_TMPFILES_DIR}" COMPONENT fic)
-install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/udev/99-fic-devices.rules"
-        DESTINATION "${FIC_UDEV_RULES_DIR}" COMPONENT fic
-        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 install(FILES src/scripts/db/PCI_CLASS_ru.txt src/scripts/db/USB_CLASS_ru.txt
         DESTINATION "${FIC_DATA_DIR}" COMPONENT fic)
 install(DIRECTORY src/scripts/image/ DESTINATION "${FIC_IMAGE_DIR}" COMPONENT fic)

@@ -34,6 +34,7 @@ struct DeviceInfo {
     std::string control_level;
     bool control_explicit = true;
     bool ignore_hierarchy = false;
+    std::string children_control = "inherit";
     std::string effective_control_level;
     std::string effective_source;
     int effective_source_device_id = -1;
@@ -57,6 +58,7 @@ public:
 public slots:
     void applyControlLevelToCurrentDevice(const QString &controlLevel);
     void applyIgnoreHierarchyToCurrentDevice(bool ignoreHierarchy);
+    void applyChildrenControlToCurrentDevice(const QString &childrenControl);
     void resetCurrentDeviceControl();
 signals:
     void deviceClicked(const DeviceInfo& device);
@@ -98,6 +100,7 @@ private:
     bool applyFilterToItem(QTreeWidgetItem *item, int &totalCount, int &visibleCount);
     void setDeviceControlLevel(int deviceId, const std::string &controlLevel);
     void setDeviceIgnoreHierarchy(int deviceId, bool ignoreHierarchy);
+    void setDeviceChildrenControl(int deviceId, const std::string &childrenControl);
     void resetDeviceControl(int deviceId);
     void deleteDeviceFromDatabase(int deviceId, const QString &deviceName);
     bool canDeleteDevice(const DeviceInfo& device);
@@ -110,6 +113,7 @@ private:
     std::string getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue = "") const;
     bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
     bool updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
+    bool updateDeviceChildrenControlRemote(int deviceId, const std::string& childrenControl, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
     bool resetDeviceControlRemote(int deviceId, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
     bool deleteDeviceRemote(int deviceId, QString *errorMessage = nullptr) const;
 

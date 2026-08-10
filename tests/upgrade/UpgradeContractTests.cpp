@@ -113,12 +113,9 @@ int main() {
         paths.lockDebugLogFile,
         false
     };
-    {
-        DB database(options);
-        assert(database.initializeDatabase());
-    }
-    executePragmas(paths.deviceDatabaseFile,
-                   "PRAGMA application_id=0; PRAGMA user_version=0;");
+    fs::copy_file(
+        fs::path(FIC_TEST_SOURCE_DIR) / "fic/src/scripts/db/devices.db",
+        paths.deviceDatabaseFile);
     fs::path primaryBackup;
     bool backupRecordedBeforeMigration = false;
     {
@@ -246,7 +243,35 @@ int main() {
         assert(tableExists(migration.backupFile, "system_settings"));
     }
 
-    executePragmas(paths.deviceDatabaseFile, "PRAGMA user_version=2;");
+    DBOptions v1Options = options;
+    v1Options.databaseFile = root / "data/v1.db";
+    v1Options.lockFile = root / "log/v1.lock";
+    fs::copy_file(
+        fs::path(FIC_TEST_SOURCE_DIR) / "fic/src/scripts/db/devices.db",
+        v1Options.databaseFile);
+    executePragmas(
+        v1Options.databaseFile,
+        "PRAGMA application_id=" +
+            std::to_string(fic::version::DEVICE_DB_APPLICATION_ID) +
+            "; PRAGMA user_version=1;");
+    {
+        DB v1Database(v1Options);
+        assert(!v1Database.initializeDatabase());
+        DBMigrationResult migration;
+        assert(v1Database.migrateDatabase(
+            paths.stateDir / "db-backups", migration, error));
+        assert(migration.migrated);
+        assert(migration.fromVersion == 1);
+        assert(migration.toVersion == fic::version::DEVICE_DB_SCHEMA_VERSION);
+        assert(v1Database.verifyDatabaseSchema(error));
+        assert(tableExists(v1Options.databaseFile, "device_policy_state"));
+        assert(v1Database.getComputerRoot().children_control == "allow");
+    }
+
+    executePragmas(
+        paths.deviceDatabaseFile,
+        "PRAGMA user_version=" +
+            std::to_string(fic::version::DEVICE_DB_SCHEMA_VERSION + 1) + ";");
     {
         DB database(options);
         assert(!database.initializeDatabase());
@@ -256,8 +281,11 @@ int main() {
         assert(error.find("downgrade refused") != std::string::npos);
     }
 
-    executePragmas(paths.deviceDatabaseFile,
-                   "PRAGMA user_version=1; DROP INDEX idx_devices_hash;");
+    executePragmas(
+        paths.deviceDatabaseFile,
+        "PRAGMA user_version=" +
+            std::to_string(fic::version::DEVICE_DB_SCHEMA_VERSION) +
+            "; DROP INDEX idx_devices_hash;");
     {
         DB database(options);
         assert(!database.initializeDatabase());
