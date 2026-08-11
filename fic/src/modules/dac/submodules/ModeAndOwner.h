@@ -24,13 +24,24 @@ enum class MissingFilePolicy {
     Fail
 };
 
+struct ModeAndOwnerExpectation {
+    FileStats stats;
+    std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
+};
+
 //Класс для работы правами/владельцами файлов и каталогов
 class ModeAndOwner : public DAC
 {
 protected:
     //Переменная с эталонными правами
-    std::map<std::string, FileStats> expected;
+    std::map<std::string, ModeAndOwnerExpectation> expected;
     MissingFilePolicy missingFilePolicy_;
+    void addExpectedRule(
+        const std::filesystem::path& path,
+        const std::string& owner,
+        const std::string& group,
+        mode_t permissions,
+        std::vector<std::filesystem::path> allowedFinalSymlinkTargets = {});
 public:
     explicit ModeAndOwner(MissingFilePolicy missingFilePolicy);
     virtual ~ModeAndOwner() = default;

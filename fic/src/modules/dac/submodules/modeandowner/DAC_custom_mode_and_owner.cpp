@@ -187,7 +187,8 @@ bool DAC_custom_mode_and_owner::apply() {
 
     for (const auto& rule : rules) {
         const mode_t permissions = static_cast<mode_t>(std::stoi(rule.mode, nullptr, 8));
-        this->expected.insert_or_assign(rule.path, FileStats(rule.owner, rule.group, permissions));
+        this->addExpectedRule(
+            rule.path, rule.owner, rule.group, permissions);
     }
 
     return this->ModeAndOwner::apply();

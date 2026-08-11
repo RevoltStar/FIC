@@ -91,6 +91,7 @@ struct FileAccessRule {
     std::string owner;
     std::string group;
     unsigned int permissions = 0;
+    std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
 };
 
 struct DacPlatformConfig {

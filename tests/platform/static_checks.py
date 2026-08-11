@@ -196,6 +196,7 @@ def main():
             "debian-12": "Debian12Profile.cpp",
             "debian-13": "Debian13Profile.cpp",
             "ubuntu-24.04": "Ubuntu2404Profile.cpp",
+            "ubuntu-26.04": "Ubuntu2604Profile.cpp",
             "alt-p11": "AltP11Profile.cpp",
         }.items()
     }
@@ -247,7 +248,7 @@ def main():
         "update-grub" not in alt_profile,
         "ALT p11 mixes incompatible GRUB generator interfaces",
     )
-    for name in ("debian-12", "debian-13", "ubuntu-24.04"):
+    for name in ("debian-12", "debian-13", "ubuntu-24.04", "ubuntu-26.04"):
         require(
             "profile.grub.rebuildArguments = {};" in profiles[name],
             f"{name} update-grub must not receive arguments",
@@ -257,6 +258,18 @@ def main():
             in profiles[name],
             f"{name} update-grub candidates are incorrect",
         )
+        require(
+            '"/etc/resolv.conf", "root", "root", 0644, {' in profiles[name]
+            and '"/run/systemd/resolve/stub-resolv.conf"' in profiles[name]
+            and '"/run/systemd/resolve/resolv.conf"' in profiles[name],
+            f"{name} does not declare the expected systemd-resolved targets",
+        )
+
+    require(
+        '"/etc/resolv.conf", "root", "root", 0644, {' not in alt_profile
+        and "/run/systemd/resolve/" not in alt_profile,
+        "ALT p11 unexpectedly permits systemd-resolved symlink targets",
+    )
 
     for language in ("ru", "en"):
         localization = (

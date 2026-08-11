@@ -6,6 +6,7 @@
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/Logger.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <filesystem>
 #include <fstream>
@@ -15,6 +16,8 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace {
 namespace fs = std::filesystem;
@@ -112,17 +115,18 @@ public:
     void addRule(const fs::path& path,
                  const std::string& owner,
                  const std::string& group,
-                 mode_t mode) {
-        expected.insert_or_assign(
-            path.string(), FileStats(owner, group, mode));
+                 mode_t mode,
+                 std::vector<fs::path> allowedTargets = {}) {
+        addExpectedRule(
+            path, owner, group, mode, std::move(allowedTargets));
     }
 
     std::string expectedOwner(const fs::path& path) const {
-        return expected.at(path.string())._owner;
+        return expected.at(path.string()).stats._owner;
     }
 
     std::string expectedGroup(const fs::path& path) const {
-        return expected.at(path.string())._group;
+        return expected.at(path.string()).stats._group;
     }
 };
 
@@ -204,6 +208,188 @@ void testSymlinkIsRejected(const fs::path& root) {
     require(fileMode(target) == 0644, "symlink target was modified");
 }
 
+void testProfileDrivenFinalSymlinks(const fs::path& root) {
+    const std::string owner = currentOwner();
+    const std::string group = currentGroup();
+
+    const fs::path regular = root / "regular-with-empty-allowlist";
+    writeFile(regular, "regular", 0644);
+    TestModeAndOwner regularPolicy(MissingFilePolicy::Fail);
+    regularPolicy.addRule(regular, owner, group, 0600);
+    require(regularPolicy.apply(),
+            "regular path with an empty allowlist failed");
+    require(fileMode(regular) == 0600,
+            "regular path permissions were not changed");
+
+    const fs::path absoluteTarget = root / "absolute-target";
+    const fs::path absoluteLink = root / "absolute-link";
+    writeFile(absoluteTarget, "absolute", 0644);
+    fs::create_symlink(absoluteTarget, absoluteLink);
+    fic::platform::DacPlatformConfig profiledRules;
+    profiledRules.protectedSystemFiles.push_back(
+        {absoluteLink, owner, group, 0600, {absoluteTarget}});
+    DAC_blocking_user_access_to_system_files absolutePolicy(profiledRules);
+    require(absolutePolicy.apply(), "allowed absolute symlink failed");
+    require(fileMode(absoluteTarget) == 0600,
+            "absolute symlink target was not changed");
+
+    const fs::path relativeTarget = root / "relative-target";
+    const fs::path linkDirectory = root / "relative-links";
+    const fs::path relativeLink = linkDirectory / "resolv.conf";
+    writeFile(relativeTarget, "relative", 0644);
+    fs::create_directories(linkDirectory);
+    fs::create_symlink("../relative-target", relativeLink);
+    TestModeAndOwner relativePolicy(MissingFilePolicy::Fail);
+    relativePolicy.addRule(
+        relativeLink, owner, group, 0600, {relativeTarget});
+    require(relativePolicy.apply(),
+            "allowed relative symlink with .. was not normalized");
+    require(fileMode(relativeTarget) == 0600,
+            "relative symlink target was not changed");
+
+    const fs::path unexpectedTarget = root / "unexpected-target";
+    const fs::path unexpectedLink = root / "unexpected-link";
+    writeFile(unexpectedTarget, "unexpected", 0644);
+    fs::create_symlink(unexpectedTarget, unexpectedLink);
+    TestModeAndOwner unexpectedPolicy(MissingFilePolicy::Fail);
+    unexpectedPolicy.addRule(
+        unexpectedLink, owner, group, 0600, {absoluteTarget});
+    require(!unexpectedPolicy.apply(),
+            "unexpected final symlink target was accepted");
+    require(fileMode(unexpectedTarget) == 0644,
+            "unexpected symlink target was modified");
+
+    const fs::path attackerDirectory = root / "attacker-directory";
+    const fs::path attackerTarget = attackerDirectory / "target";
+    const fs::path allowedNamespace = root / "allowed-namespace";
+    const fs::path intermediateLink = allowedNamespace / "component";
+    const fs::path lexicalAllowedTarget = intermediateLink / "target";
+    const fs::path policyLink = root / "intermediate-policy-link";
+    writeFile(attackerTarget, "attacker", 0644);
+    fs::create_directories(allowedNamespace);
+    fs::create_directory_symlink(attackerDirectory, intermediateLink);
+    fs::create_symlink(lexicalAllowedTarget, policyLink);
+    TestModeAndOwner intermediatePolicy(MissingFilePolicy::Fail);
+    intermediatePolicy.addRule(
+        policyLink, owner, group, 0600, {lexicalAllowedTarget});
+    require(!intermediatePolicy.apply(),
+            "intermediate target symlink was accepted");
+    require(fileMode(attackerTarget) == 0644,
+            "target behind an intermediate symlink was modified");
+
+    const fs::path missingTarget = root / "missing-allowed-target";
+    const fs::path missingLink = root / "missing-allowed-link";
+    fs::create_symlink(missingTarget, missingLink);
+    fic::platform::DacPlatformConfig missingProfileRule;
+    missingProfileRule.protectedSystemFiles.push_back(
+        {missingLink, owner, group, 0644, {missingTarget}});
+    DAC_blocking_user_access_to_system_files ignoredMissingPolicy(
+        missingProfileRule);
+    require(ignoredMissingPolicy.apply(),
+            "missing allowed profile target was not ignored");
+    TestModeAndOwner requiredMissingPolicy(MissingFilePolicy::Fail);
+    requiredMissingPolicy.addRule(
+        missingLink, owner, group, 0644, {missingTarget});
+    require(!requiredMissingPolicy.apply(),
+            "missing allowed required target was ignored");
+
+    FileAccessRulesPolicyTypeValue restrictionInfo({
+        {regular, owner, group, 0600},
+        {absoluteLink, owner, group, 0600, {absoluteTarget}}
+    });
+    const std::string displayed = restrictionInfo.getPolicyRestrictionInfo();
+    require(displayed.find(absoluteTarget.string()) != std::string::npos,
+            "profile symlink exception is absent from restriction info");
+    const std::string marker = "final symlink ->";
+    const std::size_t firstMarker = displayed.find(marker);
+    require(firstMarker != std::string::npos &&
+                displayed.find(marker, firstMarker + marker.size()) ==
+                    std::string::npos,
+            "restriction info showed a symlink exception for a regular rule");
+}
+
+void testCustomSymlinkRemainsFailClosed(const fs::path& root) {
+    const fs::path target = root / "custom-symlink-target";
+    const fs::path link = root / "custom-symlink-rule";
+    writeFile(target, "custom", 0644);
+    fs::create_symlink(target, link);
+    const std::string customValue =
+        "[{\"path\":\"" + link.string() +
+        "\",\"owner\":\"" + currentOwner() +
+        "\",\"group\":\"" + currentGroup() +
+        "\",\"mode\":\"0600\"}]";
+    writeFile(
+        root / "config/DAC.conf",
+        "_schema_version=1\n"
+        "custom_mode_and_owner.status=ENABLE\n"
+        "custom_mode_and_owner.value=" + customValue + "\n",
+        0640);
+
+    DAC_custom_mode_and_owner policy;
+    require(!policy.apply(), "custom policy accepted a final symlink");
+    require(fileMode(target) == 0644,
+            "custom policy modified a symlink target");
+}
+
+void testChownThenRestoresSpecialBits(const fs::path& root) {
+    std::string targetOwner;
+    std::string targetGroup;
+    uid_t targetOwnerId = ::geteuid();
+    gid_t targetGroupId = ::getegid();
+    if (::geteuid() == 0) {
+        const struct passwd* user = ::getpwnam("nobody");
+        if (user == nullptr) {
+            return;
+        }
+        const struct group* group = ::getgrgid(user->pw_gid);
+        if (group == nullptr) {
+            return;
+        }
+        targetOwner = user->pw_name;
+        targetGroup = group->gr_name;
+        targetOwnerId = user->pw_uid;
+        targetGroupId = group->gr_gid;
+    } else {
+        int groupCount = ::getgroups(0, nullptr);
+        if (groupCount <= 0) {
+            return;
+        }
+        std::vector<gid_t> groups(static_cast<std::size_t>(groupCount));
+        require(::getgroups(groupCount, groups.data()) == groupCount,
+                "could not read supplementary groups");
+        const auto different = std::find_if(
+            groups.begin(), groups.end(),
+            [](gid_t id) { return id != ::getegid(); });
+        if (different == groups.end()) {
+            return;
+        }
+        const struct group* group = ::getgrgid(*different);
+        if (group == nullptr) {
+            return;
+        }
+        targetOwner = currentOwner();
+        targetGroup = group->gr_name;
+        targetGroupId = group->gr_gid;
+    }
+
+    const fs::path probe = root / "chown-capability-probe";
+    writeFile(probe, "probe", 04755);
+    if (::chown(probe.c_str(), targetOwnerId, targetGroupId) != 0) {
+        fs::remove(probe);
+        return;
+    }
+    fs::remove(probe);
+
+    const fs::path file = root / "chown-clears-suid";
+    writeFile(file, "special", 04755);
+    TestModeAndOwner policy(MissingFilePolicy::Fail);
+    policy.addRule(file, targetOwner, targetGroup, 04755);
+    require(policy.apply(),
+            "one apply did not restore special bits cleared by fchown");
+    require(fileMode(file) == 04755,
+            "SUID bit cleared by fchown was not restored");
+}
+
 void testUnknownIdentitiesAndDiagnostics(const fs::path& root) {
     const fs::path unknownGroupFile = root / "unknown-group";
     writeFile(unknownGroupFile, "data", 0644);
@@ -279,6 +465,9 @@ int main() {
     testRemediationAndVerification(root);
     testMissingFilePolicies(root, customMissing);
     testSymlinkIsRejected(root);
+    testProfileDrivenFinalSymlinks(root);
+    testCustomSymlinkRemainsFailClosed(root);
+    testChownThenRestoresSpecialBits(root);
     testUnknownIdentitiesAndDiagnostics(root);
     testChownFailureReturnsFalse(root);
 

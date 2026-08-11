@@ -171,18 +171,29 @@ private:
             }
         }
 
-        lockFileDescriptor_ = open(lockFilePath_.c_str(), O_RDWR | O_CREAT, 0644);
+        lockFileDescriptor_ = open(
+            lockFilePath_.c_str(),
+            O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+            0644);
         if (lockFileDescriptor_ == -1) {
             debugLog("Failed to open lock file: " + std::string(strerror(errno)));
             return false;
         }
 
-        FileStats fs(lockFilePath_);
+        FileStats fs = FileStats::fromBorrowedDescriptor(
+            lockFileDescriptor_, lockFilePath_);
+        if (fs.has_error()) {
+            debugLog("Failed to inspect opened lock file descriptor: " +
+                     fs.error_message());
+            close(lockFileDescriptor_);
+            lockFileDescriptor_ = -1;
+            return false;
+        }
 
         bool ficExists = FileStats::group_exists("fic");
         std::string targetGroup = ficExists ? "fic" : "root";
 
-        if (fs._group != targetGroup) {
+        if (fs._owner != "root" || fs._group != targetGroup) {
             const FileStatsOperationResult result =
                 fs.change_owner_group("root", targetGroup);
             if (!result) {

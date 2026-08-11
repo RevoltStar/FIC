@@ -9,10 +9,12 @@ DAC_systemcommandlock::DAC_systemcommandlock(
     : ModeAndOwner(MissingFilePolicy::Ignore) {
     for (const fic::platform::FileAccessRule& rule :
          platformConfig.protectedSystemCommands) {
-        this->ModeAndOwner::expected.emplace(
-            rule.path.string(),
-            FileStats(rule.owner, rule.group, static_cast<mode_t>(rule.permissions))
-        );
+        this->ModeAndOwner::addExpectedRule(
+            rule.path,
+            rule.owner,
+            rule.group,
+            static_cast<mode_t>(rule.permissions),
+            rule.allowedFinalSymlinkTargets);
     }
     this->policyName = "systemcommandlock";
     this->policyTypeValue = std::make_unique<FileAccessRulesPolicyTypeValue>(

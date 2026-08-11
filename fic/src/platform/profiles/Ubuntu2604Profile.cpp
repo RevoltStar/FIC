@@ -90,7 +90,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/hosts.allow", "root", "root", 0644},
         {"/etc/hosts.deny", "root", "root", 0644},
         {"/etc/group", "root", "root", 0644},
-        {"/etc/resolv.conf", "root", "root", 0644},
+        {"/etc/resolv.conf", "root", "root", 0644, {
+            "/run/systemd/resolve/stub-resolv.conf",
+            "/run/systemd/resolve/resolv.conf"
+        }},
         {"/etc/sysctl.conf", "root", "root", 0644},
         {"/etc/logrotate.conf", "root", "root", 0644},
         {"/etc/passwd", "root", "root", 0644},

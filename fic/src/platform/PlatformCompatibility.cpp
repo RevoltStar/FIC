@@ -214,6 +214,21 @@ bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
             error = label + " path is duplicated: " + rule.path.string();
             return false;
         }
+        std::set<std::filesystem::path> uniqueSymlinkTargets;
+        for (const std::filesystem::path& target :
+             rule.allowedFinalSymlinkTargets) {
+            if (!validAbsolutePath(target)) {
+                error = label +
+                    " allowed final symlink target must be a non-empty "
+                    "absolute normalized path: " + target.string();
+                return false;
+            }
+            if (!uniqueSymlinkTargets.insert(target).second) {
+                error = label + " allowed final symlink target is duplicated: " +
+                    target.string();
+                return false;
+            }
+        }
     }
     return true;
 }

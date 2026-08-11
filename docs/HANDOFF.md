@@ -7,80 +7,86 @@
 
 - Обновлено: 2026-08-11.
 - Ветка: `main`.
-- Базовый commit: `83596e6` (`Исправляем архитектуру хранения и пакетирования конфигурации`).
-- Текущая задача: исправление `ModeAndOwner::apply()` и `FileStats`.
+- Базовый commit: `0024bf9` (`Исправляем класс (и наследников) Mode_And_Owner`).
+- Текущая задача: второй security/reliability pass для
+  `ModeAndOwner`/`FileStats`/`ExclusivePidLock`.
 - Реализация и локальные проверки завершены; изменения рабочей копии не
   зафиксированы commit.
 
 ## Сделано
 
-- `FileStats` читает полный permission mode по маске `07777`, включая SUID,
-  SGID и sticky bit.
-- Path-based `stat/chown/chmod/stat` заменён на один RAII descriptor:
-  `open(O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK)`, `fstat`, `fchown`, `fchmod` и
-  контрольный `fstat` выполняются для одного открытого объекта.
-- Конечные symlink запрещены и дают `ELOOP`; target symlink не изменяется.
-  Только `ENOENT` считается отсутствием, остальные open/fstat errors являются
-  failure.
-- `FileStatsOperationResult` сохраняет operation/path, `std::error_code`,
-  системное описание и errno. NSS lookup использует reentrant API и различает
-  отсутствующий owner/group от системной lookup error.
-- Добавлен явный `MissingFilePolicy`: системные profile policies используют
-  `Ignore`, `custom_mode_and_owner` использует `Fail`.
-- Удалены fallback неизвестной группы в `root` и мутация `expected`.
-  Отсутствующие expected owner и group обрабатываются симметрично как failure.
-- Итог `ModeAndOwner::apply()` определяется отдельными флагами ownership,
-  permissions и verification, а не количеством diagnostic strings. Все
-  причины логируются; частично успешные изменения не откатываются, итоговый
-  public result остаётся `bool`.
-- `ExclusivePidLock`, единственный другой consumer изменённых методов
-  `FileStats`, переведён на новый result и логирует системную причину.
-- Архитектурная документация дополнена fd/symlink/missing semantics.
+- `ModeAndOwner::apply()` после успешного `fchown` перечитывает inode и только
+  затем решает, нужен ли `fchmod`; сброшенные Linux биты SUID/SGID
+  восстанавливаются в том же apply.
+- `FileAccessRule` получил default-empty `allowedFinalSymlinkTargets`.
+  Валидация требует для целей абсолютный, непустой, лексически нормализованный
+  путь без дубликатов.
+- Обычный путь сохраняет безопасную descriptor-модель и запрещает final
+  symlink. Для явно разрешённого final symlink:
+  - parent открывается от `/` через `openat2` без symlink-компонентов;
+  - сам link закрепляется `O_PATH|O_NOFOLLOW` и читается через
+    `readlinkat(fd, "")`;
+  - относительная цель разрешается от parent и лексически нормализуется;
+  - точное совпадение с allowlist открывается от `/` с
+    `RESOLVE_IN_ROOT|RESOLVE_NO_SYMLINKS|RESOLVE_NO_MAGICLINKS`;
+  - `fstat`/`fchown`/`fchmod`/verification выполняются на одном target inode.
+- Если build headers не содержат `linux/openat2.h`, используется локальное UAPI
+  объявление; если syscall отсутствует в runtime kernel, symlink exception
+  отклоняется fail closed с `ENOSYS`. Небезопасного path-based fallback нет.
+- Debian 12/13 и Ubuntu 24.04/26.04 разрешают для `/etc/resolv.conf` только
+  `/run/systemd/resolve/stub-resolv.conf` и
+  `/run/systemd/resolve/resolv.conf`. ALT p11 и все protected commands не имеют
+  symlink exceptions. `custom_mode_and_owner` syntax не изменён и остаётся
+  fail closed.
+- Restriction info показывает allowlisted targets только у правил, где они
+  действительно заданы.
+- `FileStats::fromBorrowedDescriptor()` создаёт `F_DUPFD_CLOEXEC` duplicate с
+  явной семантикой владения. `ExclusivePidLock` открывает lock-файл с
+  `O_CLOEXEC|O_NOFOLLOW`; коррекция owner/group/mode, `flock`, PID I/O,
+  `ftruncate` и `fsync` теперь относятся к одному inode.
+- Добавлены тесты абсолютных/относительных/неожиданных symlink targets,
+  нормализации `..`, запрета intermediate symlink, missing semantics, custom
+  fail-closed, profile metadata/display/validation и one-inode PID lock.
+- Архитектурная документация описывает flags, fail-closed fallback и остаточную
+  namespace race.
 
 ## Изменённые файлы
 
-- `fic-common/fic-core/include/fic/core/FileStats.h`;
+- `fic-common/fic-core/include/fic/core/{FileStats,ExclusivePidLock}.h`;
 - `fic-common/fic-core/src/FileStats.cpp`;
-- `fic-common/fic-core/include/fic/core/ExclusivePidLock.h`;
-- `fic/src/modules/dac/submodules/ModeAndOwner.{h,cpp}`;
-- три policy implementation в
-  `fic/src/modules/dac/submodules/modeandowner/`;
-- `tests/dac/ModeAndOwnerTests.cpp`, `tests/CMakeLists.txt`;
-- `docs/architecture-diagrams.md`.
-
-## Тестовое покрытие
-
-`mode_and_owner_tests` проверяет:
-
-- actual `04755` против expected `0755` и expected `04755`;
-- SGID/sticky comparison (`03775`);
-- remediation `0755 -> 04755` и `04755 -> 0755` с post-verification;
-- Ignore для missing profile system file/command и Fail для missing custom path;
-- symlink rejection, сохранение `ELOOP`, неизменность link target;
-- unknown group/owner без fallback и неизменность `expected`;
-- partial success без rollback и сохранение нескольких diagnostics одной
-  категории;
-- `fchown` failure и логирование syscall cause (на non-root test runner).
+- `fic/src/modules/dac/submodules/ModeAndOwner.{h,cpp}` и три реализации в
+  `modeandowner/`;
+- `fic/src/platform/{PlatformProfile.h,PlatformCompatibility.cpp}`;
+- профили Debian 12/13 и Ubuntu 24.04/26.04;
+- `tests/dac/ModeAndOwnerTests.cpp`;
+- `tests/paths/ExclusivePidLockTests.cpp`;
+- `tests/platform/{PlatformProfileTests.cpp,static_checks.py}`;
+- `tests/CMakeLists.txt`;
+- `docs/architecture-diagrams.md` и этот файл.
 
 ## Выполненные проверки
 
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=debian-12` — успешно.
 - Полная сборка `cmake --build build-check -j2` — успешно.
 - `ctest --test-dir build-check --output-on-failure -E release_contract_tests`
-  — 29/29 успешно; три host-dependent теста корректно skipped.
-- Релевантные `mode_and_owner_tests`, platform profile/static и file handler
-  tests — успешно.
-- `git diff --check` — успешно.
+  — 30/30 успешно; три host-dependent теста корректно skipped.
+- `platform_profile_tests` отдельно собран и успешно выполнен для
+  `debian-13`, `ubuntu-24.04`, `ubuntu-26.04` и `alt-p11`; Debian 12 входит в
+  основной CTest.
+- `git diff --check` — успешно до финального обновления HANDOFF.
+- Реальное применение политики к системным файлам и package builds не
+  выполнялись.
 
-## Что осталось / ограничения
+## Ограничения и решения
 
-- Реальное применение DAC к системным файлам не запускалось: тесты используют
-  только temporary files; conditional negative `fchown` test не выполняет
-  привилегированную мутацию.
-- Descriptor гарантирует, что проверка, изменение и verification относятся к
-  одному inode и исключает подмену конечного path на symlink между шагами. Он
-  не закрепляет имя каталога: другой привилегированный процесс всё ещё может
-  переименовать path после `open`; закрытие этой namespace race потребовало бы
-  отдельного parent-directory/openat2 дизайна и не входит в минимальную правку.
-- `release_contract_tests` исключён из полного CTest из-за известного
-  несвязанного рассинхрона числа package artifacts.
+- Conditional regression test смены owner/group и восстановления `04755`
+  присутствует, но в текущем sandbox реальный chown на другой отображённый
+  UID/GID недоступен (`EINVAL`), поэтому privileged ветка корректно пропущена.
+- Link inode и его имя повторно сверяются по `st_dev/st_ino` перед возвратом
+  target descriptor. Привилегированный конкурент может переименовать policy
+  symlink после этой проверки. Это способно временно рассинхронизировать имя и
+  применённое правило, но не перенаправляет операции на неожиданный inode:
+  изменения остаются на уже открытой точной allowlisted цели.
+- `release_contract_tests` не запускался в общем CTest из-за известного
+  несвязанного рассинхрона package artifacts, зафиксированного в предыдущем
+  снимке.

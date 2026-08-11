@@ -2,11 +2,13 @@
 #define FILESTATS_H
 
 #include <grp.h>
+#include <filesystem>
 #include <pwd.h>
 #include <string>
 #include <system_error>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 enum class FileStatsState {
     Available,
@@ -41,6 +43,15 @@ public:
     FileStats(FileStats&& other) noexcept;
     FileStats& operator=(FileStats&& other) noexcept;
 
+    static FileStats openPolicyPath(
+        const std::filesystem::path& path,
+        const std::vector<std::filesystem::path>& allowedFinalSymlinkTargets);
+    // The returned object owns a close-on-exec duplicate. The caller retains
+    // ownership of descriptor and both descriptors refer to the same inode.
+    static FileStats fromBorrowedDescriptor(
+        int descriptor,
+        const std::string& diagnosticPath);
+
     FileStatsOperationResult change_owner_group(
         const std::string& owner,
         const std::string& group);
@@ -68,6 +79,10 @@ public:
     gid_t group_id() const { return groupId_; }
 
 private:
+    struct DeferredOpenTag {};
+
+    FileStats(const std::string& path, DeferredOpenTag);
+
     int descriptor_ = -1;
     std::string path_;
     FileStatsState state_ = FileStatsState::Available;
@@ -78,6 +93,8 @@ private:
 
     void close_descriptor();
     void move_from(FileStats&& other) noexcept;
+    void openRegularPath();
+    void set_open_error(const std::string& operation, int errorNumber);
     FileStatsOperationResult update_from_descriptor();
 };
 

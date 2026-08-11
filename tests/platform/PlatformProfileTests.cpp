@@ -63,6 +63,20 @@ bool hasRule(const std::vector<fic::platform::FileAccessRule>& rules,
         });
 }
 
+const fic::platform::FileAccessRule& findRule(
+    const std::vector<fic::platform::FileAccessRule>& rules,
+    const std::filesystem::path& path) {
+    const auto found = std::find_if(
+        rules.begin(), rules.end(),
+        [&path](const fic::platform::FileAccessRule& rule) {
+            return rule.path == path;
+        });
+    if (found == rules.end()) {
+        throw std::runtime_error("missing file access rule: " + path.string());
+    }
+    return *found;
+}
+
 const fic::platform::PlatformExecutableSpec& executableSpec(
     const fic::platform::PlatformProfile& profile,
     fic::platform::ExecutableId id) {
@@ -102,8 +116,15 @@ void testSelectedProfile() {
             "SYSCTL loader kind is incorrect");
     require(profile.sysctl.managedConfigPath == "/etc/sysctl.d/zzzz-fic.conf",
             "managed sysctl path is incorrect");
-    require(executableSpec(profile, fic::platform::ExecutableId::Visudo).candidates ==
-                std::vector<std::filesystem::path>({"/usr/sbin/visudo"}),
+    const std::vector<std::filesystem::path> expectedVisudoCandidates =
+        profile.id == "ubuntu-26.04"
+        ? std::vector<std::filesystem::path>{
+              "/usr/sbin/visudo.ws", "/usr/sbin/visudo"}
+        : std::vector<std::filesystem::path>{"/usr/sbin/visudo"};
+    require(executableSpec(
+                profile,
+                fic::platform::ExecutableId::Visudo).candidates ==
+                expectedVisudoCandidates,
             "visudo candidates are incorrect");
     require(profile.executables.entries.size() ==
                 fic::platform::allExecutableIds().size(),
@@ -136,6 +157,23 @@ void testSelectedProfile() {
     require(hasRule(profile.dac.protectedSystemFiles,
                     profile.sudo.mainConfigPath),
             "the selected sudoers configuration must be protected by DAC policy");
+    const auto& resolvConfRule = findRule(
+        profile.dac.protectedSystemFiles, "/etc/resolv.conf");
+    const std::vector<std::filesystem::path> resolvedTargets = {
+        "/run/systemd/resolve/stub-resolv.conf",
+        "/run/systemd/resolve/resolv.conf"
+    };
+    if (profile.id == "alt-p11") {
+        require(resolvConfRule.allowedFinalSymlinkTargets.empty(),
+                "ALT p11 must not inherit systemd-resolved exceptions");
+    } else {
+        require(resolvConfRule.allowedFinalSymlinkTargets == resolvedTargets,
+                "Debian/Ubuntu resolv.conf symlink targets are incorrect");
+    }
+    for (const auto& rule : profile.dac.protectedSystemCommands) {
+        require(rule.allowedFinalSymlinkTargets.empty(),
+                "protected commands must not have unverified symlink exceptions");
+    }
 
     if (profile.id == "alt-p11") {
         require(profile.packageManager.kind ==
@@ -223,21 +261,22 @@ void testSelectedProfile() {
                 "Debian 13 ip command path is incorrect");
         require(profile.grub.rebuildArguments.empty(),
                 "Debian 13 update-grub must not receive arguments");
-    } else if (profile.id == "ubuntu-24.04") {
+    } else if (profile.id == "ubuntu-24.04" ||
+               profile.id == "ubuntu-26.04") {
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,
-                "Ubuntu 24.04 must use the dpkg package database");
+                "Ubuntu must use the dpkg package database");
         require(profile.ssh.configPath == "/etc/ssh/sshd_config",
-                "Ubuntu 24.04 SSH configuration path is incorrect");
+                "Ubuntu SSH configuration path is incorrect");
         require(profile.displayManager.gdmConfigCandidates.front() ==
                     "/etc/gdm3/custom.conf",
-                "Ubuntu 24.04 primary GDM configuration path is incorrect");
+                "Ubuntu primary GDM configuration path is incorrect");
         require(hasRule(profile.dac.protectedSystemFiles, "/etc/bash.bashrc"),
-                "Ubuntu 24.04 must protect /etc/bash.bashrc");
+                "Ubuntu must protect /etc/bash.bashrc");
         require(hasRule(profile.dac.protectedSystemCommands, "/usr/bin/df"),
-                "Ubuntu 24.04 df command path is incorrect");
+                "Ubuntu df command path is incorrect");
         require(profile.grub.rebuildArguments.empty(),
-                "Ubuntu 24.04 update-grub must not receive arguments");
+                "Ubuntu update-grub must not receive arguments");
     } else {
         throw std::runtime_error("unexpected selected platform profile: " + profile.id);
     }
@@ -347,6 +386,27 @@ void testInvalidProfileIsRejected() {
     profile.dac.protectedSystemFiles.front().permissions = 0;
     require(!fic::platform::validatePlatformProfile(profile, error),
             "invalid DAC permissions must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.dac.protectedSystemFiles.front().allowedFinalSymlinkTargets = {
+        "run/unsafe-target"
+    };
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative DAC symlink target must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.dac.protectedSystemFiles.front().allowedFinalSymlinkTargets = {
+        "/run/safe/../unnormalized"
+    };
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an unnormalized DAC symlink target must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.dac.protectedSystemFiles.front().allowedFinalSymlinkTargets = {
+        "/run/target", "/run/target"
+    };
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a duplicate DAC symlink target must be rejected");
 }
 
 void testExecutableResolver() {

@@ -28,6 +28,17 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
                << rule.owner << ":" << rule.group << " "
                << std::setfill('0') << std::setw(4) << std::oct
                << rule.permissions << std::dec;
+        if (!rule.allowedFinalSymlinkTargets.empty()) {
+            result << " (final symlink -> ";
+            for (std::size_t index = 0;
+                 index < rule.allowedFinalSymlinkTargets.size(); ++index) {
+                if (index != 0) {
+                    result << ", ";
+                }
+                result << rule.allowedFinalSymlinkTargets[index].string();
+            }
+            result << ")";
+        }
     }
     return result.str();
 }
@@ -38,6 +49,19 @@ ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy)
     this->submoduleName = "Mode_and_Owner";
 }
 
+void ModeAndOwner::addExpectedRule(
+    const std::filesystem::path& path,
+    const std::string& owner,
+    const std::string& group,
+    mode_t permissions,
+    std::vector<std::filesystem::path> allowedFinalSymlinkTargets) {
+    expected.insert_or_assign(
+        path.string(),
+        ModeAndOwnerExpectation{
+            FileStats(owner, group, permissions),
+            std::move(allowedFinalSymlinkTargets)});
+}
+
 bool ModeAndOwner::apply() {
     this->log("Запуск функции Mode_And_Owner::apply", logLevel::TRACE);
     int total = 0;
@@ -45,9 +69,11 @@ bool ModeAndOwner::apply() {
     int failed = 0;
     int fixed = 0;
 
-    for (const auto& [filename, expectedStats] : expected) {
+    for (const auto& [filename, expectation] : expected) {
+        const FileStats& expectedStats = expectation.stats;
         ++total;
-        FileStats currentStats(filename);
+        FileStats currentStats = FileStats::openPolicyPath(
+            filename, expectation.allowedFinalSymlinkTargets);
 
         if (currentStats.is_missing()) {
             if (missingFilePolicy_ == MissingFilePolicy::Ignore) {
@@ -73,12 +99,12 @@ bool ModeAndOwner::apply() {
         const std::string originalOwner = currentStats._owner;
         const std::string originalGroup = currentStats._group;
         const mode_t originalPermissions = currentStats._permissions;
-        const bool permissionsInitiallyCorrect =
-            currentStats.check_permission(expectedStats);
         bool changed = false;
         bool ownershipRequirementMet = false;
-        bool permissionRequirementMet = permissionsInitiallyCorrect;
+        bool permissionRequirementMet = false;
         bool verificationSucceeded = true;
+        bool currentStateReadable = true;
+        bool ownershipChanged = false;
         std::vector<std::string> diagnostics;
 
         uid_t expectedOwnerId = 0;
@@ -103,6 +129,7 @@ bool ModeAndOwner::apply() {
             if (changeResult) {
                 ++fixed;
                 changed = true;
+                ownershipChanged = true;
                 this->log("Владелец/группа для " + filename +
                               " изменены [" + originalOwner + ":" +
                               originalGroup + " → " + expectedStats._owner +
@@ -114,7 +141,17 @@ bool ModeAndOwner::apply() {
             }
         }
 
-        if (!permissionsInitiallyCorrect) {
+        if (ownershipChanged) {
+            const FileStatsOperationResult postChownRefresh =
+                currentStats.refresh();
+            if (!postChownRefresh) {
+                currentStateReadable = false;
+                diagnostics.push_back(postChownRefresh.message);
+            }
+        }
+
+        if (currentStateReadable &&
+            !currentStats.check_permission(expectedStats)) {
             const FileStatsOperationResult changeResult =
                 currentStats.change_permissions(expectedStats._permissions);
             if (changeResult) {
@@ -128,6 +165,8 @@ bool ModeAndOwner::apply() {
                 permissionRequirementMet = false;
                 diagnostics.push_back(changeResult.message);
             }
+        } else if (currentStateReadable) {
+            permissionRequirementMet = true;
         }
 
         const FileStatsOperationResult refreshResult = currentStats.refresh();

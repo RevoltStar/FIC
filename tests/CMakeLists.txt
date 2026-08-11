@@ -51,6 +51,10 @@ add_executable(runtime_paths_tests paths/RuntimePathsTests.cpp)
 target_link_libraries(runtime_paths_tests PRIVATE fic-core fic-device-db)
 add_test(NAME runtime_paths_tests COMMAND runtime_paths_tests)
 
+add_executable(exclusive_pid_lock_tests paths/ExclusivePidLockTests.cpp)
+target_link_libraries(exclusive_pid_lock_tests PRIVATE fic-core)
+add_test(NAME exclusive_pid_lock_tests COMMAND exclusive_pid_lock_tests)
+
 add_executable(device_tree_revision_tests
     device-control/DeviceTreeRevisionTests.cpp
 )
