@@ -26,7 +26,8 @@ This packaging flow builds five distribution-specific Debian-format packages:
 
 - `/opt/fic/bin/fic`
 - `/opt/fic/bin/fic-udevadm-trigger`
-- `/opt/fic/config`
+- immutable defaults under `/opt/fic/share/default-config/*.conf`
+- the empty working directory `/opt/fic/config` (working files are created by FIC)
 - `/opt/fic/db`
 - `/opt/fic/image`
 - `/opt/fic/lang`
@@ -81,7 +82,9 @@ As a result:
 During installation each package:
 
 - creates the system group `fic` if it does not already exist;
-- preserves `/opt/fic/config/*.conf` as package-managed configuration files;
+- owns immutable `/opt/fic/share/default-config/*.conf` as ordinary package files;
+- bootstraps missing FIC-owned `/opt/fic/config/*.conf` atomically without
+  replacing existing files;
 - initializes a missing `/opt/fic/db/devices.db` directly at the current schema
   through the offline maintenance command;
 - creates `/opt/fic/lockstatus` and `/opt/fic/db/commandhash.txt` only when they do not yet exist;
@@ -100,15 +103,17 @@ files is read-only.
 Package versions must be Semantic Versions and are embedded through
 `FIC_PRODUCT_VERSION`. The `fic-dick` and `fic` pre-install actions stop active
 daemons before either package replaces its executable payload. The `fic`
-post-install action then resumes or creates `/opt/fic/state/upgrade.journal`, backs up and migrates all
-policy configs, performs the SQLite migration through `fic-dick`, commits the
+post-install action first runs `fic --maintenance ensure-config`, then resumes
+or creates `/opt/fic/state/upgrade.journal`, backs up and migrates all policy
+configs, performs the SQLite migration through `fic-dick`, commits the
 journal, refreshes trusted command hashes, then starts and health-checks both
 administrative daemons. Migration, trust, start, and health-check failures are
 fatal; optional tmpfiles/udev refreshes remain best-effort.
 
-Downgrade is intentionally rejected. Normal removal disables services, leaves
-configs to Debian conffile semantics, and never explicitly deletes the working
-database, journal, logs, or backups.
+Downgrade is intentionally rejected. Normal removal deletes package-owned
+defaults naturally, but never explicitly deletes FIC-owned working configs,
+the working database, journal, logs, or backups. No `DEBIAN/conffiles` entry is
+created for `/opt/fic/config/*.conf`.
 The complete recovery and rollback policy is in
 [`docs/upgrade-contract.md`](../../docs/upgrade-contract.md).
 

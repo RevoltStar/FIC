@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -61,6 +62,18 @@ bool tableExists(const std::filesystem::path& databasePath, const char* table) {
     sqlite3_close(database);
     return exists;
 }
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return std::string(
+        std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+mode_t fileMode(const std::filesystem::path& path) {
+    struct stat info {};
+    assert(::lstat(path.c_str(), &info) == 0);
+    return info.st_mode & 07777;
+}
 } // namespace
 
 int main() {
@@ -68,12 +81,13 @@ int main() {
     const fs::path root = fs::temp_directory_path() /
         ("fic-upgrade-contract-test-" + std::to_string(::getpid()));
     fs::remove_all(root);
-    fs::create_directories(root / "config");
+    fs::create_directories(root / "share/default-config");
     fs::create_directories(root / "log");
     fs::create_directories(root / "data");
 
     auto paths = fic::core::FicProductPaths::production();
     paths.configDir = root / "config";
+    paths.defaultConfigDir = root / "share/default-config";
     paths.logDir = root / "log";
     paths.dataDir = root / "data";
     paths.stateDir = root / "state";
@@ -84,7 +98,75 @@ int main() {
     assert(fic::core::FicRuntimePaths::initialize(paths, error));
 
     for (const char* fileName : CONFIG_FILES) {
-        std::ofstream(paths.configDir / fileName) << "sample.status=DISABLE\n";
+        std::ofstream(paths.defaultConfigDir / fileName)
+            << "default=" << fileName << "\n";
+    }
+
+    assert(fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    for (const char* fileName : CONFIG_FILES) {
+        const fs::path working = paths.configDir / fileName;
+        assert(fs::is_regular_file(working));
+        assert(readFile(working) == readFile(paths.defaultConfigDir / fileName));
+        assert(fileMode(working) == 0640);
+    }
+
+    const fs::path dac = paths.configDir / "DAC.conf";
+    std::ofstream(dac, std::ios::binary | std::ios::trunc) << "custom DAC\n";
+    assert(fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    assert(readFile(dac) == "custom DAC\n");
+
+    fs::remove(dac);
+    assert(fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    assert(readFile(dac) == readFile(paths.defaultConfigDir / "DAC.conf"));
+
+    const fs::path symlinkTarget = root / "symlink-target";
+    std::ofstream(symlinkTarget) << "must remain unchanged\n";
+    fs::remove(dac);
+    fs::create_symlink(symlinkTarget, dac);
+    assert(!fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    assert(fs::is_symlink(dac));
+    assert(readFile(symlinkTarget) == "must remain unchanged\n");
+    fs::remove(dac);
+    fs::create_directory(dac);
+    assert(!fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    fs::remove(dac);
+
+    const fs::path defaultDac = paths.defaultConfigDir / "DAC.conf";
+    const std::string defaultDacContent = readFile(defaultDac);
+    fs::remove(defaultDac);
+    assert(!fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    fs::create_symlink(symlinkTarget, defaultDac);
+    assert(!fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    assert(readFile(symlinkTarget) == "must remain unchanged\n");
+    fs::remove(defaultDac);
+    fs::create_directory(defaultDac);
+    assert(!fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    fs::remove(defaultDac);
+    std::ofstream(defaultDac, std::ios::binary) << defaultDacContent;
+    assert(fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    fs::remove(defaultDac);
+    assert(!fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    assert(readFile(dac) == defaultDacContent);
+    std::ofstream(defaultDac, std::ios::binary) << defaultDacContent;
+
+    for (const char* fileName : CONFIG_FILES) {
+        std::ofstream(paths.configDir / fileName, std::ios::trunc)
+            << "sample.status=DISABLE\n";
+    }
+    assert(fic::core::UpgradeManager::ensureConfigs(
+        paths.defaultConfigDir, paths.configDir, error));
+    for (const char* fileName : CONFIG_FILES) {
+        assert(readFile(paths.configDir / fileName) == "sample.status=DISABLE\n");
     }
 
     fic::core::UpgradeState upgrade;
@@ -296,6 +378,12 @@ int main() {
         << "_schema_version=2\nsample.status=DISABLE\n";
     assert(!fic::core::UpgradeManager::verifyConfigs(paths.configDir, error));
     assert(error.find("newer than this binary") != std::string::npos);
+    std::ofstream(paths.configDir / "DAC.conf", std::ios::trunc)
+        << "_schema_version=" << fic::version::CONFIG_SCHEMA_VERSION
+        << "\nsample.status=DISABLE\n";
+    fs::remove(paths.configDir / "NET.conf");
+    assert(!fic::core::UpgradeManager::verifyConfigs(paths.configDir, error));
+    assert(error.find("missing or not a regular file") != std::string::npos);
 
     fs::remove_all(root);
     return 0;

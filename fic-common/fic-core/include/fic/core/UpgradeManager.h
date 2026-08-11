@@ -20,6 +20,11 @@ struct ConfigMigrationResult {
 
 class UpgradeManager {
 public:
+    static bool ensureConfigs(
+        const std::filesystem::path& defaultConfigDirectory,
+        const std::filesystem::path& configDirectory,
+        std::string& error);
+
     static bool begin(const std::filesystem::path& stateDirectory,
                       const std::string& targetVersion,
                       UpgradeState& state,

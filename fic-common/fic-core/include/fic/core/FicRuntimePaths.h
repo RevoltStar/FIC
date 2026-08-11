@@ -15,6 +15,7 @@ struct FicProductPaths {
     std::filesystem::path dataDir;
     std::filesystem::path stateDir;
     std::filesystem::path shareDir;
+    std::filesystem::path defaultConfigDir;
     std::filesystem::path imageDir;
     std::filesystem::path runtimeDir;
     std::filesystem::path lockStatusFile;

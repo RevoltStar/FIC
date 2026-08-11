@@ -98,7 +98,8 @@ install(PROGRAMS
         "${FIC_GENERATED_SCRIPTS_DIR}/notify/fic-notify-dispatcher"
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-udevadm-trigger"
         DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
-install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
+install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}" COMPONENT fic)
+install(DIRECTORY DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY DESTINATION "${FIC_STATE_DIR}" COMPONENT fic)
 install(DIRECTORY src/scripts/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
 install(FILES

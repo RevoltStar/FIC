@@ -459,20 +459,33 @@ def main():
         "Debian-family packaging does not pass its compile-time profile",
     )
     require(
-        "/opt/fic/config/IDENTITY_ACCESS.conf" in deb_builder
-        and "/opt/fic/config/AUTH.conf" not in deb_builder,
-        "Debian-family packaging does not preserve IDENTITY_ACCESS.conf",
+        "write_conffiles" not in deb_builder
+        and "DEBIAN/conffiles" not in deb_builder,
+        "Debian-family packaging still registers working configs as conffiles",
     )
     require(
         "-DFIC_TARGET_PLATFORM=alt-p11" in rpm_builder,
         "ALT p11 packaging does not fix its compile-time profile",
     )
     require(
-        "/opt/fic/config/IDENTITY_ACCESS.conf" in rpm_builder
-        and "/opt/fic/config/AUTH.conf" not in rpm_builder,
-        "ALT p11 packaging does not preserve IDENTITY_ACCESS.conf",
+        "%config" not in rpm_builder,
+        "ALT p11 packaging still registers working configs as RPM configs",
+    )
+    fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
+    require(
+        'src/scripts/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}"' in fic_cmake
+        and 'src/scripts/config/ DESTINATION "${FIC_CONFIG_DIR}"' not in fic_cmake,
+        "CMake does not install policy templates exclusively as immutable defaults",
+    )
+    install_layout = (root / "cmake/FicInstallLayout.cmake").read_text(
+        encoding="utf-8"
+    )
+    require(
+        'FIC_DEFAULT_CONFIG_DIR "${FIC_SHARE_DIR}/default-config"' in install_layout,
+        "install layout has no centralized default configuration directory",
     )
     upgrade_steps = (
+        "--maintenance ensure-config",
         "--maintenance begin-upgrade",
         "--maintenance migrate-config",
         "--maintenance migrate-db",

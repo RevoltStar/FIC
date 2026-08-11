@@ -14,6 +14,8 @@ set(FIC_NOTIFY_DIR "/opt/fic/notify" CACHE PATH "FIC notification spool")
 set(FIC_DATA_DIR "/opt/fic/db" CACHE PATH "FIC mutable data directory")
 set(FIC_STATE_DIR "/opt/fic/state" CACHE PATH "FIC upgrade and persistent state directory")
 set(FIC_SHARE_DIR "/opt/fic/share" CACHE PATH "FIC package-owned shared data directory")
+set(FIC_DEFAULT_CONFIG_DIR "${FIC_SHARE_DIR}/default-config" CACHE PATH
+    "FIC package-owned immutable default configuration directory")
 set(FIC_IMAGE_DIR "/opt/fic/image" CACHE PATH "FIC image directory")
 set(FIC_QT_DIR "/opt/fic/qt" CACHE PATH "Bundled GUI Qt runtime directory")
 set(FIC_RUNTIME_DIR "/run/fic" CACHE PATH "FIC runtime directory")

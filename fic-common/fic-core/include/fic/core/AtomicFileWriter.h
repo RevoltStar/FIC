@@ -17,6 +17,8 @@ struct AtomicWriteOptions {
     // Applies both to a direct write and to a file disappearing before write.
     bool createIfMissing = false;
     bool rejectSymlink = false;
+    // Atomically fail if any object occupies the target at commit time.
+    bool exclusiveCreate = false;
     FileMetadataPolicy metadataPolicy = FileMetadataPolicy::PreserveExisting;
     // For a new file these values are used regardless of metadataPolicy.
     std::optional<mode_t> fileMode;

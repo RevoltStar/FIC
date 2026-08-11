@@ -6,7 +6,9 @@
 #include <system_error>
 
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 namespace {
@@ -51,6 +53,30 @@ bool closeFd(int& fd) {
     return ::close(descriptor) == 0;
 }
 
+bool installTempFile(const std::filesystem::path& tempPath,
+                     const std::filesystem::path& targetPath,
+                     bool exclusiveCreate) {
+    if (!exclusiveCreate) {
+        return ::rename(tempPath.c_str(), targetPath.c_str()) == 0;
+    }
+#ifdef SYS_renameat2
+    if (::syscall(SYS_renameat2, AT_FDCWD, tempPath.c_str(),
+                  AT_FDCWD, targetPath.c_str(), RENAME_NOREPLACE) == 0) {
+        return true;
+    }
+    if (errno != ENOSYS && errno != EINVAL) {
+        return false;
+    }
+#endif
+    if (::link(tempPath.c_str(), targetPath.c_str()) != 0) {
+        return false;
+    }
+    if (::unlink(tempPath.c_str()) != 0) {
+        return false;
+    }
+    return true;
+}
+
 void cleanup(int& fd, const std::filesystem::path& path) {
     closeFd(fd);
     std::error_code ignored;
@@ -74,6 +100,10 @@ bool AtomicFileWriter::write(const std::string& path,
     }
     if (!targetExists && !options.createIfMissing) {
         setError(errorMessage, "refusing to create missing file: " + path);
+        return false;
+    }
+    if (targetExists && options.exclusiveCreate) {
+        setError(errorMessage, "refusing to replace existing file: " + path);
         return false;
     }
     if (targetExists && options.rejectSymlink && S_ISLNK(linkStat.st_mode)) {
@@ -164,7 +194,7 @@ bool AtomicFileWriter::write(const std::string& path,
         cleanup(tempFd, tempPath);
         return false;
     }
-    if (::rename(tempPath.c_str(), targetPath.c_str()) < 0) {
+    if (!installTempFile(tempPath, targetPath, options.exclusiveCreate)) {
         setError(errorMessage, "could not replace " + targetPath.string() + ": " + errnoMessage());
         cleanup(tempFd, tempPath);
         return false;

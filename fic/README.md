@@ -393,6 +393,7 @@ prefix/root, который смешивает изменяемые данные
 
 Основные runtime-пути:
 
+- `/opt/fic/share/default-config` - package-owned неизменяемые шаблоны конфигурации;
 - `/opt/fic/config` - конфигурационные файлы политик;
 - `/opt/fic/state` - upgrade journal и резервные копии миграций;
 - `/opt/fic/log` - логи;
@@ -406,7 +407,8 @@ prefix/root, который смешивает изменяемые данные
 
 Каждый конфиг модуля начинается с `_schema_version=1`. Обычный daemon принимает
 только точную текущую схему и отказывается запускаться при незавершённом product
-upgrade. Offline-команды `fic --maintenance begin-upgrade`, `migrate-config`,
+upgrade. `fic --maintenance ensure-config` атомарно создаёт только отсутствующие
+рабочие конфиги из package defaults. Offline-команды `begin-upgrade`, `migrate-config`,
 `check-config` и `commit-upgrade` предназначены для root package lifecycle.
 Семантика backups, downgrade, rollback и remove зафиксирована в
 `docs/upgrade-contract.md`.

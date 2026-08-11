@@ -37,14 +37,17 @@ The DEB/RPM lifecycle performs the following fail-closed sequence:
 
 1. stop active `fic`, `fic-device`, and `fic-notify` services from both daemon
    package pre-install actions, before either executable payload is replaced;
-2. create/resume `/opt/fic/state/upgrade.journal` for the target product version;
-3. back up all policy configs and migrate them offline;
-4. create a consistent SQLite backup with the SQLite Backup API, run the
+2. create any missing working policy configs atomically from the package-owned
+   immutable defaults in `/opt/fic/share/default-config`, without replacing any
+   existing working config;
+3. create/resume `/opt/fic/state/upgrade.journal` for the target product version;
+4. back up all policy configs and migrate them offline;
+5. create a consistent SQLite backup with the SQLite Backup API, run the
    supported schema migration in one transaction, and run `quick_check` plus
    `foreign_key_check`; the durable backup path is recorded in the journal
    before the database transaction starts;
-5. mark the journal committed only after configuration and database migration;
-6. normalize ownership/modes, refresh trusted command hashes, reload systemd,
+6. mark the journal committed only after configuration and database migration;
+7. normalize ownership/modes, refresh trusted command hashes, reload systemd,
    start services, and require the two administrative daemons to be active.
 
 The journal is written atomically and can resume the same target version after
@@ -77,6 +80,7 @@ the services are stopped:
 ```text
 fic --version
 fic --build-info
+fic --maintenance ensure-config
 fic --maintenance begin-upgrade
 fic --maintenance migrate-config
 fic --maintenance check-config
@@ -106,14 +110,17 @@ the config directory and SQLite database must be restored from the same upgrade
 transaction, followed by installation of the matching older packages.
 
 Normal package removal disables services and removes package-owned binaries and
-integration files. Config files follow the native `conffile`/`%config` package
-manager rules; the working database, journal, logs, and backups are never
-explicitly deleted by maintainer scripts. Purging all persistent state is a
+integration files, including immutable configuration defaults under
+`/opt/fic/share/default-config`. The package manager does not own
+`/opt/fic/config/*.conf`: FIC creates and owns these working files, and
+maintainer scripts never explicitly delete them. The working database, journal,
+logs, and backups are likewise preserved. Purging all persistent state is a
 separate administrator operation; scripts do not recursively delete `/opt/fic`.
 
 ## Test boundary
 
-`upgrade_contract_tests` covers initial migration, interruption/resume,
+`upgrade_contract_tests` covers secure configuration bootstrap, initial
+migration, interruption/resume,
 idempotent reinstall, reconstruction of a rollback set, downgrade refusal,
 newer-schema refusal, fresh database
 initialization, and migration of the repository's real pre-contract database.

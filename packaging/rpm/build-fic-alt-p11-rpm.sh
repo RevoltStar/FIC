@@ -538,14 +538,7 @@ write_file_list() {
     find "$package_root" \( -type f -o -type l \) | sort | while IFS= read -r path; do
         path="${path#$package_root}"
         [ -n "$path" ] || continue
-        case "$path" in
-            /opt/fic/config/IDENTITY_ACCESS.conf|/opt/fic/config/DAC.conf|/opt/fic/config/DC.conf|/opt/fic/config/GLOBAL.conf|/opt/fic/config/NET.conf|/opt/fic/config/OSS.conf|/opt/fic/config/SYSCTL.conf)
-                printf '%%config(noreplace) %s\n' "$path" >> "$file_list"
-                ;;
-            *)
-                printf '%s\n' "$path" >> "$file_list"
-                ;;
-        esac
+        printf '%s\n' "$path" >> "$file_list"
     done
 }
 
@@ -791,6 +784,7 @@ if [ -d /run/systemd/system ]; then
     done
 fi
 
+/opt/fic/bin/fic --maintenance ensure-config || exit 1
 /opt/fic/bin/fic --maintenance begin-upgrade || exit 1
 /opt/fic/bin/fic --maintenance migrate-config || exit 1
 /opt/fic/bin/fic-dick --maintenance migrate-db || exit 1

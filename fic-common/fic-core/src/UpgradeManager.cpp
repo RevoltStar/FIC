@@ -134,6 +134,61 @@ bool readRegularFile(const std::filesystem::path& path,
     return input.good() || input.eof();
 }
 
+bool readDefaultConfig(const std::filesystem::path& path,
+                       std::string& content,
+                       std::string& error) {
+    const int descriptor = ::open(
+        path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (descriptor < 0) {
+        error = "default configuration is missing or cannot be opened safely: " +
+            path.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    struct stat info {};
+    if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode)) {
+        error = "default configuration is not a regular file: " + path.string();
+        ::close(descriptor);
+        return false;
+    }
+    if (static_cast<std::uintmax_t>(info.st_size) > MAX_CONFIG_BYTES) {
+        error = "default configuration exceeds the 1 MiB limit: " + path.string();
+        ::close(descriptor);
+        return false;
+    }
+
+    content.clear();
+    std::array<char, 8192> buffer {};
+    while (true) {
+        const ssize_t bytesRead = ::read(descriptor, buffer.data(), buffer.size());
+        if (bytesRead > 0) {
+            content.append(buffer.data(), static_cast<std::size_t>(bytesRead));
+            if (content.size() > MAX_CONFIG_BYTES) {
+                error = "default configuration exceeds the 1 MiB limit: " +
+                    path.string();
+                ::close(descriptor);
+                return false;
+            }
+            continue;
+        }
+        if (bytesRead == 0) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        error = "could not read default configuration " + path.string() + ": " +
+            std::strerror(errno);
+        ::close(descriptor);
+        return false;
+    }
+    if (::close(descriptor) != 0) {
+        error = "could not close default configuration " + path.string() + ": " +
+            std::strerror(errno);
+        return false;
+    }
+    return true;
+}
+
 bool setManagedFileMetadata(const std::filesystem::path& directory,
                             AtomicWriteOptions& options,
                             std::string& error) {
@@ -346,6 +401,62 @@ bool copyBackup(const std::filesystem::path& source,
     return AtomicFileWriter::write(destination.string(), content, options, &error);
 }
 } // namespace
+
+bool UpgradeManager::ensureConfigs(
+    const std::filesystem::path& defaultConfigDirectory,
+    const std::filesystem::path& configDirectory,
+    std::string& error) {
+    error.clear();
+    if (!validAbsoluteNormalized(defaultConfigDirectory) ||
+        !validAbsoluteNormalized(configDirectory)) {
+        error = "default and working config directories must be absolute and normalized";
+        return false;
+    }
+    struct stat defaultDirectoryInfo {};
+    if (::lstat(defaultConfigDirectory.c_str(), &defaultDirectoryInfo) != 0 ||
+        !S_ISDIR(defaultDirectoryInfo.st_mode)) {
+        error = "default config path is not a real directory: " +
+            defaultConfigDirectory.string();
+        return false;
+    }
+    if (!ensureRealDirectory(configDirectory, error)) {
+        return false;
+    }
+
+    for (const char* fileName : CONFIG_FILES) {
+        std::string defaultContent;
+        if (!readDefaultConfig(
+                defaultConfigDirectory / fileName, defaultContent, error)) {
+            return false;
+        }
+        const std::filesystem::path workingPath = configDirectory / fileName;
+        struct stat workingInfo {};
+        if (::lstat(workingPath.c_str(), &workingInfo) == 0) {
+            if (!S_ISREG(workingInfo.st_mode)) {
+                error = "working configuration is not a regular file: " +
+                    workingPath.string();
+                return false;
+            }
+            continue;
+        }
+        if (errno != ENOENT) {
+            error = "could not inspect working configuration " +
+                workingPath.string() + ": " + std::strerror(errno);
+            return false;
+        }
+
+        AtomicWriteOptions options;
+        options.createIfMissing = true;
+        options.rejectSymlink = true;
+        options.exclusiveCreate = true;
+        if (!setManagedFileMetadata(configDirectory, options, error) ||
+            !AtomicFileWriter::write(
+                workingPath.string(), defaultContent, options, &error)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 bool UpgradeManager::readState(const std::filesystem::path& stateDirectory,
                                UpgradeState& state,

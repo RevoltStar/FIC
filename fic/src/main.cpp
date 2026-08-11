@@ -943,6 +943,17 @@ int main(int argc, char* argv[]) {
         const std::string command = get_arg_value(argc, argv, 2);
         const auto& paths = fic::core::FicRuntimePaths::get();
         std::string maintenanceError;
+        if (command == "ensure-config") {
+            if (!fic::core::UpgradeManager::ensureConfigs(
+                    paths.defaultConfigDir, paths.configDir,
+                    maintenanceError)) {
+                std::cerr << "configuration bootstrap failed: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "working configuration is present" << std::endl;
+            return 0;
+        }
         if (command == "begin-upgrade") {
             fic::core::UpgradeState state;
             if (!fic::core::UpgradeManager::begin(

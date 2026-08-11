@@ -191,20 +191,6 @@ build_deb_package() {
         --build "$package_root" "$output_deb" >&2
 }
 
-write_conffiles() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/conffiles" <<'EOF'
-/opt/fic/config/IDENTITY_ACCESS.conf
-/opt/fic/config/DAC.conf
-/opt/fic/config/DC.conf
-/opt/fic/config/GLOBAL.conf
-/opt/fic/config/NET.conf
-/opt/fic/config/OSS.conf
-/opt/fic/config/SYSCTL.conf
-EOF
-}
-
 write_platform_trust_triggers() {
     local package_root="$1"
     local fic_binary="$2"
@@ -592,6 +578,7 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     done
 fi
 
+/opt/fic/bin/fic --maintenance ensure-config
 /opt/fic/bin/fic --maintenance begin-upgrade
 /opt/fic/bin/fic --maintenance migrate-config
 /opt/fic/bin/fic-dick --maintenance migrate-db
@@ -1042,7 +1029,6 @@ build_fic_package() {
         "fic-session-agent (= ${PACKAGE_VERSION})"
 
     write_fic_preinst "$package_root"
-    write_conffiles "$package_root"
     write_platform_trust_triggers "$package_root" "$FIC_BUILD_DIR/fic"
     write_system_integration_symlink_postinst "$package_root" "fic" "/opt/fic/bin/fic"
     write_system_integration_symlink_prerm "$package_root" "fic" "/opt/fic/bin/fic"

@@ -19,6 +19,7 @@ flowchart LR
     deviceSock --> deviceDaemon["fic-dick --daemon"]
 
     daemon -->|читает и меняет| config["/opt/fic/config"]
+    defaults["/opt/fic/share/default-config"] -->|ensure-config, только отсутствующие| config
     daemon -->|применяет политики| os[Linux OS]
     daemon -->|пишет| logs["/opt/fic/log"]
     daemon -->|читает и меняет| lockstatus["/opt/fic/lockstatus"]
@@ -102,6 +103,7 @@ flowchart TB
     end
 
     subgraph CoreStorage[Состояние системы]
+        defaults["/opt/fic/share/default-config<br/>package-owned defaults"]
         config["/opt/fic/config"]
         modules[IDENTITY_ACCESS, DAC, SYSCTL, OSS, NET, GLOBAL]
         logs["/opt/fic/log/&lt;boot_id&gt;/&lt;category&gt;/*.txt"]
@@ -792,7 +794,8 @@ Product upgrade использует отдельный persistent state path и
 
 ```mermaid
 flowchart LR
-    stop[stop active services] --> begin[upgrade journal: prepared]
+    stop[stop active services] --> ensure[ensure missing working configs]
+    ensure --> begin[upgrade journal: prepared]
     begin --> configBackup[backup and migrate configs]
     configBackup --> configPhase[journal: config_migrated]
     configPhase --> dbBackup[SQLite Backup API]
@@ -810,6 +813,7 @@ flowchart LR
     gui[fic-gui]
 
     config["/opt/fic/config<br/>конфиги модулей и политик"]
+    defaults["/opt/fic/share/default-config<br/>неизменяемые package defaults"]
     lang["/opt/fic/lang<br/>локализация"]
     logs["/opt/fic/log<br/>логи по boot_id и категории"]
     lockstatus["/opt/fic/lockstatus<br/>0 или 1"]
@@ -818,6 +822,7 @@ flowchart LR
     proc["/proc/sys/kernel/random/boot_id"]
 
     daemon --> config
+    defaults -->|ensure-config| config
     daemon --> lang
     daemon --> logs
     daemon --> lockstatus

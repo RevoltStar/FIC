@@ -33,6 +33,7 @@ int main() {
     paths.dataDir = root / "data";
     paths.stateDir = root / "state";
     paths.shareDir = root / "share";
+    paths.defaultConfigDir = root / "share/default-config";
     paths.imageDir = root / "image";
     paths.runtimeDir = root / "run";
     paths.lockStatusFile = root / "lockstatus";
@@ -45,6 +46,8 @@ int main() {
     assert(paths.validate(error));
     assert(fic::core::FicRuntimePaths::initialize(paths, error));
     assert(fic::core::FicRuntimePaths::get().configDir == root / "config");
+    assert(fic::core::FicRuntimePaths::get().defaultConfigDir ==
+           root / "share/default-config");
     assert(fic::core::FicRuntimePaths::get().stateDir == root / "state");
     assert(!fic::core::FicRuntimePaths::initialize(paths, error));
 
