@@ -183,14 +183,20 @@ private:
         std::string targetGroup = ficExists ? "fic" : "root";
 
         if (fs._group != targetGroup) {
-            if (!fs.change_owner_group(lockFilePath_, "root", targetGroup)) {
-                debugLog("Failed to update owner/group for lock file");
+            const FileStatsOperationResult result =
+                fs.change_owner_group("root", targetGroup);
+            if (!result) {
+                debugLog("Failed to update owner/group for lock file: " +
+                         result.message);
             }
         }
 
         mode_t permissions = S_IRUSR | S_IWUSR | S_IRGRP;
-        if (!fs.change_permissions(lockFilePath_, permissions)) {
-            debugLog("Failed to update permissions for lock file");
+        const FileStatsOperationResult permissionResult =
+            fs.change_permissions(permissions);
+        if (!permissionResult) {
+            debugLog("Failed to update permissions for lock file: " +
+                     permissionResult.message);
         }
 
         debugLog("Lock file opened, FD: " + std::to_string(lockFileDescriptor_));

@@ -669,6 +669,13 @@ flowchart TB
     systemSettings --> map
 ```
 
+`ModeAndOwner` открывает конечный объект с `O_NOFOLLOW` и выполняет `fstat`,
+`fchown`, `fchmod` и контрольный `fstat` через один descriptor. Проверка режима
+учитывает маску `07777`, включая SUID, SGID и sticky bit. Отсутствующие файлы из
+platform profile пропускаются, поскольку соответствующий пакет может быть не
+установлен; отсутствующий явно заданный `custom_mode_and_owner` path является
+ошибкой. Symlink и ошибки открытия не считаются отсутствующим файлом.
+
 ## 7. Работа GUI
 
 ```mermaid

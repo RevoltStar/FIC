@@ -1,9 +1,17 @@
 #include "modules/dac/submodules/ModeAndOwner.h"
 
-#include <algorithm>
 #include <iomanip>
 #include <sstream>
 #include <utility>
+
+namespace {
+std::string formatPermissions(mode_t permissions) {
+    std::ostringstream output;
+    output << std::setfill('0') << std::setw(4) << std::oct
+           << static_cast<unsigned int>(permissions & 07777);
+    return output.str();
+}
+} // namespace
 
 FileAccessRulesPolicyTypeValue::FileAccessRulesPolicyTypeValue(
     std::vector<fic::platform::FileAccessRule> rules)
@@ -24,141 +32,173 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
     return result.str();
 }
 
-ModeAndOwner::ModeAndOwner()
-    :DAC()
-{
+ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy)
+    : DAC(),
+      missingFilePolicy_(missingFilePolicy) {
     this->submoduleName = "Mode_and_Owner";
 }
 
-//Проверить и исправить права и владельца
 bool ModeAndOwner::apply() {
     this->log("Запуск функции Mode_And_Owner::apply", logLevel::TRACE);
-    int total = 0, success = 0, failed = 0, fixed = 0;
-    for (auto& [filename, expected_stats] : this->ModeAndOwner::expected) {
-        //Сколько параметров всего
-        total++;
-        //Полный путь для утилиты
-        std::string full_path = filename;
-        //Список ошибок при проверке
-        std::vector<std::string> errors;
+    int total = 0;
+    int success = 0;
+    int failed = 0;
+    int fixed = 0;
 
-        //Текущие настройки файла
-        //expected_stats->ожидаемые параметры
-        FileStats current_stats = FileStats(full_path);
+    for (const auto& [filename, expectedStats] : expected) {
+        ++total;
+        FileStats currentStats(filename);
 
-        if (!current_stats.exists) {
-            this->log("Файл" + full_path + " не найден", logLevel::DEBUG);
-            //Если файла нет, то считаем что все хорошо
-            success++;
+        if (currentStats.is_missing()) {
+            if (missingFilePolicy_ == MissingFilePolicy::Ignore) {
+                this->log("Файл " + filename + " отсутствует; правило пропущено",
+                          logLevel::DEBUG);
+                ++success;
+            } else {
+                this->log("Обязательный файл отсутствует: " + filename,
+                          logLevel::ERROR);
+                ++failed;
+            }
+            continue;
+        }
+        if (currentStats.has_error()) {
+            this->log("Не удалось безопасно открыть файл " + filename + ": " +
+                          currentStats.error_message(),
+                      logLevel::ERROR);
+            ++failed;
             continue;
         }
 
-        this->log("Проверка файла " + full_path, logLevel::INFO);
+        this->log("Проверка файла " + filename, logLevel::INFO);
+        const std::string originalOwner = currentStats._owner;
+        const std::string originalGroup = currentStats._group;
+        const mode_t originalPermissions = currentStats._permissions;
+        const bool permissionsInitiallyCorrect =
+            currentStats.check_permission(expectedStats);
+        bool changed = false;
+        bool ownershipRequirementMet = false;
+        bool permissionRequirementMet = permissionsInitiallyCorrect;
+        bool verificationSucceeded = true;
+        std::vector<std::string> diagnostics;
 
-        // Определяем какую группу использовать (проверяем существует ли указанная)
-        if (!current_stats.group_exists(expected_stats._group)) {
-            this->log("   Группа '" + expected_stats._group + "' не существует, будет использована 'root'" , logLevel::DEBUG);
-            //Меняем на root, если нет указанной
-            expected_stats.change_group_to_root();
-        }
-
-        // Проверка владельца/группы
-        if(!current_stats.check_owner_group(expected_stats)){
-            //Если владелец/группа не совпадают с ожиданием
-            if(current_stats.change_owner_group(full_path, expected_stats._owner, expected_stats._group)){
-                //Если получилось поменять на эталон
-                fixed++;
-                this->log("  Владелец для файла " + filename + " был исправлен [" + current_stats._owner + ":" + current_stats._group
-                          + " → " + expected_stats._owner + ":" + expected_stats._group
-                          + "]... Исправлено", logLevel::DEBUG);
-            }else{
-                //Если не получилось поменять на эталон
-                errors.push_back("Владелец/группа не изменён");
-                this->log("  Владелец для файла " + filename + " не был исправлен [" + current_stats._owner + ":" + current_stats._group
-                          + " → " + expected_stats._owner + ":" + expected_stats._group
-                          + "]... ОШИБКА", logLevel::ERROR);
-            }
-        }else{
-            this->log("Владелец/группа: ОК для " + filename, logLevel::DEBUG);
-        }
-
-        //Проверка прав доступа
-        if(!current_stats.check_permission(expected_stats)){
-            if(current_stats.change_permissions(full_path, expected_stats._permissions)){
-                fixed++;
-                this->log("  Права для файла " + filename + " были исправлены [" + current_stats.permToString()
-                          + " → " + expected_stats.permToString() + "]... Исправлено", logLevel::DEBUG);
-            }else{
-                errors.push_back("Права не изменены");
-                this->log("  Права для файла " + filename + " исправлены не были [" + current_stats.permToString()
-                          + " → " + expected_stats.permToString() + "]... ОШИБКА", logLevel::ERROR);
-            }
-        }else{
-            //Права ОК
-            this->log("   Права: ОК (" + expected_stats.permToString() + ")", logLevel::DEBUG);
-        }
-
-        const auto addVerificationError = [&errors](const std::string& message) {
-            if (std::find(errors.begin(), errors.end(), message) == errors.end()) {
-                errors.push_back(message);
-            }
-        };
-        FileStats verified_stats(full_path);
-        if (!verified_stats.exists) {
-            addVerificationError("Файл исчез во время контрольной проверки");
-        } else {
-            if (!verified_stats.check_owner_group(expected_stats)) {
-                addVerificationError("Контрольная проверка владельца/группы не пройдена");
-            }
-            if (!verified_stats.check_permission(expected_stats)) {
-                addVerificationError("Контрольная проверка прав не пройдена");
-            }
-        }
-
-        // Итог по файлу
-        if (!errors.empty()) {
-            if (errors.size() == 2) {
-                this->log("  ИТОГ: Полностью не соответствует требованиям ("
-                          + errors[0] + "; " + errors[1] + ")", logLevel::ERROR);
+        uid_t expectedOwnerId = 0;
+        gid_t expectedGroupId = 0;
+        const FileStatsOperationResult identityResult =
+            FileStats::resolve_owner_group(
+                expectedStats._owner,
+                expectedStats._group,
+                expectedOwnerId,
+                expectedGroupId);
+        const bool ownerInitiallyCorrect = identityResult &&
+            currentStats.owner_id() == expectedOwnerId &&
+            currentStats.group_id() == expectedGroupId;
+        ownershipRequirementMet = ownerInitiallyCorrect;
+        if (!identityResult) {
+            ownershipRequirementMet = false;
+            diagnostics.push_back(identityResult.message);
+        } else if (!ownerInitiallyCorrect) {
+            const FileStatsOperationResult changeResult =
+                currentStats.change_owner_group(
+                    expectedOwnerId, expectedGroupId);
+            if (changeResult) {
+                ++fixed;
+                changed = true;
+                this->log("Владелец/группа для " + filename +
+                              " изменены [" + originalOwner + ":" +
+                              originalGroup + " → " + expectedStats._owner +
+                              ":" + expectedStats._group + "]",
+                          logLevel::DEBUG);
             } else {
-                this->log("  ИТОГ: Частично соответствует требованиям (" + errors[0] + ")", logLevel::ERROR);
+                ownershipRequirementMet = false;
+                diagnostics.push_back(changeResult.message);
             }
-            failed++;
-        } else {
-            if (current_stats._owner != expected_stats._owner ||
-                current_stats._group != expected_stats._group ||
-                current_stats._permissions != expected_stats._permissions) {
-                this->log("  ИТОГ: Полностью исправлено", logLevel::INFO);
+        }
+
+        if (!permissionsInitiallyCorrect) {
+            const FileStatsOperationResult changeResult =
+                currentStats.change_permissions(expectedStats._permissions);
+            if (changeResult) {
+                ++fixed;
+                changed = true;
+                this->log("Права для " + filename + " изменены [" +
+                              formatPermissions(originalPermissions) +
+                              " → " + expectedStats.permToString() + "]",
+                          logLevel::DEBUG);
             } else {
-                this->log("  ИТОГ: Соответствует требованиям", logLevel::INFO);
+                permissionRequirementMet = false;
+                diagnostics.push_back(changeResult.message);
             }
-            success++;
+        }
+
+        const FileStatsOperationResult refreshResult = currentStats.refresh();
+        if (!refreshResult) {
+            verificationSucceeded = false;
+            ownershipRequirementMet = false;
+            permissionRequirementMet = false;
+            diagnostics.push_back(refreshResult.message);
+        } else {
+            ownershipRequirementMet =
+                static_cast<bool>(identityResult) &&
+                currentStats.owner_id() == expectedOwnerId &&
+                currentStats.group_id() == expectedGroupId;
+            permissionRequirementMet =
+                currentStats.check_permission(expectedStats);
+            if (!ownershipRequirementMet) {
+                diagnostics.push_back(
+                    "Контрольная проверка владельца/группы не пройдена для " +
+                    filename);
+            }
+            if (!permissionRequirementMet) {
+                diagnostics.push_back(
+                    "Контрольная проверка прав не пройдена для " + filename);
+            }
+        }
+
+        const bool fileSucceeded = verificationSucceeded &&
+            ownershipRequirementMet && permissionRequirementMet;
+        if (!fileSucceeded) {
+            for (const std::string& diagnostic : diagnostics) {
+                this->log(diagnostic, logLevel::ERROR);
+            }
+            this->log("ИТОГ: требования для " + filename + " не выполнены",
+                      logLevel::ERROR);
+            ++failed;
+        } else {
+            this->log(changed
+                          ? "ИТОГ: требования для " + filename + " исправлены"
+                          : "ИТОГ: файл " + filename + " соответствует требованиям",
+                      logLevel::INFO);
+            ++success;
         }
     }
 
-
-    // Итоговая статистика
     this->log("РЕЗУЛЬТАТ:", logLevel::DEBUG);
     this->log("Всего проверено файлов: " + std::to_string(total), logLevel::DEBUG);
-    this->log("Соответствуют требованиям: " + std::to_string(success), logLevel::DEBUG);
+    this->log("Соответствуют требованиям: " + std::to_string(success),
+              logLevel::DEBUG);
     this->log("Исправлено параметров: " + std::to_string(fixed), logLevel::DEBUG);
     this->log("Проблемных файлов: " + std::to_string(failed), logLevel::DEBUG);
 
     if (failed == 0) {
-        if (fixed == 0) {
-            this->log("Отклонений не обнаружено", logLevel::INFO);
-            return true;
-        } else {
-            this->notify("Были обнаружены отклонения от эталона при применении политики " +
-                               this->policyName + " ,однако они все были успешно исправлены", notifyLevel::WARN);
-            this->log("Все обнаруженные отклонения исправлены", logLevel::INFO);
-            return true;
+        if (fixed != 0) {
+            this->notify(
+                "Были обнаружены отклонения от эталона при применении политики " +
+                    this->policyName + ", однако они все были успешно исправлены",
+                notifyLevel::WARN);
         }
-    } else {
-        this->notify("Были обнаружены отклонения от эталона при применении политики " +
-                           this->policyName + " ,и некоторые (" + std::to_string(failed) + ") исправлены не были", notifyLevel::ERROR);
-        this->log("ВНИМАНИЕ: Не все отклонения удалось исправить (Проблемных файлов: " +  std::to_string(failed) + ")", logLevel::ERROR);
-        return false;
+        this->log(fixed == 0 ? "Отклонений не обнаружено"
+                             : "Все обнаруженные отклонения исправлены",
+                  logLevel::INFO);
+        return true;
     }
+
+    this->notify(
+        "Были обнаружены отклонения от эталона при применении политики " +
+            this->policyName + ", и некоторые (" + std::to_string(failed) +
+            ") исправлены не были",
+        notifyLevel::ERROR);
+    this->log("ВНИМАНИЕ: Не все отклонения удалось исправить (Проблемных файлов: " +
+                  std::to_string(failed) + ")",
+              logLevel::ERROR);
     return false;
 }

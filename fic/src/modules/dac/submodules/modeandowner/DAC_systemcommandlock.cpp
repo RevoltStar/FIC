@@ -5,7 +5,8 @@
 
 
 DAC_systemcommandlock::DAC_systemcommandlock(
-    const fic::platform::DacPlatformConfig& platformConfig) {
+    const fic::platform::DacPlatformConfig& platformConfig)
+    : ModeAndOwner(MissingFilePolicy::Ignore) {
     for (const fic::platform::FileAccessRule& rule :
          platformConfig.protectedSystemCommands) {
         this->ModeAndOwner::expected.emplace(

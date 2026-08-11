@@ -19,14 +19,20 @@ private:
     std::vector<fic::platform::FileAccessRule> rules_;
 };
 
+enum class MissingFilePolicy {
+    Ignore,
+    Fail
+};
+
 //Класс для работы правами/владельцами файлов и каталогов
 class ModeAndOwner : public DAC
 {
 protected:
     //Переменная с эталонными правами
     std::map<std::string, FileStats> expected;
+    MissingFilePolicy missingFilePolicy_;
 public:
-    ModeAndOwner();
+    explicit ModeAndOwner(MissingFilePolicy missingFilePolicy);
     virtual ~ModeAndOwner() = default;
     bool apply () override;
 };

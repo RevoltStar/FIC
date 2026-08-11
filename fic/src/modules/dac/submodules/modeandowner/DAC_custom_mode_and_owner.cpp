@@ -166,7 +166,7 @@ public:
 } // namespace
 
 DAC_custom_mode_and_owner::DAC_custom_mode_and_owner()
-    : ModeAndOwner() {
+    : ModeAndOwner(MissingFilePolicy::Fail) {
     this->policyName = "custom_mode_and_owner";
     this->policyTypeValue = std::make_unique<CustomModeAndOwnerPolicyTypeValue>();
 }

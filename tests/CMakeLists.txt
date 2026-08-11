@@ -107,6 +107,20 @@ add_executable(file_handler_options_tests
 target_link_libraries(file_handler_options_tests PRIVATE fic-core)
 add_test(NAME file_handler_options_tests COMMAND file_handler_options_tests)
 
+add_executable(mode_and_owner_tests
+    dac/ModeAndOwnerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/submodules/ModeAndOwner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/submodules/modeandowner/DAC_blocking_user_access_to_system_files.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/submodules/modeandowner/DAC_custom_mode_and_owner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/submodules/modeandowner/DAC_systemcommandlock.cpp
+)
+target_include_directories(mode_and_owner_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(mode_and_owner_tests PRIVATE fic-core fic-policy)
+add_test(NAME mode_and_owner_tests COMMAND mode_and_owner_tests)
+
 add_executable(sysctl_configuration_tests
     sysctl/SysctlConfigurationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp

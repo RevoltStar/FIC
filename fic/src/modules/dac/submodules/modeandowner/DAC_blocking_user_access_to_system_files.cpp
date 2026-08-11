@@ -2,7 +2,7 @@
 
 DAC_blocking_user_access_to_system_files::DAC_blocking_user_access_to_system_files(
     const fic::platform::DacPlatformConfig& platformConfig)
-    : ModeAndOwner ()
+    : ModeAndOwner(MissingFilePolicy::Ignore)
 {
     for (const fic::platform::FileAccessRule& rule :
          platformConfig.protectedSystemFiles) {
