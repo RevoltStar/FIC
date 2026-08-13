@@ -371,6 +371,24 @@ PolicyApplySummary applyAllPolicies(PolicyMap& policyMap) {
     return summary;
 }
 
+PolicyApplySummary applyAllPoliciesExceptModule(
+    PolicyMap& policyMap,
+    const std::string& excludedModule) {
+    PolicyApplySummary summary;
+    for (const auto& [moduleName, submoduleMap] : policyMap) {
+        if (moduleName == excludedModule) {
+            continue;
+        }
+        for (const auto& [submoduleName, submodulePolicies] : submoduleMap) {
+            for (const auto& [policyName, policyClass] : submodulePolicies) {
+                summary.add(executePolicy(
+                    moduleName, submoduleName, policyName, *policyClass));
+            }
+        }
+    }
+    return summary;
+}
+
 bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy) {
     if (summary.hasFailures()) {
         return false;
@@ -646,6 +664,13 @@ PolicyMap init_policyMap(
         platform.ssh, executables));
     cafArr.push_back(std::make_unique<NET_ssh_pubkey_auth>(
         platform.ssh, executables));
+
+    // Межсетевой экран nftables
+    cafArr.push_back(std::make_unique<fic::firewall::BlockRdpPolicy>(executables));
+    cafArr.push_back(std::make_unique<fic::firewall::BlockFtpPolicy>(executables));
+    cafArr.push_back(std::make_unique<fic::firewall::CustomRulesPolicy>(executables));
+    cafArr.push_back(
+        std::make_unique<fic::firewall::ExclusiveFirewallControlPolicy>(executables));
 
     //Общие настройки контроля устройств
     cafArr.push_back(std::make_unique<DC_block_usb_storage>());

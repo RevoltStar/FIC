@@ -19,7 +19,7 @@
 namespace {
 constexpr const char* CONFIG_FILES[] = {
     "DAC.conf", "DC.conf", "GLOBAL.conf", "IDENTITY_ACCESS.conf",
-    "NET.conf", "OSS.conf", "SYSCTL.conf"
+    "FIREWALL.conf", "NET.conf", "OSS.conf", "SYSCTL.conf"
 };
 
 void executePragmas(const std::filesystem::path& databasePath,
@@ -179,7 +179,7 @@ int main() {
     fic::core::ConfigMigrationResult configMigration;
     assert(fic::core::UpgradeManager::migrateConfigs(
         paths.configDir, paths.stateDir, configMigration, error));
-    assert(configMigration.migratedFiles == 7);
+    assert(configMigration.migratedFiles == 8);
     for (const char* fileName : CONFIG_FILES) {
         assert(fs::is_regular_file(configMigration.backupDirectory / fileName));
     }

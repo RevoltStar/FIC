@@ -23,9 +23,9 @@ constexpr const char* JOURNAL_NAME = "upgrade.journal";
 constexpr const char* LOCK_NAME = "upgrade.lock";
 constexpr const char* MANIFEST_NAME = "manifest";
 constexpr std::size_t MAX_CONFIG_BYTES = 1024U * 1024U;
-constexpr std::array<const char*, 7> CONFIG_FILES = {
+constexpr std::array<const char*, 8> CONFIG_FILES = {
     "DAC.conf", "DC.conf", "GLOBAL.conf", "IDENTITY_ACCESS.conf",
-    "NET.conf", "OSS.conf", "SYSCTL.conf"
+    "FIREWALL.conf", "NET.conf", "OSS.conf", "SYSCTL.conf"
 };
 
 struct SemanticVersion {

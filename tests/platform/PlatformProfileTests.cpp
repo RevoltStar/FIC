@@ -129,6 +129,11 @@ void testSelectedProfile() {
     require(profile.executables.entries.size() ==
                 fic::platform::allExecutableIds().size(),
             "the executable registry must contain every supported logical command");
+    require(executableSpec(
+                profile,
+                fic::platform::ExecutableId::Nft).candidates ==
+                std::vector<std::filesystem::path>{"/usr/sbin/nft"},
+            "nft candidate is incorrect");
     require(!profile.packageManager.queryCandidates.empty(),
             "package manager query candidates are missing");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",

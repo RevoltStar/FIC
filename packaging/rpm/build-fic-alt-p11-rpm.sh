@@ -1007,7 +1007,7 @@ build_fic_package() {
         "$package_name" \
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
-        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify" \
+        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify, nftables" \
         "$(system_integration_pre_script)" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic")" \
         "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")" || return 1

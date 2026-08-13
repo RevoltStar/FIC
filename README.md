@@ -49,7 +49,7 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
   independent of the distribution profile.
 - Executable candidates are stored once in the profile under the typed
   `executables` registry (`Sshd`, `Systemctl`, `Loginctl`, `Visudo`, `Lscpu`,
-  `Dmidecode`, `Udevadm`). Policies request a logical executable ID from the
+  `Dmidecode`, `Udevadm`, `UpdateGrub`, `Nft`). Policies request a logical executable ID from the
   shared resolver instead of maintaining their own path lists.
 - Initial package installation runs `fic --trust-sync-platform`. Subsequent
   package triggers pass affected paths to

@@ -434,11 +434,19 @@ bool run_daemon_apply_all_pass(
     const std::string& reason
 ) {
     policyMap = init_policyMap(platform, executables);
-    const PolicyApplySummary summary = applyAllPolicies(policyMap);
-    const bool ok = isPolicyApplySuccessful(summary, "all", "");
+    const PolicyApplySummary summary = applyAllPoliciesExceptModule(
+        policyMap, "FIREWALL");
+    std::string firewallError;
+    const bool firewallOk = fic::firewall::reconcileFirewall(
+        executables, firewallError);
+    const bool ok = isPolicyApplySuccessful(summary, "all", "") && firewallOk;
     const std::string message = "policy apply pass reason=" + sanitize_log_value(reason) +
         " ok=" + std::string(ok ? "true" : "false") +
-        " " + policy_apply_summary_text(summary);
+        " firewall_reconciliation=" + std::string(firewallOk ? "ok" : "failed") +
+        " " + policy_apply_summary_text(summary) +
+        (firewallError.empty()
+            ? ""
+            : " firewall_error=" + sanitize_log_value(firewallError));
 
     if (ok) {
         std::cout << message << std::endl;

@@ -40,6 +40,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::UpdateGrub,
             {"/usr/sbin/grub-mkconfig", "/usr/bin/grub-mkconfig"}
+        },
+        {
+            ExecutableId::Nft,
+            {"/usr/sbin/nft"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Rpm;

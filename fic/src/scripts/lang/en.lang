@@ -20,6 +20,7 @@
 [module:OSS]=OS settings
 [module:SYSCTL]=Kernel settings
 [module:NET]=Network settings
+[module:FIREWALL]=Firewall
 [module:GLOBAL]=Application settings
 
 # GUI tabs
@@ -45,6 +46,15 @@
 [module:SYSCTL][submodule:global_kernel_protection]=General kernel settings
 [module:SYSCTL][submodule:network_kernel_protection]=Network settings
 [module:NET][submodule:SshEdit]=SSH settings
+[module:FIREWALL][submodule:HostFiltering]=Host incoming and outgoing filtering
+[module:FIREWALL][policy:block_rdp]=Block incoming RDP connections
+[module:FIREWALL][policy:block_rdp][description]=Blocks IPv4 and IPv6 incoming TCP connections to destination port 3389.
+[module:FIREWALL][policy:block_ftp]=Block incoming FTP control connections
+[module:FIREWALL][policy:block_ftp][description]=Blocks IPv4 and IPv6 incoming TCP connections to destination port 21. FTP data channels are outside FIREWALL v1.
+[module:FIREWALL][policy:custom_rules]=Custom firewall rules
+[module:FIREWALL][policy:custom_rules][description]=A JSON array of IPv4 and IPv6 incoming/outgoing rules. A port range is a first-last string, one port is an integer, and any means unrestricted.
+[module:FIREWALL][policy:exclusive_firewall_control]=Exclusive host filtering control
+[module:FIREWALL][policy:exclusive_firewall_control][description]=Flushes and recreates with policy accept only foreign inet/ip/ip6 filter/route base chains hooked at input/output. Tables, NAT, FORWARD, bridge, and netdev are unchanged. Removed foreign rules are not restored when this policy is disabled.
 [module:GLOBAL][submodule:system_settings]=General settings
 [module:DC][submodule:DeviceControl]=General device control rules
 [module:DC][policy:block_usb_storage]=Block USB storage

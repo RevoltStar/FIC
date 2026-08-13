@@ -23,6 +23,7 @@ struct ProcessResult {
 
 struct ProcessOptions {
     std::chrono::milliseconds timeout{5000};
+    std::optional<std::string> standardInput;
     bool clearEnvironment = false;
     std::vector<std::pair<std::string, std::string>> environment;
     std::optional<uid_t> uid;

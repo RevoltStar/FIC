@@ -210,6 +210,7 @@ def main():
         "ExecutableId::Dmidecode",
         "ExecutableId::Udevadm",
         "ExecutableId::UpdateGrub",
+        "ExecutableId::Nft",
         "packageManager.queryCandidates",
         "sudo.mainConfigPath",
         "pam.configDirectories",
@@ -411,6 +412,7 @@ def main():
         "Lscpu",
         "Dmidecode",
         "Udevadm",
+        "Nft",
     ):
         require(
             f"ExecutableId::{executable_id}" in resolver,
@@ -568,7 +570,7 @@ def main():
         )
 
     for config_name in (
-        "DAC", "DC", "GLOBAL", "IDENTITY_ACCESS", "NET", "OSS", "SYSCTL"
+        "DAC", "DC", "FIREWALL", "GLOBAL", "IDENTITY_ACCESS", "NET", "OSS", "SYSCTL"
     ):
         config = (root / f"fic/src/scripts/config/{config_name}.conf").read_text(
             encoding="utf-8"

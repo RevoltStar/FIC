@@ -15,7 +15,8 @@ enum class ExecutableId {
     Lscpu,
     Dmidecode,
     Udevadm,
-    UpdateGrub
+    UpdateGrub,
+    Nft
 };
 
 struct PlatformExecutableSpec {

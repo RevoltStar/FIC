@@ -40,6 +40,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::UpdateGrub,
             {"/usr/sbin/update-grub", "/usr/bin/update-grub"}
+        },
+        {
+            ExecutableId::Nft,
+            {"/usr/sbin/nft"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Dpkg;

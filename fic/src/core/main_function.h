@@ -94,6 +94,9 @@
 #include "modules/net/submodules/ssh/NET_ssh_root_login.h"
 #include "modules/net/submodules/ssh/NET_ssh_pubkey_auth.h"
 
+// Межсетевой экран nftables
+#include "modules/firewall/FirewallPolicies.h"
+
 //Глобальные настройки программы
 #include "modules/global/submodules/systemsettings/GLOBAL_log_level.h"
 #include "modules/global/submodules/systemsettings/GLOBAL_lang.h"
@@ -156,6 +159,9 @@ bool policy_list(PolicyMap& policyMap, std::string module);
 PolicyApplyResult applyPolicy(PolicyMap& policyMap, std::string module, std::string policy);
 PolicyApplySummary applyModulePolicies(PolicyMap& policyMap, std::string module);
 PolicyApplySummary applyAllPolicies(PolicyMap& policyMap);
+PolicyApplySummary applyAllPoliciesExceptModule(
+    PolicyMap& policyMap,
+    const std::string& excludedModule);
 bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy);
 bool apply(PolicyMap& policyMap, std::string module, std::string policy);
 

@@ -27,6 +27,8 @@ const char* executableIdName(ExecutableId id) {
         return "udevadm";
     case ExecutableId::UpdateGrub:
         return "update-grub";
+    case ExecutableId::Nft:
+        return "nft";
     }
     return "unknown";
 }
@@ -40,7 +42,8 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Lscpu,
         ExecutableId::Dmidecode,
         ExecutableId::Udevadm,
-        ExecutableId::UpdateGrub
+        ExecutableId::UpdateGrub,
+        ExecutableId::Nft
     };
 }
 

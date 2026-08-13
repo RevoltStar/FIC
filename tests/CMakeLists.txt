@@ -26,7 +26,31 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/platform/static_checks.py
                 ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME firewall_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/firewall/static_checks.py
+                ${CMAKE_SOURCE_DIR}
+    )
 endif()
+
+add_executable(firewall_tests
+    firewall/FirewallTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+)
+target_include_directories(firewall_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(firewall_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME firewall_tests COMMAND firewall_tests)
 
 add_test(
     NAME packaging_build_resource_tests

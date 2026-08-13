@@ -105,7 +105,7 @@ flowchart TB
     subgraph CoreStorage[Состояние системы]
         defaults["/opt/fic/share/default-config<br/>package-owned defaults"]
         config["/opt/fic/config"]
-        modules[IDENTITY_ACCESS, DAC, SYSCTL, OSS, NET, GLOBAL]
+        modules[IDENTITY_ACCESS, DAC, SYSCTL, OSS, NET, FIREWALL, GLOBAL]
         logs["/opt/fic/log/&lt;boot_id&gt;/&lt;category&gt;/*.txt"]
         db["/opt/fic/db/devices.db"]
         lockstatus["/opt/fic/lockstatus"]
@@ -158,7 +158,7 @@ flowchart TD
     compiled --> profile
     profile --> executableRegistry[Typed executable registry]
     executableRegistry --> resolver[PlatformExecutableResolver]
-    resolver --> tools[sshd / systemctl / loginctl / visudo]
+    resolver --> tools[sshd / systemctl / loginctl / visudo / nft]
     profile --> sshProfile[SSH config / units]
     profile --> sudoProfile[sudoers configs]
     profile --> pamProfile[PAM roots / services / option files]
@@ -178,9 +178,11 @@ flowchart TD
     socketPath --> interval["Выбор interval<br/>--interval или 1800 сек"]
     interval --> signals[Регистрация SIGTERM/SIGINT]
     signals --> createSocket[create_server_socket]
-    createSocket --> startupApply[init_policyMap + apply all enabled policies]
-    startupApply -->|ошибка| startupFail([exit 1])
-    startupApply -->|успешно| started[fic daemon started]
+    createSocket --> startupApply[init_policyMap + apply enabled non-FIREWALL policies]
+    startupApply --> startupFirewall[FIREWALL full reconciliation]
+    startupFirewall -->|есть ошибки| startupWarn[записать ошибку и продолжить]
+    startupFirewall -->|успешно| started[fic daemon started]
+    startupWarn --> started
     started --> mainLoop{g_stop == false}
 
     mainLoop --> poll[AdminSocketTransport poll]
@@ -192,8 +194,9 @@ flowchart TD
 
     ready -->|нет| periodic{пора periodic apply?}
     periodic -->|да| reload[init_policyMap]
-    reload --> applyAll[apply all enabled policies]
-    applyAll --> schedule[обновить nextPeriodicApply]
+    reload --> applyAll[apply enabled non-FIREWALL policies]
+    applyAll --> firewallReconcile[FIREWALL full reconciliation]
+    firewallReconcile --> schedule[обновить nextPeriodicApply]
     schedule --> mainLoop
 
     periodic -->|нет| mainLoop
@@ -364,6 +367,35 @@ persistent-состояние проверено и все физически в
 возвращает `false`; подробности остаются в diagnostics. Потенциально опасная
 активация, например remount работающей файловой системы после изменения
 `/etc/fstab`, не входит в обязательные runtime-действия.
+
+FIREWALL дополняет, но не меняет этот lifecycle. Одиночный apply включённой
+firewall Policy заменяет только её собственную nftables table. После общего
+startup/periodic apply pass отдельный reconciler читает статусы всех четырёх
+FIREWALL Policy, удаляет stale FIC-owned tables и восстанавливает полный
+desired state. Поэтому disabled Policy, которую общий `executePolicy()` не
+вызывает, всё равно удаляется из фактического FIREWALL state. Отдельного
+состояния включения модуля нет: все disabled означают пустой managed state, а
+не остановку reconciliation.
+
+```mermaid
+flowchart LR
+    conf[FIREWALL.conf] --> desired[desired rules by policy]
+    actual[nft -j list ruleset] --> batch[one nft batch]
+    desired --> batch
+    batch --> check[nft -c -f -]
+    check --> applyNft[nft -f -]
+    applyNft --> owned[fic_block_rdp / fic_block_ftp / fic_custom_rules]
+    exclusive[exclusive enabled] --> foreign[foreign inet/ip/ip6 filter or route input/output base chains]
+    foreign --> batch
+```
+
+FIC-owned base chains имеют `policy accept`; разрешающее правило завершает
+только текущую base chain, а drop остаётся терминальным для ruleset. Exclusive
+mode не удаляет чужие таблицы: только влияющая base chain очищается и
+пересоздаётся с прежними family/table/name/type/hook/priority и `policy accept`.
+NAT, FORWARD, bridge, netdev и остальные цепочки той же таблицы не входят в
+scope. Удалённые сторонние правила не восстанавливаются после отключения
+exclusive policy.
 
 Запись конфигурационных файлов централизована в `fic-core`:
 
@@ -601,6 +633,12 @@ flowchart TB
     ssh --> sshMaxAuthTries[ssh_max_auth_tries]
     ssh --> sshRootLogin[ssh_root_login]
     ssh --> sshPubkeyAuth[ssh_pubkey_auth]
+
+    arr --> firewall[FIREWALL]
+    firewall --> blockRdp[block_rdp]
+    firewall --> blockFtp[block_ftp]
+    firewall --> customRules[custom_rules]
+    firewall --> exclusiveControl[exclusive_firewall_control]
 
     arr --> identity[IDENTITY_ACCESS]
     identity --> pam[PAM]

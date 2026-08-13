@@ -380,6 +380,8 @@ include-аудитом и reload.
 `xfconf-query`, Fly), XDG-путь `/run/user`, `/etc/fstab`, `/proc/sys` и
 стандартные каталоги sysctl не являются выбором дистрибутива. Они остаются
 capability-, FHS- или kernel-зависимыми и не дублируются в профилях.
+Системный `nft` является обязательным executable профиля и разрешается через
+тот же `PlatformExecutableResolver`; пакеты daemon зависят от `nftables`.
 
 Production layout определяется в `cmake/FicInstallLayout.cmake`. C++ не
 содержит собственных копий `/opt/fic` и `/run/fic`: CMake генерирует defaults,
@@ -656,6 +658,41 @@ executable; устаревшие hashes их прежних candidates удал�
 или mismatch по-прежнему приводит к fail-closed отказу. `fic-cli hash calc`
 сохраняется как явная административная break-glass операция, но для штатной
 установки и обновления больше не требуется.
+
+### Работа с FIREWALL
+
+FIREWALL v1 использует только nftables и четыре обычные Policy:
+`block_rdp`, `block_ftp`, `custom_rules` и `exclusive_firewall_control`.
+Первые две и exclusive policy управляются только статусом; `.value` для них в
+`FIREWALL.conf` отсутствует. `custom_rules.value` — нормализованный JSON-массив
+правил `incoming`/`outgoing` для IPv4/IPv6 с протоколами `any`, `tcp`, `udp` и
+действиями `allow`, `block`. Одиночный порт задаётся JSON integer, диапазон —
+строкой `first-last`, отсутствие ограничения — строкой `any`. При протоколе
+`any` оба порта должны быть `any`; одновременно заданные source и destination
+должны принадлежать одной IP family.
+
+Каждая конфигурируемая policy владеет отдельной таблицей `inet`:
+`fic_block_rdp`, `fic_block_ftp` или `fic_custom_rules`. Base chains имеют
+`policy accept`, поэтому FIREWALL v1 не вводит default DROP. Обычный
+`policy apply FIREWALL <policy>` атомарно заменяет только таблицу выбранной
+policy. Скрипт сначала проверяется `nft -c -f -`, затем передаётся тому же
+проверенному executable через `nft -f -`; временные файлы не используются.
+
+В daemon startup/periodic pass FIREWALL исключается из generic цикла отдельных
+`Policy::apply()`: daemon отдельно загружает `FIREWALL.conf`, строит полный
+desired state и одним nft batch удаляет stale FIC-owned tables и пересоздаёт
+включённые. Это не меняет IPC apply одной Policy или всего модуля. Отдельного ENABLE/DISABLE-состояния
+модуля нет: если все четыре Policy выключены, reconciliation продолжается и
+удаляет все три FIC-owned tables.
+
+При `exclusive_firewall_control=ENABLE` reconciliation дополнительно находит
+только чужие base chains семейств `inet`, `ip`, `ip6`, типов `filter`/`route`
+и hooks `input`/`output`. Каждая такая влияющая цепочка очищается и атомарно
+пересоздаётся с теми же family/table/name/type/hook/priority и `policy accept`.
+Целая таблица и её остальные цепочки не удаляются; NAT, FORWARD, bridge и
+netdev не изменяются. После отключения exclusive policy дальнейшая
+нейтрализация прекращается, но удалённые сторонние правила автоматически не
+восстанавливаются. Это намеренное ограничение FIREWALL v1.
 
 ### Работа с sysctl
 

@@ -20,6 +20,7 @@
 [module:OSS]=Настройки ОС
 [module:SYSCTL]=Настройки ядра
 [module:NET]=Сетевые настройки
+[module:FIREWALL]=Межсетевой экран
 [module:GLOBAL]=Настройки программы
 
 #Вкладки GUI
@@ -45,6 +46,15 @@
 [module:SYSCTL][submodule:global_kernel_protection]=Общие настройки ядра
 [module:SYSCTL][submodule:network_kernel_protection]=Настройки сети
 [module:NET][submodule:SshEdit]=Настройки ssh
+[module:FIREWALL][submodule:HostFiltering]=Фильтрация входящего и исходящего трафика узла
+[module:FIREWALL][policy:block_rdp]=Блокировать входящие подключения RDP
+[module:FIREWALL][policy:block_rdp][description]=Блокирует входящие TCP-подключения IPv4 и IPv6 на порт назначения 3389.
+[module:FIREWALL][policy:block_ftp]=Блокировать входящие управляющие подключения FTP
+[module:FIREWALL][policy:block_ftp][description]=Блокирует входящие TCP-подключения IPv4 и IPv6 на порт назначения 21. Каналы данных FTP не входят в FIREWALL v1.
+[module:FIREWALL][policy:custom_rules]=Пользовательские правила межсетевого экрана
+[module:FIREWALL][policy:custom_rules][description]=JSON-массив правил incoming/outgoing для IPv4 и IPv6. Диапазон портов задаётся строкой first-last, одиночный порт — числом, отсутствие ограничения — строкой any.
+[module:FIREWALL][policy:exclusive_firewall_control]=Исключительный контроль фильтрации узла
+[module:FIREWALL][policy:exclusive_firewall_control][description]=Очищает и пересоздаёт с policy accept только сторонние base chains семейств inet/ip/ip6 типов filter/route с hooks input/output. Таблицы, NAT, FORWARD, bridge и netdev не изменяются. Удалённые сторонние правила автоматически не восстанавливаются после отключения политики.
 [module:GLOBAL][submodule:system_settings]=Общие настройки
 [module:DC][submodule:DeviceControl]=Общие правила контроля устройств
 [module:DC][policy:block_usb_storage]=Запретить USB-накопители

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <functional>
 #include <grp.h>
+#include <pthread.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -18,6 +19,28 @@ void read_pipe(int fd, std::string& output) {
         const ssize_t count = ::read(fd, buffer, sizeof(buffer));
         if (count > 0) {
             output.append(buffer, static_cast<size_t>(count));
+            continue;
+        }
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+    ::close(fd);
+}
+
+void write_pipe(int fd, const std::string& input) {
+    sigset_t blockedSignals;
+    ::sigemptyset(&blockedSignals);
+    ::sigaddset(&blockedSignals, SIGPIPE);
+    ::pthread_sigmask(SIG_BLOCK, &blockedSignals, nullptr);
+
+    size_t offset = 0;
+    while (offset < input.size()) {
+        const ssize_t count = ::write(
+            fd, input.data() + offset, input.size() - offset);
+        if (count > 0) {
+            offset += static_cast<size_t>(count);
             continue;
         }
         if (count < 0 && errno == EINTR) {
@@ -51,6 +74,7 @@ ProcessResult ProcessExecutor::execute(
 
     int stdoutPipe[2];
     int stderrPipe[2];
+    int stdinPipe[2] = {-1, -1};
     if (::pipe(stdoutPipe) != 0) {
         result.error = "pipe() failed: " + std::string(std::strerror(errno));
         return result;
@@ -61,6 +85,14 @@ ProcessResult ProcessExecutor::execute(
         ::close(stdoutPipe[1]);
         return result;
     }
+    if (options.standardInput.has_value() && ::pipe(stdinPipe) != 0) {
+        result.error = "pipe() failed: " + std::string(std::strerror(errno));
+        ::close(stdoutPipe[0]);
+        ::close(stdoutPipe[1]);
+        ::close(stderrPipe[0]);
+        ::close(stderrPipe[1]);
+        return result;
+    }
 
     const pid_t pid = ::fork();
     if (pid < 0) {
@@ -69,6 +101,10 @@ ProcessResult ProcessExecutor::execute(
         ::close(stdoutPipe[1]);
         ::close(stderrPipe[0]);
         ::close(stderrPipe[1]);
+        if (stdinPipe[0] >= 0) {
+            ::close(stdinPipe[0]);
+            ::close(stdinPipe[1]);
+        }
         return result;
     }
 
@@ -76,6 +112,11 @@ ProcessResult ProcessExecutor::execute(
         ::setpgid(0, 0);
         ::close(stdoutPipe[0]);
         ::close(stderrPipe[0]);
+        if (stdinPipe[0] >= 0) {
+            ::close(stdinPipe[1]);
+            ::dup2(stdinPipe[0], STDIN_FILENO);
+            ::close(stdinPipe[0]);
+        }
         ::dup2(stdoutPipe[1], STDOUT_FILENO);
         ::dup2(stderrPipe[1], STDERR_FILENO);
         ::close(stdoutPipe[1]);
@@ -125,9 +166,17 @@ ProcessResult ProcessExecutor::execute(
     ::setpgid(pid, pid);
     ::close(stdoutPipe[1]);
     ::close(stderrPipe[1]);
+    if (stdinPipe[0] >= 0) {
+        ::close(stdinPipe[0]);
+    }
 
     std::thread stdoutReader(read_pipe, stdoutPipe[0], std::ref(result.standardOutput));
     std::thread stderrReader(read_pipe, stderrPipe[0], std::ref(result.standardError));
+    std::thread stdinWriter;
+    if (stdinPipe[1] >= 0) {
+        stdinWriter = std::thread(
+            write_pipe, stdinPipe[1], std::cref(*options.standardInput));
+    }
 
     int status = 0;
     const auto deadline = std::chrono::steady_clock::now() + options.timeout;
@@ -157,6 +206,9 @@ ProcessResult ProcessExecutor::execute(
 
     stdoutReader.join();
     stderrReader.join();
+    if (stdinWriter.joinable()) {
+        stdinWriter.join();
+    }
 
     if (WIFEXITED(status)) {
         result.exitCode = WEXITSTATUS(status);
