@@ -71,8 +71,8 @@ mapfile -d '' ARTIFACTS < <(
     find "$SNAPSHOT_DIR/dist" -maxdepth 1 -type f \
         \( -name '*.deb' -o -name '*.rpm' \) -print0 | sort -z
 )
-if [ "${#ARTIFACTS[@]}" -ne 20 ]; then
-    echo "Expected 20 release packages, found ${#ARTIFACTS[@]}" >&2
+if [ "${#ARTIFACTS[@]}" -ne 25 ]; then
+    echo "Expected 25 release packages, found ${#ARTIFACTS[@]}" >&2
     exit 1
 fi
 

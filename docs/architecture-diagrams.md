@@ -737,9 +737,10 @@ bit.
 открытия не считаются отсутствующим файлом.
 
 В профилях Debian 12/13 и Ubuntu 24.04/26.04 для `/etc/resolv.conf` разрешены
-две динамические цели `systemd-resolved`:
-`/run/systemd/resolve/stub-resolv.conf` и
-`/run/systemd/resolve/resolv.conf`. Профиль ALT p11 не объявляет это исключение:
+три динамические цели `systemd-resolved`:
+`/run/systemd/resolve/stub-resolv.conf`,
+`/run/systemd/resolve/resolv.conf` и
+`/usr/lib/systemd/resolv.conf`. Профиль ALT p11 не объявляет это исключение:
 штатная для него конфигурация в проекте не предполагает управление данным
 путём через эти цели. Для защищаемых системных команд исключений также нет;
 пути merged-`/usr` с symlink-каталогами продолжают работать как обычные пути,

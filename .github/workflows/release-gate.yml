@@ -78,8 +78,8 @@ jobs:
             wc -l
           )"
 
-          if [ "$PACKAGE_COUNT" -ne 20 ]; then
-            echo "Expected 20 packages, found $PACKAGE_COUNT" >&2
+          if [ "$PACKAGE_COUNT" -ne 25 ]; then
+            echo "Expected 25 packages, found $PACKAGE_COUNT" >&2
             exit 1
           fi
 

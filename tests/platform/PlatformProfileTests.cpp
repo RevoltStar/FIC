@@ -166,7 +166,8 @@ void testSelectedProfile() {
         profile.dac.protectedSystemFiles, "/etc/resolv.conf");
     const std::vector<std::filesystem::path> resolvedTargets = {
         "/run/systemd/resolve/stub-resolv.conf",
-        "/run/systemd/resolve/resolv.conf"
+        "/run/systemd/resolve/resolv.conf",
+        "/usr/lib/systemd/resolv.conf"
     };
     if (profile.id == "alt-p11") {
         require(resolvConfRule.allowedFinalSymlinkTargets.empty(),

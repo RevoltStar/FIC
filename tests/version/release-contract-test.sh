@@ -58,8 +58,8 @@ fic_validate_release_checkout "$TEMP_DIR"
 "$TEMP_DIR/packaging/release/build-release.sh" >/dev/null
 RELEASE_OUTPUT="$TEMP_DIR/dist/release/2.0.0-rc.1"
 [ -f "$RELEASE_OUTPUT/release-manifest.json" ] || fail "release manifest is missing"
-[ "$(find "$RELEASE_OUTPUT" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)" -eq 20 ] ||
-    fail "release entry point did not collect 20 packages"
+[ "$(find "$RELEASE_OUTPUT" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)" -eq 25 ] ||
+    fail "release entry point did not collect 25 packages"
 grep -Fq "\"commit\": \"$FIC_RELEASE_COMMIT\"" \
     "$RELEASE_OUTPUT/release-manifest.json" || fail "manifest commit is wrong"
 rm -rf "$TEMP_DIR/dist"

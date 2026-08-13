@@ -262,7 +262,8 @@ def main():
         require(
             '"/etc/resolv.conf", "root", "root", 0644, {' in profiles[name]
             and '"/run/systemd/resolve/stub-resolv.conf"' in profiles[name]
-            and '"/run/systemd/resolve/resolv.conf"' in profiles[name],
+            and '"/run/systemd/resolve/resolv.conf"' in profiles[name]
+            and '"/usr/lib/systemd/resolv.conf"' in profiles[name],
             f"{name} does not declare the expected systemd-resolved targets",
         )
 

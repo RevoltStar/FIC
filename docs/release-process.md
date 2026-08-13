@@ -65,10 +65,10 @@ success.
 The build refuses a dirty tree, a non-exact or lightweight tag, a tag/version
 mismatch, an abbreviated commit, or a missing changelog heading. It archives
 the tagged commit into a temporary source tree and builds Debian 12, Debian 13,
-Ubuntu 24.04, and ALT p11 packages from that immutable snapshot.
+Ubuntu 24.04, Ubuntu 26.04, and ALT p11 packages from that immutable snapshot.
 
 Successful output is written to `dist/release/VERSION/`. The directory contains
-20 packages and a deterministic `release-manifest.json` with product version,
+25 packages and a deterministic `release-manifest.json` with product version,
 native package version, tag, full commit, artifact names, and SHA-256 hashes.
 Existing release output is never overwritten.
 
