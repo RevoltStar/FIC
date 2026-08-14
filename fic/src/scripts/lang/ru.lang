@@ -24,8 +24,6 @@
 [module:GLOBAL]=Настройки программы
 
 #Вкладки GUI
-[tab:LOG]=Анализ логов
-[tab:DEVICES]=Дерево устройств
 
 #Подмодули
 [module:DAC][policy:sudo_env_reset]=Сброс переменных окружения перед выполнением команды через sudo
@@ -238,9 +236,16 @@
 [module:NET][submodule:SshEdit][message:save_failed]=Не удалось сохранить sshd_config
 [module:NET][submodule:SshEdit][message:deviation_fixed]=Отклонение SSH-параметра исправлено
 
-#Настройки программы
-[module:GLOBAL][policy:log_level]=Уровень логгирования
-[module:GLOBAL][policy:log_level][description]=Уровень логгирования. Логи указанного уровня и выше будут записаны в лог-файл. Для уровня NoLog логгирование не осуществляется.
+#Аудит и настройки программы
+[module:AUDIT]=Аудит
+[module:AUDIT][submodule:logging]=Логирование
+[module:AUDIT][policy:log_level]=Уровень логирования
+[module:AUDIT][policy:log_level][description]=Уровень логирования. Логи указанного уровня и выше будут записаны в лог-файл. Для уровня NoLog логирование не осуществляется.
+[module:AUDIT][page:logs]=Логи
+[module:AUDIT][page:settings]=Настройки
+[module:DC][page:device_tree]=Дерево устройств
+[module:DC][page:general_rules]=Общие правила
+[module:DC][page:events]=События
 [module:GLOBAL][policy:lang]=Язык приложения
 [module:GLOBAL][policy:lang][description]=Язык приложения. Если файлы языка отсутствуют или повреждены, то используется русский.
 

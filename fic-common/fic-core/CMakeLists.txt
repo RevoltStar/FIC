@@ -22,7 +22,7 @@ add_library(fic-core STATIC
     src/FileHandler.cpp
     src/FileStats.cpp
     src/FicRuntimePaths.cpp
-    src/GlobalConfig.cpp
+    src/PolicyConfig.cpp
     src/LocalizationManager.cpp
     src/Logger.cpp
     src/ModuleConfigFileHandler.cpp

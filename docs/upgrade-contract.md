@@ -11,9 +11,9 @@ configuration, database, IPC, or package migration path. The current
 | Contract | Current version | Owner | Compatibility rule |
 |---|---:|---|---|
 | Product | `2.0.0-dev` | annotated Git release tag and `fic-common/fic-version` | Must be SemVer without build metadata. Official releases require an exact matching tag, full commit and clean tree. |
-| Administrative IPC | `1` | `fic-common/fic-ipc` | Every request and response contains `api_version`. A mismatch is rejected before routing. |
-| Policy configuration | `1` | `fic-core/UpgradeManager` | Every installed module config contains exactly one `_schema_version`. Normal startup accepts only the exact current schema. |
-| Device SQLite database | `1` | `fic-device-db` | `PRAGMA application_id=0x46494344` and `PRAGMA user_version=1` identify the database and schema. Normal startup never mutates an old schema. |
+| Administrative IPC | `2` | `fic-common/fic-ipc` | Every request and response contains `api_version`. A mismatch is rejected before routing. Version 2 changes `module_list` from strings to `{name, view}` descriptors. |
+| Policy configuration | `2` | `fic-core/UpgradeManager` | Every installed module config contains exactly one `_schema_version`. Schema 2 adds `AUDIT.conf` and moves `log_level` out of `GLOBAL.conf`. Normal startup accepts only the exact current schema. |
+| Device SQLite database | `2` | `fic-device-db` | `PRAGMA application_id=0x46494344` and `PRAGMA user_version=2` identify the database and schema. Normal startup never mutates an old schema. |
 
 The versions are deliberately independent. Changing the product version does
 not imply an IPC or storage-schema change. A breaking change increments only
@@ -63,8 +63,12 @@ stored below `/opt/fic/state/db-backups`. They are regular `0640` files under a
 Every transaction directory retains its final `manifest`, including the exact
 database backup path, so a later reinstall does not erase rollback provenance.
 
-The first supported migrations are the pre-contract configuration/DB format
-(`0`) to schema `1`. New databases are initialized directly at schema `1`.
+The pre-contract configuration format (`0`) is initialized directly as current
+schema `2`. Because no stable release exists, there is intentionally no
+configuration migration or compatibility fallback from development schema `1`:
+defaults and all active producers/consumers were replaced together. Device DB
+migration remains the separately versioned `0 -> 1 -> 2` path, and new
+databases are initialized directly at schema `2`.
 There is no runtime `CREATE TABLE IF NOT EXISTS` repair of an existing database.
 The repository's legacy migration fixture also contains unused `domain_policies`,
 `lock_history`, `system_settings`, and `temporary_allowances` tables. The

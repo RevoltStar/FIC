@@ -15,6 +15,13 @@ Components:
 - fic-gui: graphical client; sends config mutation commands to fic
 - fic-dick: device database collector
 
+The daemon exposes module descriptors through `module_list`. Each descriptor
+has a `name` and a `view` (`standard`, `device`, or `audit`); `policy_list`
+contains the editor metadata for policies without duplicating the module view.
+The Qt GUI selects a page from this contract. A future web client must use the
+same daemon APIs and must not read policy configs, device SQLite data, or logs
+directly.
+
 Shared libraries:
 - fic-common/fic-version: compiled product, IPC, configuration, and database schema versions
 - fic-common/fic-ipc: shared IPC client/protocol helpers used by fic, fic-cli, fic-gui, and fic-session-agent

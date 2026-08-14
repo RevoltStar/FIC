@@ -93,7 +93,7 @@ def main():
     ).read_text(encoding="utf-8")
     require(
         "SYSCTL_sysrq_disable" in policy_registry,
-        "kernel SysRq policy is not registered in PolicyMap",
+        "kernel SysRq policy is not registered in PolicyRegistry",
     )
     sysctl_config = (
         root / "fic/src/scripts/config/SYSCTL.conf"
@@ -289,7 +289,7 @@ def main():
     registry = (root / "fic/src/core/main_function.cpp").read_text(encoding="utf-8")
     require(
         "const fic::platform::PlatformExecutableResolver& executables" in registry,
-        "PolicyMap and lock operations must receive the platform executable resolver",
+        "PolicyRegistry and lock operations must receive the platform executable resolver",
     )
     for policy_class in (
         "PamPasswordMinLengthPolicy",
@@ -305,7 +305,7 @@ def main():
     ):
         require(
             policy_class in registry,
-            f"identity-access policy {policy_class} is not registered in PolicyMap",
+            f"identity-access policy {policy_class} is not registered in PolicyRegistry",
         )
     identity_config = (
         root / "fic/src/scripts/config/IDENTITY_ACCESS.conf"
@@ -571,13 +571,13 @@ def main():
         )
 
     for config_name in (
-        "DAC", "DC", "FIREWALL", "GLOBAL", "IDENTITY_ACCESS", "NET", "OSS", "SYSCTL"
+        "AUDIT", "DAC", "DC", "FIREWALL", "GLOBAL", "IDENTITY_ACCESS", "NET", "OSS", "SYSCTL"
     ):
         config = (root / f"fic/src/scripts/config/{config_name}.conf").read_text(
             encoding="utf-8"
         )
         require(
-            config.startswith("_schema_version=1\n")
+            config.startswith("_schema_version=2\n")
             and config.count("_schema_version=") == 1,
             f"{config_name}.conf does not declare exactly one schema version",
         )

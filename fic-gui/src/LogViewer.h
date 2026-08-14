@@ -12,7 +12,6 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableView>
-#include <QTextBrowser>
 #include <QWidget>
 #include <QTextStream>
 
@@ -27,22 +26,6 @@ class LogViewer : public QWidget
 public:
     explicit LogViewer(QWidget *parent = nullptr);
     ~LogViewer();
-
-    void initializeUI(
-        QComboBox *comboLogLevel,
-        QComboBox *comboLogType,
-        QLineEdit *lineEditSearch,
-        QCheckBox *checkAutoScroll,
-        QCheckBox *checkWordWrap,
-        QCheckBox *checkPause,
-        QPushButton *btnRefresh,
-        QPushButton *btnClear,
-        QPushButton *btnExport,
-        QTextBrowser *textBrowserPlaceholder,
-        QLabel *labelLogCount,
-        QLabel *labelLogSize,
-        QLabel *labelLastUpdate
-    );
 
     void loadLogs();
     void clearLogs();
@@ -62,8 +45,8 @@ private slots:
     void onSelectionChanged();
 
 private:
+    void setupUi();
     void setupConnections();
-    void replacePlaceholderWidget(QTextBrowser *placeholder);
     void setupTableView();
     void populateStaticControls();
     void updateStatusBar();

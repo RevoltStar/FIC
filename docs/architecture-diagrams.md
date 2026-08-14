@@ -85,7 +85,7 @@ flowchart TB
     subgraph Daemon[fic]
         ipcServer[Unix socket server]
         requestRouter[handle_request]
-        policyMap["init_policyMap<br/>module -> submodule -> policy -> Policy"]
+        policyRegistry["initPolicyRegistry<br/>module -> ModuleView + submodules -> policies"]
         policyOps[set / enable / disable / apply]
         logApi[boot_id / log_records]
         lockApi[lock / unlock / lockstatus]
@@ -105,7 +105,7 @@ flowchart TB
     subgraph CoreStorage[Состояние системы]
         defaults["/opt/fic/share/default-config<br/>package-owned defaults"]
         config["/opt/fic/config"]
-        modules[IDENTITY_ACCESS, DAC, SYSCTL, OSS, NET, FIREWALL, GLOBAL]
+        modules[AUDIT, IDENTITY_ACCESS, DAC, DC, SYSCTL, OSS, NET, FIREWALL, GLOBAL]
         logs["/opt/fic/log/&lt;boot_id&gt;/&lt;category&gt;/*.txt"]
         db["/opt/fic/db/devices.db"]
         lockstatus["/opt/fic/lockstatus"]
@@ -167,7 +167,7 @@ flowchart TD
     profile --> osRelease[Проверить /etc/os-release]
     osRelease -->|несовместим| incompatible([exit with error])
     osRelease -->|совместим| locale[Инициализация локали]
-    locale --> initMap[init_policyMap]
+    locale --> initMap[initPolicyRegistry]
     compiled --> initMap
     initMap --> oneshot{--oneshot?}
 
@@ -178,7 +178,7 @@ flowchart TD
     socketPath --> interval["Выбор interval<br/>--interval или 1800 сек"]
     interval --> signals[Регистрация SIGTERM/SIGINT]
     signals --> createSocket[create_server_socket]
-    createSocket --> startupApply[init_policyMap + apply enabled non-FIREWALL policies]
+    createSocket --> startupApply[initPolicyRegistry + apply enabled non-FIREWALL policies]
     startupApply --> startupFirewall[FIREWALL full reconciliation]
     startupFirewall -->|есть ошибки| startupWarn[записать ошибку и продолжить]
     startupFirewall -->|успешно| started[fic daemon started]
@@ -193,7 +193,7 @@ flowchart TD
     queue --> periodic
 
     ready -->|нет| periodic{пора periodic apply?}
-    periodic -->|да| reload[init_policyMap]
+    periodic -->|да| reload[initPolicyRegistry]
     reload --> applyAll[apply enabled non-FIREWALL policies]
     applyAll --> firewallReconcile[FIREWALL full reconciliation]
     firewallReconcile --> schedule[обновить nextPeriodicApply]
@@ -206,7 +206,7 @@ flowchart TD
 
 Профиль выбирается только во время сборки. Runtime-проверка не ищет другой
 профиль, а fail-closed подтверждает, что пакет запущен на предназначенной для
-него ОС. `init_policyMap()` передает один и тот же immutable профиль политикам
+него ОС. `initPolicyRegistry()` передает один и тот же immutable профиль политикам
 при первой и каждой последующей инициализации. Профиль владеет интеграционными
 данными systemd/login, SSH, sudo, PAM, display manager и DAC. Кандидаты команд
 хранятся в едином типизированном реестре, а политики получают выбранный путь
@@ -313,23 +313,23 @@ flowchart TD
 
     router --> commandType{command}
 
-    commandType -->|set_policy_value| setFn[set policyMap module policy value]
+    commandType -->|set_policy_value| setFn[set registry module policy value]
     setFn --> getPolicy[getPolicyClass]
     getPolicy --> validate[policy.validate value]
     validate --> postprocess[policy.postprocessingValue]
     postprocess --> moduleConfig[ModuleConfigFileHandler module]
     moduleConfig --> saveValue[setValue and saveConfig]
-    saveValue --> reloadAfterSet[init_policyMap]
+    saveValue --> reloadAfterSet[initPolicyRegistry]
 
     commandType -->|enable_policy| enableFn[enable]
     enableFn --> enableConfig[ModuleConfigFileHandler.enableParam]
-    enableConfig --> reloadAfterEnable[init_policyMap]
+    enableConfig --> reloadAfterEnable[initPolicyRegistry]
 
     commandType -->|disable_policy| disableFn[disable]
     disableFn --> disableConfig[ModuleConfigFileHandler.disableParam]
-    disableConfig --> reloadAfterDisable[init_policyMap]
+    disableConfig --> reloadAfterDisable[initPolicyRegistry]
 
-    commandType -->|apply_all / apply_module / apply_policy| reloadBeforeApply[init_policyMap]
+    commandType -->|apply_all / apply_module / apply_policy| reloadBeforeApply[initPolicyRegistry]
     reloadBeforeApply --> apply[apply]
     apply --> chooseScope{scope}
     chooseScope -->|all| allModules[iterate all modules]
@@ -355,7 +355,7 @@ flowchart TD
 
 `ScopedCapture` действует только во время одного вызова `Policy::apply()` и
 хранится в thread-local контексте `Logger`. Записи добавляются в capture после
-проверки `GLOBAL/log_level`, поэтому файловый журнал и diagnostics используют
+проверки `AUDIT/log_level`, поэтому файловый журнал и diagnostics используют
 одинаковую фильтрацию. Результат применения владеет копией структурированных
 полей `timestamp`, `level`, `category`, `message`; состояние не сохраняется в
 объекте `Policy`. Объем ограничивается на уровне одного capture и всего
@@ -589,7 +589,8 @@ flowchart TD
 ```
 
 Вложенные `Policy` в composite не используются: только внешний объект в
-`PolicyMap` владеет `moduleConf`, `policyName` и значением. Composite владеет
+`PolicyRegistry` через вложенные `PolicyModule::submodules` владеет объектами
+`Policy`, их `moduleConf`, `policyName` и значением. Composite владеет
 подсистемными `ConfigurationParticipant`, и все они готовят изменения до
 первой записи. Координатор является компенсирующей транзакцией, но не заявляет
 crash-atomicity нескольких файлов без transaction journal.
@@ -598,7 +599,7 @@ crash-atomicity нескольких файлов без transaction journal.
 
 ```mermaid
 flowchart TB
-    init[init_policyMap] --> arr["vector&lt;unique_ptr&lt;Policy&gt;&gt;"]
+    init[initPolicyRegistry] --> arr["vector&lt;unique_ptr&lt;Policy&gt;&gt;"]
 
     arr --> dac[DAC]
     dac --> dacMode[ModeAndOwner]
@@ -659,8 +660,16 @@ flowchart TB
 
     arr --> global[GLOBAL]
     global --> systemSettings[SystemSettings]
+    systemSettings --> lang[lang]
 
-    dacSystemCommandLock --> map["policyMap<br/>module -> submodule -> policy -> object"]
+    arr --> audit[AUDIT view=audit]
+    audit --> auditLogging[logging]
+    auditLogging --> logLevel[log_level]
+
+    arr --> dc[DC view=device]
+    dc --> dcRules[DeviceControl]
+
+    dacSystemCommandLock --> map["PolicyRegistry<br/>module -> view + submodule -> policy -> object"]
     dacBlockSystemFiles --> map
     dacCustomMode --> map
     sudoEnvReset --> map
@@ -704,7 +713,9 @@ flowchart TB
     passwordHistoryDepth --> map
     failedAttempts --> map
     unlockTime --> map
-    systemSettings --> map
+    lang --> map
+    logLevel --> map
+    dcRules --> map
 ```
 
 `ModeAndOwner` выполняет `fstat`, `fchown`, `fchmod` и контрольный `fstat` через
@@ -759,12 +770,20 @@ flowchart TD
     mainWindow --> localization[QLocalizationManager]
     localization --> ipcLoc[localization_bundle]
 
-    mainWindow --> policyLoad[loadPoliciesFromDaemon]
-    policyLoad --> ipcPolicies[policy_list all]
-    ipcPolicies --> policyPages[createPolicyPage per module]
+    mainWindow --> moduleService[PolicyService module_list]
+    moduleService --> descriptors[ModuleDescriptor name + view]
+    descriptors --> pageFactory[ModulePageFactory]
+    pageFactory -->|standard| standardPage[StandardModulePage]
+    pageFactory -->|device| devicePage[DeviceModulePage]
+    pageFactory -->|audit| auditPage[AuditModulePage]
+    pageFactory -->|unknown| protocolError[ошибка протокола]
 
-    policyPages --> edit[Пользователь меняет value или enabled]
-    edit --> validateGui[validatePolicyValue]
+    standardPage --> policyEditor[PolicyEditorWidget]
+    devicePage --> policyEditor
+    auditPage --> policyEditor
+    policyEditor --> ipcPolicies[PolicyService policy_list]
+    ipcPolicies --> edit[Пользователь меняет value или enabled]
+    edit --> validateGui[validation by editor metadata]
     validateGui --> apply[Apply button]
     apply --> setLoop{для каждой измененной политики}
     setLoop --> setIfNeeded{value configurable?}
@@ -772,7 +791,7 @@ flowchart TD
     setIfNeeded -->|нет| state
     setValue --> state[enable_policy или disable_policy]
 
-    mainWindow --> deviceTree[DeviceTree]
+    devicePage --> deviceTree[DeviceTree]
     deviceTree --> deviceSock["/run/fic/fic-device.sock"]
     deviceSock --> devRevision[device_tree_revision every 5 seconds]
     deviceSock --> devGet[device_get]
@@ -785,15 +804,20 @@ flowchart TD
     changed -->|no| keepTree[keep current tree]
     changed -->|yes| devChildren
 
-    mainWindow --> attrList[DeviceAttributeList]
+    devicePage --> attrList[DeviceAttributeList]
     attrList --> devAttrs
 
-    mainWindow --> logViewer[LogViewer / LogService]
+    auditPage --> logViewer[LogViewer / LogService]
     logViewer --> boot[boot_id]
     logViewer --> records[log_records pages<br/>offset / limit до 500]
 ```
 
 GUI не применяет политики к ОС напрямую. Он показывает данные, валидирует ввод на стороне интерфейса и затем отправляет изменения демону отдельными IPC-командами.
+`ModuleView` хранится только в дескрипторе модуля и выбирает Qt-страницу; на
+порядок или семантику применения политик он не влияет. `policy_list` не
+дублирует `view`, но содержит метаданные, достаточные для стандартного
+редактора. Будущий `fic-web` должен использовать тот же JSON API, не Qt-код и
+не прямое чтение конфигов, device DB или лог-файлов.
 Логи загружаются страницами не более 500 записей и 768 КиБ; GUI следует по
 `next_offset`, пока `has_more` остается истинным. IPC-команды `boot_id` и
 `log_records` не пишут audit-записи, потому что LogViewer использует их как

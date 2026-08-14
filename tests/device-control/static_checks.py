@@ -26,7 +26,7 @@ def main():
     db_cpp = root / "fic-common" / "fic-device-db" / "src" / "DB.cpp"
     udev_collector = root / "fic-dick" / "src" / "modules" / "UDEVInfoCollector.cpp"
     gui_tree = root / "fic-gui" / "src" / "DeviceTree.cpp"
-    gui_main_window = root / "fic-gui" / "src" / "mainwindow.cpp"
+    gui_device_page = root / "fic-gui" / "src" / "pages" / "DeviceModulePage.cpp"
     fic_daemon = root / "fic" / "src" / "main.cpp"
     udev_trigger = root / "fic" / "src" / "scripts" / "service" / "fic-udevadm-trigger.in"
     udev_rules = root / "fic" / "src" / "scripts" / "udev" / "99-fic-devices.rules.in"
@@ -128,13 +128,14 @@ def main():
             "setMinimumWidth(660)" not in gui_source,
             "device tree must remain horizontally shrinkable")
 
-    gui_main_source = read_text(gui_main_window)
-    require("gridLayoutListView->addWidget(policyEditor, 0, 0)" in gui_main_source,
-            "device policy editor must have a dedicated layout row")
-    require("gridLayout_11->addWidget(deviceControlCombo" not in gui_main_source and
-            "gridLayout_11->addWidget(deviceChildrenControlCombo" not in gui_main_source,
-            "device policy controls must not share the read-only status layout")
-    require("setColumnMinimumWidth(0, 660)" not in gui_main_source,
+    gui_device_source = read_text(gui_device_page)
+    require("new PolicyEditorWidget(module, policies" in gui_device_source,
+            "device module must reuse the standard policy editor")
+    require("new DeviceTree" in gui_device_source and
+            "new DeviceAttributeList" in gui_device_source and
+            "new DeviceEventList" in gui_device_source,
+            "device page must own the device tree, attributes and events")
+    require("setColumnMinimumWidth(0, 660)" not in gui_device_source,
             "device page must not force the old overlapping 660 px tree column")
 
     dc_policy_source = read_text(dc_policy)

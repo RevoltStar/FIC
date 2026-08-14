@@ -54,13 +54,20 @@ int print_response(const json& response) {
     bool ok = response.value("ok", false);
 
     if (response.contains("modules")) {
-        bool first = true;
         for (const auto& module : response["modules"]) {
-            if (!first) std::cout << ' ';
-            std::cout << module.get<std::string>();
-            first = false;
+            if (!module.is_object() || !module.contains("name") ||
+                !module["name"].is_string() || !module.contains("view") ||
+                !module["view"].is_string()) {
+                std::cout << "invalid module descriptor" << std::endl;
+                return 1;
+            }
+            const std::string view = module["view"].get<std::string>();
+            if (view != "standard" && view != "device" && view != "audit") {
+                std::cout << "unknown module view: " << view << std::endl;
+                return 1;
+            }
+            std::cout << module["name"].get<std::string>() << " " << view << std::endl;
         }
-        std::cout << std::endl;
     }
 
     if (response.contains("policies")) {

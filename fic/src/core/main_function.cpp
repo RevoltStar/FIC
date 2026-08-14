@@ -239,12 +239,12 @@ std::string getArgvValue(int argc, char* argv[], int ind){
     return argv[ind];
 }
 
-ModulePolicyMap* getModule(
-        PolicyMap& policyMap,
+PolicyModule* getModule(
+        PolicyRegistry& policyRegistry,
         const std::string& module){
         // Проверяем внешний ключ
-        auto outerIt = policyMap.find(module);
-        if (outerIt != policyMap.end()) {
+        auto outerIt = policyRegistry.find(module);
+        if (outerIt != policyRegistry.end()) {
             return &outerIt->second;
         }
         //Возвращаем пустой массив (нет политик)
@@ -252,18 +252,18 @@ ModulePolicyMap* getModule(
 }
 //Дать класс политики
 Policy* getPolicyClass(
-    PolicyMap& policyMap,
+    PolicyRegistry& policyRegistry,
     const std::string& module,
     const std::string& policy
 ) {
     // Проверяем внешний ключ (ищем модуль)
-    auto moduleIt = policyMap.find(module);
-    if (moduleIt == policyMap.end()) {
+    auto moduleIt = policyRegistry.find(module);
+    if (moduleIt == policyRegistry.end()) {
         return nullptr;  // Модуль не найден
     }
 
     // Ищем политику во всех подмодулях этого модуля
-    for (const auto& submodulePair : moduleIt->second) {
+    for (const auto& submodulePair : moduleIt->second.submodules) {
         const auto& submodulePolicies = submodulePair.second;
         auto policyIt = submodulePolicies.find(policy);
         if (policyIt != submodulePolicies.end()) {
@@ -275,8 +275,8 @@ Policy* getPolicyClass(
 }
 
 //Дать информацию об ограничении
-bool policy_info_restriction(PolicyMap& policyMap, std::string module, std::string policy){
-    Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
+bool policy_info_restriction(PolicyRegistry& policyRegistry, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
     if(concretePolicy != nullptr){
         std::cout << concretePolicy->getPolicyRestriction();
         return true;
@@ -286,10 +286,10 @@ bool policy_info_restriction(PolicyMap& policyMap, std::string module, std::stri
     return false;
 }
 //Дать список модулей
-bool module_list(PolicyMap& policyMap){
+bool module_list(PolicyRegistry& policyRegistry){
     std::string moduleList;
        bool first = true;
-       for (const auto& [moduleConcrete, modulePolicies] : policyMap){
+       for (const auto& [moduleConcrete, module] : policyRegistry){
            if (!first) moduleList += " ";
            moduleList += moduleConcrete;
            first = false;
@@ -298,21 +298,21 @@ bool module_list(PolicyMap& policyMap){
        return true;
 }
 
-bool policy_list(PolicyMap& policyMap, std::string module){
+bool policy_list(PolicyRegistry& policyRegistry, std::string module){
     if(module == "all"){
-        for(const auto& [moduleName, submoduleMap] : policyMap){
-            policy_list(policyMap, moduleName);
+        for(const auto& [moduleName, policyModule] : policyRegistry){
+            policy_list(policyRegistry, moduleName);
             std::cout << " ";
         }
         return true;
     }
-    auto outerIt = policyMap.find(module);
-       if (outerIt == policyMap.end()) {
+    auto outerIt = policyRegistry.find(module);
+       if (outerIt == policyRegistry.end()) {
            return false;
        }
        std::string policyList;
        bool first = true;
-       for(const auto& [submoduleName, submoduleMap]: policyMap[module]){
+       for(const auto& [submoduleName, submoduleMap]: outerIt->second.submodules){
            for(const auto& [policyName, policyClass] : submoduleMap){
             if (!first) policyList += " ";
             policyList += policyName;
@@ -323,13 +323,13 @@ bool policy_list(PolicyMap& policyMap, std::string module){
        return true;
 }
 
-PolicyApplyResult applyPolicy(PolicyMap& policyMap, std::string module, std::string policy) {
-    auto moduleIt = policyMap.find(module);
-    if (moduleIt == policyMap.end()) {
+PolicyApplyResult applyPolicy(PolicyRegistry& policyRegistry, std::string module, std::string policy) {
+    auto moduleIt = policyRegistry.find(module);
+    if (moduleIt == policyRegistry.end()) {
         return {module, "", policy, PolicyApplyStatus::NotFound, "Модуль не существует"};
     }
 
-    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second) {
+    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second.submodules) {
         auto policyIt = submodulePolicies.find(policy);
         if (policyIt == submodulePolicies.end()) {
             continue;
@@ -341,15 +341,15 @@ PolicyApplyResult applyPolicy(PolicyMap& policyMap, std::string module, std::str
     return {module, "", policy, PolicyApplyStatus::NotFound, "Политика не существует"};
 }
 
-PolicyApplySummary applyModulePolicies(PolicyMap& policyMap, std::string module) {
+PolicyApplySummary applyModulePolicies(PolicyRegistry& policyRegistry, std::string module) {
     PolicyApplySummary summary;
-    auto moduleIt = policyMap.find(module);
-    if (moduleIt == policyMap.end()) {
+    auto moduleIt = policyRegistry.find(module);
+    if (moduleIt == policyRegistry.end()) {
         summary.add({module, "", "all", PolicyApplyStatus::NotFound, "Модуль не существует"});
         return summary;
     }
 
-    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second) {
+    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second.submodules) {
         for (const auto& [policyName, policyClass] : submodulePolicies) {
             summary.add(executePolicy(module, submoduleName, policyName, *policyClass));
         }
@@ -358,10 +358,10 @@ PolicyApplySummary applyModulePolicies(PolicyMap& policyMap, std::string module)
     return summary;
 }
 
-PolicyApplySummary applyAllPolicies(PolicyMap& policyMap) {
+PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry) {
     PolicyApplySummary summary;
-    for (const auto& [moduleName, submoduleMap] : policyMap) {
-        for (const auto& [submoduleName, submodulePolicies] : submoduleMap) {
+    for (const auto& [moduleName, policyModule] : policyRegistry) {
+        for (const auto& [submoduleName, submodulePolicies] : policyModule.submodules) {
             for (const auto& [policyName, policyClass] : submodulePolicies) {
                 summary.add(executePolicy(moduleName, submoduleName, policyName, *policyClass));
             }
@@ -372,14 +372,14 @@ PolicyApplySummary applyAllPolicies(PolicyMap& policyMap) {
 }
 
 PolicyApplySummary applyAllPoliciesExceptModule(
-    PolicyMap& policyMap,
+    PolicyRegistry& policyRegistry,
     const std::string& excludedModule) {
     PolicyApplySummary summary;
-    for (const auto& [moduleName, submoduleMap] : policyMap) {
+    for (const auto& [moduleName, policyModule] : policyRegistry) {
         if (moduleName == excludedModule) {
             continue;
         }
-        for (const auto& [submoduleName, submodulePolicies] : submoduleMap) {
+        for (const auto& [submoduleName, submodulePolicies] : policyModule.submodules) {
             for (const auto& [policyName, policyClass] : submodulePolicies) {
                 summary.add(executePolicy(
                     moduleName, submoduleName, policyName, *policyClass));
@@ -439,14 +439,14 @@ static void printPolicyApplySummary(const PolicyApplySummary& summary, std::stri
     }
 }
 
-bool apply(PolicyMap& policyMap, std::string module, std::string policy) {
+bool apply(PolicyRegistry& policyRegistry, std::string module, std::string policy) {
     PolicyApplySummary summary;
     if (module == "all") {
-        summary = applyAllPolicies(policyMap);
+        summary = applyAllPolicies(policyRegistry);
     } else if (policy == "all") {
-        summary = applyModulePolicies(policyMap, module);
+        summary = applyModulePolicies(policyRegistry, module);
     } else {
-        summary.add(applyPolicy(policyMap, module, policy));
+        summary.add(applyPolicy(policyRegistry, module, policy));
     }
 
     printPolicyApplySummary(summary, module, policy);
@@ -454,8 +454,8 @@ bool apply(PolicyMap& policyMap, std::string module, std::string policy) {
 }
 
 //Отключить политику
-bool disable (PolicyMap& policyMap, std::string module, std::string policy){
-    Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
+bool disable (PolicyRegistry& policyRegistry, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим отключение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -480,8 +480,8 @@ bool disable (PolicyMap& policyMap, std::string module, std::string policy){
     return false;
 }
 //Включить политику
-bool enable(PolicyMap& policyMap, std::string module, std::string policy){
-    Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
+bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy){
+    Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим включение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
@@ -509,8 +509,8 @@ bool enable(PolicyMap& policyMap, std::string module, std::string policy){
     return false;
 }
 
-bool set(PolicyMap& policyMap, std::string module, std::string policy, std::string value){
-   Policy* concretePolicy = getPolicyClass(policyMap, module, policy);
+bool set(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string value){
+   Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
     if(concretePolicy != nullptr){
         std::cout << "Производим попытку смены значения политики " + policy + " в модуле " + module + "..." << std::endl;
         //Производим валидацию и преобразование параметра
@@ -551,7 +551,7 @@ bool set(PolicyMap& policyMap, std::string module, std::string policy, std::stri
 }
 
 /*Ининциализируем массив классов*/
-PolicyMap init_policyMap(
+PolicyRegistry initPolicyRegistry(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables){
     std::vector<std::unique_ptr<Policy>> cafArr;
@@ -678,10 +678,10 @@ PolicyMap init_policyMap(
     cafArr.push_back(std::make_unique<DC_block_optical_drives>());
 
     //Глобальные настройки программы
-    cafArr.push_back(std::make_unique<GLOBAL_log_level>());
+    cafArr.push_back(std::make_unique<AUDIT_log_level>());
     cafArr.push_back(std::make_unique<GLOBAL_lang>());
     //Для удобства отсортируем в массив вида "модуль->подмодуль->политика->класс,представляющий политику для данного модуля"
-    PolicyMap policyMap;
+    PolicyRegistry policyRegistry;
 
     for (auto& policyClass : cafArr) {
             if (auto* sysctlPolicy = dynamic_cast<Sysctl*>(policyClass.get())) {
@@ -695,11 +695,17 @@ PolicyMap init_policyMap(
                     //submodule пуст -> нужно быть осторожным и следить, чтобы это поле не было пусто когда не надо
                 }else{
                     std::cerr << "Не заданы значения moduleName, policyName. Требуется проверить код!" << std::endl;
-                    policyMap.clear();
-                    return policyMap;
+                    policyRegistry.clear();
+                    return policyRegistry;
                 }
             }
-            policyMap[policyClass->moduleName][policyClass->submoduleName][policyClass->policyName] = std::move(policyClass);
+            const std::string moduleName = policyClass->moduleName;
+            auto [moduleIt, inserted] = policyRegistry.try_emplace(moduleName);
+            if (inserted) {
+                moduleIt->second.view = moduleViewForName(moduleName);
+            }
+            moduleIt->second.submodules[policyClass->submoduleName][policyClass->policyName] =
+                std::move(policyClass);
     }
-    return policyMap;
+    return policyRegistry;
 }

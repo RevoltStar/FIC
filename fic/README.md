@@ -18,7 +18,7 @@
 `fic` выполняет следующие задачи:
 
 - загружает конфигурацию политик из `/opt/fic/config`;
-- поддерживает карту модулей, подмодулей и политик через `init_policyMap()`;
+- поддерживает реестр `PolicyRegistry`, где модуль владеет `ModuleView` и картой подмодулей/политик;
 - периодически применяет включенные политики;
 - принимает IPC-команды от `fic-cli` и `fic-gui`;
 - изменяет значения политик по командам `set_policy_value`;
@@ -105,7 +105,7 @@ fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 
 Клиент открывает одно `AF_UNIX/SOCK_SEQPACKET`-соединение на запрос и отправляет
 JSON одним пакетом без завершающего перевода строки. Каждый запрос обязан
-содержать целочисленное `"api_version":1`; клиент также требует ту же версию в
+содержать целочисленное `"api_version":2`; клиент также требует ту же версию в
 ответе. Несовпадающая или отсутствующая версия отклоняется до маршрутизации
 команды. Размер запроса ограничен
 64 КиБ. JSON-ответ размером до 1 МиБ передается последовательностью пакетов с
@@ -124,13 +124,13 @@ JSON одним пакетом без завершающего перевода 
 Базовый успешный ответ:
 
 ```json
-{"ok":true,"message":"OK","api_version":1}
+{"ok":true,"message":"OK","api_version":2}
 ```
 
 Базовый ответ с ошибкой:
 
 ```json
-{"ok":false,"message":"error text","api_version":1}
+{"ok":false,"message":"error text","api_version":2}
 ```
 
 ## Поддерживаемые команды IPC
@@ -140,7 +140,7 @@ JSON одним пакетом без завершающего перевода 
 Проверяет, что демон запущен.
 
 ```json
-{"api_version":1,"command":"status"}
+{"api_version":2,"command":"status"}
 ```
 
 ### shutdown
@@ -148,7 +148,7 @@ JSON одним пакетом без завершающего перевода 
 Запрашивает штатную остановку демона.
 
 ```json
-{"api_version":1,"command":"shutdown"}
+{"api_version":2,"command":"shutdown"}
 ```
 
 ### module_list
@@ -156,31 +156,40 @@ JSON одним пакетом без завершающего перевода 
 Возвращает список модулей.
 
 ```json
-{"api_version":1,"command":"module_list"}
+{"api_version":2,"command":"module_list"}
 ```
 
-Ответ содержит поле `modules`.
+Ответ содержит дескрипторы модулей. `view` принимает только `standard`,
+`device` или `audit` и является клиентской метаинформацией, не влияющей на
+применение политик:
+
+```json
+{"modules":[{"name":"AUDIT","view":"audit"},{"name":"DAC","view":"standard"},{"name":"DC","view":"device"}]}
+```
 
 ### policy_list
 
 Возвращает политики одного модуля или всех модулей.
 
 ```json
-{"api_version":1,"command":"policy_list","module":"all"}
+{"api_version":2,"command":"policy_list","module":"all"}
 ```
 
 ```json
-{"api_version":1,"command":"policy_list","module":"DAC"}
+{"api_version":2,"command":"policy_list","module":"DAC"}
 ```
 
-Ответ содержит поле `policies`. Для каждой политики возвращаются `module`, `submodule`, `policy`, `enabled`, `set`.
+Ответ содержит поле `policies`. Для каждой политики возвращаются данные для
+стандартного редактора: `module`, `submodule`, `policy`, `enabled`, `set`,
+`value`, `default_value`, `editor`, `possible_values`, `restriction` и
+применимые `min`, `max`, `text_delimiter`. `view` здесь не дублируется.
 
 ### set_policy_value
 
 Изменяет значение политики в конфигурации.
 
 ```json
-{"api_version":1,"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
+{"api_version":2,"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -190,7 +199,7 @@ JSON одним пакетом без завершающего перевода 
 Включает политику.
 
 ```json
-{"api_version":1,"command":"enable_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":2,"command":"enable_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -200,7 +209,7 @@ JSON одним пакетом без завершающего перевода 
 Отключает политику.
 
 ```json
-{"api_version":1,"command":"disable_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":2,"command":"disable_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -210,7 +219,7 @@ JSON одним пакетом без завершающего перевода 
 Принудительно перечитывает конфигурацию.
 
 ```json
-{"api_version":1,"command":"reload_config"}
+{"api_version":2,"command":"reload_config"}
 ```
 
 ### apply_all
@@ -218,7 +227,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет все включенные политики.
 
 ```json
-{"api_version":1,"command":"apply_all"}
+{"api_version":2,"command":"apply_all"}
 ```
 
 ### apply_module
@@ -226,7 +235,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет все включенные политики указанного модуля.
 
 ```json
-{"api_version":1,"command":"apply_module","module":"DAC"}
+{"api_version":2,"command":"apply_module","module":"DAC"}
 ```
 
 ### apply_policy
@@ -234,12 +243,12 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет одну политику.
 
 ```json
-{"api_version":1,"command":"apply_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":2,"command":"apply_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 Все команды применения возвращают сводку и отдельный результат для каждой
 политики. В `diagnostics` находятся записи `Logger`, созданные во время
-конкретного вызова `Policy::apply()` и прошедшие текущий `GLOBAL/log_level`:
+конкретного вызова `Policy::apply()` и прошедшие текущий `AUDIT/log_level`:
 
 ```json
 {
@@ -280,7 +289,7 @@ JSON одним пакетом без завершающего перевода 
 Пересчитывает hash для указанного пути.
 
 ```json
-{"api_version":1,"command":"calc_hash","value":"/usr/bin/sudo"}
+{"api_version":2,"command":"calc_hash","value":"/usr/bin/sudo"}
 ```
 
 ### lock, unlock, lockstatus
@@ -288,15 +297,15 @@ JSON одним пакетом без завершающего перевода 
 Команды управления блокировкой.
 
 ```json
-{"api_version":1,"command":"lock"}
+{"api_version":2,"command":"lock"}
 ```
 
 ```json
-{"api_version":1,"command":"unlock"}
+{"api_version":2,"command":"unlock"}
 ```
 
 ```json
-{"api_version":1,"command":"lockstatus"}
+{"api_version":2,"command":"lockstatus"}
 ```
 
 ## Systemd
@@ -324,7 +333,7 @@ Daemon собирается ровно для одного дистрибути�
 Неизвестное или отсутствующее значение останавливает конфигурацию CMake.
 
 Выбранный профиль создается в `fic/src/platform/profiles/` и передается в
-`init_policyMap()`. Он является единым источником системных путей, executable-
+`initPolicyRegistry()`. Он является единым источником системных путей, executable-
 кандидатов и имен service units. Политики не выбирают дистрибутив через
 локальные `#ifdef`.
 
@@ -407,7 +416,7 @@ prefix/root, который смешивает изменяемые данные
 предназначен для разработки: создаваемый сокет имеет режим `0600`, и демон не
 перенастраивает production-каталог.
 
-Каждый конфиг модуля начинается с `_schema_version=1`. Обычный daemon принимает
+Каждый конфиг модуля начинается с `_schema_version=2`. Обычный daemon принимает
 только точную текущую схему и отказывается запускаться при незавершённом product
 upgrade. `fic --maintenance ensure-config` атомарно создаёт только отсутствующие
 рабочие конфиги из package defaults. Offline-команды `begin-upgrade`, `migrate-config`,

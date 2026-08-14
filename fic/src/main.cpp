@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/main_function.h"
+#include "core/PolicyRegistryJson.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/version/BuildInfo.h>
@@ -199,20 +200,20 @@ bool should_audit_ipc_request(const json& request) {
 }
 
 std::string canonical_module_name(
-    const PolicyMap& policyMap,
+    const PolicyRegistry& policyRegistry,
     const std::string& module
 ) {
     if (module.empty() || module == "all") {
         return module;
     }
 
-    auto exact = policyMap.find(module);
-    if (exact != policyMap.end()) {
+    auto exact = policyRegistry.find(module);
+    if (exact != policyRegistry.end()) {
         return module;
     }
 
     const std::string lowered = to_lower_ascii(module);
-    for (const auto& [moduleName, _] : policyMap) {
+    for (const auto& [moduleName, _] : policyRegistry) {
         if (to_lower_ascii(moduleName) == lowered) {
             return moduleName;
         }
@@ -275,15 +276,15 @@ json policy_to_json(const std::string& module,
     return item;
 }
 
-json policy_list_json(const PolicyMap& policyMap,
+json policy_list_json(const PolicyRegistry& policyRegistry,
                       const std::string& module) {
     json result = json::array();
-    auto moduleIt = policyMap.find(module);
-    if (moduleIt == policyMap.end()) {
+    auto moduleIt = policyRegistry.find(module);
+    if (moduleIt == policyRegistry.end()) {
         return result;
     }
 
-    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second) {
+    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second.submodules) {
         for (const auto& [policyName, policyClass] : submodulePolicies) {
             result.push_back(policy_to_json(module, submoduleName, policyName, *policyClass));
         }
@@ -292,11 +293,11 @@ json policy_list_json(const PolicyMap& policyMap,
 }
 
 json policy_status_json(
-    PolicyMap& policyMap,
+    PolicyRegistry& policyRegistry,
     const std::string& module,
     const std::string& policy
 ) {
-    Policy* policyClass = getPolicyClass(policyMap, module, policy);
+    Policy* policyClass = getPolicyClass(policyRegistry, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -313,11 +314,11 @@ json policy_status_json(
 }
 
 json policy_value_json(
-    PolicyMap& policyMap,
+    PolicyRegistry& policyRegistry,
     const std::string& module,
     const std::string& policy
 ) {
-    Policy* policyClass = getPolicyClass(policyMap, module, policy);
+    Policy* policyClass = getPolicyClass(policyRegistry, module, policy);
     if (policyClass == nullptr) {
         return fic::ipc::make_error_response("policy not found: " + module + " " + policy);
     }
@@ -428,14 +429,14 @@ std::string policy_apply_summary_text(const PolicyApplySummary& summary) {
 }
 
 bool run_daemon_apply_all_pass(
-    PolicyMap& policyMap,
+    PolicyRegistry& policyRegistry,
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
     const std::string& reason
 ) {
-    policyMap = init_policyMap(platform, executables);
+    policyRegistry = initPolicyRegistry(platform, executables);
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(
-        policyMap, "FIREWALL");
+        policyRegistry, "FIREWALL");
     std::string firewallError;
     const bool firewallOk = fic::firewall::reconcileFirewall(
         executables, firewallError);
@@ -585,12 +586,12 @@ json lock_status_json() {
 }
 
 json handle_request(json request,
-                    PolicyMap& policyMap,
+                    PolicyRegistry& policyRegistry,
                     const fic::platform::PlatformProfile& platform,
                     const fic::platform::PlatformExecutableResolver& executables) {
     const std::string command = request.value("command", "");
     const std::string requestedModule = request.value("module", "");
-    const std::string module = canonical_module_name(policyMap, requestedModule);
+    const std::string module = canonical_module_name(policyRegistry, requestedModule);
     const std::string policy = request.value("policy", "");
     const std::string value = request.value("value", "");
 
@@ -599,7 +600,7 @@ json handle_request(json request,
             return std::nullopt;
         }
         auto enabled = [&](const std::string& name) {
-            Policy* devicePolicy = getPolicyClass(policyMap, "DC", name);
+            Policy* devicePolicy = getPolicyClass(policyRegistry, "DC", name);
             return devicePolicy != nullptr && devicePolicy->isEnabled();
         };
         const json response = fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon).request({
@@ -649,17 +650,17 @@ json handle_request(json request,
             return fic::ipc::make_ok_response("shutdown requested");
         }
         if (command == "module_list") {
-            json modules = json::array();
-            for (const auto& [moduleName, _] : policyMap) {
-                modules.push_back(moduleName);
-            }
-            return json{{"ok", true}, {"message", "modules listed"}, {"modules", modules}};
+            return json{
+                {"ok", true},
+                {"message", "modules listed"},
+                {"modules", moduleDescriptorsJson(policyRegistry)}
+            };
         }
         if (command == "policy_list") {
             if (module == "all") {
                 json all = json::array();
-                for (const auto& [moduleName, _] : policyMap) {
-                    for (const auto& item : policy_list_json(policyMap, moduleName)) {
+                for (const auto& [moduleName, _] : policyRegistry) {
+                    for (const auto& item : policy_list_json(policyRegistry, moduleName)) {
                         all.push_back(item);
                     }
                 }
@@ -668,24 +669,24 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            return json{{"ok", true}, {"message", "policies listed"}, {"policies", policy_list_json(policyMap, module)}};
+            return json{{"ok", true}, {"message", "policies listed"}, {"policies", policy_list_json(policyRegistry, module)}};
         }
         if (command == "policy_is_enabled" || command == "policy_is_disabled" || command == "policy_value") {
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
             if (command == "policy_value") {
-                return policy_value_json(policyMap, module, policy);
+            return policy_value_json(policyRegistry, module, policy);
             }
-            return policy_status_json(policyMap, module, policy);
+            return policy_status_json(policyRegistry, module, policy);
         }
         if (command == "set_policy_value") {
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            bool ok = set(policyMap, module, policy, value);
+            bool ok = set(policyRegistry, module, policy, value);
             if (ok) {
-                policyMap = init_policyMap(platform, executables);
+                policyRegistry = initPolicyRegistry(platform, executables);
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
                 }
@@ -694,9 +695,9 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to update policy value");
         }
         if (command == "enable_policy") {
-            bool ok = enable(policyMap, module, policy);
+            bool ok = enable(policyRegistry, module, policy);
             if (ok) {
-                policyMap = init_policyMap(platform, executables);
+                policyRegistry = initPolicyRegistry(platform, executables);
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
                 }
@@ -705,9 +706,9 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to enable policy");
         }
         if (command == "disable_policy") {
-            bool ok = disable(policyMap, module, policy);
+            bool ok = disable(policyRegistry, module, policy);
             if (ok) {
-                policyMap = init_policyMap(platform, executables);
+                policyRegistry = initPolicyRegistry(platform, executables);
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
                 }
@@ -716,15 +717,15 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to disable policy");
         }
         if (command == "reload_config") {
-            policyMap = init_policyMap(platform, executables);
+            policyRegistry = initPolicyRegistry(platform, executables);
             if (auto failure = regenerateDevicePolicyIfNeeded(true)) {
                 return failure.value();
             }
             return fic::ipc::make_ok_response("config reloaded");
         }
         if (command == "apply_all") {
-            policyMap = init_policyMap(platform, executables);
-            PolicyApplySummary summary = applyAllPolicies(policyMap);
+            policyRegistry = initPolicyRegistry(platform, executables);
+            PolicyApplySummary summary = applyAllPolicies(policyRegistry);
             const bool ok = isPolicyApplySuccessful(summary, "all", "");
             return policy_apply_summary_json(
                 summary,
@@ -736,8 +737,8 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            policyMap = init_policyMap(platform, executables);
-            PolicyApplySummary summary = applyModulePolicies(policyMap, module);
+            policyRegistry = initPolicyRegistry(platform, executables);
+            PolicyApplySummary summary = applyModulePolicies(policyRegistry, module);
             const bool ok = isPolicyApplySuccessful(summary, module, "all");
             return policy_apply_summary_json(
                 summary,
@@ -749,9 +750,9 @@ json handle_request(json request,
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            policyMap = init_policyMap(platform, executables);
+            policyRegistry = initPolicyRegistry(platform, executables);
             PolicyApplySummary summary;
-            summary.add(applyPolicy(policyMap, module, policy));
+            summary.add(applyPolicy(policyRegistry, module, policy));
             const bool ok = isPolicyApplySuccessful(summary, module, policy);
             return policy_apply_summary_json(
                 summary,
@@ -857,7 +858,7 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
 std::string handle_client_packet(
                       int clientFd,
                       const std::string& requestText,
-                      PolicyMap& policyMap,
+                      PolicyRegistry& policyRegistry,
                       const fic::platform::PlatformProfile& platform,
                       const fic::platform::PlatformExecutableResolver& executables) {
     const PeerCredentials peer = get_peer_credentials(clientFd);
@@ -866,7 +867,7 @@ std::string handle_client_packet(
     json response;
     if (fic::ipc::parse_request_json(requestText, request, error) &&
         validate_policy_request_schema(request, error)) {
-        response = handle_request(request, policyMap, platform, executables);
+        response = handle_request(request, policyRegistry, platform, executables);
     } else {
         response = fic::ipc::make_error_response("invalid request: " + error);
     }
@@ -1096,10 +1097,10 @@ int main(int argc, char* argv[]) {
     }
 
     const bool once = get_arg_value(argc, argv, 1) == "--oneshot";
-    auto policyMap = init_policyMap(platform, executables);
+    auto policyRegistry = initPolicyRegistry(platform, executables);
 
     if (once) {
-        return apply(policyMap, "all", "") ? 0 : 1;
+        return apply(policyRegistry, "all", "") ? 0 : 1;
     }
 
     const std::string socketPath = get_socket_path(argc, argv);
@@ -1129,7 +1130,7 @@ int main(int argc, char* argv[]) {
     fic::ipc::AdminSocketTransport transport(serverFd);
 
     const bool startupApplyOk =
-        run_daemon_apply_all_pass(policyMap, platform, executables, "startup");
+        run_daemon_apply_all_pass(policyRegistry, platform, executables, "startup");
     if (!startupApplyOk) {
         std::cerr << "fic daemon startup policy apply completed with errors; "
                      "daemon will continue running"
@@ -1147,7 +1148,7 @@ int main(int argc, char* argv[]) {
         if (!transport.pollOnce(1000,
                 [&](int clientFd, const std::string& requestText) {
                     return handle_client_packet(clientFd, requestText,
-                        policyMap, platform, executables);
+                        policyRegistry, platform, executables);
                 },
                 transportError)) {
             std::cerr << transportError << std::endl;
@@ -1156,7 +1157,7 @@ int main(int argc, char* argv[]) {
 
         auto now = std::chrono::steady_clock::now();
         if (now >= nextPeriodicApply) {
-            run_daemon_apply_all_pass(policyMap, platform, executables, "periodic");
+            run_daemon_apply_all_pass(policyRegistry, platform, executables, "periodic");
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }
     }

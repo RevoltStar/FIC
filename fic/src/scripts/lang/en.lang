@@ -24,8 +24,6 @@
 [module:GLOBAL]=Application settings
 
 # GUI tabs
-[tab:LOG]=Log analysis
-[tab:DEVICES]=Device tree
 
 # Submodules
 [module:DAC][policy:sudo_env_reset]=Reset environment variables before executing a command via sudo
@@ -238,9 +236,16 @@ Where possible, a lock against modification is applied
 [module:NET][submodule:SshEdit][message:save_failed]=Failed to save sshd_config
 [module:NET][submodule:SshEdit][message:deviation_fixed]=SSH parameter deviation was fixed
 
-# Application settings
-[module:GLOBAL][policy:log_level]=Logging level
-[module:GLOBAL][policy:log_level][description]=Logging level. Logs of the selected level and above will be written to the log file. For the NoLog level, logging is disabled.
+# Audit and application settings
+[module:AUDIT]=Audit
+[module:AUDIT][submodule:logging]=Logging
+[module:AUDIT][policy:log_level]=Logging level
+[module:AUDIT][policy:log_level][description]=Logging level. Logs of the selected level and above will be written to the log file. For the NoLog level, logging is disabled.
+[module:AUDIT][page:logs]=Logs
+[module:AUDIT][page:settings]=Settings
+[module:DC][page:device_tree]=Device tree
+[module:DC][page:general_rules]=General rules
+[module:DC][page:events]=Events
 [module:GLOBAL][policy:lang]=Application language
 [module:GLOBAL][policy:lang][description]=Application language. If language files are missing or corrupted, Russian is used.
 

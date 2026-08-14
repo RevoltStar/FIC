@@ -10,6 +10,7 @@
 #include <fic/core/SectionConfigFileHandler.h>
 #include <fic/core/LocalizationManager.h>
 #include <fic/policy/PolicyApplyResult.h>
+#include "core/PolicyRegistry.h"
 #include "platform/PlatformProfile.h"
 #include "platform/PlatformExecutableResolver.h"
 
@@ -97,8 +98,8 @@
 // Межсетевой экран nftables
 #include "modules/firewall/FirewallPolicies.h"
 
-//Глобальные настройки программы
-#include "modules/global/submodules/systemsettings/GLOBAL_log_level.h"
+//Аудит и глобальные настройки программы
+#include "modules/audit/submodules/logging/AUDIT_log_level.h"
 #include "modules/global/submodules/systemsettings/GLOBAL_lang.h"
 
 //Контроль устройств: общие настройки
@@ -137,43 +138,40 @@ bool calcHash(const std::string& command);
 //Получить значение параметра
 std::string getArgvValue(int argc, char* argv[], int ind);
 
-using PolicyMap = std::map<std::string, std::map<std::string, std::map<std::string, std::unique_ptr<Policy>>>>;
-using ModulePolicyMap = std::map<std::string, std::map<std::string, std::unique_ptr<Policy>>>;
-
-ModulePolicyMap* getModule(
-        PolicyMap& policyMap,
+PolicyModule* getModule(
+        PolicyRegistry& policyRegistry,
         const std::string& module);
 Policy* getPolicyClass(
-            PolicyMap& policyMap,
+            PolicyRegistry& policyRegistry,
             const std::string& module,
             const std::string& policy
         );
 
 //Дать информацию об ограничении
-bool policy_info_restriction(PolicyMap& policyMap, std::string module, std::string policy);
+bool policy_info_restriction(PolicyRegistry& policyRegistry, std::string module, std::string policy);
 //Дать список модулей
-bool module_list(PolicyMap& policyMap);
+bool module_list(PolicyRegistry& policyRegistry);
 
-bool policy_list(PolicyMap& policyMap, std::string module);
+bool policy_list(PolicyRegistry& policyRegistry, std::string module);
 
-PolicyApplyResult applyPolicy(PolicyMap& policyMap, std::string module, std::string policy);
-PolicyApplySummary applyModulePolicies(PolicyMap& policyMap, std::string module);
-PolicyApplySummary applyAllPolicies(PolicyMap& policyMap);
+PolicyApplyResult applyPolicy(PolicyRegistry& policyRegistry, std::string module, std::string policy);
+PolicyApplySummary applyModulePolicies(PolicyRegistry& policyRegistry, std::string module);
+PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry);
 PolicyApplySummary applyAllPoliciesExceptModule(
-    PolicyMap& policyMap,
+    PolicyRegistry& policyRegistry,
     const std::string& excludedModule);
 bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy);
-bool apply(PolicyMap& policyMap, std::string module, std::string policy);
+bool apply(PolicyRegistry& policyRegistry, std::string module, std::string policy);
 
 //Отключить политику
-bool disable (PolicyMap& policyMap, std::string module, std::string policy);
+bool disable (PolicyRegistry& policyRegistry, std::string module, std::string policy);
 //Включить политику
-bool enable(PolicyMap& policyMap, std::string module, std::string policy);
+bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy);
 
-bool set(PolicyMap& policyMap, std::string module, std::string policy, std::string value);
+bool set(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string value);
 
 
-PolicyMap init_policyMap(
+PolicyRegistry initPolicyRegistry(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables);
 #endif // MAIN_FUNCTION_H

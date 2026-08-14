@@ -90,13 +90,13 @@ void initializeRuntimePaths(const fs::path& root,
         "\",\"mode\":\"0644\"}]";
     writeFile(
         paths.configDir / "DAC.conf",
-        "_schema_version=1\n"
+        "_schema_version=2\n"
         "custom_mode_and_owner.status=ENABLE\n"
         "custom_mode_and_owner.value=" + customValue + "\n",
         0640);
     writeFile(
-        paths.configDir / "GLOBAL.conf",
-        "_schema_version=1\n"
+        paths.configDir / "AUDIT.conf",
+        "_schema_version=2\n"
         "log_level.status=ENABLE\n"
         "log_level.value=TRACE\n",
         0640);
@@ -320,7 +320,7 @@ void testCustomSymlinkRemainsFailClosed(const fs::path& root) {
         "\",\"mode\":\"0600\"}]";
     writeFile(
         root / "config/DAC.conf",
-        "_schema_version=1\n"
+        "_schema_version=2\n"
         "custom_mode_and_owner.status=ENABLE\n"
         "custom_mode_and_owner.value=" + customValue + "\n",
         0640);

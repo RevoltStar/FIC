@@ -18,7 +18,7 @@
 
 namespace {
 constexpr const char* CONFIG_FILES[] = {
-    "DAC.conf", "DC.conf", "GLOBAL.conf", "IDENTITY_ACCESS.conf",
+    "AUDIT.conf", "DAC.conf", "DC.conf", "GLOBAL.conf", "IDENTITY_ACCESS.conf",
     "FIREWALL.conf", "NET.conf", "OSS.conf", "SYSCTL.conf"
 };
 
@@ -179,7 +179,7 @@ int main() {
     fic::core::ConfigMigrationResult configMigration;
     assert(fic::core::UpgradeManager::migrateConfigs(
         paths.configDir, paths.stateDir, configMigration, error));
-    assert(configMigration.migratedFiles == 8);
+    assert(configMigration.migratedFiles == 9);
     for (const char* fileName : CONFIG_FILES) {
         assert(fs::is_regular_file(configMigration.backupDirectory / fileName));
     }
@@ -375,7 +375,8 @@ int main() {
     }
 
     std::ofstream(paths.configDir / "DAC.conf", std::ios::trunc)
-        << "_schema_version=2\nsample.status=DISABLE\n";
+        << "_schema_version=" << (fic::version::CONFIG_SCHEMA_VERSION + 1)
+        << "\nsample.status=DISABLE\n";
     assert(!fic::core::UpgradeManager::verifyConfigs(paths.configDir, error));
     assert(error.find("newer than this binary") != std::string::npos);
     std::ofstream(paths.configDir / "DAC.conf", std::ios::trunc)

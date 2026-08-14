@@ -19,6 +19,11 @@ GUI предназначен для удобного изменения знач
 - просмотр логов и фильтрацию записей;
 - отображение информации об устройствах из базы FIC.
 
+Верхнеуровневые вкладки создаются из `module_list`: обычные модули используют
+`StandardModulePage`, `DC` с `view=device` — `DeviceModulePage`, а `AUDIT` с
+`view=audit` — `AuditModulePage`. Неизвестный `view` отклоняется. Все три
+страницы переиспользуют `PolicyEditorWidget` для стандартных политик.
+
 ## Взаимодействие с демоном
 
 GUI использует общий IPC-клиент:
@@ -68,19 +73,19 @@ fic-gui --build-info
 1. Отправляет новое значение:
 
 ```json
-{"api_version":1,"command":"set_policy_value","module":"<module>","policy":"<policy>","value":"<value>"}
+{"api_version":2,"command":"set_policy_value","module":"<module>","policy":"<policy>","value":"<value>"}
 ```
 
 2. Отправляет новое состояние политики:
 
 ```json
-{"api_version":1,"command":"enable_policy","module":"<module>","policy":"<policy>"}
+{"api_version":2,"command":"enable_policy","module":"<module>","policy":"<policy>"}
 ```
 
 или:
 
 ```json
-{"api_version":1,"command":"disable_policy","module":"<module>","policy":"<policy>"}
+{"api_version":2,"command":"disable_policy","module":"<module>","policy":"<policy>"}
 ```
 
 Если демон возвращает ошибку, GUI показывает пользователю текст ошибки и не считает изменение успешно примененным.
@@ -120,7 +125,7 @@ FIC_SOCKET_PATH=/tmp/fic.sock fic-cli status
 Из корня проекта:
 
 ```bash
-cmake -S . -B build-check
+cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04
 cmake --build build-check --target fic-gui
 ```
 
@@ -161,8 +166,10 @@ cmake --build build-fic-gui
 ## Связанные файлы
 
 - `fic-gui/src/main.cpp` - точка входа приложения;
-- `fic-gui/src/mainwindow.cpp` - основная логика окна и применения изменений;
-- `fic-gui/src/policy` - редакторы политик;
+- `fic-gui/src/mainwindow.cpp` - загрузка дескрипторов и создание верхнеуровневых вкладок;
+- `fic-gui/src/models` и `src/services` - JSON-модели и IPC orchestration;
+- `fic-gui/src/pages` - стандартная, device и audit страницы модулей;
+- `fic-gui/src/widgets/PolicyEditorWidget.*` - общий редактор политик;
 - `fic-gui/src/wrappers` - Qt-обертки над общей логикой;
 - `fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h` - IPC-клиент для связи с демоном.
 

@@ -32,7 +32,31 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/firewall/static_checks.py
                 ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME module_ui_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/module-ui/static_checks.py
+                ${CMAKE_SOURCE_DIR}
+    )
 endif()
+
+add_executable(module_registry_tests
+    module-ui/ModuleRegistryTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryJson.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/audit/AUDIT.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/audit/submodules/Logging.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/audit/submodules/logging/AUDIT_log_level.cpp
+)
+target_include_directories(module_registry_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(module_registry_tests PRIVATE fic-core fic-policy)
+add_test(NAME module_registry_tests COMMAND module_registry_tests)
+
+add_executable(module_descriptor_tests
+    module-ui/ModuleDescriptorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/models/ModuleDescriptor.cpp
+)
+target_include_directories(module_descriptor_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
+add_test(NAME module_descriptor_tests COMMAND module_descriptor_tests)
 
 add_executable(firewall_tests
     firewall/FirewallTests.cpp

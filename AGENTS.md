@@ -51,7 +51,7 @@
   `fic/src/main.cpp`.
 - Compile-time профили дистрибутивов и runtime-проверка `/etc/os-release`:
   `fic/src/platform/` и `cmake/FicTargetPlatform.cmake`.
-- Инициализация `PolicyMap`, применение, enable/disable/set:
+- Инициализация `PolicyRegistry`, применение, enable/disable/set:
   `fic/src/core/main_function.cpp` и `main_function.h`.
 - Конкретная политика:
   `fic/src/modules/<module>/...`, соответствующий файл
@@ -103,7 +103,7 @@
   upgrade-контракта синхронно обновляй `fic-common/fic-version`, offline
   migration, package lifecycle, тесты и `docs/upgrade-contract.md`.
 - После изменения значения или состояния политики демон должен перечитать
-  `PolicyMap`.
+  `PolicyRegistry`.
 - GUI и CLI обязаны показывать текст ошибки демона, а не заменять его общим
   сообщением.
 - Изменения файлов конфигурации должны сохранять существующую атомарную модель
@@ -169,7 +169,7 @@ packaging-sensitive кода — полная сборка. Runtime-провер
 - При изменении daemon API синхронно проверь CLI, GUI, IPC-документацию и
   `docs/architecture-diagrams.md`.
 - При добавлении или переименовании политики проверь регистрацию в
-  `init_policyMap()`, конфиг модуля, обе локализации и клиентское отображение.
+  `initPolicyRegistry()`, конфиг модуля, обе локализации и клиентское отображение.
 - При изменении runtime-файлов проверь и CMake install rules, и ручную staging-
   логику deb/rpm-скриптов.
 - Не редактируй содержимое `build*/` и `dist/` как исходники.

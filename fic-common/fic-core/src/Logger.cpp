@@ -1,5 +1,5 @@
 #include <fic/core/Logger.h>
-#include <fic/core/GlobalConfig.h>
+#include <fic/core/PolicyConfig.h>
 #include <fic/core/FicRuntimePaths.h>
 
 #include <algorithm>
@@ -153,7 +153,8 @@ logLevel Logger::string_to_level(const std::string& levelStr) {
 }
 
 logLevel Logger::get_configured_log_level() {
-    const std::optional<std::string> configuredLevel = GlobalConfig::getEnabledValue("log_level");
+    const std::optional<std::string> configuredLevel =
+        PolicyConfig::getEnabledValue("AUDIT", "log_level");
     if (!configuredLevel.has_value() || configuredLevel.value().empty()) {
         return logLevel::ERROR;
     }

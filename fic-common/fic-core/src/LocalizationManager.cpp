@@ -1,7 +1,7 @@
 #include <fic/core/LocalizationManager.h>
 
 #include <fic/core/FicRuntimePaths.h>
-#include <fic/core/GlobalConfig.h>
+#include <fic/core/PolicyConfig.h>
 
 namespace {
 const char* kDefaultLanguage = "ru";
@@ -63,7 +63,8 @@ bool LocalizationManager::setCurrentLanguage(const std::string& lang)
 
 std::string LocalizationManager::readLanguageFromGlobalConfig()
 {
-    const std::optional<std::string> lang = GlobalConfig::getEnabledValue(kGlobalLanguageParameter);
+    const std::optional<std::string> lang =
+        PolicyConfig::getEnabledValue("GLOBAL", kGlobalLanguageParameter);
     if (!lang.has_value() || lang.value().empty()) {
         return kDefaultLanguage;
     }

@@ -23,8 +23,8 @@ constexpr const char* JOURNAL_NAME = "upgrade.journal";
 constexpr const char* LOCK_NAME = "upgrade.lock";
 constexpr const char* MANIFEST_NAME = "manifest";
 constexpr std::size_t MAX_CONFIG_BYTES = 1024U * 1024U;
-constexpr std::array<const char*, 8> CONFIG_FILES = {
-    "DAC.conf", "DC.conf", "GLOBAL.conf", "IDENTITY_ACCESS.conf",
+constexpr std::array<const char*, 9> CONFIG_FILES = {
+    "AUDIT.conf", "DAC.conf", "DC.conf", "GLOBAL.conf", "IDENTITY_ACCESS.conf",
     "FIREWALL.conf", "NET.conf", "OSS.conf", "SYSCTL.conf"
 };
 

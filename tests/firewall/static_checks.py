@@ -36,7 +36,7 @@ def main():
     require(
         "reconcileFirewall" in daemon
         and "run_daemon_apply_all_pass" in daemon
-        and 'applyAllPoliciesExceptModule(\n        policyMap, "FIREWALL")' in daemon,
+        and 'applyAllPoliciesExceptModule(\n        policyRegistry, "FIREWALL")' in daemon,
         "daemon startup/periodic pass does not reconcile FIREWALL",
     )
     process_options = (

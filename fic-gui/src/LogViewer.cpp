@@ -3,11 +3,13 @@
 
 #include <QFileDialog>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QItemSelectionModel>
-#include <QLayout>
+#include <QLabel>
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QTextOption>
+#include <QVBoxLayout>
 
 namespace {
 QString levelLabel(logLevel level)
@@ -23,6 +25,13 @@ LogViewer::LogViewer(QWidget *parent)
     , proxyModel_(new LogFilterProxyModel(this))
 {
     proxyModel_->setSourceModel(model_);
+    setupUi();
+    setupTableView();
+    populateStaticControls();
+    setupConnections();
+    uiInitialized_ = true;
+    loadLogs();
+    service_->start();
 }
 
 LogViewer::~LogViewer()
@@ -32,43 +41,58 @@ LogViewer::~LogViewer()
     }
 }
 
-void LogViewer::initializeUI(
-    QComboBox *comboLogLevel,
-    QComboBox *comboLogType,
-    QLineEdit *lineEditSearch,
-    QCheckBox *checkAutoScroll,
-    QCheckBox *checkWordWrap,
-    QCheckBox *checkPause,
-    QPushButton *btnRefresh,
-    QPushButton *btnClear,
-    QPushButton *btnExport,
-    QTextBrowser *textBrowserPlaceholder,
-    QLabel *labelLogCount,
-    QLabel *labelLogSize,
-    QLabel *labelLastUpdate
-)
+void LogViewer::setupUi()
 {
-    comboLogLevel_ = comboLogLevel;
-    comboLogType_ = comboLogType;
-    lineEditSearch_ = lineEditSearch;
-    checkAutoScroll_ = checkAutoScroll;
-    checkWordWrap_ = checkWordWrap;
-    checkPause_ = checkPause;
-    btnRefresh_ = btnRefresh;
-    btnClear_ = btnClear;
-    btnExport_ = btnExport;
-    labelLogCount_ = labelLogCount;
-    labelLogSize_ = labelLogSize;
-    labelLastUpdate_ = labelLastUpdate;
+    auto* mainLayout = new QVBoxLayout(this);
+    auto* filters = new QHBoxLayout();
+    comboLogLevel_ = new QComboBox(this);
+    comboLogLevel_->addItems({QString::fromUtf8(u8"Все уровни"), "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"});
+    comboLogType_ = new QComboBox(this);
+    lineEditSearch_ = new QLineEdit(this);
+    lineEditSearch_->setPlaceholderText(QString::fromUtf8(u8"Поиск"));
+    filters->addWidget(new QLabel(QString::fromUtf8(u8"Уровень:"), this));
+    filters->addWidget(comboLogLevel_);
+    filters->addWidget(new QLabel(QString::fromUtf8(u8"Категория:"), this));
+    filters->addWidget(comboLogType_);
+    filters->addWidget(lineEditSearch_, 1);
+    mainLayout->addLayout(filters);
 
-    replacePlaceholderWidget(textBrowserPlaceholder);
-    setupTableView();
-    populateStaticControls();
-    setupConnections();
+    auto* actions = new QHBoxLayout();
+    checkAutoScroll_ = new QCheckBox(QString::fromUtf8(u8"Автопрокрутка"), this);
+    checkWordWrap_ = new QCheckBox(QString::fromUtf8(u8"Перенос строк"), this);
+    checkPause_ = new QCheckBox(QString::fromUtf8(u8"Пауза"), this);
+    btnRefresh_ = new QPushButton(QString::fromUtf8(u8"Обновить"), this);
+    btnClear_ = new QPushButton(QString::fromUtf8(u8"Очистить вид"), this);
+    btnExport_ = new QPushButton(QString::fromUtf8(u8"Экспорт"), this);
+    actions->addWidget(checkAutoScroll_);
+    actions->addWidget(checkWordWrap_);
+    actions->addWidget(checkPause_);
+    actions->addStretch();
+    actions->addWidget(btnRefresh_);
+    actions->addWidget(btnClear_);
+    actions->addWidget(btnExport_);
+    mainLayout->addLayout(actions);
 
-    uiInitialized_ = true;
-    loadLogs();
-    service_->start();
+    logSplitter_ = new QSplitter(Qt::Vertical, this);
+    tableView_ = new QTableView(logSplitter_);
+    detailsView_ = new QPlainTextEdit(logSplitter_);
+    detailsView_->setReadOnly(true);
+    detailsView_->setPlaceholderText(QString::fromUtf8(u8"Выберите запись, чтобы увидеть детали"));
+    logSplitter_->addWidget(tableView_);
+    logSplitter_->addWidget(detailsView_);
+    logSplitter_->setStretchFactor(0, 4);
+    logSplitter_->setStretchFactor(1, 1);
+    mainLayout->addWidget(logSplitter_, 1);
+
+    auto* status = new QHBoxLayout();
+    labelLogCount_ = new QLabel(this);
+    labelLogSize_ = new QLabel(this);
+    labelLastUpdate_ = new QLabel(this);
+    status->addWidget(labelLogCount_);
+    status->addWidget(labelLogSize_);
+    status->addStretch();
+    status->addWidget(labelLastUpdate_);
+    mainLayout->addLayout(status);
 }
 
 void LogViewer::loadLogs()
@@ -271,30 +295,6 @@ void LogViewer::setupConnections()
         connect(tableView_->selectionModel(), &QItemSelectionModel::selectionChanged,
                 this, &LogViewer::onSelectionChanged);
     }
-}
-
-void LogViewer::replacePlaceholderWidget(QTextBrowser *placeholder)
-{
-    QWidget *parentWidget = placeholder != nullptr ? placeholder->parentWidget() : nullptr;
-    QLayout *parentLayout = parentWidget != nullptr ? parentWidget->layout() : nullptr;
-    if (placeholder == nullptr || parentLayout == nullptr) {
-        return;
-    }
-
-    logSplitter_ = new QSplitter(Qt::Vertical, parentWidget);
-    tableView_ = new QTableView(logSplitter_);
-    detailsView_ = new QPlainTextEdit(logSplitter_);
-    detailsView_->setReadOnly(true);
-    detailsView_->setPlaceholderText(QString::fromUtf8(u8"Выберите запись, чтобы увидеть детали"));
-
-    logSplitter_->addWidget(tableView_);
-    logSplitter_->addWidget(detailsView_);
-    logSplitter_->setStretchFactor(0, 4);
-    logSplitter_->setStretchFactor(1, 1);
-
-    parentLayout->replaceWidget(placeholder, logSplitter_);
-    placeholder->hide();
-    placeholder->deleteLater();
 }
 
 void LogViewer::setupTableView()
