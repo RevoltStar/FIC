@@ -98,6 +98,7 @@ public:
     const_iterator find(const std::string& name) const { return modules_.find(name); }
     PolicyModule& at(const std::string& name) { return modules_.at(name); }
     const PolicyModule& at(const std::string& name) const { return modules_.at(name); }
+    void swap(PolicyRegistry& other) noexcept { modules_.swap(other.modules_); }
     void clear() { modules_.clear(); }
     bool empty() const { return modules_.empty(); }
     std::size_t size() const { return modules_.size(); }

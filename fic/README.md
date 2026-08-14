@@ -27,6 +27,13 @@
 - немедленно применяет все политики, модуль или отдельную политику;
 - выполняет вспомогательные действия: расчет hash для команд, lock/unlock/status.
 
+`PolicyRegistry` инициализируется fail-closed: production registry сначала
+полностью строится во временном объекте и только затем заменяет текущее
+состояние. Ошибка startup initialization завершает daemon до создания socket и
+до policy apply. Ошибка runtime reload сохраняет последний корректный registry;
+зависимые policy apply, DC regeneration и FIREWALL reconciliation не
+выполняются.
+
 Политики DC `block_usb_storage`, `block_printers_scanners` и
 `block_optical_drives` имеют фиксированное значение `true`; администратор
 управляет ими только через `enable_policy`/`disable_policy`.

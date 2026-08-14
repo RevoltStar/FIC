@@ -171,7 +171,9 @@ bool enable(PolicyRegistry& policyRegistry, std::string module, std::string poli
 bool set(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string value);
 
 
-PolicyRegistry initPolicyRegistry(
+bool initPolicyRegistry(
     const fic::platform::PlatformProfile& platform,
-    const fic::platform::PlatformExecutableResolver& executables);
+    const fic::platform::PlatformExecutableResolver& executables,
+    PolicyRegistry& registry,
+    std::string& error);
 #endif // MAIN_FUNCTION_H

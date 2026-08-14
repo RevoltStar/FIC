@@ -169,7 +169,8 @@ flowchart TD
     osRelease -->|совместим| locale[Инициализация локали]
     locale --> initMap[initPolicyRegistry]
     compiled --> initMap
-    initMap --> oneshot{--oneshot?}
+    initMap -->|ошибка| initFatal([exit with error])
+    initMap -->|успех| oneshot{--oneshot?}
 
     oneshot -->|да| applyOnce[apply all enabled policies]
     applyOnce --> exitOnce([exit])
@@ -177,12 +178,13 @@ flowchart TD
     oneshot -->|нет| socketPath["Выбор socket path<br/>--socket или /run/fic/fic.sock"]
     socketPath --> interval["Выбор interval<br/>--interval или 1800 сек"]
     interval --> signals[Регистрация SIGTERM/SIGINT]
-    signals --> createSocket[create_server_socket]
-    createSocket --> startupApply[initPolicyRegistry + apply enabled non-FIREWALL policies]
-    startupApply --> startupFirewall[FIREWALL full reconciliation]
+    signals --> startupApply[fail-closed initPolicyRegistry + apply enabled non-FIREWALL policies]
+    startupApply -->|registry rebuild error| registryFatal([audit + exit with error])
+    startupApply -->|registry rebuild success| startupFirewall[FIREWALL full reconciliation]
     startupFirewall -->|есть ошибки| startupWarn[записать ошибку и продолжить]
-    startupFirewall -->|успешно| started[fic daemon started]
-    startupWarn --> started
+    startupFirewall -->|успешно| createSocket[create_server_socket]
+    startupWarn --> createSocket
+    createSocket --> started[fic daemon started]
     started --> mainLoop{g_stop == false}
 
     mainLoop --> poll[AdminSocketTransport poll]
@@ -194,7 +196,9 @@ flowchart TD
 
     ready -->|нет| periodic{пора periodic apply?}
     periodic -->|да| reload[initPolicyRegistry]
-    reload --> applyAll[apply enabled non-FIREWALL policies]
+    reload -->|ошибка| keepRegistry[сохранить последний корректный registry<br/>audit error; skip apply/firewall]
+    keepRegistry --> schedule
+    reload -->|успех| applyAll[apply enabled non-FIREWALL policies]
     applyAll --> firewallReconcile[FIREWALL full reconciliation]
     firewallReconcile --> schedule[обновить nextPeriodicApply]
     schedule --> mainLoop
@@ -207,7 +211,11 @@ flowchart TD
 Профиль выбирается только во время сборки. Runtime-проверка не ищет другой
 профиль, а fail-closed подтверждает, что пакет запущен на предназначенной для
 него ОС. `initPolicyRegistry()` передает один и тот же immutable профиль политикам
-при первой и каждой последующей инициализации. Профиль владеет интеграционными
+при первой и каждой последующей инициализации. Registry строится во временном
+объекте и заменяет текущее состояние только после полного успеха. Ошибка
+первичной инициализации останавливает daemon до создания socket; ошибка runtime
+reload сохраняет последний корректный registry и запрещает связанный apply и
+FIREWALL reconciliation. Профиль владеет интеграционными
 данными systemd/login, SSH, sudo, PAM, display manager и DAC. Кандидаты команд
 хранятся в едином типизированном реестре, а политики получают выбранный путь
 через общий `PlatformExecutableResolver`; выбор backend конкретной графической
@@ -319,18 +327,22 @@ flowchart TD
     validate --> postprocess[policy.postprocessingValue]
     postprocess --> moduleConfig[ModuleConfigFileHandler module]
     moduleConfig --> saveValue[setValue and saveConfig]
-    saveValue --> reloadAfterSet[initPolicyRegistry]
+    saveValue --> reloadAfterSet[fail-closed initPolicyRegistry]
+    reloadAfterSet -->|ошибка| savedButNotLoaded[API error: config saved,<br/>old registry retained]
 
     commandType -->|enable_policy| enableFn[enable]
     enableFn --> enableConfig[ModuleConfigFileHandler.enableParam]
-    enableConfig --> reloadAfterEnable[initPolicyRegistry]
+    enableConfig --> reloadAfterEnable[fail-closed initPolicyRegistry]
+    reloadAfterEnable -->|ошибка| savedButNotLoaded
 
     commandType -->|disable_policy| disableFn[disable]
     disableFn --> disableConfig[ModuleConfigFileHandler.disableParam]
-    disableConfig --> reloadAfterDisable[initPolicyRegistry]
+    disableConfig --> reloadAfterDisable[fail-closed initPolicyRegistry]
+    reloadAfterDisable -->|ошибка| savedButNotLoaded
 
-    commandType -->|apply_all / apply_module / apply_policy| reloadBeforeApply[initPolicyRegistry]
-    reloadBeforeApply --> apply[apply]
+    commandType -->|apply_all / apply_module / apply_policy| reloadBeforeApply[fail-closed initPolicyRegistry]
+    reloadBeforeApply -->|ошибка| applyRejected[API error; no policy apply]
+    reloadBeforeApply -->|успех| apply[apply]
     apply --> chooseScope{scope}
     chooseScope -->|all| allModules[iterate all modules]
     chooseScope -->|module all| oneModule[iterate module policies]

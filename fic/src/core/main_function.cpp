@@ -553,10 +553,14 @@ bool set(PolicyRegistry& policyRegistry, std::string module, std::string policy,
 }
 
 /*Ининциализируем массив классов*/
-PolicyRegistry initPolicyRegistry(
+bool initPolicyRegistry(
     const fic::platform::PlatformProfile& platform,
-    const fic::platform::PlatformExecutableResolver& executables){
-    std::vector<std::unique_ptr<Policy>> cafArr;
+    const fic::platform::PlatformExecutableResolver& executables,
+    PolicyRegistry& registry,
+    std::string& error)
+{
+    return rebuildPolicyRegistry([&]() {
+        PolicyList cafArr;
 
     //Дискреционное разграничение доступа (DAC)
     cafArr.push_back(std::make_unique<DAC_systemcommandlock>(platform.dac));
@@ -683,19 +687,11 @@ PolicyRegistry initPolicyRegistry(
     cafArr.push_back(std::make_unique<AUDIT_log_level>());
     cafArr.push_back(std::make_unique<GLOBAL_lang>());
     //Для удобства отсортируем в массив вида "модуль->подмодуль->политика->класс,представляющий политику для данного модуля"
-    PolicyRegistry policyRegistry;
-
     for (auto& policyClass : cafArr) {
         if (auto* sysctlPolicy = dynamic_cast<Sysctl*>(policyClass.get())) {
             sysctlPolicy->setPlatformConfig(platform.sysctl);
         }
     }
-
-    std::string registrationError;
-    if (!buildPolicyRegistry(std::move(cafArr), policyRegistry, registrationError)) {
-        std::cerr << "Не удалось инициализировать PolicyRegistry: "
-                  << registrationError << std::endl;
-        policyRegistry.clear();
-    }
-    return policyRegistry;
+        return cafArr;
+    }, registry, error);
 }

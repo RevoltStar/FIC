@@ -17,6 +17,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -54,11 +55,13 @@ int main()
     std::string error;
     assert(fic::core::FicRuntimePaths::initialize(paths, error));
 
-    std::vector<std::unique_ptr<Policy>> policies;
-    policies.push_back(std::make_unique<AUDIT_log_level>());
-    policies.push_back(std::make_unique<GLOBAL_lang>());
     PolicyRegistry registry;
-    assert(buildPolicyRegistry(std::move(policies), registry, error));
+    assert(rebuildPolicyRegistry([] {
+        PolicyList policies;
+        policies.push_back(std::make_unique<AUDIT_log_level>());
+        policies.push_back(std::make_unique<GLOBAL_lang>());
+        return policies;
+    }, registry, error));
 
     assert(registry.at("DC").view == ModuleView::Device);
     assert(registry.at("AUDIT").view == ModuleView::Audit);
@@ -70,20 +73,56 @@ int main()
     assert(registry.at("DAC").submodules.empty());
 
     const nlohmann::json descriptors = moduleDescriptorsJson(registry);
-    assert(descriptors.size() == 9);
-    assert(descriptors.at(0) == nlohmann::json({{"name", "AUDIT"}, {"view", "audit"}}));
-    assert(descriptors.at(2) == nlohmann::json({{"name", "DC"}, {"view", "device"}}));
+    assert(descriptors == nlohmann::json::array({
+        {{"name", "AUDIT"}, {"view", "audit"}},
+        {{"name", "DAC"}, {"view", "standard"}},
+        {{"name", "DC"}, {"view", "device"}},
+        {{"name", "FIREWALL"}, {"view", "standard"}},
+        {{"name", "GLOBAL"}, {"view", "standard"}},
+        {{"name", "IDENTITY_ACCESS"}, {"view", "standard"}},
+        {{"name", "NET"}, {"view", "standard"}},
+        {{"name", "OSS"}, {"view", "standard"}},
+        {{"name", "SYSCTL"}, {"view", "standard"}}
+    }));
     for (const auto& descriptor : descriptors) {
         assert(descriptor.size() == 2);
         assert(descriptor.contains("name"));
         assert(descriptor.contains("view"));
     }
 
-    PolicyRegistry invalidRegistry;
-    assert(invalidRegistry.addModule("DAC", ModuleView::Standard, error));
-    assert(!invalidRegistry.addPolicy(std::make_unique<UnknownModulePolicy>(), error));
+    Policy* const originalAuditPolicy =
+        registry.at("AUDIT").submodules.at("logging").at("log_level").get();
+
+    std::vector<std::unique_ptr<Policy>> unknownModulePolicies;
+    unknownModulePolicies.push_back(std::make_unique<UnknownModulePolicy>());
+    assert(!buildPolicyRegistry(
+        std::move(unknownModulePolicies), registry, error));
     assert(error == "policy references unknown module: UNKNOWN");
-    assert(!invalidRegistry.addModule("DAC", ModuleView::Audit, error));
+    assert(moduleDescriptorsJson(registry) == descriptors);
+    assert(registry.at("AUDIT").submodules.at("logging").at("log_level").get() ==
+           originalAuditPolicy);
+    assert(!registry.empty());
+
+    std::vector<std::unique_ptr<Policy>> duplicatePolicies;
+    duplicatePolicies.push_back(std::make_unique<AUDIT_log_level>());
+    duplicatePolicies.push_back(std::make_unique<AUDIT_log_level>());
+    assert(!buildPolicyRegistry(std::move(duplicatePolicies), registry, error));
+    assert(error == "duplicate policy registration: AUDIT/logging/log_level");
+    assert(moduleDescriptorsJson(registry) == descriptors);
+    assert(registry.at("AUDIT").submodules.at("logging").at("log_level").get() ==
+           originalAuditPolicy);
+
+    assert(!rebuildPolicyRegistry([]() -> std::vector<std::unique_ptr<Policy>> {
+        throw std::runtime_error("policy constructor failed");
+    }, registry, error));
+    assert(error == "PolicyRegistry policy creation failed: policy constructor failed");
+    assert(moduleDescriptorsJson(registry) == descriptors);
+    assert(registry.at("AUDIT").submodules.at("logging").at("log_level").get() ==
+           originalAuditPolicy);
+
+    PolicyRegistry metadataConflictRegistry;
+    assert(metadataConflictRegistry.addModule("DAC", ModuleView::Standard, error));
+    assert(!metadataConflictRegistry.addModule("DAC", ModuleView::Audit, error));
     assert(error == "conflicting view for module: DAC");
 
     Logger::ScopedCapture capture;

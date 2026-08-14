@@ -434,9 +434,26 @@ bool run_daemon_apply_all_pass(
     PolicyRegistry& policyRegistry,
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
-    const std::string& reason
+    const std::string& reason,
+    bool* registryReloadFailed = nullptr
 ) {
-    policyRegistry = initPolicyRegistry(platform, executables);
+    if (registryReloadFailed != nullptr) {
+        *registryReloadFailed = false;
+    }
+    std::string registryError;
+    if (!initPolicyRegistry(
+            platform, executables, policyRegistry, registryError)) {
+        if (registryReloadFailed != nullptr) {
+            *registryReloadFailed = true;
+        }
+        const std::string message =
+            "policy apply pass reason=" + sanitize_log_value(reason) +
+            " ok=false registry_reload=failed error=\"" +
+            sanitize_log_value(registryError) + "\"";
+        std::cerr << message << std::endl;
+        write_audit_log(message);
+        return false;
+    }
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(
         policyRegistry, "FIREWALL");
     std::string firewallError;
@@ -618,6 +635,16 @@ json handle_request(json request,
             "DC configuration was saved, but generated device policy was not activated: " +
             response.value("message", "unknown device daemon error"));
     };
+    auto reloadRegistry = [&]() -> std::optional<std::string> {
+        std::string reloadError;
+        if (initPolicyRegistry(
+                platform, executables, policyRegistry, reloadError)) {
+            return std::nullopt;
+        }
+        return reloadError.empty()
+            ? std::optional<std::string>("unknown PolicyRegistry initialization error")
+            : std::optional<std::string>(std::move(reloadError));
+    };
 
     try {
         if (command == "status") {
@@ -688,7 +715,11 @@ json handle_request(json request,
             }
             bool ok = set(policyRegistry, module, policy, value);
             if (ok) {
-                policyRegistry = initPolicyRegistry(platform, executables);
+                if (auto reloadError = reloadRegistry()) {
+                    return fic::ipc::make_error_response(
+                        "policy value was saved, but PolicyRegistry reload failed: " +
+                        reloadError.value());
+                }
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
                 }
@@ -699,7 +730,11 @@ json handle_request(json request,
         if (command == "enable_policy") {
             bool ok = enable(policyRegistry, module, policy);
             if (ok) {
-                policyRegistry = initPolicyRegistry(platform, executables);
+                if (auto reloadError = reloadRegistry()) {
+                    return fic::ipc::make_error_response(
+                        "policy was enabled in configuration, but PolicyRegistry reload failed: " +
+                        reloadError.value());
+                }
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
                 }
@@ -710,7 +745,11 @@ json handle_request(json request,
         if (command == "disable_policy") {
             bool ok = disable(policyRegistry, module, policy);
             if (ok) {
-                policyRegistry = initPolicyRegistry(platform, executables);
+                if (auto reloadError = reloadRegistry()) {
+                    return fic::ipc::make_error_response(
+                        "policy was disabled in configuration, but PolicyRegistry reload failed: " +
+                        reloadError.value());
+                }
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
                 }
@@ -719,14 +758,21 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to disable policy");
         }
         if (command == "reload_config") {
-            policyRegistry = initPolicyRegistry(platform, executables);
+            if (auto reloadError = reloadRegistry()) {
+                return fic::ipc::make_error_response(
+                    "failed to reload PolicyRegistry: " + reloadError.value());
+            }
             if (auto failure = regenerateDevicePolicyIfNeeded(true)) {
                 return failure.value();
             }
             return fic::ipc::make_ok_response("config reloaded");
         }
         if (command == "apply_all") {
-            policyRegistry = initPolicyRegistry(platform, executables);
+            if (auto reloadError = reloadRegistry()) {
+                return fic::ipc::make_error_response(
+                    "policies were not applied because PolicyRegistry reload failed: " +
+                    reloadError.value());
+            }
             PolicyApplySummary summary = applyAllPolicies(policyRegistry);
             const bool ok = isPolicyApplySuccessful(summary, "all", "");
             return policy_apply_summary_json(
@@ -739,7 +785,11 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            policyRegistry = initPolicyRegistry(platform, executables);
+            if (auto reloadError = reloadRegistry()) {
+                return fic::ipc::make_error_response(
+                    "module policies were not applied because PolicyRegistry reload failed: " +
+                    reloadError.value());
+            }
             PolicyApplySummary summary = applyModulePolicies(policyRegistry, module);
             const bool ok = isPolicyApplySuccessful(summary, module, "all");
             return policy_apply_summary_json(
@@ -752,7 +802,11 @@ json handle_request(json request,
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            policyRegistry = initPolicyRegistry(platform, executables);
+            if (auto reloadError = reloadRegistry()) {
+                return fic::ipc::make_error_response(
+                    "policy was not applied because PolicyRegistry reload failed: " +
+                    reloadError.value());
+            }
             PolicyApplySummary summary;
             summary.add(applyPolicy(policyRegistry, module, policy));
             const bool ok = isPolicyApplySuccessful(summary, module, policy);
@@ -1099,7 +1153,14 @@ int main(int argc, char* argv[]) {
     }
 
     const bool once = get_arg_value(argc, argv, 1) == "--oneshot";
-    auto policyRegistry = initPolicyRegistry(platform, executables);
+    PolicyRegistry policyRegistry;
+    std::string registryError;
+    if (!initPolicyRegistry(
+            platform, executables, policyRegistry, registryError)) {
+        std::cerr << "failed to initialize PolicyRegistry: "
+                  << registryError << std::endl;
+        return 1;
+    }
 
     if (once) {
         return apply(policyRegistry, "all", "") ? 0 : 1;
@@ -1110,6 +1171,21 @@ int main(int argc, char* argv[]) {
 
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
+
+    bool startupRegistryReloadFailed = false;
+    const bool startupApplyOk = run_daemon_apply_all_pass(
+        policyRegistry, platform, executables, "startup",
+        &startupRegistryReloadFailed);
+    if (startupRegistryReloadFailed) {
+        std::cerr << "fic daemon startup aborted because PolicyRegistry reload failed"
+                  << std::endl;
+        return 1;
+    }
+    if (!startupApplyOk) {
+        std::cerr << "fic daemon startup policy apply completed with errors; "
+                     "daemon will continue running"
+                  << std::endl;
+    }
 
     fic::ipc::AdminSocketOptions socketOptions;
     socketOptions.socketPath = socketPath;
@@ -1130,14 +1206,6 @@ int main(int argc, char* argv[]) {
     }
     const int serverFd = socketResult.fileDescriptor;
     fic::ipc::AdminSocketTransport transport(serverFd);
-
-    const bool startupApplyOk =
-        run_daemon_apply_all_pass(policyRegistry, platform, executables, "startup");
-    if (!startupApplyOk) {
-        std::cerr << "fic daemon startup policy apply completed with errors; "
-                     "daemon will continue running"
-                  << std::endl;
-    }
 
     std::cout << "fic daemon started, socket=" << socketPath
               << ", interval=" << intervalSeconds << "s"
