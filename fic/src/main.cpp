@@ -158,6 +158,8 @@ std::string request_audit_summary(const json& request) {
 }
 
 void write_audit_log(const std::string& message) {
+    // Security audit is always-on and intentionally bypasses Logger and
+    // AUDIT/log_level, including its NoLog value.
     try {
         const std::string bootId = SystemBootInfo::get_boot_id();
         const std::filesystem::path auditDir = fic::core::FicRuntimePaths::get().logDir /

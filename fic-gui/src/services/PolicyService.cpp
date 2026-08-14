@@ -1,14 +1,49 @@
 #include "services/PolicyService.h"
 
+#include <utility>
+
 #include <nlohmann/json.hpp>
 
 #include <fic/ipc/FicIpcClient.h>
+
+namespace {
+bool requireSuccessfulResponse(const nlohmann::json& response,
+                               const char* operation,
+                               QString& error)
+{
+    if (!response.is_object() || !response.contains("ok") ||
+        !response["ok"].is_boolean() || !response.contains("message") ||
+        !response["message"].is_string()) {
+        error = QString("%1 protocol error: daemon response must contain boolean ok and string message")
+            .arg(operation);
+        return false;
+    }
+    if (!response["ok"].get<bool>()) {
+        error = QString::fromStdString(response["message"].get<std::string>());
+        return false;
+    }
+    return true;
+}
+}
+
+PolicyService::PolicyService(RequestFunction request)
+    : request_(std::move(request))
+{
+}
+
+nlohmann::json PolicyService::request(const nlohmann::json& payload) const
+{
+    if (request_) {
+        return request_(payload);
+    }
+    return fic::ipc::Client().request(payload);
+}
 
 bool PolicyService::loadModules(
     std::vector<ModuleDescriptor>& modules,
     QString& error) const
 {
-    const auto response = fic::ipc::Client().request({{"command", "module_list"}});
+    const auto response = request({{"command", "module_list"}});
     std::string parseError;
     const bool ok = parseModuleDescriptors(response, modules, parseError);
     error = QString::fromStdString(parseError);
@@ -20,7 +55,7 @@ bool PolicyService::loadPolicies(
     std::vector<PolicyDescriptor>& policies,
     QString& error) const
 {
-    const auto response = fic::ipc::Client().request({
+    const auto response = request({
         {"command", "policy_list"}, {"module", module}
     });
     std::string parseError;
@@ -35,30 +70,32 @@ bool PolicyService::applyChanges(
     nlohmann::json& applyResponse,
     QString& error) const
 {
-    fic::ipc::Client client;
+    error.clear();
+    applyResponse = nlohmann::json();
     for (const PolicyChange& change : changes) {
         if (change.valueConfigurable) {
-            const auto response = client.request({
+            const auto response = request({
                 {"command", "set_policy_value"},
                 {"module", module},
                 {"policy", change.policyName},
                 {"value", change.value}
             });
-            if (!response.value("ok", false)) {
-                error = QString::fromStdString(response.value("message", "failed to set policy value"));
+            if (!requireSuccessfulResponse(response, "set_policy_value", error)) {
                 return false;
             }
         }
-        const auto response = client.request({
+        const auto response = request({
             {"command", change.enabled ? "enable_policy" : "disable_policy"},
             {"module", module},
             {"policy", change.policyName}
         });
-        if (!response.value("ok", false)) {
-            error = QString::fromStdString(response.value("message", "failed to change policy state"));
+        if (!requireSuccessfulResponse(
+                response,
+                change.enabled ? "enable_policy" : "disable_policy",
+                error)) {
             return false;
         }
     }
-    applyResponse = client.request({{"command", "apply_module"}, {"module", module}});
-    return true;
+    applyResponse = request({{"command", "apply_module"}, {"module", module}});
+    return requireSuccessfulResponse(applyResponse, "apply_module", error);
 }

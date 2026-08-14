@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QPalette>
 
+#include "wrappers/QLocalizationManager.h"
+
 LogModel::LogModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
@@ -100,15 +102,15 @@ QVariant LogModel::headerData(int section, Qt::Orientation orientation, int role
 
     switch (section) {
     case TimestampColumn:
-        return QString::fromUtf8(u8"Время");
+        return QLocalizationManager::getLang("[logs:ui][time]");
     case LevelColumn:
-        return QString::fromUtf8(u8"Уровень");
+        return QLocalizationManager::getLang("[logs:ui][level_plain]");
     case CategoryColumn:
-        return QString::fromUtf8(u8"Категория");
+        return QLocalizationManager::getLang("[logs:ui][category_plain]");
     case MessageColumn:
-        return QString::fromUtf8(u8"Сообщение");
+        return QLocalizationManager::getLang("[logs:ui][message]");
     case SourceColumn:
-        return QString::fromUtf8(u8"Источник");
+        return QLocalizationManager::getLang("[logs:ui][source]");
     default:
         return {};
     }

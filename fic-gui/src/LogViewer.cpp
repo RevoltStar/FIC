@@ -11,7 +11,15 @@
 #include <QTextOption>
 #include <QVBoxLayout>
 
+#include "wrappers/QLocalizationManager.h"
+
 namespace {
+QString logText(const char* key)
+{
+    return QLocalizationManager::getLang(
+        QString::fromLatin1("[logs:ui][") + QString::fromLatin1(key) + ']');
+}
+
 QString levelLabel(logLevel level)
 {
     return logLevelToString(level);
@@ -46,24 +54,24 @@ void LogViewer::setupUi()
     auto* mainLayout = new QVBoxLayout(this);
     auto* filters = new QHBoxLayout();
     comboLogLevel_ = new QComboBox(this);
-    comboLogLevel_->addItems({QString::fromUtf8(u8"Все уровни"), "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"});
+    comboLogLevel_->addItems({logText("all_levels"), "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"});
     comboLogType_ = new QComboBox(this);
     lineEditSearch_ = new QLineEdit(this);
-    lineEditSearch_->setPlaceholderText(QString::fromUtf8(u8"Поиск"));
-    filters->addWidget(new QLabel(QString::fromUtf8(u8"Уровень:"), this));
+    lineEditSearch_->setPlaceholderText(logText("search"));
+    filters->addWidget(new QLabel(logText("level"), this));
     filters->addWidget(comboLogLevel_);
-    filters->addWidget(new QLabel(QString::fromUtf8(u8"Категория:"), this));
+    filters->addWidget(new QLabel(logText("category"), this));
     filters->addWidget(comboLogType_);
     filters->addWidget(lineEditSearch_, 1);
     mainLayout->addLayout(filters);
 
     auto* actions = new QHBoxLayout();
-    checkAutoScroll_ = new QCheckBox(QString::fromUtf8(u8"Автопрокрутка"), this);
-    checkWordWrap_ = new QCheckBox(QString::fromUtf8(u8"Перенос строк"), this);
-    checkPause_ = new QCheckBox(QString::fromUtf8(u8"Пауза"), this);
-    btnRefresh_ = new QPushButton(QString::fromUtf8(u8"Обновить"), this);
-    btnClear_ = new QPushButton(QString::fromUtf8(u8"Очистить вид"), this);
-    btnExport_ = new QPushButton(QString::fromUtf8(u8"Экспорт"), this);
+    checkAutoScroll_ = new QCheckBox(logText("auto_scroll"), this);
+    checkWordWrap_ = new QCheckBox(logText("word_wrap"), this);
+    checkPause_ = new QCheckBox(logText("pause"), this);
+    btnRefresh_ = new QPushButton(logText("refresh"), this);
+    btnClear_ = new QPushButton(logText("clear_view"), this);
+    btnExport_ = new QPushButton(logText("export"), this);
     actions->addWidget(checkAutoScroll_);
     actions->addWidget(checkWordWrap_);
     actions->addWidget(checkPause_);
@@ -77,7 +85,7 @@ void LogViewer::setupUi()
     tableView_ = new QTableView(logSplitter_);
     detailsView_ = new QPlainTextEdit(logSplitter_);
     detailsView_->setReadOnly(true);
-    detailsView_->setPlaceholderText(QString::fromUtf8(u8"Выберите запись, чтобы увидеть детали"));
+    detailsView_->setPlaceholderText(logText("details_placeholder"));
     logSplitter_->addWidget(tableView_);
     logSplitter_->addWidget(detailsView_);
     logSplitter_->setStretchFactor(0, 4);
@@ -126,9 +134,9 @@ void LogViewer::exportLogs()
 
     const QString fileName = QFileDialog::getSaveFileName(
         this,
-        QString::fromUtf8(u8"Экспорт логов"),
+        logText("export_title"),
         defaultName,
-        QStringLiteral("Text Files (*.txt);;All Files (*)"));
+        logText("export_filter"));
 
     if (fileName.isEmpty()) {
         return;
@@ -137,8 +145,8 @@ void LogViewer::exportLogs()
     QFile file(fileName);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         QMessageBox::critical(this,
-                              QString::fromUtf8(u8"Ошибка"),
-                              QString::fromUtf8(u8"Не удалось сохранить файл экспорта."));
+                              logText("error_title"),
+                              logText("export_error"));
         return;
     }
 
@@ -233,7 +241,7 @@ void LogViewer::onCategoriesChanged(const QStringList &categories)
 
     comboLogType_->blockSignals(true);
     comboLogType_->clear();
-    comboLogType_->addItem(QString::fromUtf8(u8"Все категории"), QStringLiteral("all"));
+    comboLogType_->addItem(logText("category_all"), QStringLiteral("all"));
     for (const QString &category : categories) {
         comboLogType_->addItem(categoryLabel(category), category);
     }
@@ -325,7 +333,7 @@ void LogViewer::populateStaticControls()
     comboLogLevel_->blockSignals(false);
 
     comboLogType_->clear();
-    comboLogType_->addItem(QString::fromUtf8(u8"Все категории"), QStringLiteral("all"));
+    comboLogType_->addItem(logText("category_all"), QStringLiteral("all"));
     comboLogType_->setCurrentIndex(0);
 
     checkAutoScroll_->setChecked(true);
@@ -343,14 +351,14 @@ void LogViewer::updateStatusBar()
     }
 
     const int visibleCount = proxyModel_->rowCount();
-    labelLogCount_->setText(QString::fromUtf8(u8"Сообщений: %1").arg(visibleCount));
-    labelLogSize_->setText(QString::fromUtf8(u8"Размер: %1 KB").arg(filteredByteSize() / 1024.0, 0, 'f', 1));
+    labelLogCount_->setText(logText("message_count").arg(visibleCount));
+    labelLogSize_->setText(logText("size_kb").arg(filteredByteSize() / 1024.0, 0, 'f', 1));
 
     if (lastUpdate_.isValid()) {
         labelLastUpdate_->setText(
-            QString::fromUtf8(u8"Обновлено: %1").arg(lastUpdate_.toString(QStringLiteral("hh:mm:ss"))));
+            logText("updated_at").arg(lastUpdate_.toString(QStringLiteral("hh:mm:ss"))));
     } else {
-        labelLastUpdate_->setText(QString::fromUtf8(u8"Обновлено: никогда"));
+        labelLastUpdate_->setText(logText("updated_never"));
     }
 }
 
@@ -367,11 +375,11 @@ void LogViewer::updateDetailsPane()
         return;
     }
 
-    const QString details = QString::fromUtf8(u8"Время: %1\nУровень: %2\nКатегория: %3\nИсточник: %4\n\n%5")
-        .arg(record.timestampText,
-             levelLabel(record.level),
-             categoryLabel(record.category),
-             record.sourceFile,
+    const QString details = QStringLiteral("%1: %2\n%3: %4\n%5: %6\n%7: %8\n\n%9")
+        .arg(logText("time"), record.timestampText,
+             logText("level_plain"), levelLabel(record.level),
+             logText("category_plain"), categoryLabel(record.category),
+             logText("source"), record.sourceFile,
              record.message);
     detailsView_->setPlainText(details);
 }
@@ -397,19 +405,19 @@ void LogViewer::applyWordWrapSetting()
 QString LogViewer::categoryLabel(const QString &category) const
 {
     if (category == QStringLiteral("db")) {
-        return QString::fromUtf8(u8"База данных");
+        return logText("category_db");
     }
     if (category == QStringLiteral("devices")) {
-        return QString::fromUtf8(u8"Устройства");
+        return logText("category_devices");
     }
     if (category == QStringLiteral("daemon")) {
-        return QString::fromUtf8(u8"Демон");
+        return logText("category_daemon");
     }
     if (category == QStringLiteral("unclassified")) {
-        return QString::fromUtf8(u8"Неклассифицированные");
+        return logText("category_unclassified");
     }
     if (category == QStringLiteral("all")) {
-        return QString::fromUtf8(u8"Все категории");
+        return logText("category_all");
     }
 
     return category;

@@ -1,5 +1,7 @@
 #include "main_function.h"
 
+#include "core/PolicyRegistryInitialization.h"
+
 #include <fic/core/CommandHashStore.h>
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/VerifiedProcessExecutor.h>
@@ -684,28 +686,16 @@ PolicyRegistry initPolicyRegistry(
     PolicyRegistry policyRegistry;
 
     for (auto& policyClass : cafArr) {
-            if (auto* sysctlPolicy = dynamic_cast<Sysctl*>(policyClass.get())) {
-                sysctlPolicy->setPlatformConfig(platform.sysctl);
-            }
-            //std::cout << policyClass->moduleName << std::endl;
-            //std::cout << policyClass->submoduleName << std::endl;
-            //std::cout << policyClass->policyName << std::endl;
-            if(policyClass->moduleName == "" || policyClass->policyName == "" || policyClass->submoduleName == ""){
-                if(policyClass->submoduleName == ""){
-                    //submodule пуст -> нужно быть осторожным и следить, чтобы это поле не было пусто когда не надо
-                }else{
-                    std::cerr << "Не заданы значения moduleName, policyName. Требуется проверить код!" << std::endl;
-                    policyRegistry.clear();
-                    return policyRegistry;
-                }
-            }
-            const std::string moduleName = policyClass->moduleName;
-            auto [moduleIt, inserted] = policyRegistry.try_emplace(moduleName);
-            if (inserted) {
-                moduleIt->second.view = moduleViewForName(moduleName);
-            }
-            moduleIt->second.submodules[policyClass->submoduleName][policyClass->policyName] =
-                std::move(policyClass);
+        if (auto* sysctlPolicy = dynamic_cast<Sysctl*>(policyClass.get())) {
+            sysctlPolicy->setPlatformConfig(platform.sysctl);
+        }
+    }
+
+    std::string registrationError;
+    if (!buildPolicyRegistry(std::move(cafArr), policyRegistry, registrationError)) {
+        std::cerr << "Не удалось инициализировать PolicyRegistry: "
+                  << registrationError << std::endl;
+        policyRegistry.clear();
     }
     return policyRegistry;
 }

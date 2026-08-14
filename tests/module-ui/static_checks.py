@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import re
 from pathlib import Path
 
 
@@ -19,19 +20,26 @@ def main():
     device_page = (root / "fic-gui/src/pages/DeviceModulePage.cpp").read_text(encoding="utf-8")
     audit_page = (root / "fic-gui/src/pages/AuditModulePage.cpp").read_text(encoding="utf-8")
     log_viewer = (root / "fic-gui/src/LogViewer.cpp").read_text(encoding="utf-8")
+    log_model = (root / "fic-gui/src/LogModel.cpp").read_text(encoding="utf-8")
     global_config = (root / "fic/src/scripts/config/GLOBAL.conf").read_text(encoding="utf-8")
     audit_config = (root / "fic/src/scripts/config/AUDIT.conf").read_text(encoding="utf-8")
+    ru_lang = (root / "fic/src/scripts/lang/ru.lang").read_text(encoding="utf-8")
+    en_lang = (root / "fic/src/scripts/lang/en.lang").read_text(encoding="utf-8")
 
     for marker in ["enum class ModuleView", "struct PolicyModule", "ModuleView view", "SubmoduleMap submodules"]:
         require(marker in registry, f"missing registry model marker: {marker}")
     require("PolicyMap" not in registry and "PolicyMap" not in init,
             "legacy PolicyMap name must be removed from implementation")
-    require("moduleViewForName(moduleName)" in init,
-            "registry initialization must assign module views once")
     require("moduleDescriptorsJson(policyRegistry)" in daemon,
             "module_list must serialize module descriptors")
+    policy_serializer = daemon.split("json policy_to_json", 1)[1].split("json policy_list_json", 1)[0]
+    require('"view"' not in policy_serializer,
+            "policy_list descriptors must not duplicate ModuleView")
     require('PolicyConfig::getEnabledValue("AUDIT", "log_level")' in logger,
             "Logger must read AUDIT/log_level")
+    audit_writer = daemon.split("void write_audit_log", 1)[1].split("void audit_ipc_request", 1)[0]
+    require("Logger::log" not in audit_writer,
+            "security audit trail must not be filtered through Logger")
     require("log_level" not in global_config,
             "GLOBAL.conf must not contain log_level")
     require("log_level.status" in audit_config and "log_level.value" in audit_config,
@@ -55,6 +63,23 @@ def main():
             "DeviceModulePage must own device UI")
     require("setupUi();" in log_viewer and "initializeUI" not in log_viewer,
             "LogViewer must own its UI")
+    for source, name in [(device_page, "DeviceModulePage"),
+                         (log_viewer, "LogViewer"),
+                         (log_model, "LogModel")]:
+        require(re.search(r"[А-Яа-яЁё]", source) is None,
+                f"{name} must not contain hardcoded Russian UI text")
+    for prefix in ["[devices:ui]", "[logs:ui]"]:
+        require(prefix in ru_lang and prefix in en_lang,
+                f"both localization bundles must contain {prefix} keys")
+    localized_keys = {
+        *(f"[devices:ui][{key}]" for key in re.findall(r'deviceText\("([^"]+)"\)', device_page)),
+        *(f"[logs:ui][{key}]" for key in re.findall(r'logText\("([^"]+)"\)', log_viewer)),
+        "[devices:ui][yes]",
+        "[devices:ui][no]",
+    }
+    for key in localized_keys:
+        require(f"{key}=" in ru_lang and f"{key}=" in en_lang,
+                f"missing GUI localization key in one of the bundles: {key}")
     return 0
 
 

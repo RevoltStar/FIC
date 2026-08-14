@@ -1,11 +1,12 @@
 #ifndef POLICY_SERVICE_H
 #define POLICY_SERVICE_H
 
+#include <functional>
 #include <string>
 #include <vector>
 
 #include <QString>
-#include <nlohmann/json_fwd.hpp>
+#include <nlohmann/json.hpp>
 
 #include "models/ModuleDescriptor.h"
 #include "models/PolicyDescriptor.h"
@@ -20,6 +21,10 @@ struct PolicyChange {
 class PolicyService
 {
 public:
+    using RequestFunction = std::function<nlohmann::json(const nlohmann::json&)>;
+
+    explicit PolicyService(RequestFunction request = {});
+
     bool loadModules(std::vector<ModuleDescriptor>& modules, QString& error) const;
     bool loadPolicies(const std::string& module,
                       std::vector<PolicyDescriptor>& policies,
@@ -28,6 +33,11 @@ public:
                       const std::vector<PolicyChange>& changes,
                       nlohmann::json& applyResponse,
                       QString& error) const;
+
+private:
+    nlohmann::json request(const nlohmann::json& payload) const;
+
+    RequestFunction request_;
 };
 
 #endif // POLICY_SERVICE_H

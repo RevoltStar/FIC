@@ -1,5 +1,7 @@
 find_package(Python3 COMPONENTS Interpreter)
 find_package(Threads REQUIRED)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
 if(Python3_Interpreter_FOUND)
     add_test(
@@ -42,10 +44,14 @@ endif()
 
 add_executable(module_registry_tests
     module-ui/ModuleRegistryTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryInitialization.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryJson.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/audit/AUDIT.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/audit/submodules/Logging.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/audit/submodules/logging/AUDIT_log_level.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/GLOBAL.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/submodules/SystemSettings.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/submodules/systemsettings/GLOBAL_lang.cpp
 )
 target_include_directories(module_registry_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(module_registry_tests PRIVATE fic-core fic-policy)
@@ -57,6 +63,23 @@ add_executable(module_descriptor_tests
 )
 target_include_directories(module_descriptor_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
 add_test(NAME module_descriptor_tests COMMAND module_descriptor_tests)
+
+add_executable(policy_descriptor_tests
+    module-ui/PolicyDescriptorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/models/PolicyDescriptor.cpp
+)
+target_include_directories(policy_descriptor_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
+add_test(NAME policy_descriptor_tests COMMAND policy_descriptor_tests)
+
+add_executable(policy_service_tests
+    module-ui/PolicyServiceTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/services/PolicyService.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/models/ModuleDescriptor.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/models/PolicyDescriptor.cpp
+)
+target_include_directories(policy_service_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
+target_link_libraries(policy_service_tests PRIVATE Qt${QT_VERSION_MAJOR}::Core fic-ipc)
+add_test(NAME policy_service_tests COMMAND policy_service_tests)
 
 add_executable(firewall_tests
     firewall/FirewallTests.cpp

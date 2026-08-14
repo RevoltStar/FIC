@@ -12,6 +12,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStringList>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -20,6 +21,31 @@
 #include "services/DeviceService.h"
 #include "widgets/PolicyEditorWidget.h"
 #include "wrappers/QLocalizationManager.h"
+
+namespace {
+QString deviceText(const char* key)
+{
+    return QLocalizationManager::getLang(
+        QString::fromLatin1("[devices:ui][") + QString::fromLatin1(key) + ']');
+}
+
+QString controlLevelText(const std::string& value)
+{
+    if (value == "blocked") return deviceText("blocked");
+    if (value == "allowed") return deviceText("allowed");
+    if (value == "permanent") return deviceText("permanent");
+    if (value == "ignored") return deviceText("ignored");
+    return QString::fromStdString(value);
+}
+
+QString childrenPolicyText(const std::string& value)
+{
+    if (value == "inherit") return deviceText("inherit");
+    if (value == "allow") return deviceText("allow");
+    if (value == "deny") return deviceText("deny");
+    return QString::fromStdString(value);
+}
+}
 
 DeviceModulePage::DeviceModulePage(
     const std::string& module,
@@ -50,45 +76,45 @@ QWidget* DeviceModulePage::createTreePage()
 
     auto* details = new QWidget(splitter);
     auto* detailsLayout = new QVBoxLayout(details);
-    auto* summary = new QGroupBox(QString::fromUtf8(u8"Сведения об устройстве"), details);
+    auto* summary = new QGroupBox(deviceText("device_details"), details);
     auto* form = new QFormLayout(summary);
-    subsystem_ = new QLabel("[NO SET]", summary);
-    controlLevel_ = new QLabel("[NO SET]", summary);
-    devpath_ = new QLabel("[NO SET]", summary);
+    subsystem_ = new QLabel(deviceText("not_set"), summary);
+    controlLevel_ = new QLabel(deviceText("not_set"), summary);
+    devpath_ = new QLabel(deviceText("not_set"), summary);
     currentBootId_ = new QLabel(DeviceService().currentBootId(), summary);
-    deviceBootId_ = new QLabel("[NO SET]", summary);
+    deviceBootId_ = new QLabel(deviceText("not_set"), summary);
     devpath_->setWordWrap(true);
     for (QLabel* label : {subsystem_, controlLevel_, devpath_, currentBootId_, deviceBootId_}) {
         label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     }
-    form->addRow(QString::fromUtf8(u8"Подсистема:"), subsystem_);
-    form->addRow(QString::fromUtf8(u8"Уровень контроля:"), controlLevel_);
-    form->addRow(QString::fromUtf8(u8"Путь (devpath):"), devpath_);
-    form->addRow(QString::fromUtf8(u8"Текущий boot_id:"), currentBootId_);
-    form->addRow(QString::fromUtf8(u8"boot_id устройства:"), deviceBootId_);
+    form->addRow(deviceText("subsystem"), subsystem_);
+    form->addRow(deviceText("control_level"), controlLevel_);
+    form->addRow(deviceText("devpath"), devpath_);
+    form->addRow(deviceText("current_boot_id"), currentBootId_);
+    form->addRow(deviceText("device_boot_id"), deviceBootId_);
 
-    auto* policy = new QGroupBox(QString::fromUtf8(u8"Правило устройства"), details);
+    auto* policy = new QGroupBox(deviceText("device_rule"), details);
     auto* policyLayout = new QGridLayout(policy);
     control_ = new QComboBox(policy);
-    control_->addItem(QString::fromUtf8(u8"Запрещено"), "blocked");
-    control_->addItem(QString::fromUtf8(u8"Разрешено"), "allowed");
-    control_->addItem(QString::fromUtf8(u8"Постоянно"), "permanent");
-    control_->addItem(QString::fromUtf8(u8"Не контролируется"), "ignored");
-    globalRule_ = new QCheckBox(QString::fromUtf8(u8"Во всей системе"), policy);
+    control_->addItem(deviceText("blocked"), "blocked");
+    control_->addItem(deviceText("allowed"), "allowed");
+    control_->addItem(deviceText("permanent"), "permanent");
+    control_->addItem(deviceText("ignored"), "ignored");
+    globalRule_ = new QCheckBox(deviceText("system_wide_rule"), policy);
     childrenControl_ = new QComboBox(policy);
-    childrenControl_->addItem(QString::fromUtf8(u8"Наследовать"), "inherit");
-    childrenControl_->addItem(QString::fromUtf8(u8"Разрешать"), "allow");
-    childrenControl_->addItem(QString::fromUtf8(u8"Запрещать"), "deny");
-    reset_ = new QPushButton(QString::fromUtf8(u8"Сбросить"), policy);
-    policyLayout->addWidget(new QLabel(QString::fromUtf8(u8"Устройство:"), policy), 0, 0);
+    childrenControl_->addItem(deviceText("inherit"), "inherit");
+    childrenControl_->addItem(deviceText("allow"), "allow");
+    childrenControl_->addItem(deviceText("deny"), "deny");
+    reset_ = new QPushButton(deviceText("reset"), policy);
+    policyLayout->addWidget(new QLabel(deviceText("device"), policy), 0, 0);
     policyLayout->addWidget(control_, 0, 1);
     policyLayout->addWidget(globalRule_, 0, 2);
     policyLayout->addWidget(reset_, 0, 3);
-    policyLayout->addWidget(new QLabel(QString::fromUtf8(u8"Потомки:"), policy), 1, 0);
+    policyLayout->addWidget(new QLabel(deviceText("children_policy"), policy), 1, 0);
     policyLayout->addWidget(childrenControl_, 1, 1, 1, 3);
 
-    copyPath_ = new QPushButton(QString::fromUtf8(u8"Копировать путь"), details);
-    copySummary_ = new QPushButton(QString::fromUtf8(u8"Копировать сведения"), details);
+    copyPath_ = new QPushButton(deviceText("copy_path"), details);
+    copySummary_ = new QPushButton(deviceText("copy_summary"), details);
     auto* buttons = new QHBoxLayout();
     buttons->addWidget(copyPath_);
     buttons->addWidget(copySummary_);
@@ -117,8 +143,8 @@ QWidget* DeviceModulePage::createTreePage()
     connect(attributes_, &DeviceAttributeList::attributesUpdated,
             this, [this](int, int count) {
         status_->setText(count > 0
-            ? QString::fromUtf8(u8"Загружено атрибутов: %1").arg(count)
-            : QString::fromUtf8(u8"У устройства нет атрибутов"));
+            ? deviceText("attributes_loaded").arg(count)
+            : deviceText("no_attributes"));
     });
     connect(control_, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
         if (currentDevice_.id > 0) deviceTree_->applyControlLevelToCurrentDevice(control_->itemData(index).toString());
@@ -146,7 +172,10 @@ void DeviceModulePage::onDeviceClicked(const DeviceInfo& device)
     subsystem_->setText(QString::fromStdString(device.subsystem));
     const QString effective = QString::fromStdString(
         device.effective_control_level.empty() ? device.control_level : device.effective_control_level);
-    controlLevel_->setText(device.control_explicit ? effective : effective + QString::fromUtf8(u8" (унаследовано)"));
+    const QString localizedEffective = controlLevelText(effective.toStdString());
+    controlLevel_->setText(device.control_explicit
+        ? localizedEffective
+        : deviceText("inherited_value").arg(localizedEffective));
     devpath_->setText(QString::fromStdString(device.devpath));
     currentBootId_->setText(DeviceService().currentBootId());
     deviceBootId_->setText(QString::fromStdString(device.boot_id));
@@ -176,18 +205,24 @@ void DeviceModulePage::onDeviceClicked(const DeviceInfo& device)
 
 QString DeviceModulePage::deviceSummary(const DeviceInfo& device) const
 {
-    return QString("id: %1\nsubsystem: %2\ncontrol_level: %3\neffective_control_level: %4\n"
-                   "effective_source: %5\nignore_hierarchy: %6\nchildren_control: %7\nconnected: %8\n"
-                   "devpath: %9\nboot_id: %10\nlast_event_at: %11")
-        .arg(device.id)
-        .arg(QString::fromStdString(device.subsystem))
-        .arg(QString::fromStdString(device.control_level))
-        .arg(QString::fromStdString(device.effective_control_level))
-        .arg(QString::fromStdString(device.effective_source))
-        .arg(device.ignore_hierarchy ? "true" : "false")
-        .arg(QString::fromStdString(device.children_control))
-        .arg(device.connected ? "true" : "false")
-        .arg(QString::fromStdString(device.devpath))
-        .arg(QString::fromStdString(device.boot_id))
-        .arg(QString::fromStdString(device.last_event_at));
+    const auto line = [](const QString& label, const QString& value) {
+        return QStringLiteral("%1: %2").arg(label, value);
+    };
+    return QStringList{
+        line(deviceText("summary_id"), QString::number(device.id)),
+        line(deviceText("summary_subsystem"), QString::fromStdString(device.subsystem)),
+        line(deviceText("summary_control_level"), controlLevelText(device.control_level)),
+        line(deviceText("summary_effective_control_level"),
+             controlLevelText(device.effective_control_level)),
+        line(deviceText("summary_effective_source"),
+             QString::fromStdString(device.effective_source)),
+        line(deviceText("summary_ignore_hierarchy"),
+             deviceText(device.ignore_hierarchy ? "yes" : "no")),
+        line(deviceText("summary_children_policy"),
+             childrenPolicyText(device.children_control)),
+        line(deviceText("summary_connected"), deviceText(device.connected ? "yes" : "no")),
+        line(deviceText("summary_devpath"), QString::fromStdString(device.devpath)),
+        line(deviceText("summary_boot_id"), QString::fromStdString(device.boot_id)),
+        line(deviceText("summary_last_event"), QString::fromStdString(device.last_event_at))
+    }.join('\n');
 }
