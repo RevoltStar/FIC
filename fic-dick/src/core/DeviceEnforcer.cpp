@@ -131,7 +131,7 @@ int enforce_udev_device()
     const bool enforced = enforceDeny(subsystem, devpath, details);
     Logger::log("udev deny enforcement for " + std::string(subsystem) + " " + devpath +
                     (enforced ? " succeeded: " : " failed: ") + details,
-                enforced ? logLevel::WARN : logLevel::ERROR,
+                enforced ? logLevel::INFO : logLevel::ERROR,
                 "devices");
     return enforced ? 0 : 1;
 }
