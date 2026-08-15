@@ -55,6 +55,20 @@ def main():
                    "policy.min", "policy.max", "policy.possibleValues", "policy.textDelimiter",
                    "policy.restriction"]:
         require(marker in editor, f"policy editor ignores descriptor field: {marker}")
+    require("QFrame* createTableCell(" in editor and
+            editor.count("createTableCell(") >= 5,
+            "policy editor must build reusable framed table cells")
+    require("QFrame::StyledPanel" in editor and
+            "setBackgroundRole(QPalette::" in editor,
+            "policy table cells and headers must use palette-aware Qt frames")
+    require("setRowStretch(rowNumber, 1)" in editor,
+            "policy table must place vertical stretch after its semantic rows")
+    for direct_child in ["enabled", "name", "valueWidget", "descriptionWidget"]:
+        require(re.search(
+            rf"grid->addWidget\(\s*{direct_child}\s*,\s*rowNumber", editor) is None,
+            f"policy row widget {direct_child} must be placed inside a cell container")
+    require(re.search(r"setStyleSheet\s*\([^;]*border", editor, re.DOTALL) is None,
+            "policy table borders must not cascade into native editor controls")
     require("new PolicyEditorWidget(module, policies" in device_page,
             "DeviceModulePage must reuse PolicyEditorWidget")
     require("new PolicyEditorWidget(module, policies" in audit_page,

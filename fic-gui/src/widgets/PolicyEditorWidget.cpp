@@ -11,8 +11,10 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPalette>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QTextEdit>
 #include <QVBoxLayout>
@@ -32,6 +34,55 @@ public:
 protected:
     void wheelEvent(QWheelEvent* event) override { event->ignore(); }
 };
+
+QFrame* createTableCell(
+    QWidget* child,
+    QWidget* parent,
+    Qt::Alignment alignment = {})
+{
+    auto* cell = new QFrame(parent);
+    cell->setObjectName("policyTableCell");
+    cell->setFrameShape(QFrame::StyledPanel);
+    cell->setFrameShadow(QFrame::Plain);
+    cell->setLineWidth(1);
+
+    auto* layout = new QVBoxLayout(cell);
+    layout->setContentsMargins(8, 6, 8, 6);
+    layout->setSpacing(0);
+    layout->addWidget(child, 0, alignment);
+    return cell;
+}
+
+QFrame* createHeaderCell(const QString& text, QWidget* parent)
+{
+    auto* label = new QLabel(text);
+    label->setAlignment(Qt::AlignCenter);
+    label->setWordWrap(true);
+    QFont font = label->font();
+    font.setBold(true);
+    label->setFont(font);
+
+    QFrame* cell = createTableCell(label, parent, Qt::AlignCenter);
+    cell->setObjectName("policyTableHeaderCell");
+    cell->setBackgroundRole(QPalette::Midlight);
+    cell->setAutoFillBackground(true);
+    return cell;
+}
+
+QFrame* createSubmoduleHeader(const QString& text, QWidget* parent)
+{
+    auto* label = new QLabel(text);
+    label->setAlignment(Qt::AlignCenter);
+    QFont font = label->font();
+    font.setBold(true);
+    label->setFont(font);
+
+    QFrame* cell = createTableCell(label, parent, Qt::AlignCenter);
+    cell->setObjectName("policySubmoduleHeaderCell");
+    cell->setBackgroundRole(QPalette::Mid);
+    cell->setAutoFillBackground(true);
+    return cell;
+}
 
 QString applySummary(const nlohmann::json& response)
 {
@@ -81,14 +132,20 @@ PolicyEditorWidget::PolicyEditorWidget(
 {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     auto* content = new QFrame(scrollArea);
+    content->setObjectName("policyTable");
+    content->setFrameShape(QFrame::StyledPanel);
+    content->setFrameShadow(QFrame::Plain);
+    content->setLineWidth(1);
     auto* grid = new QGridLayout(content);
-    grid->setContentsMargins(10, 10, 10, 10);
-    grid->setSpacing(10);
+    grid->setContentsMargins(8, 8, 8, 8);
+    grid->setHorizontalSpacing(4);
+    grid->setVerticalSpacing(4);
 
     const QStringList headers = {
         QLocalizationManager::getLang("[module:all][col:is_policy_active]"),
@@ -97,12 +154,7 @@ PolicyEditorWidget::PolicyEditorWidget(
         QLocalizationManager::getLang("[module:all][col:policy_descr]")
     };
     for (int column = 0; column < headers.size(); ++column) {
-        auto* label = new QLabel(headers[column], content);
-        QFont font = label->font();
-        font.setBold(true);
-        label->setFont(font);
-        label->setAlignment(Qt::AlignCenter);
-        grid->addWidget(label, 0, column);
+        grid->addWidget(createHeaderCell(headers[column], content), 0, column);
     }
 
     struct Row {
@@ -119,25 +171,21 @@ PolicyEditorWidget::PolicyEditorWidget(
 
     int rowNumber = 1;
     for (const auto& [submodule, submodulePolicies] : bySubmodule) {
-        auto* header = new QLabel(
-            QLocalizationManager::getLang(QString::fromStdString(
-                "[module:" + moduleName + "][submodule:" + submodule + "]")), content);
-        header->setAlignment(Qt::AlignCenter);
-        QFont font = header->font();
-        font.setBold(true);
-        header->setFont(font);
-        grid->addWidget(header, rowNumber++, 0, 1, 4);
+        grid->addWidget(
+            createSubmoduleHeader(
+                QLocalizationManager::getLang(QString::fromStdString(
+                    "[module:" + moduleName + "][submodule:" + submodule + "]")),
+                content),
+            rowNumber++, 0, 1, 4);
 
         for (const PolicyDescriptor& policy : submodulePolicies) {
-            auto* enabled = new QCheckBox(content);
+            auto* enabled = new QCheckBox;
             enabled->setChecked(policy.enabled && policy.valueValid);
-            grid->addWidget(enabled, rowNumber, 0, Qt::AlignCenter);
 
             const std::string key = "[module:" + moduleName + "][policy:" + policy.policyName + "]";
             auto* name = new QLabel(
-                QLocalizationManager::getLang(QString::fromStdString(key)), content);
+                QLocalizationManager::getLang(QString::fromStdString(key)));
             name->setWordWrap(true);
-            grid->addWidget(name, rowNumber, 1);
 
             const EditorType type = editorType(policy.editor);
             const std::string initialValue = policy.valueValid ? policy.value : policy.defaultValue;
@@ -145,45 +193,50 @@ PolicyEditorWidget::PolicyEditorWidget(
             switch (type) {
             case EditorType::Label: {
                 auto* label = new QLabel(
-                    QLocalizationManager::getLang("[utils:policytypevalue][type:fixedpolicytypevalue]"), content);
+                    QLocalizationManager::getLang("[utils:policytypevalue][type:fixedpolicytypevalue]"));
+                label->setWordWrap(true);
                 label->setTextInteractionFlags(Qt::TextSelectableByMouse);
                 valueWidget = label;
                 break;
             }
             case EditorType::SpinBox: {
-                auto* spin = new NoWheelSpinBox(content);
+                auto* spin = new NoWheelSpinBox;
                 spin->setRange(policy.min, policy.max);
                 try { spin->setValue(std::stoi(initialValue)); }
                 catch (const std::exception&) { spin->setValue(policy.min); }
+                spin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
                 valueWidget = spin;
                 break;
             }
             case EditorType::TextEdit: {
-                auto* edit = new QTextEdit(content);
+                auto* edit = new QTextEdit;
                 QString text = QString::fromStdString(initialValue);
                 const QString delimiter = QString::fromStdString(policy.textDelimiter);
                 if (!delimiter.isEmpty() && delimiter != "\n") text.replace(delimiter, "\n");
                 edit->setPlainText(text);
+                edit->setMinimumHeight(96);
+                edit->setMaximumHeight(120);
+                edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
                 valueWidget = edit;
                 break;
             }
             case EditorType::ComboBox: {
-                auto* combo = new QComboBox(content);
+                auto* combo = new QComboBox;
                 for (const auto& value : policy.possibleValues) {
                     combo->addItem(QString::fromStdString(value));
                 }
                 const int index = combo->findText(QString::fromStdString(initialValue));
                 if (index >= 0) combo->setCurrentIndex(index);
+                combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
                 valueWidget = combo;
                 break;
             }
             case EditorType::Unknown:
                 valueWidget = new QLabel(
-                    "Unsupported policy editor: " + QString::fromStdString(policy.editor), content);
+                    "Unsupported policy editor: " + QString::fromStdString(policy.editor));
                 enabled->setEnabled(false);
                 break;
             }
-            grid->addWidget(valueWidget, rowNumber, 2);
 
             QString description = QLocalizationManager::getLang(
                 QString::fromStdString(key + "[description]"));
@@ -192,24 +245,43 @@ PolicyEditorWidget::PolicyEditorWidget(
             if (!policy.valueValid) {
                 description += "\n--------------------------------\nCurrent config value is invalid; default value is shown.";
             }
-            auto* descriptionWidget = new QTextEdit(content);
+            auto* descriptionWidget = new QTextEdit;
             descriptionWidget->setPlainText(description);
             descriptionWidget->setReadOnly(true);
+            descriptionWidget->setMinimumHeight(84);
             descriptionWidget->setMaximumHeight(100);
-            grid->addWidget(descriptionWidget, rowNumber, 3);
+            descriptionWidget->setSizePolicy(
+                QSizePolicy::Expanding, QSizePolicy::Preferred);
+
+            grid->addWidget(
+                createTableCell(enabled, content, Qt::AlignCenter), rowNumber, 0);
+            grid->addWidget(createTableCell(name, content), rowNumber, 1);
+            grid->addWidget(createTableCell(valueWidget, content), rowNumber, 2);
+            grid->addWidget(
+                createTableCell(descriptionWidget, content), rowNumber, 3);
 
             controls.push_back({policy, enabled, valueWidget, type});
             ++rowNumber;
         }
     }
+    grid->setColumnMinimumWidth(0, 80);
+    grid->setColumnMinimumWidth(1, 200);
+    grid->setColumnMinimumWidth(2, 220);
+    grid->setColumnStretch(0, 0);
     grid->setColumnStretch(1, 1);
+    grid->setColumnStretch(2, 1);
     grid->setColumnStretch(3, 2);
+    grid->setRowStretch(rowNumber, 1);
     scrollArea->setWidget(content);
     mainLayout->addWidget(scrollArea);
 
     auto* applyButton = new QPushButton(QLocalizationManager::getLang("[apply_button]"), this);
+    applyButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     applyButton->setMinimumHeight(40);
-    mainLayout->addWidget(applyButton);
+    auto* buttonLayout = new QHBoxLayout;
+    buttonLayout->setContentsMargins(10, 10, 10, 10);
+    buttonLayout->addWidget(applyButton);
+    mainLayout->addLayout(buttonLayout);
 
     connect(applyButton, &QPushButton::clicked, this,
             [this, moduleName, controls]() {
