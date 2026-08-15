@@ -21,6 +21,7 @@ def main():
     root = Path(sys.argv[1])
     db_path = root / "fic" / "src" / "scripts" / "db" / "devices.db"
     device_daemon = root / "fic-dick" / "src" / "core" / "DeviceControlDaemon.cpp"
+    device_snapshot = root / "fic-dick" / "src" / "core" / "DeviceTreeSnapshot.cpp"
     dc_policy = root / "fic" / "src" / "modules" / "dc" / "DC.cpp"
     dc_config = root / "fic" / "src" / "scripts" / "config" / "DC.conf"
     db_cpp = root / "fic-common" / "fic-device-db" / "src" / "DB.cpp"
@@ -94,6 +95,22 @@ def main():
             "device policy compiler runtime must use SQLite as desired-policy source")
     require("getDeviceCategoryPolicyState" in daemon_source,
             "device daemon must read category desired policy from devices.db")
+    snapshot_source = read_text(device_snapshot)
+    require('command == "device_tree_snapshot"' in daemon_source,
+            "device daemon must expose the flat device tree snapshot command")
+    require("getDeviceTreeSnapshot" in snapshot_source,
+            "snapshot command must use the database batch snapshot")
+    for forbidden in [
+        "getDeviceById(",
+        "getDeviceAttributes(",
+        "getDevicesByHashAndSubsystem(",
+    ]:
+        require(forbidden not in snapshot_source,
+                f"snapshot effective-policy evaluation must not issue per-device DB calls: {forbidden}")
+    require("WITH RECURSIVE tree" in db_source and
+            "LEFT JOIN device_attributes" in db_source and
+            "BEGIN TRANSACTION" in db_source,
+            "database snapshot must read the recursive tree and attributes transactionally")
     fic_daemon_source = read_text(fic_daemon)
     require('"device_regenerate_policy"' in fic_daemon_source,
             "fic daemon must synchronize DC policy changes with device desired state")
@@ -124,6 +141,28 @@ def main():
             "GUI device polling must query the device tree revision")
     require("this, &DeviceTree::refreshIfTreeChanged" in gui_source,
             "GUI refresh timer must not rebuild the tree unconditionally")
+    require('"device_tree_snapshot"' in gui_source,
+            "GUI full-tree operations must use the flat snapshot command")
+    filter_body = gui_source[
+        gui_source.find("void DeviceTree::applyDeviceFilter"):
+        gui_source.find("QIcon DeviceTree::deviceIcon")
+    ]
+    expand_body = gui_source[
+        gui_source.find("void DeviceTree::expandAllNodes"):
+        gui_source.find("void DeviceTree::collapseAllNodes")
+    ]
+    require("expandNodeRecursively" not in filter_body and
+            "expandNodeRecursively" not in expand_body,
+            "global filtering and expand-all must not recursively fetch children")
+    snapshot_render = gui_source[
+        gui_source.find("bool DeviceTree::loadDeviceTreeSnapshot"):
+        gui_source.find("void DeviceTree::loadDeviceTree()")
+    ]
+    require("fetchDeviceAttributes" not in snapshot_render and
+            "fetchChildDevices" not in snapshot_render,
+            "snapshot rendering must not issue per-device IPC reads")
+    require('"device_events"' in daemon_source,
+            "device event history API must remain available")
     require("treeWidget->setMinimumWidth(640)" not in gui_source and
             "setMinimumWidth(660)" not in gui_source,
             "device tree must remain horizontally shrinkable")

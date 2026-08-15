@@ -232,6 +232,14 @@ void fillDeviceFromJson(DeviceInfo& device, const nlohmann::json& item)
     device.last_event_at = item.value("last_event_at", "");
     device.notes = item.value("notes", "");
 }
+
+std::string deviceAttribute(const DeviceAttributes& attributes,
+                            const std::string& name,
+                            const std::string& defaultValue = "")
+{
+    const auto it = attributes.find(name);
+    return it == attributes.end() ? defaultValue : it->second;
+}
 } // namespace
 
 DeviceTree::DeviceTree(QWidget *parent)
@@ -440,6 +448,69 @@ std::optional<std::int64_t> DeviceTree::fetchTreeRevision() const
     return revision;
 }
 
+std::optional<DeviceTreeSnapshotData> DeviceTree::fetchDeviceTreeSnapshot(
+    bool includeDisconnected) const
+{
+    const auto response = deviceClient().request({
+        {"command", "device_tree_snapshot"},
+        {"include_disconnected", includeDisconnected}
+    });
+    try {
+        if (!response.value("ok", false) ||
+            !response.contains("revision") || !response["revision"].is_number_integer() ||
+            !response.contains("boot_id") || !response["boot_id"].is_string() ||
+            !response.contains("devices") || !response["devices"].is_array()) {
+            qDebug() << "Failed to load device tree snapshot:"
+                     << QString::fromStdString(response.value(
+                            "message", "malformed daemon response"));
+            return std::nullopt;
+        }
+
+        DeviceTreeSnapshotData snapshot;
+        snapshot.revision = response["revision"].get<std::int64_t>();
+        snapshot.bootId = response["boot_id"].get<std::string>();
+        if (snapshot.revision < 0) {
+            qDebug() << "Device tree snapshot has invalid revision";
+            return std::nullopt;
+        }
+
+        QSet<int> ids;
+        for (const auto& value : response["devices"]) {
+            if (!value.is_object() || !value.contains("id") ||
+                !value["id"].is_number_integer() ||
+                !value.contains("attributes") || !value["attributes"].is_object()) {
+                qDebug() << "Device tree snapshot contains malformed device";
+                return std::nullopt;
+            }
+            DeviceTreeSnapshotEntry entry;
+            fillDeviceFromJson(entry.device, value);
+            if (entry.device.id <= 0 || ids.contains(entry.device.id)) {
+                qDebug() << "Device tree snapshot contains invalid or duplicate id";
+                return std::nullopt;
+            }
+            ids.insert(entry.device.id);
+            for (auto it = value["attributes"].begin();
+                 it != value["attributes"].end(); ++it) {
+                if (!it.value().is_string()) {
+                    qDebug() << "Device tree snapshot contains malformed attribute";
+                    return std::nullopt;
+                }
+                entry.attributes.emplace(it.key(), it.value().get<std::string>());
+            }
+            snapshot.entries.push_back(std::move(entry));
+        }
+        if (snapshot.entries.empty()) {
+            qDebug() << "Device tree snapshot is empty";
+            return std::nullopt;
+        }
+        return snapshot;
+    } catch (const nlohmann::json::exception& exception) {
+        qDebug() << "Malformed device tree snapshot:"
+                 << QString::fromStdString(exception.what());
+        return std::nullopt;
+    }
+}
+
 std::vector<DeviceInfo> DeviceTree::fetchChildDevices(int parentId, bool includeDisconnected) const
 {
     std::vector<DeviceInfo> children;
@@ -482,16 +553,6 @@ std::map<std::string, std::string> DeviceTree::fetchDeviceAttributes(int deviceI
         }
     }
     return attributes;
-}
-
-std::string DeviceTree::getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue) const
-{
-    const auto attributes = fetchDeviceAttributes(deviceId);
-    auto it = attributes.find(attributeName);
-    if (it == attributes.end()) {
-        return defaultValue;
-    }
-    return it->second;
 }
 
 namespace {
@@ -994,9 +1055,13 @@ std::string DeviceTree::getSystemBootId()
 }
 
 // Проверка, совпадает ли время старта устройства с временем старта ОС
-bool DeviceTree::isDeviceBootIdValid(const DeviceInfo &device)
+bool DeviceTree::isDeviceBootIdValid(const DeviceInfo &device,
+                                     const std::string &currentBootId)
 {
     static std::string systemBootId;
+    if (!currentBootId.empty()) {
+        return device.boot_id == currentBootId || device.boot_id == "-1";
+    }
     if (systemBootId.empty()) {
         systemBootId = getSystemBootId();
     }
@@ -1112,14 +1177,14 @@ void DeviceTree::applyDeviceFilter()
     }
 
     const bool active = filterActive();
-    if (active)
-    {
-        treeWidget->setUpdatesEnabled(false);
-        for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
-        {
-            expandNodeRecursively(treeWidget->topLevelItem(i));
-        }
-        treeWidget->setUpdatesEnabled(true);
+    const bool historyFilter = quickFilterCombo != nullptr &&
+        quickFilterCombo->currentData().toString() == "history";
+    const bool includeDisconnected = historyFilter ||
+        (chkShowHistory != nullptr && chkShowHistory->isChecked());
+    if ((active && !fullSnapshotLoaded) ||
+        (fullSnapshotLoaded && snapshotIncludesDisconnected != includeDisconnected)) {
+        refreshPreservingState(active);
+        return;
     }
 
     int totalCount = 0;
@@ -1140,7 +1205,8 @@ void DeviceTree::applyDeviceFilter()
     }
 }
 
-QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
+QIcon DeviceTree::deviceIcon(const DeviceInfo &device,
+                             const DeviceAttributes &attributes) const
 {
     auto themeIcon = [](std::initializer_list<const char *> names) -> QIcon
     {
@@ -1155,9 +1221,9 @@ QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
         return QIcon();
     };
 
-    auto attributeIsTrue = [this, &device](const std::string &name) -> bool
+    auto attributeIsTrue = [&attributes](const std::string &name) -> bool
     {
-        const std::string value = getDeviceAttribute(device.id, name, "");
+        const std::string value = deviceAttribute(attributes, name, "");
 
         return value == "1" ||
                value == "true" ||
@@ -1371,19 +1437,19 @@ QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
     if (device.subsystem == "block")
     {
         const std::string devtype =
-            getDeviceAttribute(device.id, "DEVTYPE", "");
+            deviceAttribute(attributes, "DEVTYPE", "");
 
         const std::string bus =
-            getDeviceAttribute(device.id, "ID_BUS", "");
+            deviceAttribute(attributes, "ID_BUS", "");
 
         const std::string driveFlash =
-            getDeviceAttribute(device.id, "ID_DRIVE_FLASH", "");
+            deviceAttribute(attributes, "ID_DRIVE_FLASH", "");
 
         const std::string driveThumb =
-            getDeviceAttribute(device.id, "ID_DRIVE_THUMB", "");
+            deviceAttribute(attributes, "ID_DRIVE_THUMB", "");
 
         const std::string cdrom =
-            getDeviceAttribute(device.id, "ID_CDROM", "");
+            deviceAttribute(attributes, "ID_CDROM", "");
 
         if (cdrom == "1")
         {
@@ -1450,16 +1516,16 @@ QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
          */
 
         const std::string devtype =
-            getDeviceAttribute(device.id, "DEVTYPE", "");
+            deviceAttribute(attributes, "DEVTYPE", "");
 
         const std::string interfaceClass =
-            getDeviceAttribute(device.id, "ID_USB_INTERFACE_NUM", "");
+            deviceAttribute(attributes, "ID_USB_INTERFACE_NUM", "");
 
         const std::string usbInterfaces =
-            getDeviceAttribute(device.id, "ID_USB_INTERFACES", "");
+            deviceAttribute(attributes, "ID_USB_INTERFACES", "");
 
         const std::string devname =
-            getDeviceAttribute(device.id, "DEVNAME", "");
+            deviceAttribute(attributes, "DEVNAME", "");
 
         /*
          * USB printer.
@@ -1552,10 +1618,10 @@ QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
     if (device.subsystem == "net")
     {
         const std::string type =
-            getDeviceAttribute(device.id, "ID_NET_DRIVER", "");
+            deviceAttribute(attributes, "ID_NET_DRIVER", "");
 
         const std::string wlan =
-            getDeviceAttribute(device.id, "DEVTYPE", "");
+            deviceAttribute(attributes, "DEVTYPE", "");
 
         if (wlan == "wlan" ||
             type.find("wifi") != std::string::npos ||
@@ -1659,7 +1725,7 @@ QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
     if (device.subsystem == "pci")
     {
         const std::string pciClass =
-            getDeviceAttribute(device.id, "PCI_CLASS", "");
+            deviceAttribute(attributes, "PCI_CLASS", "");
 
         /*
          * PCI class:
@@ -1811,7 +1877,9 @@ QIcon DeviceTree::deviceIcon(const DeviceInfo &device) const
 
 void DeviceTree::setupTreeItemMetadata(
     QTreeWidgetItem *item,
-    const DeviceInfo &device)
+    const DeviceInfo &device,
+    const DeviceAttributes &attributes,
+    const std::string &currentBootId)
 {
     if (item == nullptr)
     {
@@ -1846,12 +1914,13 @@ void DeviceTree::setupTreeItemMetadata(
     item->setData(
         0,
         RoleBootValid,
-        isDeviceBootIdValid(device));
+        isDeviceBootIdValid(device, currentBootId));
 
-    item->setIcon(0, deviceIcon(device));
+    item->setIcon(0, deviceIcon(device, attributes));
 }
 
-std::string DeviceTree::generateNodeName(const DeviceInfo &device)
+std::string DeviceTree::generateNodeName(const DeviceInfo &device,
+                                         const DeviceAttributes &attributes)
 {
     std::string device_name = "[" + device.subsystem + "] [" + compactDevpathLabel(device.devpath) + "]";
     if (device.subsystem == "__computer__")
@@ -1889,23 +1958,23 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     }
     if (device.subsystem == "cpu")
     {
-        std::string model_name = getDeviceAttribute(device.id, "Model name", "Unknown Model");
+        std::string model_name = deviceAttribute(attributes, "Model name", "Unknown Model");
         device_name = "Процессор [" + model_name + "]";
         return device_name;
     }
     if (device.subsystem == "board")
     {
-        std::string manufacturer = getDeviceAttribute(device.id, "Manufacturer", "Unknown Manufacturer");
-        std::string product_name = getDeviceAttribute(device.id, "Product Name", "Unknown Product Name");
+        std::string manufacturer = deviceAttribute(attributes, "Manufacturer", "Unknown Manufacturer");
+        std::string product_name = deviceAttribute(attributes, "Product Name", "Unknown Product Name");
         device_name = "Материнская плата [" + manufacturer + "]" + " [" + product_name + "]";
         return device_name;
     }
     if (device.subsystem == "memory")
     {
-        std::string manufacturer = getDeviceAttribute(device.id, "Manufacturer", "Unknown Manufacturer");
-        std::string size = getDeviceAttribute(device.id, "Size", "Unknown Size");
-        std::string locator = getDeviceAttribute(device.id, "Locator", "Unknown Locator");
-        std::string serial_number = getDeviceAttribute(device.id, "Serial Number", "Unknown Serial");
+        std::string manufacturer = deviceAttribute(attributes, "Manufacturer", "Unknown Manufacturer");
+        std::string size = deviceAttribute(attributes, "Size", "Unknown Size");
+        std::string locator = deviceAttribute(attributes, "Locator", "Unknown Locator");
+        std::string serial_number = deviceAttribute(attributes, "Serial Number", "Unknown Serial");
         device_name = "ОЗУ [" + manufacturer + "] " + "[" + serial_number + "]" + " [" + size + "] " + "[" + locator + "]";
         return device_name;
     }
@@ -1922,8 +1991,8 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     /*pci*/
     if (device.subsystem == "pci")
     {
-        std::string pci_class = getDeviceAttribute(device.id, "PCI_CLASS", "");
-        std::string pci_id = getDeviceAttribute(device.id, "PCI_ID", "");
+        std::string pci_class = deviceAttribute(attributes, "PCI_CLASS", "");
+        std::string pci_id = deviceAttribute(attributes, "PCI_ID", "");
         std::string pci_class_prepared = normalizePciClassKey(pci_class);
         std::string pci_device_info = localizeDeviceClass("pci", pci_class_prepared);
         device_name = pci_device_info.empty() ? "[PCI] class " + pci_class_prepared : pci_device_info;
@@ -1935,29 +2004,29 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     }
     if (device.subsystem == "usb")
     {
-        const std::string devtype = getDeviceAttribute(device.id, "DEVTYPE", "");
+        const std::string devtype = deviceAttribute(attributes, "DEVTYPE", "");
         const std::string vendor = firstNonEmpty({
-            getDeviceAttribute(device.id, "ID_VENDOR", ""),
-            getDeviceAttribute(device.id, "ID_USB_VENDOR", ""),
-            getDeviceAttribute(device.id, "ID_VENDOR_FROM_DATABASE", "")
+            deviceAttribute(attributes, "ID_VENDOR", ""),
+            deviceAttribute(attributes, "ID_USB_VENDOR", ""),
+            deviceAttribute(attributes, "ID_VENDOR_FROM_DATABASE", "")
         });
         const std::string model = firstNonEmpty({
-            getDeviceAttribute(device.id, "ID_MODEL", ""),
-            getDeviceAttribute(device.id, "ID_USB_MODEL", ""),
-            getDeviceAttribute(device.id, "ID_MODEL_FROM_DATABASE", "")
+            deviceAttribute(attributes, "ID_MODEL", ""),
+            deviceAttribute(attributes, "ID_USB_MODEL", ""),
+            deviceAttribute(attributes, "ID_MODEL_FROM_DATABASE", "")
         });
         const std::string serial = firstNonEmpty({
-            getDeviceAttribute(device.id, "ID_SERIAL_SHORT", ""),
-            getDeviceAttribute(device.id, "ID_USB_SERIAL_SHORT", "")
+            deviceAttribute(attributes, "ID_SERIAL_SHORT", ""),
+            deviceAttribute(attributes, "ID_USB_SERIAL_SHORT", "")
         });
-        const std::string interface = getDeviceAttribute(device.id, "INTERFACE", "");
+        const std::string interface = deviceAttribute(attributes, "INTERFACE", "");
         const std::string function = usbFunctionLabel(firstNonEmpty({
-            getDeviceAttribute(device.id, "FIC_USB_FUNCTION", ""),
+            deviceAttribute(attributes, "FIC_USB_FUNCTION", ""),
             usbFunctionFromInterface(interface)
         }));
         std::string type = devtype == "usb_interface"
             ? interface
-            : getDeviceAttribute(device.id, "TYPE", "");
+            : deviceAttribute(attributes, "TYPE", "");
         if (type.empty()) {
             type = interface;
         }
@@ -1992,7 +2061,7 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     }
     if (device.subsystem == "usbmisc")
     {
-        const std::string devname = getDeviceAttribute(device.id, "DEVNAME", "");
+        const std::string devname = deviceAttribute(attributes, "DEVNAME", "");
         std::string name = "USB устройство";
         if (devname.rfind("/dev/usb/lp", 0) == 0) {
             name = "USB печать";
@@ -2002,8 +2071,8 @@ std::string DeviceTree::generateNodeName(const DeviceInfo &device)
     }
     if (device.subsystem == "block")
     {
-        std::string major_digit = getDeviceAttribute(device.id, "MAJOR", "");
-        std::string minor_digit = getDeviceAttribute(device.id, "MINOR", "");
+        std::string major_digit = deviceAttribute(attributes, "MAJOR", "");
+        std::string minor_digit = deviceAttribute(attributes, "MINOR", "");
 
         if (major_digit.empty() || minor_digit.empty())
         {
@@ -2343,12 +2412,14 @@ void DeviceTree::setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo
 }
 
 // Функция для установки стиля элемента дерева
-void DeviceTree::setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo &device)
+void DeviceTree::setupTreeItemStyle(QTreeWidgetItem *item,
+                                    const DeviceInfo &device,
+                                    const std::string &currentBootId)
 {
     setupControlLevelColumn(item, device);
 
     // Проверяем, совпадает ли время старта устройства с временем старта ОС
-    bool isValid = isDeviceBootIdValid(device);
+    bool isValid = isDeviceBootIdValid(device, currentBootId);
 
     if (!isValid)
     {
@@ -2367,7 +2438,8 @@ void DeviceTree::setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo &dev
         }
         tooltip += "\n\nУстройство зарегистрировано при предыдущем запуске ОС\n";
         tooltip += "boot_id устройства: " + QString::fromStdString(device.boot_id) + "\n";
-        tooltip += "Текущий boot_id ОС: " + QString::fromStdString(getSystemBootId());
+        tooltip += "Текущий boot_id ОС: " + QString::fromStdString(
+            currentBootId.empty() ? getSystemBootId() : currentBootId);
         item->setToolTip(0, tooltip);
     }
     else
@@ -2455,7 +2527,7 @@ QTreeWidgetItem* DeviceTree::findItemByDeviceId(QTreeWidgetItem *item, int devic
     return nullptr;
 }
 
-void DeviceTree::refreshPreservingState()
+bool DeviceTree::refreshPreservingState(bool forceSnapshot)
 {
     QSet<int> expandedIds;
     for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
@@ -2477,7 +2549,19 @@ void DeviceTree::refreshPreservingState()
         QSignalBlocker blocker(treeWidget);
         Q_UNUSED(blocker);
 
-        loadDeviceTree();
+        const bool historyFilter = quickFilterCombo != nullptr &&
+            quickFilterCombo->currentData().toString() == "history";
+        const bool includeDisconnected = historyFilter ||
+            (chkShowHistory != nullptr && chkShowHistory->isChecked());
+        const bool useSnapshot = forceSnapshot || fullSnapshotLoaded ||
+            filterActive() || includeDisconnected;
+        if (useSnapshot) {
+            if (!loadDeviceTreeSnapshot(includeDisconnected)) {
+                return false;
+            }
+        } else {
+            loadDeviceTree();
+        }
 
         for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
         {
@@ -2503,6 +2587,89 @@ void DeviceTree::refreshPreservingState()
     {
         onItemClicked(selectedItem, 0);
     }
+    return true;
+}
+
+bool DeviceTree::loadDeviceTreeSnapshot(bool includeDisconnected)
+{
+    const auto loaded = fetchDeviceTreeSnapshot(includeDisconnected);
+    if (!loaded.has_value()) {
+        return false;
+    }
+    const DeviceTreeSnapshotData& snapshot = loaded.value();
+
+    std::map<int, const DeviceTreeSnapshotEntry*> entriesById;
+    int rootId = -1;
+    for (const auto& entry : snapshot.entries) {
+        entriesById.emplace(entry.device.id, &entry);
+        if (entry.device.subsystem == "__computer__") {
+            if (rootId > 0) {
+                qDebug() << "Device tree snapshot contains multiple roots";
+                return false;
+            }
+            rootId = entry.device.id;
+        }
+    }
+    if (rootId <= 0) {
+        qDebug() << "Device tree snapshot has no computer root";
+        return false;
+    }
+    for (const auto& entry : snapshot.entries) {
+        if (entry.device.id != rootId &&
+            entriesById.find(entry.device.parent_id) == entriesById.end()) {
+            qDebug() << "Device tree snapshot contains a missing parent";
+            return false;
+        }
+        QSet<int> visited;
+        int current = entry.device.id;
+        while (current > 0 && current != rootId) {
+            if (visited.contains(current)) {
+                qDebug() << "Device tree snapshot contains a cycle";
+                return false;
+            }
+            visited.insert(current);
+            const auto node = entriesById.find(current);
+            if (node == entriesById.end()) {
+                qDebug() << "Device tree snapshot contains a broken hierarchy";
+                return false;
+            }
+            current = node->second->device.parent_id;
+        }
+        if (current != rootId) {
+            qDebug() << "Device tree snapshot contains an unreachable device";
+            return false;
+        }
+    }
+
+    QSignalBlocker blocker(treeWidget);
+    Q_UNUSED(blocker);
+    treeWidget->clear();
+    std::map<int, QTreeWidgetItem*> itemsById;
+    for (const auto& entry : snapshot.entries) {
+        auto* item = new QTreeWidgetItem();
+        item->setText(0, QString::fromStdString(
+            generateNodeName(entry.device, entry.attributes)));
+        item->setData(0, Qt::UserRole, entry.device.id);
+        setupTreeItemMetadata(item, entry.device, entry.attributes, snapshot.bootId);
+        setupTreeItemStyle(item, entry.device, snapshot.bootId);
+        itemsById.emplace(entry.device.id, item);
+    }
+    for (const auto& entry : snapshot.entries) {
+        QTreeWidgetItem* item = itemsById.at(entry.device.id);
+        if (entry.device.id == rootId) {
+            treeWidget->addTopLevelItem(item);
+        } else {
+            itemsById.at(entry.device.parent_id)->addChild(item);
+        }
+    }
+    treeWidget->resizeColumnToContents(0);
+    if (treeWidget->columnWidth(0) < 520) {
+        treeWidget->setColumnWidth(0, 520);
+    }
+    lastTreeRevision = snapshot.revision;
+    fullSnapshotLoaded = true;
+    snapshotIncludesDisconnected = includeDisconnected;
+    return true;
 }
 
 void DeviceTree::loadDeviceTree()
@@ -2510,6 +2677,8 @@ void DeviceTree::loadDeviceTree()
     const std::optional<std::int64_t> revisionBeforeLoad = fetchTreeRevision();
 
     treeWidget->clear();
+    fullSnapshotLoaded = false;
+    snapshotIncludesDisconnected = false;
     DeviceInfo rootDevice{};
     rootDevice.id = -1;
     auto response = deviceClient().request({{"command", "device_root"}});
@@ -2526,9 +2695,11 @@ void DeviceTree::loadDeviceTree()
 
     // Создаем корневой элемент
     QTreeWidgetItem *rootItem = new QTreeWidgetItem(treeWidget);
-    rootItem->setText(0, QString::fromStdString(generateNodeName(rootDevice)));
+    const DeviceAttributes rootAttributes = fetchDeviceAttributes(rootDevice.id);
+    rootItem->setText(0, QString::fromStdString(
+        generateNodeName(rootDevice, rootAttributes)));
     rootItem->setData(0, Qt::UserRole, rootDevice.id);
-    setupTreeItemMetadata(rootItem, rootDevice);
+    setupTreeItemMetadata(rootItem, rootDevice, rootAttributes);
 
     // Устанавливаем стиль для корневого элемента
     setupTreeItemStyle(rootItem, rootDevice);
@@ -2569,10 +2740,11 @@ void DeviceTree::loadChildDevices(QTreeWidgetItem *parentItem, int parentId)
 
     for (const auto &child : allChildren)
     {
+        const DeviceAttributes attributes = fetchDeviceAttributes(child.id);
         QTreeWidgetItem *childItem = new QTreeWidgetItem(parentItem);
-        childItem->setText(0, QString::fromStdString(generateNodeName(child)));
+        childItem->setText(0, QString::fromStdString(generateNodeName(child, attributes)));
         childItem->setData(0, Qt::UserRole, child.id);
-        setupTreeItemMetadata(childItem, child);
+        setupTreeItemMetadata(childItem, child, attributes);
 
         // Устанавливаем стиль в зависимости от времени старта устройства
         setupTreeItemStyle(childItem, child);
@@ -2608,33 +2780,11 @@ void DeviceTree::ensureChildrenLoaded(QTreeWidgetItem *item)
     loadChildDevices(item, deviceId);
 }
 
-void DeviceTree::expandNodeRecursively(QTreeWidgetItem *item)
-{
-    if (item == nullptr)
-    {
-        return;
-    }
-
-    ensureChildrenLoaded(item);
-
-    for (int i = 0; i < item->childCount(); ++i)
-    {
-        expandNodeRecursively(item->child(i));
-    }
-
-    item->setExpanded(true);
-}
-
 void DeviceTree::expandAllNodes()
 {
-    treeWidget->setUpdatesEnabled(false);
-
-    for (int i = 0; i < treeWidget->topLevelItemCount(); ++i)
-    {
-        expandNodeRecursively(treeWidget->topLevelItem(i));
+    if (refreshPreservingState(true) && fullSnapshotLoaded) {
+        treeWidget->expandAll();
     }
-
-    treeWidget->setUpdatesEnabled(true);
 }
 
 void DeviceTree::collapseAllNodes()

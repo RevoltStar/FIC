@@ -96,7 +96,7 @@ flowchart TB
         eventIpc[Unix datagram ingress<br/>/run/fic/fic-device-events.sock]
         reconcile[initial/full reconciliation<br/>udev/sysfs inventory]
         eventQueue[bounded event queue<br/>coalescing + overflow dirty flag]
-        deviceApi[device_tree_revision / device_get / device_children / device_attributes]
+        deviceApi[device_tree_revision / device_tree_snapshot / device_get / device_children / device_attributes]
         deviceCompiler[DevicePolicyCompiler]
         deviceActivator[atomic rules activation]
         devicePolicy[effective policy diagnostics / PERMANENT]
@@ -271,7 +271,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     deviceCommands[device command]
-    deviceCommands --> read[device_tree_revision / device_root / device_get / device_children current or include_disconnected / device_attributes / device_events]
+    deviceCommands --> read[device_tree_revision / device_tree_snapshot flat batch / device_root / device_get / device_children current or include_disconnected / device_attributes / device_events]
     deviceCommands --> mutate[device_update_control_level / device_update_ignore_hierarchy / device_update_children_control / device_reset_control / device_delete]
     deviceCommands --> policyStatus[device_policy_status / desired and active revision]
     deviceCommands --> compat[udev_event root-only compatibility/testing path]
@@ -303,6 +303,15 @@ udev/sysfs состояния, затем проверяет `permanent` уст�
 рассматривается как notification mechanism: событие сообщает, что состояние
 могло измениться, а authoritative состояние берется из фактического udev/sysfs
 inventory.
+
+`device_tree_snapshot` — read-only batch-контракт для операций GUI, которым
+нужно всё дерево. `fic-device-db` в одной read transaction получает revision,
+рекурсивное дерево вместе с attributes, все occurrences для identity rules и
+DC category state. `fic-dick` вычисляет effective policy по индексам в памяти и
+возвращает flat список с `parent_id`, attributes, effective fields, `revision`
+и `boot_id`. Повреждённая циклическая/слишком глубокая иерархия и превышение
+лимита IPC response завершают запрос ошибкой. Существующие точечные команды и
+`device_events` не изменены.
 
 `device_update_control_level`, `device_update_ignore_hierarchy`,
 `device_update_children_control` и `device_reset_control` являются изменениями
@@ -816,6 +825,7 @@ flowchart TD
     devicePage --> deviceTree[DeviceTree]
     deviceTree --> deviceSock["/run/fic/fic-device.sock"]
     deviceSock --> devRevision[device_tree_revision every 5 seconds]
+    deviceSock --> devSnapshot[device_tree_snapshot flat batch]
     deviceSock --> devGet[device_get]
     deviceSock --> devChildren[device_children]
     deviceSock --> devAttrs[device_attributes]
@@ -825,6 +835,11 @@ flowchart TD
     devRevision --> changed{revision changed?}
     changed -->|no| keepTree[keep current tree]
     changed -->|yes| devChildren
+
+    heavy[Expand All / history / global search or filter] --> devSnapshot
+    devSnapshot --> localTree[local name, icon, hierarchy and filtering]
+    manual[manual branch expansion] --> devChildren
+    devChildren --> devAttrs
 
     devicePage --> attrList[DeviceAttributeList]
     attrList --> devAttrs

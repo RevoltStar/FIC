@@ -135,6 +135,23 @@ target_compile_definitions(device_tree_revision_tests PRIVATE
 target_link_libraries(device_tree_revision_tests PRIVATE fic-device-db)
 add_test(NAME device_tree_revision_tests COMMAND device_tree_revision_tests)
 
+add_executable(device_tree_snapshot_tests
+    device-control/DeviceTreeSnapshotTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/core/DeviceTreeSnapshot.cpp
+)
+target_compile_definitions(device_tree_snapshot_tests PRIVATE
+    FIC_TEST_LEGACY_DEVICE_DB="${CMAKE_SOURCE_DIR}/fic/src/scripts/db/devices.db"
+)
+target_include_directories(device_tree_snapshot_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+target_link_libraries(device_tree_snapshot_tests PRIVATE
+    fic-core
+    fic-device-db
+    fic-ipc
+)
+add_test(NAME device_tree_snapshot_tests COMMAND device_tree_snapshot_tests)
+
 add_executable(device_policy_compiler_tests
     device-control/DevicePolicyCompilerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/core/DevicePolicyCompiler.cpp

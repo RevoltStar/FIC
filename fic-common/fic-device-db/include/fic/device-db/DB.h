@@ -67,6 +67,18 @@ struct DeviceAttribute {
     std::string attribute_value;
 };
 
+struct DeviceTreeEntry {
+    DeviceInfo device;
+    std::map<std::string, std::string> attributes;
+};
+
+struct DeviceTreeSnapshot {
+    std::int64_t revision = -1;
+    std::vector<DeviceTreeEntry> entries;
+    std::vector<DeviceInfo> identityOccurrences;
+    DeviceCategoryPolicyState categoryPolicy;
+};
+
 // События устройств
 struct DeviceEvent {
     int id;
@@ -155,6 +167,11 @@ public:
 
     DeviceInfo getDeviceById(int id);
     std::int64_t getDeviceTreeRevision();
+    bool getDeviceTreeSnapshot(int rootId,
+                               bool includeDisconnected,
+                               const std::string& bootId,
+                               DeviceTreeSnapshot& snapshot,
+                               std::string& error);
     std::int64_t getDesiredPolicyRevision();
     std::int64_t getActivePolicyRevision();
     bool setActivePolicyRevision(std::int64_t revision);

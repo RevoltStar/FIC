@@ -997,6 +997,187 @@ std::int64_t DB::getDeviceTreeRevision()
     return revision;
 }
 
+bool DB::getDeviceTreeSnapshot(int rootId,
+                               bool includeDisconnected,
+                               const std::string& bootId,
+                               DeviceTreeSnapshot& snapshot,
+                               std::string& error)
+{
+    DeviceTreeSnapshot candidate;
+    auto fail = [&](const std::string& message) {
+        error = message;
+        std::string rollbackError;
+        executeSql(db, "ROLLBACK;", rollbackError);
+        return false;
+    };
+    auto textColumn = [](sqlite3_stmt* statement, int column,
+                         std::string& value) {
+        if (sqlite3_column_type(statement, column) == SQLITE_NULL) {
+            value.clear();
+            return true;
+        }
+        const unsigned char* text = sqlite3_column_text(statement, column);
+        if (text == nullptr) {
+            return false;
+        }
+        value = reinterpret_cast<const char*>(text);
+        return true;
+    };
+    auto readDevice = [&](sqlite3_stmt* statement, DeviceInfo& device) {
+        device.id = sqlite3_column_int(statement, 0);
+        if (device.id <= 0 ||
+            !textColumn(statement, 1, device.device_hash) ||
+            !textColumn(statement, 2, device.devpath) ||
+            !textColumn(statement, 3, device.subsystem) ||
+            !textColumn(statement, 4, device.device_type) ||
+            !textColumn(statement, 6, device.control_level) ||
+            !textColumn(statement, 9, device.boot_id) ||
+            !textColumn(statement, 10, device.created_at) ||
+            !textColumn(statement, 11, device.last_event_at) ||
+            !textColumn(statement, 12, device.notes) ||
+            !textColumn(statement, 13, device.children_control)) {
+            return false;
+        }
+        device.parent_id = sqlite3_column_type(statement, 5) == SQLITE_NULL
+            ? -1 : sqlite3_column_int(statement, 5);
+        device.control_explicit = sqlite3_column_int(statement, 7) != 0;
+        device.ignore_hierarchy = sqlite3_column_int(statement, 8) != 0;
+        return true;
+    };
+
+    if (rootId <= 0 || !executeSql(db, "BEGIN TRANSACTION;", error)) {
+        if (rootId <= 0) {
+            error = "invalid device tree root";
+        }
+        return false;
+    }
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(db,
+            "SELECT revision FROM device_tree_state WHERE id = 1", -1,
+            &statement, nullptr) != SQLITE_OK) {
+        return fail("failed to read device tree revision: " +
+                    std::string(sqlite3_errmsg(db)));
+    }
+    if (sqlite3_step(statement) != SQLITE_ROW) {
+        sqlite3_finalize(statement);
+        return fail("device tree revision is missing");
+    }
+    candidate.revision = sqlite3_column_int64(statement, 0);
+    sqlite3_finalize(statement);
+
+    constexpr const char* treeSql =
+        "WITH RECURSIVE tree(id, depth, path, cycle, depth_exceeded) AS ("
+        " SELECT id, 0, printf('/%d/', id), 0, 0 FROM devices WHERE id = ?1"
+        " UNION ALL"
+        " SELECT child.id, tree.depth + 1, tree.path || child.id || '/',"
+        "        instr(tree.path, printf('/%d/', child.id)) != 0,"
+        "        tree.depth >= 1024"
+        " FROM devices child JOIN tree ON child.parent_id = tree.id"
+        " WHERE tree.cycle = 0 AND tree.depth_exceeded = 0"
+        "   AND (?2 OR child.boot_id = '-1' OR child.boot_id = ?3)"
+        ")"
+        " SELECT d.id,d.device_hash,d.devpath,d.subsystem,d.device_type,d.parent_id,"
+        " d.control_level,d.control_explicit,d.ignore_hierarchy,d.boot_id,"
+        " d.created_at,d.last_event_at,d.notes,d.children_control,"
+        " a.attribute_name,a.attribute_value,tree.cycle,tree.depth_exceeded"
+        " FROM tree JOIN devices d ON d.id = tree.id"
+        " LEFT JOIN device_attributes a ON a.device_id = d.id"
+        " ORDER BY tree.depth,d.id,a.attribute_name";
+    if (sqlite3_prepare_v2(db, treeSql, -1, &statement, nullptr) != SQLITE_OK) {
+        return fail("failed to prepare device tree snapshot: " +
+                    std::string(sqlite3_errmsg(db)));
+    }
+    sqlite3_bind_int(statement, 1, rootId);
+    sqlite3_bind_int(statement, 2, includeDisconnected ? 1 : 0);
+    sqlite3_bind_text(statement, 3, bootId.c_str(), -1, SQLITE_TRANSIENT);
+    std::map<int, std::size_t> entryById;
+    int step = SQLITE_OK;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
+        if (sqlite3_column_int(statement, 16) != 0 ||
+            sqlite3_column_int(statement, 17) != 0) {
+            const bool cycle = sqlite3_column_int(statement, 16) != 0;
+            sqlite3_finalize(statement);
+            return fail(cycle
+                ? "cycle detected in device tree"
+                : "device tree exceeds maximum depth of 1024");
+        }
+        DeviceInfo device;
+        if (!readDevice(statement, device)) {
+            sqlite3_finalize(statement);
+            return fail("malformed device row in tree snapshot");
+        }
+        auto [position, inserted] = entryById.emplace(
+            device.id, candidate.entries.size());
+        if (inserted) {
+            candidate.entries.push_back({device, {}});
+        }
+        if (sqlite3_column_type(statement, 14) != SQLITE_NULL) {
+            std::string name;
+            std::string value;
+            if (!textColumn(statement, 14, name) || name.empty() ||
+                !textColumn(statement, 15, value)) {
+                sqlite3_finalize(statement);
+                return fail("malformed device attribute in tree snapshot");
+            }
+            candidate.entries[position->second].attributes.emplace(name, value);
+        }
+    }
+    sqlite3_finalize(statement);
+    if (step != SQLITE_DONE) {
+        return fail("failed to read device tree snapshot: " +
+                    std::string(sqlite3_errmsg(db)));
+    }
+    if (candidate.entries.empty() || candidate.entries.front().device.id != rootId) {
+        return fail("device tree root was not found");
+    }
+
+    constexpr const char* allSql =
+        "SELECT id,device_hash,devpath,subsystem,device_type,parent_id,"
+        "control_level,control_explicit,ignore_hierarchy,boot_id,created_at,"
+        "last_event_at,notes,children_control FROM devices ORDER BY id";
+    if (sqlite3_prepare_v2(db, allSql, -1, &statement, nullptr) != SQLITE_OK) {
+        return fail("failed to prepare identity snapshot: " +
+                    std::string(sqlite3_errmsg(db)));
+    }
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
+        DeviceInfo device;
+        if (!readDevice(statement, device)) {
+            sqlite3_finalize(statement);
+            return fail("malformed device row in identity snapshot");
+        }
+        candidate.identityOccurrences.push_back(std::move(device));
+    }
+    sqlite3_finalize(statement);
+    if (step != SQLITE_DONE) {
+        return fail("failed to read identity snapshot: " +
+                    std::string(sqlite3_errmsg(db)));
+    }
+
+    if (sqlite3_prepare_v2(db,
+            "SELECT block_usb_storage,block_printers_scanners,"
+            "block_optical_drives FROM device_policy_state WHERE id = 1",
+            -1, &statement, nullptr) != SQLITE_OK) {
+        return fail("failed to prepare category policy snapshot: " +
+                    std::string(sqlite3_errmsg(db)));
+    }
+    if (sqlite3_step(statement) != SQLITE_ROW) {
+        sqlite3_finalize(statement);
+        return fail("device category policy state is missing");
+    }
+    candidate.categoryPolicy.block_usb_storage = sqlite3_column_int(statement, 0) != 0;
+    candidate.categoryPolicy.block_printers_scanners = sqlite3_column_int(statement, 1) != 0;
+    candidate.categoryPolicy.block_optical_drives = sqlite3_column_int(statement, 2) != 0;
+    sqlite3_finalize(statement);
+
+    if (!executeSql(db, "COMMIT;", error)) {
+        return fail("failed to commit device tree snapshot: " + error);
+    }
+    snapshot = std::move(candidate);
+    error.clear();
+    return true;
+}
+
 std::int64_t DB::getDesiredPolicyRevision()
 {
     const char* sql = "SELECT desired_revision FROM device_policy_state WHERE id = 1";

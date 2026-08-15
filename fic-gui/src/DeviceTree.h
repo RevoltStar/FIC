@@ -46,6 +46,19 @@ struct DeviceInfo {
     std::string notes;
 };
 
+using DeviceAttributes = std::map<std::string, std::string>;
+
+struct DeviceTreeSnapshotEntry {
+    DeviceInfo device;
+    DeviceAttributes attributes;
+};
+
+struct DeviceTreeSnapshotData {
+    std::int64_t revision = -1;
+    std::string bootId;
+    std::vector<DeviceTreeSnapshotEntry> entries;
+};
+
 class DeviceTree : public QWidget
 {
     Q_OBJECT
@@ -84,16 +97,18 @@ private:
     QTimer *refreshTimer;
     QTimer *filterTimer;
     std::optional<std::int64_t> lastTreeRevision;
+    bool fullSnapshotLoaded = false;
+    bool snapshotIncludesDisconnected = false;
 
     void setupUI();
     void setupRefreshTimer();
     void refreshIfTreeChanged();
-    void refreshPreservingState();
+    bool refreshPreservingState(bool forceSnapshot = false);
+    bool loadDeviceTreeSnapshot(bool includeDisconnected);
     void collectExpandedDeviceIds(QTreeWidgetItem *item, QSet<int> &expandedIds) const;
     bool restoreExpandedDeviceIds(QTreeWidgetItem *item, const QSet<int> &expandedIds, int selectedId);
     QTreeWidgetItem* findItemByDeviceId(QTreeWidgetItem *item, int deviceId) const;
     void ensureChildrenLoaded(QTreeWidgetItem *item);
-    void expandNodeRecursively(QTreeWidgetItem *item);
     void loadChildDevices(QTreeWidgetItem *parentItem, int parentId);
     bool filterActive() const;
     bool itemMatchesFilter(QTreeWidgetItem *item) const;
@@ -108,9 +123,9 @@ private:
 
     DeviceInfo fetchDeviceById(int deviceId) const;
     std::optional<std::int64_t> fetchTreeRevision() const;
+    std::optional<DeviceTreeSnapshotData> fetchDeviceTreeSnapshot(bool includeDisconnected) const;
     std::vector<DeviceInfo> fetchChildDevices(int parentId, bool includeDisconnected = false) const;
     std::map<std::string, std::string> fetchDeviceAttributes(int deviceId) const;
-    std::string getDeviceAttribute(int deviceId, const std::string& attributeName, const std::string& defaultValue = "") const;
     bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
     bool updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
     bool updateDeviceChildrenControlRemote(int deviceId, const std::string& childrenControl, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
@@ -118,12 +133,15 @@ private:
     bool deleteDeviceRemote(int deviceId, QString *errorMessage = nullptr) const;
 
     std::string getSystemBootId();
-    bool isDeviceBootIdValid(const DeviceInfo& device);
-    void setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo& device);
-    void setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo& device);
+    bool isDeviceBootIdValid(const DeviceInfo& device, const std::string& currentBootId = "");
+    void setupTreeItemMetadata(QTreeWidgetItem *item, const DeviceInfo& device,
+                               const DeviceAttributes& attributes,
+                               const std::string& currentBootId = "");
+    void setupTreeItemStyle(QTreeWidgetItem *item, const DeviceInfo& device,
+                            const std::string& currentBootId = "");
     void setupControlLevelColumn(QTreeWidgetItem *item, const DeviceInfo& device);
-    QIcon deviceIcon(const DeviceInfo& device) const;
-    std::string generateNodeName(const DeviceInfo& device);
+    QIcon deviceIcon(const DeviceInfo& device, const DeviceAttributes& attributes) const;
+    std::string generateNodeName(const DeviceInfo& device, const DeviceAttributes& attributes);
 };
 
 #endif // DEVICETREEWIDGET_H

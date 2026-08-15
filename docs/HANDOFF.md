@@ -4,63 +4,53 @@
 
 - Дата: 2026-08-15.
 - Ветка: `main`.
-- Базовый commit задачи: `dd79dcd` (`Актуализируем AGENTS.md`).
+- Базовый commit задачи: `8a0b9f6` (`Исправить табличную разметку редактора политик`).
 
 ## Current task
 
-- Исправлена UI-регрессия табличной разметки общего `PolicyEditorWidget` без
-  возврата policy UI в `MainWindow` и без изменения business logic.
+- Устранена N+1-загрузка полного дерева устройств в `fic-gui` / `fic-dick`
+  без изменения UI layout и внешнего вида.
 
 ## Accepted architecture / invariants
 
-- Один `PolicyEditorWidget` остаётся общим для `StandardModulePage`, настроек
-  `AuditModulePage` и общих правил `DeviceModulePage`.
-- Рамки принадлежат только контейнерам табличных ячеек. Native styling
-  вложенных editors не переопределяется каскадным stylesheet.
-- Header и submodule backgrounds используют Qt palette roles и должны
-  оставаться читаемыми в light/dark themes.
+- Ручное раскрытие отдельной ветки остаётся lazy через `device_children` и
+  точечный `device_attributes`.
+- `Expand All`, checkbox/quick filter `История` и глобальные search/filter
+  используют один flat `device_tree_snapshot` IPC request.
+- Snapshot и его revision читаются в одной SQLite read transaction; основной
+  recursive CTE возвращает устройства вместе с attributes.
+- Effective policy snapshot вычисляется по in-memory indexes без SQL на каждый
+  device. `device_events` остаётся отдельным API.
 
 ## Completed
 
-- Header, submodule и четыре элемента каждой policy row помещены в отдельные
-  `QFrame::StyledPanel` cells с внутренними margins.
-- Внешний content frame снова визуально объединяет таблицу; submodule header
-  занимает все четыре колонки.
-- Колонки получили stretch `0/1/1/2` и minimum widths для enabled/name/value.
-  Пустое пространство забирает отдельная stretch-row после всех policies.
-- Multiline value editor и read-only description имеют ограниченную высоту;
-  длинный текст прокручивается внутри.
-- `Apply` остаётся вне scroll content в отдельном layout с внешними margins.
-- `module_ui_static_checks` проверяет cell containers, palette-aware frames,
-  нижнюю stretch-row и отсутствие прямого размещения policy controls в root
-  grid или каскадного stylesheet.
+- Добавлен DB snapshot с `WITH RECURSIVE`, сворачиванием attribute rows,
+  current/history visibility, защитой от cycle/depth и fail-closed output.
+- Добавлен read-only `device_tree_snapshot` с flat `parent_id`, attributes,
+  effective fields, `revision`, `boot_id` и проверкой размера IPC response.
+- GUI строит полное дерево локально из snapshot, явно передаёт attributes в
+  name/icon rendering и сохраняет selection, expanded state и scroll position.
+- Добавлены DB/IPC contract tests и архитектурные static checks.
+- Обновлена `docs/architecture-diagrams.md` с lazy и full-snapshot режимами.
 
 ## Changed areas
 
-- `fic-gui/src/widgets/PolicyEditorWidget.cpp`;
-- `tests/module-ui/static_checks.py`;
-- `docs/HANDOFF.md`.
+- `fic-common/fic-device-db`;
+- `fic-dick/src/core/DeviceTreeSnapshot.*` и daemon routing;
+- `fic-gui/src/DeviceTree.*`;
+- `tests/device-control`, `tests/CMakeLists.txt`;
+- `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- `cmake -S . -B /tmp/fic-policy-ui-build
+- `cmake -S . -B /tmp/fic-device-tree-snapshot-build
   -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- `cmake --build /tmp/fic-policy-ui-build -j2` — успешно.
-- `ctest --test-dir /tmp/fic-policy-ui-build --output-on-failure` — 38/38 без
-  ошибок; `ipc_transport_tests`, `admin_socket_tests` и
-  `command_hash_batch_tests` штатно пропущены как host-dependent.
-- Safe smoke: `fic-gui` с `QT_QPA_PLATFORM=offscreen` и отсутствующим
-  тестовым socket вошёл в event loop и был остановлен `timeout` через 3 секунды
-  (`124`).
-- Offscreen visual preview настоящего `PolicyEditorWidget` просмотрен для
-  synthetic `GLOBAL`, `NET`, `DAC`, `DC`, `AUDIT` descriptors в light и dark
-  palettes. Проверены рамки, геометрия строк, multiline editors и отделение
-  `Apply`; screenshots остались только в `/tmp/fic-policy-ui-preview`.
-- `git diff --check` — успешно.
+- `cmake --build /tmp/fic-device-tree-snapshot-build -j2` — успешно.
+- `ctest --test-dir /tmp/fic-device-tree-snapshot-build --output-on-failure` —
+  36 passed, 3 host-dependent tests штатно пропущены, ошибок нет.
+- Реальные device-control mutations/enforcement не запускались.
 
 ## Remaining
 
-- Интерактивная проверка в реальной desktop theme/VNC не выполнялась;
-  offscreen preview подтверждает отрисовку и геометрию, но не заменяет полный
-  пользовательский workflow.
-- Реальный daemon и policy mutations/apply не запускались.
+- Интерактивная проверка большого дерева в реальной GUI-сессии не выполнялась;
+  layout и styling не изменялись.

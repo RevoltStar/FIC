@@ -1,6 +1,7 @@
 #include "DeviceControlDaemon.h"
 #include "DevicePaths.h"
 #include "DevicePolicyCompiler.h"
+#include "DeviceTreeSnapshot.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1081,6 +1082,9 @@ json handle_db_request(const json& request) {
             {"message", "device tree revision loaded"},
             {"revision", revision}
         };
+    }
+    if (command == "device_tree_snapshot") {
+        return device_tree_snapshot_response(db, request, current_boot_id());
     }
     if (command == "device_policy_status") {
         const std::int64_t desired = db.getDesiredPolicyRevision();
