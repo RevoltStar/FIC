@@ -10,20 +10,30 @@ bool buildPolicyRegistry(
     try {
         error.clear();
         PolicyRegistry candidate;
-        const std::pair<const char*, ModuleView> modules[] = {
-            {"DAC", ModuleView::Standard},
-            {"IDENTITY_ACCESS", ModuleView::Standard},
-            {"SYSCTL", ModuleView::Standard},
-            {"OSS", ModuleView::Standard},
-            {"NET", ModuleView::Standard},
-            {"FIREWALL", ModuleView::Standard},
-            {"DC", ModuleView::Device},
-            {"AUDIT", ModuleView::Audit},
-            {"GLOBAL", ModuleView::Standard}
+        struct ModuleRegistration {
+            const char* name;
+            ModuleView view;
+            int displayOrder;
         };
 
-        for (const auto& [name, view] : modules) {
-            if (!candidate.addModule(name, view, error)) {
+        const ModuleRegistration modules[] = {
+            {"DAC",             ModuleView::Standard, 10},
+            {"IDENTITY_ACCESS", ModuleView::Standard, 20},
+            {"SYSCTL",          ModuleView::Standard, 30},
+            {"OSS",             ModuleView::Standard, 40},
+            {"NET",             ModuleView::Standard, 50},
+            {"FIREWALL",        ModuleView::Standard, 60},
+            {"DC",              ModuleView::Device,   70},
+            {"AUDIT",           ModuleView::Audit,    80},
+            {"GLOBAL",          ModuleView::Standard, 90}
+        };
+
+        for (const ModuleRegistration& module : modules) {
+            if (!candidate.addModule(
+                    module.name,
+                    module.view,
+                    module.displayOrder,
+                    error)) {
                 return false;
             }
         }

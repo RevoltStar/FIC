@@ -15,6 +15,7 @@ enum class ModuleView {
 struct ModuleDescriptor {
     std::string name;
     ModuleView view = ModuleView::Standard;
+    int displayOrder = 0;
 };
 
 bool parseModuleDescriptors(

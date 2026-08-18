@@ -2,6 +2,7 @@
 
 #include "./ui_mainwindow.h"
 
+#include <algorithm>
 #include <QMessageBox>
 
 #include "pages/ModulePageFactory.h"
@@ -36,6 +37,18 @@ void MainWindow::addModules()
         QMessageBox::warning(this, "FIC daemon", error);
         return;
     }
+
+    std::sort(
+        modules.begin(),
+        modules.end(),
+        [](const ModuleDescriptor& left, const ModuleDescriptor& right) {
+            if (left.displayOrder != right.displayOrder) {
+                return left.displayOrder < right.displayOrder;
+            }
+            return left.name < right.name;
+        });
+
+    const ModulePageFactory factory;
 
     const ModulePageFactory factory;
     for (const ModuleDescriptor& module : modules) {

@@ -33,6 +33,7 @@ using SubmoduleMap = std::map<std::string, PolicyEntryMap>;
 
 struct PolicyModule {
     ModuleView view = ModuleView::Standard;
+    int displayOrder = 0;
     SubmoduleMap submodules;
 };
 
@@ -42,10 +43,19 @@ public:
     using iterator = ModuleMap::iterator;
     using const_iterator = ModuleMap::const_iterator;
 
-    bool addModule(const std::string& name, ModuleView view, std::string& error)
+    bool addModule(
+        const std::string& name,
+        ModuleView view,
+        int displayOrder,
+        std::string& error)
     {
         if (name.empty()) {
             error = "module name must not be empty";
+            return false;
+        }
+
+        if (displayOrder < 0) {
+            error = "module display order must not be negative: " + name;
             return false;
         }
 
@@ -55,10 +65,16 @@ public:
                 error = "conflicting view for module: " + name;
                 return false;
             }
+            if (existing->second.displayOrder != displayOrder) {
+                error = "conflicting display order for module: " + name;
+                return false;
+            }
             return true;
         }
 
-        modules_.emplace(name, PolicyModule{view, {}});
+        modules_.emplace(
+            name,
+            PolicyModule{view, displayOrder, {}});
         return true;
     }
 

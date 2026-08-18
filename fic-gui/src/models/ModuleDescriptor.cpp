@@ -22,9 +22,13 @@ bool parseModuleDescriptors(
 
     std::set<std::string> names;
     for (const auto& item : response["modules"]) {
-        if (!item.is_object() || !item.contains("name") ||
-            !item["name"].is_string() || !item.contains("view") ||
-            !item["view"].is_string()) {
+        if (!item.is_object() ||
+            !item.contains("name") ||
+            !item["name"].is_string() ||
+            !item.contains("view") ||
+            !item["view"].is_string() ||
+            !item.contains("display_order") ||
+            !item["display_order"].is_number_integer()) {
             error = "invalid module descriptor";
             modules.clear();
             return false;
@@ -32,6 +36,13 @@ bool parseModuleDescriptors(
 
         ModuleDescriptor descriptor;
         descriptor.name = item["name"].get<std::string>();
+        descriptor.displayOrder = item["display_order"].get<int>();
+        if (descriptor.displayOrder < 0) {
+            error = "module descriptor has a negative display_order: " +
+                descriptor.name;
+            modules.clear();
+            return false;
+        }
         const std::string view = item["view"].get<std::string>();
         if (descriptor.name.empty()) {
             error = "module descriptor has an empty name";

@@ -8,7 +8,8 @@ nlohmann::json moduleDescriptorsJson(const PolicyRegistry& registry)
     for (const auto& [name, module] : registry) {
         modules.push_back({
             {"name", name},
-            {"view", moduleViewName(module.view)}
+            {"view", moduleViewName(module.view)},
+            {"display_order", module.displayOrder}
         });
     }
     return modules;

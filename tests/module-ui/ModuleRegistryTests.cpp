@@ -74,20 +74,57 @@ int main()
 
     const nlohmann::json descriptors = moduleDescriptorsJson(registry);
     assert(descriptors == nlohmann::json::array({
-        {{"name", "AUDIT"}, {"view", "audit"}},
-        {{"name", "DAC"}, {"view", "standard"}},
-        {{"name", "DC"}, {"view", "device"}},
-        {{"name", "FIREWALL"}, {"view", "standard"}},
-        {{"name", "GLOBAL"}, {"view", "standard"}},
-        {{"name", "IDENTITY_ACCESS"}, {"view", "standard"}},
-        {{"name", "NET"}, {"view", "standard"}},
-        {{"name", "OSS"}, {"view", "standard"}},
-        {{"name", "SYSCTL"}, {"view", "standard"}}
+    {
+        {"name", "AUDIT"},
+        {"view", "audit"},
+        {"display_order", 80}
+    },
+    {
+        {"name", "DAC"},
+        {"view", "standard"},
+        {"display_order", 10}
+    },
+    {
+        {"name", "DC"},
+        {"view", "device"},
+        {"display_order", 70}
+    },
+    {
+        {"name", "FIREWALL"},
+        {"view", "standard"},
+        {"display_order", 60}
+    },
+    {
+        {"name", "GLOBAL"},
+        {"view", "standard"},
+        {"display_order", 90}
+    },
+    {
+        {"name", "IDENTITY_ACCESS"},
+        {"view", "standard"},
+        {"display_order", 20}
+    },
+    {
+        {"name", "NET"},
+        {"view", "standard"},
+        {"display_order", 50}
+    },
+    {
+        {"name", "OSS"},
+        {"view", "standard"},
+        {"display_order", 40}
+    },
+    {
+        {"name", "SYSCTL"},
+        {"view", "standard"},
+        {"display_order", 30}
+    }
     }));
     for (const auto& descriptor : descriptors) {
-        assert(descriptor.size() == 2);
+        assert(descriptor.size() == 3);
         assert(descriptor.contains("name"));
         assert(descriptor.contains("view"));
+        assert(descriptor.contains("display_order"));
     }
 
     Policy* const originalAuditPolicy =
@@ -121,9 +158,16 @@ int main()
            originalAuditPolicy);
 
     PolicyRegistry metadataConflictRegistry;
-    assert(metadataConflictRegistry.addModule("DAC", ModuleView::Standard, error));
-    assert(!metadataConflictRegistry.addModule("DAC", ModuleView::Audit, error));
+    assert(metadataConflictRegistry.addModule(
+        "DAC", ModuleView::Standard, 10, error));
+
+    assert(!metadataConflictRegistry.addModule(
+        "DAC", ModuleView::Audit, 10, error));
     assert(error == "conflicting view for module: DAC");
+
+    assert(!metadataConflictRegistry.addModule(
+        "DAC", ModuleView::Standard, 20, error));
+    assert(error == "conflicting display order for module: DAC");
 
     Logger::ScopedCapture capture;
     assert(Logger::log("filtered", logLevel::ERROR, "daemon"));
