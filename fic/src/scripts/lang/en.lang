@@ -130,7 +130,7 @@
 
 [module:OSS][policy:disable_autologin][description]=Disable automatic login
 [module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
-[module:OSS][policy:disable_videodisplay_when_locked][description]=In the SDDM display manager, the name of the enabled video adapter is shown on the lock screen by default.
+[module:OSS][policy:disable_videodisplay_when_locked][description]=Disable video display on the lock screen
 [module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
 [module:OSS][policy:lock_on_tty_switch][description]=This policy is not supported yet. If enabled, applying it fails instead of reporting a false success.
 [module:OSS][policy:lock_on_tty_switch][message:not_implemented]=Locking the screen on TTY switch is not implemented yet

@@ -646,8 +646,9 @@ bool initPolicyRegistry(
         executables));
     cafArr.push_back(std::make_unique<OSS_disable_autologin>(
         executables, platform.displayManager));
-    cafArr.push_back(std::make_unique<OSS_disable_videodisplay_when_locked>(
-        executables, platform.displayManager));
+    cafArr.push_back(
+        std::make_unique<OSS_disable_videodisplay_when_locked>(
+        executables));
     cafArr.push_back(std::make_unique<OSS_lock_on_tty_switch>());
     cafArr.push_back(std::make_unique<OSS_fstab_tmp_profile>());
     cafArr.push_back(std::make_unique<OSS_fstab_var_tmp_profile>());

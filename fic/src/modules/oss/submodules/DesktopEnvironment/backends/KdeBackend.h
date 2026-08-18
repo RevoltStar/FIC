@@ -17,9 +17,25 @@ public:
         std::string& error
     ) const;
 
+    bool writeConfig(
+        const std::string& file,
+        const std::vector<std::string>& groups,
+        const std::string& key,
+        const std::string& value,
+        std::string& error
+    ) const;
+
     bool readConfig(
         const std::string& file,
         const std::string& group,
+        const std::string& key,
+        std::string& value,
+        std::string& error
+    ) const;
+
+    bool readConfig(
+        const std::string& file,
+        const std::vector<std::string>& groups,
         const std::string& key,
         std::string& value,
         std::string& error
