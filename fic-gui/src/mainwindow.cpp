@@ -49,8 +49,6 @@ void MainWindow::addModules()
         });
 
     const ModulePageFactory factory;
-
-    const ModulePageFactory factory;
     for (const ModuleDescriptor& module : modules) {
         std::vector<PolicyDescriptor> policies;
         if (!service.loadPolicies(module.name, policies, error)) {
