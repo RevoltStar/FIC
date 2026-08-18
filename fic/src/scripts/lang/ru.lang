@@ -201,7 +201,7 @@
 [module:SYSCTL][policy:ipv4_all_accept_redirects_disable][description]=Запрещает принимать IPv4 redirect на всех интерфейсах.
 [module:SYSCTL][policy:ipv4_all_rp_filter_enable][description]=Включает IPv4 rp_filter на всех интерфейсах. На сложных маршрутизируемых или multi-homed системах может влиять на сетевую производительность и доступность трафика.
 [module:SYSCTL][policy:ipv4_all_send_redirects_disable][description]=Запрещает отправку IPv4 redirect на всех интерфейсах.
-[module:SYSCTL][policy:fs_suid_dump_disable][description]=Запрещает создание core dump для SUID/SGID процессов.
+[module:SYSCTL][policy:fs_suid_dump_disable][description]=Запрещает создание core dump для SUID/SGID процессов. ВАЖНО: некоторые утилиты могут переопределять этот параметр в RUNTIME, например, apport.
 [module:SYSCTL][policy:kernel_sysrq_disable][description]=Устанавливает kernel.sysrq = 0, отключая команды Magic SysRq. При наличии параметра sysrq_always_enabled в загруженном ядре данная политика не имеет эффекта.
 [module:SYSCTL][policy:tcp_syncookies_enable][description]=Включает SYN cookies для защиты от SYN flood.
 [module:SYSCTL][policy:tcp_keepalive_time][description]=Задает время до отправки keepalive TCP-соединением. Слишком агрессивные значения могут увеличить сетевую и процессорную нагрузку при большом количестве соединений.
