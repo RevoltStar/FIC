@@ -15,94 +15,213 @@ _fic_completion()
     {
         local output
         output=$(fic-cli module list 2>/dev/null) || return
-        printf '%s\n' "$output" | awk '{for (i = 1; i <= NF; ++i) if ($i != "modules" && $i != "listed") print $i}'
+
+        # fic-cli module list:
+        #   DAC standard
+        #   DC device
+        #   AUDIT audit
+        #
+        # Для completion нужен только первый столбец.
+        printf '%s\n' "$output" | awk 'NF >= 2 { print $1 }'
     }
 
     _fic_get_modules_with_all()
     {
         local modules
         modules=$(_fic_get_modules)
-        printf '%s all\n' "$modules"
+        printf '%s\n' "$modules"
+        printf '%s\n' "all"
     }
 
     _fic_get_policies()
     {
         local module="$1"
         local output
+
+        [[ -z "$module" || "$module" == "all" ]] && return
+
         output=$(fic-cli policy list "$module" 2>/dev/null) || return
-        printf '%s\n' "$output" | awk -F '[: ]+' '/:/{print $3}'
+
+        # fic-cli policy list:
+        #   MODULE:submodule:policy ENABLE
+        printf '%s\n' "$output" |
+            awk -F '[: ]+' 'NF >= 3 { print $3 }'
     }
 
     _fic_get_policies_with_all()
     {
         local module="$1"
         local policies
+
         policies=$(_fic_get_policies "$module")
-        printf '%s all\n' "$policies"
+        printf '%s\n' "$policies"
+        printf '%s\n' "all"
     }
 
     case $cword in
         1)
-            COMPREPLY=( $(compgen -W "policy module hash help lock unlock lockstatus" -- "$cur") )
+            COMPREPLY=(
+                $(compgen -W \
+                    "policy module device hash help status shutdown lock unlock lockstatus version build-info --version --build-info" \
+                    -- "$cur")
+            )
             ;;
+
         2)
             case "${words[1]}" in
                 policy)
-                    COMPREPLY=( $(compgen -W "enable disable isenable isdisable value info apply set list" -- "$cur") )
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "set enable disable isenable isdisable value apply list info" \
+                            -- "$cur")
+                    )
                     ;;
+
                 module)
                     COMPREPLY=( $(compgen -W "list" -- "$cur") )
                     ;;
+
+                device)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "revision root get children set ignore-hierarchy children-control policy-status reset check-permanent" \
+                            -- "$cur")
+                    )
+                    ;;
+
                 hash)
                     COMPREPLY=( $(compgen -W "calc" -- "$cur") )
                     ;;
             esac
             ;;
+
         3)
             case "${words[1]}-${words[2]}" in
-                policy-enable|policy-disable|policy-isenable|policy-isdisable|policy-value|policy-set)
-                    COMPREPLY=( $(compgen -W "$(_fic_get_modules)" -- "$cur") )
+                policy-set|\
+                policy-enable|\
+                policy-disable|\
+                policy-isenable|\
+                policy-isdisable|\
+                policy-value)
+                    COMPREPLY=(
+                        $(compgen -W "$(_fic_get_modules)" -- "$cur")
+                    )
                     ;;
+
                 policy-apply|policy-list)
-                    COMPREPLY=( $(compgen -W "$(_fic_get_modules_with_all)" -- "$cur") )
+                    COMPREPLY=(
+                        $(compgen -W "$(_fic_get_modules_with_all)" -- "$cur")
+                    )
                     ;;
+
                 policy-info)
-                    COMPREPLY=( $(compgen -W "restriction" -- "$cur") )
+                    COMPREPLY=(
+                        $(compgen -W "restriction" -- "$cur")
+                    )
                     ;;
+
+                hash-calc)
+                    compopt -o filenames 2>/dev/null
+                    COMPREPLY=( $(compgen -f -- "$cur") )
+                    ;;
+
+                device-get|\
+                device-children|\
+                device-set|\
+                device-ignore-hierarchy|\
+                device-children-control|\
+                device-reset)
+                    # Здесь ожидается numeric device id.
+                    # Отдельного CLI API для перечисления всех id сейчас нет.
+                    COMPREPLY=()
+                    ;;
+            esac
+            ;;
+
+        4)
+            case "${words[1]}-${words[2]}" in
+                policy-set|\
+                policy-enable|\
+                policy-disable|\
+                policy-isenable|\
+                policy-isdisable|\
+                policy-value)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "$(_fic_get_policies "${words[3]}")" \
+                            -- "$cur")
+                    )
+                    ;;
+
+                policy-apply)
+                    if [[ "${words[3]}" == "all" ]]; then
+                        COMPREPLY=()
+                    else
+                        COMPREPLY=(
+                            $(compgen -W \
+                                "$(_fic_get_policies_with_all "${words[3]}")" \
+                                -- "$cur")
+                        )
+                    fi
+                    ;;
+
+                policy-info)
+                    if [[ "${words[3]}" == "restriction" ]]; then
+                        COMPREPLY=(
+                            $(compgen -W \
+                                "$(_fic_get_modules)" \
+                                -- "$cur")
+                        )
+                    fi
+                    ;;
+
+                device-children)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "--all --history all history" \
+                            -- "$cur")
+                    )
+                    ;;
+
+                device-set)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "blocked allowed permanent ignored" \
+                            -- "$cur")
+                    )
+                    ;;
+
+                device-ignore-hierarchy)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "true false" \
+                            -- "$cur")
+                    )
+                    ;;
+
+                device-children-control)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "allow deny inherit" \
+                            -- "$cur")
+                    )
+                    ;;
+
                 hash-calc)
                     compopt -o filenames 2>/dev/null
                     COMPREPLY=( $(compgen -f -- "$cur") )
                     ;;
             esac
             ;;
-        4)
-            case "${words[1]}-${words[2]}-${words[3]}" in
-                policy-enable-*|policy-disable-*|policy-isenable-*|policy-isdisable-*|policy-value-*|policy-set-*)
-                    COMPREPLY=( $(compgen -W "$(_fic_get_policies "${words[3]}")" -- "$cur") )
-                    ;;
-                policy-apply-all)
-                    COMPREPLY=()
-                    ;;
-                policy-apply-*)
-                    COMPREPLY=( $(compgen -W "$(_fic_get_policies_with_all "${words[3]}")" -- "$cur") )
-                    ;;
-                policy-info-restriction)
-                    COMPREPLY=( $(compgen -W "$(_fic_get_modules)" -- "$cur") )
-                    ;;
-                hash-calc-*)
-                    compopt -o filenames 2>/dev/null
-                    COMPREPLY=( $(compgen -f -- "$cur") )
-                    ;;
-            esac
-            ;;
+
         5)
-            case "${words[1]}-${words[2]}-${words[3]}-${words[4]}" in
-                policy-info-restriction-*)
-                    COMPREPLY=( $(compgen -W "$(_fic_get_policies "${words[4]}")" -- "$cur") )
-                    ;;
-                hash-calc-*)
-                    compopt -o filenames 2>/dev/null
-                    COMPREPLY=( $(compgen -f -- "$cur") )
+            case "${words[1]}-${words[2]}-${words[3]}" in
+                policy-info-restriction)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "$(_fic_get_policies "${words[4]}")" \
+                            -- "$cur")
+                    )
                     ;;
             esac
             ;;
