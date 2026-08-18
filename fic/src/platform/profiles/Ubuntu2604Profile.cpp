@@ -109,10 +109,22 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.dac.protectedSystemFiles.push_back(
         {profile.sudo.mainConfigPath, "root", "root", 0440});
     profile.dac.protectedSystemCommands = {
-        {"/usr/bin/df", "root", "root", 0750},
+        {
+            "/usr/bin/df",
+            "root",
+            "root",
+            0750,
+            {"/usr/bin/gnudf"}
+        },
         {"/usr/bin/chattr", "root", "root", 0750},
         {"/usr/sbin/arp", "root", "root", 0750},
-        {"/usr/sbin/ip", "root", "root", 0750}
+        {
+            "/usr/sbin/ip",
+            "root",
+            "root",
+            0750,
+            {"/usr/bin/ip"}
+        }
     };
     return profile;
 }
