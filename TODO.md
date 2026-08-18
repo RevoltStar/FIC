@@ -17,3 +17,5 @@
 ## Политика ставит net.ipv4.conf.all.rp_filter и net.ipv4.conf.default.rp_filter, а NetworkManager может задать:
 ## net.ipv4.conf.enp5s0.rp_filter = 2 и net.ipv4.conf.wlan0.rp_filter
 ## Либо удалять (комментировать) настройки для отдельных интерфейсов, либо переопределять нашими strict-значениями
+
+## Ввести для всех политик механизм realtime-отслеживания измененных системных файлов
