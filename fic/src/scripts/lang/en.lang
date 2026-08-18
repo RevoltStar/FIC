@@ -189,10 +189,10 @@ Where possible, a lock against modification is applied
 [module:SYSCTL][policy:ipv4_default_send_redirects_disable][description]=Prevents sending IPv4 redirects on new interfaces by default.
 [module:SYSCTL][policy:ipv6_all_accept_redirects_disable][description]=Prevents accepting IPv6 redirects on all interfaces.
 [module:SYSCTL][policy:ipv6_default_accept_redirects_disable][description]=Prevents accepting IPv6 redirects on new interfaces by default.
-[module:SYSCTL][policy:ipv6_packet_forwarding_disable][description]=Disables IPv6 packet forwarding.
+[module:SYSCTL][policy:ipv6_packet_forwarding_disable][description]=Disables IPv6 packet forwarding. IMPORTANT: Some utilities may override this parameter at runtime, for example, Docker or QEMU/KVM.
 [module:SYSCTL][policy:kernel_kptr_restrict][description]=Restricts kernel pointer exposure in /proc and dmesg.
 [module:SYSCTL][policy:fs_nr_open_limit][description]=Sets the maximum number of file descriptors per process. A value that is too low can limit applications with many connections or open files.
-[module:SYSCTL][policy:ipv4_packet_forwarding_disable][description]=Disables IPv4 packet forwarding.
+[module:SYSCTL][policy:ipv4_packet_forwarding_disable][description]=Disables IPv4 packet forwarding. IMPORTANT: Some utilities may override this parameter at runtime, for example, Docker or QEMU/KVM.
 [module:SYSCTL][policy:kernel_perf_event_paranoid][description]=Restricts access to perf_event. It may make performance profiling and diagnostics harder for unprivileged users.
 [module:SYSCTL][policy:fs_protected_symlinks][description]=Enables protection against unsafe symlinks.
 [module:SYSCTL][policy:kernel_pid_max_limit][description]=Sets the maximum number of PIDs in the system. A value that is too low can limit systems with many processes and services.

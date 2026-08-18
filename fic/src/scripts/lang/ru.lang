@@ -189,10 +189,10 @@
 [module:SYSCTL][policy:ipv4_default_send_redirects_disable][description]=Запрещает отправку IPv4 redirect для новых интерфейсов по умолчанию.
 [module:SYSCTL][policy:ipv6_all_accept_redirects_disable][description]=Запрещает принимать IPv6 redirect на всех интерфейсах.
 [module:SYSCTL][policy:ipv6_default_accept_redirects_disable][description]=Запрещает принимать IPv6 redirect для новых интерфейсов по умолчанию.
-[module:SYSCTL][policy:ipv6_packet_forwarding_disable][description]=Отключает пересылку IPv6 пакетов.
+[module:SYSCTL][policy:ipv6_packet_forwarding_disable][description]=Отключает пересылку IPv6 пакетов. ВАЖНО: некоторые утилиты могут переопределять этот параметр в RUNTIME. Например, Docker, QEMU/KVM.
 [module:SYSCTL][policy:kernel_kptr_restrict][description]=Ограничивает вывод адресов ядра в /proc и dmesg.
 [module:SYSCTL][policy:fs_nr_open_limit][description]=Задает максимальное число файловых дескрипторов на процесс. Слишком низкое значение может ограничивать производительность приложений с большим числом соединений или файлов.
-[module:SYSCTL][policy:ipv4_packet_forwarding_disable][description]=Отключает пересылку IPv4 пакетов.
+[module:SYSCTL][policy:ipv4_packet_forwarding_disable][description]=Отключает пересылку IPv4 пакетов. ВАЖНО: некоторые утилиты могут переопределять этот параметр в RUNTIME. Например, Docker, QEMU/KVM.
 [module:SYSCTL][policy:kernel_perf_event_paranoid][description]=Ограничивает доступ к perf_event. Может затруднить профилирование и диагностику производительности непривилегированными пользователями.
 [module:SYSCTL][policy:fs_protected_symlinks][description]=Включает защиту от опасных symlink.
 [module:SYSCTL][policy:kernel_pid_max_limit][description]=Задает максимальное количество PID в системе. Слишком низкое значение может ограничивать производительность систем с большим числом процессов и сервисов.
