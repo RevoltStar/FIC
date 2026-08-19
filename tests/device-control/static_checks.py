@@ -33,6 +33,7 @@ def main():
     udev_rules = root / "fic" / "src" / "scripts" / "udev" / "99-fic-devices.rules.in"
     policy_compiler = root / "fic-dick" / "src" / "core" / "DevicePolicyCompiler.cpp"
     device_enforcer = root / "fic-dick" / "src" / "core" / "DeviceEnforcer.cpp"
+    device_lifecycle = root / "fic-dick" / "src" / "core" / "DeviceLifecycle.cpp"
 
     with sqlite3.connect(db_path) as connection:
         columns = [row[1] for row in connection.execute("PRAGMA table_info(devices)")]
@@ -120,6 +121,28 @@ def main():
     ]
     require("enforce_block(" not in event_handler and "enforce_allow(" not in event_handler,
             "runtime inventory handler must not make SQLite-based hotplug enforcement decisions")
+    require("reset_subtree_boot_id" not in event_handler,
+            "successful DENY must not clear device presence")
+    require("safe_remove_device" not in event_handler,
+            "remove must use exact current-boot lifecycle operation")
+    require("removeCurrentOccurrence" in event_handler,
+            "remove must select and mutate one current-boot occurrence")
+    require("enforcementExpected = false" in daemon_source,
+            "synthetic reconciliation events must not claim enforcement was attempted")
+
+    lifecycle_source = read_text(device_lifecycle)
+    for marker in [
+        "DeviceRemovalResult",
+        "getDeviceByDevpathSubsystemAndBootId",
+        "disconnectCurrentSubtree",
+        "alreadyRemoved",
+        "beginTransaction",
+    ]:
+        require(marker in lifecycle_source, f"missing device lifecycle guard: {marker}")
+    require("device absent during reconciliation" in daemon_source,
+            "reconciliation must record why a current occurrence was disconnected")
+    require("getDeviceByDevpathAndSubsystem" not in lifecycle_source,
+            "remove lifecycle must not fall back to an arbitrary historical occurrence")
 
     compiler_source = read_text(policy_compiler)
     for marker in [
@@ -135,6 +158,8 @@ def main():
         require(marker in compiler_source, f"missing generated device policy support: {marker}")
     require("DB" not in read_text(device_enforcer),
             "hotplug sysfs enforcer must not depend on the device database")
+    require("enforced ? logLevel::INFO : logLevel::ERROR" in read_text(device_enforcer),
+            "successful DENY enforcement must be INFO and failures must be ERROR")
 
     gui_source = read_text(gui_tree)
     require('"device_tree_revision"' in gui_source,

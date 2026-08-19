@@ -2,55 +2,56 @@
 
 ## Current base
 
-- Дата: 2026-08-15.
+- Дата: 2026-08-19.
 - Ветка: `main`.
-- Базовый commit задачи: `8a0b9f6` (`Исправить табличную разметку редактора политик`).
+- Базовый commit задачи: `9711316` (`Устраняем race-condition между display-manager и fic. Теперь fic для определения DE не ожидает, что она прямо сейчас запущена`).
 
 ## Current task
 
-- Устранена N+1-загрузка полного дерева устройств в `fic-gui` / `fic-dick`
-  без изменения UI layout и внешнего вида.
+- Исправлен lifecycle Device Control для последовательности `DENY -> successful
+  enforcement -> remove events`.
 
 ## Accepted architecture / invariants
 
-- Ручное раскрытие отдельной ветки остаётся lazy через `device_children` и
-  точечный `device_attributes`.
-- `Expand All`, checkbox/quick filter `История` и глобальные search/filter
-  используют один flat `device_tree_snapshot` IPC request.
-- Snapshot и его revision читаются в одной SQLite read transaction; основной
-  recursive CTE возвращает устройства вместе с attributes.
-- Effective policy snapshot вычисляется по in-memory indexes без SQL на каждый
-  device. `device_events` остаётся отдельным API.
+- `boot_id` означает присутствие occurrence в текущей boot-session и не зависит
+  от результата policy enforcement.
+- Успешный `DENY` сохраняет current `boot_id`; переход в disconnected выполняет
+  только real remove или reconciliation отсутствующего в sysfs устройства.
+- Remove выбирает occurrence строго по `devpath + subsystem + current boot_id` и
+  атомарно сохраняет affected IDs, очищает current subtree и пишет disconnect event.
+- Duplicate/already-removed remove является успешным no-op без создания nodes и
+  без выбора historical occurrence.
 
 ## Completed
 
-- Добавлен DB snapshot с `WITH RECURSIVE`, сворачиванием attribute rows,
-  current/history visibility, защитой от cycle/depth и fail-closed output.
-- Добавлен read-only `device_tree_snapshot` с flat `parent_id`, attributes,
-  effective fields, `revision`, `boot_id` и проверкой размера IPC response.
-- GUI строит полное дерево локально из snapshot, явно передаёт attributes в
-  name/icon rendering и сохраняет selection, expanded state и scroll position.
-- Добавлены DB/IPC contract tests и архитектурные static checks.
-- Обновлена `docs/architecture-diagrams.md` с lazy и full-snapshot режимами.
+- Добавлен небольшой транзакционный `DeviceLifecycle` и удалён старый
+  parent-dependent `UDEVInfoCollector::safe_remove_device()`.
+- Real remove стал current-boot exact и идемпотентным; permanent check получает
+  сохранённые до mutation affected IDs.
+- Synthetic inventory events reconciliation больше не интерпретируются как
+  выполненный udev enforcement; startup reconciliation сохранён и сообщает о
+  lifecycle/DB failures вызывающей очереди.
+- Добавлены regression tests для DENY presence, обоих порядков parent/child
+  remove, duplicate remove, multi-boot, lost remove, reboot и virtual parents.
 
 ## Changed areas
 
-- `fic-common/fic-device-db`;
-- `fic-dick/src/core/DeviceTreeSnapshot.*` и daemon routing;
-- `fic-gui/src/DeviceTree.*`;
-- `tests/device-control`, `tests/CMakeLists.txt`;
-- `docs/architecture-diagrams.md`.
+- `fic-dick/src/core/DeviceControlDaemon.cpp`, `DeviceLifecycle.*`;
+- `fic-dick/src/modules/UDEVInfoCollector.*`;
+- `tests/device-control`, `tests/CMakeLists.txt`.
 
 ## Validation
 
-- `cmake -S . -B /tmp/fic-device-tree-snapshot-build
-  -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- `cmake --build /tmp/fic-device-tree-snapshot-build -j2` — успешно.
-- `ctest --test-dir /tmp/fic-device-tree-snapshot-build --output-on-failure` —
-  36 passed, 3 host-dependent tests штатно пропущены, ошибок нет.
-- Реальные device-control mutations/enforcement не запускались.
+- `cmake -S . -B /tmp/fic-device-lifecycle-build
+  -DFIC_TARGET_PLATFORM=ubuntu-24.04` - успешно.
+- `cmake --build /tmp/fic-device-lifecycle-build -j2` - успешно.
+- `ctest --test-dir /tmp/fic-device-lifecycle-build --output-on-failure` -
+  40/40 без ошибок; 3 host-dependent теста штатно пропущены.
+- `python3 tests/device-control/static_checks.py .` - успешно.
+- `git diff --check` - успешно.
+- Реальный udev/device enforcement на рабочем хосте не запускался.
 
 ## Remaining
 
-- Интерактивная проверка большого дерева в реальной GUI-сессии не выполнялась;
-  layout и styling не изменялись.
+- Диагностический USB HID сценарий не воспроизводился на отдельном staging host;
+  поведение подтверждено unit/contract/static tests.

@@ -34,9 +34,6 @@ public:
     // Создаем/обновляем устройство в БД
     bool create_device_config(const std::string& devpath, const std::string& subsystem);
 
-    // Удаляем устройство (сбрасываем boot_id)
-    bool safe_remove_device(const std::string& devpath, const std::string& subsystem);
-
     // Собираем параметры устройства из переменных окружения
     void collect_udev_params();
 

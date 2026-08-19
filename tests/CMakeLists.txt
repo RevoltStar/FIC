@@ -165,6 +165,19 @@ target_link_libraries(device_policy_compiler_tests PRIVATE
 )
 add_test(NAME device_policy_compiler_tests COMMAND device_policy_compiler_tests)
 
+add_executable(device_lifecycle_tests
+    device-control/DeviceLifecycleTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/core/DeviceLifecycle.cpp
+)
+target_include_directories(device_lifecycle_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+target_link_libraries(device_lifecycle_tests PRIVATE
+    fic-core
+    fic-device-db
+)
+add_test(NAME device_lifecycle_tests COMMAND device_lifecycle_tests)
+
 add_executable(ipc_paths_tests paths/IpcPathsTests.cpp)
 target_link_libraries(ipc_paths_tests PRIVATE fic-ipc)
 add_test(NAME ipc_paths_tests COMMAND ipc_paths_tests)

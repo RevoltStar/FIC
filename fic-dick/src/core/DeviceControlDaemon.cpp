@@ -1,4 +1,5 @@
 #include "DeviceControlDaemon.h"
+#include "DeviceLifecycle.h"
 #include "DevicePaths.h"
 #include "DevicePolicyCompiler.h"
 #include "DeviceTreeSnapshot.h"
@@ -88,6 +89,7 @@ struct DeviceEventEnvelope {
     std::string devpath;
     std::string subsystem;
     std::map<std::string, std::string> env;
+    bool enforcementExpected = true;
 };
 
 inline constexpr std::size_t MAX_DEVICE_EVENT_BYTES = 64U * 1024U;
@@ -535,14 +537,6 @@ bool identity_connected(DB& db, const DeviceInfo& device, const std::string& boo
     return false;
 }
 
-bool reset_subtree_boot_id(DB& db, int deviceId) {
-    bool ok = true;
-    for (const DeviceInfo& child : db.getChildDevices(deviceId)) {
-        ok = reset_subtree_boot_id(db, child.id) && ok;
-    }
-    return db.updateBootId(deviceId, "") && ok;
-}
-
 json device_to_json(DB& db, const DeviceInfo& device) {
     const EffectivePolicy policy = effective_policy(db, device);
     const std::string bootId = current_boot_id();
@@ -786,10 +780,10 @@ json process_device_event(const DeviceEventEnvelope& event) {
         return fic::ipc::make_ok_response("udev event ignored: non-physical devpath");
     }
 
-    std::unique_ptr<UDEVInfoCollector> collector = create_collector_for_subsystem(subsystem);
-    collector->set_udev_env(event.env);
-
     if (action == "add" || action == "change") {
+        std::unique_ptr<UDEVInfoCollector> collector =
+            create_collector_for_subsystem(subsystem);
+        collector->set_udev_env(event.env);
         if (!collector->create_device_config(devpath, subsystem)) {
             return fic::ipc::make_error_response("failed to add/update device");
         }
@@ -812,16 +806,23 @@ json process_device_event(const DeviceEventEnvelope& event) {
                   "generated_effective=" + effectiveLevel + "; source=" + effectiveSource);
 
         if (effectiveLevel == "DENY") {
+            if (!event.enforcementExpected) {
+                return json{
+                    {"ok", true},
+                    {"message", "device inventory reconciled with deny policy"},
+                    {"device", device_to_json(db, device)}
+                };
+            }
             std::string enforcementDetails;
             const bool enforced = deny_enforcement_observed(device, enforcementDetails);
-            add_event(db,
-                      device.id,
-                      "block",
-                      enforced ? "success" : "error",
-                      enforcementDetails + "; source=" + effectiveSource);
-            if (enforced) {
-                reset_subtree_boot_id(db, device.id);
-                device = db.getDeviceById(device.id);
+            DeviceLifecycle lifecycle(db);
+            std::string lifecycleError;
+            if (!lifecycle.recordDenyResult(
+                    device.id,
+                    enforced,
+                    enforcementDetails + "; source=" + effectiveSource,
+                    lifecycleError)) {
+                return fic::ipc::make_error_response(lifecycleError);
             }
             return json{
                 {"ok", enforced},
@@ -842,42 +843,48 @@ json process_device_event(const DeviceEventEnvelope& event) {
     }
 
     if (action == "remove") {
-        DB dbBefore(DeviceRuntimePaths::get().databaseOptions());
-        dbBefore.initializeDatabase();
-        DeviceInfo before = dbBefore.getDeviceByDevpathAndSubsystem(devpath, subsystem);
-        std::vector<int> affectedIds;
-        if (before.id != -1) {
-            affectedIds.push_back(before.id);
-            for (const DeviceInfo& descendant : dbBefore.getDescendantDevices(before.id)) {
-                affectedIds.push_back(descendant.id);
-            }
-        }
-
-        if (!collector->safe_remove_device(devpath, subsystem)) {
-            return fic::ipc::make_error_response("failed to mark device as removed");
+        const std::string bootId = current_boot_id();
+        if (bootId.empty()) {
+            return fic::ipc::make_error_response(
+                "failed to read current boot_id while removing device");
         }
 
         DB db(DeviceRuntimePaths::get().databaseOptions());
-        db.initializeDatabase();
-        DeviceInfo device = db.getDeviceByDevpathAndSubsystem(devpath, subsystem);
-        if (device.id != -1) {
-            add_event(db, device.id, "disconnect", "success", "device removed");
+        if (!db.initializeDatabase()) {
+            return fic::ipc::make_error_response(
+                "failed to initialize device database while removing device");
         }
+        DeviceLifecycle lifecycle(db);
+        const DeviceRemovalResult removal =
+            lifecycle.removeCurrentOccurrence(devpath, subsystem, bootId);
 
-        if (!affectedIds.empty()) {
-            json permanentCheck = check_permanent_devices(db, affectedIds);
+        if (!removal.ok) {
+            return fic::ipc::make_error_response(
+                "failed to mark device as removed: " + removal.error);
+        }
+        if (removal.alreadyRemoved) {
+            log_device("duplicate/already removed udev event ignored for " +
+                           subsystem + " " + devpath,
+                       logLevel::DEBUG);
+            return fic::ipc::make_ok_response("device was already removed");
+        }
+        if (!removal.affectedIds.empty()) {
+            json permanentCheck =
+                check_permanent_devices(db, removal.affectedIds);
             if (!permanentCheck.value("ok", true)) {
                 permanentCheck["message"] = permanentCheck.value(
                     "message",
                     "permanent device disconnected; failed to lock computer");
-                if (device.id != -1) {
-                    permanentCheck["device"] = device_to_json(db, device);
-                }
+                permanentCheck["device_id"] = removal.deviceId;
                 return permanentCheck;
             }
         }
 
-        return fic::ipc::make_ok_response("device removed");
+        return json{
+            {"ok", true},
+            {"message", "device removed"},
+            {"device_id", removal.deviceId}
+        };
     }
 
     return fic::ipc::make_error_response("unsupported udev action: " + action);
@@ -1754,6 +1761,7 @@ std::vector<DeviceEventEnvelope> parse_udevadm_export_db(const std::string& text
                 current.subsystem = current.env["SUBSYSTEM"];
             }
             current.action = "add";
+            current.enforcementExpected = false;
             if (is_managed_subsystem(current.subsystem)) {
                 events.push_back(current);
             }
@@ -1816,6 +1824,7 @@ bool run_device_reconciliation(const std::string& reason) {
         return false;
     }
 
+    bool reconciliationOk = true;
     std::size_t processed = 0;
     for (const DeviceEventEnvelope& event : parse_udevadm_export_db(result.standardOutput)) {
         UDEVInfoCollector checker;
@@ -1826,23 +1835,40 @@ bool run_device_reconciliation(const std::string& reason) {
         if (response.value("ok", false)) {
             ++processed;
         } else {
+            reconciliationOk = false;
             log_device("device reconciliation event failed: " +
                        response.value("message", "unknown error"), logLevel::ERROR);
         }
     }
 
     DB db(DeviceRuntimePaths::get().databaseOptions());
-    db.initializeDatabase();
+    if (!db.initializeDatabase()) {
+        log_device("device reconciliation failed: device database initialization failed",
+                   logLevel::ERROR);
+        return false;
+    }
     const std::string bootId = current_boot_id();
+    if (bootId.empty()) {
+        log_device("device reconciliation failed: current boot_id is unavailable",
+                   logLevel::ERROR);
+        return false;
+    }
+    DeviceLifecycle lifecycle(db);
     std::size_t removed = 0;
     for (const DeviceInfo& device : db.getAllDevices()) {
         if (device.boot_id != bootId || !is_managed_subsystem(device.subsystem) ||
             sysfs_devpath_exists(device.devpath)) {
             continue;
         }
-        if (reset_subtree_boot_id(db, device.id)) {
-            add_event(db, device.id, "disconnect", "success", "device absent during reconciliation");
+        const DeviceRemovalResult removal = lifecycle.disconnectCurrentSubtree(
+            device.id, bootId, "device absent during reconciliation");
+        if (removal.ok && !removal.alreadyRemoved) {
             ++removed;
+        } else if (!removal.ok) {
+            reconciliationOk = false;
+            log_device("failed to disconnect absent device during reconciliation: " +
+                           removal.error,
+                       logLevel::ERROR);
         }
     }
 
@@ -1853,7 +1879,7 @@ bool run_device_reconciliation(const std::string& reason) {
     }
     log_device("device reconciliation completed: processed=" + std::to_string(processed) +
                " removed=" + std::to_string(removed), logLevel::INFO);
-    return true;
+    return reconciliationOk;
 }
 
 } // namespace
