@@ -18,7 +18,10 @@ bool OSS_disable_autologin::apply()
         DisplayManagerBackendFactory::create(
             displayManager, this->displayManagerConfig());
     if (!backend) {
-        this->log("Failed to detect active display manager for disable_autologin policy", logLevel::ERROR);
+        this->log(
+            "Failed to detect configured display manager for disable_autologin policy",
+            logLevel::ERROR
+        );
         return false;
     }
 

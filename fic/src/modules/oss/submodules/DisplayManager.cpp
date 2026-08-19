@@ -74,7 +74,6 @@ std::string DisplayManager::detectDisplayManager() const {
             "--property=Id",
             "--property=Names",
             "--property=FragmentPath",
-            "--property=ActiveState",
             "--no-pager"
         }
     );
@@ -87,10 +86,6 @@ std::string DisplayManager::detectDisplayManager() const {
         const auto it = properties.find(name);
         return it == properties.end() ? std::string() : it->second;
     };
-    if (property("ActiveState") != "active") {
-        return "UNKNOWN";
-    }
-
     for (const char* name : {"Id", "Names", "FragmentPath"}) {
         const std::string detected = display_manager_name(property(name));
         if (detected != "UNKNOWN") {
