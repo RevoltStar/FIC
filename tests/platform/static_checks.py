@@ -577,7 +577,7 @@ def main():
             encoding="utf-8"
         )
         require(
-            config.startswith("_schema_version=2\n")
+            config.startswith("_schema_version=1\n")
             and config.count("_schema_version=") == 1,
             f"{config_name}.conf does not declare exactly one schema version",
         )

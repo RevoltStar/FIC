@@ -45,9 +45,9 @@ int main()
     fs::create_directories(root / "config");
     fs::create_directories(root / "log");
     std::ofstream(root / "config/GLOBAL.conf")
-        << "_schema_version=2\nlang.status=ENABLE\nlang.value=ru\n";
+        << "_schema_version=1\nlang.status=ENABLE\nlang.value=ru\n";
     std::ofstream(root / "config/AUDIT.conf")
-        << "_schema_version=2\nlog_level.status=ENABLE\nlog_level.value=FATAL\n";
+        << "_schema_version=1\nlog_level.status=ENABLE\nlog_level.value=FATAL\n";
 
     auto paths = fic::core::FicProductPaths::production();
     paths.configDir = root / "config";
@@ -183,7 +183,7 @@ int main()
     assert(auditPolicy->getValue() == std::optional<std::string>("FATAL"));
 
     std::ofstream(root / "config/AUDIT.conf", std::ios::trunc)
-        << "_schema_version=2\nlog_level.status=ENABLE\nlog_level.value=NoLog\n";
+        << "_schema_version=1\nlog_level.status=ENABLE\nlog_level.value=NoLog\n";
     Logger::ScopedCapture noLogCapture;
     assert(Logger::log("suppressed by NoLog", logLevel::FATAL, "daemon"));
     assert(noLogCapture.finish().records.empty());

@@ -73,19 +73,19 @@ fic-gui --build-info
 1. Отправляет новое значение:
 
 ```json
-{"api_version":2,"command":"set_policy_value","module":"<module>","policy":"<policy>","value":"<value>"}
+{"api_version":1,"command":"set_policy_value","module":"<module>","policy":"<policy>","value":"<value>"}
 ```
 
 2. Отправляет новое состояние политики:
 
 ```json
-{"api_version":2,"command":"enable_policy","module":"<module>","policy":"<policy>"}
+{"api_version":1,"command":"enable_policy","module":"<module>","policy":"<policy>"}
 ```
 
 или:
 
 ```json
-{"api_version":2,"command":"disable_policy","module":"<module>","policy":"<policy>"}
+{"api_version":1,"command":"disable_policy","module":"<module>","policy":"<policy>"}
 ```
 
 Если демон возвращает ошибку, GUI показывает пользователю текст ошибки и не считает изменение успешно примененным.

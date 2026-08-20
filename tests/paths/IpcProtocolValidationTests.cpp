@@ -11,7 +11,7 @@ int main() {
     std::string error;
 
     assert(fic::ipc::parse_request_json(
-        R"({"api_version":2,"command":"status"})", request, error));
+        R"({"api_version":1,"command":"status"})", request, error));
     assert(!fic::ipc::parse_request_json(
         R"({"command":"status"})", request, error));
     assert(error.find("api_version") != std::string::npos);
@@ -21,7 +21,7 @@ int main() {
     assert(!fic::ipc::parse_request_json("[]", request, error));
     assert(!fic::ipc::parse_request_json(R"({"command":7})", request, error));
 
-    std::string deep = R"({"api_version":2,"command":"status","value":)";
+    std::string deep = R"({"api_version":1,"command":"status","value":)";
     for (std::size_t index = 0; index < fic::ipc::MAX_JSON_DEPTH + 2U; ++index) {
         deep += '[';
     }

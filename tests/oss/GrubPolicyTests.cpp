@@ -71,7 +71,7 @@ void initializeRuntimePaths(const fs::path& root) {
     fs::create_directories(paths.dataDir);
     writeFile(
         paths.configDir / "AUDIT.conf",
-        "_schema_version=2\n"
+        "_schema_version=1\n"
         "log_level.status=ENABLE\n"
         "log_level.value=ERROR\n");
 
@@ -383,7 +383,7 @@ int main() {
 
         writeFile(
             root / "config/OSS.conf",
-            "_schema_version=2\n"
+            "_schema_version=1\n"
             "grub_test_policy.status=ENABLE\n"
             "grub_test_policy.value=expected\n"
             "grub_apply_test_policy.status=ENABLE\n"
@@ -416,7 +416,7 @@ int main() {
 
         writeFile(
             root / "config/OSS.conf",
-            "_schema_version=2\n"
+            "_schema_version=1\n"
             "grub_test_policy.status=ENABLE\n"
             "grub_test_policy.value=invalid\n"
             "grub_cmdline_linux.status=ENABLE\n"

@@ -178,7 +178,7 @@ import sys
 import threading
 
 SOCKET = "/run/fic/fic-device.sock"
-RESPONSE_MAGIC = 0x00464943U
+RESPONSE_MAGIC = 0x00464943
 
 
 def receive_response(sock):

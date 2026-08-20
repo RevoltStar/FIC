@@ -325,29 +325,29 @@ int main() {
         assert(tableExists(migration.backupFile, "system_settings"));
     }
 
-    DBOptions v1Options = options;
-    v1Options.databaseFile = root / "data/v1.db";
-    v1Options.lockFile = root / "log/v1.lock";
+    DBOptions v0Options = options;
+    v0Options.databaseFile = root / "data/v0.db";
+    v0Options.lockFile = root / "log/v0.lock";
     fs::copy_file(
         fs::path(FIC_TEST_SOURCE_DIR) / "fic/src/scripts/db/devices.db",
-        v1Options.databaseFile);
+        v0Options.databaseFile);
     executePragmas(
-        v1Options.databaseFile,
+        v0Options.databaseFile,
         "PRAGMA application_id=" +
             std::to_string(fic::version::DEVICE_DB_APPLICATION_ID) +
-            "; PRAGMA user_version=1;");
+            "; PRAGMA user_version=0;");
     {
-        DB v1Database(v1Options);
-        assert(!v1Database.initializeDatabase());
+        DB v0Database(v0Options);
+        assert(!v0Database.initializeDatabase());
         DBMigrationResult migration;
-        assert(v1Database.migrateDatabase(
+        assert(v0Database.migrateDatabase(
             paths.stateDir / "db-backups", migration, error));
         assert(migration.migrated);
-        assert(migration.fromVersion == 1);
+        assert(migration.fromVersion == 0);
         assert(migration.toVersion == fic::version::DEVICE_DB_SCHEMA_VERSION);
-        assert(v1Database.verifyDatabaseSchema(error));
-        assert(tableExists(v1Options.databaseFile, "device_policy_state"));
-        assert(v1Database.getComputerRoot().children_control == "allow");
+        assert(v0Database.verifyDatabaseSchema(error));
+        assert(tableExists(v0Options.databaseFile, "device_policy_state"));
+        assert(v0Database.getComputerRoot().children_control == "allow");
     }
 
     executePragmas(

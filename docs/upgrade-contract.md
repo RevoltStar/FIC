@@ -67,7 +67,7 @@ The pre-contract configuration format (`0`) is initialized directly as current
 schema `1`. Because no stable release exists, there is intentionally no
 configuration migration or compatibility fallback from development schema `1`:
 defaults and all active producers/consumers were replaced together. Device DB
-migration remains the separately versioned `0 -> 1 -> 2` path, and new
+migration remains the separately versioned `0 -> 1` path, and new
 databases are initialized directly at schema `1`.
 There is no runtime `CREATE TABLE IF NOT EXISTS` repair of an existing database.
 The repository's legacy migration fixture also contains unused `domain_policies`,

@@ -113,7 +113,7 @@ fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h
 
 Клиент открывает одно `AF_UNIX/SOCK_SEQPACKET`-соединение на запрос и отправляет
 JSON одним пакетом без завершающего перевода строки. Каждый запрос обязан
-содержать целочисленное `"api_version":2`; клиент также требует ту же версию в
+содержать целочисленное `"api_version":1`; клиент также требует ту же версию в
 ответе. Несовпадающая или отсутствующая версия отклоняется до маршрутизации
 команды. Размер запроса ограничен
 64 КиБ. JSON-ответ размером до 1 МиБ передается последовательностью пакетов с
@@ -132,13 +132,13 @@ JSON одним пакетом без завершающего перевода 
 Базовый успешный ответ:
 
 ```json
-{"ok":true,"message":"OK","api_version":2}
+{"ok":true,"message":"OK","api_version":1}
 ```
 
 Базовый ответ с ошибкой:
 
 ```json
-{"ok":false,"message":"error text","api_version":2}
+{"ok":false,"message":"error text","api_version":1}
 ```
 
 ## Поддерживаемые команды IPC
@@ -148,7 +148,7 @@ JSON одним пакетом без завершающего перевода 
 Проверяет, что демон запущен.
 
 ```json
-{"api_version":2,"command":"status"}
+{"api_version":1,"command":"status"}
 ```
 
 ### shutdown
@@ -156,7 +156,7 @@ JSON одним пакетом без завершающего перевода 
 Запрашивает штатную остановку демона.
 
 ```json
-{"api_version":2,"command":"shutdown"}
+{"api_version":1,"command":"shutdown"}
 ```
 
 ### module_list
@@ -164,7 +164,7 @@ JSON одним пакетом без завершающего перевода 
 Возвращает список модулей.
 
 ```json
-{"api_version":2,"command":"module_list"}
+{"api_version":1,"command":"module_list"}
 ```
 
 Ответ содержит дескрипторы модулей. `view` принимает только `standard`,
@@ -180,11 +180,11 @@ JSON одним пакетом без завершающего перевода 
 Возвращает политики одного модуля или всех модулей.
 
 ```json
-{"api_version":2,"command":"policy_list","module":"all"}
+{"api_version":1,"command":"policy_list","module":"all"}
 ```
 
 ```json
-{"api_version":2,"command":"policy_list","module":"DAC"}
+{"api_version":1,"command":"policy_list","module":"DAC"}
 ```
 
 Ответ содержит поле `policies`. Для каждой политики возвращаются данные для
@@ -197,7 +197,7 @@ JSON одним пакетом без завершающего перевода 
 Изменяет значение политики в конфигурации.
 
 ```json
-{"api_version":2,"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
+{"api_version":1,"command":"set_policy_value","module":"DAC","policy":"sudo_timeout","value":"10"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -207,7 +207,7 @@ JSON одним пакетом без завершающего перевода 
 Включает политику.
 
 ```json
-{"api_version":2,"command":"enable_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":1,"command":"enable_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -217,7 +217,7 @@ JSON одним пакетом без завершающего перевода 
 Отключает политику.
 
 ```json
-{"api_version":2,"command":"disable_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":1,"command":"disable_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 После успешного изменения демон перечитывает конфигурацию.
@@ -227,7 +227,7 @@ JSON одним пакетом без завершающего перевода 
 Принудительно перечитывает конфигурацию.
 
 ```json
-{"api_version":2,"command":"reload_config"}
+{"api_version":1,"command":"reload_config"}
 ```
 
 ### apply_all
@@ -235,7 +235,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет все включенные политики.
 
 ```json
-{"api_version":2,"command":"apply_all"}
+{"api_version":1,"command":"apply_all"}
 ```
 
 ### apply_module
@@ -243,7 +243,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет все включенные политики указанного модуля.
 
 ```json
-{"api_version":2,"command":"apply_module","module":"DAC"}
+{"api_version":1,"command":"apply_module","module":"DAC"}
 ```
 
 ### apply_policy
@@ -251,7 +251,7 @@ JSON одним пакетом без завершающего перевода 
 Немедленно применяет одну политику.
 
 ```json
-{"api_version":2,"command":"apply_policy","module":"DAC","policy":"sudo_timeout"}
+{"api_version":1,"command":"apply_policy","module":"DAC","policy":"sudo_timeout"}
 ```
 
 Все команды применения возвращают сводку и отдельный результат для каждой
@@ -304,7 +304,7 @@ security audit trail административных IPC-запросов за�
 Пересчитывает hash для указанного пути.
 
 ```json
-{"api_version":2,"command":"calc_hash","value":"/usr/bin/sudo"}
+{"api_version":1,"command":"calc_hash","value":"/usr/bin/sudo"}
 ```
 
 ### lock, unlock, lockstatus
@@ -312,15 +312,15 @@ security audit trail административных IPC-запросов за�
 Команды управления блокировкой.
 
 ```json
-{"api_version":2,"command":"lock"}
+{"api_version":1,"command":"lock"}
 ```
 
 ```json
-{"api_version":2,"command":"unlock"}
+{"api_version":1,"command":"unlock"}
 ```
 
 ```json
-{"api_version":2,"command":"lockstatus"}
+{"api_version":1,"command":"lockstatus"}
 ```
 
 ## Systemd
@@ -431,7 +431,7 @@ prefix/root, который смешивает изменяемые данные
 предназначен для разработки: создаваемый сокет имеет режим `0600`, и демон не
 перенастраивает production-каталог.
 
-Каждый конфиг модуля начинается с `_schema_version=2`. Обычный daemon принимает
+Каждый конфиг модуля начинается с `_schema_version=1`. Обычный daemon принимает
 только точную текущую схему и отказывается запускаться при незавершённом product
 upgrade. `fic --maintenance ensure-config` атомарно создаёт только отсутствующие
 рабочие конфиги из package defaults. Offline-команды `begin-upgrade`, `migrate-config`,
