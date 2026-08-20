@@ -10,7 +10,7 @@ option(FIC_RELEASE_BUILD "Enable the fail-closed compiled release contract" OFF)
 if(NOT FIC_PRODUCT_VERSION MATCHES "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")
     message(FATAL_ERROR
         "FIC_PRODUCT_VERSION must be a Semantic Version without build metadata "
-        "(for example 2.0.0 or 2.0.0-rc.1)")
+        "(for example 0.1.0 or 0.1.0-rc.1)")
 endif()
 string(REGEX MATCH "-([0-9A-Za-z.-]+)$" FIC_PRODUCT_PRERELEASE_MATCH "${FIC_PRODUCT_VERSION}")
 if(FIC_PRODUCT_PRERELEASE_MATCH)

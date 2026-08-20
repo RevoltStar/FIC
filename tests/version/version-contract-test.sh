@@ -17,7 +17,7 @@ fic_configure_product_version 0.1.0-rc.1
 [ "$FIC_PRODUCT_VERSION" = "0.1.0-rc.1" ] || fail "prerelease product version changed"
 [ "$FIC_PACKAGE_VERSION" = "0.1.0~rc.1" ] || fail "prerelease package ordering is wrong"
 
-for invalid in 0.0 00.0.0 0.1.0-rc.01 0.0.0+local v2.0.0; do
+for invalid in 0.0 00.0.0 0.1.0-rc.01 0.0.0+local v0.1.0; do
     if (fic_configure_product_version "$invalid" >/dev/null 2>&1); then
         fail "accepted invalid product version '$invalid'"
     fi

@@ -148,13 +148,13 @@ Build the packages inside the provided Docker image based on `alt:p11`:
 
 ```bash
 chmod +x packaging/rpm/build-fic-alt-p11-rpm-docker.sh
-./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 2.0.0-dev
+./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 0.0.0-alpha
 ```
 
 The product version is mandatory and must be SemVer without build metadata.
 There is no default. Prerelease product versions remain unchanged in the
-binaries but use native package ordering: `2.0.0-rc.1` produces RPM version
-`2.0.0~rc.1`.
+binaries but use native package ordering: `0.1.0-rc.1` produces RPM version
+`0.1.0~rc.1`.
 
 This wrapper:
 
@@ -190,7 +190,7 @@ BUILD_JOBS=4 \
 CONTAINER_CPUS=4 \
 CONTAINER_MEMORY_MB=8192 \
 CONTAINER_MEMORY_SWAP_MB=8192 \
-./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 2.0.0-dev
+./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 0.0.0-alpha
 ```
 
 Supported tuning variables are `BUILD_JOBS`, `FIC_BUILD_MAX_JOBS`,

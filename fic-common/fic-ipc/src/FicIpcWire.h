@@ -9,7 +9,7 @@
 
 namespace fic::ipc::wire {
 
-inline constexpr std::uint32_t RESPONSE_MAGIC = 0x46494332U; // "FIC2"
+inline constexpr std::uint32_t RESPONSE_MAGIC = 0x00464943U; // FIC
 inline constexpr std::size_t HEADER_BYTES = sizeof(std::uint32_t) * 4U;
 
 inline std::string responseFrame(const std::string& response,

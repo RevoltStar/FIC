@@ -1,8 +1,6 @@
 # FIC release process
 
-FIC has no published stable release yet. The first planned stable release is
-`2.0.0`. The unreleased FIC 1.x prototype is not an earlier supported release
-and must not be used as a compatibility baseline.
+FIC has no published stable release yet. The first planned stable release is `0.1.0`.
 
 ## Version authority
 
@@ -22,8 +20,7 @@ reported separately by `--build-info`.
 
 Ordinary CMake builds default to `0.0.0-alpha` and are marked
 `build_kind=development`. Native package entry points require exactly one
-explicit product version. They do not infer a version from the directory name,
-branch, build host, or an old `0.1.0` fallback.
+explicit product version.
 
 ## Product and native package versions
 

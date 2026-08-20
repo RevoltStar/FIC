@@ -41,7 +41,7 @@ int connectRaw(const std::filesystem::path& socketPath) {
 }
 
 json receiveRawResponse(int fd) {
-    constexpr std::uint32_t magic = 0x46494332U;
+    constexpr std::uint32_t magic = 0x00464943U;
     std::vector<char> frame(16U + fic::ipc::RESPONSE_CHUNK_BYTES);
     std::string response;
     std::size_t expected = 0;
