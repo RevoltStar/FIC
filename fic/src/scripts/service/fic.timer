@@ -1,8 +1,0 @@
-[Unit]
-Description=Deprecated FIC periodic timer; fic.service now runs as a persistent daemon
-
-[Timer]
-OnBootSec=5min
-OnUnitActiveSec=30min
-Persistent=true
-Unit=fic.service

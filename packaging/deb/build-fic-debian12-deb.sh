@@ -414,7 +414,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify /opt/fic/state
+    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
     if [ ! -f /opt/fic/lockstatus ]; then
         printf '0\n' > /opt/fic/lockstatus
@@ -568,8 +568,6 @@ fi
 ln -sfn "$target_path" "/bin/$command_name"
 
 unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
-mkdir -p /opt/fic/state
-
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     for unit in fic.service fic-device.service fic-notify.service; do
         if systemctl is-active --quiet "\$unit"; then
@@ -579,10 +577,9 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
 fi
 
 /opt/fic/bin/fic --maintenance ensure-config
-/opt/fic/bin/fic --maintenance begin-upgrade
-/opt/fic/bin/fic --maintenance migrate-config
-/opt/fic/bin/fic-dick --maintenance migrate-db
-/opt/fic/bin/fic --maintenance commit-upgrade
+/opt/fic/bin/fic-dick --maintenance initialize-db
+/opt/fic/bin/fic --maintenance check-config
+/opt/fic/bin/fic-dick --maintenance check-db
 
 chown -R root:fic /opt/fic
 find /opt/fic -type d -exec chmod 2750 {} \;

@@ -81,10 +81,6 @@ bool ModuleConfigFileHandler::saveConfig() {
     return ConfigFileHandler::saveFile();
 }
 
-bool ModuleConfigFileHandler::isParameterExists(const std::string& parameter) {
-    return hasConfiguredValue(parameter);
-}
-
 void ModuleConfigFileHandler::printConfig() const {
     ConfigFileHandler::printConfig();
 }

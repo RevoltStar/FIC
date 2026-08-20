@@ -34,8 +34,6 @@ public:
     //Сохранить конфиг
     bool saveConfig();
 
-    // Deprecated compatibility alias. Prefer hasConfiguredValue().
-    bool isParameterExists(const std::string& parameter);
 private:
     static constexpr const char* ENABLED_STATUS = "ENABLE";
     static constexpr const char* DISABLED_STATUS = "DISABLE";

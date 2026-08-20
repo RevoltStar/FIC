@@ -34,7 +34,7 @@
 #include <fic/core/Logger.h>
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/SystemBootInfo.h>
-#include <fic/core/UpgradeManager.h>
+#include <fic/core/ConfigSchemaManager.h>
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -1009,7 +1009,7 @@ int main(int argc, char* argv[]) {
         const auto& paths = fic::core::FicRuntimePaths::get();
         std::string maintenanceError;
         if (command == "ensure-config") {
-            if (!fic::core::UpgradeManager::ensureConfigs(
+            if (!fic::core::ConfigSchemaManager::ensureConfigs(
                     paths.defaultConfigDir, paths.configDir,
                     maintenanceError)) {
                 std::cerr << "configuration bootstrap failed: "
@@ -1019,36 +1019,8 @@ int main(int argc, char* argv[]) {
             std::cout << "working configuration is present" << std::endl;
             return 0;
         }
-        if (command == "begin-upgrade") {
-            fic::core::UpgradeState state;
-            if (!fic::core::UpgradeManager::begin(
-                    paths.stateDir, fic::version::PRODUCT_VERSION,
-                    state, maintenanceError)) {
-                std::cerr << "could not begin product upgrade: "
-                          << maintenanceError << std::endl;
-                return 1;
-            }
-            std::cout << "upgrade prepared: target=" << state.targetVersion
-                      << ", transaction=" << state.transactionDirectory.string()
-                      << std::endl;
-            return 0;
-        }
-        if (command == "migrate-config") {
-            fic::core::ConfigMigrationResult result;
-            if (!fic::core::UpgradeManager::migrateConfigs(
-                    paths.configDir, paths.stateDir, result,
-                    maintenanceError)) {
-                std::cerr << "configuration migration failed: "
-                          << maintenanceError << std::endl;
-                return 1;
-            }
-            std::cout << "configuration schema migrated: files="
-                      << result.migratedFiles << ", backup="
-                      << result.backupDirectory.string() << std::endl;
-            return 0;
-        }
         if (command == "check-config") {
-            if (!fic::core::UpgradeManager::verifyConfigs(
+            if (!fic::core::ConfigSchemaManager::verifyConfigs(
                     paths.configDir, maintenanceError)) {
                 std::cerr << "configuration schema check failed: "
                           << maintenanceError << std::endl;
@@ -1056,17 +1028,6 @@ int main(int argc, char* argv[]) {
             }
             std::cout << "configuration schema is current: "
                       << fic::version::CONFIG_SCHEMA_VERSION << std::endl;
-            return 0;
-        }
-        if (command == "commit-upgrade") {
-            if (!fic::core::UpgradeManager::commit(
-                    paths.stateDir, maintenanceError)) {
-                std::cerr << "could not commit product upgrade: "
-                          << maintenanceError << std::endl;
-                return 1;
-            }
-            std::cout << "product upgrade committed: "
-                      << fic::version::PRODUCT_VERSION << std::endl;
             return 0;
         }
         if (command == "wait-daemon") {
@@ -1106,17 +1067,11 @@ int main(int argc, char* argv[]) {
     }
 
     if (!packageTrustSync && !affectedPackageTrustSync) {
-        std::string upgradeError;
-        if (!fic::core::UpgradeManager::requireNoIncompleteUpgrade(
-                fic::core::FicRuntimePaths::get().stateDir, upgradeError)) {
-            std::cerr << "refusing to start during incomplete product upgrade: "
-                      << upgradeError << std::endl;
-            return 1;
-        }
-        if (!fic::core::UpgradeManager::verifyConfigs(
-                fic::core::FicRuntimePaths::get().configDir, upgradeError)) {
+        std::string configError;
+        if (!fic::core::ConfigSchemaManager::verifyConfigs(
+                fic::core::FicRuntimePaths::get().configDir, configError)) {
             std::cerr << "refusing to start with incompatible configuration: "
-                      << upgradeError << std::endl;
+                      << configError << std::endl;
             return 1;
         }
     }
@@ -1152,7 +1107,6 @@ int main(int argc, char* argv[]) {
         std::setlocale(LC_ALL, "");
     }
 
-    const bool once = get_arg_value(argc, argv, 1) == "--oneshot";
     PolicyRegistry policyRegistry;
     std::string registryError;
     if (!initPolicyRegistry(
@@ -1160,10 +1114,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "failed to initialize PolicyRegistry: "
                   << registryError << std::endl;
         return 1;
-    }
-
-    if (once) {
-        return apply(policyRegistry, "all", "") ? 0 : 1;
     }
 
     const std::string socketPath = get_socket_path(argc, argv);

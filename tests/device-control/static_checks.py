@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -19,7 +18,6 @@ def main():
         return 2
 
     root = Path(sys.argv[1])
-    db_path = root / "fic" / "src" / "scripts" / "db" / "devices.db"
     device_daemon = root / "fic-dick" / "src" / "core" / "DeviceControlDaemon.cpp"
     device_snapshot = root / "fic-dick" / "src" / "core" / "DeviceTreeSnapshot.cpp"
     dc_policy = root / "fic" / "src" / "modules" / "dc" / "DC.cpp"
@@ -35,24 +33,6 @@ def main():
     device_enforcer = root / "fic-dick" / "src" / "core" / "DeviceEnforcer.cpp"
     device_lifecycle = root / "fic-dick" / "src" / "core" / "DeviceLifecycle.cpp"
 
-    with sqlite3.connect(db_path) as connection:
-        columns = [row[1] for row in connection.execute("PRAGMA table_info(devices)")]
-        revision_rows = list(connection.execute(
-            "SELECT revision FROM device_tree_state WHERE id = 1"
-        ))
-        revision_triggers = {
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type = 'trigger' AND name LIKE 'device_tree_revision_%'"
-            )
-        }
-    require("control_explicit" in columns, "seed devices.db must contain control_explicit")
-    require(revision_rows and revision_rows[0][0] >= 0,
-            "seed devices.db must contain a non-negative device tree revision")
-    require(len(revision_triggers) == 9,
-            "seed devices.db must contain all device tree revision triggers")
-
     db_source = read_text(db_cpp)
     for marker in [
         "device_tree_state",
@@ -64,9 +44,18 @@ def main():
         "device_policy_state",
         "desired_revision",
         "active_revision",
-        "ALTER TABLE devices ADD COLUMN children_control",
     ]:
         require(marker in db_source, f"missing device tree revision support: {marker}")
+    for obsolete in [
+        "migrateDatabase",
+        "LEGACY_CLEANUP_SQL",
+        "allowLegacyTables",
+        "ALTER TABLE devices ADD COLUMN children_control",
+    ]:
+        require(obsolete not in db_source,
+                f"obsolete device database migration remains: {obsolete}")
+    require(not (root / "fic/src/scripts/db/devices.db").exists(),
+            "pre-versioned device database fixture must not be shipped")
 
     daemon_source = read_text(device_daemon)
     for marker in [

@@ -129,18 +129,12 @@ add_test(NAME exclusive_pid_lock_tests COMMAND exclusive_pid_lock_tests)
 add_executable(device_tree_revision_tests
     device-control/DeviceTreeRevisionTests.cpp
 )
-target_compile_definitions(device_tree_revision_tests PRIVATE
-    FIC_TEST_LEGACY_DEVICE_DB="${CMAKE_SOURCE_DIR}/fic/src/scripts/db/devices.db"
-)
 target_link_libraries(device_tree_revision_tests PRIVATE fic-device-db)
 add_test(NAME device_tree_revision_tests COMMAND device_tree_revision_tests)
 
 add_executable(device_tree_snapshot_tests
     device-control/DeviceTreeSnapshotTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/core/DeviceTreeSnapshot.cpp
-)
-target_compile_definitions(device_tree_snapshot_tests PRIVATE
-    FIC_TEST_LEGACY_DEVICE_DB="${CMAKE_SOURCE_DIR}/fic/src/scripts/db/devices.db"
 )
 target_include_directories(device_tree_snapshot_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic-dick/src
@@ -399,12 +393,9 @@ target_include_directories(package_trust_selection_tests PRIVATE
 )
 add_test(NAME package_trust_selection_tests COMMAND package_trust_selection_tests)
 
-add_executable(upgrade_contract_tests upgrade/UpgradeContractTests.cpp)
-target_compile_definitions(upgrade_contract_tests PRIVATE
-    FIC_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-target_link_libraries(upgrade_contract_tests PRIVATE
+add_executable(schema_contract_tests version/SchemaContractTests.cpp)
+target_link_libraries(schema_contract_tests PRIVATE
     fic-core
     fic-device-db
 )
-add_test(NAME upgrade_contract_tests COMMAND upgrade_contract_tests)
+add_test(NAME schema_contract_tests COMMAND schema_contract_tests)

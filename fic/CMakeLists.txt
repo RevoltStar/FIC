@@ -100,12 +100,10 @@ install(PROGRAMS
         DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
 install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
-install(DIRECTORY DESTINATION "${FIC_STATE_DIR}" COMPONENT fic)
 install(DIRECTORY src/scripts/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
 install(FILES
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic.service"
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-notify.service"
-        src/scripts/service/fic.timer
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic_get_device_udev_info.service"
         DESTINATION "${FIC_SYSTEMD_UNIT_DIR}" COMPONENT fic)
 install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/tmpfiles/fic.conf"

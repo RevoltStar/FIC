@@ -5,7 +5,6 @@
 #include <fic/version/ProductVersion.h>
 
 #include <algorithm>
-#include <ctime>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -187,12 +186,6 @@ constexpr const char* BASELINE_DATA_SQL =
     "AND NOT EXISTS (SELECT 1 FROM devices WHERE "
     "device_hash='virtual_container_pci_sha256_placeholder') LIMIT 1;";
 
-constexpr const char* LEGACY_CLEANUP_SQL =
-    "DROP TABLE IF EXISTS domain_policies;"
-    "DROP TABLE IF EXISTS lock_history;"
-    "DROP TABLE IF EXISTS system_settings;"
-    "DROP TABLE IF EXISTS temporary_allowances;";
-
 bool executeSql(sqlite3* database, const std::string& sql, std::string& error) {
     char* message = nullptr;
     const int result = sqlite3_exec(database, sql.c_str(), nullptr, nullptr, &message);
@@ -222,9 +215,7 @@ bool readPragmaInt(sqlite3* database, const char* pragma, int& value, std::strin
     return true;
 }
 
-bool hasExpectedApplicationTables(sqlite3* database,
-                                  bool allowLegacyTables,
-                                  std::string& error) {
+bool hasExpectedApplicationTables(sqlite3* database, std::string& error) {
     constexpr const char* sql =
         "SELECT name FROM sqlite_master WHERE type='table' "
         "AND name NOT LIKE 'sqlite_%';";
@@ -247,23 +238,10 @@ bool hasExpectedApplicationTables(sqlite3* database,
         return false;
     }
     std::set<std::string> required = {
-        "devices", "device_attributes", "device_events", "device_tree_state"
+        "devices", "device_attributes", "device_events", "device_tree_state",
+        "device_policy_state"
     };
-    if (!allowLegacyTables) {
-        required.insert("device_policy_state");
-    }
-    std::set<std::string> allowed = required;
-    if (allowLegacyTables) {
-        allowed.insert("device_policy_state");
-        allowed.insert({
-            "domain_policies", "lock_history", "system_settings",
-            "temporary_allowances"
-        });
-    }
-    if (!std::includes(actual.begin(), actual.end(),
-                       required.begin(), required.end()) ||
-        !std::includes(allowed.begin(), allowed.end(),
-                       actual.begin(), actual.end())) {
+    if (actual != required) {
         error = "device database contains a missing or unknown application table";
         return false;
     }
@@ -305,19 +283,14 @@ bool tableHasExactColumns(sqlite3* database,
     return true;
 }
 
-bool hasExpectedTableLayout(sqlite3* database,
-                            bool allowLegacyTables,
-                            std::string& error) {
+bool hasExpectedTableLayout(sqlite3* database, std::string& error) {
     std::vector<std::string> deviceColumns = {
         "id", "device_hash", "devpath", "subsystem", "device_type",
         "parent_id", "control_level", "control_explicit",
         "ignore_hierarchy", "boot_id", "created_at", "last_event_at",
-        "notes"
+        "notes", "children_control"
     };
-    if (!allowLegacyTables) {
-        deviceColumns.push_back("children_control");
-    }
-    return hasExpectedApplicationTables(database, allowLegacyTables, error) &&
+    return hasExpectedApplicationTables(database, error) &&
         tableHasExactColumns(database, "devices", deviceColumns, error) &&
         tableHasExactColumns(database, "device_attributes", {
             "id", "device_id", "attribute_name", "attribute_value"
@@ -329,10 +302,10 @@ bool hasExpectedTableLayout(sqlite3* database,
         tableHasExactColumns(database, "device_tree_state", {
             "id", "revision"
         }, error) &&
-        (allowLegacyTables || tableHasExactColumns(database, "device_policy_state", {
+        tableHasExactColumns(database, "device_policy_state", {
             "id", "desired_revision", "active_revision", "block_usb_storage",
             "block_printers_scanners", "block_optical_drives"
-        }, error));
+        }, error);
 }
 
 bool hasExpectedIndexesAndTriggers(sqlite3* database, std::string& error) {
@@ -434,67 +407,6 @@ bool integrityChecksPass(sqlite3* database, std::string& error) {
     return foreignKeysOk;
 }
 
-bool backupDatabase(sqlite3* source,
-                    const std::filesystem::path& backupFile,
-                    std::string& error) {
-    struct stat existing {};
-    if (::lstat(backupFile.c_str(), &existing) == 0 || errno != ENOENT) {
-        error = "refusing to overwrite an existing SQLite backup: " +
-            backupFile.string();
-        return false;
-    }
-    sqlite3* destination = nullptr;
-    if (sqlite3_open_v2(backupFile.c_str(), &destination,
-                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_EXCLUSIVE,
-                        nullptr) != SQLITE_OK) {
-        error = destination == nullptr ? "could not create SQLite backup" : sqlite3_errmsg(destination);
-        if (destination != nullptr) {
-            sqlite3_close(destination);
-        }
-        return false;
-    }
-    sqlite3_backup* backup = sqlite3_backup_init(destination, "main", source, "main");
-    if (backup == nullptr) {
-        error = sqlite3_errmsg(destination);
-        sqlite3_close(destination);
-        return false;
-    }
-    const int step = sqlite3_backup_step(backup, -1);
-    const int finish = sqlite3_backup_finish(backup);
-    const bool ok = step == SQLITE_DONE && finish == SQLITE_OK;
-    if (!ok) {
-        error = sqlite3_errmsg(destination);
-    }
-    sqlite3_close(destination);
-    if (!ok) {
-        std::error_code removeError;
-        std::filesystem::remove(backupFile, removeError);
-        return false;
-    }
-    if (::chmod(backupFile.c_str(), 0640) != 0) {
-        error = "could not set SQLite backup permissions: " +
-            std::string(std::strerror(errno));
-        return false;
-    }
-    const int backupFd = ::open(backupFile.c_str(), O_RDONLY | O_CLOEXEC);
-    if (backupFd < 0 || ::fsync(backupFd) != 0) {
-        error = "could not fsync SQLite backup: " +
-            std::string(std::strerror(errno));
-        if (backupFd >= 0) ::close(backupFd);
-        return false;
-    }
-    ::close(backupFd);
-    const int directoryFd = ::open(
-        backupFile.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (directoryFd < 0 || ::fsync(directoryFd) != 0) {
-        error = "could not fsync SQLite backup directory: " +
-            std::string(std::strerror(errno));
-        if (directoryFd >= 0) ::close(directoryFd);
-        return false;
-    }
-    ::close(directoryFd);
-    return true;
-}
 } // namespace
 
 DB::DB(DBOptions options)
@@ -809,7 +721,7 @@ bool DB::initializeDatabase() {
         databaseHadContent_ = true;
     }
 
-    if (!verifyDatabaseSchemaMetadata(lastError_)) {
+    if (!verifyDatabaseSchema(lastError_)) {
         log("Device database schema verification failed: " + lastError_, logLevel::FATAL);
         return false;
     }
@@ -829,147 +741,23 @@ bool DB::verifyDatabaseSchemaMetadata(std::string& error) {
     }
     if (applicationId != static_cast<int>(fic::version::DEVICE_DB_APPLICATION_ID)) {
         error = applicationId == 0
-            ? "unversioned device database requires offline migration"
+            ? "unversioned device database is unsupported"
             : "database application_id does not identify a FIC device database";
         return false;
     }
     if (schemaVersion != fic::version::DEVICE_DB_SCHEMA_VERSION) {
         error = schemaVersion > fic::version::DEVICE_DB_SCHEMA_VERSION
             ? "device database schema is newer than this binary"
-            : "device database schema requires offline migration";
+            : "device database schema is unsupported";
         return false;
     }
-    return hasExpectedTableLayout(db, false, error) &&
+    return hasExpectedTableLayout(db, error) &&
         hasExpectedIndexesAndTriggers(db, error) &&
         hasRequiredBaselineRows(db, error);
 }
 
 bool DB::verifyDatabaseSchema(std::string& error) {
     return verifyDatabaseSchemaMetadata(error) && integrityChecksPass(db, error);
-}
-
-bool DB::migrateDatabase(const std::filesystem::path& backupDirectory,
-                         DBMigrationResult& result,
-                         std::string& error,
-                         const std::function<bool(
-                             const std::filesystem::path&, std::string&)>&
-                             backupReady) {
-    result = {};
-    error.clear();
-    if (!databaseHadContent_) {
-        if (!initializeDatabase() || !verifyDatabaseSchema(error)) {
-            if (error.empty()) {
-                error = lastError_;
-            }
-            return false;
-        }
-        result.fromVersion = 0;
-        result.toVersion = fic::version::DEVICE_DB_SCHEMA_VERSION;
-        result.migrated = true;
-        return true;
-    }
-    int applicationId = 0;
-    int schemaVersion = 0;
-    if (!readPragmaInt(db, "application_id", applicationId, error) ||
-        !readPragmaInt(db, "user_version", schemaVersion, error)) {
-        return false;
-    }
-    result.fromVersion = schemaVersion;
-    result.toVersion = fic::version::DEVICE_DB_SCHEMA_VERSION;
-
-    if (applicationId != 0 &&
-        applicationId != static_cast<int>(fic::version::DEVICE_DB_APPLICATION_ID)) {
-        error = "database application_id does not identify a FIC device database";
-        return false;
-    }
-    if (schemaVersion > fic::version::DEVICE_DB_SCHEMA_VERSION) {
-        error = "downgrade refused: device database schema is newer than this binary";
-        return false;
-    }
-    if (schemaVersion == fic::version::DEVICE_DB_SCHEMA_VERSION) {
-        if (applicationId != static_cast<int>(fic::version::DEVICE_DB_APPLICATION_ID)) {
-            error = "current schema version has an invalid application_id";
-            return false;
-        }
-        return verifyDatabaseSchema(error);
-    }
-    if ((schemaVersion != 0 && schemaVersion != 1) ||
-        (schemaVersion == 0 && applicationId != 0) ||
-        (schemaVersion == 1 && applicationId !=
-            static_cast<int>(fic::version::DEVICE_DB_APPLICATION_ID)) ||
-        !hasExpectedTableLayout(db, true, error) ||
-        !integrityChecksPass(db, error)) {
-        if (error.empty()) {
-            error = "no migration path exists for the device database";
-        }
-        return false;
-    }
-    if (backupDirectory.empty() || !backupDirectory.is_absolute() ||
-        backupDirectory.lexically_normal() != backupDirectory) {
-        error = "database backup directory must be absolute and normalized";
-        return false;
-    }
-
-    std::error_code filesystemError;
-    std::filesystem::create_directories(backupDirectory, filesystemError);
-    if (filesystemError) {
-        error = "could not create database backup directory: " + filesystemError.message();
-        return false;
-    }
-    struct stat backupDirectoryInfo {};
-    if (::lstat(backupDirectory.c_str(), &backupDirectoryInfo) != 0 ||
-        !S_ISDIR(backupDirectoryInfo.st_mode)) {
-        error = "database backup path is not a real directory";
-        return false;
-    }
-    if (::chmod(backupDirectory.c_str(), 02750) != 0) {
-        error = "could not set database backup directory permissions: " +
-            std::string(std::strerror(errno));
-        return false;
-    }
-
-    result.backupFile = backupDirectory /
-        (std::filesystem::path(db_path).filename().string() + "-v" +
-         std::to_string(schemaVersion) + "-" +
-         std::to_string(static_cast<long long>(std::time(nullptr))) + "-" +
-         std::to_string(::getpid()) + ".db");
-    if (!backupDatabase(db, result.backupFile, error)) {
-        return false;
-    }
-    if (backupReady && !backupReady(result.backupFile, error)) {
-        return false;
-    }
-
-    const std::string versionSql =
-        std::string("PRAGMA application_id=") +
-            std::to_string(fic::version::DEVICE_DB_APPLICATION_ID) + ";" +
-        "PRAGMA user_version=" +
-            std::to_string(fic::version::DEVICE_DB_SCHEMA_VERSION) + ";";
-    const std::string migratePolicySql =
-        "ALTER TABLE devices ADD COLUMN children_control TEXT NOT NULL "
-        "DEFAULT 'inherit' CHECK(children_control IN ('allow', 'deny', 'inherit'));"
-        "UPDATE devices SET children_control = CASE "
-        "WHEN control_explicit = 1 AND control_level = 'blocked' THEN 'deny' "
-        "WHEN control_explicit = 1 AND control_level IN ('allowed', 'permanent') THEN 'allow' "
-        "ELSE 'inherit' END;";
-    if (!executeSql(db, "BEGIN IMMEDIATE;", error) ||
-        !executeSql(db, migratePolicySql, error) ||
-        !executeSql(db, SCHEMA_SQL, error) ||
-        !executeSql(db, INDEX_SQL, error) ||
-        !executeSql(db, BASELINE_DATA_SQL, error) ||
-        !executeSql(db, LEGACY_CLEANUP_SQL, error) ||
-        !executeSql(db, versionSql, error) ||
-        !executeSql(db, "COMMIT;", error)) {
-        std::string rollbackError;
-        executeSql(db, "ROLLBACK;", rollbackError);
-        return false;
-    }
-    if (!verifyDatabaseSchema(error)) {
-        return false;
-    }
-    result.migrated = true;
-    databaseHadContent_ = true;
-    return true;
 }
 
 const std::string& DB::lastError() const {

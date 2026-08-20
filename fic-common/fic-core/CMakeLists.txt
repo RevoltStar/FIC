@@ -17,6 +17,7 @@ find_package(Threads REQUIRED)
 add_library(fic-core STATIC
     src/AtomicFileWriter.cpp
     src/CommandHashStore.cpp
+    src/ConfigSchemaManager.cpp
     src/ConfigFileHandler.cpp
     src/ExclusivePidLock.cpp
     src/FileHandler.cpp
@@ -31,7 +32,6 @@ add_library(fic-core STATIC
     src/ProcessExecutor.cpp
     src/SectionConfigFileHandler.cpp
     src/SingleLineFileHandler.cpp
-    src/UpgradeManager.cpp
     src/VerifiedProcessExecutor.cpp
 )
 

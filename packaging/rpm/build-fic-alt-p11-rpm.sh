@@ -769,8 +769,6 @@ fi
 ln -sfn "$target_path" "/bin/$command_name"
 
 unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
-mkdir -p /opt/fic/state || exit 1
-
 if [ -d /run/systemd/system ]; then
     for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
         if [ -x "\$systemctl_bin" ]; then
@@ -785,10 +783,9 @@ if [ -d /run/systemd/system ]; then
 fi
 
 /opt/fic/bin/fic --maintenance ensure-config || exit 1
-/opt/fic/bin/fic --maintenance begin-upgrade || exit 1
-/opt/fic/bin/fic --maintenance migrate-config || exit 1
-/opt/fic/bin/fic-dick --maintenance migrate-db || exit 1
-/opt/fic/bin/fic --maintenance commit-upgrade || exit 1
+/opt/fic/bin/fic-dick --maintenance initialize-db || exit 1
+/opt/fic/bin/fic --maintenance check-config || exit 1
+/opt/fic/bin/fic-dick --maintenance check-db || exit 1
 
 chown -R root:fic /opt/fic || exit 1
 find /opt/fic -type d -exec chmod 2750 {} \; || exit 1

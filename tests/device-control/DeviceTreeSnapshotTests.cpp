@@ -61,12 +61,8 @@ int main()
     assert(paths.validate(error));
     assert(fic::core::FicRuntimePaths::initialize(paths, error));
 
-    fs::copy_file(FIC_TEST_LEGACY_DEVICE_DB, paths.deviceDatabaseFile);
     DB database({paths.deviceDatabaseFile, paths.deviceDatabaseLockFile,
                  paths.lockDebugLogFile, false});
-    assert(!database.initializeDatabase());
-    DBMigrationResult migration;
-    assert(database.migrateDatabase(rootPath / "backups", migration, error));
     assert(database.initializeDatabase());
 
     const DeviceInfo root = database.getComputerRoot();

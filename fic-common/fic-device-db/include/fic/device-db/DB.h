@@ -16,20 +16,12 @@
 #include <cstring>
 #include <cerrno>
 #include <filesystem>
-#include <functional>
 
 struct DBOptions {
     std::filesystem::path databaseFile;
     std::filesystem::path lockFile;
     std::filesystem::path lockDebugLogFile;
     bool lockDebugEnabled = true;
-};
-
-struct DBMigrationResult {
-    int fromVersion = -1;
-    int toVersion = -1;
-    bool migrated = false;
-    std::filesystem::path backupFile;
 };
 
 struct DeviceCategoryPolicyState {
@@ -116,12 +108,6 @@ public:
     // Инициализация БД (если не существует)
     bool initializeDatabase();
     bool verifyDatabaseSchema(std::string& error);
-    bool migrateDatabase(const std::filesystem::path& backupDirectory,
-                         DBMigrationResult& result,
-                         std::string& error,
-                         const std::function<bool(
-                             const std::filesystem::path&, std::string&)>&
-                             backupReady = {});
     const std::string& lastError() const;
 
     // Получить device_id по пути

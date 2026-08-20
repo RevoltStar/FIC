@@ -7,8 +7,7 @@
 #include <string>
 #include <vector>
 #include <fic/core/FicRuntimePaths.h>
-#include <fic/core/ModuleConfigFileHandler.h>
-#include <fic/core/UpgradeManager.h>
+#include <fic/core/ConfigSchemaManager.h>
 #include <fic/device-db/DB.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
@@ -121,53 +120,19 @@ int main(int argc, char* argv[], char* envp[]) {
                               << fic::version::DEVICE_DB_SCHEMA_VERSION << std::endl;
                     return 0;
                 }
-                if (command == "migrate-db") {
-                    DBMigrationResult result;
-                    const std::filesystem::path backupDirectory =
-                        fic::device_control::DeviceRuntimePaths::get().stateDir /
-                        "db-backups";
-                    const auto backupReady = [&](
-                        const std::filesystem::path& backup,
-                        std::string& callbackError) {
-                        return fic::core::UpgradeManager::recordDatabaseBackupIfActive(
-                            fic::device_control::DeviceRuntimePaths::get().stateDir,
-                            backup,
-                            callbackError);
-                    };
-                    if (!db.migrateDatabase(
-                            backupDirectory, result, error, backupReady)) {
-                        std::cerr << "device database migration failed: " << error << std::endl;
-                        return 1;
-                    }
-                    ModuleConfigFileHandler dcConfig("DC");
-                    if (!dcConfig.loadConfig() ||
-                        !db.updateDeviceCategoryPolicyState({
-                            dcConfig.getPolicyStatus("block_usb_storage") == "ENABLE",
-                            dcConfig.getPolicyStatus("block_printers_scanners") == "ENABLE",
-                            dcConfig.getPolicyStatus("block_optical_drives") == "ENABLE"
-                        })) {
-                        std::cerr << "failed to import DC category policy into device database"
-                                  << std::endl;
-                        return 1;
-                    }
-                    if (!fic::core::UpgradeManager::markDatabaseMigratedIfActive(
-                            fic::device_control::DeviceRuntimePaths::get().stateDir,
-                            result.backupFile,
-                            error)) {
-                        std::cerr << "could not advance upgrade journal: "
+                if (command == "initialize-db") {
+                    if (!db.initializeDatabase() ||
+                        !db.verifyDatabaseSchema(error)) {
+                        if (error.empty()) {
+                            error = db.lastError();
+                        }
+                        std::cerr << "device database initialization failed: "
                                   << error << std::endl;
                         return 1;
                     }
-                    std::cout << "device database schema " << result.fromVersion
-                              << " -> " << result.toVersion;
-                    if (!result.backupFile.empty()) {
-                        std::cout << ", backup=" << result.backupFile.string();
-                    } else if (result.migrated) {
-                        std::cout << ", initialized new database";
-                    } else {
-                        std::cout << ", already current";
-                    }
-                    std::cout << std::endl;
+                    std::cout << "device database schema is initialized: "
+                              << fic::version::DEVICE_DB_SCHEMA_VERSION
+                              << std::endl;
                     return 0;
                 }
                 std::cerr << "unknown maintenance command: " << command << std::endl;
@@ -179,19 +144,12 @@ int main(int argc, char* argv[], char* envp[]) {
             }
         }
 
-        std::string upgradeError;
-        if (!fic::core::UpgradeManager::requireNoIncompleteUpgrade(
-                fic::device_control::DeviceRuntimePaths::get().stateDir,
-                upgradeError)) {
-            std::cerr << "refusing to start during incomplete product upgrade: "
-                      << upgradeError << std::endl;
-            return 1;
-        }
-        if (!fic::core::UpgradeManager::verifyConfigs(
+        std::string configError;
+        if (!fic::core::ConfigSchemaManager::verifyConfigs(
                 fic::core::FicRuntimePaths::get().configDir,
-                upgradeError)) {
+                configError)) {
             std::cerr << "refusing to start with incompatible configuration: "
-                      << upgradeError << std::endl;
+                      << configError << std::endl;
             return 1;
         }
 

@@ -40,7 +40,6 @@ int main()
     fs::create_directories(paths.dataDir);
 
     const fs::path databasePath = root / "devices.db";
-    fs::copy_file(FIC_TEST_LEGACY_DEVICE_DB, databasePath);
 
     const DBOptions options{
         databasePath,
@@ -52,13 +51,6 @@ int main()
     std::int64_t finalRevision = -1;
     {
         DB database(options);
-        assert(!database.initializeDatabase());
-        DBMigrationResult migration;
-        std::string migrationError;
-        assert(database.migrateDatabase(root / "backups", migration, migrationError));
-        assert(migration.migrated);
-        assert(migration.fromVersion == 0);
-        assert(fs::is_regular_file(migration.backupFile));
         assert(database.initializeDatabase());
 
         const std::int64_t initialRevision = database.getDeviceTreeRevision();
@@ -68,7 +60,7 @@ int main()
 
         const DeviceInfo computer = database.getComputerRoot();
         assert(computer.id > 0);
-        assert(computer.children_control == "allow");
+        assert(computer.children_control == "inherit");
         const DeviceCategoryPolicyState categories =
             database.getDeviceCategoryPolicyState();
         assert(!categories.block_usb_storage);
