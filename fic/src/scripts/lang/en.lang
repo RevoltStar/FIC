@@ -1,5 +1,7 @@
 # Global FIC settings
-[apply_button]=Apply
+[save_button]=Save
+[save_apply_button]=Save and apply
+[configuration_saved]=Configuration saved
 
 [utils:policytypevalue][type:intpolicytypevalue] = The value must be in the range
 [utils:policytypevalue][type:multilinepolicytypevalue] = No restriction

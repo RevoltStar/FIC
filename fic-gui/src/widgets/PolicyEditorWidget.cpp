@@ -275,18 +275,23 @@ PolicyEditorWidget::PolicyEditorWidget(
     scrollArea->setWidget(content);
     mainLayout->addWidget(scrollArea);
 
-    auto* applyButton = new QPushButton(QLocalizationManager::getLang("[apply_button]"), this);
-    applyButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    applyButton->setMinimumHeight(40);
+    auto* saveButton = new QPushButton(
+        QLocalizationManager::getLang("[save_button]"), this);
+    saveButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    saveButton->setMinimumHeight(40);
+    auto* saveApplyButton = new QPushButton(
+        QLocalizationManager::getLang("[save_apply_button]"), this);
+    saveApplyButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    saveApplyButton->setMinimumHeight(40);
     auto* buttonLayout = new QHBoxLayout;
     buttonLayout->setContentsMargins(10, 10, 10, 10);
-    buttonLayout->addWidget(applyButton);
+    buttonLayout->addWidget(saveButton);
+    buttonLayout->addWidget(saveApplyButton);
     mainLayout->addLayout(buttonLayout);
 
-    connect(applyButton, &QPushButton::clicked, this,
-            [this, moduleName, controls]() {
-        std::vector<PolicyChange> changes;
-        QStringList validationErrors;
+    const auto collectChanges = [controls](
+        std::vector<PolicyChange>& changes,
+        QStringList& validationErrors) {
         for (const Row& row : controls) {
             std::string value;
             switch (row.type) {
@@ -321,14 +326,47 @@ PolicyEditorWidget::PolicyEditorWidget(
                                row.enabled->isChecked(),
                                row.type != EditorType::Label});
         }
+    };
+    const auto validateAndCollect = [this, collectChanges](
+        std::vector<PolicyChange>& changes) {
+        QStringList validationErrors;
+        collectChanges(changes, validationErrors);
         if (!validationErrors.isEmpty()) {
             QMessageBox::warning(this, "Validation errors", validationErrors.join("\n"));
+            return false;
+        }
+        return true;
+    };
+
+    connect(saveButton, &QPushButton::clicked, this,
+            [this, moduleName, validateAndCollect]() {
+        std::vector<PolicyChange> changes;
+        if (!validateAndCollect(changes)) {
+            return;
+        }
+
+        QString error;
+        if (!PolicyService().saveChanges(moduleName, changes, error)) {
+            QMessageBox::warning(this, "Save errors", error);
+            return;
+        }
+        QMessageBox::information(
+            this,
+            QLocalizationManager::getLang("[save_button]"),
+            QLocalizationManager::getLang("[configuration_saved]"));
+    });
+
+    connect(saveApplyButton, &QPushButton::clicked, this,
+            [this, moduleName, validateAndCollect]() {
+        std::vector<PolicyChange> changes;
+        if (!validateAndCollect(changes)) {
             return;
         }
 
         nlohmann::json response;
         QString error;
-        if (!PolicyService().applyChanges(moduleName, changes, response, error)) {
+        if (!PolicyService().saveAndApplyChanges(
+                moduleName, changes, response, error)) {
             QMessageBox::warning(this, "Apply errors", error);
             return;
         }

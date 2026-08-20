@@ -810,12 +810,17 @@ flowchart TD
     policyEditor --> ipcPolicies[PolicyService policy_list]
     ipcPolicies --> edit[Пользователь меняет value или enabled]
     edit --> validateGui[validation by editor metadata]
-    validateGui --> apply[Apply button]
-    apply --> setLoop{для каждой измененной политики}
+    validateGui --> action{Save или Save and apply}
+    action --> setLoop{PolicyService saveChanges:<br/>для каждой политики}
     setLoop --> setIfNeeded{value configurable?}
     setIfNeeded -->|да| setValue[set_policy_value]
     setIfNeeded -->|нет| state
     setValue --> state[enable_policy или disable_policy]
+    state --> saved{сохранение завершено?}
+    saved -->|ошибка| saveError[показать daemon error;<br/>apply_module не вызывать]
+    saved -->|успех, Save| saveSuccess[Configuration saved]
+    saved -->|успех, Save and apply| applyModule[apply_module]
+    applyModule --> applyResult[summary + results + diagnostics]
 
     devicePage --> deviceTree[DeviceTree]
     deviceTree --> deviceSock["/run/fic/fic-device.sock"]

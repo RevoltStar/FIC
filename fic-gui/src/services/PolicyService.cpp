@@ -64,14 +64,12 @@ bool PolicyService::loadPolicies(
     return ok;
 }
 
-bool PolicyService::applyChanges(
+bool PolicyService::saveChanges(
     const std::string& module,
     const std::vector<PolicyChange>& changes,
-    nlohmann::json& applyResponse,
     QString& error) const
 {
     error.clear();
-    applyResponse = nlohmann::json();
     for (const PolicyChange& change : changes) {
         if (change.valueConfigurable) {
             const auto response = request({
@@ -95,6 +93,19 @@ bool PolicyService::applyChanges(
                 error)) {
             return false;
         }
+    }
+    return true;
+}
+
+bool PolicyService::saveAndApplyChanges(
+    const std::string& module,
+    const std::vector<PolicyChange>& changes,
+    nlohmann::json& applyResponse,
+    QString& error) const
+{
+    applyResponse = nlohmann::json();
+    if (!saveChanges(module, changes, error)) {
+        return false;
     }
     applyResponse = request({{"command", "apply_module"}, {"module", module}});
     return requireSuccessfulResponse(applyResponse, "apply_module", error);

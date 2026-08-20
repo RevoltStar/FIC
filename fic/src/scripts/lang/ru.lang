@@ -1,5 +1,7 @@
 #Глобальные настройки FIC
-[apply_button]=Применить
+[save_button]=Сохранить
+[save_apply_button]=Сохранить и применить
+[configuration_saved]=Конфигурация сохранена
 
 #
 [utils:policytypevalue][type:intpolicytypevalue] = Значение должно находиться в диапазоне

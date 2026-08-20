@@ -17,6 +17,7 @@ def main():
     logger = (root / "fic-common/fic-core/src/Logger.cpp").read_text(encoding="utf-8")
     main_window = (root / "fic-gui/src/mainwindow.cpp").read_text(encoding="utf-8")
     editor = (root / "fic-gui/src/widgets/PolicyEditorWidget.cpp").read_text(encoding="utf-8")
+    policy_service = (root / "fic-gui/src/services/PolicyService.cpp").read_text(encoding="utf-8")
     device_page = (root / "fic-gui/src/pages/DeviceModulePage.cpp").read_text(encoding="utf-8")
     audit_page = (root / "fic-gui/src/pages/AuditModulePage.cpp").read_text(encoding="utf-8")
     log_viewer = (root / "fic-gui/src/LogViewer.cpp").read_text(encoding="utf-8")
@@ -63,6 +64,14 @@ def main():
             "policy table cells and headers must use palette-aware Qt frames")
     require("setRowStretch(rowNumber, 1)" in editor,
             "policy table must place vertical stretch after its semantic rows")
+    for key in ["[save_button]", "[save_apply_button]", "[configuration_saved]"]:
+        require(key in editor and f"{key}=" in ru_lang and f"{key}=" in en_lang,
+                f"policy save action is not localized in both bundles: {key}")
+    require("saveChanges(moduleName, changes, error)" in editor and
+            "saveAndApplyChanges(" in editor,
+            "policy editor must expose separate save and save/apply actions")
+    require("if (!saveChanges(module, changes, error))" in policy_service,
+            "save/apply must reuse the single policy save implementation")
     for direct_child in ["enabled", "name", "valueWidget", "descriptionWidget"]:
         require(re.search(
             rf"grid->addWidget\(\s*{direct_child}\s*,\s*rowNumber", editor) is None,

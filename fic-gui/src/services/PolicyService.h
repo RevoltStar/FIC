@@ -29,10 +29,13 @@ public:
     bool loadPolicies(const std::string& module,
                       std::vector<PolicyDescriptor>& policies,
                       QString& error) const;
-    bool applyChanges(const std::string& module,
-                      const std::vector<PolicyChange>& changes,
-                      nlohmann::json& applyResponse,
-                      QString& error) const;
+    bool saveChanges(const std::string& module,
+                     const std::vector<PolicyChange>& changes,
+                     QString& error) const;
+    bool saveAndApplyChanges(const std::string& module,
+                             const std::vector<PolicyChange>& changes,
+                             nlohmann::json& applyResponse,
+                             QString& error) const;
 
 private:
     nlohmann::json request(const nlohmann::json& payload) const;
