@@ -9,15 +9,15 @@ fail() {
     exit 1
 }
 
-fic_configure_product_version 2.0.0
-[ "$FIC_PRODUCT_VERSION" = "2.0.0" ] || fail "stable product version changed"
-[ "$FIC_PACKAGE_VERSION" = "2.0.0" ] || fail "stable package version changed"
+fic_configure_product_version 0.0.0
+[ "$FIC_PRODUCT_VERSION" = "0.0.0" ] || fail "stable product version changed"
+[ "$FIC_PACKAGE_VERSION" = "0.0.0" ] || fail "stable package version changed"
 
-fic_configure_product_version 2.0.0-rc.1
-[ "$FIC_PRODUCT_VERSION" = "2.0.0-rc.1" ] || fail "prerelease product version changed"
-[ "$FIC_PACKAGE_VERSION" = "2.0.0~rc.1" ] || fail "prerelease package ordering is wrong"
+fic_configure_product_version 0.1.0-rc.1
+[ "$FIC_PRODUCT_VERSION" = "0.1.0-rc.1" ] || fail "prerelease product version changed"
+[ "$FIC_PACKAGE_VERSION" = "0.1.0~rc.1" ] || fail "prerelease package ordering is wrong"
 
-for invalid in 2.0 02.0.0 2.0.0-rc.01 2.0.0+local v2.0.0; do
+for invalid in 0.0 00.0.0 0.1.0-rc.01 0.0.0+local v2.0.0; do
     if (fic_configure_product_version "$invalid" >/dev/null 2>&1); then
         fail "accepted invalid product version '$invalid'"
     fi
@@ -33,22 +33,22 @@ cleanup() {
 trap cleanup EXIT
 
 cmake -S "$ROOT_DIR/fic-common/fic-version" -B "$TEMP_DIR/valid" \
-    -DFIC_PRODUCT_VERSION=2.0.0-rc.1 \
+    -DFIC_PRODUCT_VERSION=0.1.0-rc.1 \
     -DFIC_RELEASE_BUILD=ON \
-    -DFIC_RELEASE_TAG=v2.0.0-rc.1 \
+    -DFIC_RELEASE_TAG=v0.1.0-rc.1 \
     -DFIC_BUILD_COMMIT=0123456789abcdef0123456789abcdef01234567 >/dev/null
 VALID_HEADER="$TEMP_DIR/valid/generated/include/fic/version/ProductVersion.h"
-grep -Fq 'PRODUCT_VERSION = "2.0.0-rc.1"' "$VALID_HEADER" ||
+grep -Fq 'PRODUCT_VERSION = "0.1.0-rc.1"' "$VALID_HEADER" ||
     fail "CMake generated the wrong product version"
 grep -Fq 'BUILD_KIND = "release"' "$VALID_HEADER" ||
     fail "CMake did not mark the release build"
-grep -Fq 'RELEASE_TAG = "v2.0.0-rc.1"' "$VALID_HEADER" ||
+grep -Fq 'RELEASE_TAG = "v0.1.0-rc.1"' "$VALID_HEADER" ||
     fail "CMake generated the wrong release tag"
 
 if cmake -S "$ROOT_DIR/fic-common/fic-version" -B "$TEMP_DIR/tag-mismatch" \
-    -DFIC_PRODUCT_VERSION=2.0.0 \
+    -DFIC_PRODUCT_VERSION=0.1.0 \
     -DFIC_RELEASE_BUILD=ON \
-    -DFIC_RELEASE_TAG=v2.0.1 \
+    -DFIC_RELEASE_TAG=v0.1.1 \
     -DFIC_BUILD_COMMIT=0123456789abcdef0123456789abcdef01234567 \
     >/dev/null 2>&1; then
     fail "CMake accepted a release tag/version mismatch"

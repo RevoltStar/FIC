@@ -2,11 +2,11 @@ FIC - daemon-centered Free Integrity Control
 
 Development status:
 
-- This repository contains the second-generation FIC implementation. The old
+- This repository contains the FIC implementation. The old
   FIC 1.x prototype was never released and has no compatibility or migration
   contract.
-- The current development version is `2.0.0-dev`. The first planned stable
-  release is `2.0.0`; prereleases use tags such as `v2.0.0-rc.1`.
+- The current development version is `0.0.0-alpha`. The first planned stable
+  release is `0.1.0`; prereleases use tags such as `v0.1.0-rc.1`.
 
 Components:
 - fic: daemon, owns policy application and /opt/fic/config mutations through /run/fic/fic.sock

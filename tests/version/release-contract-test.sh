@@ -43,20 +43,20 @@ for mock_builder in \
         'done' > "$TEMP_DIR/$mock_builder"
     chmod +x "$TEMP_DIR/$mock_builder"
 done
-printf '# Changelog\n\n## [2.0.0-rc.1] - 2026-08-02\n' > "$TEMP_DIR/CHANGELOG.md"
+printf '# Changelog\n\n## [0.1.0-rc.1] - 2026-08-02\n' > "$TEMP_DIR/CHANGELOG.md"
 printf 'release fixture\n' > "$TEMP_DIR/README.md"
 git -C "$TEMP_DIR" add CHANGELOG.md README.md packaging
 git -C "$TEMP_DIR" commit -qm "release fixture"
-git -C "$TEMP_DIR" tag -a v2.0.0-rc.1 -m "release fixture"
+git -C "$TEMP_DIR" tag -a v0.1.0-rc.1 -m "release fixture"
 
 fic_validate_release_checkout "$TEMP_DIR"
-[ "$FIC_RELEASE_TAG" = "v2.0.0-rc.1" ] || fail "wrong release tag"
-[ "$FIC_PRODUCT_VERSION" = "2.0.0-rc.1" ] || fail "wrong product version"
-[ "$FIC_PACKAGE_VERSION" = "2.0.0~rc.1" ] || fail "wrong native package version"
+[ "$FIC_RELEASE_TAG" = "v0.1.0-rc.1" ] || fail "wrong release tag"
+[ "$FIC_PRODUCT_VERSION" = "0.1.0-rc.1" ] || fail "wrong product version"
+[ "$FIC_PACKAGE_VERSION" = "0.1.0~rc.1" ] || fail "wrong native package version"
 [ "${#FIC_RELEASE_COMMIT}" -eq 40 ] || fail "release commit is abbreviated"
 "$TEMP_DIR/packaging/release/build-release.sh" --verify-only >/dev/null
 "$TEMP_DIR/packaging/release/build-release.sh" >/dev/null
-RELEASE_OUTPUT="$TEMP_DIR/dist/release/2.0.0-rc.1"
+RELEASE_OUTPUT="$TEMP_DIR/dist/release/0.1.0-rc.1"
 [ -f "$RELEASE_OUTPUT/release-manifest.json" ] || fail "release manifest is missing"
 [ "$(find "$RELEASE_OUTPUT" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)" -eq 25 ] ||
     fail "release entry point did not collect 25 packages"
@@ -70,17 +70,17 @@ if (fic_validate_release_checkout "$TEMP_DIR" >/dev/null 2>&1); then
 fi
 git -C "$TEMP_DIR" restore README.md
 
-git -C "$TEMP_DIR" tag -d v2.0.0-rc.1 >/dev/null
-git -C "$TEMP_DIR" tag v2.0.0-rc.1
+git -C "$TEMP_DIR" tag -d v0.1.0-rc.1 >/dev/null
+git -C "$TEMP_DIR" tag v0.1.0-rc.1
 if (fic_validate_release_checkout "$TEMP_DIR" >/dev/null 2>&1); then
     fail "accepted a lightweight release tag"
 fi
 
-git -C "$TEMP_DIR" tag -d v2.0.0-rc.1 >/dev/null
+git -C "$TEMP_DIR" tag -d v0.1.0-rc.1 >/dev/null
 printf 'next release\n' >> "$TEMP_DIR/README.md"
 git -C "$TEMP_DIR" add README.md
 git -C "$TEMP_DIR" commit -qm "next release fixture"
-git -C "$TEMP_DIR" tag -a v2.0.0 -m "release without changelog"
+git -C "$TEMP_DIR" tag -a v0.1.0 -m "release without changelog"
 if (fic_validate_release_checkout "$TEMP_DIR" >/dev/null 2>&1); then
     fail "accepted a release without a matching changelog heading"
 fi

@@ -3,27 +3,27 @@
 This document defines the versioned upgrade boundary for the second-generation
 FIC implementation. FIC 1.x was never released and has no supported state,
 configuration, database, IPC, or package migration path. The current
-`2.0.0-dev` line is development software; the first planned stable release is
-`2.0.0`.
+`0.0.0-alpha` line is development software; the first planned stable release is
+`0.1.0`.
 
 ## Independent versions
 
 | Contract | Current version | Owner | Compatibility rule |
 |---|---:|---|---|
-| Product | `2.0.0-dev` | annotated Git release tag and `fic-common/fic-version` | Must be SemVer without build metadata. Official releases require an exact matching tag, full commit and clean tree. |
-| Administrative IPC | `2` | `fic-common/fic-ipc` | Every request and response contains `api_version`. A mismatch is rejected before routing. Version 2 changes `module_list` from strings to `{name, view}` descriptors. |
-| Policy configuration | `2` | `fic-core/UpgradeManager` | Every installed module config contains exactly one `_schema_version`. Schema 2 adds `AUDIT.conf` and moves `log_level` out of `GLOBAL.conf`. Normal startup accepts only the exact current schema. |
-| Device SQLite database | `2` | `fic-device-db` | `PRAGMA application_id=0x46494344` and `PRAGMA user_version=2` identify the database and schema. Normal startup never mutates an old schema. |
+| Product | `0.0.0-alpha` | annotated Git release tag and `fic-common/fic-version` | Must be SemVer without build metadata. Official releases require an exact matching tag, full commit and clean tree. |
+| Administrative IPC | `1` | `fic-common/fic-ipc` | Every request and response contains `api_version`. A mismatch is rejected before routing. Version 2 changes `module_list` from strings to `{name, view}` descriptors. |
+| Policy configuration | `1` | `fic-core/UpgradeManager` | Every installed module config contains exactly one `_schema_version`. Schema 2 adds `AUDIT.conf` and moves `log_level` out of `GLOBAL.conf`. Normal startup accepts only the exact current schema. |
+| Device SQLite database | `1` | `fic-device-db` | `PRAGMA application_id=0x46494344` and `PRAGMA user_version=2` identify the database and schema. Normal startup never mutates an old schema. |
 
 The versions are deliberately independent. Changing the product version does
 not imply an IPC or storage-schema change. A breaking change increments only
 the affected contract and adds an explicit offline migration where applicable.
 
 The Git tag is the sole release-version authority. CMake defaults to the
-identifiable development version `2.0.0-dev`; package builders require the
+identifiable development version `0.0.0-alpha`; package builders require the
 product version as an explicit argument. For native ordering, a prerelease such
-as `2.0.0-rc.1` remains the embedded product version but maps to package version
-`2.0.0~rc.1`. Stable `2.0.0` maps unchanged.
+as `0.1.0-rc.1` remains the embedded product version but maps to package version
+`0.1.0~rc.1`. Stable `0.1.0` maps unchanged.
 
 Every executable provides `--build-info`. The output keeps the full 40-character
 source commit and release tag in separate fields rather than appending them to

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 
 project(fic_version LANGUAGES CXX)
 
-set(FIC_PRODUCT_VERSION "2.0.0-dev" CACHE STRING "FIC product version embedded in binaries")
+set(FIC_PRODUCT_VERSION "0.0.0-alpha" CACHE STRING "FIC product version embedded in binaries")
 set(FIC_BUILD_COMMIT "unknown" CACHE STRING "Full source commit embedded in binaries")
 set(FIC_RELEASE_TAG "none" CACHE STRING "Exact release tag embedded in binaries")
 option(FIC_RELEASE_BUILD "Enable the fail-closed compiled release contract" OFF)

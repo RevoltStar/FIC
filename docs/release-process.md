@@ -20,7 +20,7 @@ names should use the `alpha`, `beta`, and `rc` progression above. Build metadata
 (`+...`) is intentionally forbidden. A commit hash identifies the build and is
 reported separately by `--build-info`.
 
-Ordinary CMake builds default to `2.0.0-dev` and are marked
+Ordinary CMake builds default to `0.0.0-alpha` and are marked
 `build_kind=development`. Native package entry points require exactly one
 explicit product version. They do not infer a version from the directory name,
 branch, build host, or an old `0.1.0` fallback.
@@ -32,8 +32,8 @@ the ordering rules expected by DEB and RPM:
 
 | Git tag | Product and `--version` | DEB/RPM `Version` |
 |---|---|---|
-| `v2.0.0-rc.1` | `2.0.0-rc.1` | `2.0.0~rc.1` |
-| `v2.0.0` | `2.0.0` | `2.0.0` |
+| `v0.1.0-rc.1` | `0.1.0-rc.1` | `0.1.0~rc.1` |
+| `v0.1.0` | `0.1.0` | `0.1.0` |
 
 The tilde ensures a prerelease sorts below its stable release. Package builders
 verify both binary provenance and native package metadata before reporting
@@ -47,7 +47,7 @@ success.
 3. Create an annotated tag on that commit, for example:
 
    ```bash
-   git tag -a v2.0.0-rc.1 -m "FIC 2.0.0-rc.1"
+   git tag -a v0.1.0-rc.1 -m "FIC 0.1.0-rc.1"
    ```
 
 4. Verify the gate without building packages:

@@ -12,7 +12,7 @@ fic_version_error() {
 fic_configure_product_version() {
     if [ "$#" -ne 1 ] || [ -z "$1" ]; then
         fic_version_error \
-            "an explicit product version is required (for example 2.0.0-rc.1)"
+            "an explicit product version is required (for example 0.1.0-rc.1)"
         return 1
     fi
 

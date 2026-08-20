@@ -7,7 +7,7 @@ builds must not be treated as production-supported software.
 
 | Version | Security status |
 | --- | --- |
-| `main` / `0.0.0-dev` | Reports are accepted, but there is no compatibility or remediation SLA. |
+| `main` / `0.0.0-alpha` | Reports are accepted, but there is no compatibility or remediation SLA. |
 | Stable releases | None published. |
 
 This table will be replaced with explicit supported release ranges when the
@@ -20,7 +20,7 @@ request, or commit.
 
 Use GitHub Private Vulnerability Reporting:
 
-[Report a vulnerability privately](https://github.com/RevoltStar/FIC2.0/security/advisories/new)
+[Report a vulnerability privately](https://github.com/RevoltStar/FIC/security/advisories/new)
 
 If the private reporting form is unavailable, open a public issue that asks the
 maintainer to enable private vulnerability reporting. Do not include any
