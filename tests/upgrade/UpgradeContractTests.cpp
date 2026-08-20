@@ -333,9 +333,7 @@ int main() {
         v0Options.databaseFile);
     executePragmas(
         v0Options.databaseFile,
-        "PRAGMA application_id=" +
-            std::to_string(fic::version::DEVICE_DB_APPLICATION_ID) +
-            "; PRAGMA user_version=0;");
+        "PRAGMA application_id=0; PRAGMA user_version=0;");
     {
         DB v0Database(v0Options);
         assert(!v0Database.initializeDatabase());

@@ -1,10 +1,7 @@
 # FIC product upgrade contract
 
-This document defines the versioned upgrade boundary for the second-generation
-FIC implementation. FIC 1.x was never released and has no supported state,
-configuration, database, IPC, or package migration path. The current
-`0.0.0-alpha` line is development software; the first planned stable release is
-`0.1.0`.
+This document defines the versioned upgrade boundary for the
+FIC implementation. The current `0.0.0-alpha` line is development software; the first planned stable release is `0.1.0`.
 
 ## Independent versions
 
