@@ -70,7 +70,7 @@ cmake -S . -B build-check -DFIC_TARGET_PLATFORM=alt-p11
   database and atomically refreshed. Normal daemon runtime never accepts a new
   hash.
 
-Upgrade contract:
+Version and schema contract:
 - Product versions are Semantic Versions. Official release versions come only
   from exact annotated `vMAJOR.MINOR.PATCH[-prerelease]` Git tags; package
   builders require an explicit version and have no fallback default.
@@ -79,8 +79,8 @@ Upgrade contract:
   versions without mixing the commit into SemVer.
 - Administrative IPC, policy configuration, and the device SQLite database
   have independent schema/API versions.
-- Offline migrations, durable backups, downgrade refusal, package lifecycle,
-  and recovery rules are documented in
+- Fresh schema-1 bootstrap, strict state validation and package lifecycle are
+  documented in
   [`docs/upgrade-contract.md`](docs/upgrade-contract.md).
 - The release gate and native package version mapping are documented in
   [`docs/release-process.md`](docs/release-process.md).

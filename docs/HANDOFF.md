@@ -2,56 +2,59 @@
 
 ## Current base
 
-- Дата: 2026-08-19.
+- Дата: 2026-08-20.
 - Ветка: `main`.
-- Базовый commit задачи: `9711316` (`Устраняем race-condition между display-manager и fic. Теперь fic для определения DE не ожидает, что она прямо сейчас запущена`).
+- Базовый commit задачи: `25e2cf5` (`Продолжаем актуализировать номера сборки`).
 
 ## Current task
 
-- Исправлен lifecycle Device Control для последовательности `DENY -> successful
-  enforcement -> remove events`.
+- Очистка migration/legacy-state архитектуры перед первой публичной версией.
 
 ## Accepted architecture / invariants
 
-- `boot_id` означает присутствие occurrence в текущей boot-session и не зависит
-  от результата policy enforcement.
-- Успешный `DENY` сохраняет current `boot_id`; переход в disconnected выполняет
-  только real remove или reconciliation отсутствующего в sysfs устройства.
-- Remove выбирает occurrence строго по `devpath + subsystem + current boot_id` и
-  атомарно сохраняет affected IDs, очищает current subtree и пишет disconnect event.
-- Duplicate/already-removed remove является успешным no-op без создания nodes и
-  без выбора historical occurrence.
+- Product development version — `0.0.0-alpha`, первая stable — `0.1.0`.
+- IPC, config schema и device DB schema имеют версию `1`; schema 1 является
+  первой и единственной поддерживаемой схемой.
+- Отсутствующие конфиги создаются из immutable defaults; существующие конфиги
+  не перезаписываются и принимаются только с каноническим `_schema_version=1`.
+- Отсутствующая/пустая device DB создаётся сразу как schema 1. Любая
+  несовместимая непустая DB отклоняется без миграции и изменения.
+- Package bootstrap: `ensure-config`, `initialize-db`, строгие `check-config` и
+  `check-db`, затем обычные trust sync/start/health checks.
 
 ## Completed
 
-- Добавлен небольшой транзакционный `DeviceLifecycle` и удалён старый
-  parent-dependent `UDEVInfoCollector::safe_remove_device()`.
-- Real remove стал current-boot exact и идемпотентным; permanent check получает
-  сохранённые до mutation affected IDs.
-- Synthetic inventory events reconciliation больше не интерпретируются как
-  выполненный udev enforcement; startup reconciliation сохранён и сообщает о
-  lifecycle/DB failures вызывающей очереди.
-- Добавлены regression tests для DENY presence, обоих порядков parent/child
-  remove, duplicate remove, multi-boot, lost remove, reboot и virtual parents.
+- Удалены `UpgradeManager`, DB/config migration API, upgrade journal/state path,
+  migration-only CLI и package steps.
+- Удалены legacy DB fixture, `fic.timer`, `--oneshot` и deprecated alias
+  `ModuleConfigFileHandler::isParameterExists()`.
+- Добавлены `ConfigSchemaManager` и schema contract tests; device DB tests
+  переведены на fresh schema 1 initialization.
+- Документация и DEB/RPM lifecycle обновлены под strict first-release contract.
 
 ## Changed areas
 
-- `fic-dick/src/core/DeviceControlDaemon.cpp`, `DeviceLifecycle.*`;
-- `fic-dick/src/modules/UDEVInfoCollector.*`;
-- `tests/device-control`, `tests/CMakeLists.txt`.
+- `fic-common/fic-core`, `fic-common/fic-device-db`;
+- `fic`, `fic-dick`, CMake/install layout;
+- `packaging/deb`, `packaging/rpm`;
+- schema/device/static tests и документация.
 
 ## Validation
 
-- `cmake -S . -B /tmp/fic-device-lifecycle-build
-  -DFIC_TARGET_PLATFORM=ubuntu-24.04` - успешно.
-- `cmake --build /tmp/fic-device-lifecycle-build -j2` - успешно.
-- `ctest --test-dir /tmp/fic-device-lifecycle-build --output-on-failure` -
-  40/40 без ошибок; 3 host-dependent теста штатно пропущены.
-- `python3 tests/device-control/static_checks.py .` - успешно.
-- `git diff --check` - успешно.
-- Реальный udev/device enforcement на рабочем хосте не запускался.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
+- `cmake --build build-check -j2` — успешно.
+- Полный `ctest --test-dir build-check --output-on-failure`: 39 тестов прошли
+  или штатно пропущены, один несвязанный `ipc_protocol_validation_tests` упал
+  на противоречивом существующем assertion для одинакового request JSON.
+- `ctest --test-dir build-check --output-on-failure -E
+  '^ipc_protocol_validation_tests$'` — 39/39 без ошибок; 3 host-dependent теста
+  штатно пропущены.
+- `git diff --check` — успешно.
 
 ## Remaining
 
-- Диагностический USB HID сценарий не воспроизводился на отдельном staging host;
-  поведение подтверждено unit/contract/static tests.
+- Текущий `tests/paths/IpcProtocolValidationTests.cpp` сначала принимает, а
+  затем отвергает один и тот же `{"api_version":1,"command":"status"}`.
+  Тест и IPC-контракт текущей задачей не изменялись; требуется отдельное
+  исправление ожидания.
+- Реальные package install/upgrade и privileged runtime операции не запускались.

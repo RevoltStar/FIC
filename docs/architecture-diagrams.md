@@ -170,12 +170,7 @@ flowchart TD
     locale --> initMap[initPolicyRegistry]
     compiled --> initMap
     initMap -->|ошибка| initFatal([exit with error])
-    initMap -->|успех| oneshot{--oneshot?}
-
-    oneshot -->|да| applyOnce[apply all enabled policies]
-    applyOnce --> exitOnce([exit])
-
-    oneshot -->|нет| socketPath["Выбор socket path<br/>--socket или /run/fic/fic.sock"]
+    initMap -->|успех| socketPath["Выбор socket path<br/>--socket или /run/fic/fic.sock"]
     socketPath --> interval["Выбор interval<br/>--interval или 1800 сек"]
     interval --> signals[Регистрация SIGTERM/SIGINT]
     signals --> startupApply[fail-closed initPolicyRegistry + apply enabled non-FIREWALL policies]
@@ -920,32 +915,28 @@ tmpfiles, udev и XDG-шаблоны. Исполняемые компонент�
 контекст путей при старте; общий слой базы устройств получает `DBOptions`
 явно и поэтому не знает о layout продукта.
 
-Это не единый `FIC_ROOT`: config, state, logs, static data и runtime socket
+Это не единый `FIC_ROOT`: config, logs, static data и runtime socket
 остаются независимыми семантическими путями. Такой контракт позволяет менять
 профиль установки через CMake без строковых замен в C++ или service-файлах.
 Deb/RPM staging устанавливает именованные CMake-компоненты (`fic`, `fic-dick`,
 `fic-cli`, `fic-session-agent`, `fic-gui`) и не копирует эти файлы повторно из
 дерева исходников.
 
-Product upgrade использует отдельный persistent state path и не выполняет
-неявный repair при обычном старте. Версии IPC, конфигураций и SQLite независимы;
-точные значения генерируются `fic-common/fic-version`. Package lifecycle
-останавливает сервисы, последовательно продвигает атомарный журнал, сохраняет
-конфиги и WAL-consistent SQLite backup, выполняет offline migration и только
-после проверок запускает сервисы. Полный контракт и downgrade/remove policy
-описаны в `docs/upgrade-contract.md`.
+Версии product, IPC, конфигураций и SQLite независимы; точные значения
+генерируются `fic-common/fic-version`. Schema 1 является первой поддерживаемой
+схемой конфигурации и device DB. Package lifecycle останавливает сервисы,
+создаёт только отсутствующие конфиги и отсутствующую/пустую БД непосредственно
+в schema 1, строго проверяет оба состояния и только затем синхронизирует trust и
+запускает сервисы. Существующее несовместимое состояние не изменяется. Полный
+контракт описан в `docs/upgrade-contract.md`.
 
 ```mermaid
 flowchart LR
     stop[stop active services] --> ensure[ensure missing working configs]
-    ensure --> begin[upgrade journal: prepared]
-    begin --> configBackup[backup and migrate configs]
-    configBackup --> configPhase[journal: config_migrated]
-    configPhase --> dbBackup[SQLite Backup API]
-    dbBackup --> dbMigration[transactional DB migration and checks]
-    dbMigration --> dbPhase[journal: database_migrated]
-    dbPhase --> commit[journal: committed]
-    commit --> trust[verified trust sync]
+    ensure --> initDb[initialize absent or empty DB as schema 1]
+    initDb --> verifyConfig[strict config schema 1 check]
+    verifyConfig --> verifyDb[strict DB schema 1 and integrity check]
+    verifyDb --> trust[verified trust sync]
     trust --> start[start and health-check daemons]
 ```
 

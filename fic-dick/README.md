@@ -306,16 +306,16 @@ Unit вызывает:
 Существующая база идентифицируется через SQLite `application_id=0x46494344`, а
 версия схемы хранится в `user_version`. Схема поддерживает `children_control` и
 `device_policy_state` с desired/active revisions и статусами DC-категорий.
-Обычный runtime принимает только точную
-текущую версию и ничего не ремонтирует. Offline migration выполняется только
-явной root-командой `fic-dick --maintenance migrate-db`: перед транзакцией она
-создаёт SQLite Backup API-копию в `/opt/fic/state/db-backups`, затем проверяет
-`quick_check`, внешние ключи и итоговую версию. Проверить схему без изменения
-можно через `fic-dick --maintenance check-db`.
+Schema 1 является первой и единственной поддерживаемой версией. Команда
+`fic-dick --maintenance initialize-db` создаёт отсутствующую или пустую базу
+сразу с полным текущим layout, metadata и baseline rows. Существующая непустая
+база не изменяется и принимается только при точном совпадении `application_id`,
+`user_version`, layout, indexes, triggers и baseline rows. Проверить схему без
+изменения можно через `fic-dick --maintenance check-db`.
 
 Служебная таблица `device_tree_state` содержит единственную строку с текущей
-ревизией. Триггеры ревизии входят как в `DB::initializeDatabase()`, так и в
-поставляемую seed-базу.
+ревизией. Триггеры ревизии создаются `DB::initializeDatabase()` вместе с
+остальной schema 1; seed-база не поставляется.
 
 ## Логи
 
@@ -380,7 +380,6 @@ cmake --build build-fic-dick
 Связанные файлы:
 
 - `/opt/fic/db/devices.db` - основная база устройств;
-- `/opt/fic/share/devices.seed.db` - seed-база, устанавливаемая пакетом;
 - `/etc/udev/rules.d/99-fic-devices.rules` - правило обработки udev-событий;
 - `fic_get_device_info.service` - сбор CPU/board/memory;
 - `fic_get_device_udev_info.service` - ожидание initial reconciliation и

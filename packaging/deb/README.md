@@ -33,7 +33,6 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - `/opt/fic/lang`
 - `/opt/fic/log`
 - `/opt/fic/notify`
-- `/opt/fic/state`
 - `/lib/systemd/system/*` from `fic/src/scripts/service`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
@@ -98,23 +97,23 @@ Members of `fic` mutate configuration and device state through the two
 administrative sockets. Direct access to configuration, database and binary
 files is read-only.
 
-## Upgrade lifecycle
+## Installation lifecycle
 
 Package versions must be Semantic Versions and are embedded through
 `FIC_PRODUCT_VERSION`. The `fic-dick` and `fic` pre-install actions stop active
 daemons before either package replaces its executable payload. The `fic`
-post-install action first runs `fic --maintenance ensure-config`, then resumes
-or creates `/opt/fic/state/upgrade.journal`, backs up and migrates all policy
-configs, performs the SQLite migration through `fic-dick`, commits the
-journal, refreshes trusted command hashes, then starts and health-checks both
-administrative daemons. Migration, trust, start, and health-check failures are
+post-install action creates only missing working configs, initializes an absent
+or empty device database directly as schema 1, strictly checks config and DB
+schema 1, refreshes trusted command hashes, then starts and health-checks both
+administrative daemons. Schema, trust, start, and health-check failures are
 fatal; optional tmpfiles/udev refreshes remain best-effort.
 
-Downgrade is intentionally rejected. Normal removal deletes package-owned
-defaults naturally, but never explicitly deletes FIC-owned working configs,
-the working database, journal, logs, or backups. No `DEBIAN/conffiles` entry is
-created for `/opt/fic/config/*.conf`.
-The complete recovery and rollback policy is in
+Existing working configs and a non-empty database are never overwritten or
+converted. Incompatible state makes installation fail with an explicit error.
+Normal removal deletes package-owned defaults naturally, but never explicitly
+deletes FIC-owned working configs, the working database or logs. No
+`DEBIAN/conffiles` entry is created for `/opt/fic/config/*.conf`.
+The complete state contract is in
 [`docs/upgrade-contract.md`](../../docs/upgrade-contract.md).
 
 The `fic` package runs `fic --trust-sync-platform` before enabling services and

@@ -500,12 +500,11 @@ def main():
         'FIC_DEFAULT_CONFIG_DIR "${FIC_SHARE_DIR}/default-config"' in install_layout,
         "install layout has no centralized default configuration directory",
     )
-    upgrade_steps = (
+    bootstrap_steps = (
         "--maintenance ensure-config",
-        "--maintenance begin-upgrade",
-        "--maintenance migrate-config",
-        "--maintenance migrate-db",
-        "--maintenance commit-upgrade",
+        "--maintenance initialize-db",
+        "--maintenance check-config",
+        "--maintenance check-db",
         "--trust-sync-platform",
         "--maintenance wait-daemon 10",
         "fic-dick wait-daemon 10",
@@ -528,22 +527,32 @@ def main():
             f"{builder_name} packaging bypasses the native version mapping",
         )
         cursor = 0
-        for step in upgrade_steps:
+        for step in bootstrap_steps:
             position = builder.find(step, cursor)
             require(
                 position >= 0,
-                f"{builder_name} packaging omits upgrade step: {step}",
+                f"{builder_name} packaging omits bootstrap step: {step}",
             )
             cursor = position + len(step)
         require(
-            "/opt/fic/state" in builder
-            and "is-active --quiet fic.service" in builder,
-            f"{builder_name} packaging omits persistent state or daemon health checks",
+            "is-active --quiet fic.service" in builder,
+            f"{builder_name} packaging omits daemon health checks",
+        )
+        require(
+            "/opt/fic/state" not in builder,
+            f"{builder_name} packaging retains the removed upgrade state directory",
         )
         require(
             "devices.seed.db" not in builder,
             f"{builder_name} packaging still ships the pre-contract database as a seed",
         )
+        for obsolete in (
+            "begin-upgrade", "migrate-config", "migrate-db", "commit-upgrade"
+        ):
+            require(
+                obsolete not in builder,
+                f"{builder_name} packaging retains obsolete state handling: {obsolete}",
+            )
         require(
             "rm -rf /opt/fic" not in builder and "rm -r /opt/fic" not in builder,
             f"{builder_name} removal can recursively destroy persistent FIC state",

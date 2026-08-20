@@ -70,7 +70,6 @@ void initializeRuntimePaths(const fs::path& root,
     paths.logDir = root / "log";
     paths.notifyDir = root / "notify";
     paths.dataDir = root / "data";
-    paths.stateDir = root / "state";
     paths.shareDir = root / "share";
     paths.imageDir = root / "image";
     paths.runtimeDir = root / "run";

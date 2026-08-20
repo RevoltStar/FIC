@@ -9,7 +9,6 @@ inline constexpr const char* LANGUAGE_DIR = "@FIC_LANGUAGE_DIR@";
 inline constexpr const char* LOG_DIR = "@FIC_LOG_DIR@";
 inline constexpr const char* NOTIFY_DIR = "@FIC_NOTIFY_DIR@";
 inline constexpr const char* DATA_DIR = "@FIC_DATA_DIR@";
-inline constexpr const char* STATE_DIR = "@FIC_STATE_DIR@";
 inline constexpr const char* SHARE_DIR = "@FIC_SHARE_DIR@";
 inline constexpr const char* DEFAULT_CONFIG_DIR = "@FIC_DEFAULT_CONFIG_DIR@";
 inline constexpr const char* IMAGE_DIR = "@FIC_IMAGE_DIR@";

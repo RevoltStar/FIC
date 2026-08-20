@@ -14,7 +14,6 @@ struct DevicePaths {
     std::filesystem::path databaseLockFile;
     std::filesystem::path lockDebugLogFile;
     std::filesystem::path logDir;
-    std::filesystem::path stateDir;
 
     static DevicePaths fromProductPaths(const fic::core::FicProductPaths& paths);
     bool validate(std::string& error) const;

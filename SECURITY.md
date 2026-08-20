@@ -48,8 +48,8 @@ Examples of in-scope issues include:
 - IPC parsing, framing, authentication, authorization, or denial-of-service
   flaws with impact outside the caller's intended privileges;
 - policy enforcement bypasses that contradict documented behavior;
-- device-control, session-agent, database, migration, upgrade, or rollback
-  flaws that cross a security boundary;
+- device-control, session-agent, database schema validation, or package
+  lifecycle flaws that cross a security boundary;
 - vulnerabilities in third-party components that are demonstrably present and
   exploitable in an FIC binary package.
 

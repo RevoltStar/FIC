@@ -1,8 +1,9 @@
-# Device database assets
+# Device database resources
 
-`PCI_CLASS_ru.txt` and `USB_CLASS_ru.txt` are installed runtime lookup data.
+`PCI_CLASS_ru.txt` and `USB_CLASS_ru.txt` are immutable runtime lookup data.
+The runtime `/opt/fic/db/devices.db` is not shipped as a seed file.
 
-`devices.db` is the pre-versioned database retained only as an upgrade-test
-fixture. It is not installed as a seed. Fresh packages create the current
-schema and canonical virtual device hierarchy through
-`fic-dick --maintenance migrate-db`.
+On a fresh installation, `fic-dick --maintenance initialize-db` creates the
+complete device database directly at schema 1. Existing non-empty databases are
+accepted only when their `application_id`, `user_version`, layout, indexes,
+triggers and baseline rows match the current schema exactly.

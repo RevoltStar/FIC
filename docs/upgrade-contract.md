@@ -1,141 +1,68 @@
-# FIC product upgrade contract
+# FIC version and schema contract
 
-This document defines the versioned upgrade boundary for the
-FIC implementation. The current `0.0.0-alpha` line is development software; the first planned stable release is `0.1.0`.
+FIC has no published stable release yet. The embedded development version is
+`0.0.0-alpha`; the first planned stable release is `0.1.0`.
 
-## Independent versions
+Product, IPC, policy configuration and device database versions are independent:
 
-| Contract | Current version | Owner | Compatibility rule |
-|---|---:|---|---|
-| Product | `0.0.0-alpha` | annotated Git release tag and `fic-common/fic-version` | Must be SemVer without build metadata. Official releases require an exact matching tag, full commit and clean tree. |
-| Administrative IPC | `1` | `fic-common/fic-ipc` | Every request and response contains `api_version`. A mismatch is rejected before routing. |
-| Policy configuration | `1` | `fic-core/UpgradeManager` | Every installed module config contains exactly one `_schema_version`. Normal startup accepts only the exact current schema. |
-| Device SQLite database | `1` | `fic-device-db` | `PRAGMA application_id=0x46494344` and `PRAGMA user_version=1` identify the database and schema. Normal startup never mutates an old schema. |
+| Contract | Current version | Source |
+| --- | ---: | --- |
+| Product | `0.0.0-alpha` | `fic-common/fic-version` |
+| Administrative IPC | `1` | `fic-common/fic-version` |
+| Policy configuration | `1` | `ConfigSchemaManager` |
+| Device SQLite database | `1` | `fic-device-db` |
 
-The versions are deliberately independent. Changing the product version does
-not imply an IPC or storage-schema change. A breaking change increments only
-the affected contract and adds an explicit offline migration where applicable.
+Product releases continue to use SemVer and the release validation documented
+in [`release-process.md`](release-process.md). Schema numbers change only when
+their own contracts change.
 
-The Git tag is the sole release-version authority. CMake defaults to the
-identifiable development version `0.0.0-alpha`; package builders require the
-product version as an explicit argument. For native ordering, a prerelease such
-as `0.1.0-rc.1` remains the embedded product version but maps to package version
-`0.1.0~rc.1`. Stable `0.1.0` maps unchanged.
+## First-public-release state policy
 
-Every executable provides `--build-info`. The output keeps the full 40-character
-source commit and release tag in separate fields rather than appending them to
-SemVer. A release build is rejected during CMake configuration unless
-`FIC_RELEASE_BUILD=ON`, `FIC_RELEASE_TAG=v<FIC_PRODUCT_VERSION>`, and a full
-lowercase commit SHA are supplied. Development builds use `release_tag=none`.
+Schema 1 is the first and only supported policy configuration and device DB
+schema. There are no supported earlier schemas and no automatic import or
+conversion of development state.
 
-## Package upgrade sequence
+A fresh package installation:
 
-The DEB/RPM lifecycle performs the following fail-closed sequence:
+1. copies an immutable default only when the corresponding working config is
+   absent;
+2. creates an absent or empty device database directly with the complete schema
+   1 layout, `application_id`, `user_version`, indexes, triggers and baseline
+   rows;
+3. strictly validates every config and the device database;
+4. synchronizes trusted command hashes and starts the daemons only after those
+   checks succeed.
 
-1. stop active `fic`, `fic-device`, and `fic-notify` services from both daemon
-   package pre-install actions, before either executable payload is replaced;
-2. create any missing working policy configs atomically from the package-owned
-   immutable defaults in `/opt/fic/share/default-config`, without replacing any
-   existing working config;
-3. create/resume `/opt/fic/state/upgrade.journal` for the target product version;
-4. back up all policy configs and migrate them offline;
-5. create a consistent SQLite backup with the SQLite Backup API, run the
-   supported schema migration in one transaction, and run `quick_check` plus
-   `foreign_key_check`; the durable backup path is recorded in the journal
-   before the database transaction starts;
-6. mark the journal committed only after configuration and database migration;
-7. normalize ownership/modes, refresh trusted command hashes, reload systemd,
-   start services, and require the two administrative daemons to be active.
+The maintenance commands used by this bootstrap are:
 
-The journal is written atomically and can resume the same target version after
-an interrupted package action. Daemons refuse normal work while the journal is
-in `prepared`, `config_migrated`, or `database_migrated`, or when its committed
-product version differs from the running binary. Maintenance commands remain
-available so the package action can finish recovery.
-
-Configuration backups are stored below
-`/opt/fic/state/upgrades/<version>-<time>-<pid>/config`. Database backups are
-stored below `/opt/fic/state/db-backups`. They are regular `0640` files under a
-`root:fic` tree; group members can inspect them but cannot modify them.
-Every transaction directory retains its final `manifest`, including the exact
-database backup path, so a later reinstall does not erase rollback provenance.
-
-The pre-contract configuration format (`0`) is initialized directly as current
-schema `1`. Because no stable release exists, there is intentionally no
-configuration migration or compatibility fallback from development schema `1`:
-defaults and all active producers/consumers were replaced together. Device DB
-migration remains the separately versioned `0 -> 1` path, and new
-databases are initialized directly at schema `1`.
-There is no runtime `CREATE TABLE IF NOT EXISTS` repair of an existing database.
-The repository's legacy migration fixture also contains unused `domain_policies`,
-`lock_history`, `system_settings`, and `temporary_allowances` tables. The
-`0 -> 1` migration preserves the authoritative device tables and removes these
-deprecated tables only after the complete legacy database has been backed up;
-no current producer or consumer owns their contents.
-
-## Operator commands
-
-These commands are intended for package scripts or a root administrator while
-the services are stopped:
-
-```text
-fic --version
-fic --build-info
+```bash
 fic --maintenance ensure-config
-fic --maintenance begin-upgrade
-fic --maintenance migrate-config
+fic-dick --maintenance initialize-db
 fic --maintenance check-config
-fic-dick --maintenance migrate-db
 fic-dick --maintenance check-db
-fic --maintenance commit-upgrade
 ```
 
-`status` responses from both administrative sockets expose the product and
-owned schema version. `--version` exposes concise version information;
-`--build-info` exposes provenance and all compiled contract versions. The main
-daemon also reports its compile-time platform profile.
+`ensure-config` never overwrites an existing working configuration. Existing
+configuration files must contain exactly one `_schema_version=1`. A missing,
+invalid, lower or future schema version is rejected.
 
-## Downgrade, rollback, and removal policy
+`initialize-db` creates schema 1 only when the database is absent or empty. A
+non-empty database is accepted only when its `application_id`, `user_version=1`,
+table layout, indexes, triggers, baseline rows and SQLite integrity checks all
+match the current contract. An unversioned database, another application ID,
+another schema version or an incompatible layout is rejected without mutation.
 
-Automatic downgrade is forbidden. `begin-upgrade` compares SemVer with the
-last committed product version, while config and DB checks independently reject
-schemas newer than the running binary. Installing an older package over newer
-state is therefore expected to fail closed.
+Package lifecycle scripts do not delete incompatible state and do not remove
+`/opt/fic`. An administrator must explicitly archive or remove development state
+before installing the first public version if strict validation rejects it.
 
-Rollback means restoring a complete backup set made by the failed/undesired
-upgrade and reinstalling the exact previous package set. It is an explicit
-operator recovery, not an automatic package-script action: automatically
-restoring old data while leaving new binaries installed would create a more
-dangerous mixed-version system. Before restoration, services must be stopped;
-the config directory and SQLite database must be restored from the same upgrade
-transaction, followed by installation of the matching older packages.
+## Runtime startup
 
-Normal package removal disables services and removes package-owned binaries and
-integration files, including immutable configuration defaults under
-`/opt/fic/share/default-config`. The package manager does not own
-`/opt/fic/config/*.conf`: FIC creates and owns these working files, and
-maintainer scripts never explicitly delete them. The working database, journal,
-logs, and backups are likewise preserved. Purging all persistent state is a
-separate administrator operation; scripts do not recursively delete `/opt/fic`.
+Normal `fic` and `fic-dick` startup verifies configuration schema 1 before doing
+work. `fic-dick` also initializes an absent database through the same schema 1
+bootstrap used by installation and rejects any incompatible non-empty database.
 
-## Test boundary
-
-`upgrade_contract_tests` covers secure configuration bootstrap, initial
-migration, interruption/resume,
-idempotent reinstall, reconstruction of a rollback set, downgrade refusal,
-newer-schema refusal, fresh database
-initialization, and migration of the repository's real pre-contract database.
-New packages do not ship that legacy database as a seed: fresh installations
-create schema `1` plus the canonical virtual device roots directly. Packaging
-scripts are syntax/static checked in CI. A disposable VM is still required for
-the full package-manager sequence and service health checks; unit tests do not
-pretend to validate systemd or mutate the development host.
-
-This journal covers product configuration and database upgrades. It does not
-make multi-file operating-system policy application crash-atomic; that requires
-the separate runtime policy transaction journal described in the policy
-architecture.
-
-The source/tag gate, explicit package version input, prerelease mapping and
-compiled provenance are covered separately by `version_contract_tests`,
-`release_contract_tests`, and `build_info_tests`.
+There is no product upgrade journal, transaction manifest, migration backup
+directory or downgrade state machine in the first-public-release contract.
+Runtime policy edits retain their own atomic/transactional behavior; that is a
+separate correctness mechanism and not old-state compatibility.

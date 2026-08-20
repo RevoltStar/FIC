@@ -31,7 +31,6 @@ int main() {
     paths.logDir = root / "log";
     paths.notifyDir = root / "notify";
     paths.dataDir = root / "data";
-    paths.stateDir = root / "state";
     paths.shareDir = root / "share";
     paths.defaultConfigDir = root / "share/default-config";
     paths.imageDir = root / "image";
@@ -48,7 +47,6 @@ int main() {
     assert(fic::core::FicRuntimePaths::get().configDir == root / "config");
     assert(fic::core::FicRuntimePaths::get().defaultConfigDir ==
            root / "share/default-config");
-    assert(fic::core::FicRuntimePaths::get().stateDir == root / "state");
     assert(!fic::core::FicRuntimePaths::initialize(paths, error));
 
     bool rejectedInvalidDbOptions = false;

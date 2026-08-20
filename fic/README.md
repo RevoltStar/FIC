@@ -58,14 +58,6 @@ fic --interval 1800
 fic --socket /tmp/fic.sock --interval 60
 ```
 
-Однократная проверка без запуска socket-сервера:
-
-```bash
-fic --oneshot
-```
-
-`--oneshot` сохраняет совместимость со старым сценарием: программа инициализирует политики, применяет все включенные политики и завершает работу.
-
 ## Unix-сокет
 
 По умолчанию демон слушает:
@@ -337,7 +329,8 @@ fic/src/scripts/service/fic.service
 ExecStart=/opt/fic/bin/fic --interval 1800
 ```
 
-`fic.timer` оставлен как deprecated-файл для совместимости с прежней схемой периодического запуска. В новой архитектуре периодичность находится внутри демона.
+Периодичность находится внутри постоянного daemon process; отдельный systemd
+timer не устанавливается.
 
 ## Конфигурация и данные
 
@@ -421,7 +414,6 @@ prefix/root, который смешивает изменяемые данные
 
 - `/opt/fic/share/default-config` - package-owned неизменяемые шаблоны конфигурации;
 - `/opt/fic/config` - конфигурационные файлы политик;
-- `/opt/fic/state` - upgrade journal и резервные копии миграций;
 - `/opt/fic/log` - логи;
 - `/run/fic` - общий runtime-каталог IPC, создаваемый через `fic.conf` для systemd-tmpfiles;
 - `/run/fic/fic.sock` - Unix-сокет демона.
@@ -431,12 +423,12 @@ prefix/root, который смешивает изменяемые данные
 предназначен для разработки: создаваемый сокет имеет режим `0600`, и демон не
 перенастраивает production-каталог.
 
-Каждый конфиг модуля начинается с `_schema_version=1`. Обычный daemon принимает
-только точную текущую схему и отказывается запускаться при незавершённом product
-upgrade. `fic --maintenance ensure-config` атомарно создаёт только отсутствующие
-рабочие конфиги из package defaults. Offline-команды `begin-upgrade`, `migrate-config`,
-`check-config` и `commit-upgrade` предназначены для root package lifecycle.
-Семантика backups, downgrade, rollback и remove зафиксирована в
+Каждый конфиг модуля начинается с `_schema_version=1`. Это первая и единственная
+поддерживаемая схема: daemon отклоняет конфиги без точной текущей версии.
+`fic --maintenance ensure-config` атомарно создаёт только отсутствующие рабочие
+конфиги из package defaults и не перезаписывает существующие файлы.
+`fic --maintenance check-config` выполняет строгую проверку schema 1. Старые
+development-конфиги автоматически не преобразуются. Полный контракт описан в
 `docs/upgrade-contract.md`.
 
 ### Безопасная запись конфигурации

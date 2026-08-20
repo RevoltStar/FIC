@@ -5,14 +5,13 @@ set(FIC_INSTALL_LAYOUT_INCLUDED TRUE)
 
 # FIC currently ships as an add-on product under /opt.  Keep every semantic
 # location independent: a future FHS profile must be able to move config,
-# state, logs and static data without inventing a second "root" abstraction.
+# logs and static data without inventing a second "root" abstraction.
 set(FIC_PRIVATE_BINDIR "/opt/fic/bin" CACHE PATH "Private FIC executable directory")
 set(FIC_CONFIG_DIR "/opt/fic/config" CACHE PATH "FIC policy configuration directory")
 set(FIC_LANGUAGE_DIR "/opt/fic/lang" CACHE PATH "FIC localization directory")
 set(FIC_LOG_DIR "/opt/fic/log" CACHE PATH "FIC log directory")
 set(FIC_NOTIFY_DIR "/opt/fic/notify" CACHE PATH "FIC notification spool")
 set(FIC_DATA_DIR "/opt/fic/db" CACHE PATH "FIC mutable data directory")
-set(FIC_STATE_DIR "/opt/fic/state" CACHE PATH "FIC upgrade and persistent state directory")
 set(FIC_SHARE_DIR "/opt/fic/share" CACHE PATH "FIC package-owned shared data directory")
 set(FIC_DEFAULT_CONFIG_DIR "${FIC_SHARE_DIR}/default-config" CACHE PATH
     "FIC package-owned immutable default configuration directory")
