@@ -14,13 +14,16 @@ own session. Only a root peer is allowed to query the socket.
 For policies that require graphical-session access, the daemon:
 
 1. Lists local graphical user sessions through `loginctl`.
-2. Requires a matching agent socket for every listed session.
-3. Verifies the socket owner and peer UID.
+2. Waits up to 10 seconds for a matching agent socket when XDG Autostart is
+   still starting, retrying only a missing socket or a transient refused
+   connection.
+3. Verifies the socket type and owner on every attempt, then verifies the
+   connected peer UID. An unsafe socket fails immediately without retries.
 4. Runs fixed utilities itself after switching to the session user's UID and
    supplementary groups.
-5. Reads the resulting setting back and treats any unavailable agent, command
-   failure, timeout, unsupported desktop, or incorrect value as a policy
-   failure.
+5. Reads the resulting setting back and treats an agent still unavailable
+   after the bounded readiness wait, command failure, timeout, unsupported
+   desktop, or incorrect value as a policy failure.
 
 `OSS/screenlock_timeout` currently implements this flow for GNOME, Unity, and
 Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,

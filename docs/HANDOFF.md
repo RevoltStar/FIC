@@ -4,41 +4,54 @@
 
 - Дата: 2026-08-21.
 - Ветка: `main`.
-- Базовый commit задачи: `8c89200` (`Разделение операций в gui на "Сохранить" и "Сохранить и Применить"`).
+- Базовый commit задачи: `ac949e1` (`Обновляем профиль для alt11`).
 
 ## Current task
 
-- Исправление ошибок применения DAC/GRUB-политик на ALT Workstation K 11.4.
+- Устранение гонки между обнаружением графической сессии и запуском
+  `fic-session-agent` через XDG Autostart.
 
 ## Accepted architecture / invariants
 
-- Штатные package-owned symlink ALT разрешаются только через точные
-  `allowedFinalSymlinkTargets`; общий fail-closed запрет symlink не ослабляется.
-- GRUB-политики редактируют канонический regular defaults file платформы, чтобы
-  сохранить существующую atomic write и `rejectSymlink` модель.
+- Daemon ожидает готовность session-agent не более 10 секунд с интервалом
+  200 мс.
+- Повторяются только безопасные состояния запуска: отсутствующий socket
+  (`ENOENT`) и временный отказ подключения (`ECONNREFUSED`).
+- Неверный тип/владелец socket, неожиданные ошибки подключения, неверный peer
+  UID и ошибки протокола завершают запрос немедленно.
+- Проверки типа и владельца socket выполняются заново перед каждой попыткой
+  подключения.
 
 ## Completed
 
-- ALT p11 GRUB defaults path изменён с symlink `/etc/default/grub` на
-  `/etc/sysconfig/grub2`.
-- Для DAC объявлены точные связи `/etc/sysctl.conf` →
-  `/etc/sysctl.d/99-sysctl.conf` и `/etc/grub.cfg` → `/boot/grub/grub.cfg`.
-- Platform contract/static tests и профильная документация обновлены.
+- В `SessionAgentClient` добавлено ограниченное ожидание готовности agent
+  socket без изменения публичного API.
+- Добавлены тесты отложенного создания socket, временного `ECONNREFUSED`,
+  завершения по timeout и немедленного отказа для небезопасного пути.
+- Runtime-контракт session agent актуализирован в документации.
 
 ## Changed areas
 
-- `fic/src/platform/profiles/AltP11Profile.cpp`;
-- `tests/platform/PlatformProfileTests.cpp`, `tests/platform/static_checks.py`;
-- `fic/README.md`, `docs/architecture-diagrams.md`.
+- `fic/src/session/SessionAgentClient.cpp` и test-only internal interface;
+- `tests/session/SessionAgentClientTests.cpp`, `tests/CMakeLists.txt`;
+- `docs/session-agent.md`.
 
 ## Validation
 
-- `python3 tests/platform/static_checks.py .` — успешно.
-- `git diff --check` — успешно.
-- Сборка и compiled tests не запускались по прямому запросу пользователя.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
+- `cmake --build build-check --target session_agent_client_tests fic -j2` —
+  успешно.
+- `ctest --test-dir build-check -R '^session_agent_client_tests$' --output-on-failure`
+  вне sandbox — успешно, 1/1.
+- Полный `ctest --test-dir build-check --output-on-failure`: 36 тестов
+  успешно, 4 пропущены из-за sandbox, 1 известный несвязанный сбой
+  `ipc_protocol_validation_tests` из-за противоречивых проверок одного
+  status request.
 
 ## Remaining
 
-- После сборки нового ALT p11 пакета требуется staging-проверка применения
-  `blocking_user_access_to_system_files`, `grub_timeout` и
-  `grub_disable_recovery` на штатной package layout.
+- Изменения не развёртывались на ALT-машине `10.88.0.250`; после сборки
+  пакета нужна staging-проверка применения session-зависимой политики сразу
+  после входа пользователя.
+- Несвязанный сбой `ipc_protocol_validation_tests` в scope задачи не
+  исправлялся.

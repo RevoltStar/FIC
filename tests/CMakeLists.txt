@@ -126,6 +126,20 @@ add_executable(exclusive_pid_lock_tests paths/ExclusivePidLockTests.cpp)
 target_link_libraries(exclusive_pid_lock_tests PRIVATE fic-core)
 add_test(NAME exclusive_pid_lock_tests COMMAND exclusive_pid_lock_tests)
 
+add_executable(session_agent_client_tests
+    session/SessionAgentClientTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionAgentClient.cpp
+)
+target_include_directories(session_agent_client_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(session_agent_client_tests PRIVATE
+    fic-ipc
+    Threads::Threads
+)
+add_test(NAME session_agent_client_tests COMMAND session_agent_client_tests)
+set_tests_properties(session_agent_client_tests PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(device_tree_revision_tests
     device-control/DeviceTreeRevisionTests.cpp
 )
