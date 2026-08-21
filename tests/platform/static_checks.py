@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 import sys
 
 
@@ -236,6 +237,10 @@ def main():
 
     alt_profile = profiles["alt-p11"]
     require(
+        'profile.grub.defaultsPath = "/etc/sysconfig/grub2";' in alt_profile,
+        "ALT p11 GRUB policies do not use the canonical regular defaults file",
+    )
+    require(
         'profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};'
         in alt_profile,
         "ALT p11 grub-mkconfig does not target /etc/grub.cfg",
@@ -249,6 +254,18 @@ def main():
         "update-grub" not in alt_profile,
         "ALT p11 mixes incompatible GRUB generator interfaces",
     )
+    for path, target, mode in (
+        ("/etc/sysctl.conf", "/etc/sysctl.d/99-sysctl.conf", "0644"),
+        ("/etc/grub.cfg", "/boot/grub/grub.cfg", "0600"),
+    ):
+        pattern = (
+            rf'\{{"{re.escape(path)}", "root", "root", {mode},\s*'
+            rf'\{{\s*"{re.escape(target)}"\s*\}}\}}'
+        )
+        require(
+            re.search(pattern, alt_profile) is not None,
+            f"ALT p11 does not allow the package-owned target of {path}",
+        )
     for name in ("debian-12", "debian-13", "ubuntu-24.04", "ubuntu-26.04"):
         require(
             "profile.grub.rebuildArguments = {};" in profiles[name],

@@ -374,7 +374,7 @@ Daemon собирается ровно для одного дистрибути�
 | Debian 12 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/daemon.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
 | Debian 13 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/daemon.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
 | Ubuntu 24.04 | `/etc/ssh/sshd_config`, `ssh.service` | `/etc/gdm3/custom.conf` | `/etc/bash.bashrc`, `/boot/grub/grub.cfg` | `/usr/sbin/ip` |
-| ALT p11 | `/etc/openssh/sshd_config`, `sshd.service` | `/etc/gdm/custom.conf` | `/etc/bashrc`, `/etc/grub.cfg` | `/sbin/ip` |
+| ALT p11 | `/etc/openssh/sshd_config`, `sshd.service` | `/etc/gdm/custom.conf` | `/etc/bashrc`, `/etc/grub.cfg` → `/boot/grub/grub.cfg` | `/sbin/ip` |
 
 Если первый GDM-конфиг отсутствует, используются только следующие кандидаты из
 того же compile-time профиля. Это проверка установленного пакета внутри
@@ -763,7 +763,8 @@ kernel.dmesg_restrict = 1
 `grub_cmdline_linux` и `grub_disable_recovery`. Финальный `Grub::apply()`
 валидирует значение политики и сериализует операции всех GRUB-политик одним
 mutex. Общий редактор изменяет соответствующее присваивание в
-`/etc/default/grub`, а затем запускает генератор из compile-time профиля:
+каноническом defaults-файле compile-time профиля: `/etc/default/grub` на
+Debian/Ubuntu и `/etc/sysconfig/grub2` на ALT p11. Затем запускается
 `update-grub` без аргументов на Debian/Ubuntu или
 `grub-mkconfig -o /etc/grub.cfg` на ALT p11. Путь команды разрешается через
 единый реестр проверяемых исполняемых файлов.
@@ -776,7 +777,8 @@ mutex. Общий редактор изменяет соответствующе
 запускается: это синхронизирует потенциально устаревший сгенерированный
 `grub.cfg`.
 
-Запись `/etc/default/grub` атомарна. После неё файл перечитывается и проверяется.
+Запись профильного defaults-файла атомарна. После неё файл перечитывается и
+проверяется.
 Если первая генерация завершается ошибкой, исходный файл восстанавливается и
 генератор запускается повторно для компенсирующего восстановления загрузочной
 конфигурации. Ошибка самого применения или восстановления возвращается как

@@ -81,7 +81,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {"/etc/gdm/custom.conf"};
-    profile.grub.defaultsPath = "/etc/default/grub";
+    profile.grub.defaultsPath = "/etc/sysconfig/grub2";
     profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};
     profile.dac.protectedSystemFiles = {
         {"/etc/bashrc", "root", "root", 0644},
@@ -93,12 +93,16 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/hosts.deny", "root", "root", 0644},
         {"/etc/group", "root", "root", 0644},
         {"/etc/resolv.conf", "root", "root", 0644},
-        {"/etc/sysctl.conf", "root", "root", 0644},
+        {"/etc/sysctl.conf", "root", "root", 0644, {
+            "/etc/sysctl.d/99-sysctl.conf"
+        }},
         {"/etc/logrotate.conf", "root", "root", 0644},
         {"/etc/inittab", "root", "root", 0644},
         {"/etc/passwd", "root", "root", 0644},
         {"/etc/shadow", "root", "shadow", 0640},
-        {"/etc/grub.cfg", "root", "root", 0600},
+        {"/etc/grub.cfg", "root", "root", 0600, {
+            "/boot/grub/grub.cfg"
+        }},
         {"/etc/securetty", "root", "root", 0600}
     };
     profile.dac.protectedSystemFiles.push_back(

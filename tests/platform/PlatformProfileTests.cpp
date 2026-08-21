@@ -157,7 +157,11 @@ void testSelectedProfile() {
     require(profile.pam.passwordHistoryConfigPath ==
                 "/etc/security/pwhistory.conf",
             "pam_pwhistory configuration path is incorrect");
-    require(profile.grub.defaultsPath == "/etc/default/grub",
+    const std::filesystem::path expectedGrubDefaults =
+        profile.id == "alt-p11"
+            ? "/etc/sysconfig/grub2"
+            : "/etc/default/grub";
+    require(profile.grub.defaultsPath == expectedGrubDefaults,
             "GRUB defaults path is incorrect");
     require(hasRule(profile.dac.protectedSystemFiles,
                     profile.sudo.mainConfigPath),
@@ -199,6 +203,20 @@ void testSelectedProfile() {
                 "ALT p11 must protect /etc/bashrc");
         require(hasRule(profile.dac.protectedSystemFiles, "/etc/securetty"),
                 "ALT p11 must protect /etc/securetty");
+        require(findRule(
+                    profile.dac.protectedSystemFiles,
+                    "/etc/sysctl.conf").allowedFinalSymlinkTargets ==
+                    std::vector<std::filesystem::path>({
+                        "/etc/sysctl.d/99-sysctl.conf"
+                    }),
+                "ALT p11 sysctl.conf symlink target is incorrect");
+        require(findRule(
+                    profile.dac.protectedSystemFiles,
+                    "/etc/grub.cfg").allowedFinalSymlinkTargets ==
+                    std::vector<std::filesystem::path>({
+                        "/boot/grub/grub.cfg"
+                    }),
+                "ALT p11 grub.cfg symlink target is incorrect");
         require(!hasRule(profile.dac.protectedSystemFiles,
                          "/etc/sysconfig/securetty"),
                 "ALT p11 must not use the obsolete securetty path");

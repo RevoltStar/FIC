@@ -2,48 +2,43 @@
 
 ## Current base
 
-- Дата: 2026-08-20.
+- Дата: 2026-08-21.
 - Ветка: `main`.
-- Базовый commit задачи: `618f51d` (`Минорные правки в README.md`).
+- Базовый commit задачи: `8c89200` (`Разделение операций в gui на "Сохранить" и "Сохранить и Применить"`).
 
 ## Current task
 
-- UX-разделение сохранения desired policy configuration и немедленного
-  `apply_module` в GUI.
+- Исправление ошибок применения DAC/GRUB-политик на ALT Workstation K 11.4.
 
 ## Accepted architecture / invariants
 
-- `PolicyService::saveChanges()` является единственным GUI-путём сохранения
-  value и ENABLE/DISABLE. `saveAndApplyChanges()` вызывает его и только после
-  полного успеха отправляет существующий `apply_module`.
-- Ошибка применения не откатывает уже сохранённую конфигурацию.
+- Штатные package-owned symlink ALT разрешаются только через точные
+  `allowedFinalSymlinkTargets`; общий fail-closed запрет symlink не ослабляется.
+- GRUB-политики редактируют канонический regular defaults file платформы, чтобы
+  сохранить существующую atomic write и `rejectSymlink` модель.
 
 ## Completed
 
-- В `PolicyEditorWidget` одна кнопка заменена на локализованные «Сохранить» и
-  «Сохранить и применить» с общим сбором и валидацией `PolicyChange`.
-- `PolicyServiceTests` покрывают save-only, save+apply, ошибки каждого шага
-  сохранения и ошибку применения без rollback.
+- ALT p11 GRUB defaults path изменён с symlink `/etc/default/grub` на
+  `/etc/sysconfig/grub2`.
+- Для DAC объявлены точные связи `/etc/sysctl.conf` →
+  `/etc/sysctl.d/99-sysctl.conf` и `/etc/grub.cfg` → `/boot/grub/grub.cfg`.
+- Platform contract/static tests и профильная документация обновлены.
 
 ## Changed areas
 
-- `fic-gui/src/services/PolicyService.*`, `fic-gui/src/widgets/PolicyEditorWidget.cpp`;
-- `fic/src/scripts/lang/{ru,en}.lang`, module-ui tests и GUI-документация.
+- `fic/src/platform/profiles/AltP11Profile.cpp`;
+- `tests/platform/PlatformProfileTests.cpp`, `tests/platform/static_checks.py`;
+- `fic/README.md`, `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- `cmake --build build-check --target policy_service_tests fic-gui -j2` —
-  успешно.
-- Module-ui CTest (`module_ui_static_checks`, registry/descriptor/service tests)
-  — 5/5 успешно.
-- Полный `ctest --test-dir build-check --output-on-failure`: 39 тестов прошли
-  или штатно пропущены, один несвязанный `ipc_protocol_validation_tests` упал
-  на противоречивом существующем assertion для одинакового request JSON.
+- `python3 tests/platform/static_checks.py .` — успешно.
 - `git diff --check` — успешно.
+- Сборка и compiled tests не запускались по прямому запросу пользователя.
 
 ## Remaining
 
-- Текущий `tests/paths/IpcProtocolValidationTests.cpp` сначала принимает, а
-  затем отвергает один и тот же `{"api_version":1,"command":"status"}`.
-  Тест и IPC-контракт текущей задачей не изменялись; требуется отдельное
-  исправление ожидания.
+- После сборки нового ALT p11 пакета требуется staging-проверка применения
+  `blocking_user_access_to_system_files`, `grub_timeout` и
+  `grub_disable_recovery` на штатной package layout.
