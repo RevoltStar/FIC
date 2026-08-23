@@ -1,6 +1,7 @@
 #include "modules/identity_access/submodules/pam/PamOptionPolicy.h"
 
 #include "modules/identity_access/submodules/pam/PamConfiguration.h"
+#include "modules/identity_access/submodules/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/submodules/pam/PamOptionFile.h"
 
 #include <utility>
@@ -41,37 +42,23 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
 
     fic::identity::pam::PamConfiguration configuration(platformConfig_);
-    fic::identity::pam::PamProviderInspection inspection;
+    fic::identity::pam::PamCapabilityVerification capabilityVerification;
     std::string error;
-    if (!fic::identity::pam::PamProviderInspector::inspect(
+    if (!fic::identity::pam::PamCapabilityVerifier::verify(
             configuration,
+            platformConfig_,
             services_,
             capability_,
             provider_,
-            inspection,
-            error)) {
+            capabilityVerification)) {
         this->log(
-            "PAM provider preflight failed for " + this->policyName +
-                ": " + error,
+            "PAM capability preflight failed for " + this->policyName +
+                ": " + fic::identity::pam::formatPamCapabilityVerification(
+                    capabilityVerification),
             logLevel::ERROR);
         return false;
     }
-    if (!fic::identity::pam::PamProviderInspector::verifyProviderFiles(
-            inspection, platformConfig_.moduleDirectories, error)) {
-        this->log(
-            "PAM provider file verification failed for " + this->policyName +
-                ": " + error,
-            logLevel::ERROR);
-        return false;
-    }
-    if (!fic::identity::pam::PamProviderInspector::verifyConfigurationFiles(
-            inspection, error)) {
-        this->log(
-            "PAM configuration file verification failed for " +
-                this->policyName + ": " + error,
-            logLevel::ERROR);
-        return false;
-    }
+    const auto& inspection = capabilityVerification.inspection;
     const bool overridesValid = syntax_ == PamOptionSyntax::Assignment
         ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
               inspection, optionFile_.string(), option_, expectedValue, error)
@@ -140,28 +127,32 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
 
     fic::identity::pam::PamConfiguration verification(platformConfig_);
-    fic::identity::pam::PamProviderInspection verifiedInspection;
-    if (!fic::identity::pam::PamProviderInspector::inspect(
+    fic::identity::pam::PamCapabilityVerification verifiedCapability;
+    if (!fic::identity::pam::PamCapabilityVerifier::verify(
             verification,
+            platformConfig_,
             services_,
             capability_,
             provider_,
-            verifiedInspection,
-            error) ||
-        !fic::identity::pam::PamProviderInspector::verifyProviderFiles(
-            verifiedInspection, platformConfig_.moduleDirectories, error) ||
-        !fic::identity::pam::PamProviderInspector::verifyConfigurationFiles(
-            verifiedInspection, error) ||
+            verifiedCapability) ||
         !(syntax_ == PamOptionSyntax::Assignment
               ? fic::identity::pam::PamProviderInspector::
                     verifyOptionOverrides(
-                        verifiedInspection, optionFile_.string(), option_,
+                        verifiedCapability.inspection,
+                        optionFile_.string(), option_,
                         expectedValue, error)
               : fic::identity::pam::PamProviderInspector::
                     verifyFlagOverrides(
-                        verifiedInspection, optionFile_.string(), option_,
+                        verifiedCapability.inspection,
+                        optionFile_.string(), option_,
                         expectedFlagEnabled, error,
                         conflictingOptionsWhenFlagDisabled_))) {
+        if (!verifiedCapability.detail.empty() &&
+            verifiedCapability.state !=
+                fic::identity::pam::PamEnforcementState::Effective) {
+            error = fic::identity::pam::formatPamCapabilityVerification(
+                verifiedCapability);
+        }
         this->log(
             "PAM graph postcondition failed for " + this->policyName +
                 ": " + error,
@@ -171,7 +162,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
 
     this->log(
         "PAM policy " + this->policyName + " is effective for " +
-            std::to_string(verifiedInspection.services.size()) +
+            std::to_string(
+                verifiedCapability.inspection.services.size()) +
             " configured services",
         logLevel::INFO);
     return true;

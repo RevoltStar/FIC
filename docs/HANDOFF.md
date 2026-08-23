@@ -2,56 +2,64 @@
 
 ## Current base
 
-- Дата: 2026-08-21.
+- Дата: 2026-08-23.
 - Ветка: `main`.
-- Базовый commit задачи: `ac949e1` (`Обновляем профиль для alt11`).
+- Базовый commit задачи: `acee755`.
 
 ## Current task
 
-- Устранение гонки между обнаружением графической сессии и запуском
-  `fic-session-agent` через XDG Autostart.
+- Semantic control-flow verification обязательных PAM enforcement mechanisms
+  и policy `required_pam_enforcement`.
 
 ## Accepted architecture / invariants
 
-- Daemon ожидает готовность session-agent не более 10 секунд с интервалом
-  200 мс.
-- Повторяются только безопасные состояния запуска: отсутствующий socket
-  (`ENOENT`) и временный отказ подключения (`ECONNREFUSED`).
-- Неверный тип/владелец socket, неожиданные ошибки подключения, неверный peer
-  UID и ошибки протокола завершают запрос немедленно.
-- Проверки типа и владельца socket выполняются заново перед каждой попыткой
-  подключения.
+- `PamConfiguration` остаётся единственным PAM parser: прежний flat view
+  сохранён, а structured effective stack сохраняет границы `substack`.
+- `PamControlFlowAnalyzer` моделирует Linux-PAM simple/extended controls,
+  numeric jumps, `include`, `substack`, `done`, `die`, `ignore` и `reset`.
+- Неизвестные PAM modules моделируются недетерминированно; если отсутствие
+  successful bypass нельзя доказать, verification завершается fail-closed.
+- Каждая обычная PAM policy сама проверяет собственную capability. Новая
+  policy не является dependency declaration и не provision/remediate PAM.
+- Верхнеуровневый результат остаётся `PolicyApplyStatus::Failed`; конкретные
+  enforcement state, violation kind и path передаются через captured logs.
 
 ## Completed
 
-- В `SessionAgentClient` добавлено ограниченное ожидание готовности agent
-  socket без изменения публичного API.
-- Добавлены тесты отложенного создания socket, временного `ECONNREFUSED`,
-  завершения по timeout и немедленного отказа для небезопасного пути.
-- Runtime-контракт session agent актуализирован в документации.
+- Добавлены состояния `Missing`, `Inactive`, `Ineffective`, `Broken`,
+  `Conflicting`, `Effective` и общий `PamCapabilityVerifier`.
+- Существующие `PamOptionPolicy` требуют semantic effectiveness до записи и
+  повторно проверяют её после записи.
+- Добавлена и зарегистрирована текстовая policy `required_pam_enforcement`
+  для `pam_faillock`, `pam_pwquality`, `pam_pwhistory` со строгим разбором,
+  trim, дедупликацией и отказом для пустых/неизвестных элементов.
+- Добавлены bypass diagnostics с source line, module result, control/action и
+  bounded symbolic state/transition/trace limits.
+- Обновлены default config, ru/en localization и PAM architecture contract.
 
 ## Changed areas
 
-- `fic/src/session/SessionAgentClient.cpp` и test-only internal interface;
-- `tests/session/SessionAgentClientTests.cpp`, `tests/CMakeLists.txt`;
-- `docs/session-agent.md`.
+- `fic/src/modules/identity_access/submodules/pam/` и новая PAM policy;
+- PolicyRegistry registration, `IDENTITY_ACCESS.conf`, localization;
+- PAM/unit/policy/static tests и `docs/architecture-diagrams.md`.
 
 ## Validation
 
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- `cmake --build build-check --target session_agent_client_tests fic -j2` —
-  успешно.
-- `ctest --test-dir build-check -R '^session_agent_client_tests$' --output-on-failure`
-  вне sandbox — успешно, 1/1.
-- Полный `ctest --test-dir build-check --output-on-failure`: 36 тестов
-  успешно, 4 пропущены из-за sandbox, 1 известный несвязанный сбой
-  `ipc_protocol_validation_tests` из-за противоречивых проверок одного
-  status request.
+- `cmake --build build-check -j2` — полный build успешно, включая daemon, CLI,
+  GUI, session agent, device daemon и tests.
+- Целевые `pam_configuration_tests`, `identity_policy_hierarchy_tests`,
+  `platform_profile_static_checks` — успешно.
+- Полный `ctest --test-dir build-check --output-on-failure`: 36 passed,
+  4 sandbox-dependent skipped; 1 известный несвязанный failure
+  `ipc_protocol_validation_tests` на assertion для status request.
+- `git diff --check` — успешно до финального обновления HANDOFF.
 
 ## Remaining
 
-- Изменения не развёртывались на ALT-машине `10.88.0.250`; после сборки
-  пакета нужна staging-проверка применения session-зависимой политики сразу
-  после входа пользователя.
-- Несвязанный сбой `ipc_protocol_validation_tests` в scope задачи не
-  исправлялся.
+- Реальное применение PAM policies и изменение host PAM stack намеренно не
+  выполнялись; нужна staging-проверка на поддерживаемых platform profiles.
+- Analyzer моделирует documented outcomes известных providers и все outcomes
+  неизвестных modules, но не анализирует машинный код и не оценивает силу
+  provider options как отдельную password/lockout policy.
+- Несвязанный `ipc_protocol_validation_tests` в scope задачи не исправлялся.

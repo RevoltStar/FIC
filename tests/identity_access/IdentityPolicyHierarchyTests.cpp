@@ -6,6 +6,7 @@
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/RequiredPamEnforcementPolicy.h"
 #include "modules/identity_access/submodules/sssd/SssdPolicy.h"
 
 #include <fic/core/FicRuntimePaths.h>
@@ -52,7 +53,9 @@ void writeIdentityConfig(const std::filesystem::path& root,
         "password_history_enforce_for_root.value=" + rootHistoryValue + "\n"
         "failed_authentication_enforce_for_root.status=ENABLE\n"
         "failed_authentication_enforce_for_root.value=" + rootLockoutValue +
-            "\n");
+            "\n"
+        "required_pam_enforcement.status=ENABLE\n"
+        "required_pam_enforcement.value=pam_faillock,pam_pwhistory\n");
 }
 
 void initializeRuntimePaths(const std::filesystem::path& root) {
@@ -382,9 +385,10 @@ int main() {
         writeFile(
             root / "pam.d/login",
             "auth required pam_faillock.so preauth\n"
-            "auth required pam_unix.so\n"
+            "auth [success=1 default=bad] pam_unix.so\n"
             "auth [default=die] pam_faillock.so authfail\n"
-            "auth sufficient pam_faillock.so authsucc\n");
+            "auth sufficient pam_faillock.so authsucc\n"
+            "auth required pam_deny.so\n");
         writeFile(root / "security/pam_faillock.so", "test", 0555);
         writeFile(
             authenticationPlatform.faillockConfigPath,
@@ -434,6 +438,41 @@ int main() {
                 false,
                 flagError),
             flagError);
+
+        auto requiredPlatform = authenticationPlatform;
+        requiredPlatform.passwordServices =
+            passwordHistoryPlatform.passwordServices;
+        requiredPlatform.passwordHistoryConfigPath =
+            passwordHistoryPlatform.passwordHistoryConfigPath;
+        RequiredPamEnforcementPolicy requiredPam(requiredPlatform);
+        require(
+            requiredPam.getPolicyTypeValue().getEditorSpec().editor ==
+                "textedit" &&
+                requiredPam.validate("pam_faillock, pam_pwhistory") &&
+                !requiredPam.validate("pam_vendor"),
+            "required-PAM policy value contract is incorrect");
+        require(requiredPam.apply(),
+                "required-PAM policy rejected effective providers");
+
+        writeFile(
+            root / "pam.d/login",
+            "auth sufficient pam_permit.so\n"
+            "auth required pam_faillock.so preauth\n"
+            "auth [success=1 default=bad] pam_unix.so\n"
+            "auth [default=die] pam_faillock.so authfail\n"
+            "auth sufficient pam_faillock.so authsucc\n"
+            "auth required pam_deny.so\n");
+        require(!requiredPam.apply(),
+                "required-PAM policy accepted an authentication bypass");
+        require(rootHistoryDisabled.apply(),
+                "broken faillock must not block an independent history policy");
+        writeFile(
+            root / "pam.d/login",
+            "auth required pam_faillock.so preauth\n"
+            "auth [success=1 default=bad] pam_unix.so\n"
+            "auth [default=die] pam_faillock.so authfail\n"
+            "auth sufficient pam_faillock.so authsucc\n"
+            "auth required pam_deny.so\n");
 
         writeFile(
             authenticationPlatform.faillockConfigPath,

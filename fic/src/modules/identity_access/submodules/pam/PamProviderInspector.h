@@ -33,6 +33,19 @@ struct PamProviderInspection {
     std::vector<std::filesystem::path> configurationFiles;
 };
 
+enum class PamProviderInspectionFailure {
+    None,
+    Inactive,
+    Conflicting,
+    Broken
+};
+
+enum class PamProviderFileState {
+    Missing,
+    Untrusted,
+    Trusted
+};
+
 class PamProviderInspector {
 public:
     static bool inspect(PamConfiguration& configuration,
@@ -40,7 +53,13 @@ public:
                         PamCapability capability,
                         PamProviderKind expectedProvider,
                         PamProviderInspection& inspection,
-                        std::string& error);
+                        std::string& error,
+                        PamProviderInspectionFailure* failure = nullptr);
+
+    static PamProviderFileState inspectExpectedProviderFile(
+        PamProviderKind provider,
+        const std::vector<std::filesystem::path>& moduleDirectories,
+        std::string& error);
 
     static bool verifyOptionOverrides(
         const PamProviderInspection& inspection,
@@ -76,6 +95,7 @@ public:
 };
 
 std::string pamProviderName(PamProviderKind provider);
+std::string pamProviderModuleName(PamProviderKind provider);
 
 } // namespace fic::identity::pam
 

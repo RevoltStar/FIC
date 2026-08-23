@@ -37,6 +37,25 @@ struct PamRule {
     std::string includeTarget;
 };
 
+// Structured effective stack used by the control-flow analyzer. Includes are
+// expanded in place. A substack remains one parent entry and owns its expanded
+// child stack, matching Linux-PAM jump and termination boundaries.
+struct PamStackEntry {
+    PamRule rule;
+    std::vector<PamStackEntry> substack;
+
+    bool isSubstack() const {
+        return rule.includeKind == PamIncludeKind::Substack;
+    }
+};
+
+struct PamEffectiveStack {
+    std::string service;
+    PamManagementGroup group = PamManagementGroup::Auth;
+    std::vector<PamStackEntry> entries;
+    std::set<std::filesystem::path> sourceFiles;
+};
+
 class PamConfiguration {
 public:
     explicit PamConfiguration(fic::platform::PamPlatformConfig platformConfig);
@@ -51,6 +70,11 @@ public:
                       std::vector<PamRule>& rules,
                       std::string& error,
                       std::set<std::filesystem::path>* sourceFiles = nullptr);
+
+    bool buildEffectiveStack(const std::string& service,
+                             PamManagementGroup group,
+                             PamEffectiveStack& stack,
+                             std::string& error);
 
 private:
     struct ParsedService {
@@ -68,13 +92,15 @@ private:
     bool parseService(const std::string& service,
                       const ParsedService*& parsed,
                       std::string& error);
-    bool collectRulesRecursive(const std::string& service,
-                               PamManagementGroup group,
-                               std::vector<PamRule>& rules,
-                               std::set<std::string>& recursionStack,
-                               std::size_t depth,
-                               std::set<std::filesystem::path>* sourceFiles,
-                               std::string& error);
+    bool buildEffectiveStackRecursive(
+        const std::string& service,
+        PamManagementGroup group,
+        std::vector<PamStackEntry>& entries,
+        std::set<std::string>& recursionStack,
+        std::size_t depth,
+        std::size_t& entryCount,
+        std::set<std::filesystem::path>& sourceFiles,
+        std::string& error);
 };
 
 std::string pamManagementGroupName(PamManagementGroup group);

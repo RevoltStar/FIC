@@ -564,15 +564,21 @@ flowchart TD
     providers --> conflict{exactly one supported provider per service?}
     conflict -->|no| reject[fail closed without write]
     conflict -->|yes| topology[topology and config/module file checks]
-    topology --> overrides[conf path and argument override checks]
+    topology --> flow[PamControlFlowAnalyzer successful-path proof]
+    flow --> verifier[PamCapabilityVerifier enforcement state]
+    verifier --> overrides[conf path and argument override checks]
     overrides --> optionFile[canonical option file]
     optionFile --> writer[AtomicFileWriter root:root 0644]
     writer --> reload[reparse file and PAM graphs]
     reload --> postcondition[provider / module / value postcondition]
 ```
 
-Граф учитывает `@include`, `include` и `substack`; циклы, превышение лимитов и
-неподдерживаемый синтаксис отклоняются. Capability lockout распознает
+Граф учитывает `@include`, `include` и `substack`; границы `substack`
+сохраняются для Linux-PAM semantics numeric jumps, `done`, `die` и `reset`.
+`PamControlFlowAnalyzer` символически проверяет, что успешный путь не обходит
+обязательный provider; неизвестный модуль считается недетерминированным и не
+может служить доказательством безопасности. Циклы, превышение лимитов и
+неподдерживаемый control syntax отклоняются fail-closed. Capability lockout распознает
 `pam_faillock`, `pam_tally2` и `pam_tally`, quality — `pam_pwquality`,
 `pam_passwdqc` и `pam_cracklib`, history — `pam_pwhistory` и
 `pam_unix remember=`. Первая версия применяет политики только к
@@ -580,6 +586,9 @@ flowchart TD
 альтернативные providers диагностируются, но не мигрируются. PAM service-файлы
 не переписываются: меняется канонический provider-конфиг только после
 доказательства, что он уже effective во всех существующих целевых службах.
+`required_pam_enforcement` независимо проверяет выбранные известные providers
+как системный invariant; он не объявляет dependencies другим policies, не
+устанавливает пакеты и не исправляет чужой PAM stack.
 
 Классы identity-модуля разделяют policy metadata и владение системной
 конфигурацией:
@@ -681,6 +690,7 @@ flowchart TB
     pam --> countingPeriod[failed_authentication_counting_period]
     pam --> failedRoot[failed_authentication_enforce_for_root]
     pam --> unlockTime[failed_authentication_unlock_time]
+    pam --> requiredPam[required_pam_enforcement]
     sssd --> offlineExpiration[sssd_offline_credentials_expiration]
     kerberos --> ticketLifetimePolicy[kerberos_ticket_lifetime]
 

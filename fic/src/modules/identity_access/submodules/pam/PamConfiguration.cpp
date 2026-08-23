@@ -153,6 +153,17 @@ bool sameGroup(const PamRule& rule, PamManagementGroup group) {
     return rule.group == group;
 }
 
+void flattenStack(const std::vector<PamStackEntry>& entries,
+                  std::vector<PamRule>& rules) {
+    for (const auto& entry : entries) {
+        if (entry.isSubstack()) {
+            flattenStack(entry.substack, rules);
+        } else {
+            rules.push_back(entry.rule);
+        }
+    }
+}
+
 } // namespace
 
 PamConfiguration::PamConfiguration(
@@ -355,19 +366,49 @@ bool PamConfiguration::collectRules(
     std::vector<PamRule>& rules,
     std::string& error,
     std::set<std::filesystem::path>* sourceFiles) {
+    PamEffectiveStack stack;
+    if (!buildEffectiveStack(service, group, stack, error)) {
+        rules.clear();
+        return false;
+    }
     rules.clear();
-    std::set<std::string> recursionStack;
-    return collectRulesRecursive(
-        service, group, rules, recursionStack, 0, sourceFiles, error);
+    flattenStack(stack.entries, rules);
+    if (sourceFiles != nullptr) {
+        sourceFiles->insert(stack.sourceFiles.begin(), stack.sourceFiles.end());
+    }
+    return true;
 }
 
-bool PamConfiguration::collectRulesRecursive(
+bool PamConfiguration::buildEffectiveStack(
     const std::string& service,
     PamManagementGroup group,
-    std::vector<PamRule>& rules,
+    PamEffectiveStack& stack,
+    std::string& error) {
+    error.clear();
+    stack = PamEffectiveStack{};
+    stack.service = service;
+    stack.group = group;
+    std::set<std::string> recursionStack;
+    std::size_t entryCount = 0;
+    return buildEffectiveStackRecursive(
+        service,
+        group,
+        stack.entries,
+        recursionStack,
+        0,
+        entryCount,
+        stack.sourceFiles,
+        error);
+}
+
+bool PamConfiguration::buildEffectiveStackRecursive(
+    const std::string& service,
+    PamManagementGroup group,
+    std::vector<PamStackEntry>& entries,
     std::set<std::string>& recursionStack,
     std::size_t depth,
-    std::set<std::filesystem::path>* sourceFiles,
+    std::size_t& entryCount,
+    std::set<std::filesystem::path>& sourceFiles,
     std::string& error) {
     if (depth > kMaximumIncludeDepth) {
         error = "PAM include depth limit exceeded at service: " + service;
@@ -385,40 +426,65 @@ bool PamConfiguration::collectRulesRecursive(
         recursionStack.erase(recursionKey);
         return false;
     }
-    if (sourceFiles != nullptr) {
-        sourceFiles->insert(parsed->path);
-    }
+    sourceFiles.insert(parsed->path);
 
     for (const auto& rule : parsed->rules) {
         if (rule.includeKind == PamIncludeKind::IncludeAll) {
-            if (!collectRulesRecursive(
+            if (!buildEffectiveStackRecursive(
                     rule.includeTarget,
                     group,
-                    rules,
+                    entries,
                     recursionStack,
                     depth + 1,
+                    entryCount,
                     sourceFiles,
                     error)) {
                 recursionStack.erase(recursionKey);
                 return false;
             }
-        } else if (rule.includeKind == PamIncludeKind::Include ||
-                   rule.includeKind == PamIncludeKind::Substack) {
+        } else if (rule.includeKind == PamIncludeKind::Include) {
             if (sameGroup(rule, group) &&
-                !collectRulesRecursive(
+                !buildEffectiveStackRecursive(
                     rule.includeTarget,
                     group,
-                    rules,
+                    entries,
                     recursionStack,
                     depth + 1,
+                    entryCount,
                     sourceFiles,
                     error)) {
                 recursionStack.erase(recursionKey);
                 return false;
             }
+        } else if (rule.includeKind == PamIncludeKind::Substack) {
+            if (!sameGroup(rule, group)) {
+                continue;
+            }
+            PamStackEntry entry;
+            entry.rule = rule;
+            ++entryCount;
+            if (entryCount > kMaximumCollectedRules ||
+                !buildEffectiveStackRecursive(
+                    rule.includeTarget,
+                    group,
+                    entry.substack,
+                    recursionStack,
+                    depth + 1,
+                    entryCount,
+                    sourceFiles,
+                    error)) {
+                if (error.empty()) {
+                    error = "PAM rule count limit exceeded at service: " +
+                        service;
+                }
+                recursionStack.erase(recursionKey);
+                return false;
+            }
+            entries.push_back(std::move(entry));
         } else if (sameGroup(rule, group)) {
-            rules.push_back(rule);
-            if (rules.size() > kMaximumCollectedRules) {
+            entries.push_back(PamStackEntry{rule, {}});
+            ++entryCount;
+            if (entryCount > kMaximumCollectedRules) {
                 error = "PAM rule count limit exceeded at service: " + service;
                 recursionStack.erase(recursionKey);
                 return false;

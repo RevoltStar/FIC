@@ -317,6 +317,7 @@ def main():
         "PamFailedAuthenticationCountingPeriodPolicy",
         "PamFailedAuthenticationEnforceForRootPolicy",
         "PamFailedAuthenticationUnlockTimePolicy",
+        "RequiredPamEnforcementPolicy",
         "SssdOfflineCredentialsExpirationPolicy",
         "KerberosTicketLifetimePolicy",
     ):
@@ -336,6 +337,7 @@ def main():
         "failed_authentication_counting_period",
         "failed_authentication_enforce_for_root",
         "failed_authentication_unlock_time",
+        "required_pam_enforcement",
         "sssd_offline_credentials_expiration",
         "kerberos_ticket_lifetime",
     ):

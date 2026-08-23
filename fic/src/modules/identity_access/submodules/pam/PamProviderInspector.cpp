@@ -105,16 +105,27 @@ bool PamProviderInspector::inspect(
     PamCapability capability,
     PamProviderKind expectedProvider,
     PamProviderInspection& inspection,
-    std::string& error) {
+    std::string& error,
+    PamProviderInspectionFailure* failure) {
+    error.clear();
     inspection = PamProviderInspection{};
     inspection.provider = expectedProvider;
+    if (failure != nullptr) {
+        *failure = PamProviderInspectionFailure::None;
+    }
     std::vector<std::string> services;
     if (!configuration.existingServices(
             candidateServices, services, error)) {
+        if (failure != nullptr) {
+            *failure = PamProviderInspectionFailure::Broken;
+        }
         return false;
     }
     if (services.empty()) {
         error = "none of the configured PAM services exists";
+        if (failure != nullptr) {
+            *failure = PamProviderInspectionFailure::Broken;
+        }
         return false;
     }
 
@@ -131,6 +142,9 @@ bool PamProviderInspector::inspect(
                 primaryRules,
                 error,
                 &configurationFiles)) {
+            if (failure != nullptr) {
+                *failure = PamProviderInspectionFailure::Broken;
+            }
             return false;
         }
 
@@ -142,6 +156,9 @@ bool PamProviderInspector::inspect(
                 accountRules,
                 error,
                 &configurationFiles)) {
+            if (failure != nullptr) {
+                *failure = PamProviderInspectionFailure::Broken;
+            }
             return false;
         }
 
@@ -162,6 +179,9 @@ bool PamProviderInspector::inspect(
         if (providers.empty()) {
             error = "PAM service " + service +
                 " does not contain a provider for the requested capability";
+            if (failure != nullptr) {
+                *failure = PamProviderInspectionFailure::Inactive;
+            }
             return false;
         }
         if (providers.size() != 1) {
@@ -174,6 +194,9 @@ bool PamProviderInspector::inspect(
             }
             error = "conflicting PAM providers for service " + service +
                 ": " + names;
+            if (failure != nullptr) {
+                *failure = PamProviderInspectionFailure::Conflicting;
+            }
             return false;
         }
 
@@ -182,11 +205,17 @@ bool PamProviderInspector::inspect(
             error = "PAM service " + service + " uses unsupported provider " +
                 pamProviderName(provider) + "; expected " +
                 pamProviderName(expectedProvider);
+            if (failure != nullptr) {
+                *failure = PamProviderInspectionFailure::Broken;
+            }
             return false;
         }
         if (expectedProvider == PamProviderKind::PamFaillock &&
             !inspectFaillockTopology(
                 primaryRules, accountRules, error, service)) {
+            if (failure != nullptr) {
+                *failure = PamProviderInspectionFailure::Broken;
+            }
             return false;
         }
         if (expectedProvider != PamProviderKind::PamFaillock &&
@@ -194,6 +223,9 @@ bool PamProviderInspector::inspect(
             error = "ambiguous " + pamProviderName(expectedProvider) +
                 " topology for PAM service " + service +
                 ": expected exactly one provider call";
+            if (failure != nullptr) {
+                *failure = PamProviderInspectionFailure::Broken;
+            }
             return false;
         }
 
@@ -204,6 +236,34 @@ bool PamProviderInspector::inspect(
     inspection.configurationFiles.assign(
         configurationFiles.begin(), configurationFiles.end());
     return true;
+}
+
+PamProviderFileState PamProviderInspector::inspectExpectedProviderFile(
+    PamProviderKind provider,
+    const std::vector<std::filesystem::path>& moduleDirectories,
+    std::string& error) {
+    const std::string module = pamProviderModuleName(provider);
+    for (const auto& directory : moduleDirectories) {
+        const auto candidate = directory / module;
+        struct stat info {};
+        if (::stat(candidate.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
+            continue;
+        }
+        if (info.st_uid != ::geteuid()) {
+            error = "PAM provider is not owned by the daemon owner: " +
+                candidate.string();
+            return PamProviderFileState::Untrusted;
+        }
+        if ((info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+            error = "PAM provider is writable by group or others: " +
+                candidate.string();
+            return PamProviderFileState::Untrusted;
+        }
+        error.clear();
+        return PamProviderFileState::Trusted;
+    }
+    error = "PAM provider file was not found for " + module;
+    return PamProviderFileState::Missing;
 }
 
 bool PamProviderInspector::verifyOptionOverrides(
@@ -394,6 +454,28 @@ std::string pamProviderName(PamProviderKind provider) {
         return "pam_unix remember";
     }
     return "unknown";
+}
+
+std::string pamProviderModuleName(PamProviderKind provider) {
+    switch (provider) {
+    case PamProviderKind::PamFaillock:
+        return "pam_faillock.so";
+    case PamProviderKind::PamTally2:
+        return "pam_tally2.so";
+    case PamProviderKind::PamTally:
+        return "pam_tally.so";
+    case PamProviderKind::PamPwquality:
+        return "pam_pwquality.so";
+    case PamProviderKind::PamPasswdqc:
+        return "pam_passwdqc.so";
+    case PamProviderKind::PamCracklib:
+        return "pam_cracklib.so";
+    case PamProviderKind::PamPwhistory:
+        return "pam_pwhistory.so";
+    case PamProviderKind::PamUnixHistory:
+        return "pam_unix.so";
+    }
+    return "unknown.so";
 }
 
 } // namespace fic::identity::pam

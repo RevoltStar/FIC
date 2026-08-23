@@ -1,6 +1,8 @@
 #include "modules/identity_access/submodules/pam/PamConfiguration.h"
+#include "modules/identity_access/submodules/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/submodules/pam/PamOptionFile.h"
 #include "modules/identity_access/submodules/pam/PamProviderInspector.h"
+#include "modules/identity_access/submodules/pam/PamRequiredProviders.h"
 
 #include <filesystem>
 #include <fstream>
@@ -87,11 +89,29 @@ void createFaillockGraph(const TempDirectory& temp,
         "auth required pam_faillock.so preauth\n"
         "auth [success=1 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail " + authExtra + "\n"
-        "auth sufficient pam_faillock.so authsucc\n");
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
     writeFile(
         temp.path() / "pam.d/common-account",
         "account required pam_unix.so\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+}
+
+fic::identity::pam::PamCapabilityVerification verifyCapability(
+    const fic::platform::PamPlatformConfig& platform,
+    fic::identity::pam::PamCapability capability,
+    fic::identity::pam::PamProviderKind provider,
+    const std::vector<std::string>& services) {
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamCapabilityVerification verification;
+    fic::identity::pam::PamCapabilityVerifier::verify(
+        configuration,
+        platform,
+        services,
+        capability,
+        provider,
+        verification);
+    return verification;
 }
 
 void testIncludeGraphAndProviderInspection() {
@@ -106,7 +126,7 @@ void testIncludeGraphAndProviderInspection() {
         configuration.collectRules(
             "login", fic::identity::pam::PamManagementGroup::Auth, rules, error),
         error);
-    require(rules.size() == 4, "login auth graph must contain four rules");
+    require(rules.size() == 5, "login auth graph must contain five rules");
     require(
         rules.front().source.filename() == "common-auth",
         "include source location was not preserved");
@@ -205,6 +225,15 @@ void testConflictingLockoutProvidersFail() {
     require(
         error.find("conflicting") != std::string::npos,
         "provider conflict diagnostic is missing");
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Conflicting,
+        "multiple lockout providers must be reported as conflicting");
 }
 
 void testIncompleteFaillockFails() {
@@ -696,6 +725,380 @@ void testMalformedOptionFileFlagFailsWithoutWrite() {
         "disabling an absent PAM flag must not create a file");
 }
 
+void testEffectiveKnownProviders() {
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        createFaillockGraph(temp);
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::AuthenticationLockout,
+            fic::identity::pam::PamProviderKind::PamFaillock,
+            platform.authenticationServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Effective,
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+    }
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(
+            temp.path() / "pam.d/passwd",
+            "password requisite pam_pwquality.so\n"
+            "password required pam_unix.so\n");
+        writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Effective,
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+    }
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(
+            temp.path() / "pam.d/passwd",
+            "password include common-password\n");
+        writeFile(
+            temp.path() / "pam.d/common-password",
+            "password required pam_pwhistory.so\n"
+            "password required pam_unix.so\n");
+        writeFile(temp.path() / "security/pam_pwhistory.so", "test", 0555);
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordHistory,
+            fic::identity::pam::PamProviderKind::PamPwhistory,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Effective,
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+    }
+}
+
+void testSubstackBoundaryIsEffective() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password substack common-password\n"
+        "password required pam_unix.so\n");
+    writeFile(
+        temp.path() / "pam.d/common-password",
+        "password requisite pam_pwquality.so\n");
+    writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testFaillockAccountTopologyIsEffective() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth required pam_faillock.so preauth\n"
+        "auth sufficient pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth required pam_deny.so\n"
+        "account required pam_faillock.so\n"
+        "account required pam_unix.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        "supported pam_faillock account topology was rejected: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testMissingInactiveAndBrokenStates() {
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(temp.path() / "pam.d/passwd",
+                  "password required pam_unix.so\n");
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Missing,
+            "absent provider module must be reported as missing");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(temp.path() / "pam.d/passwd",
+                  "password required pam_unix.so\n");
+        writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Inactive,
+            "installed but unreachable provider must be reported as inactive");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(temp.path() / "pam.d/passwd",
+                  "password required pam_pwquality.so\n");
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Broken,
+            "active rule with a missing module must be reported as broken");
+    }
+}
+
+void testAuthenticationEarlySuccessBypass() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth sufficient pam_permit.so\n"
+        "auth required pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "early sufficient pam_permit must be rejected");
+    require(
+        verification.detail.find("authentication_bypass") !=
+            std::string::npos &&
+            verification.detail.find("pam_permit.so") != std::string::npos,
+        "authentication bypass diagnostic must contain the concrete path");
+}
+
+void testPasswordEarlySuccessBypass() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password sufficient pam_unix.so\n"
+        "password requisite pam_pwquality.so\n");
+    writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "successful password path bypassing pam_pwquality must be rejected");
+}
+
+void testExtendedControlBypasses() {
+    const auto verifyStack = [](const std::string& stack) {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(temp.path() / "pam.d/passwd", stack);
+        writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
+        return verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            platform.passwordServices);
+    };
+
+    const auto jump = verifyStack(
+        "password [success=1 default=ignore] pam_unknown_vendor.so\n"
+        "password requisite pam_pwquality.so\n"
+        "password sufficient pam_permit.so\n");
+    require(
+        jump.state == fic::identity::pam::PamEnforcementState::Ineffective,
+        "numeric jump over password enforcement must be rejected");
+
+    const auto done = verifyStack(
+        "password [success=done default=bad] pam_unknown_vendor.so\n"
+        "password requisite pam_pwquality.so\n");
+    require(
+        done.state == fic::identity::pam::PamEnforcementState::Ineffective,
+        "success=done before password enforcement must be rejected");
+}
+
+void testResetAndOptionalControlAreModeled() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password optional pam_unknown_vendor.so\n"
+        "password [success=reset default=bad] pam_permit.so\n"
+        "password required pam_pwquality.so\n"
+        "password sufficient pam_permit.so\n");
+    writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        "optional/reset control flow was modeled incorrectly: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testBypassThroughIncludeAndSubstack() {
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(temp.path() / "pam.d/passwd",
+                  "password include common-password\n");
+        writeFile(
+            temp.path() / "pam.d/common-password",
+            "password sufficient pam_permit.so\n"
+            "password requisite pam_pwhistory.so\n");
+        writeFile(temp.path() / "security/pam_pwhistory.so", "test", 0555);
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordHistory,
+            fic::identity::pam::PamProviderKind::PamPwhistory,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective,
+            "bypass through include must be rejected");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(
+            temp.path() / "pam.d/passwd",
+            "password substack common-password\n"
+            "password required pam_unix.so\n");
+        writeFile(
+            temp.path() / "pam.d/common-password",
+            "password sufficient pam_unknown_vendor.so\n"
+            "password requisite pam_pwhistory.so\n");
+        writeFile(temp.path() / "security/pam_pwhistory.so", "test", 0555);
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordHistory,
+            fic::identity::pam::PamProviderKind::PamPwhistory,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective,
+            "done inside substack must not hide a provider bypass");
+    }
+}
+
+void testUnknownAuthModuleCannotProveEnforcement() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth sufficient pam_unknown_vendor.so\n"
+        "auth required pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "unknown sufficient auth module must fail closed");
+}
+
+void testFailureAccountingBypass() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth required pam_faillock.so preauth\n"
+        "auth required pam_unix.so\n"
+        "auth [success=1 default=ignore] pam_env.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "failed authentication path skipping authfail must be rejected");
+    require(
+        verification.detail.find("failure_accounting_bypass") !=
+            std::string::npos,
+        "failure-accounting diagnostic is missing: " + verification.detail);
+}
+
+void testRequiredProviderListParsing() {
+    std::vector<fic::identity::pam::PamProviderKind> providers;
+    std::string normalized;
+    std::string error;
+    require(
+        fic::identity::pam::parseRequiredPamProviders(
+            " pam_faillock, pam_pwquality,pam_faillock ",
+            providers,
+            normalized,
+            error),
+        error);
+    require(
+        providers.size() == 2 &&
+            normalized == "pam_faillock,pam_pwquality",
+        "required PAM list must trim and deduplicate providers");
+    require(
+        !fic::identity::pam::parseRequiredPamProviders(
+            "pam_faillock,,pam_pwquality",
+            providers,
+            normalized,
+            error) && error.find("empty item") != std::string::npos,
+        "empty required PAM list item must be rejected");
+    require(
+        !fic::identity::pam::parseRequiredPamProviders(
+            "pam_vendor",
+            providers,
+            normalized,
+            error) && error.find("unsupported") != std::string::npos,
+        "unknown required PAM provider must be rejected");
+}
+
 void testPasswordHistoryAlternativeIsDetected() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -741,6 +1144,18 @@ int main() {
         testOptionFileSymlinkFails();
         testOptionFileFlagEnableDisable();
         testMalformedOptionFileFlagFailsWithoutWrite();
+        testEffectiveKnownProviders();
+        testSubstackBoundaryIsEffective();
+        testFaillockAccountTopologyIsEffective();
+        testMissingInactiveAndBrokenStates();
+        testAuthenticationEarlySuccessBypass();
+        testPasswordEarlySuccessBypass();
+        testExtendedControlBypasses();
+        testResetAndOptionalControlAreModeled();
+        testBypassThroughIncludeAndSubstack();
+        testUnknownAuthModuleCannotProveEnforcement();
+        testFailureAccountingBypass();
+        testRequiredProviderListParsing();
         testPasswordHistoryAlternativeIsDetected();
     } catch (const std::exception& error) {
         std::cerr << "PamConfigurationTests failed: " << error.what() << '\n';

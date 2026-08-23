@@ -267,9 +267,12 @@ add_test(NAME grub_policy_tests COMMAND grub_policy_tests)
 
 add_executable(pam_configuration_tests
     identity_access/PamConfigurationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamCapabilityVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamControlFlowAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamRequiredProviders.cpp
 )
 target_include_directories(pam_configuration_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -294,12 +297,16 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamCapabilityVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamControlFlowAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamRequiredProviders.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/RequiredPamEnforcementPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/nss/NssPolicy.cpp

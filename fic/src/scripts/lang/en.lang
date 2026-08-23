@@ -81,6 +81,8 @@
 [module:IDENTITY_ACCESS][policy:failed_authentication_enforce_for_root][description]=Controls the even_deny_root flag in the canonical pam_faillock configuration. The value yes enables root lockout and no removes the flag. Applying no is rejected if root_unlock_time or a PAM argument still enables root lockout.
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Authentication lockout duration
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Sets unlock_time in seconds in the canonical pam_faillock configuration. A value of 0 means that automatic time-based unlocking is disabled.
+[module:IDENTITY_ACCESS][policy:required_pam_enforcement]=Required PAM enforcement mechanisms
+[module:IDENTITY_ACCESS][policy:required_pam_enforcement][description]=Verifies that the listed pam_faillock, pam_pwquality, and pam_pwhistory providers are present, trusted, and unavoidable on every successful path through the corresponding effective PAM stack. The policy does not install modules or rewrite PAM topology.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=SSSD cached credential lifetime
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Sets offline_credentials_expiration in the [pam] section of sssd.conf, in days. An active SSSD service is restarted; on failure the configuration is rolled back and the previous runtime state is restored.
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime]=Kerberos ticket lifetime

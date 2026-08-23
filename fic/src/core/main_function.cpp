@@ -598,6 +598,8 @@ bool initPolicyRegistry(
             platform.pam));
     cafArr.push_back(std::make_unique<PamFailedAuthenticationUnlockTimePolicy>(
         platform.pam));
+    cafArr.push_back(
+        std::make_unique<RequiredPamEnforcementPolicy>(platform.pam));
 
     // Identity and access: SSSD, Kerberos and NSS
     cafArr.push_back(
