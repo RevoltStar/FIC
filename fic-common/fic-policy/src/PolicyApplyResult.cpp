@@ -32,8 +32,55 @@ void PolicyApplySummary::add(const PolicyApplyResult& result) {
     results.push_back(result);
 }
 
+void PolicyApplySummary::markRequestedRoot(const PolicyRef& policy) {
+    requestedRoots_.insert(policy);
+}
+
 const std::vector<PolicyApplyResult>& PolicyApplySummary::getResults() const {
     return results;
+}
+
+const std::set<PolicyRef>& PolicyApplySummary::requestedRoots() const {
+    return requestedRoots_;
+}
+
+bool PolicyApplySummary::isRequestedRoot(const PolicyRef& policy) const {
+    return requestedRoots_.find(policy) != requestedRoots_.end();
+}
+
+bool PolicyApplySummary::requestedRootsApplied() const {
+    return !requestedRoots_.empty() &&
+        std::all_of(
+            requestedRoots_.begin(), requestedRoots_.end(),
+            [&](const PolicyRef& root) {
+                const auto result = std::find_if(
+                    results.begin(), results.end(),
+                    [&](const PolicyApplyResult& candidate) {
+                        return PolicyRef{
+                            candidate.moduleName,
+                            candidate.submoduleName,
+                            candidate.policyName
+                        } == root;
+                    });
+                return result != results.end() && result->isApplied();
+            });
+}
+
+bool PolicyApplySummary::requestedRootsWithoutFailures() const {
+    return std::all_of(
+            requestedRoots_.begin(), requestedRoots_.end(),
+            [&](const PolicyRef& root) {
+                const auto result = std::find_if(
+                    results.begin(), results.end(),
+                    [&](const PolicyApplyResult& candidate) {
+                        return PolicyRef{
+                            candidate.moduleName,
+                            candidate.submoduleName,
+                            candidate.policyName
+                        } == root;
+                    });
+                return result != results.end() && !result->isFailure();
+            });
 }
 
 bool PolicyApplySummary::hasFailures() const {

@@ -348,14 +348,14 @@ flowchart TD
     reloadBeforeApply -->|ошибка| applyRejected[API error; no policy apply]
     reloadBeforeApply -->|успех| apply[apply]
     apply --> chooseScope{scope}
-    chooseScope -->|all| allModules[iterate all modules]
-    chooseScope -->|module all| oneModule[iterate module policies]
-    chooseScope -->|module policy| onePolicy[getPolicyClass]
-    allModules --> enabledOnly{policy.isEnable?}
-    oneModule --> enabledOnly
-    onePolicy --> enabledOnly
-    enabledOnly -->|yes| capture[Logger ScopedCapture]
-    enabledOnly -->|no| skip[skip policy]
+    chooseScope --> roots[deterministic requested roots]
+    roots --> planner[PolicyExecutionPlanner]
+    planner --> enabledOnly{current policy enabled?}
+    enabledOnly -->|no| skip[Disabled; do not expand dependencies]
+    enabledOnly -->|yes| dependencies[execute Required and Recommended dependencies first]
+    dependencies --> requiredOk{all Required Applied?}
+    requiredOk -->|no| blocked[dependent Failed; do not call Policy.apply]
+    requiredOk -->|yes| capture[Logger ScopedCapture]
     capture --> caf[Policy.apply]
     caf --> osChange[Изменение ОС или конфигов утилит]
     osChange --> verify[Проверка persistent и обязательных runtime postconditions]
@@ -630,11 +630,24 @@ flowchart TD
     verifyEffective -->|failure| rollback
 ```
 
+`Policy` объявляет immutable dependencies как полные `PolicyRef` со strength
+`Required` или `Recommended`. После регистрации всего candidate registry
+dependency graph проверяется на missing/self/duplicate edges и cycles; ошибка
+сохраняет предыдущий registry и не допускает mutations. Planner раскрывает
+граф только для enabled узлов, выполняет shared dependency один раз и не
+возвращает hard-excluded module через dependency edge. Все автоматически
+обработанные dependencies входят в `PolicyApplySummary`, но успех request
+определяется только результатами исходных requested roots. Failed/Disabled
+Required dependency блокирует dependent с `Failed`; Recommended создаёт
+warning diagnostic, но не определяет результат собственного `Policy.apply()`.
+
 Вложенные `Policy` в composite не используются: только внешний объект в
 `PolicyRegistry` сначала явно регистрирует каждый модуль вместе с его
 `PolicyModule::view`, а затем добавляет policies только в известные модули.
 `ModuleView` не выводится из имени модуля; конфликт metadata и ссылка policy на
-неизвестный module являются ошибками регистрации. Пустой модуль допустим.
+неизвестный module являются ошибками регистрации. Dependency metadata
+замораживается при добавлении policy, а полный DAG валидируется до замены
+registry. Пустой модуль допустим.
 Через вложенные `PolicyModule::submodules` registry владеет объектами
 `Policy`, их `moduleConf`, `policyName` и значением. Composite владеет
 подсистемными `ConfigurationParticipant`, и все они готовят изменения до

@@ -10,6 +10,7 @@
 #include <fic/core/SectionConfigFileHandler.h>
 #include <fic/core/LocalizationManager.h>
 #include <fic/policy/PolicyApplyResult.h>
+#include "core/PolicyApplication.h"
 #include "core/PolicyRegistry.h"
 #include "platform/PlatformProfile.h"
 #include "platform/PlatformExecutableResolver.h"
@@ -155,13 +156,6 @@ bool module_list(PolicyRegistry& policyRegistry);
 
 bool policy_list(PolicyRegistry& policyRegistry, std::string module);
 
-PolicyApplyResult applyPolicy(PolicyRegistry& policyRegistry, std::string module, std::string policy);
-PolicyApplySummary applyModulePolicies(PolicyRegistry& policyRegistry, std::string module);
-PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry);
-PolicyApplySummary applyAllPoliciesExceptModule(
-    PolicyRegistry& policyRegistry,
-    const std::string& excludedModule);
-bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy);
 bool apply(PolicyRegistry& policyRegistry, std::string module, std::string policy);
 
 //Отключить политику

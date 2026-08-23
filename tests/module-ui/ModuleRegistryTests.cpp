@@ -34,6 +34,21 @@ public:
 
     bool apply() override { return true; }
 };
+
+class DependencyPolicy final : public Policy {
+public:
+    DependencyPolicy(
+        const std::string& name,
+        const PolicyRef& dependency)
+    {
+        moduleName = "AUDIT";
+        submoduleName = "dependency_test";
+        policyName = name;
+        addRequiredDependency(dependency);
+    }
+
+    bool apply() override { return true; }
+};
 }
 
 int main()
@@ -145,6 +160,17 @@ int main()
     duplicatePolicies.push_back(std::make_unique<AUDIT_log_level>());
     assert(!buildPolicyRegistry(std::move(duplicatePolicies), registry, error));
     assert(error == "duplicate policy registration: AUDIT/logging/log_level");
+    assert(moduleDescriptorsJson(registry) == descriptors);
+    assert(registry.at("AUDIT").submodules.at("logging").at("log_level").get() ==
+           originalAuditPolicy);
+
+    std::vector<std::unique_ptr<Policy>> invalidDependencyPolicies;
+    invalidDependencyPolicies.push_back(std::make_unique<DependencyPolicy>(
+        "dependent",
+        PolicyRef{"AUDIT", "dependency_test", "missing"}));
+    assert(!buildPolicyRegistry(
+        std::move(invalidDependencyPolicies), registry, error));
+    assert(error.find("references unknown dependency") != std::string::npos);
     assert(moduleDescriptorsJson(registry) == descriptors);
     assert(registry.at("AUDIT").submodules.at("logging").at("log_level").get() ==
            originalAuditPolicy);

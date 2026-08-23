@@ -50,6 +50,7 @@ endif()
 
 add_executable(module_registry_tests
     module-ui/ModuleRegistryTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyDependencyGraph.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryInitialization.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryJson.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/audit/AUDIT.cpp
@@ -62,6 +63,19 @@ add_executable(module_registry_tests
 target_include_directories(module_registry_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(module_registry_tests PRIVATE fic-core fic-policy)
 add_test(NAME module_registry_tests COMMAND module_registry_tests)
+
+add_executable(policy_execution_planner_tests
+    core/PolicyExecutionPlannerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyApplication.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyDependencyGraph.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyExecutionPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryInitialization.cpp
+)
+target_include_directories(policy_execution_planner_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(policy_execution_planner_tests PRIVATE fic-core fic-policy)
+add_test(NAME policy_execution_planner_tests COMMAND policy_execution_planner_tests)
 
 add_executable(module_descriptor_tests
     module-ui/ModuleDescriptorTests.cpp

@@ -807,8 +807,8 @@ json handle_request(json request,
                     "policy was not applied because PolicyRegistry reload failed: " +
                     reloadError.value());
             }
-            PolicyApplySummary summary;
-            summary.add(applyPolicy(policyRegistry, module, policy));
+            PolicyApplySummary summary =
+                applyPolicy(policyRegistry, module, policy);
             const bool ok = isPolicyApplySuccessful(summary, module, policy);
             return policy_apply_summary_json(
                 summary,

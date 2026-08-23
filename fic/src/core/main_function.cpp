@@ -6,68 +6,6 @@
 #include <fic/core/FicRuntimePaths.h>
 #include <fic/core/VerifiedProcessExecutor.h>
 
-namespace {
-PolicyApplyResult executePolicy(const std::string& moduleName,
-                                const std::string& submoduleName,
-                                const std::string& policyName,
-                                Policy& policy) {
-    if (!policy.isEnabled()) {
-        return {
-            moduleName,
-            submoduleName,
-            policyName,
-            PolicyApplyStatus::Disabled,
-            "Политика отключена. Применение не будет выполнено."
-        };
-    }
-
-    Logger::ScopedCapture capture;
-    bool applied = false;
-    std::string exceptionMessage;
-    try {
-        applied = policy.apply();
-    } catch (const std::exception& e) {
-        exceptionMessage = "Исключение при применении политики: " + std::string(e.what());
-    } catch (...) {
-        exceptionMessage = "Неизвестное исключение при применении политики";
-    }
-
-    LogCaptureResult captured = capture.finish();
-    std::vector<PolicyDiagnostic> diagnostics;
-    diagnostics.reserve(captured.records.size() + (exceptionMessage.empty() ? 0 : 1));
-    for (LogRecord& record : captured.records) {
-        diagnostics.push_back({
-            std::move(record.timestamp),
-            Logger::level_to_string(record.level),
-            std::move(record.type),
-            std::move(record.message)
-        });
-    }
-
-    if (!exceptionMessage.empty()) {
-        diagnostics.push_back({
-            Logger::get_current_time(),
-            Logger::level_to_string(logLevel::ERROR),
-            "daemon",
-            exceptionMessage
-        });
-    }
-
-    return {
-        moduleName,
-        submoduleName,
-        policyName,
-        applied && exceptionMessage.empty() ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
-        exceptionMessage.empty()
-            ? (applied ? "Политика успешно применена" : "Не удалось применить политику")
-            : exceptionMessage,
-        std::move(diagnostics),
-        captured.truncated
-    };
-}
-}
-
-
 /*Функции вывода справки*/
 void print_program_info(){
     std::cout << "  FREE INTEGRITY CONTROL (FIC) - программа настройки СЗИ для ОС на базе ядра Linux" << std::endl;
@@ -325,85 +263,6 @@ bool policy_list(PolicyRegistry& policyRegistry, std::string module){
        return true;
 }
 
-PolicyApplyResult applyPolicy(PolicyRegistry& policyRegistry, std::string module, std::string policy) {
-    auto moduleIt = policyRegistry.find(module);
-    if (moduleIt == policyRegistry.end()) {
-        return {module, "", policy, PolicyApplyStatus::NotFound, "Модуль не существует"};
-    }
-
-    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second.submodules) {
-        auto policyIt = submodulePolicies.find(policy);
-        if (policyIt == submodulePolicies.end()) {
-            continue;
-        }
-
-        return executePolicy(module, submoduleName, policy, *policyIt->second);
-    }
-
-    return {module, "", policy, PolicyApplyStatus::NotFound, "Политика не существует"};
-}
-
-PolicyApplySummary applyModulePolicies(PolicyRegistry& policyRegistry, std::string module) {
-    PolicyApplySummary summary;
-    auto moduleIt = policyRegistry.find(module);
-    if (moduleIt == policyRegistry.end()) {
-        summary.add({module, "", "all", PolicyApplyStatus::NotFound, "Модуль не существует"});
-        return summary;
-    }
-
-    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second.submodules) {
-        for (const auto& [policyName, policyClass] : submodulePolicies) {
-            summary.add(executePolicy(module, submoduleName, policyName, *policyClass));
-        }
-    }
-
-    return summary;
-}
-
-PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry) {
-    PolicyApplySummary summary;
-    for (const auto& [moduleName, policyModule] : policyRegistry) {
-        for (const auto& [submoduleName, submodulePolicies] : policyModule.submodules) {
-            for (const auto& [policyName, policyClass] : submodulePolicies) {
-                summary.add(executePolicy(moduleName, submoduleName, policyName, *policyClass));
-            }
-        }
-    }
-
-    return summary;
-}
-
-PolicyApplySummary applyAllPoliciesExceptModule(
-    PolicyRegistry& policyRegistry,
-    const std::string& excludedModule) {
-    PolicyApplySummary summary;
-    for (const auto& [moduleName, policyModule] : policyRegistry) {
-        if (moduleName == excludedModule) {
-            continue;
-        }
-        for (const auto& [submoduleName, submodulePolicies] : policyModule.submodules) {
-            for (const auto& [policyName, policyClass] : submodulePolicies) {
-                summary.add(executePolicy(
-                    moduleName, submoduleName, policyName, *policyClass));
-            }
-        }
-    }
-    return summary;
-}
-
-bool isPolicyApplySuccessful(const PolicyApplySummary& summary, std::string module, std::string policy) {
-    if (summary.hasFailures()) {
-        return false;
-    }
-
-    const bool isSinglePolicyRequest = module != "all" && policy != "all";
-    if (isSinglePolicyRequest) {
-        return summary.totalCount() == 1 && summary.appliedCount() == 1;
-    }
-
-    return true;
-}
-
 static void printPolicyApplyResult(const PolicyApplyResult& result) {
     const std::string policyInfo = result.moduleName + " " + result.policyName;
     if (result.status == PolicyApplyStatus::Applied) {
@@ -448,7 +307,7 @@ bool apply(PolicyRegistry& policyRegistry, std::string module, std::string polic
     } else if (policy == "all") {
         summary = applyModulePolicies(policyRegistry, module);
     } else {
-        summary.add(applyPolicy(policyRegistry, module, policy));
+        summary = applyPolicy(policyRegistry, module, policy);
     }
 
     printPolicyApplySummary(summary, module, policy);

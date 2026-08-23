@@ -12,6 +12,7 @@ endif()
 add_library(fic-policy STATIC
     src/Policy.cpp
     src/PolicyApplyResult.cpp
+    src/PolicyDependency.cpp
     src/PolicyTypeValue.cpp
 )
 

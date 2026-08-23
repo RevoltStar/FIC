@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <fic/policy/Policy.h>
 
@@ -102,8 +103,50 @@ public:
                 policy->submoduleName + "/" + policy->policyName;
             return false;
         }
+        policy->freezeDependencies();
         policies.emplace(policy->policyName, std::move(policy));
         return true;
+    }
+
+    Policy* findPolicy(const PolicyRef& policy) {
+        const auto module = modules_.find(policy.moduleName);
+        if (module == modules_.end()) {
+            return nullptr;
+        }
+        const auto submodule =
+            module->second.submodules.find(policy.submoduleName);
+        if (submodule == module->second.submodules.end()) {
+            return nullptr;
+        }
+        const auto entry = submodule->second.find(policy.policyName);
+        return entry == submodule->second.end() ? nullptr : entry->second.get();
+    }
+
+    const Policy* findPolicy(const PolicyRef& policy) const {
+        const auto module = modules_.find(policy.moduleName);
+        if (module == modules_.end()) {
+            return nullptr;
+        }
+        const auto submodule =
+            module->second.submodules.find(policy.submoduleName);
+        if (submodule == module->second.submodules.end()) {
+            return nullptr;
+        }
+        const auto entry = submodule->second.find(policy.policyName);
+        return entry == submodule->second.end() ? nullptr : entry->second.get();
+    }
+
+    std::vector<PolicyRef> policyRefs() const {
+        std::vector<PolicyRef> refs;
+        for (const auto& [moduleName, module] : modules_) {
+            for (const auto& [submoduleName, policies] : module.submodules) {
+                for (const auto& [policyName, unused] : policies) {
+                    (void)unused;
+                    refs.push_back({moduleName, submoduleName, policyName});
+                }
+            }
+        }
+        return refs;
     }
 
     iterator begin() { return modules_.begin(); }

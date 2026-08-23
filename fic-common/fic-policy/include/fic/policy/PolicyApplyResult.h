@@ -2,8 +2,11 @@
 #define POLICY_APPLY_RESULT_H
 
 #include <cstddef>
+#include <set>
 #include <string>
 #include <vector>
+
+#include <fic/policy/PolicyDependency.h>
 
 enum class PolicyApplyStatus {
     Applied,
@@ -38,8 +41,13 @@ struct PolicyApplyResult {
 class PolicyApplySummary {
 public:
     void add(const PolicyApplyResult& result);
+    void markRequestedRoot(const PolicyRef& policy);
 
     const std::vector<PolicyApplyResult>& getResults() const;
+    const std::set<PolicyRef>& requestedRoots() const;
+    bool isRequestedRoot(const PolicyRef& policy) const;
+    bool requestedRootsApplied() const;
+    bool requestedRootsWithoutFailures() const;
     bool hasFailures() const;
     bool hasDisabled() const;
     bool hasApplied() const;
@@ -52,6 +60,7 @@ public:
 
 private:
     std::vector<PolicyApplyResult> results;
+    std::set<PolicyRef> requestedRoots_;
 };
 
 #endif // POLICY_APPLY_RESULT_H

@@ -7,10 +7,14 @@
 #include <fic/core/NotifyUser.h>
 //Работа с конфигурационными файлами модулей
 #include <fic/core/ModuleConfigFileHandler.h>
+#include <fic/policy/PolicyDependency.h>
 #include <fic/policy/PolicyTypeValue.h>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <vector>
+
+class PolicyRegistry;
 
 class Policy
 {
@@ -26,6 +30,9 @@ protected:
         }
         return true;
     }
+
+    void addRequiredDependency(const PolicyRef& policy);
+    void addRecommendedDependency(const PolicyRef& policy);
 public:
     //Задано ли значение политики в конфигурационном файле
     bool hasConfiguredValue(){
@@ -129,6 +136,8 @@ public:
     //Название подмодуля
     std::string submoduleName="";
 
+    const std::vector<PolicyDependency>& dependencies() const;
+
     //Логгировать (через this->logger)
     bool log(std::string message, logLevel logLev);
 
@@ -147,6 +156,17 @@ public:
     // Опасные действия активации (например, remount файловых систем) и эффекты,
     // требующие перезагрузки, намеренно не выполняются.
     virtual bool apply() = 0;
+
+private:
+    friend class PolicyRegistry;
+
+    void addDependency(
+        const PolicyRef& policy,
+        PolicyDependencyStrength strength);
+    void freezeDependencies();
+
+    std::vector<PolicyDependency> dependencies_;
+    bool dependenciesFrozen_ = false;
 };
 
 #endif // POLICY_H

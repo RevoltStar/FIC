@@ -1,4 +1,5 @@
 #include "core/PolicyRegistryInitialization.h"
+#include "core/PolicyDependencyGraph.h"
 
 #include <utility>
 
@@ -41,6 +42,9 @@ bool buildPolicyRegistry(
             if (!candidate.addPolicy(std::move(policy), error)) {
                 return false;
             }
+        }
+        if (!validatePolicyDependencyGraph(candidate, error)) {
+            return false;
         }
 
         registry.swap(candidate);
