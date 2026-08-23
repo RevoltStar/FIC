@@ -367,6 +367,28 @@ add_test(
     COMMAND identity_configuration_editors_tests
 )
 
+add_executable(password_aging_tests
+    identity_access/PasswordAgingTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyApplication.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyDependencyGraph.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyExecutionPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryInitialization.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/password_aging/LoginDefsFileHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/password_aging/PasswordAgingPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/password_aging/PasswordAgingRuntime.cpp
+)
+target_include_directories(password_aging_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(password_aging_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME password_aging_tests COMMAND password_aging_tests)
+
 add_executable(identity_concrete_policies_tests
     identity_access/IdentityConcretePoliciesTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp

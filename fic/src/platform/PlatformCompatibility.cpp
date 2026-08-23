@@ -322,6 +322,14 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                       "pam_pwquality configuration path", error) ||
         !validatePath(profile.pam.passwordHistoryConfigPath,
                       "pam_pwhistory configuration path", error) ||
+        !validatePath(profile.passwordAging.loginDefsPath,
+                      "login.defs path", error) ||
+        !validatePath(profile.passwordAging.passwdPath,
+                      "local passwd path", error) ||
+        !validatePath(profile.passwordAging.shadowPath,
+                      "local shadow path", error) ||
+        !validatePath(profile.passwordAging.tcbDirectory,
+                      "local TCB directory", error) ||
         !validatePath(profile.displayManager.sddmConfigPath,
                       "SDDM configuration path", error) ||
         !validatePath(profile.displayManager.lightDmConfigPath,
@@ -336,6 +344,13 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                                  "DAC protected system file", error) ||
         !validateFileAccessRules(profile.dac.protectedSystemCommands,
                                  "DAC protected system command", error)) {
+        return false;
+    }
+    const PasswordAgingDefaults& aging = profile.passwordAging.defaults;
+    if (aging.minDays < 0 || aging.maxDays < -1 || aging.warningDays < -1 ||
+        (aging.maxDays != -1 && aging.minDays > aging.maxDays) ||
+        aging.uidMin < 0 || aging.uidMax < aging.uidMin) {
+        error = "invalid password-aging platform defaults";
         return false;
     }
     if (profile.sysctl.managedConfigPath.extension() != ".conf") {

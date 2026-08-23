@@ -134,6 +134,32 @@ void testSelectedProfile() {
                 fic::platform::ExecutableId::Nft).candidates ==
                 std::vector<std::filesystem::path>{"/usr/sbin/nft"},
             "nft candidate is incorrect");
+    require(executableSpec(
+                profile,
+                fic::platform::ExecutableId::Chage).candidates ==
+                std::vector<std::filesystem::path>{"/usr/bin/chage"},
+            "chage candidate is incorrect");
+    require(profile.passwordAging.loginDefsPath == "/etc/login.defs" &&
+                profile.passwordAging.passwdPath == "/etc/passwd",
+            "password-aging local database paths are incorrect");
+    require(profile.passwordAging.defaults.uidMin == 1000 &&
+                profile.passwordAging.defaults.uidMax == 60000,
+            "password-aging UID defaults are incorrect");
+    if (profile.id == "alt-p11") {
+        require(profile.passwordAging.shadowKind ==
+                    fic::platform::LocalShadowKind::TcbDirectory &&
+                    profile.passwordAging.defaults.minDays == 0 &&
+                    profile.passwordAging.defaults.maxDays == -1 &&
+                    profile.passwordAging.defaults.warningDays == -1,
+                "ALT p11 password-aging defaults/backend are incorrect");
+    } else {
+        require(profile.passwordAging.shadowKind ==
+                    fic::platform::LocalShadowKind::ShadowFile &&
+                    profile.passwordAging.defaults.minDays == 0 &&
+                    profile.passwordAging.defaults.maxDays == 99999 &&
+                    profile.passwordAging.defaults.warningDays == 7,
+                "Debian/Ubuntu password-aging defaults are incorrect");
+    }
     require(!profile.packageManager.queryCandidates.empty(),
             "package manager query candidates are missing");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",

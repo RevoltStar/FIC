@@ -44,6 +44,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::Nft,
             {"/usr/sbin/nft"}
+        },
+        {
+            ExecutableId::Chage,
+            {"/usr/bin/chage"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Rpm;
@@ -82,6 +86,12 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.pam.faillockConfigPath = "/etc/security/faillock.conf";
     profile.pam.passwordQualityConfigPath = "/etc/security/pwquality.conf";
     profile.pam.passwordHistoryConfigPath = "/etc/security/pwhistory.conf";
+    profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
+    profile.passwordAging.defaults.minDays = 0;
+    profile.passwordAging.defaults.maxDays = -1;
+    profile.passwordAging.defaults.warningDays = -1;
+    profile.passwordAging.defaults.uidMin = 1000;
+    profile.passwordAging.defaults.uidMax = 60000;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {"/etc/gdm/custom.conf"};

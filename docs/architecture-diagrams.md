@@ -590,6 +590,32 @@ flowchart TD
 как системный invariant; он не объявляет dependencies другим policies, не
 устанавливает пакеты и не исправляет чужой PAM stack.
 
+Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют плоским
+`/etc/login.defs` через специализированный `LoginDefsFileHandler`.
+Неизвестные строки, комментарии и пустые строки сохраняются; duplicate или
+malformed occurrence целевого ключа отклоняется до записи. Пять config-policy
+задают `PASS_MIN_DAYS`, `PASS_MAX_DAYS`, `PASS_WARN_AGE`, `UID_MIN` и
+`UID_MAX`. Две operational policy объявляют Required dependencies через общий
+policy dependency graph и после их применения повторно читают фактический
+`login.defs`. Начальный `IDENTITY_ACCESS.conf` генерируется при сборке из
+defaults выбранного platform profile, а не из состояния build host.
+
+Bulk aging перечисляет только явно открытый local passwd file и structured
+local shadow backend: `/etc/shadow` на Debian/Ubuntu, per-user TCB на ALT p11.
+Root всегда исключён из bulk и обрабатывается отдельной policy. До первого
+изменения полностью проверяются config, local accounts, `chage` resolver и
+command hash; запись выполняется только trusted `/usr/bin/chage` с отдельными
+argv `-m/-M/-W -- user`. После каждого вызова structured state перечитывается,
+включая обязательную неизменность `sp_lstchg`. Password hashes не сохраняются
+в model и не попадают в diagnostics.
+
+Single option apply всегда сохраняет валидное resulting состояние пары.
+Произвольный coordinated переход обеих границ не является транзакцией: если
+ни один из двух возможных промежуточных states невалиден, отдельные apply
+fail-closed. Статическое направление dependency между MIN/MAX намеренно не
+вводится. Для ALT `PASS_MAX_DAYS=-1` является vendor sentinel unlimited и
+считается валидным независимо от `PASS_MIN_DAYS`.
+
 Package integration не меняет эту границу. DEB-пакет `fic` для Debian и Ubuntu
 устанавливает три физически принадлежащих пакету, по умолчанию выключенных
 `pam-auth-update` profile declaration: `fic-faillock-notify` размещает

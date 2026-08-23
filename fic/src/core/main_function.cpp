@@ -465,6 +465,23 @@ bool initPolicyRegistry(
         std::make_unique<SssdOfflineCredentialsExpirationPolicy>(executables));
     cafArr.push_back(std::make_unique<KerberosTicketLifetimePolicy>());
 
+    // Identity and access: login.defs and local password aging
+    cafArr.push_back(std::make_unique<PasswordMinAgeDaysPolicy>(
+        platform.passwordAging));
+    cafArr.push_back(std::make_unique<PasswordMaxAgeDaysPolicy>(
+        platform.passwordAging));
+    cafArr.push_back(std::make_unique<PasswordExpirationWarningDaysPolicy>(
+        platform.passwordAging));
+    cafArr.push_back(std::make_unique<RegularUserUidMinPolicy>(
+        platform.passwordAging));
+    cafArr.push_back(std::make_unique<RegularUserUidMaxPolicy>(
+        platform.passwordAging));
+    cafArr.push_back(
+        std::make_unique<PasswordAgingApplyToExistingAccountsPolicy>(
+            platform.passwordAging, executables));
+    cafArr.push_back(std::make_unique<PasswordAgingEnforceForRootPolicy>(
+        platform.passwordAging, executables));
+
     //Настройки ядра (SYSCTL)
     cafArr.push_back(std::make_unique<SYSCTL_dmesg_restrict>());
     cafArr.push_back(std::make_unique<SYSCTL_fd_limits>());

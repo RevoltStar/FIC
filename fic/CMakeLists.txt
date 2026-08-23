@@ -74,6 +74,11 @@ target_link_libraries(fic PRIVATE fic-policy)
 target_link_libraries(fic PRIVATE fic-platform)
 set(FIC_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}")
+file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/config")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scripts/config/IDENTITY_ACCESS.conf.in"
+    "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
+    @ONLY)
 foreach(template
         service/fic.service
         service/fic-notify.service
@@ -98,7 +103,10 @@ install(PROGRAMS
         "${FIC_GENERATED_SCRIPTS_DIR}/notify/fic-notify-dispatcher"
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-udevadm-trigger"
         DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
-install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}" COMPONENT fic)
+install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}"
+        COMPONENT fic PATTERN "IDENTITY_ACCESS.conf.in" EXCLUDE)
+install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
+        DESTINATION "${FIC_DEFAULT_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY src/scripts/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
 install(FILES

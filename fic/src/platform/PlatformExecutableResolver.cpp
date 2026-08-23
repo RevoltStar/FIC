@@ -29,6 +29,8 @@ const char* executableIdName(ExecutableId id) {
         return "update-grub";
     case ExecutableId::Nft:
         return "nft";
+    case ExecutableId::Chage:
+        return "chage";
     }
     return "unknown";
 }
@@ -43,7 +45,8 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Dmidecode,
         ExecutableId::Udevadm,
         ExecutableId::UpdateGrub,
-        ExecutableId::Nft
+        ExecutableId::Nft,
+        ExecutableId::Chage
     };
 }
 

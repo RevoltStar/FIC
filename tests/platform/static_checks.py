@@ -212,6 +212,7 @@ def main():
         "ExecutableId::Udevadm",
         "ExecutableId::UpdateGrub",
         "ExecutableId::Nft",
+        "ExecutableId::Chage",
         "packageManager.queryCandidates",
         "sudo.mainConfigPath",
         "pam.configDirectories",
@@ -234,6 +235,24 @@ def main():
             require(
                 section in source,
                 f"platform profile {name} does not define {section}",
+            )
+        require(
+            "ExecutableId::Chage" in source
+            and '"/usr/bin/chage"' in source,
+            f"{name} profile does not map the trusted chage executable",
+        )
+        if name == "alt-p11":
+            require(
+                "LocalShadowKind::TcbDirectory" in source
+                and "defaults.maxDays = -1" in source
+                and "defaults.warningDays = -1" in source,
+                "ALT p11 profile does not define effective TCB aging defaults",
+            )
+        else:
+            require(
+                "profile.passwordAging.defaults = {0, 99999, 7, 1000, 60000}"
+                in source,
+                f"{name} profile does not pin vendor password-aging defaults",
             )
 
     alt_profile = profiles["alt-p11"]
@@ -321,13 +340,20 @@ def main():
         "RequiredPamEnforcementPolicy",
         "SssdOfflineCredentialsExpirationPolicy",
         "KerberosTicketLifetimePolicy",
+        "PasswordMinAgeDaysPolicy",
+        "PasswordMaxAgeDaysPolicy",
+        "PasswordExpirationWarningDaysPolicy",
+        "RegularUserUidMinPolicy",
+        "RegularUserUidMaxPolicy",
+        "PasswordAgingApplyToExistingAccountsPolicy",
+        "PasswordAgingEnforceForRootPolicy",
     ):
         require(
             policy_class in registry,
             f"identity-access policy {policy_class} is not registered in PolicyRegistry",
         )
     identity_config = (
-        root / "fic/src/scripts/config/IDENTITY_ACCESS.conf"
+        root / "fic/src/scripts/config/IDENTITY_ACCESS.conf.in"
     ).read_text(encoding="utf-8")
     for policy_name in (
         "password_min_length",
@@ -341,6 +367,13 @@ def main():
         "required_pam_enforcement",
         "sssd_offline_credentials_expiration",
         "kerberos_ticket_lifetime",
+        "password_min_age_days",
+        "password_max_age_days",
+        "password_expiration_warning_days",
+        "regular_user_uid_min",
+        "regular_user_uid_max",
+        "password_aging_apply_to_existing_accounts",
+        "password_aging_enforce_for_root",
     ):
         require(
             f"{policy_name}.value=" in identity_config
@@ -356,7 +389,10 @@ def main():
                 f"{language} localization does not define "
                 f"IDENTITY_ACCESS/{policy_name}",
             )
-            for submodule in ("PAM", "SSSD", "KERBEROS", "NSS", "COMPOSITE"):
+            for submodule in (
+                "PAM", "SSSD", "KERBEROS", "NSS", "COMPOSITE",
+                "PASSWORD_AGING",
+            ):
                 require(
                     f"[module:IDENTITY_ACCESS][submodule:{submodule}]"
                     in localization,
@@ -434,6 +470,7 @@ def main():
         "Dmidecode",
         "Udevadm",
         "Nft",
+        "Chage",
     ):
         require(
             f"ExecutableId::{executable_id}" in resolver,
@@ -602,7 +639,8 @@ def main():
     for config_name in (
         "AUDIT", "DAC", "DC", "FIREWALL", "GLOBAL", "IDENTITY_ACCESS", "NET", "OSS", "SYSCTL"
     ):
-        config = (root / f"fic/src/scripts/config/{config_name}.conf").read_text(
+        suffix = ".conf.in" if config_name == "IDENTITY_ACCESS" else ".conf"
+        config = (root / f"fic/src/scripts/config/{config_name}{suffix}").read_text(
             encoding="utf-8"
         )
         require(

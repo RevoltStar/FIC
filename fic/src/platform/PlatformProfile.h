@@ -16,7 +16,8 @@ enum class ExecutableId {
     Dmidecode,
     Udevadm,
     UpdateGrub,
-    Nft
+    Nft,
+    Chage
 };
 
 struct PlatformExecutableSpec {
@@ -89,6 +90,28 @@ struct PamPlatformConfig {
     std::filesystem::path passwordHistoryConfigPath;
 };
 
+enum class LocalShadowKind {
+    ShadowFile,
+    TcbDirectory
+};
+
+struct PasswordAgingDefaults {
+    int minDays = 0;
+    int maxDays = 99999;
+    int warningDays = 7;
+    int uidMin = 1000;
+    int uidMax = 60000;
+};
+
+struct PasswordAgingPlatformConfig {
+    std::filesystem::path loginDefsPath = "/etc/login.defs";
+    std::filesystem::path passwdPath = "/etc/passwd";
+    std::filesystem::path shadowPath = "/etc/shadow";
+    LocalShadowKind shadowKind = LocalShadowKind::ShadowFile;
+    std::filesystem::path tcbDirectory = "/etc/tcb";
+    PasswordAgingDefaults defaults;
+};
+
 struct DisplayManagerPlatformConfig {
     std::filesystem::path sddmConfigPath;
     std::filesystem::path lightDmConfigPath;
@@ -123,6 +146,7 @@ struct PlatformProfile {
     SudoPlatformConfig sudo;
     SysctlPlatformConfig sysctl;
     PamPlatformConfig pam;
+    PasswordAgingPlatformConfig passwordAging;
     DisplayManagerPlatformConfig displayManager;
     GrubPlatformConfig grub;
     DacPlatformConfig dac;

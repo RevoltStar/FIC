@@ -4,65 +4,63 @@
 
 - Дата: 2026-08-23.
 - Ветка: `main`.
-- Базовый commit задачи: `e474dc2`.
+- Базовый commit задачи: `12c6a56`.
 
 ## Current task
 
-- Общий декларативный механизм Required/Recommended dependencies между FIC
-  policies. Реальные production dependencies и `login.defs` намеренно не
-  входят в текущую итерацию.
+- Управление `/etc/login.defs` и password aging существующих локальных
+  accounts в `IDENTITY_ACCESS/PASSWORD_AGING`.
 
 ## Accepted architecture / invariants
 
-- `PolicyRegistry` остаётся storage; scheduling выполняет отдельный
-  `PolicyExecutionPlanner`. `std::map` и status enum не менялись.
-- Dependency metadata создаётся constructor-time, замораживается при
-  регистрации и задаётся полным `module:submodule:policy` reference.
-- Candidate registry заменяет действующий только после проверки missing,
-  self, duplicate/mixed-strength dependencies и cycles любого strength.
-- Disabled policy не раскрывает dependency graph. Required non-Applied
-  dependency блокирует dependent как Failed; Recommended создаёт WARN
-  diagnostic и не блокирует собственный `Policy::apply()`.
-- Dependency policies никогда автоматически не ENABLE. Shared dependency
-  выполняется один раз; hard-excluded module не возвращается через graph edge.
-- Успех request определяется requested roots. Dependency-only results остаются
-  видимыми в `PolicyApplySummary`, но Failed Recommended dependency не делает
-  успешную single root policy неуспешной.
+- Operational policies используют существующие Required dependencies; они не
+  вызывают config policies вручную и повторно читают фактический `login.defs`.
+- `LoginDefsFileHandler` сохраняет чужие строки и fail-closed отклоняет
+  duplicate/malformed target keys; запись атомарна, с reload/postcondition.
+- Bulk обрабатывает только local passwd + structured local shadow accounts в
+  `UID_MIN..UID_MAX`, всегда исключая root. Root имеет отдельную policy.
+- Debian/Ubuntu читают `/etc/shadow`; ALT p11 использует per-user TCB. Запись
+  выполняется только trusted profile-resolved `/usr/bin/chage`, без shell и
+  без `-d`; `sp_lstchg` обязан остаться неизменным.
+- `PASS_MAX_DAYS=-1` — vendor sentinel unlimited на ALT и допустим независимо
+  от `PASS_MIN_DAYS`. Иначе проверяется MIN <= MAX; UID_MIN <= UID_MAX всегда.
+- Separate MIN/MAX policies не образуют транзакцию coordinated transition:
+  невалидный промежуточный state отклоняется; dependency core не расширялся.
 
 ## Completed
 
-- В `fic-policy` добавлены `PolicyRef`, dependency strength/metadata,
-  constructor helpers и requested-root metadata в summary.
-- Добавлены fail-closed graph validation, `PolicyExecutionPlanner` и единый
-  `PolicyApplication` layer для single/module/all/excluded scopes.
-- `apply_policy` теперь возвращает весь multi-result summary без скрытого
-  применения dependencies; daemon JSON и CLI уже поддерживают массив results.
-- Добавлены dummy-policy tests для Required/Recommended, disabled pruning,
-  transitive/mixed chains, shared nodes, exclusions, deterministic ordering,
-  immutable metadata, request/batch success и invalid/cyclic graphs.
+- Добавлены пять login.defs option policies и две operational policies с
+  Required dependency declarations 5/3.
+- Добавлены platform defaults/paths/shadow backend, `ExecutableId::Chage` и
+  package-trust integration через общий resolver/all-executable registry.
+- Default `IDENTITY_ACCESS.conf` генерируется для выбранного profile.
+- Добавлены local shadow/TCB reader, полный preflight, idempotency,
+  per-account postcondition и partial-failure stop.
+- Добавлены handler/option/operational/dependency/platform/static tests и
+  RU/EN localization.
 
 ## Changed areas
 
-- `fic-common/fic-policy/`;
-- `fic/src/core/` и daemon single-apply routing;
-- core/registry tests и dependency architecture documentation.
+- `fic/src/modules/identity_access/submodules/password_aging/`;
+- platform profiles/resolver и daemon policy registration;
+- default IDENTITY_ACCESS config generation, localization, tests и architecture docs.
 
 ## Validation
 
-- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- Target build `policy_execution_planner_tests`, `module_registry_tests`,
-  `fic`, `fic-cli`, `policy_service_tests` — успешно.
-- Целевые planner/registry/GUI-service tests — 3/3 успешно.
-- `cmake --build build-check -j2` — полный build всех компонентов успешно.
-- Полный CTest: 38 passed, 4 environment-dependent skipped; новый test прошёл.
-  Один воспроизводимый несвязанный failure: `ipc_protocol_validation_tests`
-  assertion для status request.
-- `git diff --check` — успешно до финального обновления HANDOFF.
+- Ubuntu 24.04 full build — успешно.
+- `password_aging_tests`, dependency planner, platform profile/static tests —
+  успешно.
+- ALT p11 configure, generated defaults и platform profile/static tests —
+  успешно.
+- Staged install содержит generated `IDENTITY_ACCESS.conf`, но не template —
+  успешно.
+- Полный CTest: 39 passed, 4 environment-dependent skipped; один известный
+  несвязанный failure `ipc_protocol_validation_tests` для status request.
 
 ## Remaining
 
-- Production policies пока не объявляют dependencies; mechanism проверен только
-  dummy-policy unit tests, без host mutations.
-- `login.defs` и password aging остановлены до отдельной следующей задачи; ни
-  один связанный handler/policy/config не добавлялся.
-- Несвязанный `ipc_protocol_validation_tests` в scope задачи не исправлялся.
+- Реальный system `chage` намеренно не запускался; runtime проверен через
+  injected runner/reader и structured temporary passwd/shadow/TCB files.
+- UID policy model ограничен текущим `IntPolicyTypeValue` (`INT_MAX`), хотя
+  некоторые Linux ABI представляют более широкий `uid_t`; расширение общего
+  GUI/IPC numeric contract не входило в эту задачу.
