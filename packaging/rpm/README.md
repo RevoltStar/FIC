@@ -18,6 +18,13 @@ The packaging script always configures the daemon with
 container. The resulting daemon validates `ID=altlinux` and
 `ALT_BRANCH_ID=p11` before starting.
 
+ALT packages do not install `/usr/share/pam-configs/fic-*`, do not depend on
+the Debian package `libpam-runtime` and do not invoke `pam-auth-update`. PAM
+topology activation remains an administrator responsibility until a separate
+ALT-specific integration is designed around the native `pam-config` /
+`pam-config-control` mechanism; that integration is outside the current
+package contract.
+
 ## Package contents
 
 `fic-dick` installs:

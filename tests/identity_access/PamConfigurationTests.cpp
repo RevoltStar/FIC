@@ -9,6 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -781,6 +782,64 @@ void testEffectiveKnownProviders() {
     }
 }
 
+void testDebianPamAuthUpdateGeneratedStackIsEffective() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    platform.passwordServices = {"passwd"};
+
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth include common-auth\n"
+        "account include common-account\n");
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password include common-password\n");
+    writeFile(
+        temp.path() / "pam.d/common-auth",
+        "auth requisite pam_faillock.so preauth\n"
+        "auth sufficient pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth requisite pam_deny.so\n");
+    writeFile(
+        temp.path() / "pam.d/common-account",
+        "account required pam_faillock.so\n"
+        "account required pam_unix.so\n");
+    writeFile(
+        temp.path() / "pam.d/common-password",
+        "password requisite pam_pwquality.so\n"
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password required pam_unix.so\n");
+    for (const auto* module : {
+             "pam_faillock.so",
+             "pam_pwquality.so",
+             "pam_pwhistory.so"}) {
+        writeFile(temp.path() / "security" / module, "test", 0555);
+    }
+
+    for (const auto& expectation : {
+             std::pair{fic::identity::pam::PamCapability::AuthenticationLockout,
+                       fic::identity::pam::PamProviderKind::PamFaillock},
+             std::pair{fic::identity::pam::PamCapability::PasswordQuality,
+                       fic::identity::pam::PamProviderKind::PamPwquality},
+             std::pair{fic::identity::pam::PamCapability::PasswordHistory,
+                       fic::identity::pam::PamProviderKind::PamPwhistory}}) {
+        const auto& services =
+            expectation.first ==
+                    fic::identity::pam::PamCapability::AuthenticationLockout
+                ? platform.authenticationServices
+                : platform.passwordServices;
+        const auto verification = verifyCapability(
+            platform, expectation.first, expectation.second, services);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Effective,
+            "expected pam-auth-update stack was rejected: " +
+                fic::identity::pam::formatPamCapabilityVerification(
+                    verification));
+    }
+}
+
 void testSubstackBoundaryIsEffective() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -1145,6 +1204,7 @@ int main() {
         testOptionFileFlagEnableDisable();
         testMalformedOptionFileFlagFailsWithoutWrite();
         testEffectiveKnownProviders();
+        testDebianPamAuthUpdateGeneratedStackIsEffective();
         testSubstackBoundaryIsEffective();
         testFaillockAccountTopologyIsEffective();
         testMissingInactiveAndBrokenStates();

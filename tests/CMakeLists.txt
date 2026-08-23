@@ -29,6 +29,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_SOURCE_DIR}
     )
     add_test(
+        NAME pam_packaging_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/packaging/PamPackagingChecks.py
+                ${CMAKE_SOURCE_DIR}
+    )
+    add_test(
         NAME firewall_static_checks
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/firewall/static_checks.py

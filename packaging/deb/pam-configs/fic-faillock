@@ -1,0 +1,6 @@
+Name: FIC PAM faillock failed authentication counter
+Default: no
+Priority: 0
+Auth-Type: Primary
+Auth:
+	[default=die]			pam_faillock.so authfail

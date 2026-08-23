@@ -4,62 +4,63 @@
 
 - Дата: 2026-08-23.
 - Ветка: `main`.
-- Базовый commit задачи: `acee755`.
+- Базовый commit задачи: `9d56ff9`.
 
 ## Current task
 
-- Semantic control-flow verification обязательных PAM enforcement mechanisms
-  и policy `required_pam_enforcement`.
+- Debian/Ubuntu package integration для по умолчанию выключенных
+  `pam-auth-update` profiles FIC без изменения PAM policy architecture.
 
 ## Accepted architecture / invariants
 
-- `PamConfiguration` остаётся единственным PAM parser: прежний flat view
-  сохранён, а structured effective stack сохраняет границы `substack`.
-- `PamControlFlowAnalyzer` моделирует Linux-PAM simple/extended controls,
-  numeric jumps, `include`, `substack`, `done`, `die`, `ignore` и `reset`.
-- Неизвестные PAM modules моделируются недетерминированно; если отсутствие
-  successful bypass нельзя доказать, verification завершается fail-closed.
-- Каждая обычная PAM policy сама проверяет собственную capability. Новая
-  policy не является dependency declaration и не provision/remediate PAM.
-- Верхнеуровневый результат остаётся `PolicyApplyStatus::Failed`; конкретные
-  enforcement state, violation kind и path передаются через captured logs.
+- PAM policies по-прежнему только inspect/prove/configure provider options/
+  verify; они не устанавливают packages, не вызывают `pam-auth-update` и не
+  меняют topology.
+- Debian/Ubuntu package владеет declarations в `/usr/share/pam-configs/`, а
+  администратор явно активирует их. Источник истины после активации —
+  `PamConfiguration` -> `PamControlFlowAnalyzer` -> `PamCapabilityVerifier`.
+- ALT p11 не получает Debian profiles, dependency или maintainer-script calls;
+  будущая интеграция должна отдельно использовать штатный ALT mechanism.
 
 ## Completed
 
-- Добавлены состояния `Missing`, `Inactive`, `Ineffective`, `Broken`,
-  `Conflicting`, `Effective` и общий `PamCapabilityVerifier`.
-- Существующие `PamOptionPolicy` требуют semantic effectiveness до записи и
-  повторно проверяют её после записи.
-- Добавлена и зарегистрирована текстовая policy `required_pam_enforcement`
-  для `pam_faillock`, `pam_pwquality`, `pam_pwhistory` со строгим разбором,
-  trim, дедупликацией и отказом для пустых/неизвестных элементов.
-- Добавлены bypass diagnostics с source line, module result, control/action и
-  bounded symbolic state/transition/trace limits.
-- Обновлены default config, ru/en localization и PAM architecture contract.
+- В DEB `fic` добавлены физические profiles `fic-faillock-notify` (1025),
+  `fic-faillock` (0) и `fic-pwhistory` (1023), все `Default: no` и без policy
+  values.
+- Добавлены прямые dependencies `libpam-runtime`, `libpam-modules`.
+- `postinst configure` вызывает `pam-auth-update --package`; `prerm remove`
+  снимает все три profiles до удаления payload. `--enable` и `--force` не
+  используются, upgrade не сбрасывает выбор администратора.
+- Добавлен отдельный packaging contract test и verifier fixture ожидаемого
+  generated PAM stack; обновлены architecture и DEB/RPM package docs.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/submodules/pam/` и новая PAM policy;
-- PolicyRegistry registration, `IDENTITY_ACCESS.conf`, localization;
-- PAM/unit/policy/static tests и `docs/architecture-diagrams.md`.
+- `packaging/deb/`, включая новые `pam-configs/fic-*`;
+- PAM/packaging tests и `tests/CMakeLists.txt`;
+- `docs/architecture-diagrams.md`, DEB/RPM packaging README.
 
 ## Validation
 
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- `cmake --build build-check -j2` — полный build успешно, включая daemon, CLI,
-  GUI, session agent, device daemon и tests.
-- Целевые `pam_configuration_tests`, `identity_policy_hierarchy_tests`,
-  `platform_profile_static_checks` — успешно.
-- Полный `ctest --test-dir build-check --output-on-failure`: 36 passed,
-  4 sandbox-dependent skipped; 1 известный несвязанный failure
-  `ipc_protocol_validation_tests` на assertion для status request.
-- `git diff --check` — успешно до финального обновления HANDOFF.
+- `cmake --build build-check -j2` — полный build успешно.
+- Целевые PAM/policy/package/platform tests — 4/4 успешно.
+- Нативная сборка Ubuntu 24.04 всех пяти DEB с version
+  `0.0.0-pam-integration` — успешно; artifact `fic` проверен через `dpkg-deb`:
+  profiles являются regular files 0644, dependencies и maintainer scripts
+  соответствуют контракту, conffiles и запрещённых flags нет.
+- Полный CTest: 37 passed, 4 sandbox-dependent skipped, новый test включён;
+  один известный несвязанный failure `ipc_protocol_validation_tests` на
+  assertion для status request.
+- `bash -n` для DEB/RPM builders и `git diff --check` — успешно до финального
+  обновления HANDOFF.
 
 ## Remaining
 
-- Реальное применение PAM policies и изменение host PAM stack намеренно не
-  выполнялись; нужна staging-проверка на поддерживаемых platform profiles.
-- Analyzer моделирует documented outcomes известных providers и все outcomes
-  неизвестных modules, но не анализирует машинный код и не оценивает силу
-  provider options как отдельную password/lockout policy.
+- Реальный `pam-auth-update` и активация PAM profiles не запускались: ordering
+  проверен безопасным fixture и semantic verifier, но нужна staging runtime
+  проверка на поддерживаемых Debian/Ubuntu profiles.
+- ALT RPM в этой среде не собирался; отсутствие Debian integration проверено
+  статически. ALT-specific `pam-config` / `pam-config-control` integration
+  остаётся отдельной будущей задачей.
 - Несвязанный `ipc_protocol_validation_tests` в scope задачи не исправлялся.

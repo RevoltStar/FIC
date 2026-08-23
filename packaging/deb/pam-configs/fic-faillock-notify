@@ -1,0 +1,9 @@
+Name: FIC PAM faillock pre-authentication and account check
+Default: no
+Priority: 1025
+Auth-Type: Primary
+Auth:
+	requisite			pam_faillock.so preauth
+Account-Type: Primary
+Account:
+	required			pam_faillock.so

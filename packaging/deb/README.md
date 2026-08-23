@@ -34,6 +34,9 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - `/opt/fic/log`
 - `/opt/fic/notify`
 - `/lib/systemd/system/*` from `fic/src/scripts/service`
+- inactive package profiles `/usr/share/pam-configs/fic-faillock-notify`,
+  `/usr/share/pam-configs/fic-faillock` and
+  `/usr/share/pam-configs/fic-pwhistory`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`
@@ -66,6 +69,9 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 ## Dependency chain
 
 - `fic` depends on `fic-dick`
+- `fic` directly depends on `libpam-runtime` and `libpam-modules`: the first
+  provides `pam-auth-update`, while the second owns the PAM modules referenced
+  by the FIC profiles
 - `fic` recommends `fic-session-agent`
 - `fic-gui` depends on both `fic` and `fic-dick`
 
@@ -124,6 +130,33 @@ FIC ignores unrelated paths and verifies only the affected logical executables
 against package checksums before atomically refreshing their SHA-256 references.
 A failed package integrity check leaves all existing references unchanged and
 fails the maintainer-script action.
+
+## PAM integration
+
+The Debian and Ubuntu `fic` package physically owns three declarations under
+`/usr/share/pam-configs/`. They are ordinary package data, not conffiles, and
+all have `Default: no`. Package installation and upgrade call
+`pam-auth-update --package` so the operating system can regenerate its managed
+stacks without enabling an FIC profile or overwriting a locally modified stack.
+The removal path unregisters the profiles before their declarations disappear.
+Maintainer scripts never use `--enable` or `--force`, and upgrades do not reset
+the administrator's selection.
+
+The administrator explicitly activates the required topology:
+
+```bash
+sudo pam-auth-update --enable fic-faillock-notify fic-faillock
+sudo pam-auth-update --enable fic-pwhistory
+```
+
+The profiles contain only topology and fixed role arguments (`preauth`,
+`authfail`, `use_authtok`). Policy values remain in
+`/etc/security/faillock.conf` and `/etc/security/pwhistory.conf`. FIC policies
+do not install packages, invoke `pam-auth-update`, activate modules or rewrite
+PAM topology. After activation, `required_pam_enforcement` can be enabled to
+check the system invariant independently: `PamConfiguration`,
+`PamControlFlowAnalyzer` and `PamCapabilityVerifier` analyze the resulting
+effective PAM graph instead of trusting profile selection state.
 
 ## Bundled Qt runtime for fic-gui
 

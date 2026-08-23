@@ -590,6 +590,17 @@ flowchart TD
 как системный invariant; он не объявляет dependencies другим policies, не
 устанавливает пакеты и не исправляет чужой PAM stack.
 
+Package integration не меняет эту границу. DEB-пакет `fic` для Debian и Ubuntu
+устанавливает три физически принадлежащих пакету, по умолчанию выключенных
+`pam-auth-update` profile declaration: `fic-faillock-notify` размещает
+`preauth` и account check, `fic-faillock` — `authfail`, а `fic-pwhistory` —
+password-history check. `postinst configure` вызывает только
+`pam-auth-update --package`; активацию администратор выполняет явно, после чего
+semantic verifier анализирует получившийся effective graph. Policy values
+остаются в `faillock.conf` и `pwhistory.conf`. ALT p11 не получает эти файлы и
+не вызывает Debian-specific mechanism; будущая интеграция должна отдельно
+использовать штатный ALT `pam-config` / `pam-config-control`.
+
 Классы identity-модуля разделяют policy metadata и владение системной
 конфигурацией:
 

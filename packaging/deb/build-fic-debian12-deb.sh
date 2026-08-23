@@ -590,6 +590,10 @@ if [ -x /opt/fic/bin/fic ]; then
     /opt/fic/bin/fic --trust-sync-platform
 fi
 
+if [ "\${1:-}" = "configure" ]; then
+    pam-auth-update --package
+fi
+
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf || true
 fi
@@ -660,6 +664,13 @@ write_system_integration_symlink_prerm() {
     cat > "$package_root/DEBIAN/prerm" <<EOF
 #!/bin/sh
 set -e
+
+if [ "\$1" = "remove" ]; then
+    pam-auth-update --package --remove \
+        fic-faillock-notify \
+        fic-faillock \
+        fic-pwhistory
+fi
 
 if [ "\$1" = "remove" ] && [ -L "/bin/$command_name" ] && [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
     rm -f "/bin/$command_name"
@@ -756,6 +767,19 @@ install_cmake_component() {
     local package_root="$3"
 
     DESTDIR="$package_root" cmake --install "$build_dir" --component "$component" >&2
+}
+
+install_fic_pam_profiles() {
+    local package_root="$1"
+    local profile
+    local profile_dir="$package_root/usr/share/pam-configs"
+
+    mkdir -p "$profile_dir"
+    for profile in fic-faillock-notify fic-faillock fic-pwhistory; do
+        install -m 0644 \
+            "$ROOT_DIR/packaging/deb/pam-configs/$profile" \
+            "$profile_dir/$profile"
+    done
 }
 
 collect_bundled_runtime_closure() {
@@ -1012,11 +1036,12 @@ build_fic_package() {
     output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     install_cmake_component "$FIC_BUILD_DIR" fic "$package_root"
+    install_fic_pam_profiles "$package_root"
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")"
-    package_depends="$(join_depends "$binary_depends" "fic-dick (= ${PACKAGE_VERSION})" "libnotify-bin" "nftables")"
+    package_depends="$(join_depends "$binary_depends" "fic-dick (= ${PACKAGE_VERSION})" "libnotify-bin" "nftables" "libpam-runtime" "libpam-modules")"
 
     write_control_file \
         "$package_root" \
