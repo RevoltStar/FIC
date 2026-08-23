@@ -31,6 +31,14 @@ enum class ActionKind {
     Jump
 };
 
+enum class PamModuleRole {
+    CredentialAuthenticator,
+    Gate,
+    Enforcement,
+    TrustedAuthenticator,
+    Unknown
+};
+
 struct ControlAction {
     ActionKind kind = ActionKind::Bad;
     std::size_t jump = 0;
@@ -39,6 +47,16 @@ struct ControlAction {
 struct ParsedControl {
     std::map<std::string, ControlAction> actions;
     ControlAction defaultAction;
+};
+
+struct TrustedAuthenticationBypassEvidence {
+    std::string service;
+    std::string module;
+    fic::platform::PamTrustedAuthenticationBypassReason reason =
+        fic::platform::PamTrustedAuthenticationBypassReason::
+            AlreadyPrivilegedCaller;
+    std::filesystem::path source;
+    std::size_t line = 0;
 };
 
 struct Evidence {
@@ -51,6 +69,8 @@ struct Evidence {
     bool accountSucceeded = false;
     bool authenticationSuccessObserved = false;
     bool authenticationFailureObserved = false;
+    std::optional<TrustedAuthenticationBypassEvidence>
+        trustedAuthenticationBypass;
 };
 
 struct ExecutionState {
@@ -222,6 +242,12 @@ std::vector<std::string> moduleOutcomes(const PamRule& rule) {
         }
         return {"auth_err"};
     }
+    if (module == "pam_rootok.so") {
+        return {"success", "auth_err"};
+    }
+    if (module == "pam_succeed_if.so") {
+        return {"success", "auth_err", "service_err"};
+    }
     if (module == "pam_faillock.so") {
         return {"success", "auth_err", "buf_err", "conv_err",
                 "incomplete", "ignore"};
@@ -266,13 +292,32 @@ bool authenticationFailureResult(const std::string& result) {
     return failures.find(result) != failures.end();
 }
 
-bool authenticationDecisionModule(const std::string& module) {
-    static const std::set<std::string> nonCredentialModules = {
-        "pam_access.so", "pam_deny.so", "pam_env.so", "pam_faildelay.so",
-        "pam_faillock.so", "pam_nologin.so", "pam_sepermit.so",
-        "pam_securetty.so", "pam_shells.so", "pam_time.so"
+PamModuleRole moduleRole(const std::string& module) {
+    static const std::set<std::string> credentialAuthenticators = {
+        "pam_ccreds.so", "pam_krb5.so", "pam_ldap.so", "pam_pkcs11.so",
+        "pam_sss.so", "pam_tcb.so", "pam_unix.so", "pam_userpass.so",
+        "pam_winbind.so"
     };
-    return nonCredentialModules.find(module) == nonCredentialModules.end();
+    static const std::set<std::string> gates = {
+        "pam_access.so", "pam_deny.so", "pam_env.so", "pam_faildelay.so",
+        "pam_nologin.so", "pam_securetty.so", "pam_sepermit.so",
+        "pam_shells.so", "pam_succeed_if.so", "pam_time.so",
+        "pam_wheel.so"
+    };
+    if (credentialAuthenticators.find(module) !=
+        credentialAuthenticators.end()) {
+        return PamModuleRole::CredentialAuthenticator;
+    }
+    if (gates.find(module) != gates.end()) {
+        return PamModuleRole::Gate;
+    }
+    if (module == "pam_faillock.so") {
+        return PamModuleRole::Enforcement;
+    }
+    if (module == "pam_rootok.so") {
+        return PamModuleRole::TrustedAuthenticator;
+    }
+    return PamModuleRole::Unknown;
 }
 
 void recordEvidence(ExecutionState& state,
@@ -302,12 +347,44 @@ void recordEvidence(ExecutionState& state,
         return;
     }
 
+    const PamModuleRole role = moduleRole(module);
     if (rule.group == PamManagementGroup::Auth && !expectedProvider &&
-        authenticationDecisionModule(module)) {
+        (role == PamModuleRole::CredentialAuthenticator ||
+         role == PamModuleRole::Unknown)) {
         state.evidence.authenticationSuccessObserved |= result == "success";
         state.evidence.authenticationFailureObserved |=
             authenticationFailureResult(result);
+    } else if (rule.group == PamManagementGroup::Auth &&
+               role == PamModuleRole::TrustedAuthenticator) {
+        state.evidence.authenticationSuccessObserved |= result == "success";
     }
+}
+
+void recordTrustedAuthenticationBypass(
+    ExecutionState& state,
+    const PamRule& rule,
+    const std::string& result,
+    const ControlAction& action,
+    const std::string& service,
+    const fic::platform::PamPlatformConfig& platformConfig) {
+    if (rule.group != PamManagementGroup::Auth || result != "success" ||
+        action.kind != ActionKind::Done) {
+        return;
+    }
+    const std::string module = moduleBaseName(rule);
+    const auto matched = std::find_if(
+        platformConfig.trustedAuthenticationBypasses.begin(),
+        platformConfig.trustedAuthenticationBypasses.end(),
+        [&](const auto& candidate) {
+            return candidate.service == service &&
+                candidate.module == module;
+        });
+    if (matched == platformConfig.trustedAuthenticationBypasses.end()) {
+        return;
+    }
+    state.evidence.trustedAuthenticationBypass =
+        TrustedAuthenticationBypassEvidence{
+            service, module, matched->reason, rule.source, rule.line};
 }
 
 std::string actionName(const ControlAction& action) {
@@ -330,6 +407,20 @@ std::string actionName(const ControlAction& action) {
     return "unknown";
 }
 
+bool sameTrustedAuthenticationBypass(
+    const std::optional<TrustedAuthenticationBypassEvidence>& left,
+    const std::optional<TrustedAuthenticationBypassEvidence>& right) {
+    if (left.has_value() != right.has_value()) {
+        return false;
+    }
+    return !left.has_value() ||
+        (left->service == right->service &&
+         left->module == right->module &&
+         left->reason == right->reason &&
+         left->source == right->source &&
+         left->line == right->line);
+}
+
 bool sameState(const ExecutionState& left, const ExecutionState& right) {
     const auto& a = left.evidence;
     const auto& b = right.evidence;
@@ -342,7 +433,10 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
         a.authsuccSucceeded == b.authsuccSucceeded &&
         a.accountSucceeded == b.accountSucceeded &&
         a.authenticationSuccessObserved == b.authenticationSuccessObserved &&
-        a.authenticationFailureObserved == b.authenticationFailureObserved;
+        a.authenticationFailureObserved == b.authenticationFailureObserved &&
+        sameTrustedAuthenticationBypass(
+            a.trustedAuthenticationBypass,
+            b.trustedAuthenticationBypass);
 }
 
 bool addUnique(std::vector<ExecutionState>& states,
@@ -369,6 +463,8 @@ bool stackSucceeded(const ExecutionState& state) {
 bool executeStack(const std::vector<PamStackEntry>& entries,
                   const ExecutionState& initial,
                   PamProviderKind provider,
+                  const std::string& service,
+                  const fic::platform::PamPlatformConfig& platformConfig,
                   std::vector<ExecutionState>& completed,
                   std::string& error,
                   ExecutionBudget& budget,
@@ -397,8 +493,16 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                     nestedInitial.traceTruncated = true;
                 }
                 std::vector<ExecutionState> nestedCompleted;
-                if (!executeStack(entry.substack, nestedInitial, provider,
-                                  nestedCompleted, error, budget, depth + 1)) {
+                if (!executeStack(
+                        entry.substack,
+                        nestedInitial,
+                        provider,
+                        service,
+                        platformConfig,
+                        nestedCompleted,
+                        error,
+                        budget,
+                        depth + 1)) {
                     return false;
                 }
                 for (auto& state : nestedCompleted) {
@@ -485,6 +589,15 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                 }
                 }
 
+                if (terminate && stackSucceeded(state)) {
+                    recordTrustedAuthenticationBypass(
+                        state,
+                        entry.rule,
+                        result,
+                        action,
+                        service,
+                        platformConfig);
+                }
                 if (terminate) {
                     if (!addUnique(completed, std::move(state), error)) {
                         return false;
@@ -553,14 +666,52 @@ void addFirstViolation(PamControlFlowAnalysis& analysis,
     }
 }
 
+void addAcceptedTrustedAuthenticationBypass(
+    PamControlFlowAnalysis& analysis,
+    const ExecutionState& state) {
+    if (!state.evidence.trustedAuthenticationBypass.has_value()) {
+        return;
+    }
+    const auto& evidence = *state.evidence.trustedAuthenticationBypass;
+    const bool duplicate = std::any_of(
+        analysis.acceptedTrustedAuthenticationBypasses.begin(),
+        analysis.acceptedTrustedAuthenticationBypasses.end(),
+        [&](const auto& existing) {
+            return existing.service == evidence.service &&
+                existing.module == evidence.module &&
+                existing.reason == evidence.reason &&
+                existing.source == evidence.source &&
+                existing.line == evidence.line;
+        });
+    if (!duplicate) {
+        analysis.acceptedTrustedAuthenticationBypasses.push_back({
+            evidence.service,
+            evidence.module,
+            evidence.reason,
+            evidence.source,
+            evidence.line,
+            state.trace,
+            state.traceTruncated
+        });
+    }
+}
+
 bool analyzePasswordStack(const PamEffectiveStack& stack,
                           PamProviderKind provider,
+                          const fic::platform::PamPlatformConfig& platformConfig,
                           PamControlFlowAnalysis& analysis,
                           std::string& error) {
     std::vector<ExecutionState> states;
     ExecutionBudget budget;
     if (!executeStack(
-            stack.entries, ExecutionState{}, provider, states, error, budget)) {
+            stack.entries,
+            ExecutionState{},
+            provider,
+            stack.service,
+            platformConfig,
+            states,
+            error,
+            budget)) {
         return false;
     }
     const auto successful = std::find_if(
@@ -587,6 +738,7 @@ bool analyzePasswordStack(const PamEffectiveStack& stack,
 }
 
 bool analyzeFaillockStack(PamConfiguration& configuration,
+                          const fic::platform::PamPlatformConfig& platformConfig,
                           const std::string& service,
                           PamControlFlowAnalysis& analysis,
                           std::string& error) {
@@ -597,9 +749,15 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
     }
     std::vector<ExecutionState> authStates;
     ExecutionBudget authBudget;
-    if (!executeStack(authStack.entries, ExecutionState{},
-                      PamProviderKind::PamFaillock, authStates, error,
-                      authBudget)) {
+    if (!executeStack(
+            authStack.entries,
+            ExecutionState{},
+            PamProviderKind::PamFaillock,
+            service,
+            platformConfig,
+            authStates,
+            error,
+            authBudget)) {
         return false;
     }
     const bool authsuccTopology = stackHasFaillockRole(
@@ -617,6 +775,10 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
 
     for (const auto& state : authStates) {
         if (stackSucceeded(state)) {
+            if (state.evidence.trustedAuthenticationBypass.has_value()) {
+                addAcceptedTrustedAuthenticationBypass(analysis, state);
+                continue;
+            }
             if ((state.evidence.authenticationFailureObserved &&
                  !state.evidence.authenticationSuccessObserved) ||
                 !state.evidence.providerReached ||
@@ -660,9 +822,15 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
     }
     std::vector<ExecutionState> accountStates;
     ExecutionBudget accountBudget;
-    if (!executeStack(accountStack.entries, ExecutionState{},
-                      PamProviderKind::PamFaillock, accountStates, error,
-                      accountBudget)) {
+    if (!executeStack(
+            accountStack.entries,
+            ExecutionState{},
+            PamProviderKind::PamFaillock,
+            service,
+            platformConfig,
+            accountStates,
+            error,
+            accountBudget)) {
         return false;
     }
     const auto accountSuccess = std::find_if(
@@ -692,6 +860,7 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
 
 bool PamControlFlowAnalyzer::analyze(
     PamConfiguration& configuration,
+    const fic::platform::PamPlatformConfig& platformConfig,
     const std::string& service,
     PamCapability capability,
     PamProviderKind provider,
@@ -700,14 +869,16 @@ bool PamControlFlowAnalyzer::analyze(
     analysis = PamControlFlowAnalysis{};
     bool analyzed = false;
     if (capability == PamCapability::AuthenticationLockout) {
-        analyzed = analyzeFaillockStack(configuration, service, analysis, error);
+        analyzed = analyzeFaillockStack(
+            configuration, platformConfig, service, analysis, error);
     } else {
         PamEffectiveStack stack;
         if (!configuration.buildEffectiveStack(
                 service, PamManagementGroup::Password, stack, error)) {
             return false;
         }
-        analyzed = analyzePasswordStack(stack, provider, analysis, error);
+        analyzed = analyzePasswordStack(
+            stack, provider, platformConfig, analysis, error);
     }
     if (!analyzed) {
         PamFlowViolation violation;

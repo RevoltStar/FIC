@@ -6,6 +6,7 @@
 #include <fstream>
 #include <set>
 #include <sstream>
+#include <utility>
 
 namespace fic::platform {
 namespace {
@@ -176,6 +177,44 @@ bool validatePamServices(const std::vector<std::string>& services,
     return true;
 }
 
+bool validatePamTrustedAuthenticationBypasses(
+    const PamPlatformConfig& pam,
+    std::string& error) {
+    std::set<std::pair<std::string, std::string>> uniqueRules;
+    for (const auto& rule : pam.trustedAuthenticationBypasses) {
+        if (!contains(pam.authenticationServices, rule.service)) {
+            error = "trusted PAM authentication bypass references an "
+                "unverified service: " + rule.service;
+            return false;
+        }
+        if (rule.module.empty() ||
+            !std::all_of(
+                rule.module.begin(), rule.module.end(), [](unsigned char ch) {
+                    return std::isalnum(ch) != 0 || ch == '_' || ch == '-' ||
+                        ch == '.';
+                }) ||
+            rule.module.find('/') != std::string::npos) {
+            error = "trusted PAM authentication bypass contains an invalid "
+                "module name: " + rule.module;
+            return false;
+        }
+        switch (rule.reason) {
+        case PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller:
+            break;
+        default:
+            error = "trusted PAM authentication bypass contains an "
+                "unsupported reason";
+            return false;
+        }
+        if (!uniqueRules.emplace(rule.service, rule.module).second) {
+            error = "trusted PAM authentication bypass is duplicated: " +
+                rule.service + ":" + rule.module;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool validateArguments(const std::vector<std::string>& arguments,
                        const std::string& label,
                        std::string& error) {
@@ -276,6 +315,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                              "PAM authentication service", error) ||
         !validatePamServices(profile.pam.passwordServices,
                              "PAM password service", error) ||
+        !validatePamTrustedAuthenticationBypasses(profile.pam, error) ||
         !validatePath(profile.pam.faillockConfigPath,
                       "pam_faillock configuration path", error) ||
         !validatePath(profile.pam.passwordQualityConfigPath,

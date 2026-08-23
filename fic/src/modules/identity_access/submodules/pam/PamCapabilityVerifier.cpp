@@ -63,6 +63,7 @@ bool PamCapabilityVerifier::verify(
         PamControlFlowAnalysis analysis;
         if (!PamControlFlowAnalyzer::analyze(
                 configuration,
+                platformConfig,
                 service,
                 capability,
                 provider,

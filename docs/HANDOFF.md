@@ -4,63 +4,75 @@
 
 - Дата: 2026-08-23.
 - Ветка: `main`.
-- Базовый commit задачи: `9d56ff9`.
+- Базовый commit задачи: `e82dc19`.
 
 ## Current task
 
-- Debian/Ubuntu package integration для по умолчанию выключенных
-  `pam-auth-update` profiles FIC без изменения PAM policy architecture.
+- Исправление semantic false positive в `PamControlFlowAnalyzer` для штатного
+  `su`/`pam_rootok` и gate-модулей вроде `pam_succeed_if` без ослабления
+  fail-closed проверки `required_pam_enforcement`.
 
 ## Accepted architecture / invariants
 
-- PAM policies по-прежнему только inspect/prove/configure provider options/
-  verify; они не устанавливают packages, не вызывают `pam-auth-update` и не
-  меняют topology.
-- Debian/Ubuntu package владеет declarations в `/usr/share/pam-configs/`, а
-  администратор явно активирует их. Источник истины после активации —
-  `PamConfiguration` -> `PamControlFlowAnalyzer` -> `PamCapabilityVerifier`.
-- ALT p11 не получает Debian profiles, dependency или maintainer-script calls;
-  будущая интеграция должна отдельно использовать штатный ALT mechanism.
+- Linux-PAM control actions продолжают обрабатываться независимо от semantic
+  role модуля; role влияет только на credential evidence.
+- `pam_rootok.so` является trusted authentication bypass только при совпадении
+  явного platform-specific правила `service + module + reason` и реальном
+  успешном завершении stack через `done`.
+- Debian/Ubuntu доверяют `pam_rootok` в `su` и `su-l`; ALT p11 — только в `su`,
+  согласно проверенной package topology.
+- `pam_succeed_if` и остальные известные gate-модули не создают credential
+  success/failure evidence, но их `sufficient`/extended controls по-прежнему
+  могут создать настоящий bypass.
+- Неизвестные модули, `pam_permit` и `pam_rootok` вне доверенного service
+  остаются fail-closed.
 
 ## Completed
 
-- В DEB `fic` добавлены физические profiles `fic-faillock-notify` (1025),
-  `fic-faillock` (0) и `fic-pwhistory` (1023), все `Default: no` и без policy
-  values.
-- Добавлены прямые dependencies `libpam-runtime`, `libpam-modules`.
-- `postinst configure` вызывает `pam-auth-update --package`; `prerm remove`
-  снимает все три profiles до удаления payload. `--enable` и `--force` не
-  используются, upgrade не сбрасывает выбор администратора.
-- Добавлен отдельный packaging contract test и verifier fixture ожидаемого
-  generated PAM stack; обновлены architecture и DEB/RPM package docs.
+- Введены роли `CredentialAuthenticator`, `Gate`, `Enforcement`,
+  `TrustedAuthenticator`, `Unknown` и точные outcomes для `pam_rootok` и
+  `pam_succeed_if`.
+- В `PamPlatformConfig` добавлены валидируемые trusted bypass rules; профили
+  Debian 12/13, Ubuntu 24.04/26.04 и ALT p11 заполнены согласно их topology.
+- Разрешённый путь не удаляется из symbolic state-space: analysis сохраняет
+  service, module, reason, source line и trace.
+- Добавлены regression-сценарии для `su`, `su-l`, `sshd/pam_rootok`, SDDM,
+  gate success/failure и сломанного non-root failure-accounting path. Старые
+  `pam_permit` и unknown-module bypass tests сохранены и проходят.
+- На `172.17.1.150` read-only подтверждены Ubuntu `su` с
+  `auth sufficient pam_rootok.so` и отдельный `su-l`, включающий `su`; систему
+  и PAM-конфигурацию не изменяли.
 
 ## Changed areas
 
-- `packaging/deb/`, включая новые `pam-configs/fic-*`;
-- PAM/packaging tests и `tests/CMakeLists.txt`;
-- `docs/architecture-diagrams.md`, DEB/RPM packaging README.
+- `fic/src/modules/identity_access/submodules/pam/`;
+- `fic/src/platform/` и PAM data поддерживаемых platform profiles;
+- PAM и platform regression/static tests.
 
 ## Validation
 
-- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
+- Целевой build `pam_configuration_tests`,
+  `identity_policy_hierarchy_tests`, `platform_profile_tests` — успешно.
+- Целевые PAM/policy/platform/static tests — 5/5 успешно.
+- Fresh configure/build и `platform_profile_tests`: Debian 12, Debian 13 и
+  ALT p11 — успешно; Ubuntu 24.04 active build — успешно.
 - `cmake --build build-check -j2` — полный build успешно.
-- Целевые PAM/policy/package/platform tests — 4/4 успешно.
-- Нативная сборка Ubuntu 24.04 всех пяти DEB с version
-  `0.0.0-pam-integration` — успешно; artifact `fic` проверен через `dpkg-deb`:
-  profiles являются regular files 0644, dependencies и maintainer scripts
-  соответствуют контракту, conffiles и запрещённых flags нет.
-- Полный CTest: 37 passed, 4 sandbox-dependent skipped, новый test включён;
-  один известный несвязанный failure `ipc_protocol_validation_tests` на
-  assertion для status request.
-- `bash -n` для DEB/RPM builders и `git diff --check` — успешно до финального
-  обновления HANDOFF.
+- Полный CTest active Ubuntu 24.04 build: 37 passed, 4 environment-dependent
+  skipped; `pam_configuration_tests`, `identity_policy_hierarchy_tests` и
+  `platform_profile_tests` прошли. Один несвязанный воспроизводимый failure:
+  `ipc_protocol_validation_tests` assertion для status request.
+- `git diff --check` — успешно до финального обновления HANDOFF.
 
 ## Remaining
 
-- Реальный `pam-auth-update` и активация PAM profiles не запускались: ordering
-  проверен безопасным fixture и semantic verifier, но нужна staging runtime
-  проверка на поддерживаемых Debian/Ubuntu profiles.
-- ALT RPM в этой среде не собирался; отсутствие Debian integration проверено
-  статически. ALT-specific `pam-config` / `pam-config-control` integration
-  остаётся отдельной будущей задачей.
+- Новый build/package не развёртывался на `172.17.1.150`; реальный
+  `fic-cli policy apply` после установки исправления не запускался.
+- На хосте остаётся отдельный реальный `login` path с ранним отказом
+  `pam_script.so`, который обходит `pam_faillock authfail` и может продолжить
+  блокировать aggregate-policy. Текущее trusted bypass правило намеренно его
+  не разрешает.
+- Fresh Ubuntu 26.04 `platform_profile_tests` блокируется существующим в `HEAD`
+  несоответствием DAC test/profile: профиль разрешает symlink targets для
+  `/usr/bin/df` и `/usr/sbin/ip`, а общий test запрещает любые такие исключения
+  у protected commands. PAM-изменение этого не затрагивает.
 - Несвязанный `ipc_protocol_validation_tests` в scope задачи не исправлялся.

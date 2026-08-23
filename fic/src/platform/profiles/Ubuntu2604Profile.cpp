@@ -71,9 +71,16 @@ PlatformProfile makeBuildPlatformProfile() {
         std::filesystem::path("/usr/lib") / FIC_LIBRARY_ARCHITECTURE / "security");
 #endif
     profile.pam.authenticationServices = {
-        "login", "sshd", "sudo", "su", "sddm", "gdm-password", "lightdm"
+        "login", "sshd", "sudo", "su", "su-l", "sddm", "gdm-password",
+        "lightdm"
     };
     profile.pam.passwordServices = {"passwd", "common-password"};
+    profile.pam.trustedAuthenticationBypasses = {
+        {"su", "pam_rootok.so",
+         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller},
+        {"su-l", "pam_rootok.so",
+         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller}
+    };
     profile.pam.faillockConfigPath = "/etc/security/faillock.conf";
     profile.pam.passwordQualityConfigPath = "/etc/security/pwquality.conf";
     profile.pam.passwordHistoryConfigPath = "/etc/security/pwhistory.conf";

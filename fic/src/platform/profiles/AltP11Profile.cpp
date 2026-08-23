@@ -75,6 +75,10 @@ PlatformProfile makeBuildPlatformProfile() {
         "system-auth"
     };
     profile.pam.passwordServices = {"passwd", "system-auth"};
+    profile.pam.trustedAuthenticationBypasses = {
+        {"su", "pam_rootok.so",
+         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller}
+    };
     profile.pam.faillockConfigPath = "/etc/security/faillock.conf";
     profile.pam.passwordQualityConfigPath = "/etc/security/pwquality.conf";
     profile.pam.passwordHistoryConfigPath = "/etc/security/pwhistory.conf";

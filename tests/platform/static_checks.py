@@ -218,6 +218,7 @@ def main():
         "pam.moduleDirectories",
         "pam.authenticationServices",
         "pam.passwordServices",
+        "pam.trustedAuthenticationBypasses",
         "pam.faillockConfigPath",
         "pam.passwordQualityConfigPath",
         "pam.passwordHistoryConfigPath",

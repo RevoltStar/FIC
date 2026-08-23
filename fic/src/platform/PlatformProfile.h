@@ -66,11 +66,24 @@ struct SysctlPlatformConfig {
     std::filesystem::path managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
 };
 
+enum class PamTrustedAuthenticationBypassReason {
+    AlreadyPrivilegedCaller
+};
+
+struct PamTrustedAuthenticationBypassRule {
+    std::string service;
+    std::string module;
+    PamTrustedAuthenticationBypassReason reason =
+        PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller;
+};
+
 struct PamPlatformConfig {
     std::vector<std::filesystem::path> configDirectories;
     std::vector<std::filesystem::path> moduleDirectories;
     std::vector<std::string> authenticationServices;
     std::vector<std::string> passwordServices;
+    std::vector<PamTrustedAuthenticationBypassRule>
+        trustedAuthenticationBypasses;
     std::filesystem::path faillockConfigPath;
     std::filesystem::path passwordQualityConfigPath;
     std::filesystem::path passwordHistoryConfigPath;

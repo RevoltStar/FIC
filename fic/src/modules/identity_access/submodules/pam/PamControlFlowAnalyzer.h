@@ -36,9 +36,23 @@ struct PamFlowViolation {
     bool pathTruncated = false;
 };
 
+struct PamTrustedAuthenticationBypassAcceptance {
+    std::string service;
+    std::string module;
+    fic::platform::PamTrustedAuthenticationBypassReason reason =
+        fic::platform::PamTrustedAuthenticationBypassReason::
+            AlreadyPrivilegedCaller;
+    std::filesystem::path source;
+    std::size_t line = 0;
+    std::vector<PamFlowStep> path;
+    bool pathTruncated = false;
+};
+
 struct PamControlFlowAnalysis {
     bool effective = false;
     std::vector<PamFlowViolation> violations;
+    std::vector<PamTrustedAuthenticationBypassAcceptance>
+        acceptedTrustedAuthenticationBypasses;
 };
 
 class PamControlFlowAnalyzer {
@@ -46,6 +60,7 @@ public:
     // false means that the effective graph or control syntax could not be
     // represented safely. A successful call can still report ineffective.
     static bool analyze(PamConfiguration& configuration,
+                        const fic::platform::PamPlatformConfig& platformConfig,
                         const std::string& service,
                         PamCapability capability,
                         PamProviderKind provider,

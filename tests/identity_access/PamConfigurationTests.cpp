@@ -962,6 +962,231 @@ void testAuthenticationEarlySuccessBypass() {
         "authentication bypass diagnostic must contain the concrete path");
 }
 
+void testTrustedSuRootokPathIsAccepted() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"su", "su-l"};
+    platform.trustedAuthenticationBypasses = {
+        {"su", "pam_rootok.so",
+         fic::platform::PamTrustedAuthenticationBypassReason::
+             AlreadyPrivilegedCaller},
+        {"su-l", "pam_rootok.so",
+         fic::platform::PamTrustedAuthenticationBypassReason::
+             AlreadyPrivilegedCaller}
+    };
+    writeFile(
+        temp.path() / "pam.d/su",
+        "auth sufficient pam_rootok.so\n"
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(
+        temp.path() / "pam.d/su-l",
+        "auth include su\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        "standard su pam_rootok path was rejected: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamControlFlowAnalysis analysis;
+    std::string error;
+    require(
+        fic::identity::pam::PamControlFlowAnalyzer::analyze(
+            configuration,
+            platform,
+            "su",
+            fic::identity::pam::PamCapability::AuthenticationLockout,
+            fic::identity::pam::PamProviderKind::PamFaillock,
+            analysis,
+            error),
+        error);
+    require(analysis.effective,
+            "trusted su analysis must remain effective");
+    require(
+        analysis.acceptedTrustedAuthenticationBypasses.size() == 1,
+        "trusted su path must be retained in analysis diagnostics");
+    const auto& accepted =
+        analysis.acceptedTrustedAuthenticationBypasses.front();
+    require(
+        accepted.service == "su" && accepted.module == "pam_rootok.so" &&
+            accepted.line == 1 && !accepted.path.empty(),
+        "trusted su path context is incomplete");
+
+    TempDirectory brokenTemp;
+    auto brokenPlatform = makePlatform(brokenTemp);
+    brokenPlatform.authenticationServices = {"su"};
+    brokenPlatform.trustedAuthenticationBypasses = {
+        platform.trustedAuthenticationBypasses.front()
+    };
+    writeFile(
+        brokenTemp.path() / "pam.d/su",
+        "auth sufficient pam_rootok.so\n"
+        "auth required pam_faillock.so preauth\n"
+        "auth required pam_unix.so\n"
+        "auth [success=1 default=ignore] pam_env.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(
+        brokenTemp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto broken = verifyCapability(
+        brokenPlatform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        brokenPlatform.authenticationServices);
+    require(
+        broken.state == fic::identity::pam::PamEnforcementState::Ineffective &&
+            broken.detail.find("failure_accounting_bypass") !=
+                std::string::npos,
+        "trusted root path must not hide a broken non-root su failure path: " +
+            fic::identity::pam::formatPamCapabilityVerification(broken));
+}
+
+void testRootokOutsideTrustedServiceIsRejected() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"sshd", "su"};
+    platform.trustedAuthenticationBypasses = {
+        {"su", "pam_rootok.so",
+         fic::platform::PamTrustedAuthenticationBypassReason::
+             AlreadyPrivilegedCaller}
+    };
+    writeFile(
+        temp.path() / "pam.d/sshd",
+        "auth sufficient pam_rootok.so\n"
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        {"sshd"});
+    require(
+        verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+            verification.detail.find("authentication_bypass") !=
+                std::string::npos &&
+            verification.detail.find("pam_rootok.so") != std::string::npos,
+        "pam_rootok outside an explicit trusted service must be rejected: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testSddmSucceedIfGateIsEffective() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"sddm"};
+    writeFile(
+        temp.path() / "pam.d/sddm",
+        "auth required pam_succeed_if.so user != root quiet_success\n"
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        "required pam_succeed_if gate broke a valid SDDM stack: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testSucceedIfSufficientBypassIsRejected() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth sufficient pam_succeed_if.so user ingroup admins\n"
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+            verification.detail.find("authentication_bypass") !=
+                std::string::npos,
+        "sufficient pam_succeed_if before faillock must remain a bypass");
+}
+
+void testGateSuccessDoesNotMaskCredentialFailure() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth required pam_succeed_if.so user != root quiet_success\n"
+        "auth required pam_faillock.so preauth\n"
+        "auth required pam_unix.so\n"
+        "auth [success=1 default=ignore] pam_env.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+            verification.detail.find("failure_accounting_bypass") !=
+                std::string::npos,
+        "pam_succeed_if success masked a credential authentication failure: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testGateFailureIsNotCredentialFailure() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth required pam_succeed_if.so user != root quiet_success\n"
+        "auth required pam_faillock.so preauth\n"
+        "auth [success=1 default=ignore] pam_env.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        "required gate failure was misclassified as credential failure: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
 void testPasswordEarlySuccessBypass() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -1209,6 +1434,12 @@ int main() {
         testFaillockAccountTopologyIsEffective();
         testMissingInactiveAndBrokenStates();
         testAuthenticationEarlySuccessBypass();
+        testTrustedSuRootokPathIsAccepted();
+        testRootokOutsideTrustedServiceIsRejected();
+        testSddmSucceedIfGateIsEffective();
+        testSucceedIfSufficientBypassIsRejected();
+        testGateSuccessDoesNotMaskCredentialFailure();
+        testGateFailureIsNotCredentialFailure();
         testPasswordEarlySuccessBypass();
         testExtendedControlBypasses();
         testResetAndOptionalControlAreModeled();

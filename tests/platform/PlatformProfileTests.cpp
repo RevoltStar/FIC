@@ -149,6 +149,30 @@ void testSelectedProfile() {
             "PAM authentication services are missing");
     require(!profile.pam.passwordServices.empty(),
             "PAM password services are missing");
+    require(!profile.pam.trustedAuthenticationBypasses.empty(),
+            "trusted PAM authentication bypass rules are missing");
+    const bool expectedSuLoginService = profile.id != "alt-p11";
+    require((std::find(profile.pam.authenticationServices.begin(),
+                       profile.pam.authenticationServices.end(),
+                       "su-l") != profile.pam.authenticationServices.end()) ==
+                expectedSuLoginService,
+            "PAM su-l service selection is incorrect");
+    const auto hasTrustedRootok = [&](const std::string& service) {
+        return std::any_of(
+            profile.pam.trustedAuthenticationBypasses.begin(),
+            profile.pam.trustedAuthenticationBypasses.end(),
+            [&](const auto& rule) {
+                return rule.service == service &&
+                    rule.module == "pam_rootok.so" &&
+                    rule.reason == fic::platform::
+                        PamTrustedAuthenticationBypassReason::
+                            AlreadyPrivilegedCaller;
+            });
+    };
+    require(hasTrustedRootok("su"),
+            "trusted PAM root transition for su is missing");
+    require(hasTrustedRootok("su-l") == expectedSuLoginService,
+            "trusted PAM root transition for su-l is incorrect");
     require(profile.pam.faillockConfigPath == "/etc/security/faillock.conf",
             "pam_faillock configuration path is incorrect");
     require(profile.pam.passwordQualityConfigPath ==
@@ -385,6 +409,18 @@ void testInvalidProfileIsRejected() {
         profile.pam.authenticationServices.front());
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a duplicate PAM service must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.trustedAuthenticationBypasses.push_back(
+        profile.pam.trustedAuthenticationBypasses.front());
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a duplicate trusted PAM bypass must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.trustedAuthenticationBypasses.front().service =
+        "unverified-service";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a trusted PAM bypass for an unverified service must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.pam.passwordServices = {"../passwd"};
