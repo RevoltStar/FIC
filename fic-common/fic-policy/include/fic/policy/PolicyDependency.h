@@ -29,11 +29,24 @@ enum class PolicyDependencyStrength {
     Recommended
 };
 
+enum class PolicyDependencyConditionType {
+    Always,
+    OwnerValueEquals
+};
+
+struct PolicyDependencyCondition {
+    PolicyDependencyConditionType type =
+        PolicyDependencyConditionType::Always;
+    std::string value;
+};
+
 struct PolicyDependency {
     PolicyRef policy;
     PolicyDependencyStrength strength = PolicyDependencyStrength::Required;
+    PolicyDependencyCondition condition;
 };
 
+PolicyDependencyCondition whenOwnerValueEquals(std::string value);
 std::string formatPolicyRef(const PolicyRef& policy);
 
 #endif // FIC_POLICY_DEPENDENCY_H

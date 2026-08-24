@@ -4,66 +4,52 @@
 
 - Дата: 2026-08-24.
 - Ветка: `main`.
-- Базовый commit задачи: `4dd9ac6`.
+- Базовый commit задачи: `38c1596`.
 
 ## Current task
 
-- Security/correctness hardening существующих `/etc/login.defs` и password
-  aging policies без добавления новых policies.
+- Инфраструктура conditional `Required`/`Recommended` policy dependencies
+  без её подключения к конкретным production policies.
 
 ## Accepted architecture / invariants
 
-- Passwd/shadow/TCB читаются строгим построчным parser; malformed/duplicate
-  physical record блокирует весь preflight.
-- TCB traversal descriptor-relative: TCB root, account directory и `shadow`
-  открываются с `O_NOFOLLOW`; `.`/`..`/slash/NUL как path component запрещены.
-- Bulk исключает все UID 0 и до первого `chage` требует shadow state каждого
-  eligible account. Root policy покрывает все локальные accounts с UID 0.
-- `PasswordAgingPolicyDefaults` отделены от explicit missing-key semantics:
-  отсутствующие PASS peers имеют shadow-utils sentinel `-1`, отсутствующие UID
-  peers отклоняются fail-closed. Operational policies fallback не используют.
-- CMake platform constants — единый источник policy defaults для generated
-  config и generated C++ header. Debian/Ubuntu: `0/99999/7/1000/60000`; ALT
-  p11: `0/99999/7/500/60000`; statuses остаются `DISABLE`.
-- UID model использует `uid_t` и `UnsignedIntegerPolicyTypeValue` до
-  `numeric_limits<uid_t>::max()`; GUI передаёт значение строкой через line edit.
-- Required dependencies и trusted `chage -m/-M/-W -- USER` architecture не
-  изменены; `sp_lstchg` остаётся неизменным.
+- `PolicyDependencyCondition` является declarative metadata с типами
+  `Always` и `OwnerValueEquals`; owner — policy, объявившая dependency.
+- Несовпадение или отсутствие owner value делает ребро неактивным
+  без target result, diagnostic, block или warning.
+- Disabled owner не раскрывает dependencies. Structural graph validation
+  учитывает все рёбра независимо от conditions.
+- Один owner может объявить только одно ребро к target; literal
+  `OwnerValueEquals` валидируется типом owner policy fail-closed.
 
 ## Completed
 
-- Исправлены malformed `login.defs` occurrences и relation validation.
-- Реализованы strict passwd/shadow parsers и secure TCB traversal.
-- Добавлен двухфазный passwd/shadow consistency preflight и UID 0 semantics.
-- Устранено дублирование platform defaults, исправлены ALT defaults и unsigned
-  UID round-trip в policy metadata/GUI.
-- Добавлены regression tests и обновлены localization/architecture docs.
+- Добавлены condition metadata, helper `whenOwnerValueEquals` и перегрузки
+  `addRequiredDependency`/`addRecommendedDependency`; старый API остался
+  unconditional.
+- Отдельный evaluator подключён к planner и registry validation.
+- Добавлены tests всех обязательных conditional scenarios; обновлено
+  authoritative архитектурное описание.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/submodules/password_aging/`;
-- platform profile/default generation и `fic-policy` numeric types;
-- GUI policy editor, localization, password-aging/platform tests и docs.
+- `fic-common/fic-policy/`;
+- daemon dependency graph/planner;
+- `tests/core/PolicyExecutionPlannerTests.cpp`;
+- `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- Targeted password-aging, dependency planner, platform profile/static tests —
-  успешно на Debian 12/13, Ubuntu 24.04 и ALT p11; password-aging/static —
-  успешно на Ubuntu 26.04.
-- Full build Ubuntu 24.04 и Debian 12 — успешно.
-- `fic` + password-aging/platform targets: Debian 13, Ubuntu 26.04, ALT p11 —
-  успешно; GUI собран на Ubuntu 24.04 и Debian 13.
-- Generated defaults/statuses всех пяти profiles проверены; ALT содержит
-  `0/99999/7/500/60000`, все семь policies `DISABLE`.
-- Full Ubuntu 24.04 CTest: 39 passed, 4 environment-dependent skipped, один
-  известный несвязанный failure `ipc_protocol_validation_tests` для status.
+- `cmake -S . -B build-hardening-ubuntu2404 -DFIC_TARGET_PLATFORM=ubuntu-24.04`
+  — успешно.
+- `cmake --build build-hardening-ubuntu2404 --target policy_execution_planner_tests -j2`
+  и targeted CTest — успешно.
+- `cmake --build build-hardening-ubuntu2404 -j2` — вся сборка успешна.
+- Full CTest: 39 passed, 4 environment-dependent skipped; один известный
+  unrelated failure `ipc_protocol_validation_tests` для `status`.
 - `git diff --check` — успешно.
 
 ## Remaining
 
-- `platform_profile_tests` на Ubuntu 26.04 имеет существующий до этой задачи
-  конфликт: профиль разрешает `/usr/sbin/ip -> /usr/bin/ip`, а общий тест
-  запрещает symlink exceptions для protected commands. Не исправлялся как
-  unrelated scope.
-- Реальный system `chage` намеренно не запускался; runtime проверен injected
-  runner/reader и temporary passwd/shadow/TCB trees.
+- Production policies на conditional dependencies намеренно не переводились.
+- Реальное policy apply и изменения host state не запускались.

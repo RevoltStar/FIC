@@ -1,6 +1,7 @@
 #include "core/PolicyExecutionPlanner.h"
 
 #include <fic/core/Logger.h>
+#include <fic/policy/PolicyDependencyConditionEvaluator.h>
 
 #include <algorithm>
 #include <exception>
@@ -165,6 +166,9 @@ const PolicyApplyResult& PolicyExecutionPlanner::executePolicy(
     bool requiredBlocked = false;
     std::vector<PolicyDiagnostic> dependencyDiagnostics;
     for (const PolicyDependency& dependency : dependencies) {
+        if (!dependencyConditionMatches(*policy, dependency.condition)) {
+            continue;
+        }
         if (excludedModules_.find(dependency.policy.moduleName) !=
             excludedModules_.end()) {
             dependencyDiagnostics.push_back(dependencyDiagnostic(

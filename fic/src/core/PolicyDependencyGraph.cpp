@@ -1,5 +1,7 @@
 #include "core/PolicyDependencyGraph.h"
 
+#include <fic/policy/PolicyDependencyConditionEvaluator.h>
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -72,12 +74,12 @@ bool visitPolicy(
 } // namespace
 
 bool validatePolicyDependencyGraph(
-    const PolicyRegistry& registry,
+    PolicyRegistry& registry,
     std::string& error) {
     error.clear();
     const std::vector<PolicyRef> policies = registry.policyRefs();
     for (const PolicyRef& owner : policies) {
-        const Policy* policy = registry.findPolicy(owner);
+        Policy* policy = registry.findPolicy(owner);
         std::map<PolicyRef, PolicyDependencyStrength> targets;
         for (const PolicyDependency& dependency : policy->dependencies()) {
             if (!validPolicyRef(dependency.policy)) {
@@ -94,6 +96,14 @@ bool validatePolicyDependencyGraph(
                 error = "policy " + formatPolicyRef(owner) +
                     " references unknown dependency " +
                     formatPolicyRef(dependency.policy);
+                return false;
+            }
+            std::string conditionError;
+            if (!validateDependencyCondition(
+                    *policy, dependency.condition, conditionError)) {
+                error = "policy " + formatPolicyRef(owner) +
+                    " contains invalid dependency condition for " +
+                    formatPolicyRef(dependency.policy) + ": " + conditionError;
                 return false;
             }
             const auto existing = targets.find(dependency.policy);

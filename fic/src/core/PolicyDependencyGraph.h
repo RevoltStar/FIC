@@ -6,7 +6,7 @@
 #include <string>
 
 bool validatePolicyDependencyGraph(
-    const PolicyRegistry& registry,
+    PolicyRegistry& registry,
     std::string& error);
 
 #endif // FIC_POLICY_DEPENDENCY_GRAPH_H

@@ -10,11 +10,23 @@ Policy::~Policy(){
 }
 
 void Policy::addRequiredDependency(const PolicyRef& policy) {
-    addDependency(policy, PolicyDependencyStrength::Required);
+    addRequiredDependency(policy, {});
+}
+
+void Policy::addRequiredDependency(
+    const PolicyRef& policy,
+    const PolicyDependencyCondition& condition) {
+    addDependency(policy, PolicyDependencyStrength::Required, condition);
 }
 
 void Policy::addRecommendedDependency(const PolicyRef& policy) {
-    addDependency(policy, PolicyDependencyStrength::Recommended);
+    addRecommendedDependency(policy, {});
+}
+
+void Policy::addRecommendedDependency(
+    const PolicyRef& policy,
+    const PolicyDependencyCondition& condition) {
+    addDependency(policy, PolicyDependencyStrength::Recommended, condition);
 }
 
 const std::vector<PolicyDependency>& Policy::dependencies() const {
@@ -23,12 +35,13 @@ const std::vector<PolicyDependency>& Policy::dependencies() const {
 
 void Policy::addDependency(
     const PolicyRef& policy,
-    PolicyDependencyStrength strength) {
+    PolicyDependencyStrength strength,
+    const PolicyDependencyCondition& condition) {
     if (dependenciesFrozen_) {
         throw std::logic_error(
             "policy dependency metadata is already frozen: " + policyName);
     }
-    dependencies_.push_back({policy, strength});
+    dependencies_.push_back({policy, strength, condition});
 }
 
 void Policy::freezeDependencies() {

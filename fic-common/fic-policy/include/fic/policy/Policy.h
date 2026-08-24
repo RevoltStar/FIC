@@ -32,7 +32,13 @@ protected:
     }
 
     void addRequiredDependency(const PolicyRef& policy);
+    void addRequiredDependency(
+        const PolicyRef& policy,
+        const PolicyDependencyCondition& condition);
     void addRecommendedDependency(const PolicyRef& policy);
+    void addRecommendedDependency(
+        const PolicyRef& policy,
+        const PolicyDependencyCondition& condition);
 public:
     //Задано ли значение политики в конфигурационном файле
     bool hasConfiguredValue(){
@@ -162,7 +168,8 @@ private:
 
     void addDependency(
         const PolicyRef& policy,
-        PolicyDependencyStrength strength);
+        PolicyDependencyStrength strength,
+        const PolicyDependencyCondition& condition);
     void freezeDependencies();
 
     std::vector<PolicyDependency> dependencies_;

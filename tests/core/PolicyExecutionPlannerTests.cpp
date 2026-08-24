@@ -46,11 +46,15 @@ public:
         moduleName = std::move(identity.moduleName);
         submoduleName = std::move(identity.submoduleName);
         policyName = std::move(identity.policyName);
+        policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
+            std::vector<std::string>{"0", "1", "2"});
         for (const PolicyDependency& dependency : dependencies) {
             if (dependency.strength == PolicyDependencyStrength::Required) {
-                addRequiredDependency(dependency.policy);
+                addRequiredDependency(
+                    dependency.policy, dependency.condition);
             } else {
-                addRecommendedDependency(dependency.policy);
+                addRecommendedDependency(
+                    dependency.policy, dependency.condition);
             }
         }
         moduleConf = std::make_unique<ModuleConfigFileHandler>(moduleName);
@@ -74,23 +78,40 @@ private:
     std::vector<std::string>& order_;
 };
 
-PolicyDependency required(const PolicyRef& dependency) {
-    return {dependency, PolicyDependencyStrength::Required};
+PolicyDependency required(
+    const PolicyRef& dependency,
+    PolicyDependencyCondition condition = {}) {
+    return {
+        dependency,
+        PolicyDependencyStrength::Required,
+        std::move(condition)
+    };
 }
 
-PolicyDependency recommended(const PolicyRef& dependency) {
-    return {dependency, PolicyDependencyStrength::Recommended};
+PolicyDependency recommended(
+    const PolicyRef& dependency,
+    PolicyDependencyCondition condition = {}) {
+    return {
+        dependency,
+        PolicyDependencyStrength::Recommended,
+        std::move(condition)
+    };
 }
 
 void writeModuleConfig(
     const std::filesystem::path& root,
     const std::string& module,
-    const std::map<std::string, bool>& enabled) {
+    const std::map<std::string, bool>& enabled,
+    const std::map<std::string, std::string>& values = {}) {
     std::ofstream output(root / "config" / (module + ".conf"), std::ios::trunc);
     output << "_schema_version=1\n";
     for (const auto& [policy, isEnabled] : enabled) {
         output << policy << ".status="
                << (isEnabled ? "ENABLE" : "DISABLE") << '\n';
+        const auto value = values.find(policy);
+        if (value != values.end()) {
+            output << policy << ".value=" << value->second << '\n';
+        }
     }
 }
 
@@ -118,6 +139,20 @@ const PolicyApplyResult& result(
     require(found != summary.getResults().end(),
             "missing result for " + formatPolicyRef(policy));
     return *found;
+}
+
+bool hasResult(
+    const PolicyApplySummary& summary,
+    const PolicyRef& policy) {
+    return std::any_of(
+        summary.getResults().begin(), summary.getResults().end(),
+        [&](const PolicyApplyResult& candidate) {
+            return PolicyRef{
+                candidate.moduleName,
+                candidate.submoduleName,
+                candidate.policyName
+            } == policy;
+        });
 }
 
 bool hasDiagnostic(
@@ -245,6 +280,188 @@ void testRecommendedDependencies(const std::filesystem::path& root) {
                 "recommended dependency warning is missing");
         require(summary.requestedRootsApplied(),
                 "dependency-only recommended failure broke root success");
+    }
+}
+
+void testConditionalDependencies(const std::filesystem::path& root) {
+    for (const std::string& ownerValue : {std::string("2"), std::string("1")}) {
+        writeModuleConfig(
+            root,
+            "AUDIT",
+            {{"a", true}, {"b", true}},
+            {{"a", ownerValue}});
+        PolicyBehavior a;
+        PolicyBehavior b;
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(
+            ref("a"), a, order,
+            std::vector<PolicyDependency>{required(
+                ref("b"), whenOwnerValueEquals("2"))}));
+        policies.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
+        PolicyRegistry registry = buildRegistry(std::move(policies));
+        const PolicyApplySummary summary =
+            PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
+
+        if (ownerValue == "2") {
+            require(order == std::vector<std::string>({"b", "a"}) &&
+                        b.calls == 1 && a.calls == 1,
+                    "matching required condition did not execute dependency first");
+            require(result(summary, ref("b")).status ==
+                            PolicyApplyStatus::Applied &&
+                        result(summary, ref("a")).status ==
+                            PolicyApplyStatus::Applied,
+                    "matching required condition statuses are incorrect");
+        } else {
+            require(order == std::vector<std::string>({"a"}) &&
+                        b.calls == 0 && a.calls == 1 &&
+                        !hasResult(summary, ref("b")),
+                    "mismatching required condition expanded dependency");
+            require(result(summary, ref("a")).diagnostics.empty(),
+                    "mismatching required condition created diagnostic");
+        }
+    }
+
+    for (const std::string& ownerValue : {std::string("2"), std::string("1")}) {
+        writeModuleConfig(
+            root,
+            "AUDIT",
+            {{"a", true}, {"b", true}},
+            {{"a", ownerValue}});
+        PolicyBehavior a;
+        PolicyBehavior b{false};
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(
+            ref("a"), a, order,
+            std::vector<PolicyDependency>{recommended(
+                ref("b"), whenOwnerValueEquals("2"))}));
+        policies.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
+        PolicyRegistry registry = buildRegistry(std::move(policies));
+        const PolicyApplySummary summary =
+            PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
+
+        require(a.calls == 1 &&
+                    result(summary, ref("a")).status == PolicyApplyStatus::Applied,
+                "conditional recommended dependency blocked owner");
+        if (ownerValue == "2") {
+            require(b.calls == 1 &&
+                        result(summary, ref("b")).status ==
+                            PolicyApplyStatus::Failed &&
+                        hasDiagnostic(
+                            result(summary, ref("a")),
+                            "WARN",
+                            "dependency status=failed"),
+                    "matching recommended condition lost failure warning");
+        } else {
+            require(b.calls == 0 && !hasResult(summary, ref("b")) &&
+                        result(summary, ref("a")).diagnostics.empty(),
+                    "mismatching recommended condition created work or warning");
+        }
+    }
+
+    writeModuleConfig(root, "AUDIT", {{"a", true}, {"b", true}});
+    PolicyBehavior missingValueA;
+    PolicyBehavior missingValueB;
+    std::vector<std::string> missingValueOrder;
+    PolicyList missingValuePolicies;
+    missingValuePolicies.push_back(std::make_unique<TestPolicy>(
+        ref("a"), missingValueA, missingValueOrder,
+        std::vector<PolicyDependency>{required(
+            ref("b"), whenOwnerValueEquals("2"))}));
+    missingValuePolicies.push_back(std::make_unique<TestPolicy>(
+        ref("b"), missingValueB, missingValueOrder));
+    PolicyRegistry missingValueRegistry =
+        buildRegistry(std::move(missingValuePolicies));
+    const PolicyApplySummary missingValueSummary =
+        PolicyExecutionPlanner(missingValueRegistry).execute({{ref("a")}, {}});
+    require(missingValueA.calls == 1 && missingValueB.calls == 0 &&
+                !hasResult(missingValueSummary, ref("b")) &&
+                result(missingValueSummary, ref("a")).status ==
+                    PolicyApplyStatus::Applied,
+            "null owner value did not behave as a false condition");
+
+    writeModuleConfig(
+        root,
+        "AUDIT",
+        {{"a", false}, {"b", true}},
+        {{"a", "2"}});
+    PolicyBehavior disabledA;
+    PolicyBehavior disabledB;
+    std::vector<std::string> disabledOrder;
+    PolicyList disabledPolicies;
+    disabledPolicies.push_back(std::make_unique<TestPolicy>(
+        ref("a"), disabledA, disabledOrder,
+        std::vector<PolicyDependency>{required(
+            ref("b"), whenOwnerValueEquals("2"))}));
+    disabledPolicies.push_back(std::make_unique<TestPolicy>(
+        ref("b"), disabledB, disabledOrder));
+    PolicyRegistry disabledRegistry = buildRegistry(std::move(disabledPolicies));
+    const PolicyApplySummary disabledSummary =
+        PolicyExecutionPlanner(disabledRegistry).execute({{ref("a")}, {}});
+    require(disabledA.calls == 0 && disabledB.calls == 0 &&
+                disabledSummary.totalCount() == 1 &&
+                result(disabledSummary, ref("a")).status ==
+                    PolicyApplyStatus::Disabled,
+            "disabled owner evaluated its conditional dependency");
+}
+
+void testConditionalExcludedModule(const std::filesystem::path& root) {
+    for (const PolicyDependencyStrength strength : {
+             PolicyDependencyStrength::Required,
+             PolicyDependencyStrength::Recommended}) {
+        for (const std::string& ownerValue : {
+                 std::string("1"), std::string("2")}) {
+            writeModuleConfig(
+                root, "AUDIT", {{"a", true}}, {{"a", ownerValue}});
+            writeModuleConfig(root, "GLOBAL", {{"b", true}});
+            PolicyBehavior a;
+            PolicyBehavior b;
+            std::vector<std::string> order;
+            const PolicyDependency dependency{
+                ref("b", "GLOBAL"),
+                strength,
+                whenOwnerValueEquals("2")
+            };
+            PolicyList policies;
+            policies.push_back(std::make_unique<TestPolicy>(
+                ref("a"), a, order,
+                std::vector<PolicyDependency>{dependency}));
+            policies.push_back(std::make_unique<TestPolicy>(
+                ref("b", "GLOBAL"), b, order));
+            PolicyRegistry registry = buildRegistry(std::move(policies));
+            const PolicyApplySummary summary =
+                PolicyExecutionPlanner(registry).execute(
+                    {{ref("a")}, {"GLOBAL"}});
+
+            require(b.calls == 0 && !hasResult(summary, ref("b", "GLOBAL")),
+                    "excluded conditional target was unexpectedly executed");
+            if (ownerValue == "1") {
+                require(a.calls == 1 &&
+                            result(summary, ref("a")).status ==
+                                PolicyApplyStatus::Applied &&
+                            result(summary, ref("a")).diagnostics.empty(),
+                        "inactive excluded edge affected owner");
+            } else if (strength == PolicyDependencyStrength::Required) {
+                require(a.calls == 0 &&
+                            result(summary, ref("a")).status ==
+                                PolicyApplyStatus::Failed &&
+                            hasDiagnostic(
+                                result(summary, ref("a")),
+                                "ERROR",
+                                "explicitly excluded module GLOBAL"),
+                        "active required excluded edge did not block owner");
+            } else {
+                require(a.calls == 1 &&
+                            result(summary, ref("a")).status ==
+                                PolicyApplyStatus::Applied &&
+                            hasDiagnostic(
+                                result(summary, ref("a")),
+                                "WARN",
+                                "explicitly excluded module GLOBAL"),
+                        "active recommended excluded edge lost warning");
+            }
+        }
     }
 }
 
@@ -511,6 +728,17 @@ void testGraphValidation(const std::filesystem::path& root) {
     duplicate.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
     expectInvalid(std::move(duplicate), "declares duplicate dependency");
 
+    PolicyList conditionalDuplicate;
+    conditionalDuplicate.push_back(std::make_unique<TestPolicy>(
+        ref("a"), a, order,
+        std::vector<PolicyDependency>{
+            required(ref("b"), whenOwnerValueEquals("1")),
+            required(ref("b"), whenOwnerValueEquals("2"))}));
+    conditionalDuplicate.push_back(
+        std::make_unique<TestPolicy>(ref("b"), b, order));
+    expectInvalid(
+        std::move(conditionalDuplicate), "declares duplicate dependency");
+
     PolicyList mixedTarget;
     mixedTarget.push_back(std::make_unique<TestPolicy>(
         ref("a"), a, order,
@@ -518,6 +746,28 @@ void testGraphValidation(const std::filesystem::path& root) {
     mixedTarget.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
     expectInvalid(
         std::move(mixedTarget), "both Required and Recommended");
+
+    PolicyList invalidLiteral;
+    invalidLiteral.push_back(std::make_unique<TestPolicy>(
+        ref("a"), a, order,
+        std::vector<PolicyDependency>{required(
+            ref("b"), whenOwnerValueEquals("42"))}));
+    invalidLiteral.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
+    expectInvalid(
+        std::move(invalidLiteral),
+        "OwnerValueEquals dependency condition contains an invalid owner policy value");
+
+    PolicyList invalidAlwaysPayload;
+    invalidAlwaysPayload.push_back(std::make_unique<TestPolicy>(
+        ref("a"), a, order,
+        std::vector<PolicyDependency>{required(
+            ref("b"),
+            {PolicyDependencyConditionType::Always, "unexpected"})}));
+    invalidAlwaysPayload.push_back(
+        std::make_unique<TestPolicy>(ref("b"), b, order));
+    expectInvalid(
+        std::move(invalidAlwaysPayload),
+        "Always dependency condition must not contain a value");
 
     for (const auto strengths : {
              std::pair{PolicyDependencyStrength::Required,
@@ -545,6 +795,17 @@ void testGraphValidation(const std::filesystem::path& root) {
     longCycle.push_back(std::make_unique<TestPolicy>(
         ref("c"), c, order, std::vector<PolicyDependency>{required(ref("a"))}));
     expectInvalid(std::move(longCycle), "dependency cycle detected");
+
+    PolicyList conditionalCycle;
+    conditionalCycle.push_back(std::make_unique<TestPolicy>(
+        ref("a"), a, order,
+        std::vector<PolicyDependency>{required(
+            ref("b"), whenOwnerValueEquals("1"))}));
+    conditionalCycle.push_back(std::make_unique<TestPolicy>(
+        ref("b"), b, order,
+        std::vector<PolicyDependency>{recommended(
+            ref("a"), whenOwnerValueEquals("2"))}));
+    expectInvalid(std::move(conditionalCycle), "dependency cycle detected");
     require(a.calls == 0 && b.calls == 0 && c.calls == 0,
             "invalid graph executed a policy");
 }
@@ -568,6 +829,8 @@ int main() {
     try {
         testRequiredDependencies(root);
         testRecommendedDependencies(root);
+        testConditionalDependencies(root);
+        testConditionalExcludedModule(root);
         testDisabledDependentDoesNotExpand(root);
         testChains(root);
         testSharedDependencyAndBatchRoots(root);

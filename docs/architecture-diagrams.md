@@ -352,7 +352,9 @@ flowchart TD
     roots --> planner[PolicyExecutionPlanner]
     planner --> enabledOnly{current policy enabled?}
     enabledOnly -->|no| skip[Disabled; do not expand dependencies]
-    enabledOnly -->|yes| dependencies[execute Required and Recommended dependencies first]
+    enabledOnly -->|yes| condition{dependency condition matches owner value?}
+    condition -->|no| absent[edge is inactive; no result or diagnostic]
+    condition -->|yes| dependencies[execute Required and Recommended dependencies first]
     dependencies --> requiredOk{all Required Applied?}
     requiredOk -->|no| blocked[dependent Failed; do not call Policy.apply]
     requiredOk -->|yes| capture[Logger ScopedCapture]
@@ -674,15 +676,27 @@ flowchart TD
 ```
 
 `Policy` объявляет immutable dependencies как полные `PolicyRef` со strength
-`Required` или `Recommended`. После регистрации всего candidate registry
-dependency graph проверяется на missing/self/duplicate edges и cycles; ошибка
-сохраняет предыдущий registry и не допускает mutations. Planner раскрывает
-граф только для enabled узлов, выполняет shared dependency один раз и не
-возвращает hard-excluded module через dependency edge. Все автоматически
-обработанные dependencies входят в `PolicyApplySummary`, но успех request
-определяется только результатами исходных requested roots. Failed/Disabled
-Required dependency блокирует dependent с `Failed`; Recommended создаёт
-warning diagnostic, но не определяет результат собственного `Policy.apply()`.
+`Required` или `Recommended` и declarative condition. Без указанного условия
+действует `Always`; `OwnerValueEquals` сравнивает текущее значение policy,
+объявившей dependency, с literal. Отсутствующее или несовпадающее
+значение делает ребро неактивным: target не выполняется, не попадает в
+result и не создаёт diagnostic. Disabled owner останавливается до вычисления
+условий.
+
+После регистрации всего candidate registry dependency graph проверяется на
+missing/self/duplicate edges и cycles по всем объявленным рёбрам независимо
+от их runtime-условий. Один owner может объявить только одно ребро к
+каждому target, даже если сила или условие различаются. Literal в
+`OwnerValueEquals` валидируется типом значения owner policy. Любая ошибка
+сохраняет предыдущий registry и не допускает mutations.
+
+Planner раскрывает граф только для enabled узлов, выполняет shared
+dependency один раз и не возвращает hard-excluded module через активное
+dependency edge. Все автоматически обработанные dependencies входят в
+`PolicyApplySummary`, но успех request определяется только результатами
+исходных requested roots. Failed/Disabled Required dependency блокирует dependent
+с `Failed`; Recommended создаёт warning diagnostic, но не определяет результат
+собственного `Policy.apply()`.
 
 Вложенные `Policy` в composite не используются: только внешний объект в
 `PolicyRegistry` сначала явно регистрирует каждый модуль вместе с его
