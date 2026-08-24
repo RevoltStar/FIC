@@ -1,6 +1,7 @@
 #include "modules/identity_access/submodules/pam/PamConfiguration.h"
 #include "modules/identity_access/submodules/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/submodules/pam/PamOptionFile.h"
+#include "modules/identity_access/submodules/pam/PamOptionValueCodec.h"
 #include "modules/identity_access/submodules/pam/PamProviderInspector.h"
 #include "modules/identity_access/submodules/pam/PamRequiredProviders.h"
 
@@ -1383,6 +1384,55 @@ void testRequiredProviderListParsing() {
         "unknown required PAM provider must be rejected");
 }
 
+void testPamOptionValueCodec() {
+    using fic::identity::pam::PamOptionValueCodec;
+    using fic::identity::pam::PamOptionValueEncoding;
+
+    std::string encoded;
+    std::string decoded;
+    std::string error;
+    require(
+        PamOptionValueCodec::encode(
+            PamOptionValueEncoding::YesNoInteger,
+            "yes", encoded, error) && encoded == "1",
+        error);
+    require(
+        PamOptionValueCodec::decode(
+            PamOptionValueEncoding::YesNoInteger,
+            "0", decoded, error) && decoded == "no",
+        error);
+    require(
+        PamOptionValueCodec::encode(
+            PamOptionValueEncoding::MinimumCredit,
+            "2", encoded, error) && encoded == "-2",
+        error);
+    require(
+        PamOptionValueCodec::decode(
+            PamOptionValueEncoding::MinimumCredit,
+            "-2", decoded, error) && decoded == "2",
+        error);
+    require(
+        PamOptionValueCodec::encode(
+            PamOptionValueEncoding::MinimumCredit,
+            "0", encoded, error) && encoded == "0",
+        error);
+    require(
+        PamOptionValueCodec::decode(
+            PamOptionValueEncoding::MinimumCredit,
+            "0", decoded, error) && decoded == "0",
+        error);
+    require(
+        !PamOptionValueCodec::decode(
+            PamOptionValueEncoding::MinimumCredit,
+            "2", decoded, error),
+        "positive native credit must not be interpreted as a minimum");
+    require(
+        !PamOptionValueCodec::encode(
+            PamOptionValueEncoding::MinimumCredit,
+            "-1", encoded, error),
+        "negative logical minimum must be rejected");
+}
+
 void testPasswordHistoryAlternativeIsDetected() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -1447,6 +1497,7 @@ int main() {
         testUnknownAuthModuleCannotProveEnforcement();
         testFailureAccountingBypass();
         testRequiredProviderListParsing();
+        testPamOptionValueCodec();
         testPasswordHistoryAlternativeIsDetected();
     } catch (const std::exception& error) {
         std::cerr << "PamConfigurationTests failed: " << error.what() << '\n';

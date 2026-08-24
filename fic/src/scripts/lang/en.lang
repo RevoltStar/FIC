@@ -70,6 +70,22 @@
 [module:IDENTITY_ACCESS][policy:password_min_length][description]=Sets minlen in the canonical pam_pwquality configuration. Application fails if pam_pwquality is not active for every configured password service, if another password-quality provider is active, or if a PAM argument overrides the requested value.
 [module:IDENTITY_ACCESS][policy:password_min_classes]=Minimum password character classes
 [module:IDENTITY_ACCESS][policy:password_min_classes][description]=Sets minclass in the canonical pam_pwquality configuration after provider and effective PAM graph verification.
+[module:IDENTITY_ACCESS][policy:password_check_username]=Check user name in password
+[module:IDENTITY_ACCESS][policy:password_check_username][description]=Checks whether the new password contains the user name in a form recognized by pam_pwquality.
+[module:IDENTITY_ACCESS][policy:password_check_gecos]=Check GECOS data in password
+[module:IDENTITY_ACCESS][policy:password_check_gecos][description]=Checks whether the new password contains significant words from the local account GECOS field.
+[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root]=Enforce password quality for root
+[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Controls the valueless enforce_for_root flag in pam_pwquality. The value yes applies quality checks when root sets a password and no removes the flag; comparison with the previous password is unavailable for root.
+[module:IDENTITY_ACCESS][policy:password_min_changed_characters]=Minimum change from previous password
+[module:IDENTITY_ACCESS][policy:password_min_changed_characters][description]=Sets difok, the minimum number of changes from the previous password. A value of 0 disables similarity checks except exact equality; comparison is normally unavailable for root because the previous password is not provided.
+[module:IDENTITY_ACCESS][policy:password_min_lowercase]=Minimum lowercase letters
+[module:IDENTITY_ACCESS][policy:password_min_lowercase][description]=Requires the specified minimum number of lowercase letters through pam_pwquality lcredit; 0 disables the separate minimum for this class.
+[module:IDENTITY_ACCESS][policy:password_min_uppercase]=Minimum uppercase letters
+[module:IDENTITY_ACCESS][policy:password_min_uppercase][description]=Requires the specified minimum number of uppercase letters through pam_pwquality ucredit; 0 disables the separate minimum for this class.
+[module:IDENTITY_ACCESS][policy:password_min_digits]=Minimum digits
+[module:IDENTITY_ACCESS][policy:password_min_digits][description]=Requires the specified minimum number of digits through pam_pwquality dcredit; 0 disables the separate minimum for this class.
+[module:IDENTITY_ACCESS][policy:password_min_other]=Minimum other characters
+[module:IDENTITY_ACCESS][policy:password_min_other][description]=Requires the specified minimum number of characters from other classes through pam_pwquality ocredit; 0 disables the separate minimum for this class.
 [module:IDENTITY_ACCESS][policy:password_history_depth]=Password history depth
 [module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets remember in the canonical pam_pwhistory configuration. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Enforce password history for root

@@ -443,6 +443,24 @@ bool initPolicyRegistry(
     cafArr.push_back(
         std::make_unique<PamPasswordMinClassesPolicy>(platform.pam));
     cafArr.push_back(
+        std::make_unique<PamPasswordCheckUsernamePolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordCheckGecosPolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordQualityEnforceForRootPolicy>(
+            platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordMinChangedCharactersPolicy>(
+            platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordMinLowercasePolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordMinUppercasePolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordMinDigitsPolicy>(platform.pam));
+    cafArr.push_back(
+        std::make_unique<PamPasswordMinOtherPolicy>(platform.pam));
+    cafArr.push_back(
         std::make_unique<PamPasswordHistoryDepthPolicy>(platform.pam));
     cafArr.push_back(
         std::make_unique<PamPasswordHistoryEnforceForRootPolicy>(

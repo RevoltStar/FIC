@@ -34,6 +34,7 @@
 #include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordMinClassesPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordMinLengthPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamPasswordQualityPolicies.h"
 #include "modules/identity_access/submodules/pam/policies/RequiredPamEnforcementPolicy.h"
 #include "modules/identity_access/submodules/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
 #include "modules/identity_access/submodules/kerberos/policies/KerberosTicketLifetimePolicy.h"

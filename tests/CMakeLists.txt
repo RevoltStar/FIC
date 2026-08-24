@@ -295,6 +295,7 @@ add_executable(pam_configuration_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamControlFlowAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionValueCodec.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamProviderInspector.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamRequiredProviders.cpp
 )
@@ -325,11 +326,13 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamControlFlowAnalyzer.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamOptionValueCodec.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamProviderInspector.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/PamRequiredProviders.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/PamPasswordQualityPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/pam/policies/RequiredPamEnforcementPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/sssd/SssdPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/kerberos/KerberosPolicy.cpp

@@ -4,52 +4,55 @@
 
 - Дата: 2026-08-24.
 - Ветка: `main`.
-- Базовый commit задачи: `38c1596`.
+- Базовый commit задачи: `b3a9c8d`.
 
 ## Current task
 
-- Инфраструктура conditional `Required`/`Recommended` policy dependencies
-  без её подключения к конкретным production policies.
+- Расширение PAM password-quality policies для дополнительных настроек
+  `pam_pwquality`.
 
 ## Accepted architecture / invariants
 
-- `PolicyDependencyCondition` является declarative metadata с типами
-  `Always` и `OwnerValueEquals`; owner — policy, объявившая dependency.
-- Несовпадение или отсутствие owner value делает ребро неактивным
-  без target result, diagnostic, block или warning.
-- Disabled owner не раскрывает dependencies. Structural graph validation
-  учитывает все рёбра независимо от conditions.
-- Один owner может объявить только одно ребро к target; literal
-  `OwnerValueEquals` валидируется типом owner policy fail-closed.
+- Новые policies используют существующий `PamOptionPolicy`, provider/effective
+  PAM verification и canonical `PamPlatformConfig::passwordQualityConfigPath`.
+- Логические FIC values хранятся без native encoding: `yes/no` преобразуются
+  в `1/0`, minimum credit `N > 0` — в `-N`, а `0` — в native `0` внутри
+  PAM option path.
+- `enforce_for_root` остаётся беззначным flag; `password_min_classes`
+  независима от четырёх minimum-credit policies.
 
 ## Completed
 
-- Добавлены condition metadata, helper `whenOwnerValueEquals` и перегрузки
-  `addRequiredDependency`/`addRecommendedDependency`; старый API остался
-  unconditional.
-- Отдельный evaluator подключён к planner и registry validation.
-- Добавлены tests всех обязательных conditional scenarios; обновлено
-  authoritative архитектурное описание.
+- Добавлены восемь policies: username/GECOS checks, quality enforcement for
+  root, `difok` и четыре class minima.
+- Добавлен небольшой двунаправленный `PamOptionValueCodec`; существующая flag
+  abstraction переиспользована без изменения её семантики.
+- Обновлены registry, default config, ru/en localization, README и static
+  registration/config checks.
+- Добавлены codec и policy-level tests с временным effective PAM graph,
+  override failures, idempotency, flag и credit mappings.
 
 ## Changed areas
 
-- `fic-common/fic-policy/`;
-- daemon dependency graph/planner;
-- `tests/core/PolicyExecutionPlannerTests.cpp`;
-- `docs/architecture-diagrams.md`.
+- `fic/src/modules/identity_access/submodules/pam/`;
+- daemon policy registration;
+- `IDENTITY_ACCESS.conf.in`, ru/en localization и PAM README;
+- PAM/identity tests и platform static checks.
 
 ## Validation
 
 - `cmake -S . -B build-hardening-ubuntu2404 -DFIC_TARGET_PLATFORM=ubuntu-24.04`
   — успешно.
-- `cmake --build build-hardening-ubuntu2404 --target policy_execution_planner_tests -j2`
-  и targeted CTest — успешно.
-- `cmake --build build-hardening-ubuntu2404 -j2` — вся сборка успешна.
-- Full CTest: 39 passed, 4 environment-dependent skipped; один известный
-  unrelated failure `ipc_protocol_validation_tests` для `status`.
-- `git diff --check` — успешно.
+- Targeted build `pam_configuration_tests`,
+  `identity_policy_hierarchy_tests` и `fic` — успешно.
+- Targeted PAM tests, `platform_profile_static_checks` и
+  `pam_packaging_static_checks` — успешно.
+- Full `cmake --build build-hardening-ubuntu2404 -j2` — успешно.
+- Full CTest: 39 passed, 4 environment-dependent skipped; один unrelated
+  failure `ipc_protocol_validation_tests` для request `status`.
+- `git diff --check` — успешно до финального HANDOFF update.
 
 ## Remaining
 
-- Production policies на conditional dependencies намеренно не переводились.
-- Реальное policy apply и изменения host state не запускались.
+- Реальный policy apply и смена паролей на host не запускались.
+- Известный unrelated `ipc_protocol_validation_tests` остаётся красным.

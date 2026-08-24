@@ -6,6 +6,7 @@
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/submodules/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
+#include "modules/identity_access/submodules/pam/policies/PamPasswordQualityPolicies.h"
 #include "modules/identity_access/submodules/pam/policies/RequiredPamEnforcementPolicy.h"
 #include "modules/identity_access/submodules/sssd/SssdPolicy.h"
 
@@ -44,7 +45,8 @@ void writeFile(const std::filesystem::path& path,
 
 void writeIdentityConfig(const std::filesystem::path& root,
                          const std::string& rootHistoryValue,
-                         const std::string& rootLockoutValue = "yes") {
+                         const std::string& rootLockoutValue = "yes",
+                         const std::string& additionalConfig = "") {
     writeFile(
         root / "config/IDENTITY_ACCESS.conf",
         "dummy.status=ENABLE\n"
@@ -55,7 +57,8 @@ void writeIdentityConfig(const std::filesystem::path& root,
         "failed_authentication_enforce_for_root.value=" + rootLockoutValue +
             "\n"
         "required_pam_enforcement.status=ENABLE\n"
-        "required_pam_enforcement.value=pam_faillock,pam_pwhistory\n");
+        "required_pam_enforcement.value=pam_faillock,pam_pwhistory\n" +
+            additionalConfig);
 }
 
 void initializeRuntimePaths(const std::filesystem::path& root) {
@@ -94,6 +97,67 @@ fic::platform::PamPlatformConfig makePasswordHistoryPlatform(
     platform.passwordHistoryConfigPath =
         root / "security-config/pwhistory.conf";
     return platform;
+}
+
+fic::platform::PamPlatformConfig makePasswordQualityPlatform(
+    const std::filesystem::path& root) {
+    fic::platform::PamPlatformConfig platform;
+    platform.configDirectories = {root / "pam.d"};
+    platform.moduleDirectories = {root / "security"};
+    platform.passwordServices = {"passwd"};
+    platform.passwordQualityConfigPath =
+        root / "security-config/pwquality.conf";
+    return platform;
+}
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    require(input.is_open(), "could not read " + path.string());
+    return std::string(
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>());
+}
+
+template <typename PolicyType>
+void applyPasswordQualityAssignment(
+    const std::filesystem::path& root,
+    const fic::platform::PamPlatformConfig& platform,
+    const std::string& policyName,
+    const std::string& logicalValue,
+    const std::string& option,
+    const std::string& nativeValue) {
+    writeIdentityConfig(
+        root, "yes", "yes",
+        policyName + ".status=ENABLE\n" +
+            policyName + ".value=" + logicalValue + "\n");
+    PolicyType policy(platform);
+    require(policy.policyName == policyName, "wrong policy name: " + policyName);
+    require(policy.apply(), "failed to apply " + policyName + "=" + logicalValue);
+    std::string error;
+    require(
+        fic::identity::pam::PamOptionFile::hasOnlyValue(
+            platform.passwordQualityConfigPath,
+            option, nativeValue, error),
+        error);
+    const std::string firstContent =
+        readFile(platform.passwordQualityConfigPath);
+    require(policy.apply(), "idempotent apply failed for " + policyName);
+    require(
+        readFile(platform.passwordQualityConfigPath) == firstContent,
+        "idempotent apply changed the file for " + policyName);
+}
+
+template <typename PolicyType>
+void testMinimumCreditPolicy(
+    const std::filesystem::path& root,
+    const fic::platform::PamPlatformConfig& platform,
+    const std::string& policyName,
+    const std::string& option) {
+    for (const auto& value : std::vector<std::pair<std::string, std::string>>{
+             {"1", "-1"}, {"2", "-2"}, {"0", "0"}}) {
+        applyPasswordQualityAssignment<PolicyType>(
+            root, platform, policyName, value.first, option, value.second);
+    }
 }
 
 fic::platform::PamPlatformConfig makeAuthenticationPlatform(
@@ -324,6 +388,153 @@ int main() {
 
     try {
         initializeRuntimePaths(root);
+
+        const auto passwordQualityPlatform =
+            makePasswordQualityPlatform(root);
+        const auto writePasswordQualityGraph =
+            [&](const std::string& arguments = "") {
+                writeFile(
+                    root / "pam.d/passwd",
+                    "password requisite pam_pwquality.so" + arguments +
+                        "\npassword required pam_unix.so\n");
+                const auto provider = root / "security/pam_pwquality.so";
+                if (!std::filesystem::exists(provider)) {
+                    writeFile(provider, "test", 0555);
+                }
+            };
+        writePasswordQualityGraph();
+        writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+
+        applyPasswordQualityAssignment<PamPasswordCheckUsernamePolicy>(
+            root, passwordQualityPlatform,
+            "password_check_username", "yes", "usercheck", "1");
+        applyPasswordQualityAssignment<PamPasswordCheckUsernamePolicy>(
+            root, passwordQualityPlatform,
+            "password_check_username", "no", "usercheck", "0");
+        writePasswordQualityGraph(" usercheck=1");
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_check_username.status=ENABLE\n"
+            "password_check_username.value=no\n");
+        const std::string usernameBefore =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
+        PamPasswordCheckUsernamePolicy conflictingUsername(
+            passwordQualityPlatform);
+        require(
+            !conflictingUsername.apply(),
+            "usercheck PAM argument override must fail");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                usernameBefore,
+            "usercheck override failure modified canonical config");
+
+        writePasswordQualityGraph();
+        applyPasswordQualityAssignment<PamPasswordCheckGecosPolicy>(
+            root, passwordQualityPlatform,
+            "password_check_gecos", "yes", "gecoscheck", "1");
+        applyPasswordQualityAssignment<PamPasswordCheckGecosPolicy>(
+            root, passwordQualityPlatform,
+            "password_check_gecos", "no", "gecoscheck", "0");
+        writePasswordQualityGraph(" gecoscheck=1");
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_check_gecos.status=ENABLE\n"
+            "password_check_gecos.value=no\n");
+        PamPasswordCheckGecosPolicy conflictingGecos(passwordQualityPlatform);
+        require(
+            !conflictingGecos.apply(),
+            "gecoscheck PAM argument override must fail");
+
+        writePasswordQualityGraph();
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=yes\n");
+        PamPasswordQualityEnforceForRootPolicy qualityForRootEnabled(
+            passwordQualityPlatform);
+        require(
+            qualityForRootEnabled.apply(),
+            "failed to enable pam_pwquality enforce_for_root");
+        std::string optionError;
+        require(
+            fic::identity::pam::PamOptionFile::hasFlag(
+                passwordQualityPlatform.passwordQualityConfigPath,
+                "enforce_for_root", true, optionError),
+            optionError);
+        const std::string enabledFlagContent =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
+        require(
+            qualityForRootEnabled.apply() &&
+                readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                    enabledFlagContent,
+            "enforce_for_root enable is not idempotent");
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=no\n");
+        PamPasswordQualityEnforceForRootPolicy qualityForRootDisabled(
+            passwordQualityPlatform);
+        require(
+            qualityForRootDisabled.apply(),
+            "failed to disable pam_pwquality enforce_for_root");
+        require(
+            fic::identity::pam::PamOptionFile::hasFlag(
+                passwordQualityPlatform.passwordQualityConfigPath,
+                "enforce_for_root", false, optionError),
+            optionError);
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "enforce_for_root=1\n");
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=yes\n");
+        PamPasswordQualityEnforceForRootPolicy malformedQualityFlag(
+            passwordQualityPlatform);
+        require(
+            !malformedQualityFlag.apply(),
+            "valued enforce_for_root directive must fail");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                "enforce_for_root=1\n",
+            "malformed flag failure modified canonical config");
+
+        writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+        applyPasswordQualityAssignment<
+            PamPasswordMinChangedCharactersPolicy>(
+                root, passwordQualityPlatform,
+                "password_min_changed_characters", "5", "difok", "5");
+        writePasswordQualityGraph(" difok=4");
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_min_changed_characters.status=ENABLE\n"
+            "password_min_changed_characters.value=5\n");
+        PamPasswordMinChangedCharactersPolicy conflictingDifok(
+            passwordQualityPlatform);
+        require(
+            !conflictingDifok.apply(),
+            "difok PAM argument override must fail");
+        writePasswordQualityGraph();
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_min_changed_characters.status=ENABLE\n"
+            "password_min_changed_characters.value=-1\n");
+        PamPasswordMinChangedCharactersPolicy invalidDifok(
+            passwordQualityPlatform);
+        require(!invalidDifok.apply(), "negative difok FIC value must fail");
+
+        testMinimumCreditPolicy<PamPasswordMinLowercasePolicy>(
+            root, passwordQualityPlatform,
+            "password_min_lowercase", "lcredit");
+        testMinimumCreditPolicy<PamPasswordMinUppercasePolicy>(
+            root, passwordQualityPlatform,
+            "password_min_uppercase", "ucredit");
+        testMinimumCreditPolicy<PamPasswordMinDigitsPolicy>(
+            root, passwordQualityPlatform,
+            "password_min_digits", "dcredit");
+        testMinimumCreditPolicy<PamPasswordMinOtherPolicy>(
+            root, passwordQualityPlatform,
+            "password_min_other", "ocredit");
 
         const auto passwordHistoryPlatform =
             makePasswordHistoryPlatform(root);

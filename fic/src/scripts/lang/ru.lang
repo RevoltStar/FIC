@@ -70,6 +70,22 @@
 [module:IDENTITY_ACCESS][policy:password_min_length][description]=Задаёт minlen в каноническом конфиге pam_pwquality. Применение завершается ошибкой, если pam_pwquality не включён для каждой целевой password-службы, действует другой provider или аргумент PAM перекрывает требуемое значение.
 [module:IDENTITY_ACCESS][policy:password_min_classes]=Минимальное число классов символов пароля
 [module:IDENTITY_ACCESS][policy:password_min_classes][description]=Задаёт minclass в каноническом конфиге pam_pwquality после проверки provider и effective PAM-графа.
+[module:IDENTITY_ACCESS][policy:password_check_username]=Проверка имени пользователя в пароле
+[module:IDENTITY_ACCESS][policy:password_check_username][description]=Проверяет, не содержит ли новый пароль имя пользователя в форме, распознаваемой pam_pwquality.
+[module:IDENTITY_ACCESS][policy:password_check_gecos]=Проверка данных GECOS в пароле
+[module:IDENTITY_ACCESS][policy:password_check_gecos][description]=Проверяет, не содержит ли новый пароль значимые слова из поля GECOS локальной учётной записи.
+[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root]=Проверять качество паролей, устанавливаемых root
+[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Управляет беззначным флагом enforce_for_root в pam_pwquality. Значение yes применяет проверки качества и при установке пароля пользователем root, значение no удаляет флаг; сравнение с предыдущим паролем для root недоступно.
+[module:IDENTITY_ACCESS][policy:password_min_changed_characters]=Минимальное отличие от предыдущего пароля
+[module:IDENTITY_ACCESS][policy:password_min_changed_characters][description]=Задаёт difok — минимальное число изменений нового пароля относительно предыдущего. Значение 0 отключает проверки сходства, кроме запрета полного совпадения; для root сравнение обычно недоступно из-за отсутствия предыдущего пароля.
+[module:IDENTITY_ACCESS][policy:password_min_lowercase]=Минимальное число строчных букв
+[module:IDENTITY_ACCESS][policy:password_min_lowercase][description]=Требует указанное минимальное число строчных букв через lcredit pam_pwquality; значение 0 отключает отдельный минимум этого класса.
+[module:IDENTITY_ACCESS][policy:password_min_uppercase]=Минимальное число заглавных букв
+[module:IDENTITY_ACCESS][policy:password_min_uppercase][description]=Требует указанное минимальное число заглавных букв через ucredit pam_pwquality; значение 0 отключает отдельный минимум этого класса.
+[module:IDENTITY_ACCESS][policy:password_min_digits]=Минимальное число цифр
+[module:IDENTITY_ACCESS][policy:password_min_digits][description]=Требует указанное минимальное число цифр через dcredit pam_pwquality; значение 0 отключает отдельный минимум этого класса.
+[module:IDENTITY_ACCESS][policy:password_min_other]=Минимальное число прочих символов
+[module:IDENTITY_ACCESS][policy:password_min_other][description]=Требует указанное минимальное число символов других классов через ocredit pam_pwquality; значение 0 отключает отдельный минимум этого класса.
 [module:IDENTITY_ACCESS][policy:password_history_depth]=Глубина истории паролей
 [module:IDENTITY_ACCESS][policy:password_history_depth][description]=Задаёт remember в каноническом конфиге pam_pwhistory. pam_unix remember= распознаётся как отдельный неподдерживаемый provider и автоматически не переписывается.
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Применять историю паролей для root

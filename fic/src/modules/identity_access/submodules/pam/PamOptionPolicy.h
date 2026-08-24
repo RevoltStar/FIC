@@ -2,6 +2,7 @@
 #define FIC_IDENTITY_ACCESS_PAM_OPTION_POLICY_H
 
 #include "modules/identity_access/submodules/pam/PamPolicy.h"
+#include "modules/identity_access/submodules/pam/PamOptionValueCodec.h"
 #include "modules/identity_access/submodules/pam/PamProviderInspector.h"
 #include "platform/PlatformProfile.h"
 
@@ -27,7 +28,9 @@ protected:
         std::string option,
         std::vector<std::string> services,
         PamOptionSyntax syntax = PamOptionSyntax::Assignment,
-        std::vector<std::string> conflictingOptionsWhenFlagDisabled = {});
+        std::vector<std::string> conflictingOptionsWhenFlagDisabled = {},
+        fic::identity::pam::PamOptionValueEncoding valueEncoding =
+            fic::identity::pam::PamOptionValueEncoding::Direct);
 
     bool applyPam(const std::string& expectedValue) override;
 
@@ -40,6 +43,7 @@ private:
     std::vector<std::string> services_;
     PamOptionSyntax syntax_;
     std::vector<std::string> conflictingOptionsWhenFlagDisabled_;
+    fic::identity::pam::PamOptionValueEncoding valueEncoding_;
 };
 
 #endif // FIC_IDENTITY_ACCESS_PAM_OPTION_POLICY_H
