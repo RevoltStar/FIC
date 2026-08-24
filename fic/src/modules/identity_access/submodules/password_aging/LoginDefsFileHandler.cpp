@@ -48,9 +48,9 @@ bool LoginDefsFileHandler::loadConfig() {
             const std::string trailing = original.substr(valueEnd);
             const std::size_t trailingToken =
                 trailing.find_first_not_of(" \t\r\n");
-            occurrence.valid = trailingToken == std::string::npos ||
-                trailing[trailingToken] == '#';
             occurrence.value = original.substr(valueStart, valueEnd - valueStart);
+            occurrence.valid = trailingToken == std::string::npos &&
+                !occurrence.value.empty() && occurrence.value.front() != '#';
         }
         occurrences_[key].push_back(occurrence);
     }

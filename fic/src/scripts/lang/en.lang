@@ -4,6 +4,7 @@
 [configuration_saved]=Configuration saved
 
 [utils:policytypevalue][type:intpolicytypevalue] = The value must be in the range
+[utils:policytypevalue][type:unsignedintegerpolicytypevalue] = The unsigned value must be in the range
 [utils:policytypevalue][type:multilinepolicytypevalue] = No restriction
 [utils:policytypevalue][type:possiblelistpolicytypevalue] = Only from this list:
 [utils:policytypevalue][type:fixedpolicytypevalue]= No editable policy
@@ -97,7 +98,7 @@
 [module:IDENTITY_ACCESS][policy:password_aging_apply_to_existing_accounts]=Apply password aging to existing accounts
 [module:IDENTITY_ACCESS][policy:password_aging_apply_to_existing_accounts][description]=Synchronizes min/max/warn through chage only for local users in UID_MIN..UID_MAX and always excludes root.
 [module:IDENTITY_ACCESS][policy:password_aging_enforce_for_root]=Enforce password aging for root
-[module:IDENTITY_ACCESS][policy:password_aging_enforce_for_root][description]=Synchronizes min/max/warn through chage only for the local root account.
+[module:IDENTITY_ACCESS][policy:password_aging_enforce_for_root][description]=Synchronizes min/max/warn through chage for every local root-equivalent account with UID 0.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=SSSD cached credential lifetime
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Sets offline_credentials_expiration in the [pam] section of sssd.conf, in days. An active SSSD service is restarted; on failure the configuration is rolled back and the previous runtime state is restored.
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime]=Kerberos ticket lifetime

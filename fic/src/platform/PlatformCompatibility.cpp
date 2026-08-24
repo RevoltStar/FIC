@@ -346,11 +346,20 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                                  "DAC protected system command", error)) {
         return false;
     }
-    const PasswordAgingDefaults& aging = profile.passwordAging.defaults;
+    const PasswordAgingPolicyDefaults& aging =
+        profile.passwordAging.policyDefaults;
     if (aging.minDays < 0 || aging.maxDays < -1 || aging.warningDays < -1 ||
         (aging.maxDays != -1 && aging.minDays > aging.maxDays) ||
-        aging.uidMin < 0 || aging.uidMax < aging.uidMin) {
+        aging.uidMax < aging.uidMin) {
         error = "invalid password-aging platform defaults";
+        return false;
+    }
+    const PasswordAgingMissingKeySemantics& missing =
+        profile.passwordAging.missingKeySemantics;
+    if (missing.minDays < -1 || missing.maxDays < -1 ||
+        missing.warningDays < -1 ||
+        (missing.maxDays != -1 && missing.minDays > missing.maxDays)) {
+        error = "invalid password-aging missing-key semantics";
         return false;
     }
     if (profile.sysctl.managedConfigPath.extension() != ".conf") {

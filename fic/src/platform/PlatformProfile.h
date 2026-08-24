@@ -1,8 +1,11 @@
 #ifndef FIC_PLATFORM_PROFILE_H
 #define FIC_PLATFORM_PROFILE_H
 
+#include "platform/PasswordAgingPolicyDefaultsGenerated.h"
+
 #include <filesystem>
 #include <string>
+#include <sys/types.h>
 #include <vector>
 
 namespace fic::platform {
@@ -95,12 +98,18 @@ enum class LocalShadowKind {
     TcbDirectory
 };
 
-struct PasswordAgingDefaults {
-    int minDays = 0;
-    int maxDays = 99999;
-    int warningDays = 7;
-    int uidMin = 1000;
-    int uidMax = 60000;
+struct PasswordAgingPolicyDefaults {
+    long minDays = FIC_PASSWORD_AGING_POLICY_MIN_DAYS_DEFAULT;
+    long maxDays = FIC_PASSWORD_AGING_POLICY_MAX_DAYS_DEFAULT;
+    long warningDays = FIC_PASSWORD_AGING_POLICY_WARNING_DAYS_DEFAULT;
+    uid_t uidMin = FIC_PASSWORD_AGING_POLICY_UID_MIN_DEFAULT;
+    uid_t uidMax = FIC_PASSWORD_AGING_POLICY_UID_MAX_DEFAULT;
+};
+
+struct PasswordAgingMissingKeySemantics {
+    long minDays = -1;
+    long maxDays = -1;
+    long warningDays = -1;
 };
 
 struct PasswordAgingPlatformConfig {
@@ -109,7 +118,8 @@ struct PasswordAgingPlatformConfig {
     std::filesystem::path shadowPath = "/etc/shadow";
     LocalShadowKind shadowKind = LocalShadowKind::ShadowFile;
     std::filesystem::path tcbDirectory = "/etc/tcb";
-    PasswordAgingDefaults defaults;
+    PasswordAgingPolicyDefaults policyDefaults;
+    PasswordAgingMissingKeySemantics missingKeySemantics;
 };
 
 struct DisplayManagerPlatformConfig {

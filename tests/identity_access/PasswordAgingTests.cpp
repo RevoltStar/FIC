@@ -6,9 +6,12 @@
 #include <fic/core/FicRuntimePaths.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -36,6 +39,20 @@ std::string readFile(const fs::path& path) {
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input),
             std::istreambuf_iterator<char>()};
+}
+
+std::map<std::string, std::string> policyConfigValues(const fs::path& path) {
+    std::map<std::string, std::string> values;
+    std::ifstream input(path);
+    require(input.is_open(), "cannot read generated policy config " + path.string());
+    std::string line;
+    while (std::getline(input, line)) {
+        const std::size_t marker = line.find(".value=");
+        if (marker != std::string::npos) {
+            values.emplace(line.substr(0, marker), line.substr(marker + 7));
+        }
+    }
+    return values;
 }
 
 void initializePaths(const fs::path& root) {
@@ -131,6 +148,27 @@ void testLoginDefsHandler(const fs::path& root) {
     require(!handler.setValue("PASS_MAX_DAYS", "30"),
             "duplicate accepted");
     require(readFile(file) == duplicate, "duplicate mutated file");
+
+    for (const std::string& malformed : {
+             std::string("PASS_MAX_DAYS\n"),
+             std::string("PASS_MAX_DAYS # no value\n"),
+             std::string("PASS_MAX_DAYS 90 extra\n")}) {
+        writeFile(file, malformed);
+        require(handler.loadConfig(), "malformed target load failed");
+        require(handler.lookup("PASS_MAX_DAYS").state ==
+                    LoginDefsValueState::Malformed,
+                "malformed target occurrence was not detected");
+        require(!handler.setValue("PASS_MAX_DAYS", "90"),
+                "malformed target was automatically repaired");
+        require(readFile(file) == malformed, "malformed target file changed");
+    }
+
+    writeFile(file, "PASS_MAX_DAYS 90\n");
+    require(handler.loadConfig() &&
+                handler.lookup("PASS_MAX_DAYS").state ==
+                    LoginDefsValueState::Unique &&
+                handler.lookup("PASS_MAX_DAYS").value == "90",
+            "unique target occurrence is not parsed exactly");
 }
 
 void testOptionPolicies(const fs::path& root) {
@@ -165,6 +203,36 @@ void testOptionPolicies(const fs::path& root) {
         "UID_MIN 65000\nUID_MAX 60000\n");
     RegularUserUidMaxPolicy uidMax(platform);
     require(!uidMax.apply(), "invalid resulting UID relation accepted");
+
+    writeFile(platform.loginDefsPath,
+        "PASS_MIN_DAYS 0\nPASS_WARN_AGE 7\nUID_MIN 1000\nUID_MAX 60000\n");
+    platform.policyDefaults.maxDays = 0;
+    platform.missingKeySemantics.maxDays = -1;
+    writePolicyConfig(root);
+    PasswordMinAgeDaysPolicy missingPasswordPeer(platform);
+    require(missingPasswordPeer.apply(),
+            "explicit unlimited missing PASS_MAX_DAYS semantics were ignored");
+    require(readFile(platform.loginDefsPath).find("PASS_MIN_DAYS 1") !=
+                std::string::npos,
+            "policy with missing password peer did not apply");
+
+    writeFile(platform.loginDefsPath,
+        "PASS_MAX_DAYS 99999\nPASS_WARN_AGE 7\nUID_MIN 1000\nUID_MAX 60000\n");
+    platform.policyDefaults.minDays = 100;
+    platform.missingKeySemantics.minDays = -1;
+    PasswordMaxAgeDaysPolicy missingPasswordMinimum(platform);
+    require(missingPasswordMinimum.apply() &&
+                readFile(platform.loginDefsPath).find("PASS_MAX_DAYS 90") !=
+                    std::string::npos,
+            "explicit missing PASS_MIN_DAYS semantics were ignored");
+
+    writeFile(platform.loginDefsPath,
+        "PASS_MIN_DAYS 1\nPASS_MAX_DAYS 90\nPASS_WARN_AGE 7\nUID_MIN 1000\n");
+    const std::string missingUidPeer = readFile(platform.loginDefsPath);
+    RegularUserUidMinPolicy missingUidMax(platform);
+    require(!missingUidMax.apply() &&
+                readFile(platform.loginDefsPath) == missingUidPeer,
+            "missing UID_MAX peer did not fail closed");
 }
 
 void testPolicyValueContracts(const fs::path& root) {
@@ -174,36 +242,72 @@ void testPolicyValueContracts(const fs::path& root) {
     PasswordExpirationWarningDaysPolicy warning(platform);
     RegularUserUidMinPolicy uidMin(platform);
     RegularUserUidMaxPolicy uidMax(platform);
-    require(min.getDefaultValue() == "0" && min.validate("0") &&
+    require(min.getDefaultValue() ==
+                    std::to_string(platform.policyDefaults.minDays) &&
+                min.validate("0") &&
                 !min.validate("-1") && !min.validate("invalid"),
             "PASS_MIN_DAYS value contract is wrong");
-    require(max.getDefaultValue() == "99999" && max.validate("-1") &&
+    require(max.getDefaultValue() ==
+                    std::to_string(platform.policyDefaults.maxDays) &&
+                max.validate("-1") &&
                 !max.validate("invalid"),
             "PASS_MAX_DAYS value contract is wrong");
-    require(warning.getDefaultValue() == "7" && warning.validate("-1") &&
+    require(warning.getDefaultValue() ==
+                    std::to_string(platform.policyDefaults.warningDays) &&
+                warning.validate("-1") &&
                 !warning.validate("invalid"),
             "PASS_WARN_AGE value contract is wrong");
-    require(uidMin.getDefaultValue() == "1000" && uidMin.validate("0") &&
+    const std::string uidMaximum =
+        std::to_string(std::numeric_limits<uid_t>::max());
+    require(uidMin.getDefaultValue() ==
+                    std::to_string(platform.policyDefaults.uidMin) &&
+                uidMin.validate("0") &&
+                uidMin.validate(uidMaximum) &&
                 !uidMin.validate("-1") && !uidMin.validate("invalid"),
             "UID_MIN value contract is wrong");
-    require(uidMax.getDefaultValue() == "60000" && uidMax.validate("0") &&
+    require(uidMax.getDefaultValue() ==
+                    std::to_string(platform.policyDefaults.uidMax) &&
+                uidMax.validate("0") &&
+                uidMax.validate(uidMaximum) &&
                 !uidMax.validate("-1") && !uidMax.validate("invalid"),
             "UID_MAX value contract is wrong");
-    platform.defaults.maxDays = -1;
-    platform.defaults.warningDays = -1;
-    require(PasswordMaxAgeDaysPolicy(platform).getDefaultValue() == "-1" &&
-                PasswordExpirationWarningDaysPolicy(platform).getDefaultValue() ==
-                    "-1",
-            "ALT sentinel defaults are not exposed by policy metadata");
+    if (std::numeric_limits<uid_t>::max() >
+        static_cast<std::uintmax_t>(std::numeric_limits<int>::max())) {
+        require(uidMax.validate(std::to_string(
+                    static_cast<std::uintmax_t>(std::numeric_limits<int>::max()) + 1)),
+                "UID policy is still artificially limited to INT_MAX");
+    }
+    require(uidMin.getPolicyTypeValue().getEditorSpec().editor == "lineedit" &&
+                uidMax.getPolicyTypeValue().getEditorSpec().editor == "lineedit",
+            "UID policy editor cannot round-trip the uid_t range");
+
+    const auto generated = policyConfigValues(FIC_GENERATED_IDENTITY_CONFIG_PATH);
+    require(generated.at("password_min_age_days") == min.getDefaultValue() &&
+                generated.at("password_max_age_days") == max.getDefaultValue() &&
+                generated.at("password_expiration_warning_days") ==
+                    warning.getDefaultValue() &&
+                generated.at("regular_user_uid_min") == uidMin.getDefaultValue() &&
+                generated.at("regular_user_uid_max") == uidMax.getDefaultValue(),
+            "generated config defaults differ from Policy metadata");
+    for (const char* name : {
+             "password_min_age_days", "password_max_age_days",
+             "password_expiration_warning_days", "regular_user_uid_min",
+             "regular_user_uid_max", "password_aging_apply_to_existing_accounts",
+             "password_aging_enforce_for_root"}) {
+        require(readFile(FIC_GENERATED_IDENTITY_CONFIG_PATH).find(
+                    std::string(name) + ".status=DISABLE") != std::string::npos,
+                std::string("generated policy is not disabled: ") + name);
+    }
 }
 
 LocalAccountSnapshot sampleAccounts() {
     LocalAccountSnapshot accounts;
     accounts.passwdAccounts = {
-        {"root", 0}, {"daemon", 10}, {"alice", 1000},
+        {"root", 0}, {"emergency", 0}, {"daemon", 10}, {"alice", 1000},
         {"locked", 1001}, {"high", 60001}};
     accounts.shadowAccounts = {
         {"root", {100, 0, 99999, 7}},
+        {"emergency", {105, 0, 99999, 7}},
         {"daemon", {101, 0, 99999, 7}},
         {"alice", {102, 0, 99999, 7}},
         {"locked", {103, 0, 99999, 7}},
@@ -257,21 +361,27 @@ void testOperationalPolicies(const fs::path& root) {
     PasswordAgingRuntime rootRuntime(platform, resolver, runner, trust, reader);
     PasswordAgingEnforceForRootPolicy rootPolicy(platform, std::move(rootRuntime));
     require(rootPolicy.apply(), "root operational policy failed");
-    require(calls.back().back() == "root", "root policy changed another user");
+    require(calls.size() == afterFirst + 2 &&
+                calls[afterFirst].back() == "root" &&
+                calls[afterFirst + 1].back() == "emergency",
+            "root policy did not cover all root-equivalent UID 0 accounts");
     require(state.shadowAccounts["root"].lastChange == 100,
             "root sp_lstchg changed");
+    require(state.shadowAccounts["emergency"].lastChange == 105,
+            "root-equivalent sp_lstchg changed");
     require(reads >= 5, "postcondition did not reread structured state");
 }
 
 void testStructuredLocalReaders(const fs::path& root) {
     auto platform = platformFor(root);
-    writeFile(platform.passwdPath,
+    const std::string validPasswd =
         "root:x:0:0:root:/root:/bin/sh\n"
-        "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n");
-    writeFile(platform.shadowPath,
+        "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n";
+    const std::string validShadow =
         "root:!:100:0:99999:7:::\n"
-        "alice:$6$not-logged:101:1:90:7:::\n",
-        0600);
+        "alice:$6$not-logged:101:1:90:7:::\n";
+    writeFile(platform.passwdPath, validPasswd);
+    writeFile(platform.shadowPath, validShadow, 0600);
     LocalAccountSnapshot snapshot;
     std::string error;
     require(PasswordAgingRuntime::readLocalAccounts(
@@ -281,8 +391,49 @@ void testStructuredLocalReaders(const fs::path& root) {
                 snapshot.shadowAccounts.at("alice").minDays == 1,
             "structured /etc/passwd + /etc/shadow reader failed");
 
+    auto expectStrictFailure = [&](const std::string& passwd,
+                                   const std::string& shadow,
+                                   const std::string& label) {
+        writeFile(platform.passwdPath, passwd);
+        writeFile(platform.shadowPath, shadow, 0600);
+        snapshot = {};
+        error.clear();
+        require(!PasswordAgingRuntime::readLocalAccounts(
+                    platform, snapshot, error) && !error.empty(),
+                label + " did not fail the entire local account read");
+    };
+    expectStrictFailure(
+        "root:x:0:0:root:/root:/bin/sh\nmalformed\n"
+        "alice:x:1000:1000:Alice:/home/alice:/bin/sh\n",
+        validShadow,
+        "malformed passwd record between valid records");
+    expectStrictFailure(
+        validPasswd + "alice:x:1001:1001:Duplicate:/tmp:/bin/sh\n",
+        validShadow,
+        "duplicate passwd username");
+    expectStrictFailure(
+        "root:x:not-a-uid:0:root:/root:/bin/sh\n",
+        "root:!:100:0:99999:7:::\n",
+        "invalid passwd UID");
+    expectStrictFailure(
+        validPasswd,
+        "root:!:100:0:99999:7:::\nmalformed\n"
+        "alice:!:101:1:90:7:::\n",
+        "malformed shadow record between valid records");
+    expectStrictFailure(
+        validPasswd,
+        validShadow + "alice:!:102:1:90:7:::\n",
+        "duplicate shadow username");
+    expectStrictFailure(
+        validPasswd,
+        "root:!:not-a-number:0:99999:7:::\n"
+        "alice:!:101:1:90:7:::\n",
+        "malformed shadow aging field");
+
+    writeFile(platform.passwdPath, validPasswd);
     platform.shadowKind = fic::platform::LocalShadowKind::TcbDirectory;
     platform.tcbDirectory = root / "etc/tcb";
+    fs::remove_all(platform.tcbDirectory);
     writeFile(platform.tcbDirectory / "root/shadow",
               "root:!:100:0:99999:7:::\n", 0600);
     writeFile(platform.tcbDirectory / "alice/shadow",
@@ -292,6 +443,38 @@ void testStructuredLocalReaders(const fs::path& root) {
     require(snapshot.shadowAccounts.size() == 2 &&
                 snapshot.shadowAccounts.at("root").lastChange == 100,
             "structured TCB reader failed");
+
+    writeFile(platform.tcbDirectory / "alice/shadow",
+              "alice:!:101:1:90:7:::\nmalformed\n", 0600);
+    error.clear();
+    require(!PasswordAgingRuntime::readLocalAccounts(
+                platform, snapshot, error),
+            "malformed TCB shadow record was skipped");
+
+    const fs::path outside = root / "outside-tcb";
+    fs::remove_all(outside);
+    writeFile(outside / "shadow", "alice:!:101:1:90:7:::\n", 0600);
+    fs::remove_all(platform.tcbDirectory / "alice");
+    fs::create_directory_symlink(outside, platform.tcbDirectory / "alice");
+    error.clear();
+    require(!PasswordAgingRuntime::readLocalAccounts(
+                platform, snapshot, error),
+            "symlink TCB account directory was followed");
+
+    fs::remove(platform.tcbDirectory / "alice");
+    fs::create_directories(platform.tcbDirectory / "alice");
+    fs::create_symlink(outside / "shadow",
+                       platform.tcbDirectory / "alice/shadow");
+    error.clear();
+    require(!PasswordAgingRuntime::readLocalAccounts(
+                platform, snapshot, error),
+            "symlink TCB shadow file was followed");
+
+    writeFile(platform.passwdPath, "..:x:1000:1000::/:/bin/sh\n");
+    error.clear();
+    require(!PasswordAgingRuntime::readLocalAccounts(
+                platform, snapshot, error),
+            "unsafe TCB '..' account component was accepted");
 }
 
 void testOperationalFailures(const fs::path& root) {
@@ -332,9 +515,10 @@ void testOperationalFailures(const fs::path& root) {
     auto trust = [](const std::string&, std::string&) { return true; };
     PasswordAgingRuntime optionSafeRuntime(
         platform, resolver, successRunner, trust, reader);
-    require(!optionSafeRuntime.apply(chage, "-option", 1, 90, 7).success() &&
-                calls == 0,
-            "option-like username reached the command runner");
+    require(optionSafeRuntime.apply(chage, "-option", 1, 90, 7).success() &&
+                calls == 1,
+            "argv-safe option-like username was rejected despite '--'");
+    calls = 0;
     state.shadowAccounts.erase("root");
     PasswordAgingRuntime missingRootRuntime(
         platform, resolver, successRunner, trust, reader);
@@ -342,6 +526,25 @@ void testOperationalFailures(const fs::path& root) {
         platform, std::move(missingRootRuntime));
     require(!missingRoot.apply() && calls == 0,
             "missing local root shadow did not fail before mutation");
+
+    state = sampleAccounts();
+    state.shadowAccounts.erase("alice");
+    PasswordAgingRuntime missingEligibleRuntime(
+        platform, resolver, successRunner, trust, reader);
+    PasswordAgingApplyToExistingAccountsPolicy missingEligible(
+        platform, std::move(missingEligibleRuntime));
+    require(!missingEligible.apply() && calls == 0,
+            "eligible passwd account without shadow did not fail preflight");
+
+    state = sampleAccounts();
+    state.shadowAccounts.erase("daemon");
+    PasswordAgingRuntime missingSystemRuntime(
+        platform, resolver, successRunner, trust, reader);
+    PasswordAgingApplyToExistingAccountsPolicy missingSystem(
+        platform, std::move(missingSystemRuntime));
+    require(missingSystem.apply() && calls == 2,
+            "out-of-range system account without shadow blocked bulk apply");
+    calls = 0;
 
     state = sampleAccounts();
     auto failRunner = [&](const std::string&, const std::vector<std::string>&) {

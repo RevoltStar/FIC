@@ -5,6 +5,7 @@
 
 #
 [utils:policytypevalue][type:intpolicytypevalue] = Значение должно находиться в диапазоне
+[utils:policytypevalue][type:unsignedintegerpolicytypevalue] = Беззнаковое значение должно находиться в диапазоне
 [utils:policytypevalue][type:multilinepolicytypevalue] = Ограничений на значение политики не накладывается
 [utils:policytypevalue][type:possiblelistpolicytypevalue] = Политика может принимать только одно из следующих значений:
 [utils:policytypevalue][type:fixedpolicytypevalue] = Политика не допускает конфигурирования
@@ -97,7 +98,7 @@
 [module:IDENTITY_ACCESS][policy:password_aging_apply_to_existing_accounts]=Применить параметры срока действия пароля к ранее созданным УЗ
 [module:IDENTITY_ACCESS][policy:password_aging_apply_to_existing_accounts][description]=Синхронизирует min/max/warn через chage только для локальных пользователей в диапазоне UID_MIN..UID_MAX, всегда исключая root.
 [module:IDENTITY_ACCESS][policy:password_aging_enforce_for_root]=Применять параметры срока действия пароля к root
-[module:IDENTITY_ACCESS][policy:password_aging_enforce_for_root][description]=Синхронизирует min/max/warn через chage только для локальной учётной записи root.
+[module:IDENTITY_ACCESS][policy:password_aging_enforce_for_root][description]=Синхронизирует min/max/warn через chage для всех локальных root-equivalent учётных записей с UID 0.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=Срок действия кешированных учётных данных SSSD
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Задаёт offline_credentials_expiration в секции [pam] файла sssd.conf, в днях. Активная служба SSSD перезапускается; при ошибке конфигурация откатывается и прежнее runtime-состояние восстанавливается.
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime]=Срок жизни Kerberos-билета

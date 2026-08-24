@@ -3,6 +3,10 @@ find_package(Threads REQUIRED)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
+# Several tests compile daemon sources directly instead of consuming
+# fic-platform, so they need the generated part of the public platform header.
+include_directories(${CMAKE_BINARY_DIR}/fic/generated/include)
+
 if(Python3_Interpreter_FOUND)
     add_test(
         NAME device_control_static_checks
@@ -380,6 +384,9 @@ add_executable(password_aging_tests
 )
 target_include_directories(password_aging_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_compile_definitions(password_aging_tests PRIVATE
+    FIC_GENERATED_IDENTITY_CONFIG_PATH="${CMAKE_BINARY_DIR}/fic/generated/scripts/config/IDENTITY_ACCESS.conf"
 )
 target_link_libraries(password_aging_tests PRIVATE
     fic-core

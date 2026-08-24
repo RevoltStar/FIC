@@ -1,6 +1,7 @@
 #include "widgets/PolicyEditorWidget.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <stdexcept>
 
@@ -10,6 +11,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPalette>
 #include <QPushButton>
@@ -208,6 +210,12 @@ PolicyEditorWidget::PolicyEditorWidget(
                 valueWidget = spin;
                 break;
             }
+            case EditorType::LineEdit: {
+                auto* edit = new QLineEdit(QString::fromStdString(initialValue));
+                edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+                valueWidget = edit;
+                break;
+            }
             case EditorType::TextEdit: {
                 auto* edit = new QTextEdit;
                 QString text = QString::fromStdString(initialValue);
@@ -301,6 +309,9 @@ PolicyEditorWidget::PolicyEditorWidget(
             case EditorType::SpinBox:
                 value = std::to_string(qobject_cast<QSpinBox*>(row.value)->value());
                 break;
+            case EditorType::LineEdit:
+                value = qobject_cast<QLineEdit*>(row.value)->text().toStdString();
+                break;
             case EditorType::TextEdit: {
                 QString text = qobject_cast<QTextEdit*>(row.value)->toPlainText();
                 const QString delimiter = QString::fromStdString(row.policy.textDelimiter);
@@ -386,6 +397,7 @@ PolicyEditorWidget::EditorType PolicyEditorWidget::editorType(const std::string&
 {
     if (editor == "label") return EditorType::Label;
     if (editor == "spinbox") return EditorType::SpinBox;
+    if (editor == "lineedit") return EditorType::LineEdit;
     if (editor == "textedit") return EditorType::TextEdit;
     if (editor == "combobox") return EditorType::ComboBox;
     return EditorType::Unknown;
@@ -410,6 +422,15 @@ bool PolicyEditorWidget::validateValue(
                 .arg(QString::fromStdString(policy.policyName));
             return false;
         }
+    }
+    if (type == EditorType::LineEdit &&
+        (value.empty() || !std::all_of(
+             value.begin(), value.end(), [](unsigned char character) {
+                 return std::isdigit(character);
+             }))) {
+        error = QString("Policy %1 must be an unsigned decimal integer")
+            .arg(QString::fromStdString(policy.policyName));
+        return false;
     }
     if (type == EditorType::ComboBox && !policy.possibleValues.empty() &&
         std::find(policy.possibleValues.begin(), policy.possibleValues.end(), value) ==

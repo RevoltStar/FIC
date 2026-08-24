@@ -10,13 +10,14 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <sys/types.h>
 #include <vector>
 
 namespace fic::identity::password_aging {
 
 struct LocalPasswdAccount {
     std::string name;
-    unsigned long uid = 0;
+    uid_t uid = 0;
 };
 
 struct ShadowAgingState {

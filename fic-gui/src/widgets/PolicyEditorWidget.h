@@ -16,7 +16,14 @@ public:
                        QWidget* parent = nullptr);
 
 private:
-    enum class EditorType { Label, SpinBox, TextEdit, ComboBox, Unknown };
+    enum class EditorType {
+        Label,
+        SpinBox,
+        LineEdit,
+        TextEdit,
+        ComboBox,
+        Unknown
+    };
 
     static EditorType editorType(const std::string& editor);
     static bool validateValue(const PolicyDescriptor& policy,

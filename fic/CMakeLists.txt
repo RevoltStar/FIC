@@ -43,6 +43,13 @@ list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\]platform[/\\\\].*\\.cpp$")
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
+set(FIC_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+file(MAKE_DIRECTORY "${FIC_GENERATED_INCLUDE_DIR}/platform")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/PasswordAgingPolicyDefaultsGenerated.h.in"
+    "${FIC_GENERATED_INCLUDE_DIR}/platform/PasswordAgingPolicyDefaultsGenerated.h"
+    @ONLY)
+
 add_library(fic-platform STATIC
     src/platform/PlatformCompatibility.cpp
     src/platform/PlatformExecutableResolver.cpp
@@ -50,6 +57,7 @@ add_library(fic-platform STATIC
 )
 target_include_directories(fic-platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${FIC_GENERATED_INCLUDE_DIR}
 )
 if(CMAKE_LIBRARY_ARCHITECTURE)
     target_compile_definitions(fic-platform PRIVATE

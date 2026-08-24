@@ -142,23 +142,28 @@ void testSelectedProfile() {
     require(profile.passwordAging.loginDefsPath == "/etc/login.defs" &&
                 profile.passwordAging.passwdPath == "/etc/passwd",
             "password-aging local database paths are incorrect");
-    require(profile.passwordAging.defaults.uidMin == 1000 &&
-                profile.passwordAging.defaults.uidMax == 60000,
-            "password-aging UID defaults are incorrect");
+    const auto& agingDefaults = profile.passwordAging.policyDefaults;
+    require(agingDefaults.uidMin == (profile.id == "alt-p11" ? 500 : 1000) &&
+                agingDefaults.uidMax == 60000,
+            "password-aging UID policy defaults are incorrect");
+    require(profile.passwordAging.missingKeySemantics.minDays == -1 &&
+                profile.passwordAging.missingKeySemantics.maxDays == -1 &&
+                profile.passwordAging.missingKeySemantics.warningDays == -1,
+            "password-aging missing-key semantics are incorrect");
     if (profile.id == "alt-p11") {
         require(profile.passwordAging.shadowKind ==
                     fic::platform::LocalShadowKind::TcbDirectory &&
-                    profile.passwordAging.defaults.minDays == 0 &&
-                    profile.passwordAging.defaults.maxDays == -1 &&
-                    profile.passwordAging.defaults.warningDays == -1,
-                "ALT p11 password-aging defaults/backend are incorrect");
+                    agingDefaults.minDays == 0 &&
+                    agingDefaults.maxDays == 99999 &&
+                    agingDefaults.warningDays == 7,
+                "ALT p11 password-aging policy defaults/backend are incorrect");
     } else {
         require(profile.passwordAging.shadowKind ==
                     fic::platform::LocalShadowKind::ShadowFile &&
-                    profile.passwordAging.defaults.minDays == 0 &&
-                    profile.passwordAging.defaults.maxDays == 99999 &&
-                    profile.passwordAging.defaults.warningDays == 7,
-                "Debian/Ubuntu password-aging defaults are incorrect");
+                    agingDefaults.minDays == 0 &&
+                    agingDefaults.maxDays == 99999 &&
+                    agingDefaults.warningDays == 7,
+                "Debian/Ubuntu password-aging policy defaults are incorrect");
     }
     require(!profile.packageManager.queryCandidates.empty(),
             "package manager query candidates are missing");

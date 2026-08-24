@@ -1,6 +1,7 @@
 #include <fic/policy/PolicyTypeValue.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <iostream>
 #include <stdexcept>
@@ -89,6 +90,55 @@ std::string IntPolicyTypeValue::postProcessingValue(const std::string& value) {
 }
 
 std::string IntPolicyTypeValue::reverse_postProcessingValue(const std::string& value) {
+    return value;
+}
+
+UnsignedIntegerPolicyTypeValue::UnsignedIntegerPolicyTypeValue(
+    std::uintmax_t minimum,
+    std::uintmax_t maximum,
+    std::uintmax_t defaultValue)
+    : min(minimum), max(maximum) {
+    if (minimum >= maximum) {
+        throw std::invalid_argument("MAX должен быть больше MIN");
+    }
+    if (defaultValue < minimum || defaultValue > maximum) {
+        throw std::invalid_argument(
+            "DEFAULT VALUE должен находиться в диапазоне [MIN;MAX]");
+    }
+    this->defaultValue = std::to_string(defaultValue);
+}
+
+PolicyEditorSpec UnsignedIntegerPolicyTypeValue::getEditorSpec() const {
+    PolicyEditorSpec spec;
+    spec.editor = "lineedit";
+    return spec;
+}
+
+bool UnsignedIntegerPolicyTypeValue::validate(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    std::uintmax_t parsed = 0;
+    const auto result = std::from_chars(
+        value.data(), value.data() + value.size(), parsed, 10);
+    return result.ec == std::errc{} &&
+        result.ptr == value.data() + value.size() &&
+        parsed >= min && parsed <= max;
+}
+
+std::string UnsignedIntegerPolicyTypeValue::getPolicyRestrictionInfo() {
+    return LocalizationManager::getLang(
+               "[utils:policytypevalue][type:unsignedintegerpolicytypevalue]") +
+        " [" + std::to_string(min) + ";" + std::to_string(max) + "]";
+}
+
+std::string UnsignedIntegerPolicyTypeValue::postProcessingValue(
+    const std::string& value) {
+    return value;
+}
+
+std::string UnsignedIntegerPolicyTypeValue::reverse_postProcessingValue(
+    const std::string& value) {
     return value;
 }
 

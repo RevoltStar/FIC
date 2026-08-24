@@ -7,6 +7,7 @@
 
 #include <fic/core/AtomicFileWriter.h>
 
+#include <memory>
 #include <string>
 
 class LoginDefsOptionPolicy : public IdentityAccessPolicy {
@@ -25,11 +26,9 @@ protected:
     LoginDefsOptionPolicy(
         const std::string& policyName,
         const std::string& key,
-        int minimum,
-        int maximum,
-        int defaultValue,
         Relation relation,
         fic::platform::PasswordAgingPlatformConfig platform,
+        std::unique_ptr<PolicyTypeValue> valueType,
         AtomicWriteOptions writeOptions = {});
 
 private:
@@ -81,8 +80,8 @@ protected:
         long& minDays,
         long& maxDays,
         long& warningDays,
-        long& uidMin,
-        long& uidMax,
+        uid_t& uidMin,
+        uid_t& uidMax,
         bool requireUidRange);
     bool synchronize(
         const std::vector<fic::identity::password_aging::LocalPasswdAccount>& targets,

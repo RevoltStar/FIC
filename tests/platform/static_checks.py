@@ -241,19 +241,38 @@ def main():
             and '"/usr/bin/chage"' in source,
             f"{name} profile does not map the trusted chage executable",
         )
-        if name == "alt-p11":
-            require(
-                "LocalShadowKind::TcbDirectory" in source
-                and "defaults.maxDays = -1" in source
-                and "defaults.warningDays = -1" in source,
-                "ALT p11 profile does not define effective TCB aging defaults",
-            )
-        else:
-            require(
-                "profile.passwordAging.defaults = {0, 99999, 7, 1000, 60000}"
-                in source,
-                f"{name} profile does not pin vendor password-aging defaults",
-            )
+        require(
+            "passwordAging.policyDefaults" not in source,
+            f"{name} profile duplicates generated password-aging policy defaults",
+        )
+
+    require(
+        "LocalShadowKind::TcbDirectory" in profiles["alt-p11"],
+        "ALT p11 profile does not select the TCB backend",
+    )
+
+    platform_cmake = (
+        root / "cmake/FicTargetPlatform.cmake"
+    ).read_text(encoding="utf-8")
+    generated_defaults = (
+        root / "fic/src/platform/PasswordAgingPolicyDefaultsGenerated.h.in"
+    ).read_text(encoding="utf-8")
+    identity_template = (
+        root / "fic/src/scripts/config/IDENTITY_ACCESS.conf.in"
+    ).read_text(encoding="utf-8")
+    for default_name in (
+        "MIN_DAYS",
+        "MAX_DAYS",
+        "WARNING_DAYS",
+        "UID_MIN",
+        "UID_MAX",
+    ):
+        cmake_name = f"FIC_PASSWORD_AGING_POLICY_{default_name}_DEFAULT"
+        require(cmake_name in platform_cmake, f"missing {cmake_name}")
+        require(f"@{cmake_name}@" in generated_defaults,
+                f"generated C++ defaults omit {cmake_name}")
+        require(f"@{cmake_name}@" in identity_template,
+                f"generated policy config omits {cmake_name}")
 
     alt_profile = profiles["alt-p11"]
     require(

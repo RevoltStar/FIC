@@ -1,6 +1,7 @@
 #ifndef POLICYTYPEVALUE_H
 #define POLICYTYPEVALUE_H
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,6 +48,22 @@ public:
 
     PolicyEditorSpec getEditorSpec() const override;
 
+    bool validate(const std::string& value) override;
+    std::string getPolicyRestrictionInfo() override;
+    std::string postProcessingValue(const std::string& value) override;
+    std::string reverse_postProcessingValue(const std::string& value) override;
+};
+
+class UnsignedIntegerPolicyTypeValue : public PolicyTypeValue {
+    std::uintmax_t min;
+    std::uintmax_t max;
+public:
+    UnsignedIntegerPolicyTypeValue(
+        std::uintmax_t minimum,
+        std::uintmax_t maximum,
+        std::uintmax_t defaultValue);
+
+    PolicyEditorSpec getEditorSpec() const override;
     bool validate(const std::string& value) override;
     std::string getPolicyRestrictionInfo() override;
     std::string postProcessingValue(const std::string& value) override;
