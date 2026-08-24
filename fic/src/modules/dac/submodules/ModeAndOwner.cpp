@@ -227,7 +227,7 @@ bool ModeAndOwner::apply() {
         }
         this->log(fixed == 0 ? "Отклонений не обнаружено"
                              : "Все обнаруженные отклонения исправлены",
-                  logLevel::INFO);
+                  fixed == 0 ? logLevel::INFO : logLevel::WARN);
         return true;
     }
 
