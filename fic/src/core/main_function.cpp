@@ -500,6 +500,20 @@ bool initPolicyRegistry(
     cafArr.push_back(std::make_unique<PasswordAgingEnforceForRootPolicy>(
         platform.passwordAging, executables));
 
+    // Identity and access: defaults for future shadow-utils useradd accounts
+    cafArr.push_back(std::make_unique<UserHomeBaseDirectoryPolicy>(
+        platform.userCreation));
+    cafArr.push_back(std::make_unique<UserCreateHomePolicy>(
+        platform.userCreation));
+    cafArr.push_back(std::make_unique<UserSkeletonDirectoryPolicy>(
+        platform.userCreation));
+    cafArr.push_back(std::make_unique<UserDefaultShellPolicy>(
+        platform.userCreation));
+    cafArr.push_back(std::make_unique<UserCreatePrivateGroupPolicy>(
+        platform.userCreation));
+    cafArr.push_back(std::make_unique<UserDefaultPrimaryGroupPolicy>(
+        platform.userCreation));
+
     //Настройки ядра (SYSCTL)
     cafArr.push_back(std::make_unique<SYSCTL_dmesg_restrict>());
     cafArr.push_back(std::make_unique<SYSCTL_fd_limits>());

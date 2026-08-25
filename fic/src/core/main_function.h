@@ -39,6 +39,7 @@
 #include "modules/identity_access/submodules/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
 #include "modules/identity_access/submodules/kerberos/policies/KerberosTicketLifetimePolicy.h"
 #include "modules/identity_access/submodules/password_aging/PasswordAgingPolicies.h"
+#include "modules/identity_access/submodules/user_creation/UserCreationPolicies.h"
 
 //Настройки ядра
 #include "modules/sysctl/submodules/fskernelprotection/SYSCTL_fd_limits.h"

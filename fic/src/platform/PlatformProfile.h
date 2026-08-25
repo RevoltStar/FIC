@@ -2,6 +2,7 @@
 #define FIC_PLATFORM_PROFILE_H
 
 #include "platform/PasswordAgingPolicyDefaultsGenerated.h"
+#include "platform/UserCreationPolicyDefaultsGenerated.h"
 
 #include <filesystem>
 #include <string>
@@ -122,6 +123,30 @@ struct PasswordAgingPlatformConfig {
     PasswordAgingMissingKeySemantics missingKeySemantics;
 };
 
+enum class UserCreationProviderKind {
+    ShadowUseradd
+};
+
+struct UserCreationPolicyDefaults {
+    std::string homeBaseDirectory = FIC_USER_CREATION_HOME_BASE_DEFAULT;
+    std::string createHome = FIC_USER_CREATION_CREATE_HOME_DEFAULT;
+    std::string skeletonDirectory = FIC_USER_CREATION_SKEL_DEFAULT;
+    std::string defaultShell = FIC_USER_CREATION_SHELL_DEFAULT;
+    std::string createPrivateGroup = FIC_USER_CREATION_PRIVATE_GROUP_DEFAULT;
+    std::string defaultPrimaryGroup = FIC_USER_CREATION_PRIMARY_GROUP_DEFAULT;
+};
+
+struct UserCreationPlatformConfig {
+    UserCreationProviderKind provider = UserCreationProviderKind::ShadowUseradd;
+    std::filesystem::path useraddDefaultsPath = "/etc/default/useradd";
+    std::filesystem::path loginDefsPath = "/etc/login.defs";
+    std::filesystem::path passwdPath = "/etc/passwd";
+    std::filesystem::path groupPath = "/etc/group";
+    std::filesystem::path shellsPath = "/etc/shells";
+    bool requireListedShellWhenShellsFileExists = true;
+    UserCreationPolicyDefaults policyDefaults;
+};
+
 struct DisplayManagerPlatformConfig {
     std::filesystem::path sddmConfigPath;
     std::filesystem::path lightDmConfigPath;
@@ -157,6 +182,7 @@ struct PlatformProfile {
     SysctlPlatformConfig sysctl;
     PamPlatformConfig pam;
     PasswordAgingPlatformConfig passwordAging;
+    UserCreationPlatformConfig userCreation;
     DisplayManagerPlatformConfig displayManager;
     GrubPlatformConfig grub;
     DacPlatformConfig dac;

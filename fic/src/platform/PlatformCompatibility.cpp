@@ -330,6 +330,16 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                       "local shadow path", error) ||
         !validatePath(profile.passwordAging.tcbDirectory,
                       "local TCB directory", error) ||
+        !validatePath(profile.userCreation.useraddDefaultsPath,
+                      "useradd defaults path", error) ||
+        !validatePath(profile.userCreation.loginDefsPath,
+                      "user-creation login.defs path", error) ||
+        !validatePath(profile.userCreation.passwdPath,
+                      "user-creation local passwd path", error) ||
+        !validatePath(profile.userCreation.groupPath,
+                      "user-creation local group path", error) ||
+        !validatePath(profile.userCreation.shellsPath,
+                      "user-creation shells path", error) ||
         !validatePath(profile.displayManager.sddmConfigPath,
                       "SDDM configuration path", error) ||
         !validatePath(profile.displayManager.lightDmConfigPath,
@@ -360,6 +370,26 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
         missing.warningDays < -1 ||
         (missing.maxDays != -1 && missing.minDays > missing.maxDays)) {
         error = "invalid password-aging missing-key semantics";
+        return false;
+    }
+    const UserCreationPolicyDefaults& creation =
+        profile.userCreation.policyDefaults;
+    const auto validDefaultPath = [](const std::string& value) {
+        const std::filesystem::path path(value);
+        return validAbsolutePath(path) && path != path.root_path();
+    };
+    if (!validDefaultPath(creation.homeBaseDirectory) ||
+        !validDefaultPath(creation.skeletonDirectory) ||
+        !validDefaultPath(creation.defaultShell) ||
+        (creation.createHome != "yes" && creation.createHome != "no") ||
+        (creation.createPrivateGroup != "yes" &&
+         creation.createPrivateGroup != "no") ||
+        creation.defaultPrimaryGroup.empty() ||
+        std::all_of(
+            creation.defaultPrimaryGroup.begin(),
+            creation.defaultPrimaryGroup.end(),
+            [](unsigned char character) { return std::isdigit(character) != 0; })) {
+        error = "invalid user-creation platform defaults";
         return false;
     }
     if (profile.sysctl.managedConfigPath.extension() != ".conf") {

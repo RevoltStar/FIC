@@ -1,6 +1,6 @@
 #include "modules/identity_access/submodules/password_aging/PasswordAgingPolicies.h"
 
-#include "modules/identity_access/submodules/password_aging/LoginDefsFileHandler.h"
+#include "modules/identity_access/configuration/LoginDefsFileHandler.h"
 
 #include <charconv>
 #include <climits>
@@ -12,6 +12,9 @@
 #include <utility>
 
 using namespace fic::identity::password_aging;
+using fic::identity::LoginDefsFileHandler;
+using fic::identity::LoginDefsValue;
+using fic::identity::LoginDefsValueState;
 
 namespace {
 

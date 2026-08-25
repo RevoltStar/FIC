@@ -1,10 +1,10 @@
-#include "modules/identity_access/submodules/password_aging/LoginDefsFileHandler.h"
+#include "modules/identity_access/configuration/LoginDefsFileHandler.h"
 
 #include <cctype>
 #include <sstream>
 #include <utility>
 
-namespace fic::identity::password_aging {
+namespace fic::identity {
 
 LoginDefsFileHandler::LoginDefsFileHandler(
     const std::string& path,
@@ -108,4 +108,4 @@ bool LoginDefsFileHandler::saveAndReload() {
     return saveFile() && loadConfig();
 }
 
-} // namespace fic::identity::password_aging
+} // namespace fic::identity

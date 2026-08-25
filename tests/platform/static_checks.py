@@ -257,6 +257,9 @@ def main():
     generated_defaults = (
         root / "fic/src/platform/PasswordAgingPolicyDefaultsGenerated.h.in"
     ).read_text(encoding="utf-8")
+    user_creation_defaults = (
+        root / "fic/src/platform/UserCreationPolicyDefaultsGenerated.h.in"
+    ).read_text(encoding="utf-8")
     identity_template = (
         root / "fic/src/scripts/config/IDENTITY_ACCESS.conf.in"
     ).read_text(encoding="utf-8")
@@ -273,6 +276,24 @@ def main():
                 f"generated C++ defaults omit {cmake_name}")
         require(f"@{cmake_name}@" in identity_template,
                 f"generated policy config omits {cmake_name}")
+    for default_name in (
+        "HOME_BASE", "CREATE_HOME", "SKEL", "SHELL", "PRIVATE_GROUP",
+        "PRIMARY_GROUP",
+    ):
+        cmake_name = f"FIC_USER_CREATION_{default_name}_DEFAULT"
+        require(cmake_name in platform_cmake, f"missing {cmake_name}")
+        require(f"@{cmake_name}@" in user_creation_defaults,
+                f"generated C++ defaults omit {cmake_name}")
+        require(f"@{cmake_name}@" in identity_template,
+                f"generated policy config omits {cmake_name}")
+    require(
+        'set(FIC_USER_CREATION_CREATE_HOME_DEFAULT "yes")' in platform_cmake,
+        "ALT p11 CREATE_HOME default is not represented",
+    )
+    require(
+        'set(FIC_USER_CREATION_SHELL_DEFAULT "/bin/bash")' in platform_cmake,
+        "ALT p11 useradd shell default is not represented",
+    )
 
     alt_profile = profiles["alt-p11"]
     require(
@@ -374,6 +395,12 @@ def main():
         "RegularUserUidMaxPolicy",
         "PasswordAgingApplyToExistingAccountsPolicy",
         "PasswordAgingEnforceForRootPolicy",
+        "UserHomeBaseDirectoryPolicy",
+        "UserCreateHomePolicy",
+        "UserSkeletonDirectoryPolicy",
+        "UserDefaultShellPolicy",
+        "UserCreatePrivateGroupPolicy",
+        "UserDefaultPrimaryGroupPolicy",
     ):
         require(
             policy_class in registry,
@@ -409,6 +436,12 @@ def main():
         "regular_user_uid_max",
         "password_aging_apply_to_existing_accounts",
         "password_aging_enforce_for_root",
+        "user_home_base_directory",
+        "user_create_home",
+        "user_skeleton_directory",
+        "user_default_shell",
+        "user_create_private_group",
+        "user_default_primary_group",
     ):
         require(
             f"{policy_name}.value=" in identity_config
@@ -427,6 +460,7 @@ def main():
             for submodule in (
                 "PAM", "SSSD", "KERBEROS", "NSS", "COMPOSITE",
                 "PASSWORD_AGING",
+                "USER_CREATION",
             ):
                 require(
                     f"[module:IDENTITY_ACCESS][submodule:{submodule}]"

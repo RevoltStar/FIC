@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace fic::identity::password_aging {
+namespace fic::identity {
 
 enum class LoginDefsValueState {
     Missing,
@@ -46,6 +46,6 @@ private:
     std::unordered_map<std::string, std::vector<Occurrence>> occurrences_;
 };
 
-} // namespace fic::identity::password_aging
+} // namespace fic::identity
 
 #endif

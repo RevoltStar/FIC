@@ -3,53 +3,61 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `1de6568`.
+- Базовый commit задачи: `e114c85`.
 
 ## Current task
 
-- Исправление опасного fallback с block-device DENY на PCI `remove` в
-  `DeviceEnforcer`.
+- Политики `IDENTITY_ACCESS/USER_CREATION` для defaults будущих локальных
+  пользователей backend `shadow-utils useradd`.
 
 ## Accepted architecture / invariants
 
-- Тип subsystem ограничивает допустимый destructive sysfs endpoint.
-- `block` использует только ancestor `delete`, чей `subsystem` symlink
-  canonical-resolve'ится в `<sysfs>/bus/scsi`; отсутствие такой цели означает
-  fail closed без поиска `remove`.
-- `pci` использует только `<DEVPATH>/remove`, если сам `DEVPATH` подтверждён
-  как `<sysfs>/bus/pci`; поиск по PCI ancestors запрещён.
-- USB/usbmisc сохраняет существующий поиск `authorized` и запись `0`.
+- Daemon изменяет только `/etc/default/useradd` (`HOME`, `SKEL`, `SHELL`,
+  `GROUP`) и `/etc/login.defs` (`CREATE_HOME`, `USERGROUPS_ENAB`).
+- Политики не создают пользователей, группы или каталоги и не меняют
+  существующие accounts; frontend-specific и supplementary-group defaults вне
+  scope.
+- Native config duplicate/malformed target, unsafe path, отсутствующая local
+  group и неэффективный shell отклоняются fail-closed до записи.
+- Debian/Ubuntu defaults: `CREATE_HOME=no`, `SHELL=/bin/sh`; ALT p11:
+  `CREATE_HOME=yes`, `SHELL=/bin/bash`. Во всех profiles `GROUP` представлен
+  именем `users`, а не vendor numeric GID 100.
 
 ## Completed
 
-- Sysfs enforcement вынесен во внутренний `DeviceEnforcerSysfs` с production
-  default `/sys` и injectable root для тестов.
-- Удалена неверная проверка имени каталога `"device"` и общая ветка
-  `block || pci`.
-- Добавлены runtime-style regression tests с fake sysfs и subsystem symlinks:
-  безопасный SCSI `delete`, fail-closed block, настоящий PCI `remove`, запрет
-  parent PCI fallback и сохранение USB `authorized=0`.
-- Обновлены device-control static invariants и описание enforcement.
+- Добавлены шесть policy, registry/config/localization wiring и
+  `UserCreationPlatformConfig` для всех пяти compile-time profiles.
+- `LoginDefsFileHandler` перенесён в общий identity configuration layer без
+  изменения состояний `Missing/Unique/Duplicate/Malformed`.
+- Добавлен специализированный `UseraddDefaultsFileHandler` с точным native
+  `KEY=value` syntax, сохранением неизвестных строк и atomic write.
+- Добавлены runtime/static/profile tests и описание backend boundary.
 
 ## Changed areas
 
-- `fic-dick/src/core/DeviceEnforcer*`;
-- `tests/device-control/DeviceEnforcerTests.cpp` и `static_checks.py`;
-- `tests/CMakeLists.txt`;
-- `fic-dick/README.md`.
+- `fic/src/modules/identity_access/configuration/` и
+  `submodules/user_creation/`;
+- platform profile/default generation и `IDENTITY_ACCESS.conf.in`;
+- daemon registration, localization, identity/platform tests;
+- `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- `cmake --build build-check --target device_enforcer_tests fic-dick -j2` —
+- Полная Ubuntu 24.04 configure/build в `/tmp/fic-user-creation-build` —
   успешно.
-- Финальный device-control CTest subset: 6/6 успешно
-  (`device_control_static_checks`, tree revision/snapshot, policy compiler,
-  lifecycle, enforcer).
-- `git diff --check` — успешно.
+- Targeted CTest subset: 5/5 успешно (`user_creation`, password-aging
+  regression, platform runtime/static, packaging resource).
+- `user_creation_tests` для Debian 12/13, Ubuntu 24.04/26.04 и ALT p11 — 5/5
+  успешно; новые `platform_profile_tests` assertions прошли во всех profiles.
+- Полный CTest: 45 tests passed/skipped as configured, один unrelated failure
+  в существующем `ipc_protocol_validation_tests` из-за противоречивых
+  assertions для одного и того же API v1 request.
 
 ## Remaining
 
-- Реальная запись в host sysfs не запускалась и не нужна как обычная
-  validation.
-- VM/device-control shell suites с настоящим hotplug не запускались.
+- Реальный policy apply и создание test account не запускались: validation не
+  меняла host accounts или `/etc`.
+- Отдельный полный `platform_profile_tests` на Ubuntu 26.04 останавливается на
+  существующем unrelated invariant про symlink exceptions у protected command;
+  новые user-creation assertions выполняются раньше и проходят.
+- Существующий IPC test failure не исправлялся как unrelated scope.

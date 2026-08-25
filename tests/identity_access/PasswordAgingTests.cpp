@@ -1,6 +1,6 @@
 #include "core/PolicyApplication.h"
 #include "core/PolicyRegistryInitialization.h"
-#include "modules/identity_access/submodules/password_aging/LoginDefsFileHandler.h"
+#include "modules/identity_access/configuration/LoginDefsFileHandler.h"
 #include "modules/identity_access/submodules/password_aging/PasswordAgingPolicies.h"
 
 #include <fic/core/FicRuntimePaths.h>
@@ -21,6 +21,7 @@
 namespace {
 namespace fs = std::filesystem;
 using namespace fic::identity::password_aging;
+using namespace fic::identity;
 
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);

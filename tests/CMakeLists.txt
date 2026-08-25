@@ -390,7 +390,7 @@ add_executable(password_aging_tests
     ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyExecutionPlanner.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/core/PolicyRegistryInitialization.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/password_aging/LoginDefsFileHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/LoginDefsFileHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/password_aging/PasswordAgingPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/password_aging/PasswordAgingRuntime.cpp
 )
@@ -407,6 +407,27 @@ target_link_libraries(password_aging_tests PRIVATE
     Threads::Threads
 )
 add_test(NAME password_aging_tests COMMAND password_aging_tests)
+
+add_executable(user_creation_tests
+    identity_access/UserCreationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/LoginDefsFileHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/UseraddDefaultsFileHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/user_creation/UserCreationPolicies.cpp
+)
+target_include_directories(user_creation_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_compile_definitions(user_creation_tests PRIVATE
+    FIC_GENERATED_IDENTITY_CONFIG_PATH="${CMAKE_BINARY_DIR}/fic/generated/scripts/config/IDENTITY_ACCESS.conf"
+)
+target_link_libraries(user_creation_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME user_creation_tests COMMAND user_creation_tests)
 
 add_executable(identity_concrete_policies_tests
     identity_access/IdentityConcretePoliciesTests.cpp

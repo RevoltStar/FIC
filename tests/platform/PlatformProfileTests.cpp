@@ -165,6 +165,28 @@ void testSelectedProfile() {
                     agingDefaults.warningDays == 7,
                 "Debian/Ubuntu password-aging policy defaults are incorrect");
     }
+    require(profile.userCreation.provider ==
+                fic::platform::UserCreationProviderKind::ShadowUseradd &&
+                profile.userCreation.useraddDefaultsPath ==
+                    "/etc/default/useradd" &&
+                profile.userCreation.loginDefsPath == "/etc/login.defs" &&
+                profile.userCreation.passwdPath == "/etc/passwd" &&
+                profile.userCreation.groupPath == "/etc/group" &&
+                profile.userCreation.shellsPath == "/etc/shells" &&
+                profile.userCreation.requireListedShellWhenShellsFileExists,
+            "user-creation backend paths/capabilities are incorrect");
+    const auto& creationDefaults = profile.userCreation.policyDefaults;
+    require(creationDefaults.homeBaseDirectory == "/home" &&
+                creationDefaults.skeletonDirectory == "/etc/skel" &&
+                creationDefaults.createPrivateGroup == "yes" &&
+                creationDefaults.defaultPrimaryGroup == "users",
+            "common user-creation policy defaults are incorrect");
+    require(
+        creationDefaults.createHome ==
+                (profile.id == "alt-p11" ? "yes" : "no") &&
+            creationDefaults.defaultShell ==
+                (profile.id == "alt-p11" ? "/bin/bash" : "/bin/sh"),
+        "distribution-specific user-creation defaults are incorrect");
     require(!profile.packageManager.queryCandidates.empty(),
             "package manager query candidates are missing");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",
@@ -462,6 +484,21 @@ void testInvalidProfileIsRejected() {
     profile.pam.passwordHistoryConfigPath = "etc/security/pwhistory.conf";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM option file path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.userCreation.useraddDefaultsPath = "etc/default/useradd";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative useradd defaults path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.userCreation.policyDefaults.homeBaseDirectory = "/";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an unsafe user home base default must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.userCreation.policyDefaults.defaultPrimaryGroup = "100";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a numeric user primary group default must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.grub.defaultsPath = "etc/default/grub";

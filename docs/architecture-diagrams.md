@@ -593,7 +593,8 @@ flowchart TD
 устанавливает пакеты и не исправляет чужой PAM stack.
 
 Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют плоским
-`/etc/login.defs` через специализированный `LoginDefsFileHandler`.
+`/etc/login.defs` через общий для identity configuration
+`LoginDefsFileHandler`.
 Неизвестные строки, комментарии и пустые строки сохраняются; duplicate или
 malformed occurrence целевого ключа отклоняется до записи. Пять config-policy
 задают `PASS_MIN_DAYS`, `PASS_MAX_DAYS`, `PASS_WARN_AGE`, `UID_MIN` и
@@ -603,6 +604,19 @@ policy dependency graph и после их применения повторно
 defaults выбранного platform profile, а не из состояния build host. Одни и те
 же CMake platform constants генерируют этот config и C++ header, из которого
 `PasswordAgingPolicyDefaults` инициализирует runtime policy metadata.
+
+Политики `IDENTITY_ACCESS/USER_CREATION` управляют только defaults для
+будущих локальных пользователей backend `ShadowUseradd`: `HOME`, `SKEL`,
+`SHELL` и именованным `GROUP` в `/etc/default/useradd`, а также `CREATE_HOME`
+и `USERGROUPS_ENAB` в `/etc/login.defs`. Они не создают пользователей, группы
+или каталоги и не изменяют существующие accounts. `UseraddDefaultsFileHandler`
+сохраняет комментарии и неизвестные параметры; duplicate или malformed
+целевой key отклоняется fail-closed. Каталоги и shell должны существовать,
+shell должен разрешаться в обычный executable file и при наличии `/etc/shells`
+входить в него под запрошенным именем, а
+`GROUP` должен однозначно существовать в локальном `/etc/group`. Поддержка
+frontend, игнорирующих shadow-utils defaults, и ALT supplementary/default
+groups намеренно не входят в этот контракт.
 
 `PasswordAgingPolicyDefaults` не используются как semantics отсутствующего
 `login.defs` key. Для отсутствующих `PASS_MIN_DAYS`/`PASS_MAX_DAYS` явно

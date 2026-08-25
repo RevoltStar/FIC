@@ -49,6 +49,10 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/PasswordAgingPolicyDefaultsGenerated.h.in"
     "${FIC_GENERATED_INCLUDE_DIR}/platform/PasswordAgingPolicyDefaultsGenerated.h"
     @ONLY)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/UserCreationPolicyDefaultsGenerated.h.in"
+    "${FIC_GENERATED_INCLUDE_DIR}/platform/UserCreationPolicyDefaultsGenerated.h"
+    @ONLY)
 
 add_library(fic-platform STATIC
     src/platform/PlatformCompatibility.cpp
