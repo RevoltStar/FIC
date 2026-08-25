@@ -31,6 +31,7 @@ def main():
     udev_rules = root / "fic" / "src" / "scripts" / "udev" / "99-fic-devices.rules.in"
     policy_compiler = root / "fic-dick" / "src" / "core" / "DevicePolicyCompiler.cpp"
     device_enforcer = root / "fic-dick" / "src" / "core" / "DeviceEnforcer.cpp"
+    device_enforcer_sysfs = root / "fic-dick" / "src" / "core" / "DeviceEnforcerSysfs.cpp"
     device_lifecycle = root / "fic-dick" / "src" / "core" / "DeviceLifecycle.cpp"
 
     db_source = read_text(db_cpp)
@@ -145,10 +146,24 @@ def main():
         "escapeUdevValue",
     ]:
         require(marker in compiler_source, f"missing generated device policy support: {marker}")
-    require("DB" not in read_text(device_enforcer),
+    enforcer_source = read_text(device_enforcer)
+    enforcer_sysfs_source = read_text(device_enforcer_sysfs)
+    require("DB" not in enforcer_source and "DB" not in enforcer_sysfs_source,
             "hotplug sysfs enforcer must not depend on the device database")
-    require("enforced ? logLevel::INFO : logLevel::ERROR" in read_text(device_enforcer),
+    require("enforced ? logLevel::INFO : logLevel::ERROR" in enforcer_source,
             "successful DENY enforcement must be INFO and failures must be ERROR")
+    require('subsystem == "block" || subsystem == "pci"' not in enforcer_sysfs_source,
+            "block DENY must never share the PCI remove fallback")
+    require("findScsiDeleteTarget" in enforcer_sysfs_source and
+            'sysfsSubsystemMatches(parent, "scsi", options)' in enforcer_sysfs_source,
+            "block DENY must accept only a subsystem-verified SCSI delete target")
+    require("findPciRemoveTarget" in enforcer_sysfs_source and
+            'sysfsSubsystemMatches(devicePath.value(), "pci", options)' in enforcer_sysfs_source,
+            "PCI DENY must accept only a subsystem-verified PCI remove target")
+    require("PCI remove fallback is prohibited" in enforcer_sysfs_source,
+            "block DENY without a safe target must fail closed")
+    require('filename() == "device"' not in enforcer_sysfs_source,
+            "SCSI delete validation must not rely on an invalid directory-name heuristic")
 
     gui_source = read_text(gui_tree)
     require('"device_tree_revision"' in gui_source,

@@ -191,8 +191,11 @@ policy, скомпилированной из БД. Generated rule выбира�
   processing pipeline, который используется initial reconciliation;
 - до запуска inventory helper generated rule уже вычисляет effective policy;
 - при DENY rule сначала запускает `fic-dick enforce`, который не открывает
-  SQLite: USB/usbmisc пишет `authorized=0`, PCI пишет в ближайший `remove`,
-  block использует SCSI `device/delete` или `remove`;
+  SQLite: USB/usbmisc пишет `authorized=0`, PCI использует только `remove`
+  самого `DEVPATH` с подтверждённым sysfs subsystem `pci`, а block — только `delete`
+  ancestor с подтверждённым sysfs subsystem `scsi`; если безопасный SCSI
+  `delete` отсутствует, block enforcement завершается ошибкой и никогда не
+  поднимается к PCI `remove`;
 - затем `fic-dick udev` передает environment с `FIC_EFFECTIVE_LEVEL` и
   `FIC_POLICY_SOURCE` daemon для inventory, history и PERMANENT handling;
 - если обязательных переменных окружения нет, обработка завершается с ошибкой.

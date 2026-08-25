@@ -2,57 +2,54 @@
 
 ## Current base
 
-- Дата: 2026-08-24.
 - Ветка: `main`.
-- Базовый commit задачи: `b3a9c8d`.
+- Базовый commit задачи: `1de6568`.
 
 ## Current task
 
-- Расширение PAM password-quality policies для дополнительных настроек
-  `pam_pwquality`.
+- Исправление опасного fallback с block-device DENY на PCI `remove` в
+  `DeviceEnforcer`.
 
 ## Accepted architecture / invariants
 
-- Новые policies используют существующий `PamOptionPolicy`, provider/effective
-  PAM verification и canonical `PamPlatformConfig::passwordQualityConfigPath`.
-- Логические FIC values хранятся без native encoding: `yes/no` преобразуются
-  в `1/0`, minimum credit `N > 0` — в `-N`, а `0` — в native `0` внутри
-  PAM option path.
-- `enforce_for_root` остаётся беззначным flag; `password_min_classes`
-  независима от четырёх minimum-credit policies.
+- Тип subsystem ограничивает допустимый destructive sysfs endpoint.
+- `block` использует только ancestor `delete`, чей `subsystem` symlink
+  canonical-resolve'ится в `<sysfs>/bus/scsi`; отсутствие такой цели означает
+  fail closed без поиска `remove`.
+- `pci` использует только `<DEVPATH>/remove`, если сам `DEVPATH` подтверждён
+  как `<sysfs>/bus/pci`; поиск по PCI ancestors запрещён.
+- USB/usbmisc сохраняет существующий поиск `authorized` и запись `0`.
 
 ## Completed
 
-- Добавлены восемь policies: username/GECOS checks, quality enforcement for
-  root, `difok` и четыре class minima.
-- Добавлен небольшой двунаправленный `PamOptionValueCodec`; существующая flag
-  abstraction переиспользована без изменения её семантики.
-- Обновлены registry, default config, ru/en localization, README и static
-  registration/config checks.
-- Добавлены codec и policy-level tests с временным effective PAM graph,
-  override failures, idempotency, flag и credit mappings.
+- Sysfs enforcement вынесен во внутренний `DeviceEnforcerSysfs` с production
+  default `/sys` и injectable root для тестов.
+- Удалена неверная проверка имени каталога `"device"` и общая ветка
+  `block || pci`.
+- Добавлены runtime-style regression tests с fake sysfs и subsystem symlinks:
+  безопасный SCSI `delete`, fail-closed block, настоящий PCI `remove`, запрет
+  parent PCI fallback и сохранение USB `authorized=0`.
+- Обновлены device-control static invariants и описание enforcement.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/submodules/pam/`;
-- daemon policy registration;
-- `IDENTITY_ACCESS.conf.in`, ru/en localization и PAM README;
-- PAM/identity tests и platform static checks.
+- `fic-dick/src/core/DeviceEnforcer*`;
+- `tests/device-control/DeviceEnforcerTests.cpp` и `static_checks.py`;
+- `tests/CMakeLists.txt`;
+- `fic-dick/README.md`.
 
 ## Validation
 
-- `cmake -S . -B build-hardening-ubuntu2404 -DFIC_TARGET_PLATFORM=ubuntu-24.04`
-  — успешно.
-- Targeted build `pam_configuration_tests`,
-  `identity_policy_hierarchy_tests` и `fic` — успешно.
-- Targeted PAM tests, `platform_profile_static_checks` и
-  `pam_packaging_static_checks` — успешно.
-- Full `cmake --build build-hardening-ubuntu2404 -j2` — успешно.
-- Full CTest: 39 passed, 4 environment-dependent skipped; один unrelated
-  failure `ipc_protocol_validation_tests` для request `status`.
-- `git diff --check` — успешно до финального HANDOFF update.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
+- `cmake --build build-check --target device_enforcer_tests fic-dick -j2` —
+  успешно.
+- Финальный device-control CTest subset: 6/6 успешно
+  (`device_control_static_checks`, tree revision/snapshot, policy compiler,
+  lifecycle, enforcer).
+- `git diff --check` — успешно.
 
 ## Remaining
 
-- Реальный policy apply и смена паролей на host не запускались.
-- Известный unrelated `ipc_protocol_validation_tests` остаётся красным.
+- Реальная запись в host sysfs не запускалась и не нужна как обычная
+  validation.
+- VM/device-control shell suites с настоящим hotplug не запускались.
