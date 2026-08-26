@@ -261,6 +261,7 @@ json policy_to_json(const std::string& module,
         {"value_valid", valueValid},
         {"default_value", policyClass.getDefaultValue()},
         {"editor", editorSpec.editor},
+        {"validator", editorSpec.validator},
         {"possible_values", possibleValues},
         {"restriction", policyClass.getPolicyRestriction()}
     };

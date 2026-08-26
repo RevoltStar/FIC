@@ -7,49 +7,50 @@
 
 ## Current task
 
-- Миграция repository layout на domain/feature-first архитектуру без изменения
-  runtime contracts и поведения.
+- Исправление ложной числовой валидации строковых политик USER_CREATION в GUI.
 
 ## Accepted architecture / invariants
 
-- Верхнеуровневые process и library boundaries не изменены.
-- `fic-core` остаётся одной библиотекой, но внутренне разделён по
-  ответственности; public include paths содержат соответствующий
-  domain-каталог.
-- В daemon source layout нет `submodules`: feature определяется путём
-  `modules/<module>/<feature>`.
-- GUI использует `app`, `shared` и feature-first `features`; `fic-dick`
-  разделён на `daemon`, `device`, `policy`, `enforcement`, `collectors`.
-- Runtime resources находятся в `fic/src/resources`; tests зеркалируют
-  production domains, integration-сценарии находятся в `tests/integration`.
+- `PolicyEditorSpec.editor` определяет только вид GUI-контрола.
+- `PolicyEditorSpec.validator` независимо определяет клиентскую валидацию:
+  `none`, `integer_range`, `unsigned_integer` или `allowed_values`.
+- Daemon остаётся authoritative источником окончательной policy validation.
+- Administrative IPC API остаётся version `1`; `validator` является добавочным
+  полем ответа `policy_list`.
 
 ## Completed
 
-- Перенесены daemon, common, GUI, device-control и test sources в целевые
-  каталоги.
-- Обновлены include paths, CMake source/resource references, packaging/static
-  checks и relevant documentation.
-- Production behavior, IPC, policy/config/DB schemas и version contracts не
-  изменялись.
+- Daemon добавляет `validator` в каждый `policy_list` descriptor.
+- GUI разбирает и проверяет явный validator вместо вывода типа значения из
+  `lineedit`.
+- Пути, shell и имя primary group принимаются как строки; UID policies
+  сохраняют unsigned-integer validation.
+- Добавлены descriptor и concrete-policy regression tests, обновлена IPC
+  документация поля `validator`.
 
 ## Changed areas
 
-- `fic-common/fic-core/`, `fic/src/`, `fic-gui/src/`, `fic-dick/src/`;
-- `tests/`, component CMake files и packaging path references;
-- `AGENTS.md`, component README и `docs/architecture-diagrams.md`.
+- `fic-common/fic-policy/`, `fic/src/main.cpp`;
+- `fic-gui/src/features/policies/`;
+- IPC descriptor docs и relevant GUI, user-creation, password-aging tests.
 
 ## Validation
 
 - `cmake -S . -B /tmp/fic-architecture-build -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
 - `cmake --build /tmp/fic-architecture-build -j2` — успешно.
-- Staging install через `DESTDIR=/tmp/fic-architecture-stage` — успешно;
-  binaries, public headers и runtime resources установлены.
-- Targeted rerun исправленных static/packaging/version tests — 4/4 успешно;
-  отдельный финальный `path_layout_static_checks` — успешно.
-- Финальный полный CTest: 41 passed, 4 skipped, 1 существующий unrelated
-  failure — `ipc_protocol_validation_tests` assertion в
-  `tests/common/ipc/IpcProtocolValidationTests.cpp:18`.
+- Targeted descriptor, GUI static, policy service, user-creation и
+  password-aging tests — успешно.
+- Финальные targeted tests: 7/7 успешно, включая version contract, GUI static,
+  descriptor/service, user-creation и password-aging tests.
+- Полный CTest с IPC API version `1`: 40 passed, 4 skipped, 2 unrelated
+  failures — `platform_profile_static_checks` (ALT p11 packaging omits
+  `--maintenance wait-daemon 10`) и существующий
+  `ipc_protocol_validation_tests` assertion.
+- `git diff --check` — успешно.
 
 ## Remaining
 
-- Runtime/privileged policy apply и device mutation не выполнять.
+- Для проверки на `10.88.0.250` необходимо собрать и установить обновлённые
+  daemon и GUI; runtime deployment не выполнялся.
+- Unrelated ALT p11 packaging и IPC protocol test failures оставлены без
+  изменений.

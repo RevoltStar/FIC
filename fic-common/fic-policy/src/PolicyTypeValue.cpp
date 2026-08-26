@@ -43,6 +43,7 @@ PolicyEditorSpec IntPolicyTypeValue::getEditorSpec() const {
     spec.editor = "spinbox";
     spec.min = this->min;
     spec.max = this->max;
+    spec.validator = "integer_range";
     return spec;
 }
 
@@ -111,6 +112,7 @@ UnsignedIntegerPolicyTypeValue::UnsignedIntegerPolicyTypeValue(
 PolicyEditorSpec UnsignedIntegerPolicyTypeValue::getEditorSpec() const {
     PolicyEditorSpec spec;
     spec.editor = "lineedit";
+    spec.validator = "unsigned_integer";
     return spec;
 }
 
@@ -164,6 +166,7 @@ PolicyEditorSpec PossibleListPolicyTypeValue::getEditorSpec() const {
     PolicyEditorSpec spec;
     spec.editor = "combobox";
     spec.possibleValues = this->possibleList;
+    spec.validator = "allowed_values";
     return spec;
 }
 

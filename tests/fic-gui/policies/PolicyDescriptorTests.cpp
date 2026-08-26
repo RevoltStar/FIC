@@ -17,6 +17,7 @@ nlohmann::json validDescriptor()
         {"submodule", "Sudo"},
         {"policy", "sudo_timeout"},
         {"editor", "spinbox"},
+        {"validator", "integer_range"},
         {"enabled", true},
         {"set", true},
         {"value_valid", true},
@@ -52,6 +53,31 @@ int main()
     assert(policies.front().policyName == "sudo_timeout");
     assert(policies.front().min == 0);
     assert(policies.front().max == 60);
+    assert(policies.front().validator == "integer_range");
+
+    assert(validatePolicyDescriptorValue(policies.front(), "10", error));
+    assert(!validatePolicyDescriptorValue(policies.front(), "invalid", error));
+    assert(error.find("is not an integer") != std::string::npos);
+    assert(!validatePolicyDescriptorValue(policies.front(), "61", error));
+    assert(error.find("outside allowed range") != std::string::npos);
+
+    auto textDescriptor = validDescriptor();
+    textDescriptor["policy"] = "user_default_shell";
+    textDescriptor["editor"] = "lineedit";
+    textDescriptor["validator"] = "none";
+    textDescriptor.erase("min");
+    textDescriptor.erase("max");
+    assert(parseOne(textDescriptor, policies, error));
+    assert(validatePolicyDescriptorValue(policies.front(), "/bin/bash", error));
+    assert(validatePolicyDescriptorValue(policies.front(), "users", error));
+
+    auto unsignedDescriptor = textDescriptor;
+    unsignedDescriptor["policy"] = "uid_min";
+    unsignedDescriptor["validator"] = "unsigned_integer";
+    assert(parseOne(unsignedDescriptor, policies, error));
+    assert(validatePolicyDescriptorValue(policies.front(), "1000", error));
+    assert(!validatePolicyDescriptorValue(policies.front(), "/home", error));
+    assert(error.find("unsigned decimal integer") != std::string::npos);
 
     auto invalid = validDescriptor();
     invalid["module"] = 3;
@@ -82,6 +108,16 @@ int main()
     invalid.erase("restriction");
     assert(!parseOne(invalid, policies, error));
     assert(error.find("missing required field 'restriction'") != std::string::npos);
+
+    invalid = validDescriptor();
+    invalid.erase("validator");
+    assert(!parseOne(invalid, policies, error));
+    assert(error.find("missing required field 'validator'") != std::string::npos);
+
+    invalid = validDescriptor();
+    invalid["validator"] = "path_from_restriction_text";
+    assert(!parseOne(invalid, policies, error));
+    assert(error.find("unknown validator") != std::string::npos);
 
     invalid = validDescriptor();
     invalid["module"] = "NET";

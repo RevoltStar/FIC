@@ -539,6 +539,17 @@ void testDefaultsAndMetadata() {
                 policy.submoduleName == "USER_CREATION" &&
                 policy.policyName == "user_home_base_directory",
             "policy hierarchy metadata is wrong");
+    UserSkeletonDirectoryPolicy skeleton(platform);
+    UserDefaultShellPolicy defaultShell(platform);
+    UserDefaultPrimaryGroupPolicy primaryGroup(platform);
+    for (const Policy* stringPolicy :
+         std::vector<const Policy*>{
+             &policy, &skeleton, &defaultShell, &primaryGroup}) {
+        const PolicyEditorSpec editor =
+            stringPolicy->getPolicyTypeValue().getEditorSpec();
+        require(editor.editor == "lineedit" && editor.validator == "none",
+                "string policy editor metadata incorrectly requires a numeric value");
+    }
     UserDefaultSupplementaryGroupsPolicy supplementary(platform);
     require(supplementary.policyName ==
                 "user_default_supplementary_groups" &&

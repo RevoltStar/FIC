@@ -11,6 +11,7 @@ struct PolicyDescriptor {
     std::string submoduleName;
     std::string policyName;
     std::string editor;
+    std::string validator;
     std::string value;
     std::string defaultValue;
     std::string textDelimiter;
@@ -27,6 +28,11 @@ bool parsePolicyDescriptors(
     const nlohmann::json& response,
     const std::string& expectedModule,
     std::vector<PolicyDescriptor>& policies,
+    std::string& error);
+
+bool validatePolicyDescriptorValue(
+    const PolicyDescriptor& policy,
+    const std::string& value,
     std::string& error);
 
 #endif // POLICY_DESCRIPTOR_H

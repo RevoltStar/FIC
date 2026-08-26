@@ -1,7 +1,5 @@
 #include "features/policies/widgets/PolicyEditorWidget.h"
 
-#include <algorithm>
-#include <cctype>
 #include <map>
 #include <stdexcept>
 
@@ -328,9 +326,10 @@ PolicyEditorWidget::PolicyEditorWidget(
             case EditorType::Unknown:
                 continue;
             }
-            QString validationError;
-            if (!validateValue(row.policy, value, validationError)) {
-                validationErrors << validationError;
+            std::string validationError;
+            if (!validatePolicyDescriptorValue(
+                    row.policy, value, validationError)) {
+                validationErrors << QString::fromStdString(validationError);
                 continue;
             }
             changes.push_back({row.policy.policyName, value,
@@ -401,43 +400,4 @@ PolicyEditorWidget::EditorType PolicyEditorWidget::editorType(const std::string&
     if (editor == "textedit") return EditorType::TextEdit;
     if (editor == "combobox") return EditorType::ComboBox;
     return EditorType::Unknown;
-}
-
-bool PolicyEditorWidget::validateValue(
-    const PolicyDescriptor& policy,
-    const std::string& value,
-    QString& error)
-{
-    const EditorType type = editorType(policy.editor);
-    if (type == EditorType::SpinBox) {
-        try {
-            const int parsed = std::stoi(value);
-            if (parsed < policy.min || parsed > policy.max) {
-                error = QString("Policy %1 is outside allowed range [%2; %3]")
-                    .arg(QString::fromStdString(policy.policyName)).arg(policy.min).arg(policy.max);
-                return false;
-            }
-        } catch (const std::exception&) {
-            error = QString("Policy %1 is not an integer")
-                .arg(QString::fromStdString(policy.policyName));
-            return false;
-        }
-    }
-    if (type == EditorType::LineEdit &&
-        (value.empty() || !std::all_of(
-             value.begin(), value.end(), [](unsigned char character) {
-                 return std::isdigit(character);
-             }))) {
-        error = QString("Policy %1 must be an unsigned decimal integer")
-            .arg(QString::fromStdString(policy.policyName));
-        return false;
-    }
-    if (type == EditorType::ComboBox && !policy.possibleValues.empty() &&
-        std::find(policy.possibleValues.begin(), policy.possibleValues.end(), value) ==
-            policy.possibleValues.end()) {
-        error = QString("Policy %1 is not in the allowed values list")
-            .arg(QString::fromStdString(policy.policyName));
-        return false;
-    }
-    return true;
 }

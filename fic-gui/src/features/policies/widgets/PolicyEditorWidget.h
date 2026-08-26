@@ -26,9 +26,6 @@ private:
     };
 
     static EditorType editorType(const std::string& editor);
-    static bool validateValue(const PolicyDescriptor& policy,
-                              const std::string& value,
-                              QString& error);
 };
 
 #endif // POLICY_EDITOR_WIDGET_H

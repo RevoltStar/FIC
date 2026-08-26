@@ -278,8 +278,14 @@ void testPolicyValueContracts(const fs::path& root) {
                     static_cast<std::uintmax_t>(std::numeric_limits<int>::max()) + 1)),
                 "UID policy is still artificially limited to INT_MAX");
     }
-    require(uidMin.getPolicyTypeValue().getEditorSpec().editor == "lineedit" &&
-                uidMax.getPolicyTypeValue().getEditorSpec().editor == "lineedit",
+    const PolicyEditorSpec uidMinEditor =
+        uidMin.getPolicyTypeValue().getEditorSpec();
+    const PolicyEditorSpec uidMaxEditor =
+        uidMax.getPolicyTypeValue().getEditorSpec();
+    require(uidMinEditor.editor == "lineedit" &&
+                uidMaxEditor.editor == "lineedit" &&
+                uidMinEditor.validator == "unsigned_integer" &&
+                uidMaxEditor.validator == "unsigned_integer",
             "UID policy editor cannot round-trip the uid_t range");
 
     const auto generated = policyConfigValues(FIC_GENERATED_IDENTITY_CONFIG_PATH);

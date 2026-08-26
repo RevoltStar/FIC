@@ -36,6 +36,8 @@ def main():
     policy_serializer = daemon.split("json policy_to_json", 1)[1].split("json policy_list_json", 1)[0]
     require('"view"' not in policy_serializer,
             "policy_list descriptors must not duplicate ModuleView")
+    require('{"validator", editorSpec.validator}' in policy_serializer,
+            "policy_list descriptors must expose value validation separately from editor type")
     require('PolicyConfig::getEnabledValue("AUDIT", "log_level")' in logger,
             "Logger must read AUDIT/log_level")
     audit_writer = daemon.split("void write_audit_log", 1)[1].split("void audit_ipc_request", 1)[0]
@@ -56,6 +58,9 @@ def main():
                    "policy.min", "policy.max", "policy.possibleValues", "policy.textDelimiter",
                    "policy.restriction"]:
         require(marker in editor, f"policy editor ignores descriptor field: {marker}")
+    require("validatePolicyDescriptorValue(" in editor and
+            "row.policy, value, validationError" in editor,
+            "policy editor must validate values using descriptor validator metadata")
     require("QFrame* createTableCell(" in editor and
             editor.count("createTableCell(") >= 5,
             "policy editor must build reusable framed table cells")

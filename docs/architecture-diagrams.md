@@ -964,7 +964,7 @@ flowchart TD
     auditPage --> policyEditor
     policyEditor --> ipcPolicies[PolicyService policy_list]
     ipcPolicies --> edit[Пользователь меняет value или enabled]
-    edit --> validateGui[validation by editor metadata]
+    edit --> validateGui[validation by explicit validator metadata]
     validateGui --> action{Save или Save and apply}
     action --> setLoop{PolicyService saveChanges:<br/>для каждой политики}
     setLoop --> setIfNeeded{value configurable?}

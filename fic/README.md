@@ -181,8 +181,10 @@ JSON одним пакетом без завершающего перевода 
 
 Ответ содержит поле `policies`. Для каждой политики возвращаются данные для
 стандартного редактора: `module`, `submodule`, `policy`, `enabled`, `set`,
-`value`, `default_value`, `editor`, `possible_values`, `restriction` и
+`value`, `default_value`, `editor`, `validator`, `possible_values`, `restriction` и
 применимые `min`, `max`, `text_delimiter`. `view` здесь не дублируется.
+`editor` определяет вид контрола, а `validator` независимо задаёт клиентскую
+валидацию (`none`, `integer_range`, `unsigned_integer`, `allowed_values`).
 
 ### set_policy_value
 

@@ -16,6 +16,7 @@ struct PolicyEditorSpec {
     std::optional<int> max;
     std::vector<std::string> possibleValues;
     std::optional<std::string> textDelimiter;
+    std::string validator = "none";
 };
 
 //Тип параметра политики

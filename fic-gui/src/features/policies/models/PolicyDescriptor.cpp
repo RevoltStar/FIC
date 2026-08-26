@@ -1,5 +1,8 @@
 #include "features/policies/models/PolicyDescriptor.h"
 
+#include <algorithm>
+#include <charconv>
+#include <cctype>
 #include <cstdint>
 #include <limits>
 
@@ -75,6 +78,7 @@ bool parsePolicyDescriptors(
                 {"submodule", nlohmann::json::value_t::string},
                 {"policy", nlohmann::json::value_t::string},
                 {"editor", nlohmann::json::value_t::string},
+                {"validator", nlohmann::json::value_t::string},
                 {"enabled", nlohmann::json::value_t::boolean},
                 {"set", nlohmann::json::value_t::boolean},
                 {"value_valid", nlohmann::json::value_t::boolean},
@@ -114,6 +118,7 @@ bool parsePolicyDescriptors(
             policy.submoduleName = item.at("submodule").get<std::string>();
             policy.policyName = item.at("policy").get<std::string>();
             policy.editor = item.at("editor").get<std::string>();
+            policy.validator = item.at("validator").get<std::string>();
             policy.enabled = item.at("enabled").get<bool>();
             policy.isSet = item.at("set").get<bool>();
             policy.valueValid = item.at("value_valid").get<bool>();
@@ -145,6 +150,18 @@ bool parsePolicyDescriptors(
             if (delimiter != item.end()) {
                 policy.textDelimiter = delimiter->get<std::string>();
             }
+            if (policy.validator != "none" &&
+                policy.validator != "integer_range" &&
+                policy.validator != "unsigned_integer" &&
+                policy.validator != "allowed_values") {
+                return fail(policies, error, "descriptor " + std::to_string(index) +
+                    " has an unknown validator '" + policy.validator + "'");
+            }
+            if (policy.validator == "integer_range" &&
+                (!item.contains("min") || !item.contains("max"))) {
+                return fail(policies, error, "descriptor " + std::to_string(index) +
+                    " integer_range validator requires min and max");
+            }
             policies.push_back(std::move(policy));
             ++index;
         }
@@ -154,4 +171,54 @@ bool parsePolicyDescriptors(
     } catch (const std::exception& exception) {
         return fail(policies, error, "malformed descriptor: " + std::string(exception.what()));
     }
+}
+
+bool validatePolicyDescriptorValue(
+    const PolicyDescriptor& policy,
+    const std::string& value,
+    std::string& error)
+{
+    error.clear();
+    if (policy.validator == "none") {
+        return true;
+    }
+    if (policy.validator == "integer_range") {
+        int parsed = 0;
+        const auto result = std::from_chars(
+            value.data(), value.data() + value.size(), parsed, 10);
+        if (result.ec != std::errc{} ||
+            result.ptr != value.data() + value.size()) {
+            error = "Policy " + policy.policyName + " is not an integer";
+            return false;
+        }
+        if (parsed < policy.min || parsed > policy.max) {
+            error = "Policy " + policy.policyName +
+                " is outside allowed range [" + std::to_string(policy.min) +
+                "; " + std::to_string(policy.max) + "]";
+            return false;
+        }
+        return true;
+    }
+    if (policy.validator == "unsigned_integer") {
+        if (value.empty() || !std::all_of(
+                value.begin(), value.end(), [](unsigned char character) {
+                    return std::isdigit(character);
+                })) {
+            error = "Policy " + policy.policyName +
+                " must be an unsigned decimal integer";
+            return false;
+        }
+        return true;
+    }
+    if (policy.validator == "allowed_values") {
+        if (std::find(policy.possibleValues.begin(), policy.possibleValues.end(), value) ==
+            policy.possibleValues.end()) {
+            error = "Policy " + policy.policyName +
+                " is not in the allowed values list";
+            return false;
+        }
+        return true;
+    }
+    error = "Policy " + policy.policyName + " has an unsupported validator";
+    return false;
 }
