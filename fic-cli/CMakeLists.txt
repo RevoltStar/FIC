@@ -17,6 +17,6 @@ add_executable(fic-cli
 target_link_libraries(fic-cli PRIVATE fic-ipc)
 
 install(TARGETS fic-cli RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic-cli)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/scripts/completion/fic"
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/resources/completion/fic"
         DESTINATION "${FIC_BASH_COMPLETION_DIR}"
         RENAME fic-cli COMPONENT fic-cli)

@@ -1,7 +1,7 @@
 #include <fic/device-db/DB.h>
 
-#include <fic/core/ExclusivePidLock.h>
-#include <fic/core/Logger.h>
+#include <fic/core/process/ExclusivePidLock.h>
+#include <fic/core/logging/Logger.h>
 #include <fic/version/ProductVersion.h>
 
 #include <algorithm>

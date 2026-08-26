@@ -1,0 +1,15 @@
+#include "modules/sysctl/fs_kernel/policies/SYSCTL_protected_symlinks.h"
+
+SYSCTL_protected_symlinks::SYSCTL_protected_symlinks()
+    : FSKernelProtection()
+{
+    this->Sysctl::sysctlParameter = "fs.protected_symlinks";
+    this->Sysctl::sysctlParameterValue = "1";
+    this->policyName = "fs_protected_symlinks";
+    this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
+}
+
+bool SYSCTL_protected_symlinks::apply()
+{
+    return this->Sysctl::apply();
+}

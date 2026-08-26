@@ -6,22 +6,22 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <fic/core/FicRuntimePaths.h>
-#include <fic/core/ConfigSchemaManager.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/config/ConfigSchemaManager.h>
 #include <fic/device-db/DB.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
-#include "core/DeviceControlDaemon.h"
-#include "core/DeviceEnforcer.h"
-#include "core/DevicePaths.h"
-#include "modules/UDEVInfoCollector.h"
-#include "modules/USBInfoCollector.h"
-#include "modules/PCIInfoCollector.h"
-#include "modules/BlockInfoCollector.h"
-#include "modules/BoardInfoCollector.h"
-#include "modules/CPUInfoCollector.h"
-#include "modules/MemoryInfoCollector.h"
-#include "modules/NetInfoCollector.h"
+#include "daemon/DeviceControlDaemon.h"
+#include "enforcement/DeviceEnforcer.h"
+#include "device/DevicePaths.h"
+#include "collectors/UDEVInfoCollector.h"
+#include "collectors/USBInfoCollector.h"
+#include "collectors/PCIInfoCollector.h"
+#include "collectors/BlockInfoCollector.h"
+#include "collectors/BoardInfoCollector.h"
+#include "collectors/CPUInfoCollector.h"
+#include "collectors/MemoryInfoCollector.h"
+#include "collectors/NetInfoCollector.h"
 
 using namespace std;
 

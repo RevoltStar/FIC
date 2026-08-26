@@ -39,11 +39,6 @@ file(GLOB_RECURSE HDR_FILES
 )
 
 list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\][^/\\\\]*[Tt]est[^/\\\\]*\\.cpp$")
-list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/core/.*")
-list(FILTER SRC_FILES EXCLUDE REGEX ".*/src/modules/.*")
-list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/core/.*")
-list(FILTER HDR_FILES EXCLUDE REGEX ".*/src/modules/.*")
-
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(fic-gui
         MANUAL_FINALIZATION
@@ -70,7 +65,6 @@ target_link_libraries(fic-gui PRIVATE
 
 target_include_directories(fic-gui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/wrappers
 )
 
 set_target_properties(fic-gui PROPERTIES

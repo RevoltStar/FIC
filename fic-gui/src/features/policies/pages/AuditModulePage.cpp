@@ -1,0 +1,24 @@
+#include "features/policies/pages/AuditModulePage.h"
+
+#include <QTabWidget>
+#include <QVBoxLayout>
+
+#include "features/logs/widgets/LogViewer.h"
+#include "features/policies/widgets/PolicyEditorWidget.h"
+#include "shared/i18n/QLocalizationManager.h"
+
+AuditModulePage::AuditModulePage(
+    const std::string& module,
+    const std::vector<PolicyDescriptor>& policies,
+    QWidget* parent)
+    : QWidget(parent)
+{
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* tabs = new QTabWidget(this);
+    tabs->addTab(new LogViewer(tabs),
+                 QLocalizationManager::getLang("[module:AUDIT][page:logs]"));
+    tabs->addTab(new PolicyEditorWidget(module, policies, tabs),
+                 QLocalizationManager::getLang("[module:AUDIT][page:settings]"));
+    layout->addWidget(tabs);
+}

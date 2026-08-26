@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/fic">
+        <file alias="FIC.jpg">../../../fic/src/resources/image/FIC.jpg</file>
+    </qresource>
+</RCC>

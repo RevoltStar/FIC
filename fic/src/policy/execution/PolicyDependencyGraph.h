@@ -1,0 +1,12 @@
+#ifndef FIC_POLICY_DEPENDENCY_GRAPH_H
+#define FIC_POLICY_DEPENDENCY_GRAPH_H
+
+#include "policy/registry/PolicyRegistry.h"
+
+#include <string>
+
+bool validatePolicyDependencyGraph(
+    PolicyRegistry& registry,
+    std::string& error);
+
+#endif // FIC_POLICY_DEPENDENCY_GRAPH_H

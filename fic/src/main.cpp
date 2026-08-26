@@ -25,16 +25,16 @@
 
 #include <nlohmann/json.hpp>
 
-#include "core/main_function.h"
-#include "core/PolicyRegistryJson.h"
+#include "daemon/main_function.h"
+#include "policy/registry/PolicyRegistryJson.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
-#include <fic/core/Logger.h>
-#include <fic/core/FicRuntimePaths.h>
-#include <fic/core/SystemBootInfo.h>
-#include <fic/core/ConfigSchemaManager.h>
+#include <fic/core/logging/Logger.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/runtime/SystemBootInfo.h>
+#include <fic/core/config/ConfigSchemaManager.h>
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"

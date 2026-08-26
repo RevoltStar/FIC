@@ -1,0 +1,12 @@
+#ifndef OSS_FSTAB_VAR_LOG_SECURE_OPTIONS_H
+#define OSS_FSTAB_VAR_LOG_SECURE_OPTIONS_H
+
+#include "modules/oss/fstab/Fstab.h"
+
+class OSS_fstab_var_log_secure_options : public Fstab
+{
+public:
+    OSS_fstab_var_log_secure_options();
+};
+
+#endif // OSS_FSTAB_VAR_LOG_SECURE_OPTIONS_H

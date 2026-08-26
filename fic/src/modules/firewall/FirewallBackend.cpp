@@ -1,7 +1,7 @@
 #include "modules/firewall/FirewallBackend.h"
 
-#include <fic/core/VerifiedProcessExecutor.h>
-#include <fic/core/Logger.h>
+#include <fic/core/process/VerifiedProcessExecutor.h>
+#include <fic/core/logging/Logger.h>
 
 #include <filesystem>
 #include <nlohmann/json.hpp>

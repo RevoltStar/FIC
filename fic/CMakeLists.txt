@@ -46,11 +46,11 @@ find_package(Threads REQUIRED)
 set(FIC_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
 file(MAKE_DIRECTORY "${FIC_GENERATED_INCLUDE_DIR}/platform")
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/PasswordAgingPolicyDefaultsGenerated.h.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/PasswordAgingPolicyDefaultsGenerated.h.in"
     "${FIC_GENERATED_INCLUDE_DIR}/platform/PasswordAgingPolicyDefaultsGenerated.h"
     @ONLY)
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/UserCreationPolicyDefaultsGenerated.h.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/UserCreationPolicyDefaultsGenerated.h.in"
     "${FIC_GENERATED_INCLUDE_DIR}/platform/UserCreationPolicyDefaultsGenerated.h"
     @ONLY)
 
@@ -74,7 +74,6 @@ add_executable(fic ${SRC_FILES} ${HDR_FILES})
 # Подключаем заголовки
 target_include_directories(fic PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/modules
 )
 
@@ -88,7 +87,7 @@ set(FIC_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/config")
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/scripts/config/IDENTITY_ACCESS.conf.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/config/IDENTITY_ACCESS.conf.in"
     "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
     @ONLY)
 foreach(template
@@ -100,13 +99,13 @@ foreach(template
     get_filename_component(template_dir "${template}" DIRECTORY)
     file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/${template_dir}")
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/scripts/${template}.in"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/${template}.in"
         "${FIC_GENERATED_SCRIPTS_DIR}/${template}"
         @ONLY)
 endforeach()
 
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/scripts/notify/fic-notify-dispatcher"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/notify/fic-notify-dispatcher"
     "${FIC_GENERATED_SCRIPTS_DIR}/notify/fic-notify-dispatcher"
     @ONLY)
 
@@ -115,12 +114,12 @@ install(PROGRAMS
         "${FIC_GENERATED_SCRIPTS_DIR}/notify/fic-notify-dispatcher"
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-udevadm-trigger"
         DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
-install(DIRECTORY src/scripts/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}"
+install(DIRECTORY src/resources/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}"
         COMPONENT fic PATTERN "IDENTITY_ACCESS.conf.in" EXCLUDE)
 install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
         DESTINATION "${FIC_DEFAULT_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
-install(DIRECTORY src/scripts/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
+install(DIRECTORY src/resources/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
 install(FILES
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic.service"
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-notify.service"
@@ -128,6 +127,6 @@ install(FILES
         DESTINATION "${FIC_SYSTEMD_UNIT_DIR}" COMPONENT fic)
 install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/tmpfiles/fic.conf"
         DESTINATION "${FIC_TMPFILES_DIR}" COMPONENT fic)
-install(FILES src/scripts/db/PCI_CLASS_ru.txt src/scripts/db/USB_CLASS_ru.txt
+install(FILES src/resources/db/PCI_CLASS_ru.txt src/resources/db/USB_CLASS_ru.txt
         DESTINATION "${FIC_DATA_DIR}" COMPONENT fic)
-install(DIRECTORY src/scripts/image/ DESTINATION "${FIC_IMAGE_DIR}" COMPONENT fic)
+install(DIRECTORY src/resources/image/ DESTINATION "${FIC_IMAGE_DIR}" COMPONENT fic)

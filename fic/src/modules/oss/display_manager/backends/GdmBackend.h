@@ -1,0 +1,20 @@
+#ifndef GDM_BACKEND_H
+#define GDM_BACKEND_H
+
+#include "modules/oss/display_manager/backends/DisplayManagerBackend.h"
+
+class GdmBackend final : public DisplayManagerBackend {
+public:
+    GdmBackend(std::string displayName,
+               const std::vector<std::filesystem::path>& configCandidates);
+
+    DisplayManagerKind kind() const override { return DisplayManagerKind::Gdm; }
+    const char* name() const override { return displayName.c_str(); }
+    const std::string& configPath() const override { return path; }
+
+private:
+    std::string displayName;
+    std::string path;
+};
+
+#endif // GDM_BACKEND_H

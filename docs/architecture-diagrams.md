@@ -149,6 +149,27 @@ flowchart TB
     collectors --> db
 ```
 
+### Структура исходного кода
+
+Верхнеуровневые каталоги соответствуют процессам и reusable libraries:
+`fic`, `fic-cli`, `fic-gui`, `fic-dick`, `fic-session-agent` и
+`fic-common`. Внутри них действует предметная, а не технически-плоская
+группировка:
+
+- `fic-common/fic-core` остаётся одной библиотекой, но разделён на
+  `config`, `fs`, `process`, `runtime`, `integrity`, `logging`, `i18n` и
+  `notification`;
+- daemon разделяет lifecycle (`daemon`), execution/registry (`policy`),
+  platform/session/trust и feature-first `modules`; искусственный каталог
+  `submodules` в source layout не используется;
+- runtime-installed файлы daemon находятся в `fic/src/resources`;
+- GUI организован как `app`, `shared` и feature-first области `policies`,
+  `devices`, `logs`;
+- device-control daemon разделён на `daemon`, `device`, `policy`,
+  `enforcement` и `collectors`;
+- `tests` зеркалирует production domains, а runtime и packaging сценарии
+  находятся в `tests/integration`.
+
 ## 3. Жизненный цикл демона `fic`
 
 ```mermaid

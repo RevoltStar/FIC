@@ -243,7 +243,7 @@ fic-cli lockstatus
 Файл completion устанавливается из:
 
 ```text
-fic/src/scripts/completion/fic
+fic/src/resources/completion/fic
 ```
 
 В пакетах он устанавливается как completion для `fic-cli`.

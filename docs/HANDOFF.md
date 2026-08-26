@@ -7,57 +7,49 @@
 
 ## Current task
 
-- `IDENTITY_ACCESS/USER_CREATION:user_default_supplementary_groups` с
-  provider-specific backend для defaults будущих локальных пользователей.
+- Миграция repository layout на domain/feature-first архитектуру без изменения
+  runtime contracts и поведения.
 
 ## Accepted architecture / invariants
 
-- Одна logical policy использует отдельную
-  `UserSupplementaryGroupsProviderKind`, не изменяя provider первых шести
-  `USER_CREATION` policy.
-- Debian 12 и Ubuntu 24.04 управляются через `ADD_EXTRA_GROUPS` и
-  `EXTRA_GROUPS` в `/etc/adduser.conf`; Debian 13 и Ubuntu 26.04 — через
-  `GROUPS` в `/etc/default/useradd`.
-- ALT p11 `alterator-users 10.25-alt1` имеет additive-only
-  `default-groups.d`, не выражающий exact replacement или empty list, поэтому
-  profile явно `Unsupported` и apply завершается без записи.
-- Значение хранится canonical JSON array; empty list удаляет shadow `GROUPS`
-  либо задаёт `ADD_EXTRA_GROUPS=0`. Отсутствующие local groups и
-  duplicate/malformed native targets отклоняются до mutation.
+- Верхнеуровневые process и library boundaries не изменены.
+- `fic-core` остаётся одной библиотекой, но внутренне разделён по
+  ответственности; public include paths содержат соответствующий
+  domain-каталог.
+- В daemon source layout нет `submodules`: feature определяется путём
+  `modules/<module>/<feature>`.
+- GUI использует `app`, `shared` и feature-first `features`; `fic-dick`
+  разделён на `daemon`, `device`, `policy`, `enforcement`, `collectors`.
+- Runtime resources находятся в `fic/src/resources`; tests зеркалируют
+  production domains, integration-сценарии находятся в `tests/integration`.
 
 ## Completed
 
-- Добавлены policy/value type, provider mapping, daemon/config/localization
-  wiring и architecture documentation.
-- Добавлены специализированный atomic `/etc/adduser.conf` handler,
-  `UseraddDefaultsFileHandler::removeValue()` и reusable local group helper.
-- Добавлены runtime, profile и static/contract tests, включая empty state,
-  idempotency, ambiguous config, unsafe paths и atomic two-key update.
+- Перенесены daemon, common, GUI, device-control и test sources в целевые
+  каталоги.
+- Обновлены include paths, CMake source/resource references, packaging/static
+  checks и relevant documentation.
+- Production behavior, IPC, policy/config/DB schemas и version contracts не
+  изменялись.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/configuration/` и
-  `submodules/user_creation/`;
-- platform profiles, daemon registration, config/localization resources;
-- identity/platform/static tests и `docs/architecture-diagrams.md`.
+- `fic-common/fic-core/`, `fic/src/`, `fic-gui/src/`, `fic-dick/src/`;
+- `tests/`, component CMake files и packaging path references;
+- `AGENTS.md`, component README и `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- Полная сборка Debian 13 profile в `/tmp/fic-supp-groups-build` — успешно.
-- Targeted CTest (`user_creation_tests`, `platform_profile_tests`,
-  `platform_profile_static_checks`) — 3/3 успешно.
-- Полный CTest — 41 passed, 4 skipped, 1 unrelated existing failure:
-  `ipc_protocol_validation_tests` assertion в
-  `tests/paths/IpcProtocolValidationTests.cpp:18`.
-- Compile-time provider mapping probe прошёл для Debian 12/13, Ubuntu
-  24.04/26.04 и ALT p11. Полный Ubuntu 26.04 `platform_profile_tests`
-  останавливается на существующем unrelated symlink-exception invariant для
-  `/usr/bin/df`; новые mapping assertions не являются причиной ошибки.
+- `cmake -S . -B /tmp/fic-architecture-build -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
+- `cmake --build /tmp/fic-architecture-build -j2` — успешно.
+- Staging install через `DESTDIR=/tmp/fic-architecture-stage` — успешно;
+  binaries, public headers и runtime resources установлены.
+- Targeted rerun исправленных static/packaging/version tests — 4/4 успешно;
+  отдельный финальный `path_layout_static_checks` — успешно.
+- Финальный полный CTest: 41 passed, 4 skipped, 1 существующий unrelated
+  failure — `ipc_protocol_validation_tests` assertion в
+  `tests/common/ipc/IpcProtocolValidationTests.cpp:18`.
 
 ## Remaining
 
-- Реальный policy apply и создание test account не выполнялись; host accounts
-  и `/etc` не изменялись.
-- ALT остаётся намеренно unsupported до появления native override semantics,
-  способной выразить replacement и empty list.
-- Unrelated IPC и Ubuntu 26.04 profile baseline failures не исправлялись.
+- Runtime/privileged policy apply и device mutation не выполнять.

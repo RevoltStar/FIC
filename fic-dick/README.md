@@ -148,7 +148,7 @@ fic-dick udev
 Обычно этот режим запускается не вручную, а из сгенерированного udev-правила:
 
 ```text
-fic/src/scripts/udev/99-fic-devices.rules
+fic/src/resources/udev/99-fic-devices.rules
 ```
 
 Правило вызывает:
@@ -161,7 +161,7 @@ fic/src/scripts/udev/99-fic-devices.rules
 policy, скомпилированной из БД. Generated rule выбирает только подсистемы
 `usb`, `usbmisc`, `pci` и `block`.
 Фильтрации подсистем внутри `UDEVInfoCollector` нет: если список подсистем
-нужно изменить, это делается в `fic/src/scripts/udev/99-fic-devices.rules`.
+нужно изменить, это делается в `fic/src/resources/udev/99-fic-devices.rules`.
 
 Для работы режима `udev` ожидаются переменные окружения, которые предоставляет udev:
 
@@ -285,7 +285,7 @@ fic-dick cpu_board_memory
 Обычно режим запускается systemd-unit-файлом:
 
 ```text
-fic/src/scripts/service/fic_get_device_info.service
+fic/src/resources/service/fic_get_device_info.service
 ```
 
 Unit вызывает:

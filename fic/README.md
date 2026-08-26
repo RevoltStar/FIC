@@ -320,7 +320,7 @@ security audit trail административных IPC-запросов за�
 Основной unit находится в:
 
 ```text
-fic/src/scripts/service/fic.service
+fic/src/resources/service/fic.service
 ```
 
 Сервис запускает демон как постоянный процесс:

@@ -1,8 +1,8 @@
 #include "modules/firewall/FirewallPolicies.h"
 
-#include <fic/core/LocalizationManager.h>
-#include <fic/core/Logger.h>
-#include <fic/core/ModuleConfigFileHandler.h>
+#include <fic/core/i18n/LocalizationManager.h>
+#include <fic/core/logging/Logger.h>
+#include <fic/core/config/ModuleConfigFileHandler.h>
 
 #include <iostream>
 #include <utility>

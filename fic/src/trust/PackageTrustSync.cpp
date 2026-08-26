@@ -1,7 +1,7 @@
 #include "trust/PackageTrustSync.h"
 
-#include <fic/core/CommandHashStore.h>
-#include <fic/core/ProcessExecutor.h>
+#include <fic/core/integrity/CommandHashStore.h>
+#include <fic/core/process/ProcessExecutor.h>
 
 #include <algorithm>
 #include <cctype>

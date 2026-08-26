@@ -1,6 +1,6 @@
 #include "session/SessionLocator.h"
 
-#include <fic/core/ProcessExecutor.h>
+#include <fic/core/process/ProcessExecutor.h>
 
 #include <cctype>
 #include <locale>

@@ -43,8 +43,6 @@ add_executable(fic-dick ${SRC_FILES} ${HDR_FILES})
 # Подключаем заголовки
 target_include_directories(fic-dick PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/modules
 )
 
 target_link_libraries(fic-dick PRIVATE
@@ -63,12 +61,12 @@ file(MAKE_DIRECTORY "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service")
 file(MAKE_DIRECTORY "${FIC_DICK_GENERATED_SCRIPTS_DIR}/udev")
 foreach(service fic-device.service fic_get_device_info.service)
     configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/scripts/service/${service}.in"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/resources/service/${service}.in"
         "${FIC_DICK_GENERATED_SCRIPTS_DIR}/service/${service}"
         @ONLY)
 endforeach()
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/scripts/udev/99-fic-devices.rules.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fic/src/resources/udev/99-fic-devices.rules.in"
     "${FIC_DICK_GENERATED_SCRIPTS_DIR}/udev/99-fic-devices.rules"
     @ONLY)
 

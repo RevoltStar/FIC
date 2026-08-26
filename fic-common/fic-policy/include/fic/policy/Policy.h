@@ -2,11 +2,11 @@
 #define POLICY_H
 
 //Логгирование
-#include <fic/core/Logger.h>
+#include <fic/core/logging/Logger.h>
 //Уведомление
-#include <fic/core/NotifyUser.h>
+#include <fic/core/notification/NotifyUser.h>
 //Работа с конфигурационными файлами модулей
-#include <fic/core/ModuleConfigFileHandler.h>
+#include <fic/core/config/ModuleConfigFileHandler.h>
 #include <fic/policy/PolicyDependency.h>
 #include <fic/policy/PolicyTypeValue.h>
 #include <memory>

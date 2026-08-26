@@ -1,0 +1,16 @@
+#ifndef NET_SSH_MAX_AUTH_TRIES_H
+#define NET_SSH_MAX_AUTH_TRIES_H
+
+#include "modules/net/ssh/Ssh.h"
+
+class NET_ssh_max_auth_tries : public Ssh
+{
+public:
+    explicit NET_ssh_max_auth_tries(
+        const fic::platform::SshPlatformConfig& platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables);
+    ~NET_ssh_max_auth_tries();
+    bool apply() override;
+};
+
+#endif // NET_SSH_MAX_AUTH_TRIES_H

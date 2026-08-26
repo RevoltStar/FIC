@@ -33,7 +33,7 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - `/opt/fic/lang`
 - `/opt/fic/log`
 - `/opt/fic/notify`
-- `/lib/systemd/system/*` from `fic/src/scripts/service`
+- `/lib/systemd/system/*` from `fic/src/resources/service`
 - inactive package profiles `/usr/share/pam-configs/fic-faillock-notify`,
   `/usr/share/pam-configs/fic-faillock` and
   `/usr/share/pam-configs/fic-pwhistory`

@@ -170,12 +170,13 @@ cmake --build build-fic-gui
 
 ## Связанные файлы
 
-- `fic-gui/src/main.cpp` - точка входа приложения;
-- `fic-gui/src/mainwindow.cpp` - загрузка дескрипторов и создание верхнеуровневых вкладок;
-- `fic-gui/src/models` и `src/services` - JSON-модели и IPC orchestration;
-- `fic-gui/src/pages` - стандартная, device и audit страницы модулей;
-- `fic-gui/src/widgets/PolicyEditorWidget.*` - общий редактор политик;
-- `fic-gui/src/wrappers` - Qt-обертки над общей логикой;
+- `fic-gui/src/app/main.cpp` - точка входа приложения;
+- `fic-gui/src/app/MainWindow.cpp` - загрузка дескрипторов и создание верхнеуровневых вкладок;
+- `fic-gui/src/features/policies` - policy models, IPC orchestration, pages и reusable editor;
+- `fic-gui/src/features/devices` - device service, widgets и module page;
+- `fic-gui/src/features/logs` - log models, service и viewer;
+- `fic-gui/src/features/policies/widgets/PolicyEditorWidget.*` - общий редактор политик;
+- `fic-gui/src/shared/i18n` - Qt-обертка локализации;
 - `fic-common/fic-ipc/include/fic/ipc/FicIpcClient.h` - IPC-клиент для связи с демоном.
 
 ## Типовой сценарий разработки

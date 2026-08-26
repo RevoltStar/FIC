@@ -2,7 +2,7 @@
 #define DC_H
 
 #include <fic/policy/Policy.h>
-#include <fic/core/ConfigFileHandler.h>
+#include <fic/core/config/ConfigFileHandler.h>
 #include <iostream>
 
 // Общие настройки контроля устройств. Само дерево устройств и исполнение

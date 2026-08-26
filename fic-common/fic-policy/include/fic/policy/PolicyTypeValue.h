@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <fic/core/LocalizationManager.h>
+#include <fic/core/i18n/LocalizationManager.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;

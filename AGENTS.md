@@ -103,9 +103,9 @@ Daemon IPC routing и формирование ответов:
 
 `PolicyRegistry` initialization, reload, mutation и apply orchestration:
 
-* `fic/src/core/PolicyRegistry*`
-* `fic/src/core/PolicyRegistryInitialization.*`
-* `fic/src/core/main_function.*`
+* `fic/src/policy/registry/PolicyRegistry*`
+* `fic/src/policy/registry/PolicyRegistryInitialization.*`
+* `fic/src/daemon/main_function.*`
 
 Конкретные policies:
 
@@ -126,40 +126,40 @@ Session handling:
 
 Top-level загрузка module descriptors и создание module pages:
 
-* `fic-gui/src/mainwindow.*`
+* `fic-gui/src/app/MainWindow.*`
 
 Не начинай исследование policy behavior с `MainWindow`, если задача касается policy parsing, mutation или отображения.
 
 Daemon policy/module descriptors:
 
-* `fic-gui/src/models/`
+* `fic-gui/src/features/policies/models/`
 
 Policy IPC operations, mutation и apply:
 
-* `fic-gui/src/services/PolicyService.*`
+* `fic-gui/src/features/policies/services/PolicyService.*`
 
 Device operations:
 
-* `fic-gui/src/services/DeviceService.*`
+* `fic-gui/src/features/devices/services/DeviceService.*`
 
 Module-specific UI:
 
-* `fic-gui/src/pages/`
+* `fic-gui/src/features/*/pages/`
 
 Reusable policy editor:
 
-* `fic-gui/src/widgets/PolicyEditorWidget.*`
+* `fic-gui/src/features/policies/widgets/PolicyEditorWidget.*`
 
 Device tree / attributes:
 
-* `fic-gui/src/DeviceTree.*`
-* `fic-gui/src/DeviceAttributeList.*`
+* `fic-gui/src/features/devices/widgets/DeviceTree.*`
+* `fic-gui/src/features/devices/widgets/DeviceAttributeList.*`
 
 Logs:
 
-* `fic-gui/src/LogService.*`
-* `fic-gui/src/LogModel.*`
-* `fic-gui/src/LogViewer.*`
+* `fic-gui/src/features/logs/services/LogService.*`
+* `fic-gui/src/features/logs/models/LogModel.*`
+* `fic-gui/src/features/logs/widgets/LogViewer.*`
 
 ### CLI / shared code / resources
 
@@ -185,15 +185,15 @@ Device collection:
 
 Localization:
 
-* `fic/src/scripts/lang/{ru,en}.lang`
+* `fic/src/resources/lang/{ru,en}.lang`
 
 Default configs:
 
-* `fic/src/scripts/config/`
+* `fic/src/resources/config/`
 
 Systemd, udev и другие runtime resources:
 
-* `fic/src/scripts/`
+* `fic/src/resources/`
 
 Packaging:
 

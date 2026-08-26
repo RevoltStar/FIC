@@ -2,7 +2,7 @@
 
 #include "modules/sysctl/SysctlKey.h"
 
-#include <fic/core/AtomicFileWriter.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <algorithm>
 #include <cctype>

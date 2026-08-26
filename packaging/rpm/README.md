@@ -45,7 +45,7 @@ package contract.
 - `/opt/fic/lang`
 - `/opt/fic/log`
 - `/opt/fic/notify`
-- `/usr/lib/systemd/system/*` from `fic/src/scripts/service`
+- `/usr/lib/systemd/system/*` from `fic/src/resources/service`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`

@@ -15,31 +15,31 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(fic-core STATIC
-    src/AtomicFileWriter.cpp
-    src/CommandHashStore.cpp
-    src/ConfigSchemaManager.cpp
-    src/ConfigFileHandler.cpp
-    src/ExclusivePidLock.cpp
-    src/FileHandler.cpp
-    src/FileStats.cpp
-    src/FicRuntimePaths.cpp
-    src/PolicyConfig.cpp
-    src/LocalizationManager.cpp
-    src/Logger.cpp
-    src/ModuleConfigFileHandler.cpp
-    src/MultilineConfigFileHandler.cpp
-    src/NotifyUser.cpp
-    src/ProcessExecutor.cpp
-    src/SectionConfigFileHandler.cpp
-    src/SingleLineFileHandler.cpp
-    src/VerifiedProcessExecutor.cpp
+    src/config/ConfigFileHandler.cpp
+    src/config/ConfigSchemaManager.cpp
+    src/config/ModuleConfigFileHandler.cpp
+    src/config/MultilineConfigFileHandler.cpp
+    src/config/PolicyConfig.cpp
+    src/config/SectionConfigFileHandler.cpp
+    src/config/SingleLineFileHandler.cpp
+    src/fs/AtomicFileWriter.cpp
+    src/fs/FileHandler.cpp
+    src/fs/FileStats.cpp
+    src/i18n/LocalizationManager.cpp
+    src/integrity/CommandHashStore.cpp
+    src/logging/Logger.cpp
+    src/notification/NotifyUser.cpp
+    src/process/ExclusivePidLock.cpp
+    src/process/ProcessExecutor.cpp
+    src/process/VerifiedProcessExecutor.cpp
+    src/runtime/FicRuntimePaths.cpp
 )
 
 set(FIC_CORE_GENERATED_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
-file(MAKE_DIRECTORY ${FIC_CORE_GENERATED_INCLUDE_DIR}/fic/core)
+file(MAKE_DIRECTORY ${FIC_CORE_GENERATED_INCLUDE_DIR}/fic/core/runtime)
 configure_file(
-    include/fic/core/FicPathDefaults.h.in
-    ${FIC_CORE_GENERATED_INCLUDE_DIR}/fic/core/FicPathDefaults.h
+    include/fic/core/runtime/FicPathDefaults.h.in
+    ${FIC_CORE_GENERATED_INCLUDE_DIR}/fic/core/runtime/FicPathDefaults.h
     @ONLY
 )
 
@@ -55,5 +55,5 @@ target_link_libraries(fic-core PUBLIC fic-version PRIVATE OpenSSL::Crypto Thread
 install(TARGETS fic-core ARCHIVE DESTINATION lib COMPONENT Development)
 install(DIRECTORY include/ DESTINATION include COMPONENT Development
         FILES_MATCHING PATTERN "*.h")
-install(FILES ${FIC_CORE_GENERATED_INCLUDE_DIR}/fic/core/FicPathDefaults.h
-        DESTINATION include/fic/core COMPONENT Development)
+install(FILES ${FIC_CORE_GENERATED_INCLUDE_DIR}/fic/core/runtime/FicPathDefaults.h
+        DESTINATION include/fic/core/runtime COMPONENT Development)
