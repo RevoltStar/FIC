@@ -77,6 +77,17 @@ bool installTempFile(const std::filesystem::path& tempPath,
     return true;
 }
 
+bool matchesExpectedIdentity(const std::filesystem::path& path,
+                             const AtomicWriteOptions& options) {
+    if (!options.expectedTargetIdentity.has_value()) {
+        return true;
+    }
+    struct stat current {};
+    return ::lstat(path.c_str(), &current) == 0 && S_ISREG(current.st_mode) &&
+        current.st_dev == options.expectedTargetIdentity->device &&
+        current.st_ino == options.expectedTargetIdentity->inode;
+}
+
 void cleanup(int& fd, const std::filesystem::path& path) {
     closeFd(fd);
     std::error_code ignored;
@@ -108,6 +119,11 @@ bool AtomicFileWriter::write(const std::string& path,
     }
     if (targetExists && options.rejectSymlink && S_ISLNK(linkStat.st_mode)) {
         setError(errorMessage, "refusing to replace symbolic link: " + path);
+        return false;
+    }
+    if (!matchesExpectedIdentity(requestedPath, options)) {
+        setError(errorMessage,
+                 "target identity changed before atomic write: " + path);
         return false;
     }
 
@@ -191,6 +207,13 @@ bool AtomicFileWriter::write(const std::string& path,
     }
     if (!closeFd(tempFd)) {
         setError(errorMessage, "could not close " + tempPath.string() + ": " + errnoMessage());
+        cleanup(tempFd, tempPath);
+        return false;
+    }
+    if (!matchesExpectedIdentity(targetPath, options)) {
+        setError(errorMessage,
+                 "target identity changed before atomic replacement: " +
+                     targetPath.string());
         cleanup(tempFd, tempPath);
         return false;
     }

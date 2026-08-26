@@ -170,7 +170,8 @@ void testWhitespaceAndUnrelatedContent() {
     const std::string fixture =
         "# administrator comment\n"
         "auth    required    pam_tcb.so   shadow fork nullok\n"
-        "auth optional pam_env.so\n"
+        "# auth tail comment\n"
+        "\n"
         "account    required    pam_tcb.so shadow fork\n"
         "password required pam_passwdqc.so config=/etc/passwdqc.conf\n"
         "session required pam_tcb.so";
@@ -183,6 +184,110 @@ void testWhitespaceAndUnrelatedContent() {
             "whitespace/unrelated bytes were not preserved");
 }
 
+void testExecutableAuthTailRejectedBeforeWrite() {
+    for (const std::string& tail : {
+             std::string("auth required pam_succeed_if.so user != root quiet\n"),
+             std::string("auth optional pam_env.so\n")}) {
+        TemporaryTree tree;
+        const std::string fixture =
+            "auth required pam_tcb.so shadow fork nullok\n" + tail +
+            "account required pam_tcb.so shadow fork\n";
+        TemporaryTree::write(tree.target(), fixture);
+        auto options = tree.options();
+        std::size_t writes = 0;
+        options.writer = [&writes](const std::string& path,
+                                   const std::string& content,
+                                   const AtomicWriteOptions& writeOptions,
+                                   std::string* error) {
+            ++writes;
+            return AtomicFileWriter::write(path, content, writeOptions, error);
+        };
+        AltPamFaillockTopologyManager manager(
+            tree.platform(), std::move(options));
+        std::string error;
+        require(!manager.enable(error),
+                "executable auth rule after pam_tcb was accepted");
+        require(writes == 0, "auth-tail rejection happened after a write");
+        require(TemporaryTree::read(tree.target()) == fixture,
+                "auth-tail rejection changed the target");
+    }
+}
+
+void testIncludedExternalFaillockRejectedBeforeWrite() {
+    TemporaryTree tree;
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth",
+        "auth include system-auth-local-only\n"
+        "auth include system-auth-common\n"
+        "account include system-auth-local-only\n"
+        "account include system-auth-common\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth-common",
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "account required pam_faillock.so\n");
+    const std::string original = TemporaryTree::read(tree.target());
+    auto options = tree.options();
+    std::size_t writes = 0;
+    options.writer = [&writes](const std::string& path,
+                               const std::string& content,
+                               const AtomicWriteOptions& writeOptions,
+                               std::string* error) {
+        ++writes;
+        return AtomicFileWriter::write(path, content, writeOptions, error);
+    };
+    AltPamFaillockTopologyManager manager(
+        tree.platform(), std::move(options));
+    std::string error;
+    require(!manager.enable(error),
+            "included external pam_faillock topology was accepted");
+    require(writes == 0,
+            "included external pam_faillock was detected only after mutation");
+    require(TemporaryTree::read(tree.target()) == original,
+            "included external topology changed the target");
+}
+
+void testSssModeVerifiesManagedLocalBranch() {
+    TemporaryTree tree;
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth",
+        "auth include system-check-localuser\n"
+        "auth substack system-auth-local-only\n"
+        "auth [default=1] pam_permit.so\n"
+        "auth substack system-auth-sss-only\n"
+        "auth substack system-auth-common\n"
+        "account include system-check-localuser\n"
+        "account substack system-auth-local-only\n"
+        "account [default=1] pam_permit.so\n"
+        "account substack system-auth-sss-only\n"
+        "account substack system-auth-common\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-check-localuser",
+        "auth [success=1 perm_denied=ignore default=die] pam_localuser.so\n"
+        "auth [success=2 auth_err=ignore default=bad] "
+        "pam_succeed_if.so uid >= 65536 quiet\n"
+        "account [success=1 perm_denied=ignore default=die] pam_localuser.so\n"
+        "account [success=2 auth_err=ignore default=bad] "
+        "pam_succeed_if.so uid >= 65536 quiet\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth-sss-only",
+        "auth required pam_sss.so forward_pass\n"
+        "account required pam_sss.so\n");
+    TemporaryTree::write(tree.root / "pam.d/system-auth-common", "# empty\n");
+    AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
+    std::string error;
+    const bool enabled = manager.enable(error);
+    require(enabled,
+            "ALT sss mode rejected local-only faillock topology: " + error);
+    AltPamFaillockTopologyState state;
+    require(manager.status(state, error) &&
+                state == AltPamFaillockTopologyState::Enabled,
+            "ALT sss mode did not report enabled local topology: " + error);
+    require(manager.disable(error), error);
+    require(TemporaryTree::read(tree.target()) == kCanonical,
+            "ALT sss local branch was not restored exactly");
+}
+
 void testExternalTopologyRejected() {
     TemporaryTree tree;
     const std::string external =
@@ -193,7 +298,17 @@ void testExternalTopologyRejected() {
         "account required pam_faillock.so\n"
         "account required pam_tcb.so shadow fork\n";
     TemporaryTree::write(tree.target(), external);
-    AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
+    auto options = tree.options();
+    std::size_t writes = 0;
+    options.writer = [&writes](const std::string& path,
+                               const std::string& content,
+                               const AtomicWriteOptions& writeOptions,
+                               std::string* error) {
+        ++writes;
+        return AtomicFileWriter::write(path, content, writeOptions, error);
+    };
+    AltPamFaillockTopologyManager manager(
+        tree.platform(), std::move(options));
     std::string error;
     require(!manager.enable(error) &&
                 error.find("external pam_faillock topology") != std::string::npos,
@@ -209,6 +324,7 @@ void testExternalTopologyRejected() {
     require(!manager.enable(error), "partial external topology was accepted");
     require(TemporaryTree::read(tree.target()) == partial,
             "partial external topology was modified");
+    require(writes == 0, "target-local external topology invoked the writer");
 }
 
 void testBrokenMarkersRejected() {
@@ -256,40 +372,66 @@ void testBrokenMarkersRejected() {
             "modified managed block was changed");
 }
 
-void testManagedPlacementChangeRejectedButRemovable() {
+void testManagedPlacementChangeRejectedWithoutMutation() {
     TemporaryTree tree;
     AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
     std::string error;
     require(manager.enable(error), error);
     std::string moved = TemporaryTree::read(tree.target());
-    const std::string boundary =
-        std::string(AltPamFaillockTopologyManager::PREAUTH_END) + "\n" +
-        AltPamFaillockTopologyManager::AUTHFAIL_BEGIN;
-    const std::size_t position = moved.find(boundary);
-    require(position != std::string::npos,
-            "managed block boundary is missing");
-    const std::string external = "auth optional pam_env.so\n";
-    moved.insert(position + std::strlen(
-                     AltPamFaillockTopologyManager::PREAUTH_END) + 1,
-                 external);
+    const std::size_t begin = moved.find(
+        AltPamFaillockTopologyManager::PREAUTH_BEGIN);
+    const std::size_t endMarker = moved.find(
+        AltPamFaillockTopologyManager::PREAUTH_END, begin);
+    require(begin != std::string::npos && endMarker != std::string::npos,
+            "managed preauth block is missing");
+    const std::size_t end = endMarker + std::strlen(
+        AltPamFaillockTopologyManager::PREAUTH_END) + 1;
+    const std::string preauthBlock = moved.substr(begin, end - begin);
+    moved.erase(begin, end - begin);
+    const std::size_t accountBlock = moved.find(
+        AltPamFaillockTopologyManager::ACCOUNT_BEGIN);
+    require(accountBlock != std::string::npos,
+            "managed account block is missing");
+    moved.insert(accountBlock, preauthBlock);
     TemporaryTree::write(tree.target(), moved);
     AltPamFaillockTopologyState state;
     require(!manager.status(state, error),
             "moved managed topology has enabled status");
     require(!manager.enable(error),
             "moved managed topology was accepted by enable");
-    require(manager.disable(error), error);
-    require(TemporaryTree::read(tree.target()) ==
-                std::string("#%PAM-1.0\n") +
-                    "auth\t\trequired\tpam_tcb.so shadow fork nullok\n" +
-                    external +
-                    "account\t\trequired\tpam_tcb.so shadow fork\n" +
-                    "password\trequired\tpam_passwdqc.so "
-                    "config=/etc/passwdqc.conf\n" +
-                    "password\trequired\tpam_tcb.so use_authtok shadow fork "
-                    "nullok write_to=tcb\n" +
-                    "session\t\trequired\tpam_tcb.so\n",
-            "disable did not preserve the line outside moved managed blocks");
+    require(!manager.disable(error),
+            "moved managed topology was guessed during disable");
+    require(TemporaryTree::read(tree.target()) == moved,
+            "failed disable changed moved managed topology");
+}
+
+void testAtomicWriteRejectsReplacementAfterSnapshotCheck() {
+    TemporaryTree tree;
+    const std::string replacement =
+        "auth required pam_deny.so\n"
+        "account required pam_deny.so\n";
+    auto options = tree.options();
+    std::size_t writes = 0;
+    options.writer = [&writes, &replacement](
+                         const std::string& path,
+                         const std::string& content,
+                         const AtomicWriteOptions& writeOptions,
+                         std::string* error) {
+        ++writes;
+        if (writes == 1) {
+            const fs::path replacementPath = std::string(path) + ".replacement";
+            TemporaryTree::write(replacementPath, replacement);
+            fs::rename(replacementPath, path);
+        }
+        return AtomicFileWriter::write(path, content, writeOptions, error);
+    };
+    AltPamFaillockTopologyManager manager(
+        tree.platform(), std::move(options));
+    std::string error;
+    require(!manager.enable(error),
+            "atomic writer overwrote a replacement target");
+    require(TemporaryTree::read(tree.target()) == replacement,
+            "replacement target was not preserved");
 }
 
 void testMissingAndAmbiguousAnchors() {
@@ -436,9 +578,13 @@ int main() {
     try {
         testCanonicalRoundTrip();
         testWhitespaceAndUnrelatedContent();
+        testSssModeVerifiesManagedLocalBranch();
+        testAtomicWriteRejectsReplacementAfterSnapshotCheck();
+        testManagedPlacementChangeRejectedWithoutMutation();
+        testIncludedExternalFaillockRejectedBeforeWrite();
+        testExecutableAuthTailRejectedBeforeWrite();
         testExternalTopologyRejected();
         testBrokenMarkersRejected();
-        testManagedPlacementChangeRejectedButRemovable();
         testMissingAndAmbiguousAnchors();
         testSymlinkRejected();
         testPostconditionRollback();

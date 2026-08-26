@@ -13,6 +13,11 @@ enum class FileMetadataPolicy {
     EnforceProvided
 };
 
+struct AtomicTargetIdentity {
+    dev_t device = 0;
+    ino_t inode = 0;
+};
+
 struct AtomicWriteOptions {
     // Applies both to a direct write and to a file disappearing before write.
     bool createIfMissing = false;
@@ -24,6 +29,8 @@ struct AtomicWriteOptions {
     std::optional<mode_t> fileMode;
     std::optional<uid_t> fileOwner;
     std::optional<gid_t> fileGroup;
+    // When set, refuse replacement unless the target still names this inode.
+    std::optional<AtomicTargetIdentity> expectedTargetIdentity;
 };
 
 class AtomicFileWriter {

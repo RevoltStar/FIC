@@ -318,6 +318,49 @@ bool hasExternalFaillock(const std::vector<PamRule>& rules,
         });
 }
 
+bool verifyNoExternalFaillockInRelevantGraph(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const ManagedInspection& managed,
+    std::string& error) {
+    PamConfiguration configuration(platformConfig);
+    std::vector<std::string> services;
+    if (!configuration.existingServices(
+            platformConfig.authenticationServices, services, error)) {
+        return false;
+    }
+    if (services.empty()) {
+        error = "none of the configured PAM authentication services exists";
+        return false;
+    }
+    const auto target =
+        platformConfig.localAuthenticationStackPath.lexically_normal();
+    for (const std::string& service : services) {
+        for (const PamManagementGroup group : {
+                 PamManagementGroup::Auth, PamManagementGroup::Account}) {
+            std::vector<PamRule> rules;
+            if (!configuration.collectRules(
+                    service, group, rules, error)) {
+                return false;
+            }
+            for (const PamRule& rule : rules) {
+                if (moduleBaseName(rule) != "pam_faillock.so") {
+                    continue;
+                }
+                const bool owned = rule.source.lexically_normal() == target &&
+                    managed.ruleLines.find(rule.line) != managed.ruleLines.end();
+                if (!owned) {
+                    error = "external pam_faillock topology is effective for PAM "
+                        "service " + service + " at " + rule.source.string() +
+                        ":" + std::to_string(rule.line);
+                    return false;
+                }
+            }
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool inspectSecureTarget(const std::filesystem::path& path,
                          TargetSnapshot& snapshot,
                          std::string& error) {
@@ -403,6 +446,15 @@ bool targetStillMatches(const std::filesystem::path& path,
         return false;
     }
     return true;
+}
+
+AtomicWriteOptions writeOptionsForSnapshot(
+    const AtomicWriteOptions& base,
+    const TargetSnapshot& snapshot) {
+    AtomicWriteOptions result = base;
+    result.expectedTargetIdentity =
+        AtomicTargetIdentity{snapshot.device, snapshot.inode};
+    return result;
 }
 
 PhysicalLine generatedLine(std::string text) {
@@ -524,6 +576,29 @@ bool verifyManagedPlacement(const std::vector<PamRule>& rules,
     return true;
 }
 
+bool verifyNoExecutableAuthTail(
+    const std::vector<PamRule>& rules,
+    const std::vector<PhysicalLine>& lines,
+    const ManagedInspection& managed,
+    std::string& error) {
+    std::size_t authLine = 0;
+    std::size_t accountLine = 0;
+    if (!findAnchors(rules, lines, authLine, accountLine, error)) {
+        return false;
+    }
+    (void)accountLine;
+    for (const PamRule& rule : rules) {
+        if (rule.group == PamManagementGroup::Auth && rule.line > authLine &&
+            managed.ruleLines.find(rule.line) == managed.ruleLines.end()) {
+            error = "executable auth rule follows the pam_tcb.so anchor at " +
+                rule.source.string() + ":" + std::to_string(rule.line);
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 std::string buildEnabledContent(const std::vector<PhysicalLine>& lines,
                                 const std::vector<PamRule>& rules,
                                 std::size_t authLine,
@@ -600,10 +675,16 @@ bool AltPamFaillockTopologyManager::verifySemanticEffectiveness(
     }
     PamConfiguration configuration(platformConfig_);
     PamCapabilityVerification verification;
+    const std::string localService =
+        platformConfig_.localAuthenticationStackPath.filename().string();
+    if (localService.empty()) {
+        error = "local PAM authentication stack service name is empty";
+        return false;
+    }
     if (!PamCapabilityVerifier::verify(
             configuration,
             platformConfig_,
-            platformConfig_.authenticationServices,
+            {localService},
             PamCapability::AuthenticationLockout,
             PamProviderKind::PamFaillock,
             verification)) {
@@ -654,8 +735,19 @@ bool AltPamFaillockTopologyManager::status(
         error = "FIC pam_faillock managed topology placement is invalid: " + error;
         return false;
     }
+    if (!verifyNoExecutableAuthTail(rules, lines, managed, error)) {
+        error = "FIC pam_faillock managed topology has unsafe auth tail: " +
+            error;
+        return false;
+    }
     if (hasExternalFaillock(rules, managed)) {
         error = "FIC pam_faillock blocks coexist with external pam_faillock topology";
+        return false;
+    }
+    if (!verifyNoExternalFaillockInRelevantGraph(
+            platformConfig_, managed, error)) {
+        error = "FIC pam_faillock blocks coexist with external pam_faillock "
+            "topology: " + error;
         return false;
     }
     if (!verifySemanticEffectiveness(error)) {
@@ -701,6 +793,17 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
                 error;
             return false;
         }
+        if (!verifyNoExecutableAuthTail(rules, lines, managed, error)) {
+            error = "existing FIC pam_faillock topology has unsafe auth tail: " +
+                error;
+            return false;
+        }
+        if (!verifyNoExternalFaillockInRelevantGraph(
+                platformConfig_, managed, error)) {
+            error = "existing FIC pam_faillock topology conflicts with external "
+                "topology: " + error;
+            return false;
+        }
         if (!verifySemanticEffectiveness(error)) {
             error = "existing FIC pam_faillock topology is not effective: " + error;
             return false;
@@ -716,10 +819,20 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
         error = "external pam_faillock topology already exists; FIC will not take ownership";
         return false;
     }
+    if (!verifyNoExternalFaillockInRelevantGraph(
+            platformConfig_, managed, error)) {
+        error = "external pam_faillock topology already exists; FIC will not "
+            "take ownership: " + error;
+        return false;
+    }
 
     std::size_t authLine = 0;
     std::size_t accountLine = 0;
     if (!findAnchors(rules, lines, authLine, accountLine, error)) {
+        return false;
+    }
+    if (!verifyNoExecutableAuthTail(rules, lines, managed, error)) {
+        error = "unsafe ALT local authentication topology: " + error;
         return false;
     }
     const std::string candidate =
@@ -734,7 +847,9 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
     }
     std::string writeError;
     if (!options_.writer(
-            path.string(), candidate, options_.writeOptions, &writeError)) {
+            path.string(), candidate,
+            writeOptionsForSnapshot(options_.writeOptions, original),
+            &writeError)) {
         error = "could not atomically enable FIC pam_faillock topology: " +
             writeError;
         return false;
@@ -742,8 +857,16 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
 
     auto rollback = [&](const std::string& failure) -> bool {
         std::string rollbackError;
+        TargetSnapshot rollbackTarget;
+        if (!inspectSecureTarget(path, rollbackTarget, rollbackError)) {
+            error = failure + "; CRITICAL: could not inspect rollback target: " +
+                rollbackError + "; PAM configuration may be inconsistent";
+            return false;
+        }
         if (!options_.writer(path.string(), original.content,
-                             options_.writeOptions, &rollbackError)) {
+                             writeOptionsForSnapshot(
+                                 options_.writeOptions, rollbackTarget),
+                             &rollbackError)) {
             error = failure + "; CRITICAL: rollback write failed: " + rollbackError +
                 "; PAM configuration may be inconsistent";
             return false;
@@ -777,6 +900,10 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
         hasExternalFaillock(writtenRules, writtenManaged) ||
         !verifyManagedPlacement(
             writtenRules, writtenLines, verificationError) ||
+        !verifyNoExecutableAuthTail(
+            writtenRules, writtenLines, writtenManaged, verificationError) ||
+        !verifyNoExternalFaillockInRelevantGraph(
+            platformConfig_, writtenManaged, verificationError) ||
         !verifySemanticEffectiveness(verificationError)) {
         return rollback("post-enable PAM verification failed: " + verificationError);
     }
@@ -816,6 +943,11 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
         error = "broken FIC pam_faillock managed topology";
         return false;
     }
+    if (!verifyManagedPlacement(rules, lines, error)) {
+        error = "refusing to disable invalid FIC pam_faillock placement: " +
+            error;
+        return false;
+    }
     const std::string candidate = buildDisabledContent(lines, managed);
     std::vector<PamRule> candidateRules;
     if (!parseTarget(path, candidate, candidateRules, error)) {
@@ -827,7 +959,9 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
     }
     std::string writeError;
     if (!options_.writer(
-            path.string(), candidate, options_.writeOptions, &writeError)) {
+            path.string(), candidate,
+            writeOptionsForSnapshot(options_.writeOptions, original),
+            &writeError)) {
         error = "could not atomically disable FIC pam_faillock topology: " +
             writeError;
         return false;
@@ -835,8 +969,16 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
 
     auto rollback = [&](const std::string& failure) -> bool {
         std::string rollbackError;
+        TargetSnapshot rollbackTarget;
+        if (!inspectSecureTarget(path, rollbackTarget, rollbackError)) {
+            error = failure + "; CRITICAL: could not inspect rollback target: " +
+                rollbackError + "; PAM configuration may be inconsistent";
+            return false;
+        }
         if (!options_.writer(path.string(), original.content,
-                             options_.writeOptions, &rollbackError)) {
+                             writeOptionsForSnapshot(
+                                 options_.writeOptions, rollbackTarget),
+                             &rollbackError)) {
             error = failure + "; CRITICAL: rollback write failed: " + rollbackError +
                 "; PAM configuration may be inconsistent";
             return false;

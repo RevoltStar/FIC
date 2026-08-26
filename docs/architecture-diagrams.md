@@ -708,9 +708,17 @@ semantic verifier анализирует получившийся effective grap
 `control fic-pam-faillock`, которая через offline `fic` manager управляет
 только FIC-owned blocks в platform path `system-auth-local-only`. Manager
 сохраняет исходную строку `pam_tcb` для exact disable, доказывает resulting
-AuthenticationLockout через общий analyzer/verifier и откатывает exact bytes
-при failed postcondition. Внешняя topology не присваивается FIC; ALT activation
-для `pam_pwhistory` намеренно отсутствует.
+AuthenticationLockout именно для изменяемого local stack через общий
+analyzer/verifier и откатывает exact bytes при failed postcondition. Это
+сохраняет local-only contract в `sss` mode, не ослабляя глобальную semantics
+`required_pam_enforcement`. До записи manager обходит effective include/substack
+graph целевых authentication services и отклоняет любой не принадлежащий FIC
+`pam_faillock`; простой global grep не используется. Замена `pam_tcb required`
+на `sufficient` разрешена только когда `pam_tcb` является последним
+исполняемым auth rule локального файла. Disable требует неизменного placement
+managed blocks. Atomic replacement получает ожидаемые `dev+ino` target и
+отклоняет уже заменённый inode непосредственно перед commit. Внешняя topology
+не присваивается FIC; ALT activation для `pam_pwhistory` намеренно отсутствует.
 
 Классы identity-модуля разделяют policy metadata и владение системной
 конфигурацией:

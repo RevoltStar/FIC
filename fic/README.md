@@ -602,7 +602,13 @@ policy values через `control fic-pam-faillock enabled|disabled`. Facility
 активируют. Manager изменяет только platform path
 `/etc/pam.d/system-auth-local-only`, использует FIC-owned markers, atomic write,
 inter-process lock, semantic postcondition через `PamCapabilityVerifier` и
-rollback exact original bytes. Внешняя topology никогда не присваивается FIC.
+rollback exact original bytes. Проверка postcondition ограничена изменяемым
+local stack, поэтому штатный `sss` router не считается bypass этой package-level
+facility; глобальная policy `required_pam_enforcement` не ослабляется. Перед
+записью effective include/substack graph проверяется на внешний
+`pam_faillock`, а `pam_tcb` должен быть последним исполняемым auth rule.
+Moved managed blocks и заменённый после snapshot target inode отклоняются без
+записи. Внешняя topology никогда не присваивается FIC.
 Штатный ALT `pam_passwdqc` остаётся без FIC activation facility, а активация
 `pam_pwhistory` на ALT не поддерживается до появления безопасного storage
 contract для истории паролей.

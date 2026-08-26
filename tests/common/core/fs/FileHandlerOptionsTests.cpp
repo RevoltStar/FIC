@@ -1,4 +1,5 @@
 #include <fic/core/config/ConfigFileHandler.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <filesystem>
 #include <fstream>
@@ -165,6 +166,36 @@ void testValueRemovalPreservesUnrelatedContent() {
             "unrelated value was unexpectedly removed");
 }
 
+void testAtomicExpectedTargetIdentity() {
+    TempTree tree;
+    const auto path = tree.root / "identity.conf";
+    writeFile(path, "old\n");
+    struct stat original {};
+    require(::lstat(path.c_str(), &original) == 0,
+            "failed to inspect identity fixture");
+
+    AtomicWriteOptions options;
+    options.expectedTargetIdentity =
+        AtomicTargetIdentity{original.st_dev, original.st_ino};
+    std::string error;
+    require(AtomicFileWriter::write(path.string(), "first\n", options, &error),
+            "matching expected identity was rejected: " + error);
+
+    struct stat installed {};
+    require(::lstat(path.c_str(), &installed) == 0,
+            "failed to inspect installed fixture");
+    options.expectedTargetIdentity =
+        AtomicTargetIdentity{installed.st_dev, installed.st_ino};
+    const auto replacement = tree.root / "replacement.conf";
+    writeFile(replacement, "replacement\n");
+    std::filesystem::rename(replacement, path);
+    require(!AtomicFileWriter::write(
+                path.string(), "stale-writer\n", options, &error),
+            "stale expected identity overwrote a replacement inode");
+    require(readFile(path) == "replacement\n",
+            "replacement inode content was not preserved");
+}
+
 } // namespace
 
 int main() {
@@ -175,6 +206,7 @@ int main() {
         testSymlinkIsRejected();
         testDeletionBetweenLoadAndSaveDoesNotRecreateFile();
         testValueRemovalPreservesUnrelatedContent();
+        testAtomicExpectedTargetIdentity();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
