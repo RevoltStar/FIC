@@ -812,7 +812,7 @@ if [ -d /run/systemd/system ]; then
             "\$systemctl_bin" enable --now fic-notify.service >/dev/null 2>&1 || exit 1
             "\$systemctl_bin" is-active --quiet fic.service || exit 1
             "\$systemctl_bin" is-active --quiet fic-device.service || exit 1
-            /opt/fic/bin/fic --maintenance wait-daemon 10 || exit 1
+            /opt/fic/bin/fic --maintenance wait-daemon 30 || exit 1
             /opt/fic/bin/fic-dick wait-daemon 10 || exit 1
             break
         fi
