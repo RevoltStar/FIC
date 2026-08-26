@@ -1,5 +1,5 @@
-#ifndef FIC_IDENTITY_USERADD_DEFAULTS_FILE_HANDLER_H
-#define FIC_IDENTITY_USERADD_DEFAULTS_FILE_HANDLER_H
+#ifndef FIC_IDENTITY_ADDUSER_CONFIG_FILE_HANDLER_H
+#define FIC_IDENTITY_ADDUSER_CONFIG_FILE_HANDLER_H
 
 #include <fic/core/ConfigFileHandler.h>
 
@@ -10,29 +10,30 @@
 
 namespace fic::identity {
 
-enum class UseraddDefaultsValueState {
+enum class AdduserConfigValueState {
     Missing,
     Unique,
     Duplicate,
     Malformed
 };
 
-struct UseraddDefaultsValue {
-    UseraddDefaultsValueState state = UseraddDefaultsValueState::Missing;
+struct AdduserConfigValue {
+    AdduserConfigValueState state = AdduserConfigValueState::Missing;
     std::string value;
 };
 
-class UseraddDefaultsFileHandler final : public ConfigFileHandler {
+class AdduserConfigFileHandler final : public ConfigFileHandler {
 public:
-    explicit UseraddDefaultsFileHandler(
+    explicit AdduserConfigFileHandler(
         const std::string& path,
         FileHandlerOptions options = {});
 
     bool loadConfig() override;
     std::string getValue(const std::string& parameter) const override;
-    bool setValue(const std::string& parameter, const std::string& value) override;
-    bool removeValue(const std::string& parameter);
-    UseraddDefaultsValue lookup(const std::string& parameter) const;
+    AdduserConfigValue lookup(const std::string& parameter) const;
+    bool setSupplementaryGroups(
+        bool enabled,
+        const std::vector<std::string>& groups);
     bool saveAndReload();
 
 private:
@@ -41,6 +42,11 @@ private:
         std::string value;
         bool valid = false;
     };
+
+    bool setCanonicalValue(
+        const std::string& parameter,
+        const std::string& value,
+        bool quoted);
 
     std::unordered_map<std::string, std::vector<Occurrence>> occurrences_;
 };

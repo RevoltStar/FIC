@@ -8,6 +8,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayName = "Ubuntu 24.04";
     profile.hostCompatibility.osIds = {"ubuntu"};
     profile.hostCompatibility.versionIds = {"24.04"};
+    profile.userCreation.supplementaryGroupsProvider =
+        UserSupplementaryGroupsProviderKind::DebianAdduser;
     profile.executables.entries = {
         {
             ExecutableId::Sshd,

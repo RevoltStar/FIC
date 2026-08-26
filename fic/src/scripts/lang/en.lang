@@ -128,6 +128,8 @@
 [module:IDENTITY_ACCESS][policy:user_create_private_group][description]=Manages USERGROUPS_ENAB in /etc/login.defs for future local shadow-utils users.
 [module:IDENTITY_ACCESS][policy:user_default_primary_group]=Default primary group
 [module:IDENTITY_ACCESS][policy:user_default_primary_group][description]=Manages GROUP in /etc/default/useradd. Only the name of an existing local group is accepted, not a numeric GID.
+[module:IDENTITY_ACCESS][policy:user_default_supplementary_groups]=Supplementary groups for new users
+[module:IDENTITY_ACCESS][policy:user_default_supplementary_groups][description]=Sets supplementary groups assigned to new local users by the platform's native user-creation provider. Only the provider-specific list is managed; other frontend options may add memberships.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=SSSD cached credential lifetime
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Sets offline_credentials_expiration in the [pam] section of sssd.conf, in days. An active SSSD service is restarted; on failure the configuration is rolled back and the previous runtime state is restored.
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime]=Kerberos ticket lifetime

@@ -412,6 +412,8 @@ add_executable(user_creation_tests
     identity_access/UserCreationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/LoginDefsFileHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/LocalGroupDatabase.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/AdduserConfigFileHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/configuration/UseraddDefaultsFileHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/submodules/user_creation/UserCreationPolicies.cpp
 )

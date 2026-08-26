@@ -63,3 +63,5 @@ user_create_private_group.status=DISABLE
 user_create_private_group.value=@FIC_USER_CREATION_PRIVATE_GROUP_DEFAULT@
 user_default_primary_group.status=DISABLE
 user_default_primary_group.value=@FIC_USER_CREATION_PRIMARY_GROUP_DEFAULT@
+user_default_supplementary_groups.status=DISABLE
+user_default_supplementary_groups.value=[]

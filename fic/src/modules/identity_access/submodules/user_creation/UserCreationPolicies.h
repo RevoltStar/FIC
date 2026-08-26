@@ -8,6 +8,18 @@
 
 #include <memory>
 #include <string>
+#include <vector>
+
+class GroupListPolicyTypeValue final : public PolicyTypeValue {
+public:
+    GroupListPolicyTypeValue();
+
+    PolicyEditorSpec getEditorSpec() const override;
+    bool validate(const std::string& value) override;
+    std::string getPolicyRestrictionInfo() override;
+    std::string postProcessingValue(const std::string& value) override;
+    std::string reverse_postProcessingValue(const std::string& value) override;
+};
 
 class UserCreationOptionPolicy : public IdentityAccessPolicy {
 public:
@@ -73,6 +85,23 @@ public:
     explicit UserDefaultPrimaryGroupPolicy(
         fic::platform::UserCreationPlatformConfig platform,
         AtomicWriteOptions options = {});
+};
+
+class UserDefaultSupplementaryGroupsPolicy final
+    : public IdentityAccessPolicy {
+public:
+    explicit UserDefaultSupplementaryGroupsPolicy(
+        fic::platform::UserCreationPlatformConfig platform,
+        AtomicWriteOptions options = {});
+
+    bool apply() override;
+
+private:
+    bool applyShadowUseraddDefaults(const std::vector<std::string>& groups);
+    bool applyDebianAdduser(const std::vector<std::string>& groups);
+
+    fic::platform::UserCreationPlatformConfig platform_;
+    AtomicWriteOptions writeOptions_;
 };
 
 #endif

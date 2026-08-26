@@ -94,6 +94,30 @@ bool UseraddDefaultsFileHandler::setValue(
     return true;
 }
 
+bool UseraddDefaultsFileHandler::removeValue(const std::string& parameter) {
+    if (parameter.empty()) return false;
+    const UseraddDefaultsValue current = lookup(parameter);
+    if (current.state == UseraddDefaultsValueState::Duplicate ||
+        current.state == UseraddDefaultsValueState::Malformed) {
+        return false;
+    }
+    if (current.state == UseraddDefaultsValueState::Missing) return true;
+    const std::size_t removedLine =
+        occurrences_.at(parameter).front().line;
+    original_lines_.erase(
+        original_lines_.begin() +
+        static_cast<std::ptrdiff_t>(removedLine));
+    occurrences_.erase(parameter);
+    for (auto& [key, entries] : occurrences_) {
+        (void)key;
+        for (Occurrence& occurrence : entries) {
+            if (occurrence.line > removedLine) --occurrence.line;
+        }
+    }
+    config_.erase(parameter);
+    return true;
+}
+
 bool UseraddDefaultsFileHandler::saveAndReload() {
     return saveFile() && loadConfig();
 }

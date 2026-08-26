@@ -8,6 +8,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayName = "Debian 13";
     profile.hostCompatibility.osIds = {"debian"};
     profile.hostCompatibility.versionIds = {"13"};
+    profile.userCreation.supplementaryGroupsProvider =
+        UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
     profile.executables.entries = {
         {
             ExecutableId::Sshd,

@@ -401,6 +401,7 @@ def main():
         "UserDefaultShellPolicy",
         "UserCreatePrivateGroupPolicy",
         "UserDefaultPrimaryGroupPolicy",
+        "UserDefaultSupplementaryGroupsPolicy",
     ):
         require(
             policy_class in registry,
@@ -442,6 +443,7 @@ def main():
         "user_default_shell",
         "user_create_private_group",
         "user_default_primary_group",
+        "user_default_supplementary_groups",
     ):
         require(
             f"{policy_name}.value=" in identity_config

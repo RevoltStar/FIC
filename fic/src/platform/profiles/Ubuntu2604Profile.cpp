@@ -8,6 +8,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayName = "Ubuntu 26.04";
     profile.hostCompatibility.osIds = {"ubuntu"};
     profile.hostCompatibility.versionIds = {"26.04"};
+    profile.userCreation.supplementaryGroupsProvider =
+        UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
     profile.executables.entries = {
         {
             ExecutableId::Sshd,

@@ -605,7 +605,7 @@ defaults выбранного platform profile, а не из состояния 
 же CMake platform constants генерируют этот config и C++ header, из которого
 `PasswordAgingPolicyDefaults` инициализирует runtime policy metadata.
 
-Политики `IDENTITY_ACCESS/USER_CREATION` управляют только defaults для
+Базовые политики `IDENTITY_ACCESS/USER_CREATION` управляют только defaults для
 будущих локальных пользователей backend `ShadowUseradd`: `HOME`, `SKEL`,
 `SHELL` и именованным `GROUP` в `/etc/default/useradd`, а также `CREATE_HOME`
 и `USERGROUPS_ENAB` в `/etc/login.defs`. Они не создают пользователей, группы
@@ -615,8 +615,31 @@ defaults выбранного platform profile, а не из состояния 
 shell должен разрешаться в обычный executable file и при наличии `/etc/shells`
 входить в него под запрошенным именем, а
 `GROUP` должен однозначно существовать в локальном `/etc/group`. Поддержка
-frontend, игнорирующих shadow-utils defaults, и ALT supplementary/default
-groups намеренно не входят в этот контракт.
+frontend, игнорирующих shadow-utils defaults, намеренно не входит в этот
+контракт.
+
+`user_default_supplementary_groups` использует отдельную platform capability.
+На Debian 12 и Ubuntu 24.04 она управляет extra-groups частью `adduser` через
+`ADD_EXTRA_GROUPS` и `EXTRA_GROUPS` в `/etc/adduser.conf`; raw `useradd` этих
+defaults не получает. На Debian 13 и Ubuntu 26.04 она управляет `GROUPS` в
+`/etc/default/useradd`, поддержанным shadow-utils 4.17.4. `adduser` на этих
+платформах вызывает `useradd` без `-G`, но затем может добавить memberships из
+`USERGROUPS`/`USERS_GROUP` и `EXTRA_GROUPS`, поэтому policy не обещает полный
+итоговый exact set для каждого frontend. Логический список хранится как
+canonical JSON array; пустой список удаляет `GROUPS` для shadow provider либо
+устанавливает `ADD_EXTRA_GROUPS=0` для adduser provider.
+
+ALT p11 `alterator-users 10.25-alt1` читает непустой
+`/usr/share/install3/default-groups` как замену встроенного списка и объединяет
+с ним все обычные файлы из `/usr/share/install3/default-groups.d` через
+whitespace split и `sort -u` при каждом вызове `create_account()`. Drop-ins
+additive-only и не имеют late precedence; пустой основной файл игнорируется.
+При enabled `libnss-role` backend принудительно оставляет `users` и исключает
+из явного списка группы, уже входящие в системную роль `users`. Поэтому ни
+точная замена, ни пустой список через FIC-owned drop-in невыразимы; capability
+для ALT p11 помечена unsupported и apply завершается fail-closed без записи.
+Отсутствие пакета `alterator-users` не включает другой backend и не приводит к
+созданию предполагаемых native files.
 
 `PasswordAgingPolicyDefaults` не используются как semantics отсутствующего
 `login.defs` key. Для отсутствующих `PASS_MIN_DAYS`/`PASS_MAX_DAYS` явно

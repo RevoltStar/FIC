@@ -129,6 +129,23 @@ void testSelectedProfile() {
     require(profile.executables.entries.size() ==
                 fic::platform::allExecutableIds().size(),
             "the executable registry must contain every supported logical command");
+    const auto supplementaryProvider =
+        profile.userCreation.supplementaryGroupsProvider;
+    if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {
+        require(supplementaryProvider ==
+                    fic::platform::UserSupplementaryGroupsProviderKind::DebianAdduser,
+                "legacy Debian-family profile must use adduser extra groups");
+    } else if (profile.id == "debian-13" || profile.id == "ubuntu-26.04") {
+        require(supplementaryProvider ==
+                    fic::platform::UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults,
+                "shadow 4.17 profile must use useradd GROUPS");
+    } else if (profile.id == "alt-p11") {
+        require(supplementaryProvider ==
+                    fic::platform::UserSupplementaryGroupsProviderKind::Unsupported,
+                "ALT p11 cannot express replacement or empty group-list semantics");
+        require(profile.userCreation.adduserConfigPath.empty(),
+                "ALT p11 must not claim a Debian adduser native path");
+    }
     require(executableSpec(
                 profile,
                 fic::platform::ExecutableId::Nft).candidates ==

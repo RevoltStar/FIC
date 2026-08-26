@@ -127,6 +127,12 @@ enum class UserCreationProviderKind {
     ShadowUseradd
 };
 
+enum class UserSupplementaryGroupsProviderKind {
+    ShadowUseraddDefaults,
+    DebianAdduser,
+    Unsupported
+};
+
 struct UserCreationPolicyDefaults {
     std::string homeBaseDirectory = FIC_USER_CREATION_HOME_BASE_DEFAULT;
     std::string createHome = FIC_USER_CREATION_CREATE_HOME_DEFAULT;
@@ -138,7 +144,10 @@ struct UserCreationPolicyDefaults {
 
 struct UserCreationPlatformConfig {
     UserCreationProviderKind provider = UserCreationProviderKind::ShadowUseradd;
+    UserSupplementaryGroupsProviderKind supplementaryGroupsProvider =
+        UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
     std::filesystem::path useraddDefaultsPath = "/etc/default/useradd";
+    std::filesystem::path adduserConfigPath = "/etc/adduser.conf";
     std::filesystem::path loginDefsPath = "/etc/login.defs";
     std::filesystem::path passwdPath = "/etc/passwd";
     std::filesystem::path groupPath = "/etc/group";

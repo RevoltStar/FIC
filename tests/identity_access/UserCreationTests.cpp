@@ -1,3 +1,4 @@
+#include "modules/identity_access/configuration/AdduserConfigFileHandler.h"
 #include "modules/identity_access/configuration/UseraddDefaultsFileHandler.h"
 #include "modules/identity_access/submodules/user_creation/UserCreationPolicies.h"
 
@@ -65,7 +66,8 @@ void writePolicyConfig(
     const std::string& shell,
     const std::string& group,
     const std::string& createHome = "yes",
-    const std::string& privateGroup = "yes") {
+    const std::string& privateGroup = "yes",
+    const std::string& supplementaryGroups = "[]") {
     writeFile(root / "config/IDENTITY_ACCESS.conf",
         "_schema_version=1\n"
         "user_home_base_directory.status=ENABLE\n"
@@ -79,7 +81,9 @@ void writePolicyConfig(
         "user_create_private_group.status=ENABLE\n"
         "user_create_private_group.value=" + privateGroup + "\n"
         "user_default_primary_group.status=ENABLE\n"
-        "user_default_primary_group.value=" + group + "\n");
+        "user_default_primary_group.value=" + group + "\n"
+        "user_default_supplementary_groups.status=ENABLE\n"
+        "user_default_supplementary_groups.value=" + supplementaryGroups + "\n");
 }
 
 fic::platform::UserCreationPlatformConfig platformFor(const fs::path& root) {
@@ -145,13 +149,245 @@ void prepareNativeFiles(
     fs::create_directories(skel);
     writeFile(shell, "#!/bin/sh\n", 0755);
     writeFile(platform.shellsPath, shell.string() + "\n");
-    writeFile(platform.groupPath, "root:x:0:\nusers:x:100:\n");
+    writeFile(platform.groupPath,
+              "root:x:0:\nusers:x:100:\naudio:x:101:\nvideo:x:102:\n");
     writeFile(platform.passwdPath, "root:x:0:0:root:/root:/bin/sh\n");
     writeFile(platform.useraddDefaultsPath,
               "# vendor\nGROUP=100\nHOME=/home\nSHELL=/bin/sh\n"
               "SKEL=/etc/skel\nINACTIVE=-1\nEXPIRE=\n", 0600);
     writeFile(platform.loginDefsPath,
               "CREATE_HOME no\nUSERGROUPS_ENAB no\n", 0644);
+}
+
+void testGroupListValueType() {
+    GroupListPolicyTypeValue value;
+    require(value.validate("") && value.postProcessingValue("") == "[]",
+            "empty group list is not canonical");
+    require(value.validate("audio") &&
+                value.postProcessingValue("audio") == "[\"audio\"]",
+            "single group is not canonical");
+    require(value.validate("video, audio") &&
+                value.postProcessingValue("video, audio") ==
+                    "[\"audio\",\"video\"]",
+            "group list is not sorted deterministically");
+    require(value.reverse_postProcessingValue("[\"audio\",\"video\"]") ==
+                "audio,video",
+            "stored group list was not decoded");
+    require(!value.validate("audio,audio"), "duplicate group was accepted");
+    require(!value.validate("100") && !value.validate("audio,,video"),
+            "invalid group name/list was accepted");
+    bool invalidSerialization = false;
+    try {
+        (void)value.reverse_postProcessingValue("not-json");
+    } catch (const std::exception&) {
+        invalidSerialization = true;
+    }
+    require(invalidSerialization, "invalid serialization was accepted");
+    const PolicyEditorSpec editor = value.getEditorSpec();
+    require(editor.editor == "textedit" && editor.textDelimiter == ",",
+            "group-list editor metadata is wrong");
+}
+
+void testAdduserHandler(const fs::path& root) {
+    const fs::path path = root / "handler/adduser.conf";
+    writeFile(path,
+              "# vendor\nUNKNOWN = keep\nADD_EXTRA_GROUPS = 0\n"
+              "EXTRA_GROUPS='users audio video'\n",
+              0600);
+    AdduserConfigFileHandler handler(path.string());
+    require(handler.loadConfig(), "adduser config load failed");
+    require(handler.lookup("ADD_EXTRA_GROUPS").value == "0" &&
+                handler.lookup("EXTRA_GROUPS").value == "users audio video",
+            "quoted/whitespace adduser config was not parsed");
+    require(handler.setSupplementaryGroups(true, {"audio", "video"}) &&
+                handler.saveAndReload(),
+            "adduser two-key update failed");
+    const std::string changed = readFile(path);
+    require(changed.find("# vendor\nUNKNOWN = keep\n") == 0 &&
+                changed.find("ADD_EXTRA_GROUPS=1\n") != std::string::npos &&
+                changed.find("EXTRA_GROUPS=\"audio video\"\n") !=
+                    std::string::npos,
+            "adduser config was not written canonically/atomically");
+    struct stat status {};
+    require(::stat(path.c_str(), &status) == 0 &&
+                (status.st_mode & 0777) == 0600,
+            "adduser config mode was not preserved");
+
+    for (const std::string& malformed : {
+             "ADD_EXTRA_GROUPS 1\nEXTRA_GROUPS=\"audio\"\n",
+             "ADD_EXTRA_GROUPS=1\nEXTRA_GROUPS=\"audio\n"}) {
+        writeFile(path, malformed);
+        require(handler.loadConfig(), "malformed adduser load failed");
+        const std::string before = readFile(path);
+        require(!handler.setSupplementaryGroups(true, {"audio"}) &&
+                    readFile(path) == before,
+                "malformed adduser target was repaired");
+    }
+    writeFile(path,
+              "add_extra_groups=0\nADD_EXTRA_GROUPS=1\n"
+              "EXTRA_GROUPS=audio\n");
+    require(handler.loadConfig() &&
+                handler.lookup("ADD_EXTRA_GROUPS").state ==
+                    AdduserConfigValueState::Duplicate &&
+                !handler.setSupplementaryGroups(true, {"audio"}),
+            "duplicate adduser option was accepted");
+}
+
+void writeSupplementaryConfig(
+    const fs::path& root,
+    const std::string& serialized) {
+    writeFile(root / "config/IDENTITY_ACCESS.conf",
+              "_schema_version=1\n"
+              "user_default_supplementary_groups.status=ENABLE\n"
+              "user_default_supplementary_groups.value=" + serialized + "\n");
+}
+
+void testShadowSupplementaryPolicy(const fs::path& root) {
+    auto platform = platformFor(root);
+    platform.supplementaryGroupsProvider =
+        fic::platform::UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
+    const fs::path home = root / "supplementary/home";
+    const fs::path skel = root / "supplementary/skel";
+    const fs::path shell = root / "supplementary/shell";
+    prepareNativeFiles(platform, home, skel, shell);
+
+    writeSupplementaryConfig(root, "[\"video\",\"audio\"]");
+    UserDefaultSupplementaryGroupsPolicy set(platform);
+    require(set.apply() &&
+                readFile(platform.useraddDefaultsPath).find(
+                    "GROUPS=audio,video\n") != std::string::npos,
+            "shadow supplementary groups were not applied");
+    require(readFile(platform.useraddDefaultsPath).find(
+                "# vendor\nGROUP=100\nHOME=/home\n") == 0,
+            "shadow apply did not preserve comments/unknown keys");
+
+    writeFile(platform.useraddDefaultsPath,
+              "# keep\nGROUPS=audio\nHOME=/home\n");
+    require(set.apply() &&
+                readFile(platform.useraddDefaultsPath).find(
+                    "GROUPS=audio,video\n") != std::string::npos,
+            "different shadow GROUPS was not replaced");
+
+    writeFile(platform.useraddDefaultsPath,
+              "# keep\nGROUPS=video,audio\nHOME=/home\n");
+    writeSupplementaryConfig(root, "[\"audio\",\"video\"]");
+    UserDefaultSupplementaryGroupsPolicy orderInsensitive(platform);
+    const std::string reordered = readFile(platform.useraddDefaultsPath);
+    require(orderInsensitive.apply() &&
+                readFile(platform.useraddDefaultsPath) == reordered,
+            "equivalent native group order caused mutation");
+
+    writeSupplementaryConfig(root, "[]");
+    UserDefaultSupplementaryGroupsPolicy clear(platform);
+    require(clear.apply() &&
+                readFile(platform.useraddDefaultsPath).find("GROUPS=") ==
+                    std::string::npos,
+            "empty shadow list did not remove GROUPS");
+    const std::string cleared = readFile(platform.useraddDefaultsPath);
+    require(clear.apply() && readFile(platform.useraddDefaultsPath) == cleared,
+            "empty shadow list is not idempotent");
+
+    writeFile(platform.useraddDefaultsPath,
+              "GROUPS=audio\nGROUPS=video\nHOME=/home\n");
+    writeSupplementaryConfig(root, "[\"audio\"]");
+    UserDefaultSupplementaryGroupsPolicy duplicate(platform);
+    const std::string before = readFile(platform.useraddDefaultsPath);
+    require(!duplicate.apply() && readFile(platform.useraddDefaultsPath) == before,
+            "duplicate native GROUPS was not fail-closed");
+
+    writeFile(platform.useraddDefaultsPath, "GROUPS=\nHOME=/home\n");
+    UserDefaultSupplementaryGroupsPolicy malformed(platform);
+    require(!malformed.apply(), "malformed native GROUPS was accepted");
+
+    writeFile(platform.useraddDefaultsPath, "HOME=/home\n");
+    writeSupplementaryConfig(root, "[\"missing\"]");
+    UserDefaultSupplementaryGroupsPolicy missingGroup(platform);
+    require(!missingGroup.apply(), "missing supplementary group was accepted");
+
+    writeSupplementaryConfig(root, "not-json");
+    UserDefaultSupplementaryGroupsPolicy invalidSerialized(platform);
+    require(!invalidSerialized.apply(), "invalid stored list was accepted");
+
+    writeSupplementaryConfig(root, "[\"audio\"]");
+    const fs::path realDefaults = root / "etc/default/useradd.supp-real";
+    writeFile(realDefaults, "HOME=/home\n");
+    fs::remove(platform.useraddDefaultsPath);
+    fs::create_symlink(realDefaults, platform.useraddDefaultsPath);
+    UserDefaultSupplementaryGroupsPolicy symlink(platform);
+    require(!symlink.apply() &&
+                readFile(realDefaults) == "HOME=/home\n",
+            "symlink shadow defaults was accepted");
+    fs::remove(platform.useraddDefaultsPath);
+    UserDefaultSupplementaryGroupsPolicy missingTarget(platform);
+    require(!missingTarget.apply() && !fs::exists(platform.useraddDefaultsPath),
+            "missing shadow defaults was created");
+}
+
+void testAdduserSupplementaryPolicy(const fs::path& root) {
+    auto platform = platformFor(root);
+    platform.supplementaryGroupsProvider =
+        fic::platform::UserSupplementaryGroupsProviderKind::DebianAdduser;
+    platform.adduserConfigPath = root / "etc/adduser.conf";
+    writeFile(platform.groupPath,
+              "root:x:0:\nusers:x:100:\naudio:x:101:\nvideo:x:102:\n");
+    writeFile(platform.adduserConfigPath,
+              "# vendor\nADD_EXTRA_GROUPS = 0\n"
+              "EXTRA_GROUPS='users audio'\n",
+              0600);
+    writeSupplementaryConfig(root, "[\"video\",\"audio\"]");
+    UserDefaultSupplementaryGroupsPolicy set(platform);
+    require(set.apply(), "adduser supplementary groups apply failed");
+    const std::string applied = readFile(platform.adduserConfigPath);
+    require(applied.find("ADD_EXTRA_GROUPS=1\n") != std::string::npos &&
+                applied.find("EXTRA_GROUPS=\"audio video\"\n") !=
+                    std::string::npos,
+            "adduser supplementary state is partial or wrong");
+    require(set.apply() && readFile(platform.adduserConfigPath) == applied,
+            "adduser apply is not idempotent");
+
+    writeSupplementaryConfig(root, "[]");
+    UserDefaultSupplementaryGroupsPolicy clear(platform);
+    require(clear.apply(), "empty adduser list failed");
+    const std::string cleared = readFile(platform.adduserConfigPath);
+    require(cleared.find("ADD_EXTRA_GROUPS=0\n") != std::string::npos &&
+                cleared.find("EXTRA_GROUPS=\"audio video\"\n") !=
+                    std::string::npos,
+            "empty adduser list did not disable while preserving EXTRA_GROUPS");
+
+    writeFile(platform.adduserConfigPath, "EXTRA_GROUPS=users audio\n");
+    UserDefaultSupplementaryGroupsPolicy explicitEmpty(platform);
+    require(explicitEmpty.apply() &&
+                readFile(platform.adduserConfigPath).find(
+                    "ADD_EXTRA_GROUPS=0\n") != std::string::npos,
+            "empty list did not materialize disabled adduser state");
+
+    writeFile(platform.adduserConfigPath,
+              "ADD_EXTRA_GROUPS=0\nADD_EXTRA_GROUPS=1\nEXTRA_GROUPS=audio\n");
+    writeSupplementaryConfig(root, "[\"audio\"]");
+    UserDefaultSupplementaryGroupsPolicy duplicate(platform);
+    const std::string before = readFile(platform.adduserConfigPath);
+    require(!duplicate.apply() && readFile(platform.adduserConfigPath) == before,
+            "duplicate adduser config was not fail-closed");
+
+    const fs::path real = root / "etc/adduser.real";
+    writeFile(real, "ADD_EXTRA_GROUPS=0\nEXTRA_GROUPS=audio\n");
+    fs::remove(platform.adduserConfigPath);
+    fs::create_symlink(real, platform.adduserConfigPath);
+    UserDefaultSupplementaryGroupsPolicy symlink(platform);
+    require(!symlink.apply(), "symlink adduser config was accepted");
+    fs::remove(platform.adduserConfigPath);
+    UserDefaultSupplementaryGroupsPolicy missing(platform);
+    require(!missing.apply() && !fs::exists(platform.adduserConfigPath),
+            "missing adduser config was created");
+}
+
+void testUnsupportedSupplementaryProvider(const fs::path& root) {
+    auto platform = platformFor(root);
+    platform.supplementaryGroupsProvider =
+        fic::platform::UserSupplementaryGroupsProviderKind::Unsupported;
+    writeSupplementaryConfig(root, "[]");
+    UserDefaultSupplementaryGroupsPolicy policy(platform);
+    require(!policy.apply(), "unsupported supplementary provider was accepted");
 }
 
 void testPolicies(const fs::path& root) {
@@ -292,6 +528,7 @@ void testDefaultsAndMetadata() {
                 fic::platform::UserCreationProviderKind::ShadowUseradd,
             "wrong provider default");
     require(platform.useraddDefaultsPath == "/etc/default/useradd" &&
+                platform.adduserConfigPath == "/etc/adduser.conf" &&
                 platform.loginDefsPath == "/etc/login.defs" &&
                 platform.passwdPath == "/etc/passwd" &&
                 platform.groupPath == "/etc/group" &&
@@ -302,6 +539,11 @@ void testDefaultsAndMetadata() {
                 policy.submoduleName == "USER_CREATION" &&
                 policy.policyName == "user_home_base_directory",
             "policy hierarchy metadata is wrong");
+    UserDefaultSupplementaryGroupsPolicy supplementary(platform);
+    require(supplementary.policyName ==
+                "user_default_supplementary_groups" &&
+                supplementary.getDefaultValue() == "[]",
+            "supplementary policy metadata/default is wrong");
 }
 
 void testGeneratedConfig() {
@@ -321,6 +563,13 @@ void testGeneratedConfig() {
                     std::string::npos,
                 "generated policy default is wrong: " + name);
     }
+    require(config.find(
+                "user_default_supplementary_groups.status=DISABLE\n") !=
+                std::string::npos &&
+                config.find(
+                    "user_default_supplementary_groups.value=[]\n") !=
+                    std::string::npos,
+            "generated supplementary policy default is unsafe");
 }
 
 } // namespace
@@ -335,6 +584,11 @@ int main() {
         const fs::path root = created;
         initializePaths(root);
         testHandler(root);
+        testGroupListValueType();
+        testAdduserHandler(root);
+        testShadowSupplementaryPolicy(root);
+        testAdduserSupplementaryPolicy(root);
+        testUnsupportedSupplementaryProvider(root);
         testPolicies(root);
         testFailClosedValidation(root);
         testDefaultsAndMetadata();

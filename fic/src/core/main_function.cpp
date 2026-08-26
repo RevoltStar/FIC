@@ -513,6 +513,8 @@ bool initPolicyRegistry(
         platform.userCreation));
     cafArr.push_back(std::make_unique<UserDefaultPrimaryGroupPolicy>(
         platform.userCreation));
+    cafArr.push_back(std::make_unique<UserDefaultSupplementaryGroupsPolicy>(
+        platform.userCreation));
 
     //Настройки ядра (SYSCTL)
     cafArr.push_back(std::make_unique<SYSCTL_dmesg_restrict>());

@@ -1,11 +1,13 @@
 #include "modules/identity_access/submodules/user_creation/UserCreationPolicies.h"
 
+#include "modules/identity_access/configuration/AdduserConfigFileHandler.h"
 #include "modules/identity_access/configuration/LoginDefsFileHandler.h"
+#include "modules/identity_access/configuration/LocalGroupDatabase.h"
 #include "modules/identity_access/configuration/UseraddDefaultsFileHandler.h"
 
 #include <cerrno>
-#include <cctype>
-#include <fstream>
+#include <set>
+#include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
@@ -21,25 +23,6 @@ bool isNormalizedAbsolutePath(const std::string& value) {
     const std::filesystem::path path(value);
     return path.is_absolute() && path != path.root_path() &&
         path.lexically_normal() == path;
-}
-
-bool isValidGroupName(const std::string& value) {
-    if (value.empty() || value.size() > 32 ||
-        std::isdigit(static_cast<unsigned char>(value.front())) != 0 ||
-        (std::isalpha(static_cast<unsigned char>(value.front())) == 0 &&
-         value.front() != '_')) {
-        return false;
-    }
-    for (std::size_t i = 1; i < value.size(); ++i) {
-        const char character = value[i];
-        if (std::isalnum(static_cast<unsigned char>(character)) != 0 ||
-            character == '_' || character == '-') {
-            continue;
-        }
-        if (character == '$' && i + 1 == value.size()) continue;
-        return false;
-    }
-    return true;
 }
 
 class PathPolicyTypeValue final : public PolicyTypeValue {
@@ -69,7 +52,7 @@ public:
     }
     PolicyEditorSpec getEditorSpec() const override { return {"lineedit"}; }
     bool validate(const std::string& value) override {
-        return isValidGroupName(value);
+        return fic::identity::isValidLocalGroupName(value);
     }
     std::string getPolicyRestrictionInfo() override {
         return "existing local group name (numeric GID is not accepted)";
@@ -94,39 +77,6 @@ bool statType(const std::filesystem::path& path, mode_t type) {
         (status.st_mode & S_IFMT) == type;
 }
 
-bool localGroupExists(
-    const std::filesystem::path& path,
-    const std::string& expected) {
-    if (!lstatType(path, S_IFREG)) return false;
-    std::ifstream stream(path);
-    if (!stream.is_open()) return false;
-    std::size_t matches = 0;
-    std::string line;
-    while (std::getline(stream, line)) {
-        if (line.empty()) continue;
-        std::size_t first = line.find(':');
-        std::size_t second = first == std::string::npos
-            ? std::string::npos : line.find(':', first + 1);
-        std::size_t third = second == std::string::npos
-            ? std::string::npos : line.find(':', second + 1);
-        if (first == std::string::npos || second == std::string::npos ||
-            third == std::string::npos || line.find(':', third + 1) !=
-                std::string::npos) {
-            return false;
-        }
-        const std::string name = line.substr(0, first);
-        const std::string gid = line.substr(second + 1, third - second - 1);
-        if (!isValidGroupName(name) || gid.empty()) return false;
-        for (char character : gid) {
-            if (std::isdigit(static_cast<unsigned char>(character)) == 0) {
-                return false;
-            }
-        }
-        if (name == expected) ++matches;
-    }
-    return stream.eof() && matches == 1;
-}
-
 bool shellIsListed(
     const std::filesystem::path& shellsPath,
     const std::string& shell) {
@@ -147,7 +97,105 @@ bool shellIsListed(
     return false;
 }
 
+std::string trimCopy(std::string value) {
+    const std::size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const std::size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+bool parseLogicalGroupList(
+    const std::string& value,
+    std::vector<std::string>& groups) {
+    groups.clear();
+    if (value.empty()) return true;
+    std::set<std::string> unique;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t end = value.find(',', start);
+        const std::string group = trimCopy(value.substr(
+            start, end == std::string::npos ? std::string::npos : end - start));
+        if (!fic::identity::isValidLocalGroupName(group) ||
+            !unique.insert(group).second) {
+            return false;
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    groups.assign(unique.begin(), unique.end());
+    return true;
+}
+
+bool parseNativeGroupList(
+    const std::string& value,
+    char delimiter,
+    std::vector<std::string>& groups) {
+    if (value.empty()) return false;
+    std::string logical;
+    if (delimiter == ' ') {
+        std::istringstream input(value);
+        std::string group;
+        while (input >> group) {
+            if (!logical.empty()) logical += ',';
+            logical += group;
+        }
+    } else {
+        logical = value;
+    }
+    if (logical.find_first_of(" \t\r\n") != std::string::npos) return false;
+    return parseLogicalGroupList(logical, groups) && !groups.empty();
+}
+
+std::string joinGroups(
+    const std::vector<std::string>& groups,
+    char delimiter) {
+    std::string result;
+    for (std::size_t i = 0; i < groups.size(); ++i) {
+        if (i != 0) result += delimiter;
+        result += groups[i];
+    }
+    return result;
+}
+
 } // namespace
+
+GroupListPolicyTypeValue::GroupListPolicyTypeValue() {
+    defaultValue = "[]";
+}
+
+PolicyEditorSpec GroupListPolicyTypeValue::getEditorSpec() const {
+    PolicyEditorSpec spec;
+    spec.editor = "textedit";
+    spec.textDelimiter = ",";
+    return spec;
+}
+
+bool GroupListPolicyTypeValue::validate(const std::string& value) {
+    std::vector<std::string> groups;
+    return parseLogicalGroupList(value, groups);
+}
+
+std::string GroupListPolicyTypeValue::getPolicyRestrictionInfo() {
+    return "comma-separated unique local group names; empty list is allowed";
+}
+
+std::string GroupListPolicyTypeValue::postProcessingValue(
+    const std::string& value) {
+    std::vector<std::string> groups;
+    if (!parseLogicalGroupList(value, groups)) return {};
+    return json(groups).dump();
+}
+
+std::string GroupListPolicyTypeValue::reverse_postProcessingValue(
+    const std::string& value) {
+    const json stored = json::parse(value);
+    if (!stored.is_array()) {
+        throw std::runtime_error("Expected a JSON array of group names");
+    }
+    std::vector<std::string> groups;
+    for (const auto& item : stored) groups.push_back(item.get<std::string>());
+    return joinGroups(groups, ',');
+}
 
 UserCreationOptionPolicy::UserCreationOptionPolicy(
     const std::string& policyName,
@@ -179,8 +227,9 @@ bool UserCreationOptionPolicy::validateNativeValue(
     case Semantic::Boolean:
         return value == "yes" || value == "no";
     case Semantic::Group:
-        return isValidGroupName(value) &&
-            localGroupExists(platform_.groupPath, value);
+        return fic::identity::isValidLocalGroupName(value) &&
+            fic::identity::localGroupExistsExactlyOnce(
+                platform_.groupPath, value);
     }
     return false;
 }
@@ -306,3 +355,148 @@ UserDefaultPrimaryGroupPolicy::UserDefaultPrimaryGroupPolicy(
           std::make_unique<GroupNamePolicyTypeValue>(
               platform.policyDefaults.defaultPrimaryGroup),
           std::move(options)) {}
+
+UserDefaultSupplementaryGroupsPolicy::UserDefaultSupplementaryGroupsPolicy(
+    fic::platform::UserCreationPlatformConfig platform,
+    AtomicWriteOptions options)
+    : IdentityAccessPolicy(kSubmodule), platform_(std::move(platform)),
+      writeOptions_(std::move(options)) {
+    writeOptions_.createIfMissing = false;
+    writeOptions_.rejectSymlink = true;
+    policyName = "user_default_supplementary_groups";
+    policyTypeValue = std::make_unique<GroupListPolicyTypeValue>();
+}
+
+bool UserDefaultSupplementaryGroupsPolicy::applyShadowUseraddDefaults(
+    const std::vector<std::string>& groups) {
+    FileHandlerOptions options;
+    options.writeOptions = writeOptions_;
+    fic::identity::UseraddDefaultsFileHandler file(
+        platform_.useraddDefaultsPath.string(), options);
+    if (!file.loadConfig()) return false;
+    const auto current = file.lookup("GROUPS");
+    if (current.state == fic::identity::UseraddDefaultsValueState::Duplicate ||
+        current.state == fic::identity::UseraddDefaultsValueState::Malformed) {
+        log("Ambiguous useradd defaults parameter: GROUPS", logLevel::ERROR);
+        return false;
+    }
+    if (groups.empty()) {
+        if (current.state == fic::identity::UseraddDefaultsValueState::Missing) {
+            return true;
+        }
+        if (!file.removeValue("GROUPS") || !file.saveAndReload()) return false;
+        return file.lookup("GROUPS").state ==
+            fic::identity::UseraddDefaultsValueState::Missing;
+    }
+
+    if (current.state == fic::identity::UseraddDefaultsValueState::Unique) {
+        std::vector<std::string> actual;
+        if (!parseNativeGroupList(current.value, ',', actual)) {
+            log("Invalid native GROUPS value", logLevel::ERROR);
+            return false;
+        }
+        if (actual == groups) return true;
+    }
+    const std::string expected = joinGroups(groups, ',');
+    if (!file.setValue("GROUPS", expected) || !file.saveAndReload()) return false;
+    const auto after = file.lookup("GROUPS");
+    if (after.state != fic::identity::UseraddDefaultsValueState::Unique) {
+        return false;
+    }
+    std::vector<std::string> actual;
+    return parseNativeGroupList(after.value, ',', actual) && actual == groups;
+}
+
+bool UserDefaultSupplementaryGroupsPolicy::applyDebianAdduser(
+    const std::vector<std::string>& groups) {
+    FileHandlerOptions options;
+    options.writeOptions = writeOptions_;
+    fic::identity::AdduserConfigFileHandler file(
+        platform_.adduserConfigPath.string(), options);
+    if (!file.loadConfig()) return false;
+    const auto enabled = file.lookup("ADD_EXTRA_GROUPS");
+    const auto nativeGroups = file.lookup("EXTRA_GROUPS");
+    const auto ambiguous = [](fic::identity::AdduserConfigValueState state) {
+        return state == fic::identity::AdduserConfigValueState::Duplicate ||
+            state == fic::identity::AdduserConfigValueState::Malformed;
+    };
+    if (ambiguous(enabled.state) || ambiguous(nativeGroups.state)) {
+        log("Ambiguous adduser supplementary-groups configuration",
+            logLevel::ERROR);
+        return false;
+    }
+
+    bool currentEnabled = false;
+    if (enabled.state == fic::identity::AdduserConfigValueState::Unique) {
+        if (enabled.value.empty()) return false;
+        currentEnabled = enabled.value != "0";
+    }
+    std::vector<std::string> actual;
+    if (nativeGroups.state == fic::identity::AdduserConfigValueState::Unique &&
+        !nativeGroups.value.empty() &&
+        !parseNativeGroupList(nativeGroups.value, ' ', actual)) {
+        log("Invalid native EXTRA_GROUPS value", logLevel::ERROR);
+        return false;
+    }
+    if (groups.empty() &&
+        enabled.state == fic::identity::AdduserConfigValueState::Unique &&
+        !currentEnabled) {
+        return true;
+    }
+    if (!groups.empty() && currentEnabled && actual == groups) return true;
+
+    if (!file.setSupplementaryGroups(!groups.empty(), groups) ||
+        !file.saveAndReload()) {
+        return false;
+    }
+    const auto afterEnabled = file.lookup("ADD_EXTRA_GROUPS");
+    if (afterEnabled.state != fic::identity::AdduserConfigValueState::Unique ||
+        afterEnabled.value != (groups.empty() ? "0" : "1")) {
+        return false;
+    }
+    if (groups.empty()) return true;
+    const auto afterGroups = file.lookup("EXTRA_GROUPS");
+    actual.clear();
+    return afterGroups.state == fic::identity::AdduserConfigValueState::Unique &&
+        parseNativeGroupList(afterGroups.value, ' ', actual) && actual == groups;
+}
+
+bool UserDefaultSupplementaryGroupsPolicy::apply() {
+    if (platform_.supplementaryGroupsProvider ==
+        fic::platform::UserSupplementaryGroupsProviderKind::Unsupported) {
+        log("Default supplementary groups are unsupported by this platform provider",
+            logLevel::ERROR);
+        return false;
+    }
+    std::optional<std::string> expected;
+    try {
+        expected = getValue();
+    } catch (const std::exception& error) {
+        log("Invalid serialized supplementary group list: " +
+                std::string(error.what()),
+            logLevel::ERROR);
+        return false;
+    }
+    if (!expected.has_value()) return false;
+    std::vector<std::string> groups;
+    if (!parseLogicalGroupList(*expected, groups)) return false;
+
+    const std::lock_guard<std::mutex> lock(configurationMutex());
+    for (const std::string& group : groups) {
+        if (!fic::identity::localGroupExistsExactlyOnce(
+                platform_.groupPath, group)) {
+            log("Unavailable local supplementary group: " + group,
+                logLevel::ERROR);
+            return false;
+        }
+    }
+    if (platform_.supplementaryGroupsProvider ==
+        fic::platform::UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults) {
+        return applyShadowUseraddDefaults(groups);
+    }
+    if (platform_.supplementaryGroupsProvider ==
+        fic::platform::UserSupplementaryGroupsProviderKind::DebianAdduser) {
+        return applyDebianAdduser(groups);
+    }
+    return false;
+}

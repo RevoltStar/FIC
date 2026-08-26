@@ -8,6 +8,9 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayName = "ALT Linux p11";
     profile.hostCompatibility.osIds = {"altlinux"};
     profile.hostCompatibility.altBranchIds = {"p11"};
+    profile.userCreation.supplementaryGroupsProvider =
+        UserSupplementaryGroupsProviderKind::Unsupported;
+    profile.userCreation.adduserConfigPath.clear();
     profile.executables.entries = {
         {
             ExecutableId::Sshd,
