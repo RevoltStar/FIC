@@ -250,6 +250,12 @@ def main():
         "LocalShadowKind::TcbDirectory" in profiles["alt-p11"],
         "ALT p11 profile does not select the TCB backend",
     )
+    require(
+        'pam.localAuthenticationStackPath =\n        "/etc/pam.d/system-auth-local-only"'
+        in profiles["alt-p11"]
+        and "localAuthenticationStackPath" in platform_profile,
+        "ALT p11 profile does not declare its native local PAM topology target",
+    )
 
     platform_cmake = (
         root / "cmake/FicTargetPlatform.cmake"
@@ -608,6 +614,12 @@ def main():
         "ALT p11 packaging does not fix its compile-time profile",
     )
     require(
+        "/etc/control.d/facilities/fic-pam-faillock" in rpm_builder
+        and "control-dump fic-pam-faillock" in rpm_builder
+        and "control-restore fic-pam-faillock" in rpm_builder,
+        "ALT p11 packaging does not preserve the native PAM facility lifecycle",
+    )
+    require(
         "%config" not in rpm_builder,
         "ALT p11 packaging still registers working configs as RPM configs",
     )
@@ -630,7 +642,7 @@ def main():
         "--maintenance check-config",
         "--maintenance check-db",
         "--trust-sync-platform",
-        "--maintenance wait-daemon 10",
+        "--maintenance wait-daemon ",
         "fic-dick wait-daemon 10",
     )
     for builder_name, builder in (
@@ -686,7 +698,7 @@ def main():
         "Debian-family daemon packages do not stop services before payload replacement",
     )
     require(
-        rpm_builder.count('"$(system_integration_pre_script)"') >= 2,
+        rpm_builder.count('"$(system_integration_pre_script') >= 2,
         "ALT p11 daemon packages do not stop services before payload replacement",
     )
 

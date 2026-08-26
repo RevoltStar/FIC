@@ -3,54 +3,80 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `e190798f716384aa4383664ff98db7fd8fbf1034`.
+- Базовый commit задачи: `f5bcf592519d508ebc069aa5cebd1309d0e16b7e`.
 
 ## Current task
 
-- Исправление ложной числовой валидации строковых политик USER_CREATION в GUI.
+- Нативная ALT p11 `control`-интеграция для package-level управления
+  топологией `pam_faillock` в `system-auth-local-only`.
 
 ## Accepted architecture / invariants
 
-- `PolicyEditorSpec.editor` определяет только вид GUI-контрола.
-- `PolicyEditorSpec.validator` независимо определяет клиентскую валидацию:
-  `none`, `integer_range`, `unsigned_integer` или `allowed_values`.
-- Daemon остаётся authoritative источником окончательной policy validation.
-- Administrative IPC API остаётся version `1`; `validator` является добавочным
-  полем ответа `policy_list`.
+- Значения FIC policies и наличие package-level PAM-топологии управляются
+  раздельно: facility `fic-pam-faillock` не передаёт policy options в PAM.
+- Facility является тонким adapter к root-only offline maintenance API daemon:
+  `fic --maintenance pam-alt-faillock status|enable|disable`.
+- Менеджер изменяет только `/etc/pam.d/system-auth-local-only`, использует
+  размеченные FIC-блоки, atomic write, межпроцессный lock, строгую проверку
+  структуры и postcondition с rollback.
+- Чужие `pam_faillock`-строки не присваиваются и не удаляются. Неполные,
+  дублированные, изменённые или неоднозначные managed-блоки обрабатываются
+  fail-closed.
+- Для достижимого успешного пути между `preauth` и `[default=die] authfail`
+  исходный `auth required pam_tcb.so ...` временно представлен как
+  `auth sufficient pam_tcb.so ...`; его точные исходные байты хранятся в
+  managed metadata и восстанавливаются byte-for-byte при disable.
+- IPC API остаётся version `1`; Debian/Ubuntu packaging этой задачей не менялся.
 
 ## Completed
 
-- Daemon добавляет `validator` в каждый `policy_list` descriptor.
-- GUI разбирает и проверяет явный validator вместо вывода типа значения из
-  `lineedit`.
-- Пути, shell и имя primary group принимаются как строки; UID policies
-  сохраняют unsigned-integer validation.
-- Добавлены descriptor и concrete-policy regression tests, обновлена IPC
-  документация поля `validator`.
+- Добавлен ALT p11 profile path и `AltPamFaillockTopologyManager` с операциями
+  status/enable/disable, безопасной работой с файлом и rollback.
+- Общий PAM parser открыт через `PamConfiguration::parseRulesContent` и
+  переиспользуется менеджером без параллельного parser implementation.
+- Добавлены maintenance CLI dispatch и native control facility с полным
+  `help/list/summary/status/enabled/disabled` contract.
+- RPM lifecycle поддерживает disabled-by-default clean install, сохранение
+  control state при upgrade и безопасное удаление topology при final erase.
+- Добавлены unit/static/packaging tests, включая `pam_passwdqc` detection,
+  malformed/external topology, idempotency, rollback и exact restoration.
+- Обновлена релевантная RPM, daemon и architecture документация.
 
 ## Changed areas
 
-- `fic-common/fic-policy/`, `fic/src/main.cpp`;
-- `fic-gui/src/features/policies/`;
-- IPC descriptor docs и relevant GUI, user-creation, password-aging tests.
+- `fic/src/modules/identity_access/pam/`, `fic/src/main.cpp`;
+- `fic/src/platform/` ALT p11 profile;
+- `packaging/rpm/`;
+- relevant PAM, platform и packaging tests;
+- `fic/README.md`, `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- `cmake -S . -B /tmp/fic-architecture-build -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- `cmake --build /tmp/fic-architecture-build -j2` — успешно.
-- Targeted descriptor, GUI static, policy service, user-creation и
-  password-aging tests — успешно.
-- Финальные targeted tests: 7/7 успешно, включая version contract, GUI static,
-  descriptor/service, user-creation и password-aging tests.
-- Полный CTest с IPC API version `1`: 40 passed, 4 skipped, 2 unrelated
-  failures — `platform_profile_static_checks` (ALT p11 packaging omits
-  `--maintenance wait-daemon 10`) и существующий
-  `ipc_protocol_validation_tests` assertion.
+- ALT p11 configure и полный build в `/tmp/fic-alt-pam-build` — успешно.
+- Targeted PAM topology/configuration, platform profile и packaging/static
+  tests — успешно.
+- Полный CTest: 42 passed, 4 skipped, 1 unrelated failure — существующий
+  `ipc_protocol_validation_tests` assertion об API v1 request; затронутые этой
+  задачей tests прошли.
+- `bash -n` для RPM scripts — успешно.
+- `./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 0.0.0-alpha` — успешно;
+  итоговые RPM dependency metadata содержат `control`, `pam >= 1.7.1` и
+  `pam-config >= 1.10.0`.
+- В изолированном ALT p11 container с `pam-config-1.10.0-alt0.p11.2`,
+  `pam-1.7.1-alt1`, `control-0.8.0-alt3` проверены clean install, enable,
+  повторный enable, enabled/disabled upgrade и final erase: состояние
+  сохраняется, managed-блоки не дублируются, исходный PAM-файл
+  восстанавливается byte-for-byte. RPM устанавливались с `--nodeps`, поскольку
+  builder image не содержит unrelated runtime dependencies; metadata проверена
+  отдельно.
 - `git diff --check` — успешно.
 
 ## Remaining
 
-- Для проверки на `10.88.0.250` необходимо собрать и установить обновлённые
-  daemon и GUI; runtime deployment не выполнялся.
-- Unrelated ALT p11 packaging и IPC protocol test failures оставлены без
-  изменений.
+- `PamPasswdqc` распознаётся parser как effective provider, но существующие
+  option policies и `required_pam_enforcement` принимают password-quality
+  provider только `pam_pwquality`. Поддержка ALT `pam_passwdqc` как источника
+  policy options является отдельной задачей.
+- `pam_pwhistory` не добавлялся: canonical ALT p11 stack его не содержит, а
+  текущая задача не определяет безопасную topology/option migration для него.
+- Существующий unrelated `ipc_protocol_validation_tests` failure не исправлялся.

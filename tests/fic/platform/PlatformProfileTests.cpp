@@ -251,6 +251,12 @@ void testSelectedProfile() {
     require(profile.pam.passwordHistoryConfigPath ==
                 "/etc/security/pwhistory.conf",
             "pam_pwhistory configuration path is incorrect");
+    const std::filesystem::path expectedLocalPamStack =
+        profile.id == "alt-p11"
+            ? std::filesystem::path("/etc/pam.d/system-auth-local-only")
+            : std::filesystem::path{};
+    require(profile.pam.localAuthenticationStackPath == expectedLocalPamStack,
+            "ALT PAM topology target metadata is incorrect");
     const std::filesystem::path expectedGrubDefaults =
         profile.id == "alt-p11"
             ? "/etc/sysconfig/grub2"
@@ -501,6 +507,12 @@ void testInvalidProfileIsRejected() {
     profile.pam.passwordHistoryConfigPath = "etc/security/pwhistory.conf";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM option file path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.localAuthenticationStackPath =
+        "etc/pam.d/system-auth-local-only";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative PAM topology target must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.userCreation.useraddDefaultsPath = "etc/default/useradd";

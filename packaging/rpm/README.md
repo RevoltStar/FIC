@@ -19,11 +19,58 @@ container. The resulting daemon validates `ID=altlinux` and
 `ALT_BRANCH_ID=p11` before starting.
 
 ALT packages do not install `/usr/share/pam-configs/fic-*`, do not depend on
-the Debian package `libpam-runtime` and do not invoke `pam-auth-update`. PAM
-topology activation remains an administrator responsibility until a separate
-ALT-specific integration is designed around the native `pam-config` /
-`pam-config-control` mechanism; that integration is outside the current
-package contract.
+the Debian package `libpam-runtime` and do not invoke `pam-auth-update`. The
+`fic` RPM installs the native ALT control facility
+`/etc/control.d/facilities/fic-pam-faillock`. Installation does not activate
+it; PAM topology remains an explicit administrator choice.
+
+## ALT PAM topology integration
+
+The supported package-level integration is limited to `pam_faillock`:
+
+```bash
+sudo control fic-pam-faillock status
+sudo control fic-pam-faillock enabled
+sudo control fic-pam-faillock disabled
+```
+
+The facility is `disabled` after a clean install. It is a thin dispatcher to
+the offline FIC PAM manager and never generates or edits PAM content in shell.
+Enable acquires an inter-process lock, rejects symlink or untrusted targets,
+uses the shared PAM parser to find the unique local `pam_tcb` auth/account
+anchors, and atomically installs FIC-owned marked blocks. The native ALT
+`pam_tcb` auth rule is retained byte-for-byte in marker metadata while its
+active control is `sufficient`, as required by the ALT faillock topology.
+The only added provider calls are:
+
+```text
+auth requisite pam_faillock.so preauth
+auth [default=die] pam_faillock.so authfail
+account required pam_faillock.so
+```
+
+Policy values such as `deny`, `fail_interval`, `unlock_time` and
+`even_deny_root` remain in `/etc/security/faillock.conf`. After enable, the
+same `PamCapabilityVerifier` used by daemon policies must prove the resulting
+AuthenticationLockout capability Effective. Failed postconditions restore the
+exact original bytes atomically; a failed rollback is reported as a critical
+inconsistent-state error.
+
+FIC never adopts or removes administrator-owned `pam_faillock` rules. Partial,
+duplicated or modified FIC markers fail closed. Disable removes only valid
+FIC-owned blocks and restores the original `pam_tcb` rule; unrelated content
+is preserved. The facility never changes `control system-auth` or its symlinks.
+
+RPM upgrade uses ALT `control-dump` / `control-restore` to preserve the selected
+enabled/disabled state. Final erase invokes the same safe disable operation
+before removing the helper and facility; malformed managed state makes erase
+fail instead of triggering blind cleanup.
+
+The `fic` RPM depends on `control`, `pam >= 1.7.1` (the ALT p11 owner of
+`pam_faillock.so`) and `pam-config >= 1.10.0` (the owner of
+`system-auth-local-only`). Native `pam_passwdqc` topology remains unchanged and
+has no FIC activation facility. ALT activation of `pam_pwhistory` is currently
+unsupported pending a separately proven safe password-history storage design.
 
 ## Package contents
 
@@ -47,6 +94,7 @@ package contract.
 - `/opt/fic/notify`
 - `/usr/lib/systemd/system/*` from `fic/src/resources/service`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
+- `/etc/control.d/facilities/fic-pam-faillock` (disabled by default)
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`
 are enabled and started automatically. `fic-device.service` performs initial

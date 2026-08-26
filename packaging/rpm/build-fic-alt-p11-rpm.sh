@@ -650,6 +650,7 @@ EOF
 }
 
 system_integration_pre_script() {
+    local lifecycle_hook="${1:-}"
     cat <<'EOF'
 if ! getent group fic >/dev/null 2>&1; then
     groupadd -r fic >/dev/null 2>&1 || true
@@ -667,9 +668,9 @@ if [ -d /run/systemd/system ]; then
         fi
     done
 fi
-
-exit 0
 EOF
+    printf '%s\n' "$lifecycle_hook"
+    printf 'exit 0\n'
 }
 
 common_post_script() {
@@ -740,6 +741,7 @@ EOF
 system_integration_symlink_post_script() {
     local command_name="$1"
     local target_path="$2"
+    local lifecycle_hook="${3:-}"
 
     cat <<EOF
 if ! getent group fic >/dev/null 2>&1; then
@@ -801,6 +803,8 @@ for tmpfiles_bin in /usr/bin/systemd-tmpfiles /bin/systemd-tmpfiles /usr/sbin/sy
     fi
 done
 
+$lifecycle_hook
+
 if [ -d /run/systemd/system ]; then
     for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
         if [ -x "\$systemctl_bin" ]; then
@@ -852,8 +856,11 @@ EOF
 system_integration_symlink_preun_script() {
     local command_name="$1"
     local target_path="$2"
+    local lifecycle_hook="${3:-}"
 
     cat <<EOF
+$lifecycle_hook
+
 if [ "\$1" -eq 0 ] && [ -L "/bin/$command_name" ] && [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
     rm -f "/bin/$command_name"
 fi
@@ -872,6 +879,33 @@ if [ "\$1" -eq 0 ]; then
 fi
 
 exit 0
+EOF
+}
+
+fic_pam_facility_pre_upgrade_script() {
+    cat <<'EOF'
+if [ "$1" -ge 2 ] && [ -x /etc/control.d/facilities/fic-pam-faillock ]; then
+    /usr/sbin/control-dump fic-pam-faillock || exit 1
+fi
+EOF
+}
+
+fic_pam_facility_post_script() {
+    cat <<'EOF'
+if [ "$1" -ge 2 ] && [ -s /var/run/control/fic-pam-faillock ]; then
+    /usr/sbin/control-restore fic-pam-faillock || exit 1
+fi
+EOF
+}
+
+fic_pam_facility_preun_script() {
+    cat <<'EOF'
+if [ "$1" -eq 0 ]; then
+    /usr/sbin/control fic-pam-faillock disabled || {
+        echo "refusing to remove fic with unsafe FIC-owned PAM topology" >&2
+        exit 1
+    }
+fi
 EOF
 }
 
@@ -995,19 +1029,23 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
     mkdir -p "$package_root/usr/lib/rpm"
+    mkdir -p "$package_root/etc/control.d/facilities"
     install -m 0755 \
         "$ROOT_DIR/packaging/rpm/fic-trust-sync.filetrigger" \
         "$package_root/usr/lib/rpm/fic-trust-sync.filetrigger"
+    install -m 0755 \
+        "$ROOT_DIR/packaging/rpm/fic-pam-faillock" \
+        "$package_root/etc/control.d/facilities/fic-pam-faillock"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
         "$package_name" \
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
-        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify, nftables" \
-        "$(system_integration_pre_script)" \
-        "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic")" \
-        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic")")" || return 1
+        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify, nftables, control, pam >= 1.7.1, pam-config >= 1.10.0" \
+        "$(system_integration_pre_script "$(fic_pam_facility_pre_upgrade_script)")" \
+        "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_post_script)")" \
+        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_preun_script)")")" || return 1
 
     printf '%s\n' "$output_rpm"
 }

@@ -89,6 +89,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.pam.faillockConfigPath = "/etc/security/faillock.conf";
     profile.pam.passwordQualityConfigPath = "/etc/security/pwquality.conf";
     profile.pam.passwordHistoryConfigPath = "/etc/security/pwhistory.conf";
+    profile.pam.localAuthenticationStackPath =
+        "/etc/pam.d/system-auth-local-only";
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";

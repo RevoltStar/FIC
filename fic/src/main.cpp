@@ -21,11 +21,13 @@
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "daemon/main_function.h"
+#include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
@@ -1061,6 +1063,51 @@ int main(int argc, char* argv[]) {
             } while (std::chrono::steady_clock::now() < deadline);
             std::cerr << "fic daemon did not become version-compatible and ready: "
                       << response.value("message", "unknown error") << std::endl;
+            return 1;
+        }
+        if (command == "pam-alt-faillock") {
+            if (::geteuid() != 0) {
+                std::cerr << "ALT PAM topology maintenance must be run as root"
+                          << std::endl;
+                return 1;
+            }
+            fic::identity::pam::AltPamFaillockTopologyOptions options;
+            options.lockFilePath =
+                paths.runtimeDir / "pam-alt-faillock-topology.lock";
+            options.lockDebugLogPath = paths.lockDebugLogFile;
+            fic::identity::pam::AltPamFaillockTopologyManager manager(
+                platform.pam, std::move(options));
+            const std::string action = get_arg_value(argc, argv, 3);
+            if (action == "status") {
+                fic::identity::pam::AltPamFaillockTopologyState state;
+                if (!manager.status(state, maintenanceError)) {
+                    std::cerr << "ALT pam_faillock topology status failed: "
+                              << maintenanceError << std::endl;
+                    return 1;
+                }
+                std::cout <<
+                    fic::identity::pam::altPamFaillockTopologyStateName(state)
+                          << std::endl;
+                return 0;
+            }
+            if (action == "enable") {
+                if (!manager.enable(maintenanceError)) {
+                    std::cerr << "ALT pam_faillock topology enable failed: "
+                              << maintenanceError << std::endl;
+                    return 1;
+                }
+                return 0;
+            }
+            if (action == "disable") {
+                if (!manager.disable(maintenanceError)) {
+                    std::cerr << "ALT pam_faillock topology disable failed: "
+                              << maintenanceError << std::endl;
+                    return 1;
+                }
+                return 0;
+            }
+            std::cerr << "unknown ALT pam_faillock topology action: "
+                      << action << std::endl;
             return 1;
         }
         std::cerr << "unknown maintenance command: " << command << std::endl;

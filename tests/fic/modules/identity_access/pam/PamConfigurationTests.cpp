@@ -765,6 +765,26 @@ void testEffectiveKnownProviders() {
         const auto platform = makePlatform(temp);
         writeFile(
             temp.path() / "pam.d/passwd",
+            "password required pam_passwdqc.so config=/etc/passwdqc.conf\n"
+            "password required pam_tcb.so use_authtok\n");
+        writeFile(temp.path() / "security/pam_passwdqc.so", "test", 0555);
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPasswdqc,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Effective,
+            "native ALT pam_passwdqc provider was not detected: " +
+                fic::identity::pam::formatPamCapabilityVerification(
+                    verification));
+    }
+    {
+        TempDirectory temp;
+        const auto platform = makePlatform(temp);
+        writeFile(
+            temp.path() / "pam.d/passwd",
             "password include common-password\n");
         writeFile(
             temp.path() / "pam.d/common-password",

@@ -322,6 +322,9 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                       "pam_pwquality configuration path", error) ||
         !validatePath(profile.pam.passwordHistoryConfigPath,
                       "pam_pwhistory configuration path", error) ||
+        (!profile.pam.localAuthenticationStackPath.empty() &&
+         !validatePath(profile.pam.localAuthenticationStackPath,
+                       "PAM local authentication stack path", error)) ||
         !validatePath(profile.passwordAging.loginDefsPath,
                       "login.defs path", error) ||
         !validatePath(profile.passwordAging.passwdPath,

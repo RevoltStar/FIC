@@ -596,6 +596,17 @@ PAM service/include-файлов и используемых `.so`, аргуме
 `root:root 0644`, но только если поддерживаемый provider уже корректно включен
 во всех найденных целевых службах.
 
+На ALT p11 package-level topology `pam_faillock` управляется отдельно от
+policy values через `control fic-pam-faillock enabled|disabled`. Facility
+вызывает offline manager основного `fic`; daemon policies сами facility не
+активируют. Manager изменяет только platform path
+`/etc/pam.d/system-auth-local-only`, использует FIC-owned markers, atomic write,
+inter-process lock, semantic postcondition через `PamCapabilityVerifier` и
+rollback exact original bytes. Внешняя topology никогда не присваивается FIC.
+Штатный ALT `pam_passwdqc` остаётся без FIC activation facility, а активация
+`pam_pwhistory` на ALT не поддерживается до появления безопасного storage
+contract для истории паролей.
+
 При отключении `failed_authentication_enforce_for_root` параметр
 `root_unlock_time` считается конфликтом, потому что в `pam_faillock` он сам
 подразумевает `even_deny_root`. FIC отказывает до записи вместо удаления

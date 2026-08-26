@@ -87,6 +87,8 @@ def main() -> int:
 
     deb_builder = (root / "packaging/deb/build-fic-debian12-deb.sh").read_text(encoding="utf-8")
     rpm_builder = (root / "packaging/rpm/build-fic-alt-p11-rpm.sh").read_text(encoding="utf-8")
+    rpm_facility_path = root / "packaging/rpm/fic-pam-faillock"
+    rpm_facility = rpm_facility_path.read_text(encoding="utf-8")
     fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
 
     fic_package = function_body(deb_builder, "build_fic_package")
@@ -129,6 +131,45 @@ def main() -> int:
     for forbidden in ("pam-auth-update", "libpam-runtime", "libpam-modules", "pam-configs/fic-"):
         require(forbidden not in rpm_builder, f"ALT packaging contains Debian PAM integration: {forbidden}")
         require(forbidden not in fic_cmake, f"generic CMake installs Debian PAM integration: {forbidden}")
+
+    require(rpm_facility_path.is_file() and not rpm_facility_path.is_symlink(),
+            "ALT fic-pam-faillock facility is missing")
+    require(rpm_facility_path.stat().st_mode & 0o111,
+            "ALT fic-pam-faillock facility is not executable")
+    for operation in ("help", "list", "summary", "status", "enabled", "disabled"):
+        require(operation in rpm_facility,
+                f"ALT facility does not implement control operation: {operation}")
+    require(". /etc/control.d/functions" in rpm_facility and
+            "new_help enabled" in rpm_facility and
+            "new_help disabled" in rpm_facility,
+            "ALT facility does not use the native control protocol")
+    require("--maintenance pam-alt-faillock" in rpm_facility,
+            "ALT facility does not dispatch to the FIC PAM helper")
+    for forbidden in ("sed ", "sed\t", "pam_faillock.so", "pam_tcb.so"):
+        require(forbidden not in rpm_facility,
+                f"ALT facility contains topology implementation: {forbidden}")
+
+    rpm_fic_package = function_body(rpm_builder, "build_fic_package")
+    require('"$ROOT_DIR/packaging/rpm/fic-pam-faillock"' in rpm_fic_package and
+            '"$package_root/etc/control.d/facilities/fic-pam-faillock"' in rpm_fic_package,
+            "ALT fic package does not stage its control facility")
+    for dependency in ("control", "pam >= 1.7.1", "pam-config >= 1.10.0"):
+        require(dependency in rpm_fic_package,
+                f"ALT fic package lacks PAM facility dependency: {dependency}")
+    require("control-dump fic-pam-faillock" in rpm_builder and
+            "control-restore fic-pam-faillock" in rpm_builder,
+            "ALT RPM upgrade does not preserve control facility state")
+    require('if [ "$1" -eq 0 ]; then' in
+            function_body(rpm_builder, "fic_pam_facility_preun_script") and
+            "control fic-pam-faillock disabled" in rpm_builder,
+            "ALT RPM final erase does not remove FIC-owned PAM topology")
+    post_hook = function_body(rpm_builder, "fic_pam_facility_post_script")
+    require("control fic-pam-faillock enabled" not in post_hook and
+            "control-restore" in post_hook,
+            "ALT RPM install must not automatically enable pam_faillock")
+    require("fic-pam-pwhistory" not in rpm_builder and
+            "fic-pam-passwdqc" not in rpm_builder,
+            "ALT RPM must not install unsupported PAM facilities")
 
     print("PAM packaging checks passed")
     return 0

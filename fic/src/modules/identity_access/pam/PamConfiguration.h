@@ -76,6 +76,13 @@ public:
                              PamEffectiveStack& stack,
                              std::string& error);
 
+    // Parses one physical PAM service without resolving include directives.
+    // Topology editors use this same parser before constructing a new graph.
+    static bool parseRulesContent(const std::filesystem::path& source,
+                                  const std::string& content,
+                                  std::vector<PamRule>& rules,
+                                  std::string& error);
+
 private:
     struct ParsedService {
         std::filesystem::path path;

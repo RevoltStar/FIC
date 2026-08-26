@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <utility>
 
@@ -171,6 +172,111 @@ PamConfiguration::PamConfiguration(
     : platformConfig_(std::move(platformConfig)) {
 }
 
+bool PamConfiguration::parseRulesContent(
+    const std::filesystem::path& source,
+    const std::string& content,
+    std::vector<PamRule>& rules,
+    std::string& error) {
+    rules.clear();
+    std::istringstream input(content);
+    std::string physicalLine;
+    std::string logicalLine;
+    std::size_t physicalLineNumber = 0;
+    std::size_t logicalLineNumber = 0;
+
+    auto parseLogicalLine = [&](const std::string& raw,
+                                std::size_t lineNumber) -> bool {
+        const std::string line = trimCopy(stripComment(raw));
+        if (line.empty()) {
+            return true;
+        }
+        std::vector<std::string> tokens;
+        std::string tokenError;
+        if (!tokenize(line, tokens, tokenError)) {
+            error = source.string() + ":" + std::to_string(lineNumber) +
+                ": " + tokenError;
+            return false;
+        }
+        if (tokens.empty()) {
+            return true;
+        }
+
+        if (tokens.front() == "@include") {
+            if (tokens.size() != 2 || !validServiceName(tokens[1])) {
+                error = source.string() + ":" + std::to_string(lineNumber) +
+                    ": invalid @include directive";
+                return false;
+            }
+            PamRule rule;
+            rule.source = source;
+            rule.line = lineNumber;
+            rule.includeKind = PamIncludeKind::IncludeAll;
+            rule.includeTarget = tokens[1];
+            rules.push_back(std::move(rule));
+            return true;
+        }
+
+        const auto group = parseManagementGroup(tokens.front());
+        if (!group.has_value() || tokens.size() < 3) {
+            error = source.string() + ":" + std::to_string(lineNumber) +
+                ": unsupported or malformed PAM rule";
+            return false;
+        }
+
+        PamRule rule;
+        rule.source = source;
+        rule.line = lineNumber;
+        rule.group = *group;
+        rule.control = tokens[1];
+        if (rule.control == "include" || rule.control == "substack") {
+            if (!validServiceName(tokens[2])) {
+                error = source.string() + ":" + std::to_string(lineNumber) +
+                    ": invalid PAM include target";
+                return false;
+            }
+            rule.includeKind = rule.control == "include"
+                ? PamIncludeKind::Include
+                : PamIncludeKind::Substack;
+            rule.includeTarget = tokens[2];
+        } else {
+            rule.module = tokens[2];
+            rule.arguments.assign(tokens.begin() + 3, tokens.end());
+        }
+        rules.push_back(std::move(rule));
+        return true;
+    };
+
+    while (std::getline(input, physicalLine)) {
+        ++physicalLineNumber;
+        if (logicalLine.empty()) {
+            logicalLineNumber = physicalLineNumber;
+        }
+        logicalLine += physicalLine;
+        if (hasUnescapedContinuation(logicalLine)) {
+            logicalLine.pop_back();
+            logicalLine.push_back(' ');
+            continue;
+        }
+        if (!parseLogicalLine(logicalLine, logicalLineNumber)) {
+            rules.clear();
+            return false;
+        }
+        logicalLine.clear();
+    }
+    if (!input.eof()) {
+        error = "could not read PAM service content: " + source.string();
+        rules.clear();
+        return false;
+    }
+    if (!logicalLine.empty() &&
+        !parseLogicalLine(logicalLine, logicalLineNumber)) {
+        rules.clear();
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool PamConfiguration::resolveServicePath(
     const std::string& service,
     bool& exists,
@@ -261,96 +367,16 @@ bool PamConfiguration::parseService(const std::string& service,
         return false;
     }
 
-    ParsedService candidate;
-    candidate.path = path;
-    std::string physicalLine;
-    std::string logicalLine;
-    std::size_t physicalLineNumber = 0;
-    std::size_t logicalLineNumber = 0;
-
-    auto parseLogicalLine = [&](const std::string& raw, std::size_t lineNumber) -> bool {
-        const std::string line = trimCopy(stripComment(raw));
-        if (line.empty()) {
-            return true;
-        }
-        std::vector<std::string> tokens;
-        std::string tokenError;
-        if (!tokenize(line, tokens, tokenError)) {
-            error = path.string() + ":" + std::to_string(lineNumber) +
-                ": " + tokenError;
-            return false;
-        }
-        if (tokens.empty()) {
-            return true;
-        }
-
-        if (tokens.front() == "@include") {
-            if (tokens.size() != 2 || !validServiceName(tokens[1])) {
-                error = path.string() + ":" + std::to_string(lineNumber) +
-                    ": invalid @include directive";
-                return false;
-            }
-            PamRule rule;
-            rule.source = path;
-            rule.line = lineNumber;
-            rule.includeKind = PamIncludeKind::IncludeAll;
-            rule.includeTarget = tokens[1];
-            candidate.rules.push_back(std::move(rule));
-            return true;
-        }
-
-        const auto group = parseManagementGroup(tokens.front());
-        if (!group.has_value() || tokens.size() < 3) {
-            error = path.string() + ":" + std::to_string(lineNumber) +
-                ": unsupported or malformed PAM rule";
-            return false;
-        }
-
-        PamRule rule;
-        rule.source = path;
-        rule.line = lineNumber;
-        rule.group = *group;
-        rule.control = tokens[1];
-        if (rule.control == "include" || rule.control == "substack") {
-            if (!validServiceName(tokens[2])) {
-                error = path.string() + ":" + std::to_string(lineNumber) +
-                    ": invalid PAM include target";
-                return false;
-            }
-            rule.includeKind = rule.control == "include"
-                ? PamIncludeKind::Include
-                : PamIncludeKind::Substack;
-            rule.includeTarget = tokens[2];
-        } else {
-            rule.module = tokens[2];
-            rule.arguments.assign(tokens.begin() + 3, tokens.end());
-        }
-        candidate.rules.push_back(std::move(rule));
-        return true;
-    };
-
-    while (std::getline(input, physicalLine)) {
-        ++physicalLineNumber;
-        if (logicalLine.empty()) {
-            logicalLineNumber = physicalLineNumber;
-        }
-        logicalLine += physicalLine;
-        if (hasUnescapedContinuation(logicalLine)) {
-            logicalLine.pop_back();
-            logicalLine.push_back(' ');
-            continue;
-        }
-        if (!parseLogicalLine(logicalLine, logicalLineNumber)) {
-            return false;
-        }
-        logicalLine.clear();
-    }
-    if (!input.eof()) {
+    const std::string content(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    if (input.bad()) {
         error = "could not read PAM service: " + path.string();
         return false;
     }
-    if (!logicalLine.empty() &&
-        !parseLogicalLine(logicalLine, logicalLineNumber)) {
+    ParsedService candidate;
+    candidate.path = path;
+    if (!parseRulesContent(path, content, candidate.rules, error)) {
         return false;
     }
 

@@ -606,9 +606,12 @@ flowchart TD
 `pam_passwdqc` и `pam_cracklib`, history — `pam_pwhistory` и
 `pam_unix remember=`. Первая версия применяет политики только к
 `pam_faillock`, `pam_pwquality` и `pam_pwhistory`; конфликтующие или
-альтернативные providers диагностируются, но не мигрируются. PAM service-файлы
-не переписываются: меняется канонический provider-конфиг только после
-доказательства, что он уже effective во всех существующих целевых службах.
+альтернативные providers диагностируются, но не мигрируются. Daemon PAM
+policies не переписывают PAM service-файлы: меняется канонический
+provider-конфиг только после доказательства, что topology уже effective во
+всех существующих целевых службах. Отдельный offline package-integration
+manager для ALT p11 может атомарно включать и отключать FIC-owned topology по
+явной команде администратора; он не вызывается daemon policies.
 `required_pam_enforcement` независимо проверяет выбранные известные providers
 как системный invariant; он не объявляет dependencies другим policies, не
 устанавливает пакеты и не исправляет чужой PAM stack.
@@ -700,9 +703,14 @@ Package integration не меняет эту границу. DEB-пакет `fic
 password-history check. `postinst configure` вызывает только
 `pam-auth-update --package`; активацию администратор выполняет явно, после чего
 semantic verifier анализирует получившийся effective graph. Policy values
-остаются в `faillock.conf` и `pwhistory.conf`. ALT p11 не получает эти файлы и
-не вызывает Debian-specific mechanism; будущая интеграция должна отдельно
-использовать штатный ALT `pam-config` / `pam-config-control`.
+остаются в `faillock.conf` и `pwhistory.conf`. ALT p11 не получает эти files и
+не вызывает Debian-specific mechanism. RPM устанавливает выключенную facility
+`control fic-pam-faillock`, которая через offline `fic` manager управляет
+только FIC-owned blocks в platform path `system-auth-local-only`. Manager
+сохраняет исходную строку `pam_tcb` для exact disable, доказывает resulting
+AuthenticationLockout через общий analyzer/verifier и откатывает exact bytes
+при failed postcondition. Внешняя topology не присваивается FIC; ALT activation
+для `pam_pwhistory` намеренно отсутствует.
 
 Классы identity-модуля разделяют policy metadata и владение системной
 конфигурацией:

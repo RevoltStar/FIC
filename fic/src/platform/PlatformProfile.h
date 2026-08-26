@@ -92,6 +92,8 @@ struct PamPlatformConfig {
     std::filesystem::path faillockConfigPath;
     std::filesystem::path passwordQualityConfigPath;
     std::filesystem::path passwordHistoryConfigPath;
+    // Empty on platforms without a native FIC-owned PAM topology facility.
+    std::filesystem::path localAuthenticationStackPath;
 };
 
 enum class LocalShadowKind {
