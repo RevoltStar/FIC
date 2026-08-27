@@ -3,6 +3,7 @@
 
 #include <string>
 #include <sys/types.h>
+#include <vector>
 
 namespace fic::session_agent {
 
@@ -13,12 +14,22 @@ struct LogindSessionInfo {
     std::string type;
 };
 
+enum class ProcessSessionResult {
+    Found,
+    NotAssociated,
+    Error
+};
+
 class LogindSessionProvider {
 public:
     virtual ~LogindSessionProvider() = default;
 
-    virtual bool currentProcessSession(
+    virtual ProcessSessionResult currentProcessSession(
         std::string& sessionId,
+        std::string& error) const = 0;
+    virtual bool userSessions(
+        uid_t uid,
+        std::vector<std::string>& sessions,
         std::string& error) const = 0;
     virtual bool sessionInfo(
         const std::string& sessionId,
@@ -38,7 +49,13 @@ public:
     static bool validSessionId(const std::string& sessionId);
 
 private:
-    static bool validateSession(
+    enum class ValidationResult {
+        Valid,
+        NotCandidate,
+        Error
+    };
+
+    static ValidationResult validateSession(
         const std::string& sessionId,
         uid_t currentUid,
         const LogindSessionProvider& provider,

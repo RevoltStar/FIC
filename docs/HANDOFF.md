@@ -3,74 +3,68 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `22c690136398e502cad358f2d42615698b6c2f92`.
+- Базовый commit задачи: `c1197c58ea2dd5a8d0a4a5e8fae03c64ae4c95f8`.
 
 ## Current task
 
-- Надёжное определение собственной logind session в `fic-session-agent`,
-  включая ALT p11 без `XDG_SESSION_ID`.
+- Однозначный UID-session fallback для systemd-managed GNOME, когда
+  `fic-session-agent` не принадлежит конкретной logind session.
 
 ## Accepted architecture / invariants
 
-- `fic-session-agent` остаётся per-graphical-session context provider, а не
-  per-user service; daemon остаётся authoritative источником списка sessions.
-- `XDG_SESSION_ID` является предпочтительным источником, но принимается только
-  после logind-проверки UID, `Class=user`, `Remote=no` и графического типа
-  `x11|wayland|mir`.
-- Fallback использует только `sd_pid_get_session(0)` и тем самым identity
-  текущего процесса. Enumeration/primary/display/first-session эвристики по UID
-  запрещены.
-- `Active=yes` не требуется, что сохраняет daemon contract для нескольких
-  локальных графических sessions одного UID.
-- Если процесс запущен shared `systemd --user` service и не принадлежит
-  конкретной login session, а валидный `XDG_SESSION_ID` не передан, agent
-  завершается fail-closed.
-- Socket path, runtime-directory ownership, root peer и daemon-side
-  session/UID mismatch checks не ослаблены.
+- `fic-session-agent` остаётся per-graphical-session context provider; daemon
+  остаётся authoritative источником sessions для применения policies.
+- Identity resolution: validated `XDG_SESSION_ID`, затем session собственного
+  PID, затем — только после точного `-ENODATA` — sessions текущего UID.
+- Найденная process session authoritative: SSH/TTY/remote/non-user/foreign UID
+  приводит к fail-closed без UID fallback.
+- Hard error `sd_pid_get_session()` приводит к fail-closed без UID fallback.
+- UID fallback использует `sd_uid_get_sessions(uid, 0, ...)`, общий predicate
+  UID + `Class=user` + `Remote=no` + `Type=x11|wayland|mir` и принимает только
+  ровно одного graphical candidate.
+- `Active`, seat, display, порядок и primary-session эвристики не используются;
+  несколько graphical sessions остаются неоднозначными и fail-closed.
+- Socket/runtime directory/root-peer и daemon-side UID/session mismatch checks
+  не изменены.
 
 ## Completed
 
-- Добавлены тестируемый `SessionIdentityResolver` и production adapter к
-  libsystemd `sd-login` API.
-- Agent валидирует environment session, затем при необходимости проверяет
-  session собственного PID, с раздельной диагностикой причин отказа.
-- CMake подключает `libsystemd` через pkg-config imported target.
-- Build images получили `libsystemd-dev` для Debian/Ubuntu и
-  `libsystemd-devel` для ALT p11.
-- Добавлены resolver regression tests, static architecture/packaging checks и
-  daemon-client mismatch regression test.
-- Обновлён authoritative contract в `docs/session-agent.md`.
+- Provider API различает `Found`, `NotAssociated` и `Error` для process session.
+- Production provider сопоставляет только `-ENODATA` с `NotAssociated` и
+  перечисляет online sessions без active-only фильтра.
+- Resolver фильтрует enumeration через ту же validation logic и выдаёт точные
+  diagnostics для zero/multiple candidates и hard errors.
+- Добавлены regression tests для ALT `{Wayland, manager, SSH}`, process-bound
+  SSH/TTY/remote/foreign UID, hard error, ambiguity, Active state и unsafe IDs.
+- Обновлены static architecture checks и `docs/session-agent.md`.
 
 ## Changed areas
 
-- `fic-session-agent/src/`, `fic-session-agent/CMakeLists.txt`;
-- `tests/fic-session-agent/`, `tests/fic/session/SessionAgentClientTests.cpp`;
-- packaging build Dockerfiles;
+- `fic-session-agent/src/SessionIdentityResolver.*`;
+- `fic-session-agent/src/SystemdLogindSessionProvider.*`;
+- `tests/fic-session-agent/`;
 - `docs/session-agent.md`.
 
 ## Validation
 
-- Configure ALT p11 и полная сборка в `/tmp/fic-session-agent-build` — успешно.
-  Host не имел installed headers, поэтому официальный ALT p11
-  `libsystemd-devel-257.9-alt1` был только скачан и распакован в `/tmp`; runtime
-  link использовал установленный `libsystemd.so.0`.
-- `fic-session-agent`, `session_identity_resolver_tests` и
-  `session_agent_client_tests` targets — успешно собраны.
-- Resolver и static checks — успешно; socket/client mismatch test успешно
-  запущен отдельно вне sandbox.
-- Production fail-closed diagnostic проверен на процессе без logind session:
-  agent завершился с code 1 и сообщил `No data available`.
-- Полный CTest: 44 passed, 4 skipped из-за sandbox, 1 существующий unrelated
-  failure — `ipc_protocol_validation_tests` assertion об API v1 request.
+- `fic-session-agent` и `session_identity_resolver_tests` — успешно собраны в
+  ALT p11 build `/tmp/fic-session-agent-build`.
+- Targeted resolver/static tests — 2/2 успешно.
+- Production libsystemd path без `XDG_SESSION_ID` и process association дошёл
+  до `XDG_RUNTIME_DIR` validation, подтвердив успешный unique-candidate fallback.
+- `session_agent_client_tests` успешно выполнен вне sandbox, включая daemon-side
+  session mismatch regression.
+- Полная сборка проекта — успешно.
+- Полный CTest: 44 passed, 4 sandbox-skipped, 1 существующий unrelated failure —
+  `ipc_protocol_validation_tests` assertion об API v1 request.
+- Provider и resolver/tests отдельно собраны с `-Wall -Wextra -Werror`.
 - `git diff --check` — успешно.
 
 ## Remaining
 
-- Debian 12/13 и Ubuntu 24.04/26.04 container builds не запускались: Docker
-  daemon отсутствует (`/var/run/docker.sock` не существует). Их build images и
-  dependency static checks обновлены.
-- Реальный запуск внутри ALT GNOME/Wayland session без `XDG_SESSION_ID` не
-  выполнялся в текущем headless окружении. Он сработает только если процесс
-  XDG Autostart остаётся связан со своей logind session; shared user-manager
-  запуск без session-bound identity намеренно fail-closed.
+- Обновлённый binary не устанавливался на `10.88.0.86`; package/runtime test
+  реального ALT GNOME autostart после этой доработки ещё не выполнен.
+- При двух simultaneous GUI sessions одного UID и отсутствии session-bound
+  identity agent намеренно завершается fail-closed; launch mechanism не менялся.
+- Debian/Ubuntu container builds не запускались: Docker daemon отсутствует.
 - Существующий unrelated `ipc_protocol_validation_tests` failure не исправлялся.

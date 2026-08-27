@@ -7,6 +7,23 @@
 
 namespace fic::session_agent {
 namespace {
+class StringVectorGuard {
+public:
+    explicit StringVectorGuard(char** values) : values_(values) {}
+    ~StringVectorGuard() {
+        if (values_ == nullptr) {
+            return;
+        }
+        for (char** value = values_; *value != nullptr; ++value) {
+            std::free(*value);
+        }
+        std::free(values_);
+    }
+
+private:
+    char** values_;
+};
+
 std::string systemd_error(int result) {
     return std::strerror(result < 0 ? -result : result);
 }
@@ -30,17 +47,44 @@ bool read_session_string(
 }
 } // namespace
 
-bool SystemdLogindSessionProvider::currentProcessSession(
+ProcessSessionResult SystemdLogindSessionProvider::currentProcessSession(
     std::string& sessionId,
     std::string& error) const {
     char* rawSessionId = nullptr;
     const int result = ::sd_pid_get_session(0, &rawSessionId);
+    if (result == -ENODATA) {
+        error.clear();
+        return ProcessSessionResult::NotAssociated;
+    }
+    if (result < 0) {
+        error = systemd_error(result);
+        return ProcessSessionResult::Error;
+    }
+    sessionId = rawSessionId == nullptr ? std::string() : std::string(rawSessionId);
+    std::free(rawSessionId);
+    error.clear();
+    return ProcessSessionResult::Found;
+}
+
+bool SystemdLogindSessionProvider::userSessions(
+    uid_t uid,
+    std::vector<std::string>& sessions,
+    std::string& error) const {
+    sessions.clear();
+    char** rawSessions = nullptr;
+    const int result = ::sd_uid_get_sessions(uid, 0, &rawSessions);
     if (result < 0) {
         error = systemd_error(result);
         return false;
     }
-    sessionId = rawSessionId == nullptr ? std::string() : std::string(rawSessionId);
-    std::free(rawSessionId);
+
+    const StringVectorGuard guard(rawSessions);
+    for (char** session = rawSessions;
+         session != nullptr && *session != nullptr;
+         ++session) {
+        sessions.emplace_back(*session);
+    }
+    error.clear();
     return true;
 }
 

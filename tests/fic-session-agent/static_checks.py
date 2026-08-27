@@ -24,10 +24,13 @@ require("PkgConfig::LIBSYSTEMD" in agent_cmake,
         "fic-session-agent is not linked to the imported libsystemd target")
 require("sd_pid_get_session(0" in provider,
         "agent fallback does not resolve the current process session")
+require("result == -ENODATA" in provider,
+        "agent provider does not distinguish an unbound process from hard errors")
+require("sd_uid_get_sessions(uid, 0" in provider,
+        "agent does not enumerate all online UID sessions after ENODATA")
 
 for forbidden in (
     "sd_uid_get_display",
-    "sd_uid_get_sessions",
     "show-user",
     "list-sessions",
 ):

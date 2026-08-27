@@ -8,6 +8,7 @@
 namespace {
 using fic::session_agent::LogindSessionInfo;
 using fic::session_agent::LogindSessionProvider;
+using fic::session_agent::ProcessSessionResult;
 using fic::session_agent::SessionIdentityResolver;
 
 void require(bool condition, const std::string& message) {
@@ -18,21 +19,45 @@ void require(bool condition, const std::string& message) {
 
 class FakeLogind final : public LogindSessionProvider {
 public:
-    bool processAvailable = true;
+    ProcessSessionResult processResult = ProcessSessionResult::Found;
     std::string processSession = "current";
+    std::string processError = "Input/output error";
+    bool enumerationAvailable = true;
+    std::vector<std::string> enumeratedSessions;
     std::unordered_map<std::string, LogindSessionInfo> sessions;
+    // Deliberately not exposed through LogindSessionInfo: Active must never be
+    // a resolver input or an ambiguity discriminator.
+    std::unordered_map<std::string, bool> activeStates;
     mutable size_t processLookups = 0;
+    mutable size_t enumerationLookups = 0;
     mutable std::vector<std::string> sessionLookups;
 
-    bool currentProcessSession(
+    ProcessSessionResult currentProcessSession(
         std::string& sessionId,
         std::string& error) const override {
         ++processLookups;
-        if (!processAvailable) {
-            error = "No data available";
+        if (processResult == ProcessSessionResult::Found) {
+            sessionId = processSession;
+            error.clear();
+        } else if (processResult == ProcessSessionResult::Error) {
+            error = processError;
+        } else {
+            error.clear();
+        }
+        return processResult;
+    }
+
+    bool userSessions(
+        uid_t,
+        std::vector<std::string>& result,
+        std::string& error) const override {
+        ++enumerationLookups;
+        if (!enumerationAvailable) {
+            error = "enumeration failed";
             return false;
         }
-        sessionId = processSession;
+        result = enumeratedSessions;
+        error.clear();
         return true;
     }
 
@@ -47,6 +72,7 @@ public:
             return false;
         }
         info = it->second;
+        error.clear();
         return true;
     }
 };
@@ -73,11 +99,25 @@ void testValidEnvironmentSessionIsPreferred() {
     std::string error;
     require(resolve("env-session", 1000, logind, sessionId, error), error);
     require(sessionId == "env-session", "valid XDG_SESSION_ID was not used");
-    require(logind.processLookups == 0,
-            "process fallback ran for a valid environment session");
+    require(logind.processLookups == 0 && logind.enumerationLookups == 0,
+            "fallback ran for a valid environment session");
 }
 
-void testMissingEnvironmentUsesCurrentProcessSession() {
+void testInvalidEnvironmentUsesGraphicalProcessSession() {
+    FakeLogind logind;
+    logind.processSession = "pid-session";
+    logind.sessions["pid-session"] = graphical(1000);
+
+    std::string sessionId;
+    std::string error;
+    require(resolve("../unsafe", 1000, logind, sessionId, error), error);
+    require(sessionId == "pid-session",
+            "invalid environment did not fall back to the process session");
+    require(logind.enumerationLookups == 0,
+            "UID enumeration ran despite a process-bound session");
+}
+
+void testMissingEnvironmentUsesGraphicalProcessSession() {
     FakeLogind logind;
     logind.processSession = "pid-session";
     logind.sessions["pid-session"] = graphical(1000);
@@ -85,87 +125,136 @@ void testMissingEnvironmentUsesCurrentProcessSession() {
     std::string sessionId;
     std::string error;
     require(resolve("", 1000, logind, sessionId, error), error);
-    require(sessionId == "pid-session",
-            "current process session was not used as fallback");
+    require(sessionId == "pid-session", "process session fallback failed");
+    require(logind.enumerationLookups == 0,
+            "UID enumeration ran despite a process-bound session");
 }
 
-void testInvalidEnvironmentDoesNotSelectArbitrarySession() {
+void testNotAssociatedWithOneGraphicalSessionSucceeds() {
     FakeLogind logind;
-    logind.processSession = "owned-session";
-    logind.sessions["owned-session"] = graphical(1000);
-    logind.sessions["other-session"] = graphical(1000);
+    logind.processResult = ProcessSessionResult::NotAssociated;
+    logind.enumeratedSessions = {"3"};
+    logind.sessions["3"] = graphical(1000);
 
     std::string sessionId;
     std::string error;
-    require(resolve("../other-session", 1000, logind, sessionId, error), error);
-    require(sessionId == "owned-session",
-            "invalid environment id selected another user session");
-    require(logind.sessionLookups.size() == 1 &&
-                logind.sessionLookups.front() == "owned-session",
-            "resolver inspected sessions other than the current process session");
+    require(resolve("", 1000, logind, sessionId, error), error);
+    require(sessionId == "3", "unique graphical session was not selected");
 }
 
-void testRejectedEnvironmentFallsBackOnlyToProcessSession() {
+void testNotAssociatedWithNoGraphicalSessionFails() {
     FakeLogind logind;
-    logind.processSession = "owned-session";
-    logind.sessions["stale-session"] = graphical(2000);
-    logind.sessions["owned-session"] = graphical(1000);
-    logind.sessions["unrelated-session"] = graphical(1000);
+    logind.processResult = ProcessSessionResult::NotAssociated;
 
     std::string sessionId;
     std::string error;
-    require(resolve("stale-session", 1000, logind, sessionId, error), error);
-    require(sessionId == "owned-session",
-            "rejected environment did not fall back to the process session");
+    require(!resolve("", 1000, logind, sessionId, error),
+            "zero graphical candidates unexpectedly succeeded");
+    require(error.find("no local graphical user session exists for uid 1000") !=
+                std::string::npos,
+            "zero-candidate diagnostic is unclear: " + error);
+}
+
+void testNotAssociatedWithTwoGraphicalSessionsFails() {
+    FakeLogind logind;
+    logind.processResult = ProcessSessionResult::NotAssociated;
+    logind.enumeratedSessions = {"3", "7"};
+    logind.sessions["3"] = graphical(1000, "wayland");
+    logind.sessions["7"] = graphical(1000, "x11");
+
+    std::string sessionId;
+    std::string error;
+    require(!resolve("", 1000, logind, sessionId, error),
+            "ambiguous graphical sessions unexpectedly succeeded");
+    require(error.find("multiple local graphical sessions exist for uid 1000: 3, 7") !=
+                std::string::npos,
+            "ambiguity diagnostic is unclear: " + error);
+}
+
+void testAltGnomeManagerSshAndWaylandSelectsOnlyWayland() {
+    FakeLogind logind;
+    logind.processResult = ProcessSessionResult::NotAssociated;
+    logind.enumeratedSessions = {"3", "4", "6"};
+    logind.sessions["3"] = graphical(1000, "wayland");
+    logind.sessions["4"] = {1000, "manager", false, "unspecified"};
+    logind.sessions["6"] = {1000, "user", true, "tty"};
+
+    std::string sessionId;
+    std::string error;
+    require(resolve("", 1000, logind, sessionId, error), error);
+    require(sessionId == "3", "ALT GNOME session was not resolved to 3");
     require(logind.sessionLookups ==
-                std::vector<std::string>({"stale-session", "owned-session"}),
-            "fallback inspected an unrelated session of the same uid");
+                std::vector<std::string>({"3", "4", "6"}),
+            "ALT candidate set was not fully validated");
 }
 
-void testForeignUidFails() {
+void requireProcessSessionRejectedWithoutEnumeration(
+    const LogindSessionInfo& info,
+    const std::string& description) {
     FakeLogind logind;
-    logind.processAvailable = false;
-    logind.sessions["foreign"] = graphical(2000);
+    logind.processSession = "6";
+    logind.sessions["6"] = info;
+    logind.enumeratedSessions = {"3"};
+    logind.sessions["3"] = graphical(1000);
 
     std::string sessionId;
     std::string error;
-    require(!resolve("foreign", 1000, logind, sessionId, error),
-            "foreign uid session was accepted");
-    require(error.find("does not belong to the current uid") != std::string::npos,
-            "foreign uid diagnostic is missing: " + error);
+    require(!resolve("", 1000, logind, sessionId, error),
+            description + " process session unexpectedly succeeded");
+    require(logind.enumerationLookups == 0,
+            description + " process session incorrectly used UID fallback");
+    require(error.find("current process belongs to logind session 6") !=
+                std::string::npos,
+            description + " process diagnostic is unclear: " + error);
 }
 
-void testNonUserClassFails() {
+void testTtyProcessSessionFailsWithoutEnumeration() {
+    requireProcessSessionRejectedWithoutEnumeration(
+        {1000, "user", false, "tty"}, "tty");
+}
+
+void testRemoteProcessSessionFailsWithoutEnumeration() {
+    requireProcessSessionRejectedWithoutEnumeration(
+        {1000, "user", true, "tty"}, "remote");
+}
+
+void testForeignProcessSessionFailsWithoutEnumeration() {
+    requireProcessSessionRejectedWithoutEnumeration(
+        graphical(2000), "foreign uid");
+}
+
+void testHardProcessLookupErrorFailsWithoutEnumeration() {
     FakeLogind logind;
-    logind.processAvailable = false;
-    logind.sessions["manager"] = {1000, "manager", false, "wayland"};
+    logind.processResult = ProcessSessionResult::Error;
+    logind.processError = "Permission denied";
+    logind.enumeratedSessions = {"3"};
+    logind.sessions["3"] = graphical(1000);
 
     std::string sessionId;
     std::string error;
-    require(!resolve("manager", 1000, logind, sessionId, error),
-            "non-user class was accepted");
+    require(!resolve("", 1000, logind, sessionId, error),
+            "hard process lookup error unexpectedly succeeded");
+    require(logind.enumerationLookups == 0,
+            "hard process lookup error incorrectly used UID fallback");
+    require(error.find("could not determine the current process logind session") !=
+                std::string::npos,
+            "hard process error diagnostic is unclear: " + error);
 }
 
-void testRemoteSessionFails() {
+void testActiveStateDoesNotResolveAmbiguity() {
     FakeLogind logind;
-    logind.processAvailable = false;
-    logind.sessions["remote"] = {1000, "user", true, "wayland"};
+    logind.processResult = ProcessSessionResult::NotAssociated;
+    logind.enumeratedSessions = {"3", "7"};
+    logind.sessions["3"] = graphical(1000, "wayland");
+    logind.sessions["7"] = graphical(1000, "x11");
+    logind.activeStates = {{"3", true}, {"7", false}};
 
     std::string sessionId;
     std::string error;
-    require(!resolve("remote", 1000, logind, sessionId, error),
-            "remote session was accepted");
-}
-
-void testNonGraphicalTypeFails() {
-    FakeLogind logind;
-    logind.processAvailable = false;
-    logind.sessions["tty"] = graphical(1000, "tty");
-
-    std::string sessionId;
-    std::string error;
-    require(!resolve("tty", 1000, logind, sessionId, error),
-            "non-graphical session was accepted");
+    require(!resolve("", 1000, logind, sessionId, error),
+            "Active state was incorrectly used to select a session");
+    require(error.find("3, 7") != std::string::npos,
+            "both graphical sessions were not reported as ambiguous");
 }
 
 void testEverySupportedGraphicalTypeIsAccepted() {
@@ -179,46 +268,66 @@ void testEverySupportedGraphicalTypeIsAccepted() {
     }
 }
 
-void testUnavailableProcessSessionFailsClosed() {
+void testInvalidProcessSessionIdFailsWithoutEnumeration() {
     FakeLogind logind;
-    logind.processAvailable = false;
+    logind.processSession = "../unsafe";
+    logind.enumeratedSessions = {"3"};
+    logind.sessions["3"] = graphical(1000);
 
     std::string sessionId;
     std::string error;
     require(!resolve("", 1000, logind, sessionId, error),
-            "missing process session did not fail closed");
-    require(error.find("XDG_SESSION_ID is not set") != std::string::npos &&
-                error.find("not associated with a logind session") !=
-                    std::string::npos,
-            "missing process session diagnostic is unclear: " + error);
+            "unsafe process session id unexpectedly succeeded");
+    require(logind.enumerationLookups == 0,
+            "unsafe process session id incorrectly used UID fallback");
+    require(error.find("invalid logind session id") != std::string::npos,
+            "unsafe session diagnostic is missing: " + error);
 }
 
-void testMultipleSessionsUseOnlyExactProcessSession() {
+void testInvalidEnumeratedSessionIdFailsClosed() {
     FakeLogind logind;
-    logind.processSession = "second";
-    logind.sessions["first"] = graphical(1000, "x11");
-    logind.sessions["second"] = graphical(1000, "wayland");
+    logind.processResult = ProcessSessionResult::NotAssociated;
+    logind.enumeratedSessions = {"3", "../unsafe"};
+    logind.sessions["3"] = graphical(1000);
 
     std::string sessionId;
     std::string error;
-    require(resolve("", 1000, logind, sessionId, error), error);
-    require(sessionId == "second", "resolver selected a different user session");
-    require(logind.sessionLookups == std::vector<std::string>{"second"},
-            "resolver enumerated or inspected another user session");
+    require(!resolve("", 1000, logind, sessionId, error),
+            "unsafe enumerated session id was ignored");
+    require(error.find("could not be validated") != std::string::npos,
+            "unsafe enumerated id diagnostic is missing: " + error);
+}
+
+void testEnumerationErrorFailsClosed() {
+    FakeLogind logind;
+    logind.processResult = ProcessSessionResult::NotAssociated;
+    logind.enumerationAvailable = false;
+
+    std::string sessionId;
+    std::string error;
+    require(!resolve("", 1000, logind, sessionId, error),
+            "session enumeration error unexpectedly succeeded");
+    require(error.find("could not be enumerated") != std::string::npos,
+            "enumeration error diagnostic is missing: " + error);
 }
 } // namespace
 
 int main() {
     testValidEnvironmentSessionIsPreferred();
-    testMissingEnvironmentUsesCurrentProcessSession();
-    testInvalidEnvironmentDoesNotSelectArbitrarySession();
-    testRejectedEnvironmentFallsBackOnlyToProcessSession();
-    testForeignUidFails();
-    testNonUserClassFails();
-    testRemoteSessionFails();
-    testNonGraphicalTypeFails();
+    testInvalidEnvironmentUsesGraphicalProcessSession();
+    testMissingEnvironmentUsesGraphicalProcessSession();
+    testNotAssociatedWithOneGraphicalSessionSucceeds();
+    testNotAssociatedWithNoGraphicalSessionFails();
+    testNotAssociatedWithTwoGraphicalSessionsFails();
+    testAltGnomeManagerSshAndWaylandSelectsOnlyWayland();
+    testTtyProcessSessionFailsWithoutEnumeration();
+    testRemoteProcessSessionFailsWithoutEnumeration();
+    testForeignProcessSessionFailsWithoutEnumeration();
+    testHardProcessLookupErrorFailsWithoutEnumeration();
+    testActiveStateDoesNotResolveAmbiguity();
     testEverySupportedGraphicalTypeIsAccepted();
-    testUnavailableProcessSessionFailsClosed();
-    testMultipleSessionsUseOnlyExactProcessSession();
+    testInvalidProcessSessionIdFailsWithoutEnumeration();
+    testInvalidEnumeratedSessionIdFailsClosed();
+    testEnumerationErrorFailsClosed();
     return 0;
 }

@@ -21,17 +21,26 @@ required, matching the daemon contract for multiple local graphical sessions.
 
 If `XDG_SESSION_ID` is absent or rejected, the agent calls
 `sd_pid_get_session(0)` and applies the same validation to the login session of
-its own process. It never enumerates a user's sessions and never selects a
-primary, display, active, or first session. This remains correct when a UID has
-multiple simultaneous graphical sessions.
+its own process. If the process belongs to any logind session, that result is
+authoritative: a remote, TTY, non-user, foreign-UID, or otherwise unsuitable
+process session causes a fail-closed exit and cannot be replaced with a
+graphical session of the same user.
 
 Processes started as shared `systemd --user` services may not belong to any
 specific `session-*.scope`; systemd documents that `sd_pid_get_session()` then
-returns no session. When the launcher also did not preserve a valid
-`XDG_SESSION_ID`, exact per-session identity is unavailable and the agent exits
-fail-closed. The XDG Autostart entry must therefore remain per-session; it must
-not be converted into a shared per-user service without an explicit,
-session-bound identity handoff.
+returns `-ENODATA`. Only for this distinct not-associated result, the agent
+enumerates the current UID's sessions with `sd_uid_get_sessions(uid, 0, ...)`,
+applies the same UID/class/remote/type predicate, and accepts the result only
+when exactly one local graphical candidate remains. It does not use active
+state, seat, display, age, ordering, or another winner heuristic. Zero or
+multiple candidates remain fail-closed.
+
+This third fallback handles a systemd-managed XDG Autostart when one graphical
+session is unambiguous, while preserving isolation for SSH processes and for
+UIDs with simultaneous graphical sessions. The XDG Autostart entry must remain
+per-session and must not be converted into a deliberately shared per-user
+service; desktop environments with multiple GUI sessions and no session-bound
+identity handoff cannot be resolved by this fallback.
 
 For policies that require graphical-session access, the daemon:
 

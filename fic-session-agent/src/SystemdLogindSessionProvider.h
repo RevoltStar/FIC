@@ -7,8 +7,12 @@ namespace fic::session_agent {
 
 class SystemdLogindSessionProvider final : public LogindSessionProvider {
 public:
-    bool currentProcessSession(
+    ProcessSessionResult currentProcessSession(
         std::string& sessionId,
+        std::string& error) const override;
+    bool userSessions(
+        uid_t uid,
+        std::vector<std::string>& sessions,
         std::string& error) const override;
     bool sessionInfo(
         const std::string& sessionId,
