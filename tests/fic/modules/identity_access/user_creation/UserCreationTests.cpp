@@ -1,8 +1,12 @@
 #include "modules/identity_access/user_creation/configuration/AdduserConfigFileHandler.h"
 #include "modules/identity_access/user_creation/configuration/UseraddDefaultsFileHandler.h"
 #include "modules/identity_access/user_creation/UserCreationPolicies.h"
+#include "policy/registry/PolicyRegistryJson.h"
+#include "policy/registry/PolicyRegistryMutation.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
+
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -161,7 +165,10 @@ void prepareNativeFiles(
 
 void testGroupListValueType() {
     GroupListPolicyTypeValue value;
-    require(value.validate("") && value.postProcessingValue("") == "[]",
+    require(value.getDefaultValue() == "" && value.validate("") &&
+                value.validate(value.getDefaultValue()) &&
+                value.postProcessingValue(value.getDefaultValue()) == "[]" &&
+                value.reverse_postProcessingValue("[]") == "",
             "empty group list is not canonical");
     require(value.validate("audio") &&
                 value.postProcessingValue("audio") == "[\"audio\"]",
@@ -553,8 +560,54 @@ void testDefaultsAndMetadata() {
     UserDefaultSupplementaryGroupsPolicy supplementary(platform);
     require(supplementary.policyName ==
                 "user_default_supplementary_groups" &&
-                supplementary.getDefaultValue() == "[]",
+                supplementary.getDefaultValue() == "",
             "supplementary policy metadata/default is wrong");
+}
+
+void testSupplementaryGroupsDaemonContract(const fs::path& root) {
+    writeFile(
+        root / "config/IDENTITY_ACCESS.conf",
+        "_schema_version=1\n"
+        "user_default_supplementary_groups.status=DISABLE\n");
+
+    fic::platform::UserCreationPlatformConfig platform;
+    auto policy =
+        std::make_unique<UserDefaultSupplementaryGroupsPolicy>(platform);
+    Policy* const policyPtr = policy.get();
+    PolicyRegistry registry;
+    std::string error;
+    require(
+        registry.addModule(
+            "IDENTITY_ACCESS", ModuleView::Standard, 20, error) &&
+            registry.addPolicy(std::move(policy), error),
+        error);
+
+    const nlohmann::json descriptor = policyToJson(
+        "IDENTITY_ACCESS",
+        "USER_CREATION",
+        "user_default_supplementary_groups",
+        *policyPtr);
+    require(
+        descriptor.at("default_value") == "" &&
+            descriptor.at("value") == "" &&
+            !descriptor.at("set").get<bool>() &&
+            descriptor.at("value_valid").get<bool>(),
+        "unset supplementary-groups descriptor is not logical/API data");
+
+    require(
+        setPolicyValue(
+            registry,
+            "IDENTITY_ACCESS",
+            "user_default_supplementary_groups",
+            "",
+            error),
+        error);
+    const std::string stored =
+        readFile(root / "config/IDENTITY_ACCESS.conf");
+    require(
+        stored.find("user_default_supplementary_groups.value=[]\n") !=
+            std::string::npos,
+        "daemon did not store the empty logical group list as []");
 }
 
 void testGeneratedConfig() {
@@ -604,6 +657,7 @@ int main() {
         testFailClosedValidation(root);
         testDefaultsAndMetadata();
         testGeneratedConfig();
+        testSupplementaryGroupsDaemonContract(root);
         fs::remove_all(root);
         std::cout << "UserCreationTests passed\n";
         return 0;

@@ -9,6 +9,8 @@
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 
+#include "PolicySetCommand.h"
+
 using json = nlohmann::json;
 
 namespace {
@@ -344,12 +346,14 @@ int main(int argc, char* argv[]) {
         }
 
         if (action == "set") {
-            const std::string value = arg(argc, argv, 5);
-            if (module.empty() || policy.empty() || value.empty()) {
+            json request;
+            std::string error;
+            if (!fic::cli::makePolicySetRequest(
+                    argc, argv, request, error)) {
                 print_help();
                 return 1;
             }
-            return print_response(client.request({{"command", "set_policy_value"}, {"module", module}, {"policy", policy}, {"value", value}}));
+            return print_response(client.request(request));
         }
         if (action == "enable") {
             return print_response(client.request({{"command", "enable_policy"}, {"module", module}, {"policy", policy}}));

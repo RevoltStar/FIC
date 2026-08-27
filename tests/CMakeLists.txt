@@ -111,6 +111,15 @@ target_include_directories(policy_service_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-
 target_link_libraries(policy_service_tests PRIVATE Qt${QT_VERSION_MAJOR}::Core fic-ipc)
 add_test(NAME policy_service_tests COMMAND policy_service_tests)
 
+add_executable(cli_policy_set_tests
+    fic-cli/PolicySetCommandTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-cli/src/PolicySetCommand.cpp
+)
+target_include_directories(cli_policy_set_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-cli/src
+)
+add_test(NAME cli_policy_set_tests COMMAND cli_policy_set_tests)
+
 add_executable(firewall_tests
     fic/modules/firewall/FirewallTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
@@ -463,6 +472,8 @@ add_executable(user_creation_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/configuration/AdduserConfigFileHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/configuration/UseraddDefaultsFileHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryMutation.cpp
 )
 target_include_directories(user_creation_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src

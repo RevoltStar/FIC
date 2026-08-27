@@ -1,6 +1,7 @@
 #include "main_function.h"
 
 #include "policy/registry/PolicyRegistryInitialization.h"
+#include "policy/registry/PolicyRegistryMutation.h"
 
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
@@ -371,44 +372,18 @@ bool enable(PolicyRegistry& policyRegistry, std::string module, std::string poli
 }
 
 bool set(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string value){
-   Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
-    if(concretePolicy != nullptr){
-        std::cout << "Производим попытку смены значения политики " + policy + " в модуле " + module + "..." << std::endl;
-        //Производим валидацию и преобразование параметра
-        if(!concretePolicy->validate(value)){
-            std::cerr << "Параметр не является допустимым для политики " + policy << '\n';
-            concretePolicy->getPolicyRestriction();
-            return false;
-        }
-        ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
-        if(!mcfh.loadConfig()){
-            std::cerr << "Не удалось загрузить конфигурационный файл" << '\n';
-            return false;
-        }
-        //После валидации преобразуем в удобный для хранения вид
-        std::string valPostprocessing = concretePolicy->postprocessingValue(value);
-        //Улучшить!
-        if(valPostprocessing == ""){
-            std::cerr << "Не удалось преобразовать параметр." << '\n';
-            return false;
-        }
-        if(!mcfh.setPolicyValue(policy, valPostprocessing)){
-            std::cerr << "Не удалось задать значение параметра" << '\n';
-            return false;
-        }
-        std::cout << "Параметру " + policy + " было присвоено переданное значение. Если статус не был задан ранее, политика остается выключенной." << '\n';
-        if(!mcfh.saveConfig()){
-            std::cerr << "Не удалось сохранить конфигурационный файл" << '\n';
-            return false;
-        }else{
-            std::cout << "Конфигурационный файл был обновлен" << '\n';
-            return true;
-        }
-    } else {
-        std::cerr << "Указанная политика не существует" << '\n';
+    std::cout << "Производим попытку смены значения политики " + policy +
+        " в модуле " + module + "..." << std::endl;
+    std::string error;
+    if (!setPolicyValue(policyRegistry, module, policy, value, error)) {
+        std::cerr << "Не удалось задать значение политики: " << error << '\n';
         return false;
     }
-    return false;
+    std::cout << "Параметру " + policy +
+        " было присвоено переданное значение. Если статус не был задан ранее, "
+        "политика остается выключенной." << '\n';
+    std::cout << "Конфигурационный файл был обновлен" << '\n';
+    return true;
 }
 
 /*Ининциализируем массив классов*/

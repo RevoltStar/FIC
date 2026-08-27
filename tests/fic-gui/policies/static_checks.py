@@ -14,6 +14,9 @@ def main():
     registry = (root / "fic/src/policy/registry/PolicyRegistry.h").read_text(encoding="utf-8")
     init = (root / "fic/src/daemon/main_function.cpp").read_text(encoding="utf-8")
     daemon = (root / "fic/src/main.cpp").read_text(encoding="utf-8")
+    registry_json = (
+        root / "fic/src/policy/registry/PolicyRegistryJson.cpp"
+    ).read_text(encoding="utf-8")
     logger = (root / "fic-common/fic-core/src/logging/Logger.cpp").read_text(encoding="utf-8")
     main_window = (root / "fic-gui/src/app/MainWindow.cpp").read_text(encoding="utf-8")
     editor = (root / "fic-gui/src/features/policies/widgets/PolicyEditorWidget.cpp").read_text(encoding="utf-8")
@@ -33,7 +36,9 @@ def main():
             "legacy PolicyMap name must be removed from implementation")
     require("moduleDescriptorsJson(policyRegistry)" in daemon,
             "module_list must serialize module descriptors")
-    policy_serializer = daemon.split("json policy_to_json", 1)[1].split("json policy_list_json", 1)[0]
+    policy_serializer = registry_json.split(
+        "nlohmann::json policyToJson", 1
+    )[1].split("nlohmann::json policyListJson", 1)[0]
     require('"view"' not in policy_serializer,
             "policy_list descriptors must not duplicate ModuleView")
     require('{"validator", editorSpec.validator}' in policy_serializer,

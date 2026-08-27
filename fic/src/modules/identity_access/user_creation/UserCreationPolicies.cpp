@@ -160,7 +160,7 @@ std::string joinGroups(
 } // namespace
 
 GroupListPolicyTypeValue::GroupListPolicyTypeValue() {
-    defaultValue = "[]";
+    defaultValue = "";
 }
 
 PolicyEditorSpec GroupListPolicyTypeValue::getEditorSpec() const {

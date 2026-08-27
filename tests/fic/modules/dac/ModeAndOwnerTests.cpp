@@ -183,6 +183,12 @@ void testMissingFilePolicies(const fs::path& root,
 
     require(!fs::exists(customMissing), "custom test path unexpectedly exists");
     DAC_custom_mode_and_owner customPolicy;
+    require(
+        customPolicy.getDefaultValue() == "" &&
+            customPolicy.validate(customPolicy.getDefaultValue()) &&
+            customPolicy.postprocessingValue("") == "[]" &&
+            customPolicy.reverse_postprocessingValue("[]") == "",
+        "custom mode-and-owner logical/storage contract is incorrect");
     require(!customPolicy.apply(), "missing custom path was ignored");
 }
 

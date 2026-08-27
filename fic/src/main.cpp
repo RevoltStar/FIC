@@ -225,78 +225,6 @@ std::string canonical_module_name(
 
     return module;
 }
-json policy_to_json(const std::string& module,
-                    const std::string& submoduleName,
-                    const std::string& policyName,
-                    Policy& policyClass) {
-    const PolicyTypeValue& typeValue = policyClass.getPolicyTypeValue();
-    const PolicyEditorSpec editorSpec = typeValue.getEditorSpec();
-    const bool isSet = policyClass.hasConfiguredValue();
-    bool valueValid = true;
-    std::string value = policyClass.getDefaultValue();
-
-    if (isSet) {
-        try {
-            std::optional<std::string> currentValue = policyClass.getValue();
-            if (currentValue.has_value()) {
-                value = currentValue.value();
-            } else {
-                valueValid = false;
-            }
-        } catch (const std::exception&) {
-            valueValid = false;
-        }
-    }
-
-    json possibleValues = json::array();
-    for (const std::string& possibleValue : editorSpec.possibleValues) {
-        possibleValues.push_back(possibleValue);
-    }
-
-    json item = {
-        {"module", module},
-        {"submodule", submoduleName},
-        {"policy", policyName},
-        {"enabled", policyClass.isEnabled()},
-        {"set", isSet},
-        {"value", value},
-        {"value_valid", valueValid},
-        {"default_value", policyClass.getDefaultValue()},
-        {"editor", editorSpec.editor},
-        {"validator", editorSpec.validator},
-        {"possible_values", possibleValues},
-        {"restriction", policyClass.getPolicyRestriction()}
-    };
-
-    if (editorSpec.min.has_value()) {
-        item["min"] = editorSpec.min.value();
-    }
-    if (editorSpec.max.has_value()) {
-        item["max"] = editorSpec.max.value();
-    }
-    if (editorSpec.textDelimiter.has_value()) {
-        item["text_delimiter"] = editorSpec.textDelimiter.value();
-    }
-
-    return item;
-}
-
-json policy_list_json(const PolicyRegistry& policyRegistry,
-                      const std::string& module) {
-    json result = json::array();
-    auto moduleIt = policyRegistry.find(module);
-    if (moduleIt == policyRegistry.end()) {
-        return result;
-    }
-
-    for (const auto& [submoduleName, submodulePolicies] : moduleIt->second.submodules) {
-        for (const auto& [policyName, policyClass] : submodulePolicies) {
-            result.push_back(policy_to_json(module, submoduleName, policyName, *policyClass));
-        }
-    }
-    return result;
-}
-
 json policy_status_json(
     PolicyRegistry& policyRegistry,
     const std::string& module,
@@ -692,7 +620,7 @@ json handle_request(json request,
             if (module == "all") {
                 json all = json::array();
                 for (const auto& [moduleName, _] : policyRegistry) {
-                    for (const auto& item : policy_list_json(policyRegistry, moduleName)) {
+                    for (const auto& item : policyListJson(policyRegistry, moduleName)) {
                         all.push_back(item);
                     }
                 }
@@ -701,7 +629,7 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            return json{{"ok", true}, {"message", "policies listed"}, {"policies", policy_list_json(policyRegistry, module)}};
+            return json{{"ok", true}, {"message", "policies listed"}, {"policies", policyListJson(policyRegistry, module)}};
         }
         if (command == "policy_is_enabled" || command == "policy_is_disabled" || command == "policy_value") {
             if (module.empty() || policy.empty()) {

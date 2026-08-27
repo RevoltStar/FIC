@@ -349,8 +349,11 @@ void testConcretePolicyContracts(
 
     OSS_grub_cmdline_linux cmdline(platform, executables);
     require(cmdline.policyName == "grub_cmdline_linux" &&
+                cmdline.getDefaultValue() == "" &&
+                cmdline.validate(cmdline.getDefaultValue()) &&
                 cmdline.validate("") && !cmdline.validate("bad\nvalue") &&
                 cmdline.postprocessingValue("") == "[]" &&
+                cmdline.reverse_postprocessingValue("[]") == "" &&
                 cmdline.postprocessingValue("quiet isolcpus=1-3,5") ==
                     "[\"quiet isolcpus=1-3,5\"]" &&
                 cmdline.reverse_postprocessingValue(

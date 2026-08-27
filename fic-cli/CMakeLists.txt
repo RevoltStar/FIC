@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(fic-cli
     src/main.cpp
+    src/PolicySetCommand.cpp
 )
 
 target_link_libraries(fic-cli PRIVATE fic-ipc)
