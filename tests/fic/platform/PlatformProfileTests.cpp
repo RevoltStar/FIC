@@ -288,7 +288,15 @@ void testSelectedProfile() {
                 "Debian/Ubuntu resolv.conf symlink targets are incorrect");
     }
     for (const auto& rule : profile.dac.protectedSystemCommands) {
-        require(rule.allowedFinalSymlinkTargets.empty(),
+        std::vector<std::filesystem::path> expectedTargets;
+        if ((profile.id == "debian-13" || profile.id == "ubuntu-26.04") &&
+            rule.path == "/usr/sbin/ip") {
+            expectedTargets = {"/usr/bin/ip"};
+        } else if (profile.id == "ubuntu-26.04" &&
+                   rule.path == "/usr/bin/df") {
+            expectedTargets = {"/usr/bin/gnudf"};
+        }
+        require(rule.allowedFinalSymlinkTargets == expectedTargets,
                 "protected commands must not have unverified symlink exceptions");
     }
 
@@ -390,6 +398,11 @@ void testSelectedProfile() {
                 "Debian 13 df command path must use the merged-/usr location");
         require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
                 "Debian 13 ip command path is incorrect");
+        require(findRule(
+                    profile.dac.protectedSystemCommands,
+                    "/usr/sbin/ip").allowedFinalSymlinkTargets ==
+                    std::vector<std::filesystem::path>({"/usr/bin/ip"}),
+                "Debian 13 ip command symlink target is incorrect");
         require(profile.grub.rebuildArguments.empty(),
                 "Debian 13 update-grub must not receive arguments");
     } else if (profile.id == "ubuntu-24.04" ||

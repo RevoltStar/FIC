@@ -125,7 +125,13 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/usr/bin/df", "root", "root", 0750},
         {"/usr/bin/chattr", "root", "root", 0750},
         {"/usr/sbin/arp", "root", "root", 0750},
-        {"/usr/sbin/ip", "root", "root", 0750}
+        {
+            "/usr/sbin/ip",
+            "root",
+            "root",
+            0750,
+            {"/usr/bin/ip"}
+        }
     };
     return profile;
 }
