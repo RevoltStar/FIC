@@ -399,6 +399,10 @@ add_executable(identity_policy_hierarchy_tests
 target_include_directories(identity_policy_hierarchy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
+target_compile_definitions(identity_policy_hierarchy_tests PRIVATE
+    FIC_GENERATED_IDENTITY_CONFIG_PATH="${CMAKE_BINARY_DIR}/fic/generated/scripts/config/IDENTITY_ACCESS.conf"
+    FIC_TARGET_PLATFORM_NAME="${FIC_TARGET_PLATFORM}"
+)
 target_link_libraries(identity_policy_hierarchy_tests PRIVATE
     fic-core
     fic-policy

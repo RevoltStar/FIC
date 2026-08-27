@@ -8,6 +8,8 @@
 
 namespace fic::identity::pam {
 
+const std::vector<std::string>& requiredPamProviderNames();
+
 bool parseRequiredPamProviders(const std::string& value,
                                std::vector<PamProviderKind>& providers,
                                std::string& normalized,

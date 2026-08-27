@@ -99,7 +99,7 @@
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Authentication lockout duration
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Sets unlock_time in seconds in the canonical pam_faillock configuration. A value of 0 means that automatic time-based unlocking is disabled.
 [module:IDENTITY_ACCESS][policy:required_pam_enforcement]=Required PAM enforcement mechanisms
-[module:IDENTITY_ACCESS][policy:required_pam_enforcement][description]=Verifies that the listed pam_faillock, pam_pwquality, and pam_pwhistory providers are present, trusted, and unavoidable on every successful path through the corresponding effective PAM stack. The policy does not install modules or rewrite PAM topology.
+[module:IDENTITY_ACCESS][policy:required_pam_enforcement][description]=Verifies that the listed pam_faillock, pam_pwquality, pam_passwdqc, and pam_pwhistory providers are present, trusted, and unavoidable on every successful path through the corresponding effective PAM stack. The policy does not install modules or rewrite PAM topology.
 [module:IDENTITY_ACCESS][submodule:PASSWORD_AGING]=Password aging
 [module:IDENTITY_ACCESS][policy:password_min_age_days]=Minimum days between password changes
 [module:IDENTITY_ACCESS][policy:password_min_age_days][description]=Manages PASS_MIN_DAYS in /etc/login.defs for new local accounts.

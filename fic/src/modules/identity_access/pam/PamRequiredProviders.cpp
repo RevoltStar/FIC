@@ -4,6 +4,7 @@
 #include <cctype>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace fic::identity::pam {
 namespace {
@@ -23,20 +24,40 @@ std::string trimCopy(const std::string& value) {
     return std::string(first, last);
 }
 
+const std::vector<std::pair<std::string, PamProviderKind>>&
+requiredPamProviders() {
+    static const std::vector<std::pair<std::string, PamProviderKind>> providers{
+        {"pam_faillock", PamProviderKind::PamFaillock},
+        {"pam_pwquality", PamProviderKind::PamPwquality},
+        {"pam_passwdqc", PamProviderKind::PamPasswdqc},
+        {"pam_pwhistory", PamProviderKind::PamPwhistory},
+    };
+    return providers;
+}
+
 std::optional<PamProviderKind> requiredProvider(const std::string& name) {
-    if (name == "pam_faillock") {
-        return PamProviderKind::PamFaillock;
-    }
-    if (name == "pam_pwquality") {
-        return PamProviderKind::PamPwquality;
-    }
-    if (name == "pam_pwhistory") {
-        return PamProviderKind::PamPwhistory;
+    for (const auto& [providerName, provider] : requiredPamProviders()) {
+        if (name == providerName) {
+            return provider;
+        }
     }
     return std::nullopt;
 }
 
 } // namespace
+
+const std::vector<std::string>& requiredPamProviderNames() {
+    static const std::vector<std::string> names = [] {
+        std::vector<std::string> result;
+        result.reserve(requiredPamProviders().size());
+        for (const auto& [name, provider] : requiredPamProviders()) {
+            (void)provider;
+            result.push_back(name);
+        }
+        return result;
+    }();
+    return names;
+}
 
 bool parseRequiredPamProviders(const std::string& value,
                                std::vector<PamProviderKind>& providers,

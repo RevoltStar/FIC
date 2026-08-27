@@ -46,7 +46,9 @@ void writeFile(const std::filesystem::path& path,
 void writeIdentityConfig(const std::filesystem::path& root,
                          const std::string& rootHistoryValue,
                          const std::string& rootLockoutValue = "yes",
-                         const std::string& additionalConfig = "") {
+                         const std::string& additionalConfig = "",
+                         const std::string& requiredPamValue =
+                             "pam_faillock,pam_pwhistory") {
     writeFile(
         root / "config/IDENTITY_ACCESS.conf",
         "dummy.status=ENABLE\n"
@@ -57,7 +59,7 @@ void writeIdentityConfig(const std::filesystem::path& root,
         "failed_authentication_enforce_for_root.value=" + rootLockoutValue +
             "\n"
         "required_pam_enforcement.status=ENABLE\n"
-        "required_pam_enforcement.value=pam_faillock,pam_pwhistory\n" +
+        "required_pam_enforcement.value=" + requiredPamValue + "\n" +
             additionalConfig);
 }
 
@@ -116,6 +118,18 @@ std::string readFile(const std::filesystem::path& path) {
     return std::string(
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>());
+}
+
+std::string configuredValue(const std::string& content,
+                            const std::string& key) {
+    const std::string prefix = key + "=";
+    const std::size_t position = content.find(prefix);
+    require(position == 0 ||
+                (position != std::string::npos && content[position - 1] == '\n'),
+            "missing generated config key: " + key);
+    const std::size_t valueStart = position + prefix.size();
+    const std::size_t lineEnd = content.find('\n', valueStart);
+    return content.substr(valueStart, lineEnd - valueStart);
 }
 
 template <typename PolicyType>
@@ -656,12 +670,37 @@ int main() {
         requiredPlatform.passwordHistoryConfigPath =
             passwordHistoryPlatform.passwordHistoryConfigPath;
         RequiredPamEnforcementPolicy requiredPam(requiredPlatform);
+        const std::string generatedIdentityConfig =
+            readFile(FIC_GENERATED_IDENTITY_CONFIG_PATH);
+        const std::string expectedRequiredPamDefault =
+            std::string(FIC_TARGET_PLATFORM_NAME) == "alt-p11"
+            ? "pam_faillock,pam_passwdqc"
+            : "pam_faillock,pam_pwquality,pam_pwhistory";
         require(
             requiredPam.getPolicyTypeValue().getEditorSpec().editor ==
-                "textedit" &&
+                    "textedit" &&
+                requiredPam.getPolicyTypeValue().getEditorSpec().textDelimiter ==
+                    "," &&
                 requiredPam.validate("pam_faillock, pam_pwhistory") &&
+                requiredPam.validate("pam_faillock, pam_pwquality") &&
+                requiredPam.validate("pam_passwdqc") &&
                 !requiredPam.validate("pam_vendor"),
             "required-PAM policy value contract is incorrect");
+        require(
+            requiredPam.getDefaultValue() == configuredValue(
+                generatedIdentityConfig,
+                "required_pam_enforcement.value") &&
+                requiredPam.getDefaultValue() == expectedRequiredPamDefault,
+            "required-PAM policy and generated config defaults diverged");
+        require(
+            configuredValue(
+                generatedIdentityConfig,
+                "required_pam_enforcement.status") == "DISABLE",
+            "required-PAM generated status must remain disabled");
+        require(
+            requiredPam.getPolicyRestriction().find("pam_passwdqc") !=
+                std::string::npos,
+            "required-PAM editor metadata omits pam_passwdqc");
         require(requiredPam.apply(),
                 "required-PAM policy rejected effective providers");
 
@@ -684,6 +723,29 @@ int main() {
             "auth [default=die] pam_faillock.so authfail\n"
             "auth sufficient pam_faillock.so authsucc\n"
             "auth required pam_deny.so\n");
+
+        writeIdentityConfig(
+            root, "no", "no", "",
+            "pam_passwdqc");
+        writeFile(
+            root / "pam.d/passwd",
+            "password required pam_passwdqc.so\n"
+            "password required pam_unix.so\n");
+        writeFile(root / "security/pam_passwdqc.so", "test", 0555);
+        RequiredPamEnforcementPolicy requiredPasswdqc(requiredPlatform);
+        require(
+            requiredPasswdqc.apply(),
+            "required-PAM policy did not verify effective pam_passwdqc on "
+            "password services");
+        writeFile(
+            root / "pam.d/passwd",
+            "password required pam_unix.so\n");
+        require(
+            !requiredPasswdqc.apply(),
+            "required-PAM policy accepted missing pam_passwdqc");
+        writeFile(
+            root / "pam.d/passwd",
+            "password required pam_pwhistory.so\n");
 
         writeFile(
             authenticationPlatform.faillockConfigPath,

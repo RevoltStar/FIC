@@ -3,8 +3,10 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamRequiredProviders.h"
+#include "platform/RequiredPamEnforcementDefaultsGenerated.h"
 
 #include <iostream>
+#include <sstream>
 #include <utility>
 
 namespace {
@@ -12,8 +14,7 @@ namespace {
 class RequiredPamPolicyTypeValue final : public PolicyTypeValue {
 public:
     RequiredPamPolicyTypeValue() {
-        this->defaultValue =
-            "pam_faillock,pam_pwquality,pam_pwhistory";
+        this->defaultValue = FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT;
     }
 
     PolicyEditorSpec getEditorSpec() const override {
@@ -51,8 +52,16 @@ public:
     }
 
     std::string getPolicyRestrictionInfo() override {
-        return "Comma-separated supported PAM providers: pam_faillock, "
-               "pam_pwquality, pam_pwhistory";
+        std::ostringstream restriction;
+        restriction << "Comma-separated supported PAM providers: ";
+        const auto& names = fic::identity::pam::requiredPamProviderNames();
+        for (std::size_t index = 0; index < names.size(); ++index) {
+            if (index != 0) {
+                restriction << ", ";
+            }
+            restriction << names[index];
+        }
+        return restriction.str();
     }
 };
 
@@ -65,6 +74,7 @@ capabilityAndServices(
         return {fic::identity::pam::PamCapability::AuthenticationLockout,
                 platform.authenticationServices};
     case fic::identity::pam::PamProviderKind::PamPwquality:
+    case fic::identity::pam::PamProviderKind::PamPasswdqc:
         return {fic::identity::pam::PamCapability::PasswordQuality,
                 platform.passwordServices};
     case fic::identity::pam::PamProviderKind::PamPwhistory:

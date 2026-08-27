@@ -53,6 +53,10 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/UserCreationPolicyDefaultsGenerated.h.in"
     "${FIC_GENERATED_INCLUDE_DIR}/platform/UserCreationPolicyDefaultsGenerated.h"
     @ONLY)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/RequiredPamEnforcementDefaultsGenerated.h.in"
+    "${FIC_GENERATED_INCLUDE_DIR}/platform/RequiredPamEnforcementDefaultsGenerated.h"
+    @ONLY)
 
 add_library(fic-platform STATIC
     src/platform/PlatformCompatibility.cpp

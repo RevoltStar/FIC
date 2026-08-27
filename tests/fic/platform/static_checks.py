@@ -266,6 +266,9 @@ def main():
     user_creation_defaults = (
         root / "fic/src/platform/generated/UserCreationPolicyDefaultsGenerated.h.in"
     ).read_text(encoding="utf-8")
+    required_pam_defaults = (
+        root / "fic/src/platform/generated/RequiredPamEnforcementDefaultsGenerated.h.in"
+    ).read_text(encoding="utf-8")
     identity_template = (
         root / "fic/src/resources/config/IDENTITY_ACCESS.conf.in"
     ).read_text(encoding="utf-8")
@@ -299,6 +302,23 @@ def main():
     require(
         'set(FIC_USER_CREATION_SHELL_DEFAULT "/bin/bash")' in platform_cmake,
         "ALT p11 useradd shell default is not represented",
+    )
+    required_pam_name = "FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT"
+    require(
+        f"@{required_pam_name}@" in required_pam_defaults and
+        f"@{required_pam_name}@" in identity_template,
+        "required-PAM C++ and generated config defaults do not share the "
+        "platform value",
+    )
+    require(
+        '"pam_faillock,pam_pwquality,pam_pwhistory"' in platform_cmake and
+        '"pam_faillock,pam_passwdqc"' in platform_cmake,
+        "required-PAM platform defaults are incomplete",
+    )
+    require(
+        "required_pam_enforcement.value=" +
+        f"@{required_pam_name}@" in identity_template,
+        "IDENTITY_ACCESS template hardcodes required-PAM providers",
     )
 
     alt_profile = profiles["alt-p11"]

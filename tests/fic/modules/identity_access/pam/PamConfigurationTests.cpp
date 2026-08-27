@@ -1389,6 +1389,32 @@ void testRequiredProviderListParsing() {
             normalized == "pam_faillock,pam_pwquality",
         "required PAM list must trim and deduplicate providers");
     require(
+        fic::identity::pam::parseRequiredPamProviders(
+            " pam_faillock , pam_passwdqc ",
+            providers,
+            normalized,
+            error),
+        error);
+    require(
+        providers == std::vector<fic::identity::pam::PamProviderKind>{
+                         fic::identity::pam::PamProviderKind::PamFaillock,
+                         fic::identity::pam::PamProviderKind::PamPasswdqc} &&
+            normalized == "pam_faillock,pam_passwdqc",
+        "pam_passwdqc must be normalized as a required PAM provider");
+    require(
+        fic::identity::pam::parseRequiredPamProviders(
+            "pam_pwquality,pam_pwhistory,pam_passwdqc",
+            providers,
+            normalized,
+            error),
+        "all supported non-default providers must remain valid: " + error);
+    require(
+        fic::identity::pam::requiredPamProviderNames() ==
+            std::vector<std::string>{
+                "pam_faillock", "pam_pwquality", "pam_passwdqc",
+                "pam_pwhistory"},
+        "required PAM provider metadata is incomplete");
+    require(
         !fic::identity::pam::parseRequiredPamProviders(
             "pam_faillock,,pam_pwquality",
             providers,

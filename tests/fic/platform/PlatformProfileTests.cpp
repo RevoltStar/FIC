@@ -1,6 +1,7 @@
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
+#include "platform/RequiredPamEnforcementDefaultsGenerated.h"
 
 #include <cstdlib>
 #include <algorithm>
@@ -206,6 +207,12 @@ void testSelectedProfile() {
         "distribution-specific user-creation defaults are incorrect");
     require(!profile.packageManager.queryCandidates.empty(),
             "package manager query candidates are missing");
+    require(
+        std::string(FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT) ==
+            (profile.id == "alt-p11"
+                 ? "pam_faillock,pam_passwdqc"
+                 : "pam_faillock,pam_pwquality,pam_pwhistory"),
+        "required-PAM platform default is incorrect");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",
             "SDDM configuration path is incorrect");
     require(profile.displayManager.lightDmConfigPath ==
