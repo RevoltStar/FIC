@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     glibc-devel \
     libglvnd-devel \
     libsqlite3-devel \
+    libsystemd-devel \
     make \
     nlohmann-json-devel \
     openssl-devel \

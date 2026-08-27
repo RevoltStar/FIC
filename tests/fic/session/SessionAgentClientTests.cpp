@@ -58,8 +58,9 @@ std::thread startServerAfter(
     const fs::path& path,
     const UserSession& session,
     std::chrono::milliseconds delay,
-    ServerResult& result) {
-    return std::thread([path, session, delay, &result]() {
+    ServerResult& result,
+    const std::string& responseSessionId = {}) {
+    return std::thread([path, session, delay, &result, responseSessionId]() {
         try {
             std::this_thread::sleep_for(delay);
             const int serverFd = bindServer(path);
@@ -90,7 +91,8 @@ std::thread startServerAfter(
             const fic::ipc::json response = {
                 {"ok", true},
                 {"message", "session context loaded"},
-                {"session_id", session.id},
+                {"session_id", responseSessionId.empty()
+                    ? session.id : responseSessionId},
                 {"desktop", "KDE"},
                 {"session_type", session.type},
                 {"display", ""},
@@ -191,6 +193,26 @@ void testUnsafePathFailsImmediately(const fs::path& root) {
     require(elapsed < 500ms,
             "unsafe session agent path was retried instead of rejected");
 }
+
+void testMismatchedSessionIdentityIsRejected(const fs::path& root) {
+    const fs::path path = root / "mismatch.sock";
+    const UserSession session = testSession();
+    ServerResult serverResult;
+    std::thread server = startServerAfter(
+        path, session, 10ms, serverResult, "different-session");
+
+    SessionContext context;
+    std::string error;
+    const bool ok = session_agent_client_detail::queryAtPath(
+        session, path.string(), 2s, 20ms, context, error);
+    server.join();
+
+    require(serverResult.error.empty(), serverResult.error);
+    require(!ok, "mismatched agent session identity was accepted");
+    require(error.find("does not match the logind session") !=
+                std::string::npos,
+            "session mismatch diagnostic is incorrect: " + error);
+}
 } // namespace
 
 int main() {
@@ -209,6 +231,7 @@ int main() {
         testRefusedSocketIsRetried(root);
         testMissingSocketTimesOut(root);
         testUnsafePathFailsImmediately(root);
+        testMismatchedSessionIdentityIsRejected(root);
     } catch (const std::exception& exception) {
         fs::remove_all(root);
         if (std::string(exception.what()).find("Operation not permitted") !=

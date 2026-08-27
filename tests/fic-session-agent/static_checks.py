@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import sys
+
+
+root = Path(sys.argv[1])
+agent_cmake = (root / "fic-session-agent/CMakeLists.txt").read_text()
+provider = (
+    root / "fic-session-agent/src/SystemdLogindSessionProvider.cpp"
+).read_text()
+resolver = (root / "fic-session-agent/src/SessionIdentityResolver.cpp").read_text()
+main_source = (root / "fic-session-agent/src/main.cpp").read_text()
+desktop = (root / "fic-session-agent/fic-session-agent.desktop.in").read_text()
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+require("pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)" in agent_cmake,
+        "fic-session-agent does not resolve libsystemd through pkg-config")
+require("PkgConfig::LIBSYSTEMD" in agent_cmake,
+        "fic-session-agent is not linked to the imported libsystemd target")
+require("sd_pid_get_session(0" in provider,
+        "agent fallback does not resolve the current process session")
+
+for forbidden in (
+    "sd_uid_get_display",
+    "sd_uid_get_sessions",
+    "show-user",
+    "list-sessions",
+):
+    require(forbidden not in provider and forbidden not in resolver,
+            f"session identity resolver contains forbidden UID heuristic: {forbidden}")
+
+require("Exec=@FIC_PRIVATE_BINDIR@/fic-session-agent" in desktop,
+        "session agent is no longer launched directly by per-session XDG Autostart")
+require('"session-" + sessionId + ".sock"' in main_source,
+        "session agent socket is no longer keyed by the resolved session id")
+
+for dockerfile, dependency in (
+    ("packaging/deb/Dockerfile", "libsystemd-dev"),
+    ("packaging/deb/Dockerfile.debian13", "libsystemd-dev"),
+    ("packaging/deb/Dockerfile.ubuntu2404", "libsystemd-dev"),
+    ("packaging/deb/Dockerfile.ubuntu2604", "libsystemd-dev"),
+    ("packaging/rpm/Dockerfile", "libsystemd-devel"),
+):
+    require(dependency in (root / dockerfile).read_text(),
+            f"{dockerfile} does not install {dependency}")

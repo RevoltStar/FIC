@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.5)
 project(fic_session_agent LANGUAGES CXX)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+
 if(NOT TARGET fic-ipc)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
 endif()
@@ -12,9 +15,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(fic-session-agent
     src/main.cpp
+    src/SessionIdentityResolver.cpp
+    src/SystemdLogindSessionProvider.cpp
 )
 
-target_link_libraries(fic-session-agent PRIVATE fic-ipc)
+target_link_libraries(fic-session-agent PRIVATE fic-ipc PkgConfig::LIBSYSTEMD)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/fic-session-agent.desktop.in"

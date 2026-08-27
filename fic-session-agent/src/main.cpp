@@ -1,5 +1,8 @@
+#include "SessionIdentityResolver.h"
+#include "SystemdLogindSessionProvider.h"
+
 #include <atomic>
-#include <cctype>
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -32,24 +35,30 @@ std::string environment_value(const char* name) {
     return value == nullptr ? std::string() : std::string(value);
 }
 
-bool valid_session_id(const std::string& id) {
-    if (id.empty()) {
+bool verify_runtime_directory(
+    const std::string& runtimeDirectory,
+    std::string& error) {
+    if (runtimeDirectory.empty()) {
+        error = "XDG_RUNTIME_DIR is not set";
         return false;
     }
-    for (const unsigned char ch : id) {
-        if (!std::isalnum(ch) && ch != '_' && ch != '-') {
-            return false;
-        }
+    struct stat info {};
+    if (::lstat(runtimeDirectory.c_str(), &info) != 0) {
+        error = "invalid XDG_RUNTIME_DIR " + runtimeDirectory + ": " +
+            std::strerror(errno);
+        return false;
+    }
+    if (!S_ISDIR(info.st_mode)) {
+        error = "invalid XDG_RUNTIME_DIR " + runtimeDirectory +
+            ": path is not a directory";
+        return false;
+    }
+    if (info.st_uid != ::getuid()) {
+        error = "invalid XDG_RUNTIME_DIR " + runtimeDirectory +
+            ": directory does not belong to the current uid";
+        return false;
     }
     return true;
-}
-
-bool verify_runtime_directory(const std::string& runtimeDirectory) {
-    struct stat info {};
-    return !runtimeDirectory.empty() &&
-           ::lstat(runtimeDirectory.c_str(), &info) == 0 &&
-           S_ISDIR(info.st_mode) &&
-           info.st_uid == ::getuid();
 }
 
 int create_server_socket(const std::string& socketPath) {
@@ -140,10 +149,24 @@ int main(int argc, char* argv[]) {
         fic::version::writeBuildInfo(std::cout, "fic-session-agent");
         return 0;
     }
-    const std::string sessionId = environment_value("XDG_SESSION_ID");
+    fic::session_agent::SystemdLogindSessionProvider logindProvider;
+    std::string sessionId;
+    std::string sessionError;
+    if (!fic::session_agent::SessionIdentityResolver::resolve(
+            environment_value("XDG_SESSION_ID"),
+            ::getuid(),
+            logindProvider,
+            sessionId,
+            sessionError)) {
+        std::cerr << "failed to determine this agent's graphical logind session: "
+                  << sessionError << std::endl;
+        return 1;
+    }
+
     const std::string runtimeDirectory = environment_value("XDG_RUNTIME_DIR");
-    if (!valid_session_id(sessionId) || !verify_runtime_directory(runtimeDirectory)) {
-        std::cerr << "fic-session-agent requires a valid graphical session environment" << std::endl;
+    std::string runtimeDirectoryError;
+    if (!verify_runtime_directory(runtimeDirectory, runtimeDirectoryError)) {
+        std::cerr << runtimeDirectoryError << std::endl;
         return 1;
     }
 

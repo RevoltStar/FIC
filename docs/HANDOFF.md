@@ -3,89 +3,74 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit hardening-задачи: `1792350c0f709562141cea765c682580fcec2c89`.
+- Базовый commit задачи: `22c690136398e502cad358f2d42615698b6c2f92`.
 
 ## Current task
 
-- Hardening нативной ALT p11 `control`-интеграции `fic-pam-faillock` после
-  воспроизведения пяти fail-closed/TOCTOU дефектов исходной реализации.
+- Надёжное определение собственной logind session в `fic-session-agent`,
+  включая ALT p11 без `XDG_SESSION_ID`.
 
 ## Accepted architecture / invariants
 
-- Значения FIC policies и наличие package-level PAM-топологии управляются
-  раздельно: facility `fic-pam-faillock` не передаёт policy options в PAM.
-- Facility является тонким adapter к root-only offline maintenance API daemon:
-  `fic --maintenance pam-alt-faillock status|enable|disable`.
-- Менеджер изменяет только `/etc/pam.d/system-auth-local-only`, использует
-  размеченные FIC-блоки, atomic write, межпроцессный lock, строгую проверку
-  структуры и postcondition с rollback.
-- Чужие `pam_faillock`-строки не присваиваются и не удаляются. Неполные,
-  дублированные, изменённые или неоднозначные managed-блоки обрабатываются
-  fail-closed.
-- Для достижимого успешного пути между `preauth` и `[default=die] authfail`
-  исходный `auth required pam_tcb.so ...` временно представлен как
-  `auth sufficient pam_tcb.so ...`; его точные исходные байты хранятся в
-  managed metadata и восстанавливаются byte-for-byte при disable.
-- `pam_tcb.so` обязан быть последним исполняемым auth-правилом локального
-  stack; effective graph проверяется до первой записи, а semantic postcondition
-  в SSS mode относится к управляемой local-only ветви.
-- Atomic replacement может быть привязан к ожидаемым `st_dev`/`st_ino`; это
-  обнаруживает замену target inode до commit, но не является kernel-level CAS.
-- IPC API остаётся version `1`; Debian/Ubuntu packaging этой задачей не менялся.
+- `fic-session-agent` остаётся per-graphical-session context provider, а не
+  per-user service; daemon остаётся authoritative источником списка sessions.
+- `XDG_SESSION_ID` является предпочтительным источником, но принимается только
+  после logind-проверки UID, `Class=user`, `Remote=no` и графического типа
+  `x11|wayland|mir`.
+- Fallback использует только `sd_pid_get_session(0)` и тем самым identity
+  текущего процесса. Enumeration/primary/display/first-session эвристики по UID
+  запрещены.
+- `Active=yes` не требуется, что сохраняет daemon contract для нескольких
+  локальных графических sessions одного UID.
+- Если процесс запущен shared `systemd --user` service и не принадлежит
+  конкретной login session, а валидный `XDG_SESSION_ID` не передан, agent
+  завершается fail-closed.
+- Socket path, runtime-directory ownership, root peer и daemon-side
+  session/UID mismatch checks не ослаблены.
 
 ## Completed
 
-- Добавлен ALT p11 profile path и `AltPamFaillockTopologyManager` с операциями
-  status/enable/disable, безопасной работой с файлом и rollback.
-- Общий PAM parser открыт через `PamConfiguration::parseRulesContent` и
-  переиспользуется менеджером без параллельного parser implementation.
-- Добавлены maintenance CLI dispatch и native control facility с полным
-  `help/list/summary/status/enabled/disabled` contract.
-- RPM lifecycle поддерживает disabled-by-default clean install, сохранение
-  control state при upgrade и безопасное удаление topology при final erase.
-- Добавлены unit/static/packaging tests, включая `pam_passwdqc` detection,
-  malformed/external topology, idempotency, rollback и exact restoration.
-- Обновлена релевантная RPM, daemon и architecture документация.
-- Исправлены подтверждённые findings A-E: небезопасный auth tail, ложный отказ
-  SSS mode, позднее обнаружение внешнего `pam_faillock`, угадывание позиции при
-  disable и перезапись заменённого inode.
-- Добавлены regression tests для каждого finding и прямой тест expected target
-  identity в `AtomicFileWriter`.
+- Добавлены тестируемый `SessionIdentityResolver` и production adapter к
+  libsystemd `sd-login` API.
+- Agent валидирует environment session, затем при необходимости проверяет
+  session собственного PID, с раздельной диагностикой причин отказа.
+- CMake подключает `libsystemd` через pkg-config imported target.
+- Build images получили `libsystemd-dev` для Debian/Ubuntu и
+  `libsystemd-devel` для ALT p11.
+- Добавлены resolver regression tests, static architecture/packaging checks и
+  daemon-client mismatch regression test.
+- Обновлён authoritative contract в `docs/session-agent.md`.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/pam/`, `fic/src/main.cpp`;
-- `fic-common/fic-core` atomic file writer;
-- relevant PAM и filesystem tests;
-- `packaging/rpm/` documentation;
-- `fic/README.md`, `docs/architecture-diagrams.md`.
+- `fic-session-agent/src/`, `fic-session-agent/CMakeLists.txt`;
+- `tests/fic-session-agent/`, `tests/fic/session/SessionAgentClientTests.cpp`;
+- packaging build Dockerfiles;
+- `docs/session-agent.md`.
 
 ## Validation
 
-- ALT p11 configure и полный build в `/tmp/fic-alt-pam-hardening-build` —
-  успешно.
-- Targeted 7/7: topology/configuration, atomic writer, platform profile и
-  packaging/static tests — успешно.
-- Полный CTest: 41 passed, 4 skipped, 2 unrelated failures из 47. Существующий
-  `ipc_protocol_validation_tests` падает на API v1 assertion; `path_layout_static_checks`
-  видит два пустых obsolete directory в рабочем checkout. Затронутые tests
-  прошли.
-- `bash -n` для RPM scripts — успешно.
-- Пересборка RPM была запущена, но Docker daemon заблокировался на I/O и не
-  ответил даже на `docker ps`; новый package/runtime прогон не завершён.
+- Configure ALT p11 и полная сборка в `/tmp/fic-session-agent-build` — успешно.
+  Host не имел installed headers, поэтому официальный ALT p11
+  `libsystemd-devel-257.9-alt1` был только скачан и распакован в `/tmp`; runtime
+  link использовал установленный `libsystemd.so.0`.
+- `fic-session-agent`, `session_identity_resolver_tests` и
+  `session_agent_client_tests` targets — успешно собраны.
+- Resolver и static checks — успешно; socket/client mismatch test успешно
+  запущен отдельно вне sandbox.
+- Production fail-closed diagnostic проверен на процессе без logind session:
+  agent завершился с code 1 и сообщил `No data available`.
+- Полный CTest: 44 passed, 4 skipped из-за sandbox, 1 существующий unrelated
+  failure — `ipc_protocol_validation_tests` assertion об API v1 request.
 - `git diff --check` — успешно.
 
 ## Remaining
 
-- `PamPasswdqc` распознаётся parser как effective provider, но существующие
-  option policies и `required_pam_enforcement` принимают password-quality
-  provider только `pam_pwquality`. Поддержка ALT `pam_passwdqc` как источника
-  policy options является отдельной задачей.
-- `pam_pwhistory` не добавлялся: canonical ALT p11 stack его не содержит, а
-  текущая задача не определяет безопасную topology/option migration для него.
+- Debian 12/13 и Ubuntu 24.04/26.04 container builds не запускались: Docker
+  daemon отсутствует (`/var/run/docker.sock` не существует). Их build images и
+  dependency static checks обновлены.
+- Реальный запуск внутри ALT GNOME/Wayland session без `XDG_SESSION_ID` не
+  выполнялся в текущем headless окружении. Он сработает только если процесс
+  XDG Autostart остаётся связан со своей logind session; shared user-manager
+  запуск без session-bound identity намеренно fail-closed.
 - Существующий unrelated `ipc_protocol_validation_tests` failure не исправлялся.
-- До release gate нужно повторить RPM build и реальные ALT p11 local/SSS,
-  external-topology и final-erase сценарии после восстановления Docker daemon.
-- Между последним `lstat` и `rename` остаётся узкое userspace TOCTOU-окно;
-  `st_dev`/`st_ino` contract предотвращает воспроизведённую замену до writer,
-  но не заявляется как абсолютный filesystem CAS.

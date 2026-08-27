@@ -50,6 +50,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/fic-gui/policies/static_checks.py
                 ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME session_agent_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/fic-session-agent/static_checks.py
+                ${CMAKE_SOURCE_DIR}
+    )
 endif()
 
 add_executable(module_registry_tests
@@ -163,6 +169,15 @@ target_link_libraries(session_agent_client_tests PRIVATE
 )
 add_test(NAME session_agent_client_tests COMMAND session_agent_client_tests)
 set_tests_properties(session_agent_client_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(session_identity_resolver_tests
+    fic-session-agent/SessionIdentityResolverTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-session-agent/src/SessionIdentityResolver.cpp
+)
+target_include_directories(session_identity_resolver_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-session-agent/src
+)
+add_test(NAME session_identity_resolver_tests COMMAND session_identity_resolver_tests)
 
 add_executable(device_tree_revision_tests
     fic-dick/device/DeviceTreeRevisionTests.cpp

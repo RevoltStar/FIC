@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopengl-dev \
     libsqlite3-dev \
     libssl-dev \
+    libsystemd-dev \
     libxkbcommon-dev \
     nlohmann-json3-dev \
     pkg-config \
