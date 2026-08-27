@@ -4,42 +4,42 @@
 
 namespace kde_lock_screen_media_controls {
 
-bool applyToKdeSessions(const std::vector<UserSession>& sessions,
-                        const ContextQuery& queryContext,
-                        const SessionApply& applySession,
-                        const ContextFailure& reportContextFailure,
-                        std::size_t& applicableSessions)
+ApplicabilityResult applyToKdeSessions(
+    const std::vector<UserSession>& sessions,
+    const ContextQuery& queryContext,
+    const SessionApply& applySession,
+    const ContextFailure& reportContextFailure)
 {
-    applicableSessions = 0;
-    bool success = true;
+    ApplicabilityResult result;
     for (const UserSession& session : sessions) {
         SessionContext context;
         std::string error;
         if (!queryContext(session, context, error)) {
             reportContextFailure(session, error);
-            success = false;
+            result.success = false;
+            ++result.classificationFailures;
             continue;
         }
-        const std::string desktop =
-            DesktopEnvironmentBackend::normalizeName(context.desktop);
-        if (desktop.empty() || desktop == "UNKNOWN") {
+        const DesktopEnvironmentKind kind =
+            DesktopEnvironmentBackend::kindFromName(context.desktop);
+        if (context.desktop.empty() || kind == DesktopEnvironmentKind::Unknown) {
             reportContextFailure(
                 session, "session agent did not provide a reliable desktop "
                     "identity");
-            success = false;
+            result.success = false;
+            ++result.classificationFailures;
             continue;
         }
-        if (DesktopEnvironmentBackend::kindFromName(context.desktop) !=
-            DesktopEnvironmentKind::Kde) {
+        if (kind != DesktopEnvironmentKind::Kde) {
             continue;
         }
 
-        ++applicableSessions;
+        ++result.applicableSessions;
         if (!applySession(session, context)) {
-            success = false;
+            result.success = false;
         }
     }
-    return success;
+    return result;
 }
 
 } // namespace kde_lock_screen_media_controls

@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <sys/file.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -99,7 +100,10 @@ bool is_root_peer(int fd) {
 #endif
 }
 
-void serve_client(int fd, const std::string& sessionId) {
+void serve_client(
+    int fd,
+    const std::string& sessionId,
+    const fic::session_agent::AgentSessionContext& context) {
     if (!is_root_peer(fd)) {
         return;
     }
@@ -117,18 +121,14 @@ void serve_client(int fd, const std::string& sessionId) {
         if (request.value("command", "") != "session_context") {
             response = fic::ipc::make_error_response("unsupported session agent command");
         } else {
-            std::string desktop = environment_value("XDG_CURRENT_DESKTOP");
-            if (desktop.empty()) {
-                desktop = environment_value("DESKTOP_SESSION");
-            }
             response = {
                 {"ok", true},
                 {"message", "session context loaded"},
                 {"session_id", sessionId},
-                {"desktop", desktop},
-                {"session_type", environment_value("XDG_SESSION_TYPE")},
-                {"display", environment_value("DISPLAY")},
-                {"wayland_display", environment_value("WAYLAND_DISPLAY")}
+                {"desktop", context.desktop},
+                {"session_type", context.sessionType},
+                {"display", context.display},
+                {"wayland_display", context.waylandDisplay}
             };
         }
     } catch (const std::exception& exception) {
@@ -150,11 +150,12 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     fic::session_agent::SystemdLogindSessionProvider logindProvider;
-    const fic::session_agent::AgentSessionContext agentContext{
-        environment_value("XDG_SESSION_TYPE"),
-        environment_value("XDG_CURRENT_DESKTOP").empty()
-            ? environment_value("DESKTOP_SESSION")
-            : environment_value("XDG_CURRENT_DESKTOP"),
+    std::string desktop = environment_value("XDG_CURRENT_DESKTOP");
+    if (desktop.empty()) {
+        desktop = environment_value("DESKTOP_SESSION");
+    }
+    fic::session_agent::AgentSessionContext agentContext{
+        environment_value("XDG_SESSION_TYPE"), std::move(desktop),
         environment_value("DISPLAY"),
         environment_value("WAYLAND_DISPLAY")
     };
@@ -171,6 +172,14 @@ int main(int argc, char* argv[]) {
                   << sessionError << std::endl;
         return 1;
     }
+    const auto effectiveType =
+        fic::session_agent::effectiveGraphicalSessionType(agentContext);
+    if (!effectiveType.has_value()) {
+        std::cerr << "failed to determine this agent's effective graphical "
+                     "session type" << std::endl;
+        return 1;
+    }
+    agentContext.sessionType = *effectiveType;
 
     const std::string runtimeDirectory = environment_value("XDG_RUNTIME_DIR");
     std::string runtimeDirectoryError;
@@ -221,7 +230,7 @@ int main(int argc, char* argv[]) {
                 timeval clientTimeout{};
                 clientTimeout.tv_sec = 2;
                 ::setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &clientTimeout, sizeof(clientTimeout));
-                serve_client(clientFd, sessionId);
+                serve_client(clientFd, sessionId, agentContext);
                 ::close(clientFd);
             }
         }

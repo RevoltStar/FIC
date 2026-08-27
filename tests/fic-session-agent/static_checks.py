@@ -48,6 +48,19 @@ require("allowGraphicalContextForTty" in resolver and
         "session agent does not validate the session-bound startx context")
 require("candidate, false, agentContext" in resolver,
         "UID-only fallback can ambiguously select a TTY session")
+require("effectiveGraphicalSessionType" in resolver and
+        'context.sessionType != "tty"' in resolver and
+        "context.desktop.empty()" in resolver,
+        "session agent does not canonicalize session-bound startx context")
+serve_client = main_source[main_source.index("void serve_client"):]
+serve_client = serve_client[:serve_client.index("} // namespace")]
+require("const fic::session_agent::AgentSessionContext& context" in serve_client and
+        'environment_value("XDG_SESSION_TYPE")' not in serve_client and
+        '{"session_type", context.sessionType}' in serve_client,
+        "session agent IPC response is not serialized from the validated context")
+require("agentContext.sessionType = *effectiveType" in main_source and
+        "serve_client(clientFd, sessionId, agentContext)" in main_source,
+        "session agent does not publish the canonical graphical session type")
 
 for dockerfile, dependency in (
     ("packaging/deb/Dockerfile", "libsystemd-dev"),

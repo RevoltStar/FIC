@@ -11,6 +11,7 @@ using fic::session_agent::LogindSessionProvider;
 using fic::session_agent::ProcessSessionResult;
 using fic::session_agent::SessionIdentityResolver;
 using fic::session_agent::AgentSessionContext;
+using fic::session_agent::effectiveGraphicalSessionType;
 
 void require(bool condition, const std::string& message) {
     if (!condition) {
@@ -153,7 +154,7 @@ void testNotAssociatedWithNoGraphicalSessionFails() {
     std::string error;
     require(!resolve("", 1000, logind, sessionId, error),
             "zero graphical candidates unexpectedly succeeded");
-    require(error.find("no local graphical user session exists for uid 1000") !=
+    require(error.find("no graphical user session exists for uid 1000") !=
                 std::string::npos,
             "zero-candidate diagnostic is unclear: " + error);
 }
@@ -169,7 +170,7 @@ void testNotAssociatedWithTwoGraphicalSessionsFails() {
     std::string error;
     require(!resolve("", 1000, logind, sessionId, error),
             "ambiguous graphical sessions unexpectedly succeeded");
-    require(error.find("multiple local graphical sessions exist for uid 1000: 3, 7") !=
+    require(error.find("multiple graphical sessions exist for uid 1000: 3, 7") !=
                 std::string::npos,
             "ambiguity diagnostic is unclear: " + error);
 }
@@ -244,9 +245,72 @@ void testStartxTtyProcessSessionSucceeds() {
     std::string error;
     require(resolve(
                 "", 1000, logind, sessionId, error,
-                {"x11", "KDE", ":1", ""}),
+                {"tty", "KDE", ":1", ""}),
             "startx KDE context was rejected: " + error);
     require(sessionId == "tty2", "startx was bound to the wrong session");
+}
+
+void testStartxTtyWithEmptyRawTypeSucceeds() {
+    FakeLogind logind;
+    logind.processSession = "tty2";
+    logind.sessions["tty2"] = {1000, "user", false, "tty"};
+    std::string sessionId;
+    std::string error;
+    require(resolve(
+                "", 1000, logind, sessionId, error,
+                {"", "KDE", ":1", ""}),
+            "startx with empty XDG_SESSION_TYPE was rejected: " + error);
+}
+
+void testTtyGraphicalInferenceIsFailClosed() {
+    FakeLogind logind;
+    logind.processSession = "tty2";
+    logind.sessions["tty2"] = {1000, "user", false, "tty"};
+    std::string sessionId;
+    std::string error;
+    for (const AgentSessionContext context : {
+             AgentSessionContext{"tty", "", "", ""},
+             AgentSessionContext{"tty", "", ":1", ""}}) {
+        require(!resolve("", 1000, logind, sessionId, error, context),
+                "plain or desktop-less TTY was accepted");
+    }
+}
+
+void testWaylandInTtySucceeds() {
+    FakeLogind logind;
+    logind.processSession = "tty2";
+    logind.sessions["tty2"] = {1000, "user", false, "tty"};
+    std::string sessionId;
+    std::string error;
+    require(resolve(
+                "", 1000, logind, sessionId, error,
+                {"tty", "KDE", "", "wayland-0"}),
+            "Wayland-in-TTY context was rejected: " + error);
+}
+
+void testEffectiveGraphicalTypeCanonicalization() {
+    const auto requireType = [](const AgentSessionContext& context,
+                                const std::string& expected) {
+        const auto actual = effectiveGraphicalSessionType(context);
+        require(actual.has_value() && *actual == expected,
+                "unexpected effective graphical type");
+    };
+    requireType({"wayland", "", "", "wayland-0"}, "wayland");
+    requireType({"x11", "", ":1", ""}, "x11");
+    requireType({"tty", "KDE", ":1", ""}, "x11");
+    requireType({"", "KDE", ":1", ""}, "x11");
+    requireType({"tty", "KDE", "", "wayland-0"}, "wayland");
+    requireType({"", "KDE", "", "wayland-0"}, "wayland");
+    requireType({"tty", "KDE", ":1", "wayland-0"}, "wayland");
+    requireType({"x11", "KDE", ":1", "wayland-0"}, "wayland");
+    requireType({"mir", "", ":0", ""}, "mir");
+    require(!effectiveGraphicalSessionType({"tty", "", ":1", ""}),
+            "DISPLAY without desktop identity was canonicalized");
+    require(!effectiveGraphicalSessionType({"x11", "KDE", "", ""}),
+            "explicit X11 without DISPLAY was canonicalized");
+    require(!effectiveGraphicalSessionType(
+                {"wayland", "KDE", "", ""}),
+            "explicit Wayland without WAYLAND_DISPLAY was canonicalized");
 }
 
 void testStartxTtyRequiresConsistentDisplay() {
@@ -270,7 +334,7 @@ void testTtyIsNotSelectedByUidFallback() {
     std::string error;
     require(!resolve(
                 "", 1000, logind, sessionId, error,
-                {"x11", "KDE", ":1", ""}),
+                {"tty", "KDE", ":1", ""}),
             "unbound agent ambiguously selected a TTY session");
 }
 
@@ -379,6 +443,10 @@ int main() {
     testTtyProcessSessionFailsWithoutEnumeration();
     testRemoteGraphicalProcessSessionSucceeds();
     testStartxTtyProcessSessionSucceeds();
+    testStartxTtyWithEmptyRawTypeSucceeds();
+    testTtyGraphicalInferenceIsFailClosed();
+    testWaylandInTtySucceeds();
+    testEffectiveGraphicalTypeCanonicalization();
     testStartxTtyRequiresConsistentDisplay();
     testTtyIsNotSelectedByUidFallback();
     testForeignProcessSessionFailsWithoutEnumeration();

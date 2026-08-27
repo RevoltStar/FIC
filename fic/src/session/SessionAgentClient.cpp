@@ -116,6 +116,14 @@ int connect_when_ready(
 }
 } // namespace
 
+bool session_agent_client_detail::safeEndpointPresent(
+    const std::string& path,
+    uid_t expectedUid) {
+    struct stat info {};
+    return ::lstat(path.c_str(), &info) == 0 &&
+        S_ISSOCK(info.st_mode) && info.st_uid == expectedUid;
+}
+
 bool session_agent_client_detail::validateContextIdentity(
     const UserSession& session,
     const SessionContext& context,
@@ -130,15 +138,17 @@ bool session_agent_client_detail::validateContextIdentity(
         const bool graphicalContext =
             (context.sessionType == "wayland" &&
              !context.waylandDisplay.empty()) ||
-            ((context.sessionType == "x11" ||
-              context.sessionType == "mir") && !context.display.empty());
+            (context.sessionType == "x11" && !context.display.empty());
         if (!graphicalContext) {
             error = "TTY logind session does not have a consistent graphical "
                 "session agent context";
             return false;
         }
-    } else if (!context.sessionType.empty() &&
-               context.sessionType != session.type) {
+    } else if (context.sessionType != session.type ||
+               (context.sessionType == "wayland" &&
+                context.waylandDisplay.empty()) ||
+               ((context.sessionType == "x11" ||
+                 context.sessionType == "mir") && context.display.empty())) {
         error = "session agent context does not match the logind session";
         return false;
     }

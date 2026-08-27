@@ -1,5 +1,6 @@
 #include "session/SessionLocator.h"
 #include "session/SessionAgentClient.h"
+#include "session/SessionAgentClientInternal.h"
 #include "session/SessionSelection.h"
 
 #include <fic/core/process/ProcessExecutor.h>
@@ -8,7 +9,6 @@
 #include <locale>
 #include <sstream>
 #include <unordered_map>
-#include <sys/stat.h>
 
 namespace {
 bool valid_session_id(const std::string& id) {
@@ -46,8 +46,8 @@ enum class SelectionMode {
 
 bool agent_endpoint_present(const UserSession& session)
 {
-    struct stat info {};
-    return ::lstat(SessionAgentClient::socketPath(session).c_str(), &info) == 0;
+    return session_agent_client_detail::safeEndpointPresent(
+        SessionAgentClient::socketPath(session), session.uid);
 }
 
 bool enumerate_sessions(
@@ -114,10 +114,14 @@ bool enumerate_sessions(
         properties.state = value("State");
         properties.remote = value("Remote") == "yes";
 
+        const bool agentEndpointPresent =
+            mode == SelectionMode::KdeMediaControls &&
+            properties.session.type == "tty" &&
+            agent_endpoint_present(properties.session);
         const bool selected = mode == SelectionMode::ActiveGraphical
             ? session_selection::activeGraphicalSession(properties)
             : session_selection::kdeMediaControlsCandidate(
-                properties, agent_endpoint_present(properties.session));
+                properties, agentEndpointPresent);
         if (selected) {
             sessions.push_back(properties.session);
         }

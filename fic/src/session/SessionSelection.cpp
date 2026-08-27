@@ -24,7 +24,8 @@ bool kdeMediaControlsCandidate(const SessionProperties& properties,
         properties.state == "closing" || properties.state == "dead") {
         return false;
     }
-    return graphicalType(properties.session.type) || agentEndpointPresent;
+    return graphicalType(properties.session.type) ||
+        (properties.session.type == "tty" && agentEndpointPresent);
 }
 
 } // namespace session_selection

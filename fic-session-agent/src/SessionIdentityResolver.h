@@ -2,6 +2,7 @@
 #define FIC_SESSION_AGENT_SESSION_IDENTITY_RESOLVER_H
 
 #include <string>
+#include <optional>
 #include <sys/types.h>
 #include <vector>
 
@@ -20,6 +21,9 @@ struct AgentSessionContext {
     std::string display;
     std::string waylandDisplay;
 };
+
+std::optional<std::string> effectiveGraphicalSessionType(
+    const AgentSessionContext& context);
 
 enum class ProcessSessionResult {
     Found,

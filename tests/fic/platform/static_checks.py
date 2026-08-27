@@ -281,6 +281,12 @@ def main():
     session_selection = (
         root / "fic/src/session/SessionSelection.cpp"
     ).read_text(encoding="utf-8")
+    session_agent_client = (
+        root / "fic/src/session/SessionAgentClient.cpp"
+    ).read_text(encoding="utf-8")
+    session_command_executor = (
+        root / "fic/src/session/SessionCommandExecutor.cpp"
+    ).read_text(encoding="utf-8")
     upgrade_contract = (
         root / "docs/upgrade-contract.md"
     ).read_text(encoding="utf-8")
@@ -364,6 +370,16 @@ def main():
         'properties.state == "dead"' in session_selection and
         '"--property=Active"' not in session_locator,
         "KDE media-controls policy still has legacy naming/session filtering",
+    )
+    require(
+        "safeEndpointPresent" in session_locator and
+        "S_ISSOCK(info.st_mode)" in session_agent_client and
+        "info.st_uid == expectedUid" in session_agent_client,
+        "TTY discovery does not require an owned session-agent socket",
+    )
+    require(
+        '{"XDG_SESSION_TYPE", context.sessionType}' in session_command_executor,
+        "session commands do not use the canonical agent session type",
     )
 
     alt_profile = profiles["alt-p11"]

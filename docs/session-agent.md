@@ -18,10 +18,15 @@ The agent prefers `XDG_SESSION_ID`, but validates the referenced logind session:
 it must belong to the agent UID and have `Class=user`. Remote sessions are
 accepted. The logind type is normally `x11`, `wayland`, or `mir`; a directly
 identified `Type=tty` session is accepted only when the agent reports a
-consistent graphical context (`XDG_SESSION_TYPE` plus the matching `DISPLAY`
-or `WAYLAND_DISPLAY` and a non-empty desktop identity). This covers `startx`
-without accepting an arbitrary TTY as graphical. `Active=yes` is intentionally
-not required.
+consistent graphical context and a non-empty desktop identity. For a normal
+`startx`, raw `XDG_SESSION_TYPE=tty` (or an empty value) is valid when `DISPLAY`
+is present; the effective type becomes `x11`. A matching `WAYLAND_DISPLAY`
+makes the effective type `wayland` and wins over `DISPLAY` when both exist.
+Explicit raw `x11` and `wayland` values still require their matching display.
+The agent publishes this canonical effective type to the daemon from the same
+environment snapshot that passed identity validation. This covers a
+session-bound `startx` without accepting an arbitrary TTY as graphical.
+`Active=yes` is intentionally not required.
 
 If `XDG_SESSION_ID` is absent or rejected, the agent calls
 `sd_pid_get_session(0)` and applies the same validation to the login session of
@@ -51,9 +56,12 @@ For policies that require graphical-session access, the daemon:
 
 1. Uses a policy-specific session selector. `OSS/screenlock_timeout` retains
    its local native-graphical selector. KDE lock-screen media controls include
-   current foreground/background and remote graphical sessions; a TTY session
-   is included only when its exact session-id socket already exists. Closing or
-   dead sessions are excluded.
+   current foreground/background and remote native graphical sessions, which
+   logind exposes independently of the agent. A `Type=tty` startx session is
+   included only when its exact session-id endpoint is an owned Unix socket;
+   the complete socket owner, peer and response identity checks still happen
+   during the query. Closing or dead sessions are excluded. Therefore FIC does
+   not claim discovery of an arbitrary startx session without its bound agent.
 2. Waits up to 10 seconds for a matching agent socket when XDG Autostart is
    still starting, retrying only a missing socket or a transient refused
    connection.
@@ -65,6 +73,12 @@ For policies that require graphical-session access, the daemon:
    after the bounded readiness wait, command failure, timeout, unsupported
    desktop, or incorrect value as a policy failure.
 
+Consequently, a native graphical logind session is discovered without an
+agent, but policy apply fails after the readiness timeout if its agent never
+appears. A graphical desktop inside `Type=tty` is discovered only through its
+exact session-bound agent endpoint. A plain TTY without that endpoint is not a
+candidate.
+
 `OSS/screenlock_timeout` currently implements this flow for GNOME, Unity, and
 Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,
 XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
@@ -73,9 +87,11 @@ a dedicated daemon-side backend is implemented.
 
 `OSS/disable_kde_lock_screen_media_controls` classifies every discovered
 candidate through its matching agent. A successfully identified non-KDE
-desktop is outside the policy scope. Failure to obtain the context, or an empty
-or explicitly unknown desktop identity, is a policy failure rather than a
-not-applicable result.
+desktop from the known GNOME, XFCE or FLY families is outside the policy scope.
+Failure to obtain the context, or an empty or unclassified desktop identity
+(for example `COSMIC` or `MATE`), is a policy failure rather than a
+not-applicable result. The not-applicable diagnostic is emitted only when
+classification and all processing succeeded and no KDE session was found.
 
 After installing or upgrading the package, existing graphical sessions must
 be restarted or the agent must be launched manually before session-dependent

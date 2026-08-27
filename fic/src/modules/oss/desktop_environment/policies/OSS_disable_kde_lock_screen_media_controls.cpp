@@ -45,8 +45,7 @@ bool OSS_disable_kde_lock_screen_media_controls::apply()
         return false;
     }
 
-    std::size_t applicableSessions = 0;
-    const bool success =
+    const kde_lock_screen_media_controls::ApplicabilityResult result =
         kde_lock_screen_media_controls::applyToKdeSessions(
             sessions,
             [](const UserSession& session,
@@ -66,16 +65,15 @@ bool OSS_disable_kde_lock_screen_media_controls::apply()
                         session.user + ", session " + session.id + ": " +
                         queryError,
                     logLevel::ERROR);
-            },
-            applicableSessions);
+            });
 
-    if (applicableSessions == 0) {
+    if (result.notApplicable()) {
         this->log(
             "No current KDE graphical sessions; "
             "disable_kde_lock_screen_media_controls is not applicable",
             logLevel::DEBUG);
     }
-    return success;
+    return result.success;
 }
 
 bool OSS_disable_kde_lock_screen_media_controls::applyKdeSession(

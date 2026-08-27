@@ -1,4 +1,5 @@
 #include "session/SessionCommandExecutor.h"
+#include "session/SessionCommandExecutorInternal.h"
 
 #include <pwd.h>
 
@@ -15,24 +16,34 @@ ProcessResult SessionCommandExecutor::execute(
         return result;
     }
 
-    const std::string runtimeDirectory = "/run/user/" + std::to_string(session.uid);
+    ProcessOptions options = session_command_executor_detail::buildOptions(
+        session, context, userInfo->pw_dir, userInfo->pw_gid);
+    return ProcessExecutor::execute(executable, arguments, options);
+}
+
+ProcessOptions session_command_executor_detail::buildOptions(
+    const UserSession& session,
+    const SessionContext& context,
+    const std::string& homeDirectory,
+    gid_t primaryGroup) {
+    const std::string runtimeDirectory =
+        "/run/user/" + std::to_string(session.uid);
     ProcessOptions options;
     options.timeout = std::chrono::seconds(5);
     options.clearEnvironment = true;
     options.uid = session.uid;
-    options.gid = userInfo->pw_gid;
+    options.gid = primaryGroup;
     options.user = session.user;
-    options.workingDirectory = userInfo->pw_dir;
+    options.workingDirectory = homeDirectory;
     options.environment = {
-        {"HOME", userInfo->pw_dir},
+        {"HOME", homeDirectory},
         {"USER", session.user},
         {"LOGNAME", session.user},
         {"PATH", "/usr/local/bin:/usr/bin:/bin"},
         {"XDG_RUNTIME_DIR", runtimeDirectory},
         {"DBUS_SESSION_BUS_ADDRESS", "unix:path=" + runtimeDirectory + "/bus"},
         {"XDG_SESSION_ID", session.id},
-        {"XDG_SESSION_TYPE", context.sessionType.empty()
-            ? session.type : context.sessionType},
+        {"XDG_SESSION_TYPE", context.sessionType},
         {"XDG_CURRENT_DESKTOP", context.desktop}
     };
     if (!context.display.empty()) {
@@ -42,5 +53,5 @@ ProcessResult SessionCommandExecutor::execute(
         options.environment.emplace_back("WAYLAND_DISPLAY", context.waylandDisplay);
     }
 
-    return ProcessExecutor::execute(executable, arguments, options);
+    return options;
 }

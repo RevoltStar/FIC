@@ -18,13 +18,8 @@ bool graphical_context(const AgentSessionContext& context) {
     if (context.desktop.empty()) {
         return false;
     }
-    if (context.sessionType == "wayland") {
-        return !context.waylandDisplay.empty();
-    }
-    if (context.sessionType == "x11" || context.sessionType == "mir") {
-        return !context.display.empty();
-    }
-    return false;
+    const auto type = effectiveGraphicalSessionType(context);
+    return type.has_value() && (*type == "x11" || *type == "wayland");
 }
 
 std::string describe_session(const LogindSessionInfo& info) {
@@ -196,14 +191,45 @@ bool SessionIdentityResolver::resolve(
     error = environment_prefix(environmentSessionId, environmentError) +
         "; the current process is not associated with a logind session, and ";
     if (graphicalCandidates.empty()) {
-        error += "no local graphical user session exists for uid " +
+        error += "no graphical user session exists for uid " +
             std::to_string(currentUid);
     } else {
-        error += "multiple local graphical sessions exist for uid " +
+        error += "multiple graphical sessions exist for uid " +
             std::to_string(currentUid) + ": " +
             join_session_ids(graphicalCandidates);
     }
     return false;
+}
+
+std::optional<std::string> effectiveGraphicalSessionType(
+    const AgentSessionContext& context) {
+    if (context.sessionType == "wayland") {
+        return context.waylandDisplay.empty()
+            ? std::nullopt : std::optional<std::string>("wayland");
+    }
+    if (context.sessionType == "x11") {
+        if (context.display.empty()) {
+            return std::nullopt;
+        }
+        return context.waylandDisplay.empty()
+            ? std::optional<std::string>("x11")
+            : std::optional<std::string>("wayland");
+    }
+    if (context.sessionType == "mir") {
+        return context.display.empty()
+            ? std::nullopt : std::optional<std::string>("mir");
+    }
+    if ((context.sessionType != "tty" && !context.sessionType.empty()) ||
+        context.desktop.empty()) {
+        return std::nullopt;
+    }
+    if (!context.waylandDisplay.empty()) {
+        return std::string("wayland");
+    }
+    if (!context.display.empty()) {
+        return std::string("x11");
+    }
+    return std::nullopt;
 }
 
 } // namespace fic::session_agent

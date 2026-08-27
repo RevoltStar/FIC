@@ -3,57 +3,64 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `5472f9d`.
+- Базовый commit задачи: `f9206955bf7e1f6687e886fa50a13c18dc35d6c7`.
 
 ## Current task
 
-- Исправление review-замечаний к discovery и session identity contract
-  `disable_kde_lock_screen_media_controls`.
+- Исправление review-замечаний к startx/session identity, discovery и
+  classification policy `disable_kde_lock_screen_media_controls`.
 
 ## Accepted architecture / invariants
 
-- Policy применяет `showMediaControls=false` ко всем текущим KDE-сессиям:
-  foreground/background, local/remote и безопасно идентифицированным startx.
-- Достоверно классифицированные non-KDE сессии находятся вне scope; context
-  query failure и пустой/UNKNOWN desktop identity дают общий failure.
-- Нет текущих KDE-сессий — успешный результат/not applicable; ошибка хотя бы
-  в одной KDE-сессии — общий failure.
-- KDE backend сохраняет запись и readback `kscreenlockerrc`, затем вызывает
-  существующий DBus reload.
+- Native graphical sessions обнаруживаются daemon через logind независимо от
+  agent; `Type=tty` startx входит в KDE-policy только через owned Unix socket
+  точной session и полную последующую identity/peer validation.
+- Session agent читает environment один раз, привязывает этот context к точной
+  logind-session и публикует canonical `x11`/`wayland` type. UID-only fallback
+  никогда не выбирает TTY.
+- Достоверные GNOME/XFCE/FLY находятся вне KDE-policy scope; пустой или
+  неизвестный desktop identity является classification failure.
+- `not applicable` допустим только при общем success и нуле KDE-сессий.
 - `screenlock_timeout` сохраняет прежний local native-graphical selector.
 
 ## Completed
 
-- Добавлен отдельный KDE-policy selector без `Active`; closing/dead исключены,
-  native graphical выбираются всегда, TTY — при наличии точного agent socket.
-- Session agent принимает remote sessions и прямой TTY/startx context только
-  при согласованных XDG session type, desktop и display; UID-only fallback не
-  выбирает TTY.
-- Daemon допускает `logind Type=tty` → agent `x11/wayland/mir` только с
-  соответствующим display и сохраняет socket owner/peer/session-id checks.
-- Документирован first-public-release contract: старый development `OSS.conf`
-  пересоздаётся, migration и schema bump не добавляются.
+- Raw `XDG_SESSION_TYPE=tty` или пустое значение с KDE desktop и matching
+  display канонизируется в `x11`/`wayland`; при обоих display выбран Wayland.
+- Agent IPC response сериализуется из того же проверенного context snapshot.
+- Daemon принимает для logind TTY только canonical x11/Wayland context и
+  передаёт effective type в environment KDE-команд.
+- TTY discovery требует `S_ISSOCK` и owner=session UID; regular file, symlink
+  и чужой socket не являются доказательством agent.
+- Applicability возвращает явный summary и fail-closed обрабатывает COSMIC,
+  MATE, CINNAMON и другие неизвестные DE.
+- Обновлены существующие unit/static tests и `docs/session-agent.md`.
 
 ## Changed areas
 
-- KDE policy applicability и localization;
-- `fic/src/session/SessionLocator*`, `SessionSelection*`, agent client/executor;
-- `fic-session-agent` identity resolver;
-- session-agent/upgrade documentation;
-- relevant CMake regression tests и static checks.
+- `fic-session-agent` identity resolver и IPC producer;
+- daemon session discovery/client/command environment;
+- KDE media-controls applicability и diagnostics;
+- relevant session/KDE/static tests;
+- `docs/session-agent.md`.
 
 ## Validation
 
-- Targeted build daemon, session agent и четырёх test targets — успешно.
-- Targeted CTest/static checks — успешно; socket client test отдельно успешно
-  вне sandbox.
-- Полная ALT p11 build — успешно.
-- Полный CTest из 53 tests: 48 passed, 4 environment-skipped, 1 existing unrelated
-  failure `ipc_protocol_validation_tests` (устаревшее ожидание reject API v1).
-- Все static checks прошли.
-- `git diff --check` — успешно.
+- Local ALT-profile daemon и affected test targets build — успешно; configure
+  использовал временный `/tmp` pkg-config stub только из-за отсутствующего
+  local `libsystemd-devel`, session-agent этим способом не заявлялся.
+- Session-agent socket test отдельно вне sandbox — успешно.
+- Чистый полный ALT p11 build в обновлённом штатном builder image — успешно,
+  включая `fic-session-agent` с `libsystemd 257`.
+- Targeted ALT p11 CTest: 6/6 успешно (`session_agent_static_checks`,
+  `platform_profile_static_checks`, client/resolver/selection/applicability).
+- Полный ALT p11 CTest: 47 passed, 1 skipped, 5 unrelated/environment failures
+  из 53. Failures: empty obsolete checkout directories; builder image без git;
+  existing device-enforcer fixture mismatch; existing IPC v1 assertion; test
+  group отсутствует в container passwd/group database.
+- `git diff --check` — успешно перед HANDOFF update; повторить финально.
 
 ## Remaining
 
 - Изменения текущей задачи не закоммичены.
-- Existing unrelated `ipc_protocol_validation_tests` failure не исправлялся.
+- Unrelated full-CTest failures не исправлялись.

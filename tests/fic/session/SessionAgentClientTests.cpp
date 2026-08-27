@@ -199,6 +199,31 @@ void testUnsafePathFailsImmediately(const fs::path& root) {
             "unsafe session agent path was retried instead of rejected");
 }
 
+void testDiscoveryRequiresOwnedSocket(const fs::path& root) {
+    const fs::path regular = root / "endpoint-file";
+    std::ofstream(regular) << "not a socket";
+    require(!session_agent_client_detail::safeEndpointPresent(
+                regular.string(), ::getuid()),
+            "regular file was accepted as a discovery endpoint");
+
+    const fs::path socket = root / "endpoint.sock";
+    const int socketFd = bindServer(socket);
+    require(session_agent_client_detail::safeEndpointPresent(
+                socket.string(), ::getuid()),
+            "owned socket was rejected as a discovery endpoint");
+    require(!session_agent_client_detail::safeEndpointPresent(
+                socket.string(), ::getuid() + 1),
+            "socket owned by a different uid was accepted");
+
+    const fs::path link = root / "endpoint-link";
+    fs::create_symlink(socket.filename(), link);
+    require(!session_agent_client_detail::safeEndpointPresent(
+                link.string(), ::getuid()),
+            "symlink was accepted as a discovery endpoint");
+    ::close(socketFd);
+    ::unlink(socket.c_str());
+}
+
 void testMismatchedSessionIdentityIsRejected(const fs::path& root) {
     const fs::path path = root / "mismatch.sock";
     const UserSession session = testSession();
@@ -235,6 +260,42 @@ void testStartxTtyGraphicalContextIsAccepted(const fs::path& root) {
 
     require(serverResult.error.empty(), serverResult.error);
     require(ok, "valid startx context was rejected: " + error);
+}
+
+void testWaylandInTtyCanonicalContextIsAccepted(const fs::path& root) {
+    const fs::path path = root / "startx-wayland.sock";
+    UserSession session = testSession();
+    session.type = "tty";
+    ServerResult serverResult;
+    std::thread server = startServerAfter(
+        path, session, 10ms, serverResult, {}, "wayland", "", "wayland-1");
+
+    SessionContext context;
+    std::string error;
+    const bool ok = session_agent_client_detail::queryAtPath(
+        session, path.string(), 2s, 20ms, context, error);
+    server.join();
+
+    require(serverResult.error.empty(), serverResult.error);
+    require(ok, "valid Wayland-in-TTY context was rejected: " + error);
+}
+
+void testRawTtyContextIsRejectedByDaemon(const fs::path& root) {
+    const fs::path path = root / "raw-tty.sock";
+    UserSession session = testSession();
+    session.type = "tty";
+    ServerResult serverResult;
+    std::thread server = startServerAfter(
+        path, session, 10ms, serverResult, {}, "tty", ":1", "");
+
+    SessionContext context;
+    std::string error;
+    const bool ok = session_agent_client_detail::queryAtPath(
+        session, path.string(), 2s, 20ms, context, error);
+    server.join();
+
+    require(serverResult.error.empty(), serverResult.error);
+    require(!ok, "raw tty IPC context bypassed canonicalization contract");
 }
 
 void testContradictoryTtyContextIsRejected(const fs::path& root) {
@@ -294,8 +355,11 @@ int main() {
         testRefusedSocketIsRetried(root);
         testMissingSocketTimesOut(root);
         testUnsafePathFailsImmediately(root);
+        testDiscoveryRequiresOwnedSocket(root);
         testMismatchedSessionIdentityIsRejected(root);
         testStartxTtyGraphicalContextIsAccepted(root);
+        testWaylandInTtyCanonicalContextIsAccepted(root);
+        testRawTtyContextIsRejectedByDaemon(root);
         testContradictoryTtyContextIsRejected(root);
         testContradictoryNativeSessionTypeIsRejected(root);
     } catch (const std::exception& exception) {

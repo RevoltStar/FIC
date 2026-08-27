@@ -1,6 +1,9 @@
 #include "modules/oss/desktop_environment/policies/KdeLockScreenMediaControlsApplicability.h"
 #include "session/SessionSelection.h"
+#include "session/SessionCommandExecutor.h"
+#include "session/SessionCommandExecutorInternal.h"
 
+#include <algorithm>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -48,12 +51,11 @@ void requireScenario(const std::vector<UserSession>& sessions,
                      bool expectedSuccess,
                      std::size_t expectedApplicable,
                      const std::vector<std::string>& expectedApplied,
-                     bool expectedContextFailure = false)
+                     std::size_t expectedClassificationFailures = 0)
 {
     std::vector<std::string> applied;
     std::vector<std::string> contextFailures;
-    std::size_t applicable = 0;
-    const bool success =
+    const auto result =
         kde_lock_screen_media_controls::applyToKdeSessions(
             sessions,
             [&desktops](const UserSession& candidate,
@@ -76,16 +78,33 @@ void requireScenario(const std::vector<UserSession>& sessions,
             [&contextFailures](const UserSession& candidate,
                                const std::string& error) {
                 contextFailures.push_back(candidate.id + ":" + error);
-            },
-            applicable);
+            });
 
-    require(success == expectedSuccess, "unexpected aggregate result");
-    require(applicable == expectedApplicable,
+    require(result.success == expectedSuccess, "unexpected aggregate result");
+    require(result.applicableSessions == expectedApplicable,
             "unexpected applicable KDE session count");
+    require(result.classificationFailures == expectedClassificationFailures,
+            "unexpected classification failure count");
+    require(result.notApplicable() ==
+                (expectedSuccess && expectedApplicable == 0),
+            "not-applicable summary contradicts aggregate result");
     require(applied == expectedApplied,
             "non-KDE session was applied or KDE session was omitted");
-    require((!contextFailures.empty()) == expectedContextFailure,
+    require(contextFailures.size() == expectedClassificationFailures,
             "unexpected context-query failure reporting");
+}
+
+void testStartxCommandUsesCanonicalType()
+{
+    UserSession startx{"tty2", 1000, "test-user", "tty"};
+    SessionContext context{"tty2", "KDE", "x11", ":1", ""};
+    const ProcessOptions options = session_command_executor_detail::buildOptions(
+        startx, context, "/home/test-user", 1000);
+    const auto sessionType = std::find(
+        options.environment.begin(), options.environment.end(),
+        std::pair<std::string, std::string>{"XDG_SESSION_TYPE", "x11"});
+    require(sessionType != options.environment.end(),
+            "startx command inherited logind Type=tty");
 }
 
 } // namespace
@@ -122,17 +141,31 @@ int main()
         {session("unavailable")},
         {},
         {},
-        false, 0, {}, true);
+        false, 0, {}, 1);
     requireScenario(
         {session("unknown")},
         {{"unknown", ""}},
         {},
-        false, 0, {}, true);
+        false, 0, {}, 1);
     requireScenario(
         {session("unknown-literal")},
         {{"unknown-literal", "UNKNOWN"}},
         {},
-        false, 0, {}, true);
+        false, 0, {}, 1);
+    for (const std::string desktop : {"COSMIC", "MATE", "CINNAMON", "SOME_NEW_DE"}) {
+        requireScenario(
+            {session("unclassified")},
+            {{"unclassified", desktop}},
+            {},
+            false, 0, {}, 1);
+    }
+    for (const std::string desktop : {"GNOME", "XFCE", "FLY"}) {
+        requireScenario(
+            {session("known-non-kde")},
+            {{"known-non-kde", desktop}},
+            {},
+            true, 0, {});
+    }
     requireScenario(
         {
             selectedCandidate("foreground", "wayland", "active", false, false),
@@ -156,5 +189,6 @@ int main()
         {{"startx", "KDE"}},
         {{"startx", true}},
         true, 1, {"startx"});
+    testStartxCommandUsesCanonicalType();
     return 0;
 }

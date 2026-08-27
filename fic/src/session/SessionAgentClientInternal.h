@@ -8,6 +8,8 @@
 
 namespace session_agent_client_detail {
 
+bool safeEndpointPresent(const std::string& path, uid_t expectedUid);
+
 bool validateContextIdentity(const UserSession& session,
                              const SessionContext& context,
                              std::string& error);

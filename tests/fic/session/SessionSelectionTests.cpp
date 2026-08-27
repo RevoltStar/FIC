@@ -46,6 +46,9 @@ int main()
             "TTY session with a session-bound agent was omitted");
     require(!session_selection::kdeMediaControlsCandidate(startx, false),
             "plain TTY session without an agent became a candidate");
+    require(!session_selection::kdeMediaControlsCandidate(
+                properties("unspecified", "online"), true),
+            "non-graphical non-TTY session became an agent-backed candidate");
 
     require(!session_selection::kdeMediaControlsCandidate(
                 properties("wayland", "closing"), true),
