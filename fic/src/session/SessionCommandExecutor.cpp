@@ -31,7 +31,8 @@ ProcessResult SessionCommandExecutor::execute(
         {"XDG_RUNTIME_DIR", runtimeDirectory},
         {"DBUS_SESSION_BUS_ADDRESS", "unix:path=" + runtimeDirectory + "/bus"},
         {"XDG_SESSION_ID", session.id},
-        {"XDG_SESSION_TYPE", session.type},
+        {"XDG_SESSION_TYPE", context.sessionType.empty()
+            ? session.type : context.sessionType},
         {"XDG_CURRENT_DESKTOP", context.desktop}
     };
     if (!context.display.empty()) {

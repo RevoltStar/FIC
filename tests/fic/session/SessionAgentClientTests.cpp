@@ -59,8 +59,12 @@ std::thread startServerAfter(
     const UserSession& session,
     std::chrono::milliseconds delay,
     ServerResult& result,
-    const std::string& responseSessionId = {}) {
-    return std::thread([path, session, delay, &result, responseSessionId]() {
+    const std::string& responseSessionId = {},
+    const std::string& responseSessionType = {},
+    const std::string& display = {},
+    const std::string& waylandDisplay = "wayland-0") {
+    return std::thread([path, session, delay, &result, responseSessionId,
+                        responseSessionType, display, waylandDisplay]() {
         try {
             std::this_thread::sleep_for(delay);
             const int serverFd = bindServer(path);
@@ -94,9 +98,10 @@ std::thread startServerAfter(
                 {"session_id", responseSessionId.empty()
                     ? session.id : responseSessionId},
                 {"desktop", "KDE"},
-                {"session_type", session.type},
-                {"display", ""},
-                {"wayland_display", "wayland-0"}
+                {"session_type", responseSessionType.empty()
+                    ? session.type : responseSessionType},
+                {"display", display},
+                {"wayland_display", waylandDisplay}
             };
             if (!fic::ipc::write_all(
                     clientFd, response.dump() + "\n", ipcError)) {
@@ -213,6 +218,64 @@ void testMismatchedSessionIdentityIsRejected(const fs::path& root) {
                 std::string::npos,
             "session mismatch diagnostic is incorrect: " + error);
 }
+
+void testStartxTtyGraphicalContextIsAccepted(const fs::path& root) {
+    const fs::path path = root / "startx.sock";
+    UserSession session = testSession();
+    session.type = "tty";
+    ServerResult serverResult;
+    std::thread server = startServerAfter(
+        path, session, 10ms, serverResult, {}, "x11", ":1", "");
+
+    SessionContext context;
+    std::string error;
+    const bool ok = session_agent_client_detail::queryAtPath(
+        session, path.string(), 2s, 20ms, context, error);
+    server.join();
+
+    require(serverResult.error.empty(), serverResult.error);
+    require(ok, "valid startx context was rejected: " + error);
+}
+
+void testContradictoryTtyContextIsRejected(const fs::path& root) {
+    const fs::path path = root / "tty-mismatch.sock";
+    UserSession session = testSession();
+    session.type = "tty";
+    ServerResult serverResult;
+    std::thread server = startServerAfter(
+        path, session, 10ms, serverResult, {}, "x11", "", "");
+
+    SessionContext context;
+    std::string error;
+    const bool ok = session_agent_client_detail::queryAtPath(
+        session, path.string(), 2s, 20ms, context, error);
+    server.join();
+
+    require(serverResult.error.empty(), serverResult.error);
+    require(!ok, "TTY context without DISPLAY was accepted");
+    require(error.find("consistent graphical") != std::string::npos,
+            "TTY mismatch diagnostic is incorrect: " + error);
+}
+
+void testContradictoryNativeSessionTypeIsRejected(const fs::path& root) {
+    const fs::path path = root / "native-type-mismatch.sock";
+    const UserSession session = testSession();
+    ServerResult serverResult;
+    std::thread server = startServerAfter(
+        path, session, 10ms, serverResult, {}, "x11", ":2", "");
+
+    SessionContext context;
+    std::string error;
+    const bool ok = session_agent_client_detail::queryAtPath(
+        session, path.string(), 2s, 20ms, context, error);
+    server.join();
+
+    require(serverResult.error.empty(), serverResult.error);
+    require(!ok, "contradictory native session type was accepted");
+    require(error.find("does not match the logind session") !=
+                std::string::npos,
+            "native session mismatch diagnostic is incorrect: " + error);
+}
 } // namespace
 
 int main() {
@@ -232,6 +295,9 @@ int main() {
         testMissingSocketTimesOut(root);
         testUnsafePathFailsImmediately(root);
         testMismatchedSessionIdentityIsRejected(root);
+        testStartxTtyGraphicalContextIsAccepted(root);
+        testContradictoryTtyContextIsRejected(root);
+        testContradictoryNativeSessionTypeIsRejected(root);
     } catch (const std::exception& exception) {
         fs::remove_all(root);
         if (std::string(exception.what()).find("Operation not permitted") !=

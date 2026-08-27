@@ -36,10 +36,11 @@ bool OSS_disable_kde_lock_screen_media_controls::apply()
 {
     std::vector<UserSession> sessions;
     std::string error;
-    if (!SessionLocator::activeGraphicalSessions(
+    if (!SessionLocator::kdeMediaControlsCandidates(
             executables_, sessions, error)) {
         this->log(
-            "Failed to enumerate active graphical sessions: " + error,
+            "Failed to enumerate KDE media-controls session candidates: " +
+                error,
             logLevel::ERROR);
         return false;
     }
@@ -58,11 +59,19 @@ bool OSS_disable_kde_lock_screen_media_controls::apply()
                    const SessionContext& context) {
                 return applyKdeSession(session, context);
             },
+            [this](const UserSession& session,
+                   const std::string& queryError) {
+                this->log(
+                    "Failed to classify desktop environment for user " +
+                        session.user + ", session " + session.id + ": " +
+                        queryError,
+                    logLevel::ERROR);
+            },
             applicableSessions);
 
     if (applicableSessions == 0) {
         this->log(
-            "No active KDE graphical sessions; "
+            "No current KDE graphical sessions; "
             "disable_kde_lock_screen_media_controls is not applicable",
             logLevel::DEBUG);
     }

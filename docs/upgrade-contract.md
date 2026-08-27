@@ -22,6 +22,13 @@ Schema 1 is the first and only supported policy configuration and device DB
 schema. There are no supported earlier schemas and no automatic import or
 conversion of development state.
 
+This also applies to the development-only OSS policy key renamed from
+`disable_videodisplay_when_locked` to
+`disable_kde_lock_screen_media_controls`: an existing development `OSS.conf`
+must be archived/removed and recreated from the packaged defaults. The rename
+does not change `CONFIG_SCHEMA_VERSION` and does not introduce a migration for
+pre-release state.
+
 A fresh package installation:
 
 1. copies an immutable default only when the corresponding working config is

@@ -14,6 +14,13 @@ struct LogindSessionInfo {
     std::string type;
 };
 
+struct AgentSessionContext {
+    std::string sessionType;
+    std::string desktop;
+    std::string display;
+    std::string waylandDisplay;
+};
+
 enum class ProcessSessionResult {
     Found,
     NotAssociated,
@@ -41,6 +48,7 @@ class SessionIdentityResolver {
 public:
     static bool resolve(
         const std::string& environmentSessionId,
+        const AgentSessionContext& agentContext,
         uid_t currentUid,
         const LogindSessionProvider& provider,
         std::string& sessionId,
@@ -57,6 +65,8 @@ private:
 
     static ValidationResult validateSession(
         const std::string& sessionId,
+        bool allowGraphicalContextForTty,
+        const AgentSessionContext& agentContext,
         uid_t currentUid,
         const LogindSessionProvider& provider,
         std::string& error);

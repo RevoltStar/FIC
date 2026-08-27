@@ -14,10 +14,13 @@ using ContextQuery = std::function<bool(
     const UserSession&, SessionContext&, std::string&)>;
 using SessionApply = std::function<bool(
     const UserSession&, const SessionContext&)>;
+using ContextFailure = std::function<void(
+    const UserSession&, const std::string&)>;
 
 bool applyToKdeSessions(const std::vector<UserSession>& sessions,
                         const ContextQuery& queryContext,
                         const SessionApply& applySession,
+                        const ContextFailure& reportContextFailure,
                         std::size_t& applicableSessions);
 
 } // namespace kde_lock_screen_media_controls

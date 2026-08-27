@@ -181,7 +181,7 @@
 
 [module:OSS][policy:disable_autologin][description]=Disable automatic login
 [module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
-[module:OSS][policy:disable_kde_lock_screen_media_controls][description]=Disables multimedia playback controls on the lock screen in every active KDE session. Sessions using other desktop environments are outside this policy's scope and do not affect its result. The policy does not stop media playback.
+[module:OSS][policy:disable_kde_lock_screen_media_controls][description]=Disables multimedia playback controls on the lock screen in every current graphical KDE session, including background and remote sessions. Reliably identified sessions using other desktop environments are outside this policy's scope and do not affect its result. The policy does not stop media playback.
 [module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
 [module:OSS][policy:lock_on_tty_switch][description]=This policy is not supported yet. If enabled, applying it fails instead of reporting a false success.
 [module:OSS][policy:lock_on_tty_switch][message:not_implemented]=Locking the screen on TTY switch is not implemented yet

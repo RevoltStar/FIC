@@ -150,10 +150,19 @@ int main(int argc, char* argv[]) {
         return 0;
     }
     fic::session_agent::SystemdLogindSessionProvider logindProvider;
+    const fic::session_agent::AgentSessionContext agentContext{
+        environment_value("XDG_SESSION_TYPE"),
+        environment_value("XDG_CURRENT_DESKTOP").empty()
+            ? environment_value("DESKTOP_SESSION")
+            : environment_value("XDG_CURRENT_DESKTOP"),
+        environment_value("DISPLAY"),
+        environment_value("WAYLAND_DISPLAY")
+    };
     std::string sessionId;
     std::string sessionError;
     if (!fic::session_agent::SessionIdentityResolver::resolve(
             environment_value("XDG_SESSION_ID"),
+            agentContext,
             ::getuid(),
             logindProvider,
             sessionId,

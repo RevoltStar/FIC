@@ -7,6 +7,7 @@ namespace kde_lock_screen_media_controls {
 bool applyToKdeSessions(const std::vector<UserSession>& sessions,
                         const ContextQuery& queryContext,
                         const SessionApply& applySession,
+                        const ContextFailure& reportContextFailure,
                         std::size_t& applicableSessions)
 {
     applicableSessions = 0;
@@ -15,6 +16,17 @@ bool applyToKdeSessions(const std::vector<UserSession>& sessions,
         SessionContext context;
         std::string error;
         if (!queryContext(session, context, error)) {
+            reportContextFailure(session, error);
+            success = false;
+            continue;
+        }
+        const std::string desktop =
+            DesktopEnvironmentBackend::normalizeName(context.desktop);
+        if (desktop.empty() || desktop == "UNKNOWN") {
+            reportContextFailure(
+                session, "session agent did not provide a reliable desktop "
+                    "identity");
+            success = false;
             continue;
         }
         if (DesktopEnvironmentBackend::kindFromName(context.desktop) !=

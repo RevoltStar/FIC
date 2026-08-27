@@ -153,6 +153,7 @@ add_executable(kde_lock_screen_media_controls_applicability_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/KdeLockScreenMediaControlsApplicability.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionSelection.cpp
 )
 target_include_directories(kde_lock_screen_media_controls_applicability_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -212,6 +213,15 @@ target_include_directories(session_identity_resolver_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic-session-agent/src
 )
 add_test(NAME session_identity_resolver_tests COMMAND session_identity_resolver_tests)
+
+add_executable(session_selection_tests
+    fic/session/SessionSelectionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionSelection.cpp
+)
+target_include_directories(session_selection_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME session_selection_tests COMMAND session_selection_tests)
 
 add_executable(device_tree_revision_tests
     fic-dick/device/DeviceTreeRevisionTests.cpp

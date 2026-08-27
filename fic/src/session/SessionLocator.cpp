@@ -1,4 +1,6 @@
 #include "session/SessionLocator.h"
+#include "session/SessionAgentClient.h"
+#include "session/SessionSelection.h"
 
 #include <fic/core/process/ProcessExecutor.h>
 
@@ -6,6 +8,7 @@
 #include <locale>
 #include <sstream>
 #include <unordered_map>
+#include <sys/stat.h>
 
 namespace {
 bool valid_session_id(const std::string& id) {
@@ -34,10 +37,25 @@ std::unordered_map<std::string, std::string> parse_properties(const std::string&
 }
 } // namespace
 
-bool SessionLocator::activeGraphicalSessions(
+namespace {
+
+enum class SelectionMode {
+    ActiveGraphical,
+    KdeMediaControls
+};
+
+bool agent_endpoint_present(const UserSession& session)
+{
+    struct stat info {};
+    return ::lstat(SessionAgentClient::socketPath(session).c_str(), &info) == 0;
+}
+
+bool enumerate_sessions(
     const fic::platform::PlatformExecutableResolver& executables,
+    SelectionMode mode,
     std::vector<UserSession>& sessions,
-    std::string& error) {
+    std::string& error)
+{
     sessions.clear();
     std::filesystem::path loginctl;
     if (!executables.resolve(
@@ -47,9 +65,7 @@ bool SessionLocator::activeGraphicalSessions(
     }
 
     ProcessResult listResult = ProcessExecutor::execute(
-        loginctl.string(),
-        {"list-sessions", "--no-legend", "--no-pager"}
-    );
+        loginctl.string(), {"list-sessions", "--no-legend", "--no-pager"});
     if (!listResult.success()) {
         error = "loginctl list-sessions failed: " + listResult.standardError;
         return false;
@@ -60,43 +76,50 @@ bool SessionLocator::activeGraphicalSessions(
     size_t parsedSessionCount = 0;
     while (std::getline(lines, line)) {
         std::istringstream fields(line);
-        // loginctl output is a machine-readable table. Parsing its numeric UID
-        // must not depend on the daemon's UI locale (for example ru_RU.UTF-8).
         fields.imbue(std::locale::classic());
-        UserSession session;
+        SessionProperties properties;
         unsigned long uid = 0;
-        if (!(fields >> session.id >> uid >> session.user) || !valid_session_id(session.id)) {
+        if (!(fields >> properties.session.id >> uid >> properties.session.user) ||
+            !valid_session_id(properties.session.id)) {
             continue;
         }
         ++parsedSessionCount;
-        session.uid = static_cast<uid_t>(uid);
+        properties.session.uid = static_cast<uid_t>(uid);
 
+        std::vector<std::string> showArguments{
+            "show-session", properties.session.id,
+            "--property=Class",
+            "--property=Remote"
+        };
+        if (mode == SelectionMode::KdeMediaControls) {
+            showArguments.push_back("--property=State");
+        }
+        showArguments.insert(
+            showArguments.end(), {"--property=Type", "--no-pager"});
         ProcessResult showResult = ProcessExecutor::execute(
-            loginctl.string(),
-            {
-                "show-session", session.id,
-                "--property=Class",
-                "--property=Active",
-                "--property=Type",
-                "--no-pager"
-            }
-        );
+            loginctl.string(), showArguments);
         if (!showResult.success()) {
-            error = "loginctl show-session failed for session " + session.id + ": " +
-                    showResult.standardError;
+            error = "loginctl show-session failed for session " +
+                properties.session.id + ": " + showResult.standardError;
             return false;
         }
 
-        const auto properties = parse_properties(showResult.standardOutput);
-        const auto value = [&properties](const std::string& name) {
-            const auto it = properties.find(name);
-            return it == properties.end() ? std::string() : it->second;
+        const auto values = parse_properties(showResult.standardOutput);
+        const auto value = [&values](const std::string& name) {
+            const auto it = values.find(name);
+            return it == values.end() ? std::string() : it->second;
         };
+        properties.session.type = value("Type");
+        properties.sessionClass = value("Class");
+        properties.state = value("State");
+        properties.remote = value("Remote") == "yes";
 
-        session.type = value("Type");
-        const bool graphical = session.type == "x11" || session.type == "wayland" || session.type == "mir";
-        if (value("Class") == "user" && value("Active") == "yes" && graphical) {
-            sessions.push_back(session);
+        const bool selected = mode == SelectionMode::ActiveGraphical
+            ? session_selection::activeGraphicalSession(properties)
+            : session_selection::kdeMediaControlsCandidate(
+                properties, agent_endpoint_present(properties.session));
+        if (selected) {
+            sessions.push_back(properties.session);
         }
     }
 
@@ -105,4 +128,23 @@ bool SessionLocator::activeGraphicalSessions(
         return false;
     }
     return true;
+}
+
+} // namespace
+
+bool SessionLocator::activeGraphicalSessions(
+    const fic::platform::PlatformExecutableResolver& executables,
+    std::vector<UserSession>& sessions,
+    std::string& error) {
+    return enumerate_sessions(
+        executables, SelectionMode::ActiveGraphical, sessions, error);
+}
+
+bool SessionLocator::kdeMediaControlsCandidates(
+    const fic::platform::PlatformExecutableResolver& executables,
+    std::vector<UserSession>& sessions,
+    std::string& error)
+{
+    return enumerate_sessions(
+        executables, SelectionMode::KdeMediaControls, sessions, error);
 }

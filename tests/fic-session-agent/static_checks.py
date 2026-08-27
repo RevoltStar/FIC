@@ -41,6 +41,13 @@ require("Exec=@FIC_PRIVATE_BINDIR@/fic-session-agent" in desktop,
         "session agent is no longer launched directly by per-session XDG Autostart")
 require('"session-" + sessionId + ".sock"' in main_source,
         "session agent socket is no longer keyed by the resolved session id")
+require("info.remote ||" not in resolver,
+        "session agent still rejects every remote logind session")
+require("allowGraphicalContextForTty" in resolver and
+        "graphical_context(agentContext)" in resolver,
+        "session agent does not validate the session-bound startx context")
+require("candidate, false, agentContext" in resolver,
+        "UID-only fallback can ambiguously select a TTY session")
 
 for dockerfile, dependency in (
     ("packaging/deb/Dockerfile", "libsystemd-dev"),

@@ -10,6 +10,7 @@ using fic::session_agent::LogindSessionInfo;
 using fic::session_agent::LogindSessionProvider;
 using fic::session_agent::ProcessSessionResult;
 using fic::session_agent::SessionIdentityResolver;
+using fic::session_agent::AgentSessionContext;
 
 void require(bool condition, const std::string& message) {
     if (!condition) {
@@ -86,9 +87,11 @@ bool resolve(
     uid_t uid,
     const FakeLogind& logind,
     std::string& sessionId,
-    std::string& error) {
+    std::string& error,
+    const AgentSessionContext& context =
+        {"wayland", "KDE", "", "wayland-0"}) {
     return SessionIdentityResolver::resolve(
-        environmentSession, uid, logind, sessionId, error);
+        environmentSession, context, uid, logind, sessionId, error);
 }
 
 void testValidEnvironmentSessionIsPreferred() {
@@ -209,13 +212,66 @@ void requireProcessSessionRejectedWithoutEnumeration(
 }
 
 void testTtyProcessSessionFailsWithoutEnumeration() {
-    requireProcessSessionRejectedWithoutEnumeration(
-        {1000, "user", false, "tty"}, "tty");
+    FakeLogind logind;
+    logind.processSession = "6";
+    logind.sessions["6"] = {1000, "user", false, "tty"};
+    std::string sessionId;
+    std::string error;
+    require(!resolve("", 1000, logind, sessionId, error, {}),
+            "TTY without graphical context unexpectedly succeeded");
+    require(logind.enumerationLookups == 0,
+            "TTY process session incorrectly used UID fallback");
 }
 
-void testRemoteProcessSessionFailsWithoutEnumeration() {
-    requireProcessSessionRejectedWithoutEnumeration(
-        {1000, "user", true, "tty"}, "remote");
+void testRemoteGraphicalProcessSessionSucceeds() {
+    FakeLogind logind;
+    logind.processSession = "xrdp";
+    logind.sessions["xrdp"] = {1000, "user", true, "x11"};
+    std::string sessionId;
+    std::string error;
+    require(resolve(
+                "", 1000, logind, sessionId, error,
+                {"x11", "KDE", ":10", ""}),
+            "remote XRDP session was rejected: " + error);
+    require(sessionId == "xrdp", "wrong XRDP session was selected");
+}
+
+void testStartxTtyProcessSessionSucceeds() {
+    FakeLogind logind;
+    logind.processSession = "tty2";
+    logind.sessions["tty2"] = {1000, "user", false, "tty"};
+    std::string sessionId;
+    std::string error;
+    require(resolve(
+                "", 1000, logind, sessionId, error,
+                {"x11", "KDE", ":1", ""}),
+            "startx KDE context was rejected: " + error);
+    require(sessionId == "tty2", "startx was bound to the wrong session");
+}
+
+void testStartxTtyRequiresConsistentDisplay() {
+    FakeLogind logind;
+    logind.processSession = "tty2";
+    logind.sessions["tty2"] = {1000, "user", false, "tty"};
+    std::string sessionId;
+    std::string error;
+    require(!resolve(
+                "", 1000, logind, sessionId, error,
+                {"x11", "KDE", "", ""}),
+            "startx context without DISPLAY unexpectedly succeeded");
+}
+
+void testTtyIsNotSelectedByUidFallback() {
+    FakeLogind logind;
+    logind.processResult = ProcessSessionResult::NotAssociated;
+    logind.enumeratedSessions = {"tty2"};
+    logind.sessions["tty2"] = {1000, "user", false, "tty"};
+    std::string sessionId;
+    std::string error;
+    require(!resolve(
+                "", 1000, logind, sessionId, error,
+                {"x11", "KDE", ":1", ""}),
+            "unbound agent ambiguously selected a TTY session");
 }
 
 void testForeignProcessSessionFailsWithoutEnumeration() {
@@ -321,7 +377,10 @@ int main() {
     testNotAssociatedWithTwoGraphicalSessionsFails();
     testAltGnomeManagerSshAndWaylandSelectsOnlyWayland();
     testTtyProcessSessionFailsWithoutEnumeration();
-    testRemoteProcessSessionFailsWithoutEnumeration();
+    testRemoteGraphicalProcessSessionSucceeds();
+    testStartxTtyProcessSessionSucceeds();
+    testStartxTtyRequiresConsistentDisplay();
+    testTtyIsNotSelectedByUidFallback();
     testForeignProcessSessionFailsWithoutEnumeration();
     testHardProcessLookupErrorFailsWithoutEnumeration();
     testActiveStateDoesNotResolveAmbiguity();

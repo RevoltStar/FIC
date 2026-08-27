@@ -14,6 +14,19 @@ bool graphical_type(const std::string& type) {
     return type == "x11" || type == "wayland" || type == "mir";
 }
 
+bool graphical_context(const AgentSessionContext& context) {
+    if (context.desktop.empty()) {
+        return false;
+    }
+    if (context.sessionType == "wayland") {
+        return !context.waylandDisplay.empty();
+    }
+    if (context.sessionType == "x11" || context.sessionType == "mir") {
+        return !context.display.empty();
+    }
+    return false;
+}
+
 std::string describe_session(const LogindSessionInfo& info) {
     return "Class=" + info.sessionClass +
         ", Remote=" + (info.remote ? "yes" : "no") +
@@ -55,6 +68,8 @@ bool SessionIdentityResolver::validSessionId(const std::string& sessionId) {
 
 SessionIdentityResolver::ValidationResult SessionIdentityResolver::validateSession(
     const std::string& sessionId,
+    bool allowGraphicalContextForTty,
+    const AgentSessionContext& agentContext,
     uid_t currentUid,
     const LogindSessionProvider& provider,
     std::string& error) {
@@ -73,9 +88,17 @@ SessionIdentityResolver::ValidationResult SessionIdentityResolver::validateSessi
             " does not belong to the current uid";
         return ValidationResult::NotCandidate;
     }
-    if (info.sessionClass != "user" || info.remote || !graphical_type(info.type)) {
+    if (info.sessionClass != "user") {
         error = "logind session " + sessionId +
-            " is not a local graphical user session (" +
+            " is not a user session (" +
+            describe_session(info) + ")";
+        return ValidationResult::NotCandidate;
+    }
+    if (!graphical_type(info.type) &&
+        !(allowGraphicalContextForTty && info.type == "tty" &&
+          graphical_context(agentContext))) {
+        error = "logind session " + sessionId +
+            " is not graphical and has no matching graphical agent context (" +
             describe_session(info) + ")";
         return ValidationResult::NotCandidate;
     }
@@ -85,6 +108,7 @@ SessionIdentityResolver::ValidationResult SessionIdentityResolver::validateSessi
 
 bool SessionIdentityResolver::resolve(
     const std::string& environmentSessionId,
+    const AgentSessionContext& agentContext,
     uid_t currentUid,
     const LogindSessionProvider& provider,
     std::string& sessionId,
@@ -93,6 +117,8 @@ bool SessionIdentityResolver::resolve(
     if (!environmentSessionId.empty()) {
         if (validateSession(
                 environmentSessionId,
+                true,
+                agentContext,
                 currentUid,
                 provider,
                 environmentError) == ValidationResult::Valid) {
@@ -116,6 +142,8 @@ bool SessionIdentityResolver::resolve(
     if (processResult == ProcessSessionResult::Found) {
         if (validateSession(
                 processSessionId,
+                true,
+                agentContext,
                 currentUid,
                 provider,
                 processError) != ValidationResult::Valid) {
@@ -145,7 +173,8 @@ bool SessionIdentityResolver::resolve(
     for (const std::string& candidate : userSessions) {
         std::string candidateError;
         const ValidationResult validation = validateSession(
-            candidate, currentUid, provider, candidateError);
+            candidate, false, agentContext, currentUid, provider,
+            candidateError);
         if (validation == ValidationResult::Error) {
             error = environment_prefix(environmentSessionId, environmentError) +
                 "; the current process is not associated with a logind session, "

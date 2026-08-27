@@ -8,6 +8,10 @@
 
 namespace session_agent_client_detail {
 
+bool validateContextIdentity(const UserSession& session,
+                             const SessionContext& context,
+                             std::string& error);
+
 bool queryAtPath(
     const UserSession& session,
     const std::string& path,

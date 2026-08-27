@@ -278,6 +278,12 @@ def main():
     session_locator = (
         root / "fic/src/session/SessionLocator.cpp"
     ).read_text(encoding="utf-8")
+    session_selection = (
+        root / "fic/src/session/SessionSelection.cpp"
+    ).read_text(encoding="utf-8")
+    upgrade_contract = (
+        root / "docs/upgrade-contract.md"
+    ).read_text(encoding="utf-8")
     kde_media_policy_source = (
         root / "fic/src/modules/oss/desktop_environment/policies/"
         "OSS_disable_kde_lock_screen_media_controls.cpp"
@@ -349,9 +355,14 @@ def main():
         )
     require(
         "disable_videodisplay_when_locked" not in policy_registry + oss_config and
-        '"--property=Active"' in session_locator and
-        'value("Active") == "yes"' in session_locator and
-        'value("Remote")' not in session_locator,
+        "disable_videodisplay_when_locked" in upgrade_contract and
+        "kdeMediaControlsCandidates" in kde_media_policy_source and
+        "SelectionMode::ActiveGraphical" in session_locator and
+        "SelectionMode::KdeMediaControls" in session_locator and
+        "agentEndpointPresent" in session_selection and
+        'properties.state == "closing"' in session_selection and
+        'properties.state == "dead"' in session_selection and
+        '"--property=Active"' not in session_locator,
         "KDE media-controls policy still has legacy naming/session filtering",
     )
 

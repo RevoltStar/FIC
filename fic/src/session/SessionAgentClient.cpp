@@ -116,6 +116,37 @@ int connect_when_ready(
 }
 } // namespace
 
+bool session_agent_client_detail::validateContextIdentity(
+    const UserSession& session,
+    const SessionContext& context,
+    std::string& error)
+{
+    if (context.sessionId != session.id) {
+        error = "session agent context does not match the logind session";
+        return false;
+    }
+
+    if (session.type == "tty") {
+        const bool graphicalContext =
+            (context.sessionType == "wayland" &&
+             !context.waylandDisplay.empty()) ||
+            ((context.sessionType == "x11" ||
+              context.sessionType == "mir") && !context.display.empty());
+        if (!graphicalContext) {
+            error = "TTY logind session does not have a consistent graphical "
+                "session agent context";
+            return false;
+        }
+    } else if (!context.sessionType.empty() &&
+               context.sessionType != session.type) {
+        error = "session agent context does not match the logind session";
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 std::string SessionAgentClient::socketPath(const UserSession& session) {
     return "/run/user/" + std::to_string(session.uid) + "/fic/session-" + session.id + ".sock";
 }
@@ -185,10 +216,5 @@ bool session_agent_client_detail::queryAtPath(
         return false;
     }
 
-    if (context.sessionId != session.id ||
-        (!context.sessionType.empty() && context.sessionType != session.type)) {
-        error = "session agent context does not match the logind session";
-        return false;
-    }
-    return true;
+    return validateContextIdentity(session, context, error);
 }

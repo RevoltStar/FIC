@@ -13,6 +13,11 @@ public:
         const fic::platform::PlatformExecutableResolver& executables,
         std::vector<UserSession>& sessions,
         std::string& error);
+
+    static bool kdeMediaControlsCandidates(
+        const fic::platform::PlatformExecutableResolver& executables,
+        std::vector<UserSession>& sessions,
+        std::string& error);
 };
 
 #endif // SESSION_LOCATOR_H

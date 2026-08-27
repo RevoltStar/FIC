@@ -1,4 +1,5 @@
 #include "modules/oss/desktop_environment/policies/KdeLockScreenMediaControlsApplicability.h"
+#include "session/SessionSelection.h"
 
 #include <map>
 #include <stdexcept>
@@ -23,14 +24,34 @@ UserSession session(const std::string& id)
     return result;
 }
 
+UserSession selectedCandidate(const std::string& id,
+                              const std::string& type,
+                              const std::string& state,
+                              bool remote,
+                              bool agentEndpointPresent)
+{
+    SessionProperties properties;
+    properties.session = session(id);
+    properties.session.type = type;
+    properties.sessionClass = "user";
+    properties.state = state;
+    properties.remote = remote;
+    require(session_selection::kdeMediaControlsCandidate(
+                properties, agentEndpointPresent),
+            "expected session candidate was not discovered: " + id);
+    return properties.session;
+}
+
 void requireScenario(const std::vector<UserSession>& sessions,
                      const std::map<std::string, std::string>& desktops,
                      const std::map<std::string, bool>& applyResults,
                      bool expectedSuccess,
                      std::size_t expectedApplicable,
-                     const std::vector<std::string>& expectedApplied)
+                     const std::vector<std::string>& expectedApplied,
+                     bool expectedContextFailure = false)
 {
     std::vector<std::string> applied;
+    std::vector<std::string> contextFailures;
     std::size_t applicable = 0;
     const bool success =
         kde_lock_screen_media_controls::applyToKdeSessions(
@@ -52,6 +73,10 @@ void requireScenario(const std::vector<UserSession>& sessions,
                 const auto found = applyResults.find(candidate.id);
                 return found != applyResults.end() && found->second;
             },
+            [&contextFailures](const UserSession& candidate,
+                               const std::string& error) {
+                contextFailures.push_back(candidate.id + ":" + error);
+            },
             applicable);
 
     require(success == expectedSuccess, "unexpected aggregate result");
@@ -59,6 +84,8 @@ void requireScenario(const std::vector<UserSession>& sessions,
             "unexpected applicable KDE session count");
     require(applied == expectedApplied,
             "non-KDE session was applied or KDE session was omitted");
+    require((!contextFailures.empty()) == expectedContextFailure,
+            "unexpected context-query failure reporting");
 }
 
 } // namespace
@@ -91,5 +118,43 @@ int main()
         {},
         true, 0, {});
     requireScenario({}, {}, {}, true, 0, {});
+    requireScenario(
+        {session("unavailable")},
+        {},
+        {},
+        false, 0, {}, true);
+    requireScenario(
+        {session("unknown")},
+        {{"unknown", ""}},
+        {},
+        false, 0, {}, true);
+    requireScenario(
+        {session("unknown-literal")},
+        {{"unknown-literal", "UNKNOWN"}},
+        {},
+        false, 0, {}, true);
+    requireScenario(
+        {
+            selectedCandidate("foreground", "wayland", "active", false, false),
+            selectedCandidate("background", "x11", "online", false, false)
+        },
+        {{"foreground", "KDE"}, {"background", "PLASMA"}},
+        {{"foreground", true}, {"background", true}},
+        true, 2, {"foreground", "background"});
+    requireScenario(
+        {selectedCandidate("xrdp-kde", "x11", "online", true, false)},
+        {{"xrdp-kde", "KDE"}},
+        {{"xrdp-kde", true}},
+        true, 1, {"xrdp-kde"});
+    requireScenario(
+        {selectedCandidate("remote-gnome", "x11", "online", true, false)},
+        {{"remote-gnome", "GNOME"}},
+        {},
+        true, 0, {});
+    requireScenario(
+        {selectedCandidate("startx", "tty", "online", false, true)},
+        {{"startx", "KDE"}},
+        {{"startx", true}},
+        true, 1, {"startx"});
     return 0;
 }
