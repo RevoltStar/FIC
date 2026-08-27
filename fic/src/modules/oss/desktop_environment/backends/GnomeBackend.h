@@ -3,6 +3,8 @@
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 
+#include <cstdint>
+
 class GnomeBackend final : public DesktopEnvironmentBackend {
 public:
     using DesktopEnvironmentBackend::DesktopEnvironmentBackend;
@@ -20,6 +22,13 @@ public:
         const std::string& schema,
         const std::string& key,
         std::string& value,
+        std::string& error
+    ) const;
+
+    bool getUInt32Setting(
+        const std::string& schema,
+        const std::string& key,
+        std::uint32_t& value,
         std::string& error
     ) const;
 };

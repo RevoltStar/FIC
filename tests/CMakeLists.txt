@@ -129,6 +129,15 @@ target_link_libraries(firewall_tests PRIVATE
 )
 add_test(NAME firewall_tests COMMAND firewall_tests)
 
+add_executable(gsettings_value_parser_tests
+    fic/modules/oss/desktop_environment/GSettingsValueParserTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GSettingsValueParser.cpp
+)
+target_include_directories(gsettings_value_parser_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME gsettings_value_parser_tests COMMAND gsettings_value_parser_tests)
+
 add_test(
     NAME packaging_build_resource_tests
     COMMAND bash

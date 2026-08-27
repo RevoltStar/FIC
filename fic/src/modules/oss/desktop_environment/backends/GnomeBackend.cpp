@@ -1,4 +1,5 @@
 #include "modules/oss/desktop_environment/backends/GnomeBackend.h"
+#include "modules/oss/desktop_environment/backends/GSettingsValueParser.h"
 
 namespace {
 std::string find_gsettings()
@@ -39,4 +40,26 @@ bool GnomeBackend::getSetting(
         return false;
     }
     return execute(gsettings, {"get", schema, key}, value, error);
+}
+
+bool GnomeBackend::getUInt32Setting(
+    const std::string& schema,
+    const std::string& key,
+    std::uint32_t& value,
+    std::string& error
+) const
+{
+    std::string encoded;
+    if (!getSetting(schema, key, encoded, error)) {
+        return false;
+    }
+
+    const auto parsed = gnome_backend::parseGSettingsUInt32(encoded);
+    if (!parsed.has_value()) {
+        error = "could not parse GNOME " + key + " value: " + encoded;
+        return false;
+    }
+    value = parsed.value();
+    error.clear();
+    return true;
 }

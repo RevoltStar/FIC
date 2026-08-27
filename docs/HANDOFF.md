@@ -3,68 +3,57 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `c1197c58ea2dd5a8d0a4a5e8fae03c64ae4c95f8`.
+- Базовый commit задачи: `b43019f0d45df56212da3de23f3c6db9936eb8e3`.
 
 ## Current task
 
-- Однозначный UID-session fallback для systemd-managed GNOME, когда
-  `fic-session-agent` не принадлежит конкретной logind session.
+- Исправление ложного failure `OSS/screenlock_timeout` при read-back GNOME
+  `gsettings` значений вида `uint32 N`.
 
 ## Accepted architecture / invariants
 
-- `fic-session-agent` остаётся per-graphical-session context provider; daemon
-  остаётся authoritative источником sessions для применения policies.
-- Identity resolution: validated `XDG_SESSION_ID`, затем session собственного
-  PID, затем — только после точного `-ENODATA` — sessions текущего UID.
-- Найденная process session authoritative: SSH/TTY/remote/non-user/foreign UID
-  приводит к fail-closed без UID fallback.
-- Hard error `sd_pid_get_session()` приводит к fail-closed без UID fallback.
-- UID fallback использует `sd_uid_get_sessions(uid, 0, ...)`, общий predicate
-  UID + `Class=user` + `Remote=no` + `Type=x11|wayland|mir` и принимает только
-  ровно одного graphical candidate.
-- `Active`, seat, display, порядок и primary-session эвристики не используются;
-  несколько graphical sessions остаются неоднозначными и fail-closed.
-- Socket/runtime directory/root-peer и daemon-side UID/session mismatch checks
-  не изменены.
+- GVariant textual syntax является GNOME-specific и не добавляется в общий
+  `desktop_backend::parseInteger()`.
+- KDE/XFCE/FLY продолжают использовать неизменённый generic integer parser.
+- GNOME unsigned settings читаются через typed `GnomeBackend` API и строгий
+  parser полного `uint32 N` representation.
+- Session-agent, session resolution, command environment и daemon trust model
+  этой задачей не меняются.
 
 ## Completed
 
-- Provider API различает `Found`, `NotAssociated` и `Error` для process session.
-- Production provider сопоставляет только `-ENODATA` с `NotAssociated` и
-  перечисляет online sessions без active-only фильтра.
-- Resolver фильтрует enumeration через ту же validation logic и выдаёт точные
-  diagnostics для zero/multiple candidates и hard errors.
-- Добавлены regression tests для ALT `{Wayland, manager, SSH}`, process-bound
-  SSH/TTY/remote/foreign UID, hard error, ambiguity, Active state и unsafe IDs.
-- Обновлены static architecture checks и `docs/session-agent.md`.
+- Добавлен `gnome_backend::parseGSettingsUInt32()` на `std::from_chars` с
+  полной проверкой input, отрицательных значений и uint32 overflow.
+- Добавлен `GnomeBackend::getUInt32Setting()` с parse diagnostic.
+- `GnomeScreenLockTimeoutHandler` проверяет typed `idle-delay`/`lock-delay` и
+  выдаёт отдельные parse/mismatch diagnostics с expected/actual.
+- Generic `desktop_backend::parseInteger()` не изменён.
+- Добавлены regression tests для реальных, whitespace, malformed и boundary
+  GVariant значений.
 
 ## Changed areas
 
-- `fic-session-agent/src/SessionIdentityResolver.*`;
-- `fic-session-agent/src/SystemdLogindSessionProvider.*`;
-- `tests/fic-session-agent/`;
-- `docs/session-agent.md`.
+- `fic/src/modules/oss/desktop_environment/backends/`;
+- `GnomeScreenLockTimeoutHandler.cpp`;
+- relevant test и `tests/CMakeLists.txt`.
 
 ## Validation
 
-- `fic-session-agent` и `session_identity_resolver_tests` — успешно собраны в
-  ALT p11 build `/tmp/fic-session-agent-build`.
-- Targeted resolver/static tests — 2/2 успешно.
-- Production libsystemd path без `XDG_SESSION_ID` и process association дошёл
-  до `XDG_RUNTIME_DIR` validation, подтвердив успешный unique-candidate fallback.
-- `session_agent_client_tests` успешно выполнен вне sandbox, включая daemon-side
-  session mismatch regression.
+- ALT p11 configure в `/tmp/fic-session-agent-build` — успешно.
+- `fic` и `gsettings_value_parser_tests` — успешно собраны.
+- Targeted parser test — успешно.
+- Parser test отдельно собран и выполнен с `-Wall -Wextra -Werror`.
 - Полная сборка проекта — успешно.
-- Полный CTest: 44 passed, 4 sandbox-skipped, 1 существующий unrelated failure —
-  `ipc_protocol_validation_tests` assertion об API v1 request.
-- Provider и resolver/tests отдельно собраны с `-Wall -Wextra -Werror`.
+- Полный CTest из 50 tests: 45 passed, 4 sandbox-skipped, 1 существующий
+  unrelated failure — `ipc_protocol_validation_tests` assertion об API v1.
 - `git diff --check` — успешно.
 
 ## Remaining
 
-- Обновлённый binary не устанавливался на `10.88.0.86`; package/runtime test
-  реального ALT GNOME autostart после этой доработки ещё не выполнен.
-- При двух simultaneous GUI sessions одного UID и отсутствии session-bound
-  identity agent намеренно завершается fail-closed; launch mechanism не менялся.
-- Debian/Ubuntu container builds не запускались: Docker daemon отсутствует.
+- Новый daemon binary/RPM не устанавливался на `10.88.0.86`, поэтому повторный
+  runtime `fic-cli policy apply OSS screenlock_timeout` после parser fix ещё не
+  выполнен.
+- До исправления на этой машине подтверждены правильные фактические values:
+  `idle-delay=uint32 600`, `lock-enabled=true`, `lock-delay=uint32 0`; false
+  failure был вызван разбором `32` из type name `uint32`.
 - Существующий unrelated `ipc_protocol_validation_tests` failure не исправлялся.
