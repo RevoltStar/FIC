@@ -108,10 +108,10 @@ bool FirewallBackend::applyPolicy(const std::string& policyName,
     const std::string table = managedTableName(policyName);
     if (actual.managedInetTables.count(table) == 0 && !rules.empty()) {
         Logger::log("Managed firewall rule set is missing: " + policyName,
-                    logLevel::WARN, "daemon");
+                    logLevel::DEBUG, "daemon");
     } else if (actual.managedInetTables.count(table) != 0) {
         Logger::log("Refreshing managed firewall rule set: " + policyName,
-                    logLevel::WARN, "daemon");
+                    logLevel::DEBUG, "daemon");
     }
     if (!executeScript(
             executable, buildPolicyScript(policyName, rules, actual), error)) {
@@ -189,17 +189,19 @@ bool FirewallBackend::reconcile(const FirewallDesiredState& desired,
                 break;
             }
         }
-        Logger::log(
-            remainsDesired
-                ? "Refreshing managed firewall table: " + table
-                : "Removing stale managed firewall table: " + table,
-            logLevel::WARN, "daemon");
+        if (remainsDesired) {
+            Logger::log("Refreshing managed firewall table: " + table,
+                        logLevel::DEBUG, "daemon");
+        } else {
+            Logger::log("Removing stale managed firewall table: " + table,
+                        logLevel::INFO, "daemon");
+        }
     }
     for (const auto& [policy, rules] : desired.policyRules) {
         const std::string table = managedTableName(policy);
         if (!rules.empty() && actual.managedInetTables.count(table) == 0) {
             Logger::log("Managed firewall table is missing: " + table,
-                        logLevel::WARN, "daemon");
+                        logLevel::DEBUG, "daemon");
         }
     }
     if (!executeScript(

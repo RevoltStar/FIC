@@ -8,6 +8,18 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def require_log_level(source, message, level):
+    start = source.find(message)
+    require(start >= 0, f"missing firewall log message: {message}")
+    end = source.find(");", start)
+    require(end >= 0, f"unterminated firewall log statement: {message}")
+    statement = source[start:end]
+    require(
+        f"logLevel::{level}" in statement,
+        f"firewall log message has the wrong level: {message}",
+    )
+
+
 def main():
     if len(sys.argv) != 2:
         return 2
@@ -54,6 +66,16 @@ def main():
         "nft scripts must be checked and then applied through stdin",
     )
     require("flush ruleset" not in backend, "FIREWALL must not flush the ruleset")
+    for message in (
+        "Managed firewall rule set is missing:",
+        "Refreshing managed firewall rule set:",
+        "Refreshing managed firewall table:",
+        "Managed firewall table is missing:",
+    ):
+        require_log_level(backend, message, "DEBUG")
+    require_log_level(
+        backend, "Removing stale managed firewall table:", "INFO"
+    )
     return 0
 
 

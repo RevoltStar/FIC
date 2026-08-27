@@ -3,42 +3,41 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `e1309057f6f8be0401dd7b17e0507fc017623b57`.
+- Базовый commit задачи: `da39884b35fd83c3d6215eb2158d276cdb4d1ead`.
 
 ## Current task
 
-- Исправление применения `DAC:systemcommandlock` на Debian 13, где штатный
-  `/usr/sbin/ip` является symlink на `/usr/bin/ip`.
+- Устранение ложных `WARN` при штатном apply/reconciliation в
+  `FirewallBackend`.
 
 ## Accepted architecture / invariants
 
-- Общая fail-closed обработка policy paths с `O_NOFOLLOW` сохраняется.
-- Допустимые конечные symlink targets задаются явно и только в платформенном
-  профиле для конкретного policy path.
+- Первичное создание, повторный refresh и восстановление отсутствующих
+  FIC-managed nftables tables являются штатными операциями.
+- Удаление stale FIC-managed table логируется как значимое изменение, но не
+  как ошибка; нейтрализация чужих filtering chains сохраняет `WARN`.
+- Ошибки nft execution и postcondition поднимаются из backend и логируются
+  вызывающим policy/reconciliation слоем как `ERROR`.
 
 ## Completed
 
-- В Debian 13 profile для `/usr/sbin/ip` разрешён точный target `/usr/bin/ip`.
-- Platform profile test закрепляет это правило и полный allowlist проверенных
-  command symlink exceptions.
+- Routine `missing` и `refreshing` сообщения `FirewallBackend` переведены с
+  `WARN` на `DEBUG`.
+- Удаление stale FIC-managed table переведено с `WARN` на `INFO`.
+- Static contract фиксирует уровни всех изменённых backend-сообщений.
 
 ## Changed areas
 
-- `fic/src/platform/profiles/Debian13Profile.cpp`.
-- `tests/fic/platform/PlatformProfileTests.cpp`.
+- `fic/src/modules/firewall/FirewallBackend.cpp`.
+- `tests/fic/modules/firewall/static_checks.py`.
 
 ## Validation
 
-- Чистая configure для `debian-13` во временном build dir с configure-only
-  `libsystemd.pc` stub — успешно.
-- `platform_profile_tests` — 1/1 успешно.
-- `mode_and_owner_tests` — 1/1 успешно.
-- Чистая configure для `ubuntu-26.04` с тем же stub и
-  `platform_profile_tests` — 1/1 успешно.
+- `firewall_static_checks` — успешно.
+- `firewall_tests` — успешно.
 - `git diff --check` — успешно.
 
 ## Remaining
 
 - Изменения не закоммичены.
-- Новая сборка не развёртывалась на удалённую Debian 13 машину; повторный
-  runtime apply не выполнялся.
+- Новая сборка не развёртывалась; live nftables apply не выполнялся.
