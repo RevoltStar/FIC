@@ -147,6 +147,22 @@ target_include_directories(gsettings_value_parser_tests PRIVATE
 )
 add_test(NAME gsettings_value_parser_tests COMMAND gsettings_value_parser_tests)
 
+add_executable(kde_lock_screen_media_controls_applicability_tests
+    fic/modules/oss/desktop_environment/KdeLockScreenMediaControlsApplicabilityTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/KdeLockScreenMediaControlsApplicability.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+)
+target_include_directories(kde_lock_screen_media_controls_applicability_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(kde_lock_screen_media_controls_applicability_tests PRIVATE fic-core)
+add_test(
+    NAME kde_lock_screen_media_controls_applicability_tests
+    COMMAND kde_lock_screen_media_controls_applicability_tests
+)
+
 add_test(
     NAME packaging_build_resource_tests
     COMMAND bash

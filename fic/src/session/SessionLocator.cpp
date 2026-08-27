@@ -76,7 +76,7 @@ bool SessionLocator::activeGraphicalSessions(
             {
                 "show-session", session.id,
                 "--property=Class",
-                "--property=Remote",
+                "--property=Active",
                 "--property=Type",
                 "--no-pager"
             }
@@ -95,7 +95,7 @@ bool SessionLocator::activeGraphicalSessions(
 
         session.type = value("Type");
         const bool graphical = session.type == "x11" || session.type == "wayland" || session.type == "mir";
-        if (value("Class") == "user" && value("Remote") == "no" && graphical) {
+        if (value("Class") == "user" && value("Active") == "yes" && graphical) {
             sessions.push_back(session);
         }
     }

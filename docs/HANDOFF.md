@@ -3,51 +3,51 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `a96d91b9da27257538cceecb60e38b4ac45c96a8`.
+- Базовый commit задачи: `3600419733c7514501088c59305ac880e62e999c`.
 
 ## Current task
 
-- Исправление logical/storage representation для policy values и поддержка
-  явно переданного пустого значения в `fic-cli policy set`.
+- Переименование `disable_videodisplay_when_locked` в
+  `disable_kde_lock_screen_media_controls` и ограничение применения активными
+  графическими KDE-сессиями.
 
 ## Accepted architecture / invariants
 
-- CLI и GUI работают только с logical representation.
-- Daemon валидирует logical value; policy type выполняет logical -> storage и
-  storage -> logical преобразования.
-- `user_default_supplementary_groups` использует logical default `""`, но
-  сохраняет пустой список как `[]`.
-- `FIREWALL/custom_rules` сохраняет logical default `[]` и не изменяется.
-- Наличие CLI value argument определяется по `argc`, а не по пустоте строки.
+- Policy применяет `showMediaControls=false` только к активным графическим
+  KDE-сессиям, независимо от способа их запуска.
+- Сессии других desktop environment и с неизвестным desktop находятся вне
+  области действия и не влияют на итоговый результат.
+- Нет активных KDE-сессий — успешный результат/not applicable; ошибка хотя бы
+  в одной KDE-сессии — общий failure.
+- KDE backend сохраняет запись и readback `kscreenlockerrc`, затем вызывает
+  существующий DBus reload.
 
 ## Completed
 
-- Исправлен logical default `GroupListPolicyTypeValue`.
-- Policy descriptor serialization вынесена в testable `PolicyRegistryJson`.
-- Daemon value mutation вынесена в `PolicyRegistryMutation`; `set` делегирует
-  ей validation, serialization и atomic config path.
-- CLI формирует `set_policy_value` request через testable helper, сохраняя
-  явно переданное `""`.
-- Добавлены regression tests для type round-trip, unset descriptor, daemon
-  storage, CLI missing/empty argument и соседних empty-list policies.
+- Policy, config и localization keys переименованы.
+- `SessionLocator::activeGraphicalSessions` теперь отбирает `Active=yes` и не
+  исключает remote sessions.
+- Применение разделено по KDE applicability с агрегацией результатов только
+  применимых сессий.
+- Добавлены шесть regression-сценариев и static checks контракта.
 
 ## Changed areas
 
-- `fic-cli/src/PolicySetCommand.*` и CLI routing;
-- `fic/src/policy/registry/PolicyRegistryJson.*` и `PolicyRegistryMutation.*`;
-- `GroupListPolicyTypeValue`;
-- relevant CMake tests и static check.
+- `fic/src/modules/oss/desktop_environment/policies/`;
+- daemon policy registration;
+- `fic/src/session/SessionLocator.cpp`;
+- OSS config и `ru`/`en` localization;
+- relevant CMake tests и platform static checks.
 
 ## Validation
 
-- Targeted build: `fic`, `fic-cli`, user creation, CLI, DAC, GRUB, registry и
-  GUI service tests — успешно.
-- Targeted CTest из 8 tests — успешно.
+- Targeted build нового test target — успешно.
+- Targeted CTest из 4 tests — успешно.
 - Полная ALT p11 build — успешно.
-- Полный CTest из 51 tests: 46 passed, 4 sandbox-skipped, 1 existing unrelated
+- Полный CTest из 52 tests: 47 passed, 4 environment-skipped, 1 existing unrelated
   failure `ipc_protocol_validation_tests` (устаревшее ожидание reject API v1).
 - Все static checks прошли.
-- `git diff --check` — успешно перед финальным review.
+- `git diff --check` — успешно.
 
 ## Remaining
 

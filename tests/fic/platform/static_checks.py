@@ -272,6 +272,16 @@ def main():
     identity_template = (
         root / "fic/src/resources/config/IDENTITY_ACCESS.conf.in"
     ).read_text(encoding="utf-8")
+    oss_config = (
+        root / "fic/src/resources/config/OSS.conf"
+    ).read_text(encoding="utf-8")
+    session_locator = (
+        root / "fic/src/session/SessionLocator.cpp"
+    ).read_text(encoding="utf-8")
+    kde_media_policy_source = (
+        root / "fic/src/modules/oss/desktop_environment/policies/"
+        "OSS_disable_kde_lock_screen_media_controls.cpp"
+    ).read_text(encoding="utf-8")
     for default_name in (
         "MIN_DAYS",
         "MAX_DAYS",
@@ -319,6 +329,30 @@ def main():
         "required_pam_enforcement.value=" +
         f"@{required_pam_name}@" in identity_template,
         "IDENTITY_ACCESS template hardcodes required-PAM providers",
+    )
+    kde_media_policy = "disable_kde_lock_screen_media_controls"
+    require(
+        f"{kde_media_policy}.status=DISABLE" in oss_config and
+        f"{kde_media_policy}.value=ENABLE" in oss_config and
+        f'policyName = "{kde_media_policy}"' in kde_media_policy_source and
+        "OSS_disable_kde_lock_screen_media_controls" in policy_registry,
+        "KDE lock-screen media-controls policy registration/config is incomplete",
+    )
+    for language in ("ru", "en"):
+        localization = (
+            root / f"fic/src/resources/lang/{language}.lang"
+        ).read_text(encoding="utf-8")
+        require(
+            f"[module:OSS][policy:{kde_media_policy}]" in localization and
+            f"[module:OSS][policy:{kde_media_policy}][description]" in localization,
+            f"{language} localization omits the KDE media-controls policy",
+        )
+    require(
+        "disable_videodisplay_when_locked" not in policy_registry + oss_config and
+        '"--property=Active"' in session_locator and
+        'value("Active") == "yes"' in session_locator and
+        'value("Remote")' not in session_locator,
+        "KDE media-controls policy still has legacy naming/session filtering",
     )
 
     alt_profile = profiles["alt-p11"]

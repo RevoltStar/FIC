@@ -79,7 +79,7 @@
 #include "modules/oss/grub/policies/OSS_grub_cmdline_linux.h"
 #include "modules/oss/grub/policies/OSS_grub_disable_recovery.h"
 #include "modules/oss/display_manager/policies/OSS_disable_autologin.h"
-#include "modules/oss/desktop_environment/policies/OSS_disable_videodisplay_when_locked.h"
+#include "modules/oss/desktop_environment/policies/OSS_disable_kde_lock_screen_media_controls.h"
 #include "modules/oss/session_management/policies/OSS_lock_on_tty_switch.h"
 #include "modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h"
 #include "modules/oss/fstab/policies/OSS_fstab_boot_efi_profile.h"
