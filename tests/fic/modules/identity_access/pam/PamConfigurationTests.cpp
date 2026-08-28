@@ -814,6 +814,7 @@ void testEffectiveKnownProviders() {
         platform.capabilities[1].provider =
             fic::platform::PamProviderKind::PamPasswdqc;
         platform.passwordQualityConfigPath = temp.path() / "passwdqc.conf";
+        writeFile(platform.passwordQualityConfigPath, "enforce=everyone\n");
         writeFile(
             temp.path() / "pam.d/passwd",
             "password required pam_passwdqc.so config=" +
@@ -1562,6 +1563,11 @@ void testPasswdqcConfigArgumentAndInlineOverride() {
         fic::platform::PamProviderKind::PamPasswdqc;
     platform.passwordQualityConfigPath = temp.path() / "passwdqc.conf";
     writeFile(
+        platform.passwordQualityConfigPath,
+        "min=disabled,20,10,8,7\n"
+        "enforce=everyone\n");
+    writeFile(temp.path() / "security/pam_passwdqc.so", "test", 0555);
+    writeFile(
         temp.path() / "pam.d/passwd",
         "password required pam_passwdqc.so config=" +
             platform.passwordQualityConfigPath.string() + " min=24,11,8,7,7\n");
@@ -1612,7 +1618,7 @@ void testPasswdqcConfigArgumentAndInlineOverride() {
         !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
             inspection, platform.passwordQualityConfigPath.string(),
             "min", "disabled,24,11,8,7", error) &&
-            error.find("overrides") != std::string::npos,
+            error.find("effective passwdqc min") != std::string::npos,
         "passwdqc inline min override was not rejected");
     auto duplicateConfig = inspection;
     duplicateConfig.providerRules.front().arguments.push_back(
@@ -1627,11 +1633,117 @@ void testPasswdqcConfigArgumentAndInlineOverride() {
     duplicateOption.providerRules.front().arguments.push_back(
         "min=24,11,8,7,7");
     require(
-        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
             duplicateOption, platform.passwordQualityConfigPath.string(),
-            "min", "24,11,8,7,7", error) &&
-            error.find("duplicate PAM argument min") != std::string::npos,
-        "duplicate passwdqc inline option was accepted");
+            "min", "24,11,8,7,7", error),
+        "native sequential passwdqc option repetition was rejected: " +
+            error);
+
+    const std::string configArgument =
+        "config=" + platform.passwordQualityConfigPath.string();
+    auto invalidArgument = inspection;
+    invalidArgument.providerRules.front().arguments = {
+        configArgument, "max=garbage"};
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            invalidArgument, platform.passwordQualityConfigPath.string(),
+            "min", "disabled,20,10,8,7", error),
+        "invalid non-policy passwdqc argument was ignored");
+
+    auto unknownArgument = inspection;
+    unknownArgument.providerRules.front().arguments = {
+        "vendor_unknown=value", configArgument};
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            unknownArgument, platform.passwordQualityConfigPath.string(),
+            "min", "disabled,20,10,8,7", error),
+        "unknown passwdqc argument was ignored");
+
+    auto beforeConfig = inspection;
+    beforeConfig.providerRules.front().arguments = {
+        "min=disabled,24,11,8,7", configArgument};
+    require(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            beforeConfig, platform.passwordQualityConfigPath.string(),
+            "min", "disabled,20,10,8,7", error),
+        "passwdqc config= did not override an earlier PAM min argument: " +
+            error);
+
+    auto afterConfig = inspection;
+    afterConfig.providerRules.front().arguments = {
+        configArgument, "min=disabled,24,11,8,7"};
+    require(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            afterConfig, platform.passwordQualityConfigPath.string(),
+            "min", "disabled,24,11,8,7", error),
+        "passwdqc PAM min argument did not override preceding config=: " +
+            error);
+
+    auto randomOnly = inspection;
+    randomOnly.providerRules.front().arguments = {
+        configArgument, "random=47,only"};
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            randomOnly, platform.passwordQualityConfigPath.string(),
+            "min", "disabled,20,10,8,7", error),
+        "passwdqc random=47,only cross-option minimum effect was ignored");
+
+    auto enforceBeforeConfig = inspection;
+    enforceBeforeConfig.providerRules.front().arguments = {
+        "enforce=none", configArgument};
+    require(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            enforceBeforeConfig, platform.passwordQualityConfigPath.string(),
+            "enforce", "everyone", error),
+        "passwdqc config= did not override earlier enforce=none: " + error);
+
+    auto enforceAfterConfig = inspection;
+    enforceAfterConfig.providerRules.front().arguments = {
+        configArgument, "enforce=users"};
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            enforceAfterConfig, platform.passwordQualityConfigPath.string(),
+            "enforce", "everyone", error) &&
+            fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+                enforceAfterConfig,
+                platform.passwordQualityConfigPath.string(),
+                "enforce", "users", error),
+        "passwdqc final enforce mapping ignored PAM argv ordering");
+
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_passwdqc.so " + configArgument +
+            " enforce=none\n"
+        "password required pam_unix.so use_authtok\n");
+    auto ineffective = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPasswdqc,
+        platform.passwordServices);
+    require(
+        ineffective.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "passwdqc enforce=none was reported as effective");
+
+    platform.passwordServices = {"passwd", "chpasswd"};
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_passwdqc.so " + configArgument + "\n"
+        "password required pam_unix.so use_authtok\n");
+    writeFile(
+        temp.path() / "pam.d/chpasswd",
+        "password required pam_passwdqc.so " + configArgument +
+            " enforce=none\n"
+        "password required pam_unix.so use_authtok\n");
+    ineffective = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPasswdqc,
+        platform.passwordServices);
+    require(
+        ineffective.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "one ineffective passwdqc service was hidden by another service");
 }
 
 } // namespace
