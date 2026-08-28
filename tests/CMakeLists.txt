@@ -588,6 +588,10 @@ add_executable(platform_profile_tests
 target_include_directories(platform_profile_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
+target_compile_definitions(platform_profile_tests PRIVATE
+    FIC_CMAKE_PAM_PASSWORD_QUALITY_PROVIDER="${FIC_PAM_PASSWORD_QUALITY_PROVIDER}"
+    FIC_CMAKE_PAM_PASSWORD_HISTORY_PROVIDER="${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"
+)
 target_link_libraries(platform_profile_tests PRIVATE fic-platform)
 add_test(NAME platform_profile_tests COMMAND platform_profile_tests)
 add_test(

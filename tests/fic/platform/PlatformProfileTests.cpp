@@ -558,6 +558,34 @@ void testPamCompositionIsMechanismDriven() {
             error);
 }
 
+void testCmakePamProviderSelectionMatchesProfile() {
+    const auto profile = fic::platform::makeBuildPlatformProfile();
+    const auto* quality = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    require(quality != nullptr,
+            "selected platform has no password-quality capability");
+    const std::string qualityProvider =
+        quality->provider == fic::platform::PamProviderKind::PamPasswdqc
+        ? "passwdqc"
+        : quality->provider == fic::platform::PamProviderKind::PamPwquality
+            ? "pwquality"
+            : "unsupported";
+    require(
+        qualityProvider == FIC_CMAKE_PAM_PASSWORD_QUALITY_PROVIDER,
+        "CMake password-quality provider diverges from PlatformProfile");
+
+    const auto* history = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordHistory);
+    const std::string historyProvider = history == nullptr
+        ? "none"
+        : history->provider == fic::platform::PamProviderKind::PamPwhistory
+            ? "pwhistory"
+            : "unsupported";
+    require(
+        historyProvider == FIC_CMAKE_PAM_PASSWORD_HISTORY_PROVIDER,
+        "CMake password-history provider diverges from PlatformProfile");
+}
+
 void testInvalidProfileIsRejected() {
     fic::platform::PlatformProfile profile =
         fic::platform::makeBuildPlatformProfile();
@@ -820,6 +848,7 @@ int main() {
         testSelectedProfile();
         testCompatibilityIsFailClosed();
         testPamCompositionIsMechanismDriven();
+        testCmakePamProviderSelectionMatchesProfile();
         testInvalidProfileIsRejected();
         testExecutableResolver();
         testOsReleaseParsing();

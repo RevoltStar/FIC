@@ -60,4 +60,13 @@ if(NOT FIC_PAM_PASSWORD_HISTORY_PROVIDER STREQUAL "none")
         ",pam_${FIC_PAM_PASSWORD_HISTORY_PROVIDER}")
 endif()
 
+# Expose the selected composition to sibling validation targets. The values
+# remain derived above from the same target-platform branch used by fic.
+set(FIC_PAM_PASSWORD_QUALITY_PROVIDER
+    "${FIC_PAM_PASSWORD_QUALITY_PROVIDER}" CACHE INTERNAL
+    "Selected PAM password-quality provider" FORCE)
+set(FIC_PAM_PASSWORD_HISTORY_PROVIDER
+    "${FIC_PAM_PASSWORD_HISTORY_PROVIDER}" CACHE INTERNAL
+    "Selected PAM password-history provider" FORCE)
+
 message(STATUS "FIC target platform: ${FIC_TARGET_PLATFORM}")
