@@ -507,6 +507,45 @@ void testPasswordHistoryFlagAssignmentFails() {
         "PAM flag configuration-path diagnostic is missing");
 }
 
+void testOptionalExternalConfigRequiresNativeDefaultPath() {
+    TempDirectory temp;
+    const auto platform = makePlatform(temp);
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so\n");
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            configuration,
+            platform.passwordServices,
+            fic::identity::pam::PamCapability::PasswordHistory,
+            fic::identity::pam::PamProviderKind::PamPwhistory,
+            inspection,
+            error),
+        error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyExternalConfigContract(
+            inspection, platform.passwordHistoryConfigPath.string(), error),
+        "optional PAM config accepted a non-default managed path without conf=");
+    require(
+        error.find("native default configuration path") != std::string::npos,
+        "optional PAM default-path diagnostic is missing: " + error);
+    require(
+        fic::identity::pam::PamProviderInspector::verifyExternalConfigContract(
+            inspection, "/etc/security/pwhistory.conf", error),
+        "native pam_pwhistory default path was rejected: " + error);
+
+    inspection.providerRules.front().arguments = {
+        "conf=" + platform.passwordHistoryConfigPath.string()};
+    require(
+        fic::identity::pam::PamProviderInspector::verifyExternalConfigContract(
+            inspection, platform.passwordHistoryConfigPath.string(), error),
+        "explicit optional PAM config path was rejected: " + error);
+}
+
 void testFlagConflictingOptionFails() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -1760,6 +1799,7 @@ int main() {
         testFailIntervalArgumentOverride();
         testPasswordHistoryFlagOverride();
         testPasswordHistoryFlagAssignmentFails();
+        testOptionalExternalConfigRequiresNativeDefaultPath();
         testFlagConflictingOptionFails();
         testWritableProviderFileFails();
         testWritableConfigurationFileFails();
