@@ -679,6 +679,44 @@ bool PasswdqcConfigEvaluator::evaluate(
     return true;
 }
 
+bool PasswdqcConfigEvaluator::evaluateInvocation(
+    const std::vector<std::string>& arguments,
+    const std::filesystem::path& source,
+    std::size_t line,
+    PasswdqcEffectiveState& state,
+    std::string& error)
+{
+    PasswdqcEffectiveState evaluated;
+    EvaluationContext context;
+    for (const auto& argument : arguments) {
+        PasswdqcDirective directive;
+        std::string directiveError;
+        if (!parseDirective(
+                argument, source, line, directive, directiveError)) {
+            error = source.string() + ":" + std::to_string(line) +
+                ": " + directiveError;
+            return false;
+        }
+        if (directive.kind == PasswdqcDirectiveKind::Config) {
+            if (!evaluateFile(
+                    std::filesystem::path(directive.value), 0, context,
+                    evaluated, directiveError)) {
+                error = source.string() + ":" + std::to_string(line) +
+                    ": " + directiveError;
+                return false;
+            }
+        } else if (!applyDirective(
+                       directive, evaluated, directiveError)) {
+            error = source.string() + ":" + std::to_string(line) +
+                ": " + directiveError;
+            return false;
+        }
+    }
+    state = std::move(evaluated);
+    error.clear();
+    return true;
+}
+
 bool PasswdqcConfigFile::validateNativeValue(const std::string& option,
                                               const std::string& value,
                                               std::string& error)

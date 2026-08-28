@@ -10,7 +10,8 @@ bool PamCapabilityVerifier::verify(
     const std::vector<std::string>& services,
     PamCapability capability,
     PamProviderKind provider,
-    PamCapabilityVerification& verification) {
+    PamCapabilityVerification& verification,
+    PamCapabilityVerificationMode mode) {
     verification = PamCapabilityVerification{};
     PamProviderInspectionFailure inspectionFailure =
         PamProviderInspectionFailure::None;
@@ -67,11 +68,21 @@ bool PamCapabilityVerifier::verify(
         configuredCapability->provider != provider ||
         !PamProviderInspector::verifyExternalConfigContract(
             verification.inspection,
-            configuredCapability->configPath.string(), error)) {
+            configuredCapability->configPath.string(), error) ||
+        !PamProviderInspector::verifyInvocationSemantics(
+            verification.inspection, false, error)) {
         verification.state = PamEnforcementState::Broken;
         verification.detail = configuredCapability == nullptr
             ? "PAM capability is absent from platform composition"
             : error;
+        return false;
+    }
+
+    if (mode == PamCapabilityVerificationMode::SecurityEffective &&
+        !PamProviderInspector::verifyInvocationSemantics(
+            verification.inspection, true, error)) {
+        verification.state = PamEnforcementState::Ineffective;
+        verification.detail = error;
         return false;
     }
 

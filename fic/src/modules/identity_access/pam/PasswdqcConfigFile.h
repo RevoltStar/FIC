@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace fic::identity::pam {
 
@@ -92,6 +93,13 @@ public:
     static bool evaluate(const std::filesystem::path& root,
                          PasswdqcEffectiveState& state,
                          std::string& error);
+
+    static bool evaluateInvocation(
+        const std::vector<std::string>& arguments,
+        const std::filesystem::path& source,
+        std::size_t line,
+        PasswdqcEffectiveState& state,
+        std::string& error);
 };
 
 class PasswdqcConfigFile {

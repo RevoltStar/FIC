@@ -1,6 +1,7 @@
 #include "modules/identity_access/pam/PamProviderInspector.h"
 
 #include "modules/identity_access/pam/PamProviderCatalog.h"
+#include "modules/identity_access/pam/PasswdqcConfigFile.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -333,6 +334,29 @@ bool PamProviderInspector::verifyOptionOverrides(
             inspection, expectedConfigPath, error)) {
         return false;
     }
+    const auto& descriptor = pamProviderDescriptor(inspection.provider);
+    if (descriptor.grammar == fic::platform::PamConfigGrammar::Passwdqc) {
+        for (const auto& rule : inspection.providerRules) {
+            PasswdqcEffectiveState state;
+            if (!PasswdqcConfigEvaluator::evaluateInvocation(
+                    rule.arguments, rule.source, rule.line, state, error)) {
+                return false;
+            }
+            std::string effectiveValue;
+            if (!state.managedValue(option, effectiveValue, error)) {
+                return false;
+            }
+            if (effectiveValue != expectedValue) {
+                error = rule.source.string() + ":" +
+                    std::to_string(rule.line) + ": effective passwdqc " +
+                    option + " is " + effectiveValue + ", expected " +
+                    expectedValue;
+                return false;
+            }
+        }
+        error.clear();
+        return true;
+    }
     for (const auto& rule : inspection.providerRules) {
         std::optional<std::string> overrideValue;
         if (!uniqueArgumentValue(rule, option, overrideValue, error)) {
@@ -342,6 +366,33 @@ bool PamProviderInspector::verifyOptionOverrides(
             error = rule.source.string() + ":" + std::to_string(rule.line) +
                 ": PAM argument " + option + "=" + *overrideValue +
                 " overrides the requested value " + expectedValue;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PamProviderInspector::verifyInvocationSemantics(
+    const PamProviderInspection& inspection,
+    bool requirePasswordQualityEnforcement,
+    std::string& error)
+{
+    error.clear();
+    const auto& descriptor = pamProviderDescriptor(inspection.provider);
+    if (descriptor.grammar != fic::platform::PamConfigGrammar::Passwdqc) {
+        return true;
+    }
+    for (const auto& rule : inspection.providerRules) {
+        PasswdqcEffectiveState state;
+        if (!PasswdqcConfigEvaluator::evaluateInvocation(
+                rule.arguments, rule.source, rule.line, state, error)) {
+            return false;
+        }
+        if (requirePasswordQualityEnforcement && state.enforce == "none") {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": pam_passwdqc password quality enforcement is disabled "
+                "by effective enforce=none";
             return false;
         }
     }

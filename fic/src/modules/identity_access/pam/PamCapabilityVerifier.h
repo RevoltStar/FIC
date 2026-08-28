@@ -17,6 +17,11 @@ enum class PamEnforcementState {
     Effective
 };
 
+enum class PamCapabilityVerificationMode {
+    Structural,
+    SecurityEffective
+};
+
 struct PamCapabilityVerification {
     PamEnforcementState state = PamEnforcementState::Broken;
     PamProviderInspection inspection;
@@ -32,7 +37,9 @@ public:
         const std::vector<std::string>& services,
         PamCapability capability,
         PamProviderKind provider,
-        PamCapabilityVerification& verification);
+        PamCapabilityVerification& verification,
+        PamCapabilityVerificationMode mode =
+            PamCapabilityVerificationMode::SecurityEffective);
 };
 
 std::string pamEnforcementStateName(PamEnforcementState state);

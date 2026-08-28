@@ -74,7 +74,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             *services,
             capability->capability,
             capability->provider,
-            capabilityVerification)) {
+            capabilityVerification,
+            fic::identity::pam::PamCapabilityVerificationMode::Structural)) {
         this->log(
             "PAM capability preflight failed for " + this->policyName +
                 ": " + fic::identity::pam::formatPamCapabilityVerification(
@@ -83,15 +84,18 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
     const auto& inspection = capabilityVerification.inspection;
-    const bool overridesValid = binding->syntax ==
-            fic::identity::pam::PamNativeOptionSyntax::Assignment
-        ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
-              inspection, capability->configPath.string(), binding->option,
-              nativeExpectedValue, error)
-        : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
-              inspection, capability->configPath.string(), binding->option,
-              expectedFlagEnabled, error,
-              binding->conflictingOptionsWhenDisabled);
+    const bool overridesValid =
+        provider.grammar == fic::platform::PamConfigGrammar::Passwdqc
+        ? true
+        : binding->syntax ==
+                fic::identity::pam::PamNativeOptionSyntax::Assignment
+            ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+                  inspection, capability->configPath.string(), binding->option,
+                  nativeExpectedValue, error)
+            : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+                  inspection, capability->configPath.string(), binding->option,
+                  expectedFlagEnabled, error,
+                  binding->conflictingOptionsWhenDisabled);
     if (!overridesValid) {
         this->log(
             "PAM option override preflight failed for " + this->policyName +

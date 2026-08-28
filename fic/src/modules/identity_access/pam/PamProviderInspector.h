@@ -52,6 +52,11 @@ public:
         const std::string& expectedConfigPath,
         std::string& error);
 
+    static bool verifyInvocationSemantics(
+        const PamProviderInspection& inspection,
+        bool requirePasswordQualityEnforcement,
+        std::string& error);
+
     static bool verifyOptionOverrides(
         const PamProviderInspection& inspection,
         const std::string& expectedConfigPath,
