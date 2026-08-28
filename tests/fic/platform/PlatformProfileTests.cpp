@@ -505,6 +505,59 @@ void testCompatibilityIsFailClosed() {
     }
 }
 
+void testPamCompositionIsMechanismDriven() {
+    fic::platform::PlatformProfile profile =
+        fic::platform::makeBuildPlatformProfile();
+    profile.id = "synthetic-passwdqc-with-history";
+    auto* quality = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    require(quality != nullptr, "selected profile has no quality capability");
+    quality->provider = fic::platform::PamProviderKind::PamPasswdqc;
+    quality->configPath = "/etc/passwdqc.conf";
+    if (pamCapability(
+            profile.pam,
+            fic::platform::PamCapability::PasswordHistory) == nullptr) {
+        profile.pam.capabilities.push_back({
+            fic::platform::PamCapability::PasswordHistory,
+            fic::platform::PamProviderKind::PamPwhistory,
+            quality->scope,
+            "/etc/security/pwhistory.conf",
+            fic::platform::PamTopologyStrategyKind::StaticReadOnly,
+            {}});
+    }
+
+    std::string error;
+    require(
+        fic::platform::validatePlatformProfile(profile, error),
+        "synthetic non-ALT passwdqc composition was rejected: " + error);
+    require(
+        pamCapability(
+            profile.pam,
+            fic::platform::PamCapability::PasswordHistory) != nullptr,
+        "synthetic passwdqc composition lost an independent history capability");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.id = "synthetic-pwquality-without-history";
+    quality = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    require(quality != nullptr, "selected profile has no quality capability");
+    quality->provider = fic::platform::PamProviderKind::PamPwquality;
+    quality->configPath = "/etc/security/pwquality.conf";
+    profile.pam.capabilities.erase(
+        std::remove_if(
+            profile.pam.capabilities.begin(),
+            profile.pam.capabilities.end(),
+            [](const auto& capability) {
+                return capability.capability ==
+                    fic::platform::PamCapability::PasswordHistory;
+            }),
+        profile.pam.capabilities.end());
+    require(
+        fic::platform::validatePlatformProfile(profile, error),
+        "synthetic pwquality composition without history was rejected: " +
+            error);
+}
+
 void testInvalidProfileIsRejected() {
     fic::platform::PlatformProfile profile =
         fic::platform::makeBuildPlatformProfile();
@@ -766,6 +819,7 @@ int main() {
     try {
         testSelectedProfile();
         testCompatibilityIsFailClosed();
+        testPamCompositionIsMechanismDriven();
         testInvalidProfileIsRejected();
         testExecutableResolver();
         testOsReleaseParsing();

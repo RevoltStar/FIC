@@ -260,8 +260,25 @@ def main():
     require(
         'PamProviderKind::PamPasswdqc' in profiles["alt-p11"]
         and '"/etc/passwdqc.conf"' in profiles["alt-p11"]
-        and 'PamConfigGrammar::Passwdqc' in profiles["alt-p11"],
+        and 'PamConfigGrammar::Passwdqc' not in profiles["alt-p11"],
         "ALT p11 profile does not select the native passwdqc backend",
+    )
+    provider_metadata = (
+        root / "fic/src/platform/PamProviderMetadata.cpp"
+    ).read_text(encoding="utf-8")
+    require(
+        "Provider::PamPasswdqc" in provider_metadata
+        and "PamExternalConfigMode::Required" in provider_metadata
+        and "Grammar::Passwdqc" in provider_metadata,
+        "passwdqc descriptor does not own its required external-config/grammar contract",
+    )
+    compatibility = (
+        root / "fic/src/platform/PlatformCompatibility.cpp"
+    ).read_text(encoding="utf-8")
+    require(
+        "pamProviderDescriptor(capability.provider)" in compatibility
+        and "providerImplementsCapability" not in compatibility,
+        "platform validation duplicates provider capability metadata",
     )
     for name in ("debian-12", "debian-13", "ubuntu-24.04", "ubuntu-26.04"):
         require(
@@ -273,6 +290,12 @@ def main():
     platform_cmake = (
         root / "cmake/FicTargetPlatform.cmake"
     ).read_text(encoding="utf-8")
+    fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
+    require(
+        'FIC_TARGET_PLATFORM STREQUAL "alt-p11"' not in fic_cmake
+        and "fic_resolve_pam_policy_defaults" in fic_cmake,
+        "generated PAM defaults are selected by a literal distribution id",
+    )
     generated_defaults = (
         root / "fic/src/platform/generated/PasswordAgingPolicyDefaultsGenerated.h.in"
     ).read_text(encoding="utf-8")
@@ -346,8 +369,12 @@ def main():
         "platform value",
     )
     require(
-        '"pam_faillock,pam_pwquality,pam_pwhistory"' in platform_cmake and
-        '"pam_faillock,pam_passwdqc"' in platform_cmake,
+        '"pam_faillock,pam_${FIC_PAM_PASSWORD_QUALITY_PROVIDER}"'
+            in platform_cmake and
+        '",pam_${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"' in platform_cmake and
+        'set(FIC_PAM_PASSWORD_QUALITY_PROVIDER "passwdqc")'
+            in platform_cmake and
+        'set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "none")' in platform_cmake,
         "required-PAM platform defaults are incomplete",
     )
     require(
@@ -520,7 +547,7 @@ def main():
     identity_config = (
         root / "fic/src/resources/config/IDENTITY_ACCESS.conf.in"
     ).read_text(encoding="utf-8") + (
-        root / "fic/CMakeLists.txt"
+        root / "cmake/FicPamPolicyDefaults.cmake"
     ).read_text(encoding="utf-8")
     for policy_name in (
         "password_min_length",

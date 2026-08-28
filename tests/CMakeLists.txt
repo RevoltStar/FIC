@@ -589,6 +589,12 @@ target_include_directories(platform_profile_tests PRIVATE
 )
 target_link_libraries(platform_profile_tests PRIVATE fic-platform)
 add_test(NAME platform_profile_tests COMMAND platform_profile_tests)
+add_test(
+    NAME pam_policy_defaults_tests
+    COMMAND ${CMAKE_COMMAND}
+        -DFIC_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/fic/platform/PamPolicyDefaultsTests.cmake
+)
 
 add_executable(command_hash_batch_tests
     common/core/integrity/CommandHashBatchTests.cpp

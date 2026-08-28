@@ -23,8 +23,8 @@ set(FIC_USER_CREATION_SKEL_DEFAULT "/etc/skel")
 set(FIC_USER_CREATION_SHELL_DEFAULT "/bin/sh")
 set(FIC_USER_CREATION_PRIVATE_GROUP_DEFAULT "yes")
 set(FIC_USER_CREATION_PRIMARY_GROUP_DEFAULT "users")
-set(FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT
-    "pam_faillock,pam_pwquality,pam_pwhistory")
+set(FIC_PAM_PASSWORD_QUALITY_PROVIDER "pwquality")
+set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "pwhistory")
 
 if(FIC_TARGET_PLATFORM STREQUAL "debian-12")
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
@@ -44,13 +44,20 @@ elseif(FIC_TARGET_PLATFORM STREQUAL "alt-p11")
     set(FIC_PASSWORD_AGING_POLICY_UID_MIN_DEFAULT 500)
     set(FIC_USER_CREATION_CREATE_HOME_DEFAULT "yes")
     set(FIC_USER_CREATION_SHELL_DEFAULT "/bin/bash")
-    set(FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT
-        "pam_faillock,pam_passwdqc")
+    set(FIC_PAM_PASSWORD_QUALITY_PROVIDER "passwdqc")
+    set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "none")
 else()
     message(FATAL_ERROR
         "FIC_TARGET_PLATFORM must be explicitly set to one of: "
         "debian-12, debian-13, ubuntu-24.04, ubuntu-26.04, alt-p11. "
         "Example: -DFIC_TARGET_PLATFORM=alt-p11")
+endif()
+
+set(FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT
+    "pam_faillock,pam_${FIC_PAM_PASSWORD_QUALITY_PROVIDER}")
+if(NOT FIC_PAM_PASSWORD_HISTORY_PROVIDER STREQUAL "none")
+    string(APPEND FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT
+        ",pam_${FIC_PAM_PASSWORD_HISTORY_PROVIDER}")
 endif()
 
 message(STATUS "FIC target platform: ${FIC_TARGET_PLATFORM}")

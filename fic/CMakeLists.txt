@@ -91,45 +91,12 @@ target_link_libraries(fic PRIVATE fic-platform)
 set(FIC_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/config")
-if(FIC_TARGET_PLATFORM STREQUAL "alt-p11")
-    set(FIC_PASSWORD_QUALITY_PROVIDER_POLICY_DEFAULTS
-"passwdqc_strength_thresholds.status=DISABLE
-passwdqc_strength_thresholds.value=disabled,24,11,8,7
-passwdqc_passphrase_words.status=DISABLE
-passwdqc_passphrase_words.value=3
-passwdqc_match_length.status=DISABLE
-passwdqc_match_length.value=4
-passwdqc_similar_password.status=DISABLE
-passwdqc_similar_password.value=deny
-passwdqc_retry_count.status=DISABLE
-passwdqc_retry_count.value=3")
-    set(FIC_PASSWORD_HISTORY_POLICY_DEFAULTS "")
-else()
-    set(FIC_PASSWORD_QUALITY_PROVIDER_POLICY_DEFAULTS
-"password_min_length.status=DISABLE
-password_min_length.value=12
-password_min_classes.status=DISABLE
-password_min_classes.value=3
-password_check_username.status=DISABLE
-password_check_username.value=yes
-password_check_gecos.status=DISABLE
-password_check_gecos.value=yes
-password_min_changed_characters.status=DISABLE
-password_min_changed_characters.value=1
-password_min_lowercase.status=DISABLE
-password_min_lowercase.value=0
-password_min_uppercase.status=DISABLE
-password_min_uppercase.value=0
-password_min_digits.status=DISABLE
-password_min_digits.value=0
-password_min_other.status=DISABLE
-password_min_other.value=0")
-    set(FIC_PASSWORD_HISTORY_POLICY_DEFAULTS
-"password_history_depth.status=DISABLE
-password_history_depth.value=5
-password_history_enforce_for_root.status=DISABLE
-password_history_enforce_for_root.value=yes")
-endif()
+include("${CMAKE_SOURCE_DIR}/cmake/FicPamPolicyDefaults.cmake")
+fic_resolve_pam_policy_defaults(
+    "${FIC_PAM_PASSWORD_QUALITY_PROVIDER}"
+    "${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"
+    FIC_PASSWORD_QUALITY_PROVIDER_POLICY_DEFAULTS
+    FIC_PASSWORD_HISTORY_POLICY_DEFAULTS)
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/config/IDENTITY_ACCESS.conf.in"
     "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
