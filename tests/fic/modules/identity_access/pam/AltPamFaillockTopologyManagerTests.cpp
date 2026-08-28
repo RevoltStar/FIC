@@ -96,14 +96,12 @@ public:
              fic::platform::PamProviderKind::PamFaillock,
              fic::platform::PamScope::EffectiveAuthenticationStack,
              root / "faillock.conf",
-             fic::platform::PamConfigGrammar::KeyValue,
              fic::platform::PamTopologyStrategyKind::AltTcbManaged,
              root / "pam.d/system-auth-local-only"},
             {fic::platform::PamCapability::PasswordQuality,
              fic::platform::PamProviderKind::PamPasswdqc,
              fic::platform::PamScope::LocalPasswordChange,
              root / "passwdqc.conf",
-             fic::platform::PamConfigGrammar::Passwdqc,
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
         };
         return result;

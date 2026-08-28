@@ -75,17 +75,14 @@ private:
             {fic::platform::PamCapability::AuthenticationLockout,
              fic::platform::PamProviderKind::PamFaillock,
              fic::platform::PamScope::EffectiveAuthenticationStack, {},
-             fic::platform::PamConfigGrammar::KeyValue,
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
             {fic::platform::PamCapability::PasswordQuality,
              fic::platform::PamProviderKind::PamPwquality,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamConfigGrammar::KeyValue,
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
             {fic::platform::PamCapability::PasswordHistory,
              fic::platform::PamProviderKind::PamPwhistory,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamConfigGrammar::KeyValue,
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
         };
         return result;
@@ -813,10 +810,14 @@ void testEffectiveKnownProviders() {
     }
     {
         TempDirectory temp;
-        const auto platform = makePlatform(temp);
+        auto platform = makePlatform(temp);
+        platform.capabilities[1].provider =
+            fic::platform::PamProviderKind::PamPasswdqc;
+        platform.passwordQualityConfigPath = temp.path() / "passwdqc.conf";
         writeFile(
             temp.path() / "pam.d/passwd",
-            "password required pam_passwdqc.so config=/etc/passwdqc.conf\n"
+            "password required pam_passwdqc.so config=" +
+                platform.passwordQualityConfigPath.string() + "\n"
             "password required pam_tcb.so use_authtok\n");
         writeFile(temp.path() / "security/pam_passwdqc.so", "test", 0555);
         const auto verification = verifyCapability(
@@ -1559,8 +1560,6 @@ void testPasswdqcConfigArgumentAndInlineOverride() {
     auto platform = makePlatform(temp);
     platform.capabilities[1].provider =
         fic::platform::PamProviderKind::PamPasswdqc;
-    platform.capabilities[1].grammar =
-        fic::platform::PamConfigGrammar::Passwdqc;
     platform.passwordQualityConfigPath = temp.path() / "passwdqc.conf";
     writeFile(
         temp.path() / "pam.d/passwd",
@@ -1582,9 +1581,30 @@ void testPasswdqcConfigArgumentAndInlineOverride() {
             inspection, platform.passwordQualityConfigPath.string(),
             "min", "24,11,8,7,7", error),
         error);
+    auto missingConfig = inspection;
+    missingConfig.providerRules.front().arguments.erase(
+        missingConfig.providerRules.front().arguments.begin());
     require(
         !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
-            inspection, "/other/passwdqc.conf", "min",
+            missingConfig, platform.passwordQualityConfigPath.string(),
+            "min", "24,11,8,7,7", error) &&
+            error.find("requires PAM config=") != std::string::npos,
+        "passwdqc without required config= was accepted");
+    auto malformedConfig = missingConfig;
+    malformedConfig.providerRules.front().arguments.insert(
+        malformedConfig.providerRules.front().arguments.begin(), "config");
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            malformedConfig, platform.passwordQualityConfigPath.string(),
+            "min", "24,11,8,7,7", error) &&
+            error.find("requires an assigned value") != std::string::npos,
+        "malformed passwdqc config argument was accepted");
+    auto wrongConfig = inspection;
+    wrongConfig.providerRules.front().arguments.front() =
+        "config=/other/passwdqc.conf";
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            wrongConfig, platform.passwordQualityConfigPath.string(), "min",
             "24,11,8,7,7", error) &&
             error.find("another configuration file") != std::string::npos,
         "passwdqc config= path mismatch was not rejected");

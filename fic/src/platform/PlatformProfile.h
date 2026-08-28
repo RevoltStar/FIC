@@ -157,7 +157,6 @@ struct PamCapabilityConfig {
     PamProviderKind provider = PamProviderKind::PamFaillock;
     PamScope scope = PamScope::EffectiveAuthenticationStack;
     std::filesystem::path configPath;
-    PamConfigGrammar grammar = PamConfigGrammar::KeyValue;
     PamTopologyStrategyKind topology = PamTopologyStrategyKind::StaticReadOnly;
     std::filesystem::path topologyTarget;
 };

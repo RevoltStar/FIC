@@ -2,7 +2,9 @@
 #include "modules/identity_access/kerberos/KerberosPolicy.h"
 #include "modules/identity_access/nss/NssPolicy.h"
 #include "modules/identity_access/pam/PamOptionFile.h"
+#include "modules/identity_access/pam/PamOptionPolicy.h"
 #include "modules/identity_access/pam/PamPolicy.h"
+#include "modules/identity_access/pam/PasswdqcConfigFile.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
@@ -15,6 +17,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -60,17 +63,14 @@ private:
             {fic::platform::PamCapability::AuthenticationLockout,
              fic::platform::PamProviderKind::PamFaillock,
              fic::platform::PamScope::EffectiveAuthenticationStack, {},
-             fic::platform::PamConfigGrammar::KeyValue,
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
             {fic::platform::PamCapability::PasswordQuality,
              fic::platform::PamProviderKind::PamPwquality,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamConfigGrammar::KeyValue,
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
             {fic::platform::PamCapability::PasswordHistory,
              fic::platform::PamProviderKind::PamPwhistory,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamConfigGrammar::KeyValue,
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
         };
         return result;
@@ -430,6 +430,47 @@ public:
     }
 };
 
+class FaultInjectedPamOptionPolicy final : public PamOptionPolicy {
+public:
+    using VerificationHook =
+        std::function<void(const std::filesystem::path&)>;
+
+    explicit FaultInjectedPamOptionPolicy(
+        TestPamPlatformConfig platform,
+        VerificationHook verificationHook = {})
+        : PamOptionPolicy(
+              std::move(platform),
+              fic::platform::PamPolicyFeature::PasswordMinLength),
+          verificationHook_(std::move(verificationHook)) {
+        moduleName = "IDENTITY_ACCESS";
+        submoduleName = "PAM";
+        policyName = "fault_injected_password_min_length";
+    }
+
+    bool applyValue(const std::string& value) {
+        return PamOptionPolicy::applyPam(value);
+    }
+
+protected:
+    bool verifyPostMutationPamState(
+        const fic::platform::PamCapabilityConfig& capability,
+        const std::vector<std::string>&,
+        const fic::identity::pam::PamProviderPolicyBinding&,
+        const std::string&,
+        bool,
+        std::size_t&,
+        std::string& error) const override {
+        if (verificationHook_) {
+            verificationHook_(capability.configPath);
+        }
+        error = "injected final verification failure";
+        return false;
+    }
+
+private:
+    VerificationHook verificationHook_;
+};
+
 template <typename PolicyType>
 void requireLeaf(PolicyType& policy, const std::string& submodule) {
     require(
@@ -470,6 +511,41 @@ int main() {
             };
         writePasswordQualityGraph();
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+
+        const fs::path transactionRoot = root / "pam-transaction";
+        const auto transactionPlatform =
+            makePasswordQualityPlatform(transactionRoot);
+        writeFile(
+            transactionRoot / "pam.d/passwd",
+            "password requisite pam_pwquality.so\n"
+            "password required pam_unix.so\n");
+        writeFile(
+            transactionRoot / "security/pam_pwquality.so", "test", 0555);
+        const std::string transactionOriginal = "minlen = 12\n";
+        writeFile(
+            transactionPlatform.passwordQualityConfigPath,
+            transactionOriginal);
+        FaultInjectedPamOptionPolicy rollbackPolicy(transactionPlatform);
+        require(
+            !rollbackPolicy.applyValue("13"),
+            "injected final verification failure must fail apply");
+        require(
+            readFile(transactionPlatform.passwordQualityConfigPath) ==
+                transactionOriginal,
+            "failed final PAM verification did not restore raw config");
+
+        FaultInjectedPamOptionPolicy rollbackFailurePolicy(
+            transactionPlatform,
+            [&](const fs::path& configPath) {
+                writeFile(configPath, "external concurrent change\n");
+            });
+        require(
+            !rollbackFailurePolicy.applyValue("13"),
+            "concurrent rollback target change must fail apply");
+        require(
+            readFile(transactionPlatform.passwordQualityConfigPath) ==
+                "external concurrent change\n",
+            "rollback overwrote a concurrent external config change");
 
         applyPasswordQualityAssignment<PamPasswordCheckUsernamePolicy>(
             root, passwordQualityPlatform,
@@ -782,8 +858,6 @@ int main() {
         auto passwdqcPlatform = requiredPlatform;
         passwdqcPlatform.capabilities[1].provider =
             fic::platform::PamProviderKind::PamPasswdqc;
-        passwdqcPlatform.capabilities[1].grammar =
-            fic::platform::PamConfigGrammar::Passwdqc;
         passwdqcPlatform.capabilities[1].configPath =
             root / "security-config/passwdqc.conf";
         writeFile(
@@ -820,23 +894,29 @@ int main() {
             passwdqcPlatform);
         PamPasswdqcSimilarPasswordPolicy passwdqcSimilar(
             passwdqcPlatform);
+        PamPasswdqcRetryCountPolicy passwdqcRetry(passwdqcPlatform);
         PamPasswordQualityEnforceForRootPolicy passwdqcRoot(
             passwdqcPlatform);
         require(passwdqcMinimums.getDefaultValue() ==
                     "disabled,24,11,8,7" &&
                     passwdqcMinimums.validate("24,24,11,8,7") &&
                     !passwdqcMinimums.validate("24,25,11,8,7") &&
-                    passwdqcSimilar.getDefaultValue() == "deny",
+                    passwdqcSimilar.getDefaultValue() == "deny" &&
+                    passwdqcRetry.validate("0") &&
+                    !passwdqcRetry.validate("-1"),
                 "passwdqc policy defaults/validation are inconsistent");
         require(passwdqcMinimums.apply() && passwdqcRoot.apply(),
                 "native passwdqc policies failed to apply");
         const std::string passwdqcConfig = readFile(
             passwdqcPlatform.passwordQualityConfigPath);
+        std::string passwdqcError;
         require(passwdqcConfig.find(
                     "min=disabled,24,11,8,7\n") != std::string::npos &&
-                    passwdqcConfig.find("enforce=everyone\n") !=
-                        std::string::npos,
-                "passwdqc policies did not emit exact native syntax/mapping");
+                    fic::identity::pam::PasswdqcConfigFile::hasEffectiveValue(
+                        passwdqcPlatform.passwordQualityConfigPath,
+                        "enforce", "everyone", passwdqcError),
+                "passwdqc policies did not emit exact native syntax/mapping: " +
+                    passwdqcConfig + passwdqcError);
         writeFile(
             root / "pam.d/passwd",
             "password required pam_pwhistory.so\n");

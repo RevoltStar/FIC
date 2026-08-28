@@ -372,7 +372,7 @@ add_executable(pam_configuration_tests
 target_include_directories(pam_configuration_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(pam_configuration_tests PRIVATE fic-core)
+target_link_libraries(pam_configuration_tests PRIVATE fic-core fic-platform)
 add_test(NAME pam_configuration_tests COMMAND pam_configuration_tests)
 
 add_executable(passwdqc_config_file_tests
@@ -385,7 +385,7 @@ add_executable(passwdqc_config_file_tests
 target_include_directories(passwdqc_config_file_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(passwdqc_config_file_tests PRIVATE fic-core)
+target_link_libraries(passwdqc_config_file_tests PRIVATE fic-core fic-platform)
 add_test(NAME passwdqc_config_file_tests COMMAND passwdqc_config_file_tests)
 
 add_executable(alt_pam_faillock_topology_tests
@@ -427,6 +427,7 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
@@ -463,6 +464,7 @@ target_compile_definitions(identity_policy_hierarchy_tests PRIVATE
 target_link_libraries(identity_policy_hierarchy_tests PRIVATE
     fic-core
     fic-policy
+    fic-platform
     Threads::Threads
 )
 add_test(

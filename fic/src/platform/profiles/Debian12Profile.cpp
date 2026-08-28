@@ -91,15 +91,15 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.pam.capabilities = {
         {PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock,
          PamScope::EffectiveAuthenticationStack,
-         "/etc/security/faillock.conf", PamConfigGrammar::KeyValue,
+         "/etc/security/faillock.conf",
          PamTopologyStrategyKind::ExternalOptIn, {}},
         {PamCapability::PasswordQuality, PamProviderKind::PamPwquality,
          PamScope::EffectivePasswordStack,
-         "/etc/security/pwquality.conf", PamConfigGrammar::KeyValue,
+         "/etc/security/pwquality.conf",
          PamTopologyStrategyKind::ExternalOptIn, {}},
         {PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
          PamScope::EffectivePasswordStack,
-         "/etc/security/pwhistory.conf", PamConfigGrammar::KeyValue,
+         "/etc/security/pwhistory.conf",
          PamTopologyStrategyKind::ExternalOptIn, {}}
     };
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";

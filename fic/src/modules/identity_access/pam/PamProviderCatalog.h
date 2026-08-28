@@ -1,7 +1,6 @@
 #ifndef FIC_IDENTITY_ACCESS_PAM_PROVIDER_CATALOG_H
 #define FIC_IDENTITY_ACCESS_PAM_PROVIDER_CATALOG_H
 
-#include "modules/identity_access/pam/PamOptionValueCodec.h"
 #include "platform/PlatformProfile.h"
 
 #include <optional>
@@ -22,6 +21,12 @@ enum class PamNativeValueEncoding {
     PasswdqcEnforceForRoot
 };
 
+enum class PamExternalConfigMode {
+    None,
+    Optional,
+    Required
+};
+
 struct PamProviderPolicyBinding {
     fic::platform::PamPolicyFeature feature =
         fic::platform::PamPolicyFeature::PasswordMinLength;
@@ -39,6 +44,7 @@ struct PamProviderDescriptor {
     const char* name = "";
     const char* moduleName = "";
     const char* externalConfigArgument = "";
+    PamExternalConfigMode externalConfigMode = PamExternalConfigMode::None;
     fic::platform::PamConfigGrammar grammar =
         fic::platform::PamConfigGrammar::KeyValue;
     std::vector<PamProviderPolicyBinding> policies;
@@ -46,6 +52,8 @@ struct PamProviderDescriptor {
 
 const PamProviderDescriptor& pamProviderDescriptor(
     fic::platform::PamProviderKind provider);
+
+const std::vector<PamProviderDescriptor>& pamProviderDescriptors();
 
 const PamProviderPolicyBinding* pamProviderPolicyBinding(
     fic::platform::PamProviderKind provider,

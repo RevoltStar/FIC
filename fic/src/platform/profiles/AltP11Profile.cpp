@@ -91,12 +91,12 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.pam.capabilities = {
         {PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock,
          PamScope::EffectiveAuthenticationStack,
-         "/etc/security/faillock.conf", PamConfigGrammar::KeyValue,
+         "/etc/security/faillock.conf",
          PamTopologyStrategyKind::AltTcbManaged,
          "/etc/pam.d/system-auth-local-only"},
         {PamCapability::PasswordQuality, PamProviderKind::PamPasswdqc,
          PamScope::EffectivePasswordStack,
-         "/etc/passwdqc.conf", PamConfigGrammar::Passwdqc,
+         "/etc/passwdqc.conf",
          PamTopologyStrategyKind::StaticReadOnly, {}}
     };
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;

@@ -1,9 +1,9 @@
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 
+#include "modules/identity_access/pam/PamOptionValueCodec.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 
 #include <algorithm>
-#include <stdexcept>
 
 namespace fic::identity::pam {
 namespace {
@@ -12,109 +12,7 @@ using Feature = fic::platform::PamPolicyFeature;
 using Provider = fic::platform::PamProviderKind;
 using Capability = fic::platform::PamCapability;
 
-PamProviderPolicyBinding assignment(
-    Feature feature,
-    const char* option,
-    PamNativeValueEncoding encoding = PamNativeValueEncoding::Direct)
-{
-    return {feature, option, PamNativeOptionSyntax::Assignment, encoding, {}};
-}
-
-PamProviderPolicyBinding flag(
-    Feature feature,
-    const char* option,
-    std::vector<std::string> conflicts = {})
-{
-    return {feature, option, PamNativeOptionSyntax::Flag,
-            PamNativeValueEncoding::Direct, std::move(conflicts)};
-}
-
-const std::vector<PamProviderDescriptor>& descriptors()
-{
-    static const std::vector<PamProviderDescriptor> values{
-        {Provider::PamFaillock, Capability::AuthenticationLockout,
-         "pam_faillock", "pam_faillock.so", "conf",
-         fic::platform::PamConfigGrammar::KeyValue,
-         {
-             assignment(Feature::FailedAuthenticationAttempts, "deny"),
-             assignment(Feature::FailedAuthenticationCountingPeriod,
-                        "fail_interval"),
-             flag(Feature::FailedAuthenticationEnforceForRoot,
-                  "even_deny_root", {"root_unlock_time"}),
-             assignment(Feature::FailedAuthenticationUnlockTime,
-                        "unlock_time")
-         }},
-        {Provider::PamPwquality, Capability::PasswordQuality,
-         "pam_pwquality", "pam_pwquality.so", "conf",
-         fic::platform::PamConfigGrammar::KeyValue,
-         {
-             assignment(Feature::PasswordMinLength, "minlen"),
-             assignment(Feature::PasswordMinClasses, "minclass"),
-             assignment(Feature::PasswordCheckUsername, "usercheck",
-                        PamNativeValueEncoding::YesNoInteger),
-             assignment(Feature::PasswordCheckGecos, "gecoscheck",
-                        PamNativeValueEncoding::YesNoInteger),
-             flag(Feature::PasswordQualityEnforceForRoot,
-                  "enforce_for_root"),
-             assignment(Feature::PasswordMinChangedCharacters, "difok"),
-             assignment(Feature::PasswordMinLowercase, "lcredit",
-                        PamNativeValueEncoding::MinimumCredit),
-             assignment(Feature::PasswordMinUppercase, "ucredit",
-                        PamNativeValueEncoding::MinimumCredit),
-             assignment(Feature::PasswordMinDigits, "dcredit",
-                        PamNativeValueEncoding::MinimumCredit),
-             assignment(Feature::PasswordMinOther, "ocredit",
-                        PamNativeValueEncoding::MinimumCredit)
-         }},
-        {Provider::PamPasswdqc, Capability::PasswordQuality,
-         "pam_passwdqc", "pam_passwdqc.so", "config",
-         fic::platform::PamConfigGrammar::Passwdqc,
-         {
-             assignment(Feature::PasswordQualityEnforceForRoot, "enforce",
-                        PamNativeValueEncoding::PasswdqcEnforceForRoot),
-             assignment(Feature::PasswdqcStrengthThresholds, "min"),
-             assignment(Feature::PasswdqcPassphraseWords, "passphrase"),
-             assignment(Feature::PasswdqcMatchLength, "match"),
-             assignment(Feature::PasswdqcSimilarPassword, "similar"),
-             assignment(Feature::PasswdqcRetryCount, "retry")
-         }},
-        {Provider::PamPwhistory, Capability::PasswordHistory,
-         "pam_pwhistory", "pam_pwhistory.so", "conf",
-         fic::platform::PamConfigGrammar::KeyValue,
-         {
-             assignment(Feature::PasswordHistoryDepth, "remember"),
-             flag(Feature::PasswordHistoryEnforceForRoot, "enforce_for_root")
-         }},
-        {Provider::PamTally2, Capability::AuthenticationLockout,
-         "pam_tally2", "pam_tally2.so", "",
-         fic::platform::PamConfigGrammar::KeyValue, {}},
-        {Provider::PamTally, Capability::AuthenticationLockout,
-         "pam_tally", "pam_tally.so", "",
-         fic::platform::PamConfigGrammar::KeyValue, {}},
-        {Provider::PamCracklib, Capability::PasswordQuality,
-         "pam_cracklib", "pam_cracklib.so", "",
-         fic::platform::PamConfigGrammar::KeyValue, {}},
-        {Provider::PamUnixHistory, Capability::PasswordHistory,
-         "pam_unix remember", "pam_unix.so", "",
-         fic::platform::PamConfigGrammar::KeyValue, {}}
-    };
-    return values;
-}
-
 } // namespace
-
-const PamProviderDescriptor& pamProviderDescriptor(Provider provider)
-{
-    const auto& values = descriptors();
-    const auto found = std::find_if(
-        values.begin(), values.end(), [provider](const auto& candidate) {
-            return candidate.kind == provider;
-        });
-    if (found == values.end()) {
-        throw std::logic_error("unknown PAM provider descriptor");
-    }
-    return *found;
-}
 
 const PamProviderPolicyBinding* pamProviderPolicyBinding(
     Provider provider,
@@ -134,7 +32,7 @@ std::optional<Provider> pamProviderForModule(
     const std::string& moduleName,
     bool hasUnixRememberArgument)
 {
-    const auto& values = descriptors();
+    const auto& values = pamProviderDescriptors();
     const auto found = std::find_if(
         values.begin(), values.end(),
         [&](const auto& candidate) {

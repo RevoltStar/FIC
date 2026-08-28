@@ -47,6 +47,11 @@ public:
         const std::vector<std::filesystem::path>& moduleDirectories,
         std::string& error);
 
+    static bool verifyExternalConfigContract(
+        const PamProviderInspection& inspection,
+        const std::string& expectedConfigPath,
+        std::string& error);
+
     static bool verifyOptionOverrides(
         const PamProviderInspection& inspection,
         const std::string& expectedConfigPath,

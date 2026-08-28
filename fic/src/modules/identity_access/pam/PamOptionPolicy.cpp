@@ -2,6 +2,7 @@
 
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
+#include "modules/identity_access/pam/PamConfigFileTransaction.h"
 #include "modules/identity_access/pam/PamOptionFile.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
@@ -32,6 +33,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
     const auto* binding = fic::identity::pam::pamProviderPolicyBinding(
         capability->provider, feature_);
+    const auto& provider =
+        fic::identity::pam::pamProviderDescriptor(capability->provider);
     if (binding == nullptr) {
         this->log("PAM provider does not support policy " + this->policyName,
                   logLevel::ERROR);
@@ -109,7 +112,7 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
 
     const auto hasExpectedState = [&](std::string& stateError) {
-        if (capability->grammar == fic::platform::PamConfigGrammar::Passwdqc) {
+        if (provider.grammar == fic::platform::PamConfigGrammar::Passwdqc) {
             return fic::identity::pam::PasswdqcConfigFile::hasOnlyValue(
                 capability->configPath, binding->option,
                 nativeExpectedValue, stateError);
@@ -124,7 +127,7 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
                   expectedFlagEnabled, stateError);
     };
     const auto setExpectedState = [&](std::string& stateError) {
-        if (capability->grammar == fic::platform::PamConfigGrammar::Passwdqc) {
+        if (provider.grammar == fic::platform::PamConfigGrammar::Passwdqc) {
             return fic::identity::pam::PasswdqcConfigFile::setValue(
                 capability->configPath, binding->option,
                 nativeExpectedValue, stateError);
@@ -140,75 +143,107 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     };
 
     std::string currentError;
+    fic::identity::pam::PamConfigFileSnapshot snapshot;
+    bool mutationAttempted = false;
+    const auto failAfterMutation = [&](const std::string& failure) {
+        std::string diagnostic = failure;
+        if (mutationAttempted) {
+            std::string rollbackError;
+            if (!fic::identity::pam::PamConfigFileTransaction::rollback(
+                    snapshot, rollbackError)) {
+                diagnostic += "; CRITICAL: PAM policy rollback failed: " +
+                    rollbackError + "; PAM configuration may be degraded";
+            }
+        }
+        this->log(diagnostic, logLevel::ERROR);
+        return false;
+    };
     if (!hasExpectedState(currentError)) {
-        if (!setExpectedState(error)) {
+        if (!fic::identity::pam::PamConfigFileTransaction::capture(
+                capability->configPath, snapshot, error)) {
             this->log(
-                "Could not update PAM option for " + this->policyName +
+                "Could not snapshot PAM option for " + this->policyName +
                     ": " + error,
                 logLevel::ERROR);
             return false;
         }
+        mutationAttempted = true;
+        if (!setExpectedState(error)) {
+            return failAfterMutation(
+                "Could not update PAM option for " + this->policyName +
+                    ": " + error);
+        }
+        if (!fic::identity::pam::PamConfigFileTransaction::recordMutation(
+                snapshot, error)) {
+            return failAfterMutation(
+                "Could not record mutated PAM option for " +
+                    this->policyName + ": " + error);
+        }
     }
 
     if (!hasExpectedState(error)) {
-        this->log(
+        return failAfterMutation(
             "PAM option postcondition failed for " + this->policyName +
-                ": " + error,
-            logLevel::ERROR);
-        return false;
+                ": " + error);
     }
     if (binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
         !expectedFlagEnabled &&
         !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
             capability->configPath,
             binding->conflictingOptionsWhenDisabled, error)) {
-        this->log(
+        return failAfterMutation(
             "PAM flag dependency postcondition failed for " +
-                this->policyName + ": " + error,
-            logLevel::ERROR);
-        return false;
+                this->policyName + ": " + error);
     }
 
-    fic::identity::pam::PamConfiguration verification(platformConfig_);
-    fic::identity::pam::PamCapabilityVerification verifiedCapability;
-    if (!fic::identity::pam::PamCapabilityVerifier::verify(
-            verification,
-            platformConfig_,
-            *services,
-            capability->capability,
-            capability->provider,
-            verifiedCapability) ||
-        !(binding->syntax ==
-                  fic::identity::pam::PamNativeOptionSyntax::Assignment
-              ? fic::identity::pam::PamProviderInspector::
-                    verifyOptionOverrides(
-                        verifiedCapability.inspection,
-                        capability->configPath.string(), binding->option,
-                        nativeExpectedValue, error)
-              : fic::identity::pam::PamProviderInspector::
-                    verifyFlagOverrides(
-                        verifiedCapability.inspection,
-                        capability->configPath.string(), binding->option,
-                        expectedFlagEnabled, error,
-                        binding->conflictingOptionsWhenDisabled))) {
-        if (!verifiedCapability.detail.empty() &&
-            verifiedCapability.state !=
-                fic::identity::pam::PamEnforcementState::Effective) {
-            error = fic::identity::pam::formatPamCapabilityVerification(
-                verifiedCapability);
-        }
-        this->log(
+    std::size_t verifiedServiceCount = 0;
+    if (!verifyPostMutationPamState(
+            *capability, *services, *binding, nativeExpectedValue,
+            expectedFlagEnabled, verifiedServiceCount, error)) {
+        return failAfterMutation(
             "PAM graph postcondition failed for " + this->policyName +
-                ": " + error,
-            logLevel::ERROR);
-        return false;
+                ": " + error);
     }
 
     this->log(
         "PAM policy " + this->policyName + " is effective for " +
-            std::to_string(
-                verifiedCapability.inspection.services.size()) +
+            std::to_string(verifiedServiceCount) +
             " configured services",
         logLevel::INFO);
+    return true;
+}
+
+bool PamOptionPolicy::verifyPostMutationPamState(
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::vector<std::string>& services,
+    const fic::identity::pam::PamProviderPolicyBinding& binding,
+    const std::string& nativeExpectedValue,
+    bool expectedFlagEnabled,
+    std::size_t& verifiedServiceCount,
+    std::string& error) const
+{
+    fic::identity::pam::PamConfiguration verification(platformConfig_);
+    fic::identity::pam::PamCapabilityVerification verifiedCapability;
+    if (!fic::identity::pam::PamCapabilityVerifier::verify(
+            verification, platformConfig_, services, capability.capability,
+            capability.provider, verifiedCapability)) {
+        error = fic::identity::pam::formatPamCapabilityVerification(
+            verifiedCapability);
+        return false;
+    }
+    const bool overridesValid = binding.syntax ==
+            fic::identity::pam::PamNativeOptionSyntax::Assignment
+        ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+              verifiedCapability.inspection, capability.configPath.string(),
+              binding.option, nativeExpectedValue, error)
+        : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+              verifiedCapability.inspection, capability.configPath.string(),
+              binding.option, expectedFlagEnabled, error,
+              binding.conflictingOptionsWhenDisabled);
+    if (!overridesValid) {
+        return false;
+    }
+    verifiedServiceCount = verifiedCapability.inspection.services.size();
+    error.clear();
     return true;
 }

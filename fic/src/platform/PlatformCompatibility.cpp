@@ -1,5 +1,6 @@
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
+#include "modules/identity_access/pam/PamProviderCatalog.h"
 
 #include <algorithm>
 #include <cctype>
@@ -223,24 +224,6 @@ bool validatePamTrustedAuthenticationBypasses(
     return true;
 }
 
-bool providerImplementsCapability(PamProviderKind provider,
-                                  PamCapability capability) {
-    switch (capability) {
-    case PamCapability::AuthenticationLockout:
-        return provider == PamProviderKind::PamFaillock ||
-            provider == PamProviderKind::PamTally2 ||
-            provider == PamProviderKind::PamTally;
-    case PamCapability::PasswordQuality:
-        return provider == PamProviderKind::PamPwquality ||
-            provider == PamProviderKind::PamPasswdqc ||
-            provider == PamProviderKind::PamCracklib;
-    case PamCapability::PasswordHistory:
-        return provider == PamProviderKind::PamPwhistory ||
-            provider == PamProviderKind::PamUnixHistory;
-    }
-    return false;
-}
-
 bool validatePamComposition(const PamPlatformConfig& pam,
                             std::string& error) {
     if (pam.scopes.empty() || pam.capabilities.empty()) {
@@ -274,8 +257,9 @@ bool validatePamComposition(const PamPlatformConfig& pam,
             error = "PAM capability references an incompatible service scope";
             return false;
         }
-        if (!providerImplementsCapability(
-                capability.provider, capability.capability)) {
+        const auto& provider =
+            fic::identity::pam::pamProviderDescriptor(capability.provider);
+        if (provider.capability != capability.capability) {
             error = "PAM provider does not implement its declared capability";
             return false;
         }
@@ -287,11 +271,6 @@ bool validatePamComposition(const PamPlatformConfig& pam,
         if (!configPaths.insert(capability.configPath).second) {
             error = "PAM provider configuration path is shared by multiple "
                 "capabilities";
-            return false;
-        }
-        if ((capability.provider == PamProviderKind::PamPasswdqc) !=
-            (capability.grammar == PamConfigGrammar::Passwdqc)) {
-            error = "PAM provider and configuration grammar are inconsistent";
             return false;
         }
         if (capability.topology == PamTopologyStrategyKind::AltTcbManaged) {

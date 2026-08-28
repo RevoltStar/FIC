@@ -103,5 +103,5 @@ PamPasswdqcRetryCountPolicy::PamPasswdqcRetryCountPolicy(
 {
     policyName = "passwdqc_retry_count";
     policyTypeValue = std::make_unique<IntPolicyTypeValue>(
-        1, std::numeric_limits<int>::max(), 3);
+        0, std::numeric_limits<int>::max(), 3);
 }

@@ -1,5 +1,7 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 
+#include "modules/identity_access/pam/PamPlatformComposition.h"
+
 namespace fic::identity::pam {
 
 bool PamCapabilityVerifier::verify(
@@ -56,6 +58,20 @@ bool PamCapabilityVerifier::verify(
             error)) {
         verification.state = PamEnforcementState::Broken;
         verification.detail = error;
+        return false;
+    }
+
+    const auto* configuredCapability = capabilityConfig(
+        platformConfig, capability);
+    if (configuredCapability == nullptr ||
+        configuredCapability->provider != provider ||
+        !PamProviderInspector::verifyExternalConfigContract(
+            verification.inspection,
+            configuredCapability->configPath.string(), error)) {
+        verification.state = PamEnforcementState::Broken;
+        verification.detail = configuredCapability == nullptr
+            ? "PAM capability is absent from platform composition"
+            : error;
         return false;
     }
 

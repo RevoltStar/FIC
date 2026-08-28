@@ -27,6 +27,73 @@ public:
     static std::string serialize(const PasswdqcMinimums& value);
 };
 
+enum class PasswdqcDirectiveKind {
+    Minimums,
+    Maximum,
+    PassphraseWords,
+    MatchLength,
+    Similar,
+    RandomBits,
+    Wordlist,
+    Denylist,
+    Filter,
+    Enforce,
+    NonUnix,
+    Retry,
+    AskOldAuthToken,
+    CheckOldAuthToken,
+    UseFirstPass,
+    UseAuthToken,
+    NoAudit,
+    Config
+};
+
+struct PasswdqcDirective {
+    PasswdqcDirectiveKind kind = PasswdqcDirectiveKind::Minimums;
+    std::string option;
+    std::string value;
+    std::filesystem::path source;
+    std::size_t line = 0;
+};
+
+struct PasswdqcEffectiveState {
+    PasswdqcMinimums minimums;
+    unsigned int maximum = 72;
+    unsigned int passphraseWords = 3;
+    unsigned int matchLength = 4;
+    std::string similar = "deny";
+    unsigned int randomBits = 47;
+    std::string wordlist;
+    std::string denylist;
+    std::string filter;
+    std::string enforce = "everyone";
+    unsigned int retry = 3;
+    bool nonUnix = false;
+    bool askOldAuthToken = false;
+    bool askOldAuthTokenDuringUpdate = false;
+    bool checkOldAuthToken = false;
+    bool useFirstPass = false;
+    bool useAuthToken = false;
+    bool noAudit = false;
+
+    PasswdqcEffectiveState();
+
+    bool managedValue(const std::string& option,
+                      std::string& value,
+                      std::string& error) const;
+};
+
+class PasswdqcConfigEvaluator {
+public:
+    static constexpr std::size_t maximumDepth = 16;
+    static constexpr std::size_t maximumTotalBytes = 1024U * 1024U;
+    static constexpr std::size_t maximumLineBytes = 8190;
+
+    static bool evaluate(const std::filesystem::path& root,
+                         PasswdqcEffectiveState& state,
+                         std::string& error);
+};
+
 class PasswdqcConfigFile {
 public:
     using Writer = std::function<bool(
@@ -41,10 +108,17 @@ public:
                          std::string& error,
                          Writer writer = {});
 
+    static bool hasEffectiveValue(const std::filesystem::path& path,
+                                  const std::string& option,
+                                  const std::string& expectedValue,
+                                  std::string& error);
+
     static bool hasOnlyValue(const std::filesystem::path& path,
                              const std::string& option,
                              const std::string& expectedValue,
-                             std::string& error);
+                             std::string& error) {
+        return hasEffectiveValue(path, option, expectedValue, error);
+    }
 
     static bool validateNativeValue(const std::string& option,
                                     const std::string& value,

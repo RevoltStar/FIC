@@ -80,6 +80,12 @@ bool uniqueArgumentValue(const PamRule& rule,
     value.reset();
     const std::string prefix = option + "=";
     for (const auto& argument : rule.arguments) {
+        if (argument == option) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) + ": PAM argument " + option +
+                " requires an assigned value";
+            return false;
+        }
         if (argument.compare(0, prefix.size(), prefix) != 0) {
             continue;
         }
@@ -263,6 +269,59 @@ PamProviderFileState PamProviderInspector::inspectExpectedProviderFile(
     return PamProviderFileState::Missing;
 }
 
+bool PamProviderInspector::verifyExternalConfigContract(
+    const PamProviderInspection& inspection,
+    const std::string& expectedConfigPath,
+    std::string& error)
+{
+    error.clear();
+    const auto& descriptor = pamProviderDescriptor(inspection.provider);
+    if (descriptor.externalConfigMode == PamExternalConfigMode::None) {
+        return true;
+    }
+    const std::filesystem::path expected(expectedConfigPath);
+    if (!expected.is_absolute() || expected != expected.lexically_normal()) {
+        error = "managed PAM configuration path is not absolute and normalized";
+        return false;
+    }
+    for (const auto& rule : inspection.providerRules) {
+        std::optional<std::string> configuredPath;
+        if (!uniqueArgumentValue(
+                rule, descriptor.externalConfigArgument,
+                configuredPath, error)) {
+            return false;
+        }
+        if (!configuredPath.has_value()) {
+            if (descriptor.externalConfigMode ==
+                PamExternalConfigMode::Required) {
+                error = rule.source.string() + ":" +
+                    std::to_string(rule.line) + ": provider requires PAM " +
+                    descriptor.externalConfigArgument + "=" +
+                    expected.string();
+                return false;
+            }
+            continue;
+        }
+        const std::filesystem::path configured(*configuredPath);
+        if (!configured.is_absolute() ||
+            configured != configured.lexically_normal()) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": provider configuration path is not absolute and normalized: " +
+                *configuredPath;
+            return false;
+        }
+        if (configured != expected) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": provider uses another configuration file: " +
+                *configuredPath;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool PamProviderInspector::verifyOptionOverrides(
     const PamProviderInspection& inspection,
     const std::string& expectedConfigPath,
@@ -270,24 +329,11 @@ bool PamProviderInspector::verifyOptionOverrides(
     const std::string& expectedValue,
     std::string& error) {
     error.clear();
-    const auto& descriptor = pamProviderDescriptor(inspection.provider);
+    if (!verifyExternalConfigContract(
+            inspection, expectedConfigPath, error)) {
+        return false;
+    }
     for (const auto& rule : inspection.providerRules) {
-        std::optional<std::string> configuredPath;
-        if (descriptor.externalConfigArgument[0] != '\0' &&
-            !uniqueArgumentValue(
-                rule, descriptor.externalConfigArgument,
-                configuredPath, error)) {
-            return false;
-        }
-        if (configuredPath.has_value() &&
-            std::filesystem::path(*configuredPath).lexically_normal() !=
-                std::filesystem::path(expectedConfigPath).lexically_normal()) {
-            error = rule.source.string() + ":" + std::to_string(rule.line) +
-                ": provider uses another configuration file: " +
-                *configuredPath;
-            return false;
-        }
-
         std::optional<std::string> overrideValue;
         if (!uniqueArgumentValue(rule, option, overrideValue, error)) {
             return false;
@@ -311,23 +357,11 @@ bool PamProviderInspector::verifyFlagOverrides(
     const std::vector<std::string>& conflictingOptionsWhenDisabled) {
     error.clear();
     const std::string assignmentPrefix = flag + "=";
-    const auto& descriptor = pamProviderDescriptor(inspection.provider);
+    if (!verifyExternalConfigContract(
+            inspection, expectedConfigPath, error)) {
+        return false;
+    }
     for (const auto& rule : inspection.providerRules) {
-        std::optional<std::string> configuredPath;
-        if (descriptor.externalConfigArgument[0] != '\0' &&
-            !uniqueArgumentValue(
-                rule, descriptor.externalConfigArgument,
-                configuredPath, error)) {
-            return false;
-        }
-        if (configuredPath.has_value() &&
-            std::filesystem::path(*configuredPath).lexically_normal() !=
-                std::filesystem::path(expectedConfigPath).lexically_normal()) {
-            error = rule.source.string() + ":" + std::to_string(rule.line) +
-                ": provider uses another configuration file: " +
-                *configuredPath;
-            return false;
-        }
         std::size_t flagOccurrences = 0;
         for (const auto& argument : rule.arguments) {
             flagOccurrences += argument == flag ? 1U : 0U;
