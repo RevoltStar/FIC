@@ -8,6 +8,7 @@
 [utils:policytypevalue][type:multilinepolicytypevalue] = No restriction
 [utils:policytypevalue][type:possiblelistpolicytypevalue] = Only from this list:
 [utils:policytypevalue][type:fixedpolicytypevalue]= No editable policy
+[utils:policytypevalue][type:passwdqcminimums] = Exactly five comma-separated passwdqc thresholds; each next value must not exceed the previous one, and disabled is permitted
 
 #
 [module:all][col:is_policy_active]=Enabled?
@@ -75,7 +76,7 @@
 [module:IDENTITY_ACCESS][policy:password_check_gecos]=Check GECOS data in password
 [module:IDENTITY_ACCESS][policy:password_check_gecos][description]=Checks whether the new password contains significant words from the local account GECOS field.
 [module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root]=Enforce password quality for root
-[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Controls the valueless enforce_for_root flag in pam_pwquality. The value yes applies quality checks when root sets a password and no removes the flag; comparison with the previous password is unavailable for root.
+[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Applies password-quality checks when root sets a password. The provider backend maps yes/no to the native pam_pwquality or pam_passwdqc representation.
 [module:IDENTITY_ACCESS][policy:password_min_changed_characters]=Minimum change from previous password
 [module:IDENTITY_ACCESS][policy:password_min_changed_characters][description]=Sets difok, the minimum number of changes from the previous password. A value of 0 disables similarity checks except exact equality; comparison is normally unavailable for root because the previous password is not provided.
 [module:IDENTITY_ACCESS][policy:password_min_lowercase]=Minimum lowercase letters
@@ -86,6 +87,16 @@
 [module:IDENTITY_ACCESS][policy:password_min_digits][description]=Requires the specified minimum number of digits through pam_pwquality dcredit; 0 disables the separate minimum for this class.
 [module:IDENTITY_ACCESS][policy:password_min_other]=Minimum other characters
 [module:IDENTITY_ACCESS][policy:password_min_other][description]=Requires the specified minimum number of characters from other classes through pam_pwquality ocredit; 0 disables the separate minimum for this class.
+[module:IDENTITY_ACCESS][policy:passwdqc_strength_thresholds]=passwdqc strength thresholds
+[module:IDENTITY_ACCESS][policy:passwdqc_strength_thresholds][description]=Sets the native passwdqc min tuple with exactly five non-increasing numeric or disabled fields.
+[module:IDENTITY_ACCESS][policy:passwdqc_passphrase_words]=passwdqc passphrase word count
+[module:IDENTITY_ACCESS][policy:passwdqc_passphrase_words][description]=Sets the native passwdqc passphrase option; 0 disables the passphrase-specific check.
+[module:IDENTITY_ACCESS][policy:passwdqc_match_length]=passwdqc match length
+[module:IDENTITY_ACCESS][policy:passwdqc_match_length][description]=Sets the native passwdqc match option; 0 disables the substring match check.
+[module:IDENTITY_ACCESS][policy:passwdqc_similar_password]=passwdqc similar-password handling
+[module:IDENTITY_ACCESS][policy:passwdqc_similar_password][description]=Selects the native passwdqc similar value: deny or permit.
+[module:IDENTITY_ACCESS][policy:passwdqc_retry_count]=passwdqc retry count
+[module:IDENTITY_ACCESS][policy:passwdqc_retry_count][description]=Sets the native passwdqc retry count used by pam_passwdqc.
 [module:IDENTITY_ACCESS][policy:password_history_depth]=Password history depth
 [module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets remember in the canonical pam_pwhistory configuration. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Enforce password history for root

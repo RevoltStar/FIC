@@ -180,9 +180,17 @@ bool validatePamServices(const std::vector<std::string>& services,
 bool validatePamTrustedAuthenticationBypasses(
     const PamPlatformConfig& pam,
     std::string& error) {
+    const auto authenticationScope = std::find_if(
+        pam.scopes.begin(), pam.scopes.end(), [](const auto& scope) {
+            return scope.scope == PamScope::EffectiveAuthenticationStack;
+        });
+    if (authenticationScope == pam.scopes.end()) {
+        error = "effective PAM authentication scope is missing";
+        return false;
+    }
     std::set<std::pair<std::string, std::string>> uniqueRules;
     for (const auto& rule : pam.trustedAuthenticationBypasses) {
-        if (!contains(pam.authenticationServices, rule.service)) {
+        if (!contains(authenticationScope->services, rule.service)) {
             error = "trusted PAM authentication bypass references an "
                 "unverified service: " + rule.service;
             return false;
@@ -209,6 +217,91 @@ bool validatePamTrustedAuthenticationBypasses(
         if (!uniqueRules.emplace(rule.service, rule.module).second) {
             error = "trusted PAM authentication bypass is duplicated: " +
                 rule.service + ":" + rule.module;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool providerImplementsCapability(PamProviderKind provider,
+                                  PamCapability capability) {
+    switch (capability) {
+    case PamCapability::AuthenticationLockout:
+        return provider == PamProviderKind::PamFaillock ||
+            provider == PamProviderKind::PamTally2 ||
+            provider == PamProviderKind::PamTally;
+    case PamCapability::PasswordQuality:
+        return provider == PamProviderKind::PamPwquality ||
+            provider == PamProviderKind::PamPasswdqc ||
+            provider == PamProviderKind::PamCracklib;
+    case PamCapability::PasswordHistory:
+        return provider == PamProviderKind::PamPwhistory ||
+            provider == PamProviderKind::PamUnixHistory;
+    }
+    return false;
+}
+
+bool validatePamComposition(const PamPlatformConfig& pam,
+                            std::string& error) {
+    if (pam.scopes.empty() || pam.capabilities.empty()) {
+        error = "PAM scope and capability composition must not be empty";
+        return false;
+    }
+    std::set<PamScope> scopes;
+    for (const auto& scope : pam.scopes) {
+        if (!scopes.insert(scope.scope).second) {
+            error = "PAM scope is duplicated";
+            return false;
+        }
+        if (!validatePamServices(scope.services, "PAM scope service", error)) {
+            return false;
+        }
+    }
+
+    std::set<PamCapability> capabilities;
+    std::set<std::filesystem::path> configPaths;
+    for (const auto& capability : pam.capabilities) {
+        if (!capabilities.insert(capability.capability).second) {
+            error = "PAM capability is duplicated";
+            return false;
+        }
+        if (scopes.find(capability.scope) == scopes.end()) {
+            error = "PAM capability references an undefined scope";
+            return false;
+        }
+        if ((capability.capability == PamCapability::AuthenticationLockout) !=
+            (capability.scope == PamScope::EffectiveAuthenticationStack)) {
+            error = "PAM capability references an incompatible service scope";
+            return false;
+        }
+        if (!providerImplementsCapability(
+                capability.provider, capability.capability)) {
+            error = "PAM provider does not implement its declared capability";
+            return false;
+        }
+        if (!validatePath(
+                capability.configPath, "PAM provider configuration path",
+                error)) {
+            return false;
+        }
+        if (!configPaths.insert(capability.configPath).second) {
+            error = "PAM provider configuration path is shared by multiple "
+                "capabilities";
+            return false;
+        }
+        if ((capability.provider == PamProviderKind::PamPasswdqc) !=
+            (capability.grammar == PamConfigGrammar::Passwdqc)) {
+            error = "PAM provider and configuration grammar are inconsistent";
+            return false;
+        }
+        if (capability.topology == PamTopologyStrategyKind::AltTcbManaged) {
+            if (!validatePath(
+                    capability.topologyTarget, "PAM topology target", error)) {
+                return false;
+            }
+        } else if (!capability.topologyTarget.empty()) {
+            error = "PAM topology target is set for a strategy that does not "
+                "manage a target";
             return false;
         }
     }
@@ -311,20 +404,8 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                        "PAM configuration directory", error) ||
         !validatePaths(profile.pam.moduleDirectories,
                        "PAM module directory", error) ||
-        !validatePamServices(profile.pam.authenticationServices,
-                             "PAM authentication service", error) ||
-        !validatePamServices(profile.pam.passwordServices,
-                             "PAM password service", error) ||
+        !validatePamComposition(profile.pam, error) ||
         !validatePamTrustedAuthenticationBypasses(profile.pam, error) ||
-        !validatePath(profile.pam.faillockConfigPath,
-                      "pam_faillock configuration path", error) ||
-        !validatePath(profile.pam.passwordQualityConfigPath,
-                      "pam_pwquality configuration path", error) ||
-        !validatePath(profile.pam.passwordHistoryConfigPath,
-                      "pam_pwhistory configuration path", error) ||
-        (!profile.pam.localAuthenticationStackPath.empty() &&
-         !validatePath(profile.pam.localAuthenticationStackPath,
-                       "PAM local authentication stack path", error)) ||
         !validatePath(profile.passwordAging.loginDefsPath,
                       "login.defs path", error) ||
         !validatePath(profile.passwordAging.passwdPath,

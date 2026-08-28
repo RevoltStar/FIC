@@ -2,6 +2,7 @@
 
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
 
 #include <fic/core/process/ExclusivePidLock.h>
 
@@ -323,17 +324,23 @@ bool verifyNoExternalFaillockInRelevantGraph(
     const ManagedInspection& managed,
     std::string& error) {
     PamConfiguration configuration(platformConfig);
+    const fic::platform::PamCapabilityConfig* capability = nullptr;
+    const std::vector<std::string>* configuredServices = nullptr;
+    if (!resolveCapability(
+            platformConfig, PamCapability::AuthenticationLockout,
+            capability, configuredServices, error)) {
+        return false;
+    }
     std::vector<std::string> services;
     if (!configuration.existingServices(
-            platformConfig.authenticationServices, services, error)) {
+            *configuredServices, services, error)) {
         return false;
     }
     if (services.empty()) {
         error = "none of the configured PAM authentication services exists";
         return false;
     }
-    const auto target =
-        platformConfig.localAuthenticationStackPath.lexically_normal();
+    const auto target = capability->topologyTarget.lexically_normal();
     for (const std::string& service : services) {
         for (const PamManagementGroup group : {
                  PamManagementGroup::Auth, PamManagementGroup::Account}) {
@@ -675,8 +682,11 @@ bool AltPamFaillockTopologyManager::verifySemanticEffectiveness(
     }
     PamConfiguration configuration(platformConfig_);
     PamCapabilityVerification verification;
-    const std::string localService =
-        platformConfig_.localAuthenticationStackPath.filename().string();
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    const std::string localService = capability == nullptr
+        ? std::string()
+        : capability->topologyTarget.filename().string();
     if (localService.empty()) {
         error = "local PAM authentication stack service name is empty";
         return false;
@@ -698,7 +708,12 @@ bool AltPamFaillockTopologyManager::verifySemanticEffectiveness(
 bool AltPamFaillockTopologyManager::status(
     AltPamFaillockTopologyState& state,
     std::string& error) {
-    if (platformConfig_.localAuthenticationStackPath.empty() ||
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    if (capability == nullptr ||
+        capability->topology !=
+            fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
+        capability->topologyTarget.empty() ||
         options_.lockFilePath.empty()) {
         error = "ALT pam_faillock topology is unsupported by this platform profile";
         return false;
@@ -712,13 +727,13 @@ bool AltPamFaillockTopologyManager::status(
     }
     TargetSnapshot snapshot;
     if (!inspectSecureTarget(
-            platformConfig_.localAuthenticationStackPath, snapshot, error)) {
+            capability->topologyTarget, snapshot, error)) {
         return false;
     }
     std::vector<PhysicalLine> lines;
     std::vector<PamRule> rules;
     ManagedInspection managed;
-    if (!parseAndInspect(platformConfig_.localAuthenticationStackPath,
+    if (!parseAndInspect(capability->topologyTarget,
                          snapshot.content, lines, rules, managed, error)) {
         return false;
     }
@@ -758,8 +773,44 @@ bool AltPamFaillockTopologyManager::status(
     return true;
 }
 
+bool AltPamFaillockTopologyManager::inspect(PamTopologyStatus& result,
+                                            std::string& error)
+{
+    AltPamFaillockTopologyState current;
+    if (!status(current, error)) {
+        result = {PamTopologyState::Broken, true, error};
+        return false;
+    }
+    result.state = current == AltPamFaillockTopologyState::Enabled
+        ? PamTopologyState::Enabled
+        : PamTopologyState::Disabled;
+    result.manageable = true;
+    result.detail.clear();
+    return true;
+}
+
+bool AltPamFaillockTopologyManager::canEnable(std::string& error) const
+{
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    if (capability == nullptr ||
+        capability->topology !=
+            fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
+        capability->topologyTarget.empty() || options_.lockFilePath.empty()) {
+        error = "ALT pam_faillock topology is unsupported by this platform profile";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool AltPamFaillockTopologyManager::enable(std::string& error) {
-    if (platformConfig_.localAuthenticationStackPath.empty() ||
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    if (capability == nullptr ||
+        capability->topology !=
+            fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
+        capability->topologyTarget.empty() ||
         options_.lockFilePath.empty()) {
         error = "ALT pam_faillock topology is unsupported by this platform profile";
         return false;
@@ -772,7 +823,7 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
         return false;
     }
 
-    const auto& path = platformConfig_.localAuthenticationStackPath;
+    const auto& path = capability->topologyTarget;
     TargetSnapshot original;
     if (!inspectSecureTarget(path, original, error)) {
         return false;
@@ -912,7 +963,12 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
 }
 
 bool AltPamFaillockTopologyManager::disable(std::string& error) {
-    if (platformConfig_.localAuthenticationStackPath.empty() ||
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    if (capability == nullptr ||
+        capability->topology !=
+            fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
+        capability->topologyTarget.empty() ||
         options_.lockFilePath.empty()) {
         error = "ALT pam_faillock topology is unsupported by this platform profile";
         return false;
@@ -924,7 +980,7 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
             options_.lockFilePath.string();
         return false;
     }
-    const auto& path = platformConfig_.localAuthenticationStackPath;
+    const auto& path = capability->topologyTarget;
     TargetSnapshot original;
     if (!inspectSecureTarget(path, original, error)) {
         return false;

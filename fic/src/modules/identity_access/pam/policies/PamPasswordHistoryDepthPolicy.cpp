@@ -4,11 +4,7 @@ PamPasswordHistoryDepthPolicy::PamPasswordHistoryDepthPolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamOptionPolicy(
           platformConfig,
-          fic::identity::pam::PamCapability::PasswordHistory,
-          fic::identity::pam::PamProviderKind::PamPwhistory,
-          platformConfig.passwordHistoryConfigPath,
-          "remember",
-          platformConfig.passwordServices) {
+          fic::platform::PamPolicyFeature::PasswordHistoryDepth) {
     this->policyName = "password_history_depth";
     this->policyTypeValue =
         std::make_unique<IntPolicyTypeValue>(1, 50, 5);

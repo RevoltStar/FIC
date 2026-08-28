@@ -2,18 +2,9 @@
 #define FIC_IDENTITY_ACCESS_PAM_OPTION_POLICY_H
 
 #include "modules/identity_access/pam/PamPolicy.h"
-#include "modules/identity_access/pam/PamOptionValueCodec.h"
-#include "modules/identity_access/pam/PamProviderInspector.h"
 #include "platform/PlatformProfile.h"
 
-#include <filesystem>
 #include <string>
-#include <vector>
-
-enum class PamOptionSyntax {
-    Assignment,
-    Flag
-};
 
 class PamOptionPolicy : public PamPolicy {
 public:
@@ -22,28 +13,13 @@ public:
 protected:
     PamOptionPolicy(
         fic::platform::PamPlatformConfig platformConfig,
-        fic::identity::pam::PamCapability capability,
-        fic::identity::pam::PamProviderKind provider,
-        std::filesystem::path optionFile,
-        std::string option,
-        std::vector<std::string> services,
-        PamOptionSyntax syntax = PamOptionSyntax::Assignment,
-        std::vector<std::string> conflictingOptionsWhenFlagDisabled = {},
-        fic::identity::pam::PamOptionValueEncoding valueEncoding =
-            fic::identity::pam::PamOptionValueEncoding::Direct);
+        fic::platform::PamPolicyFeature feature);
 
     bool applyPam(const std::string& expectedValue) override;
 
 private:
     fic::platform::PamPlatformConfig platformConfig_;
-    fic::identity::pam::PamCapability capability_;
-    fic::identity::pam::PamProviderKind provider_;
-    std::filesystem::path optionFile_;
-    std::string option_;
-    std::vector<std::string> services_;
-    PamOptionSyntax syntax_;
-    std::vector<std::string> conflictingOptionsWhenFlagDisabled_;
-    fic::identity::pam::PamOptionValueEncoding valueEncoding_;
+    fic::platform::PamPolicyFeature feature_;
 };
 
 #endif // FIC_IDENTITY_ACCESS_PAM_OPTION_POLICY_H

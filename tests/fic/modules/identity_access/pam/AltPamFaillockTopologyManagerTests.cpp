@@ -19,6 +19,9 @@ namespace fs = std::filesystem;
 using fic::identity::pam::AltPamFaillockTopologyManager;
 using fic::identity::pam::AltPamFaillockTopologyOptions;
 using fic::identity::pam::AltPamFaillockTopologyState;
+using fic::identity::pam::PamTopologyManager;
+using fic::identity::pam::PamTopologyState;
+using fic::identity::pam::PamTopologyStatus;
 
 namespace {
 
@@ -80,13 +83,29 @@ public:
         fic::platform::PamPlatformConfig result;
         result.configDirectories = {root / "pam.d"};
         result.moduleDirectories = {root / "security-modules"};
-        result.authenticationServices = {"system-auth"};
-        result.passwordServices = {"system-auth"};
-        result.faillockConfigPath = root / "faillock.conf";
-        result.passwordQualityConfigPath = root / "pwquality.conf";
-        result.passwordHistoryConfigPath = root / "pwhistory.conf";
-        result.localAuthenticationStackPath =
-            root / "pam.d/system-auth-local-only";
+        result.scopes = {
+            {fic::platform::PamScope::EffectiveAuthenticationStack,
+             {"system-auth"}},
+            {fic::platform::PamScope::EffectivePasswordStack,
+             {"system-auth"}},
+            {fic::platform::PamScope::LocalPasswordChange,
+             {"system-auth-local-only"}}
+        };
+        result.capabilities = {
+            {fic::platform::PamCapability::AuthenticationLockout,
+             fic::platform::PamProviderKind::PamFaillock,
+             fic::platform::PamScope::EffectiveAuthenticationStack,
+             root / "faillock.conf",
+             fic::platform::PamConfigGrammar::KeyValue,
+             fic::platform::PamTopologyStrategyKind::AltTcbManaged,
+             root / "pam.d/system-auth-local-only"},
+            {fic::platform::PamCapability::PasswordQuality,
+             fic::platform::PamProviderKind::PamPasswdqc,
+             fic::platform::PamScope::LocalPasswordChange,
+             root / "passwdqc.conf",
+             fic::platform::PamConfigGrammar::Passwdqc,
+             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
+        };
         return result;
     }
 
@@ -132,6 +151,13 @@ void testCanonicalRoundTrip() {
     TemporaryTree tree;
     AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
     std::string error;
+    PamTopologyManager& topology = manager;
+    PamTopologyStatus genericStatus;
+    require(topology.canEnable(error), error);
+    require(topology.inspect(genericStatus, error) &&
+                genericStatus.state == PamTopologyState::Disabled &&
+                genericStatus.manageable,
+            error);
     AltPamFaillockTopologyState state;
     require(manager.status(state, error) &&
                 state == AltPamFaillockTopologyState::Disabled,
@@ -155,6 +181,9 @@ void testCanonicalRoundTrip() {
             "account block is missing");
     require(manager.status(state, error) &&
                 state == AltPamFaillockTopologyState::Enabled,
+            error);
+    require(topology.inspect(genericStatus, error) &&
+                genericStatus.state == PamTopologyState::Enabled,
             error);
     require(manager.enable(error), error);
     require(TemporaryTree::read(tree.target()) == enabled,

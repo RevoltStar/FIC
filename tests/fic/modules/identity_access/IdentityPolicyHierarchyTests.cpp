@@ -6,6 +6,7 @@
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
+#include "modules/identity_access/pam/policies/PamPasswdqcPolicies.h"
 #include "modules/identity_access/pam/policies/PamPasswordQualityPolicies.h"
 #include "modules/identity_access/pam/policies/RequiredPamEnforcementPolicy.h"
 #include "modules/identity_access/sssd/SssdPolicy.h"
@@ -24,6 +25,57 @@
 #include <unistd.h>
 
 namespace {
+
+struct TestPamPlatformConfig : fic::platform::PamPlatformConfig {
+    std::vector<std::string>& authenticationServices;
+    std::vector<std::string>& passwordServices;
+    std::filesystem::path& faillockConfigPath;
+    std::filesystem::path& passwordQualityConfigPath;
+    std::filesystem::path& passwordHistoryConfigPath;
+
+    TestPamPlatformConfig()
+        : fic::platform::PamPlatformConfig(initial()),
+          authenticationServices(scopes[0].services),
+          passwordServices(scopes[1].services),
+          faillockConfigPath(capabilities[0].configPath),
+          passwordQualityConfigPath(capabilities[1].configPath),
+          passwordHistoryConfigPath(capabilities[2].configPath) {}
+
+    TestPamPlatformConfig(const TestPamPlatformConfig& other)
+        : fic::platform::PamPlatformConfig(other),
+          authenticationServices(scopes[0].services),
+          passwordServices(scopes[1].services),
+          faillockConfigPath(capabilities[0].configPath),
+          passwordQualityConfigPath(capabilities[1].configPath),
+          passwordHistoryConfigPath(capabilities[2].configPath) {}
+
+private:
+    static fic::platform::PamPlatformConfig initial() {
+        fic::platform::PamPlatformConfig result;
+        result.scopes = {
+            {fic::platform::PamScope::EffectiveAuthenticationStack, {}},
+            {fic::platform::PamScope::EffectivePasswordStack, {}}
+        };
+        result.capabilities = {
+            {fic::platform::PamCapability::AuthenticationLockout,
+             fic::platform::PamProviderKind::PamFaillock,
+             fic::platform::PamScope::EffectiveAuthenticationStack, {},
+             fic::platform::PamConfigGrammar::KeyValue,
+             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+            {fic::platform::PamCapability::PasswordQuality,
+             fic::platform::PamProviderKind::PamPwquality,
+             fic::platform::PamScope::EffectivePasswordStack, {},
+             fic::platform::PamConfigGrammar::KeyValue,
+             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+            {fic::platform::PamCapability::PasswordHistory,
+             fic::platform::PamProviderKind::PamPwhistory,
+             fic::platform::PamScope::EffectivePasswordStack, {},
+             fic::platform::PamConfigGrammar::KeyValue,
+             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
+        };
+        return result;
+    }
+};
 
 void require(bool condition, const std::string& message) {
     if (!condition) {
@@ -90,9 +142,9 @@ void initializeRuntimePaths(const std::filesystem::path& root) {
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
 }
 
-fic::platform::PamPlatformConfig makePasswordHistoryPlatform(
+TestPamPlatformConfig makePasswordHistoryPlatform(
     const std::filesystem::path& root) {
-    fic::platform::PamPlatformConfig platform;
+    TestPamPlatformConfig platform;
     platform.configDirectories = {root / "pam.d"};
     platform.moduleDirectories = {root / "security"};
     platform.passwordServices = {"passwd"};
@@ -101,9 +153,9 @@ fic::platform::PamPlatformConfig makePasswordHistoryPlatform(
     return platform;
 }
 
-fic::platform::PamPlatformConfig makePasswordQualityPlatform(
+TestPamPlatformConfig makePasswordQualityPlatform(
     const std::filesystem::path& root) {
-    fic::platform::PamPlatformConfig platform;
+    TestPamPlatformConfig platform;
     platform.configDirectories = {root / "pam.d"};
     platform.moduleDirectories = {root / "security"};
     platform.passwordServices = {"passwd"};
@@ -135,7 +187,7 @@ std::string configuredValue(const std::string& content,
 template <typename PolicyType>
 void applyPasswordQualityAssignment(
     const std::filesystem::path& root,
-    const fic::platform::PamPlatformConfig& platform,
+    const TestPamPlatformConfig& platform,
     const std::string& policyName,
     const std::string& logicalValue,
     const std::string& option,
@@ -164,7 +216,7 @@ void applyPasswordQualityAssignment(
 template <typename PolicyType>
 void testMinimumCreditPolicy(
     const std::filesystem::path& root,
-    const fic::platform::PamPlatformConfig& platform,
+    const TestPamPlatformConfig& platform,
     const std::string& policyName,
     const std::string& option) {
     for (const auto& value : std::vector<std::pair<std::string, std::string>>{
@@ -174,9 +226,9 @@ void testMinimumCreditPolicy(
     }
 }
 
-fic::platform::PamPlatformConfig makeAuthenticationPlatform(
+TestPamPlatformConfig makeAuthenticationPlatform(
     const std::filesystem::path& root) {
-    fic::platform::PamPlatformConfig platform;
+    TestPamPlatformConfig platform;
     platform.configDirectories = {root / "pam.d"};
     platform.moduleDirectories = {root / "security"};
     platform.authenticationServices = {"login"};
@@ -727,12 +779,20 @@ int main() {
         writeIdentityConfig(
             root, "no", "no", "",
             "pam_passwdqc");
+        auto passwdqcPlatform = requiredPlatform;
+        passwdqcPlatform.capabilities[1].provider =
+            fic::platform::PamProviderKind::PamPasswdqc;
+        passwdqcPlatform.capabilities[1].grammar =
+            fic::platform::PamConfigGrammar::Passwdqc;
+        passwdqcPlatform.capabilities[1].configPath =
+            root / "security-config/passwdqc.conf";
         writeFile(
             root / "pam.d/passwd",
-            "password required pam_passwdqc.so\n"
+            "password required pam_passwdqc.so config=" +
+                passwdqcPlatform.passwordQualityConfigPath.string() + "\n"
             "password required pam_unix.so\n");
         writeFile(root / "security/pam_passwdqc.so", "test", 0555);
-        RequiredPamEnforcementPolicy requiredPasswdqc(requiredPlatform);
+        RequiredPamEnforcementPolicy requiredPasswdqc(passwdqcPlatform);
         require(
             requiredPasswdqc.apply(),
             "required-PAM policy did not verify effective pam_passwdqc on "
@@ -743,6 +803,40 @@ int main() {
         require(
             !requiredPasswdqc.apply(),
             "required-PAM policy accepted missing pam_passwdqc");
+
+        writeIdentityConfig(
+            root, "no", "no",
+            "passwdqc_strength_thresholds.status=ENABLE\n"
+            "passwdqc_strength_thresholds.value=disabled,24,11,8,7\n"
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=yes\n",
+            "pam_passwdqc");
+        writeFile(
+            root / "pam.d/passwd",
+            "password required pam_passwdqc.so config=" +
+                passwdqcPlatform.passwordQualityConfigPath.string() + "\n"
+            "password required pam_unix.so\n");
+        PamPasswdqcStrengthThresholdsPolicy passwdqcMinimums(
+            passwdqcPlatform);
+        PamPasswdqcSimilarPasswordPolicy passwdqcSimilar(
+            passwdqcPlatform);
+        PamPasswordQualityEnforceForRootPolicy passwdqcRoot(
+            passwdqcPlatform);
+        require(passwdqcMinimums.getDefaultValue() ==
+                    "disabled,24,11,8,7" &&
+                    passwdqcMinimums.validate("24,24,11,8,7") &&
+                    !passwdqcMinimums.validate("24,25,11,8,7") &&
+                    passwdqcSimilar.getDefaultValue() == "deny",
+                "passwdqc policy defaults/validation are inconsistent");
+        require(passwdqcMinimums.apply() && passwdqcRoot.apply(),
+                "native passwdqc policies failed to apply");
+        const std::string passwdqcConfig = readFile(
+            passwdqcPlatform.passwordQualityConfigPath);
+        require(passwdqcConfig.find(
+                    "min=disabled,24,11,8,7\n") != std::string::npos &&
+                    passwdqcConfig.find("enforce=everyone\n") !=
+                        std::string::npos,
+                "passwdqc policies did not emit exact native syntax/mapping");
         writeFile(
             root / "pam.d/passwd",
             "password required pam_pwhistory.so\n");

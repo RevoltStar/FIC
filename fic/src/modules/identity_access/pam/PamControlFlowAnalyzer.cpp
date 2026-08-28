@@ -257,6 +257,10 @@ std::vector<std::string> moduleOutcomes(const PamRule& rule) {
                 "authtok_lock_busy", "user_unknown", "maxtries",
                 "try_again", "incomplete"};
     }
+    if (module == "pam_passwdqc.so") {
+        return {"success", "authtok_err", "authtok_recover_err",
+                "authtok_lock_busy", "user_unknown", "maxtries"};
+    }
     if (module == "pam_pwhistory.so") {
         return {"success", "system_err", "authtok_err",
                 "authtok_recover_err", "authtok_lock_busy",

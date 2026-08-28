@@ -22,6 +22,41 @@ void require(bool condition, const std::string& message) {
     }
 }
 
+const fic::platform::PamScopeConfig& pamScope(
+    const fic::platform::PamPlatformConfig& pam,
+    fic::platform::PamScope scope) {
+    const auto found = std::find_if(
+        pam.scopes.begin(), pam.scopes.end(),
+        [scope](const auto& candidate) { return candidate.scope == scope; });
+    require(found != pam.scopes.end(), "required PAM scope is missing");
+    return *found;
+}
+
+fic::platform::PamScopeConfig& pamScope(
+    fic::platform::PamPlatformConfig& pam,
+    fic::platform::PamScope scope) {
+    return const_cast<fic::platform::PamScopeConfig&>(
+        pamScope(std::as_const(pam), scope));
+}
+
+const fic::platform::PamCapabilityConfig* pamCapability(
+    const fic::platform::PamPlatformConfig& pam,
+    fic::platform::PamCapability capability) {
+    const auto found = std::find_if(
+        pam.capabilities.begin(), pam.capabilities.end(),
+        [capability](const auto& candidate) {
+            return candidate.capability == capability;
+        });
+    return found == pam.capabilities.end() ? nullptr : &*found;
+}
+
+fic::platform::PamCapabilityConfig* pamCapability(
+    fic::platform::PamPlatformConfig& pam,
+    fic::platform::PamCapability capability) {
+    return const_cast<fic::platform::PamCapabilityConfig*>(
+        pamCapability(std::as_const(pam), capability));
+}
+
 class TemporaryOsRelease {
 public:
     TemporaryOsRelease() {
@@ -222,16 +257,24 @@ void testSelectedProfile() {
             "PAM configuration directories are missing");
     require(!profile.pam.moduleDirectories.empty(),
             "PAM module directories are missing");
-    require(!profile.pam.authenticationServices.empty(),
+    const auto& authenticationServices = pamScope(
+        profile.pam,
+        fic::platform::PamScope::EffectiveAuthenticationStack).services;
+    const auto& passwordServices = pamScope(
+        profile.pam,
+        profile.id == "alt-p11"
+            ? fic::platform::PamScope::LocalPasswordChange
+            : fic::platform::PamScope::EffectivePasswordStack).services;
+    require(!authenticationServices.empty(),
             "PAM authentication services are missing");
-    require(!profile.pam.passwordServices.empty(),
+    require(!passwordServices.empty(),
             "PAM password services are missing");
     require(!profile.pam.trustedAuthenticationBypasses.empty(),
             "trusted PAM authentication bypass rules are missing");
     const bool expectedSuLoginService = profile.id != "alt-p11";
-    require((std::find(profile.pam.authenticationServices.begin(),
-                       profile.pam.authenticationServices.end(),
-                       "su-l") != profile.pam.authenticationServices.end()) ==
+    require((std::find(authenticationServices.begin(),
+                       authenticationServices.end(),
+                       "su-l") != authenticationServices.end()) ==
                 expectedSuLoginService,
             "PAM su-l service selection is incorrect");
     const auto hasTrustedRootok = [&](const std::string& service) {
@@ -250,19 +293,31 @@ void testSelectedProfile() {
             "trusted PAM root transition for su is missing");
     require(hasTrustedRootok("su-l") == expectedSuLoginService,
             "trusted PAM root transition for su-l is incorrect");
-    require(profile.pam.faillockConfigPath == "/etc/security/faillock.conf",
+    const auto* faillock = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    const auto* quality = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    const auto* history = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordHistory);
+    require(faillock != nullptr &&
+                faillock->configPath == "/etc/security/faillock.conf",
             "pam_faillock configuration path is incorrect");
-    require(profile.pam.passwordQualityConfigPath ==
-                "/etc/security/pwquality.conf",
-            "pam_pwquality configuration path is incorrect");
-    require(profile.pam.passwordHistoryConfigPath ==
-                "/etc/security/pwhistory.conf",
-            "pam_pwhistory configuration path is incorrect");
+    require(quality != nullptr &&
+                quality->configPath ==
+                    (profile.id == "alt-p11"
+                         ? std::filesystem::path("/etc/passwdqc.conf")
+                         : std::filesystem::path(
+                               "/etc/security/pwquality.conf")),
+            "password-quality provider configuration path is incorrect");
+    require((history != nullptr) == (profile.id != "alt-p11") &&
+                (history == nullptr || history->configPath ==
+                    "/etc/security/pwhistory.conf"),
+            "password-history capability composition is incorrect");
     const std::filesystem::path expectedLocalPamStack =
         profile.id == "alt-p11"
             ? std::filesystem::path("/etc/pam.d/system-auth-local-only")
             : std::filesystem::path{};
-    require(profile.pam.localAuthenticationStackPath == expectedLocalPamStack,
+    require(faillock->topologyTarget == expectedLocalPamStack,
             "ALT PAM topology target metadata is incorrect");
     const std::filesystem::path expectedGrubDefaults =
         profile.id == "alt-p11"
@@ -501,8 +556,10 @@ void testInvalidProfileIsRejected() {
             "a relative PAM configuration directory must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.pam.authenticationServices.push_back(
-        profile.pam.authenticationServices.front());
+    auto& authenticationServices = pamScope(
+        profile.pam,
+        fic::platform::PamScope::EffectiveAuthenticationStack).services;
+    authenticationServices.push_back(authenticationServices.front());
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a duplicate PAM service must be rejected");
 
@@ -519,18 +576,41 @@ void testInvalidProfileIsRejected() {
             "a trusted PAM bypass for an unverified service must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.pam.passwordServices = {"../passwd"};
+    pamScope(profile.pam,
+             fic::platform::PamScope::EffectivePasswordStack).services =
+        {"../passwd"};
     require(!fic::platform::validatePlatformProfile(profile, error),
             "an unsafe PAM service name must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.pam.passwordHistoryConfigPath = "etc/security/pwhistory.conf";
+    pamCapability(profile.pam,
+                  fic::platform::PamCapability::PasswordQuality)->configPath =
+        "etc/security/pwquality.conf";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM option file path must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.pam.localAuthenticationStackPath =
-        "etc/pam.d/system-auth-local-only";
+    pamCapability(profile.pam,
+                  fic::platform::PamCapability::PasswordQuality)->scope =
+        fic::platform::PamScope::EffectiveAuthenticationStack;
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a password capability in an authentication scope must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    auto* qualityCapability = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    auto* lockoutCapability = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    qualityCapability->configPath = lockoutCapability->configPath;
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a PAM config path shared by capabilities must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    auto* lockout = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    lockout->topology =
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged;
+    lockout->topologyTarget = "etc/pam.d/system-auth-local-only";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM topology target must be rejected");
 

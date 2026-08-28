@@ -413,43 +413,73 @@ bool initPolicyRegistry(
         platform.sudo, executables));
 
     // Identity and access: PAM
-    cafArr.push_back(
+    const auto registerPamPolicy = [&](fic::platform::PamPolicyFeature feature,
+                                       std::unique_ptr<Policy> policy) {
+        if (fic::identity::pam::pamPolicySupport(platform.pam, feature) !=
+            fic::platform::PamPolicySupport::Unsupported) {
+            cafArr.push_back(std::move(policy));
+        }
+    };
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinLength,
         std::make_unique<PamPasswordMinLengthPolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinClasses,
         std::make_unique<PamPasswordMinClassesPolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordCheckUsername,
         std::make_unique<PamPasswordCheckUsernamePolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordCheckGecos,
         std::make_unique<PamPasswordCheckGecosPolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswordQualityEnforceForRoot,
         std::make_unique<PamPasswordQualityEnforceForRootPolicy>(
             platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswordMinChangedCharacters,
         std::make_unique<PamPasswordMinChangedCharactersPolicy>(
             platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinLowercase,
         std::make_unique<PamPasswordMinLowercasePolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinUppercase,
         std::make_unique<PamPasswordMinUppercasePolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinDigits,
         std::make_unique<PamPasswordMinDigitsPolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinOther,
         std::make_unique<PamPasswordMinOtherPolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswdqcStrengthThresholds,
+        std::make_unique<PamPasswdqcStrengthThresholdsPolicy>(platform.pam));
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswdqcPassphraseWords,
+        std::make_unique<PamPasswdqcPassphraseWordsPolicy>(platform.pam));
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswdqcMatchLength,
+        std::make_unique<PamPasswdqcMatchLengthPolicy>(platform.pam));
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswdqcSimilarPassword,
+        std::make_unique<PamPasswdqcSimilarPasswordPolicy>(platform.pam));
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswdqcRetryCount,
+        std::make_unique<PamPasswdqcRetryCountPolicy>(platform.pam));
+    registerPamPolicy(fic::platform::PamPolicyFeature::PasswordHistoryDepth,
         std::make_unique<PamPasswordHistoryDepthPolicy>(platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot,
         std::make_unique<PamPasswordHistoryEnforceForRootPolicy>(
             platform.pam));
-    cafArr.push_back(std::make_unique<PamFailedAuthenticationAttemptsPolicy>(
-        platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::FailedAuthenticationAttempts,
+        std::make_unique<PamFailedAuthenticationAttemptsPolicy>(platform.pam));
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::FailedAuthenticationCountingPeriod,
         std::make_unique<PamFailedAuthenticationCountingPeriodPolicy>(
             platform.pam));
-    cafArr.push_back(
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::FailedAuthenticationEnforceForRoot,
         std::make_unique<PamFailedAuthenticationEnforceForRootPolicy>(
             platform.pam));
-    cafArr.push_back(std::make_unique<PamFailedAuthenticationUnlockTimePolicy>(
-        platform.pam));
+    registerPamPolicy(
+        fic::platform::PamPolicyFeature::FailedAuthenticationUnlockTime,
+        std::make_unique<PamFailedAuthenticationUnlockTimePolicy>(
+            platform.pam));
     cafArr.push_back(
         std::make_unique<RequiredPamEnforcementPolicy>(platform.pam));
 

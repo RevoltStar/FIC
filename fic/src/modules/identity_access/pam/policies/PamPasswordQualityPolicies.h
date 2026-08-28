@@ -32,7 +32,7 @@ protected:
     PamPasswordMinimumCreditPolicy(
         const fic::platform::PamPlatformConfig& platformConfig,
         std::string policyName,
-        std::string option);
+        fic::platform::PamPolicyFeature feature);
 };
 
 class PamPasswordMinLowercasePolicy final

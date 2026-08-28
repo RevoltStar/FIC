@@ -12,14 +12,7 @@ PamPasswordCheckUsernamePolicy::PamPasswordCheckUsernamePolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamOptionPolicy(
           platformConfig,
-          fic::identity::pam::PamCapability::PasswordQuality,
-          fic::identity::pam::PamProviderKind::PamPwquality,
-          platformConfig.passwordQualityConfigPath,
-          "usercheck",
-          platformConfig.passwordServices,
-          PamOptionSyntax::Assignment,
-          {},
-          fic::identity::pam::PamOptionValueEncoding::YesNoInteger) {
+          fic::platform::PamPolicyFeature::PasswordCheckUsername) {
     this->policyName = "password_check_username";
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
         std::vector<std::string>{"yes", "no"});
@@ -29,14 +22,7 @@ PamPasswordCheckGecosPolicy::PamPasswordCheckGecosPolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamOptionPolicy(
           platformConfig,
-          fic::identity::pam::PamCapability::PasswordQuality,
-          fic::identity::pam::PamProviderKind::PamPwquality,
-          platformConfig.passwordQualityConfigPath,
-          "gecoscheck",
-          platformConfig.passwordServices,
-          PamOptionSyntax::Assignment,
-          {},
-          fic::identity::pam::PamOptionValueEncoding::YesNoInteger) {
+          fic::platform::PamPolicyFeature::PasswordCheckGecos) {
     this->policyName = "password_check_gecos";
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
         std::vector<std::string>{"yes", "no"});
@@ -47,12 +33,7 @@ PamPasswordQualityEnforceForRootPolicy::
         const fic::platform::PamPlatformConfig& platformConfig)
     : PamOptionPolicy(
           platformConfig,
-          fic::identity::pam::PamCapability::PasswordQuality,
-          fic::identity::pam::PamProviderKind::PamPwquality,
-          platformConfig.passwordQualityConfigPath,
-          "enforce_for_root",
-          platformConfig.passwordServices,
-          PamOptionSyntax::Flag) {
+          fic::platform::PamPolicyFeature::PasswordQualityEnforceForRoot) {
     this->policyName = "password_quality_enforce_for_root";
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
         std::vector<std::string>{"yes", "no"});
@@ -63,11 +44,7 @@ PamPasswordMinChangedCharactersPolicy::
         const fic::platform::PamPlatformConfig& platformConfig)
     : PamOptionPolicy(
           platformConfig,
-          fic::identity::pam::PamCapability::PasswordQuality,
-          fic::identity::pam::PamProviderKind::PamPwquality,
-          platformConfig.passwordQualityConfigPath,
-          "difok",
-          platformConfig.passwordServices) {
+          fic::platform::PamPolicyFeature::PasswordMinChangedCharacters) {
     this->policyName = "password_min_changed_characters";
     this->policyTypeValue =
         std::make_unique<IntPolicyTypeValue>(0, passwordQualityMaximum, 1);
@@ -76,17 +53,10 @@ PamPasswordMinChangedCharactersPolicy::
 PamPasswordMinimumCreditPolicy::PamPasswordMinimumCreditPolicy(
     const fic::platform::PamPlatformConfig& platformConfig,
     std::string policyName,
-    std::string option)
+    fic::platform::PamPolicyFeature feature)
     : PamOptionPolicy(
           platformConfig,
-          fic::identity::pam::PamCapability::PasswordQuality,
-          fic::identity::pam::PamProviderKind::PamPwquality,
-          platformConfig.passwordQualityConfigPath,
-          std::move(option),
-          platformConfig.passwordServices,
-          PamOptionSyntax::Assignment,
-          {},
-          fic::identity::pam::PamOptionValueEncoding::MinimumCredit) {
+          feature) {
     this->policyName = std::move(policyName);
     this->policyTypeValue =
         std::make_unique<IntPolicyTypeValue>(0, passwordQualityMaximum, 0);
@@ -95,23 +65,27 @@ PamPasswordMinimumCreditPolicy::PamPasswordMinimumCreditPolicy(
 PamPasswordMinLowercasePolicy::PamPasswordMinLowercasePolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamPasswordMinimumCreditPolicy(
-          platformConfig, "password_min_lowercase", "lcredit") {
+          platformConfig, "password_min_lowercase",
+          fic::platform::PamPolicyFeature::PasswordMinLowercase) {
 }
 
 PamPasswordMinUppercasePolicy::PamPasswordMinUppercasePolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamPasswordMinimumCreditPolicy(
-          platformConfig, "password_min_uppercase", "ucredit") {
+          platformConfig, "password_min_uppercase",
+          fic::platform::PamPolicyFeature::PasswordMinUppercase) {
 }
 
 PamPasswordMinDigitsPolicy::PamPasswordMinDigitsPolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamPasswordMinimumCreditPolicy(
-          platformConfig, "password_min_digits", "dcredit") {
+          platformConfig, "password_min_digits",
+          fic::platform::PamPolicyFeature::PasswordMinDigits) {
 }
 
 PamPasswordMinOtherPolicy::PamPasswordMinOtherPolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamPasswordMinimumCreditPolicy(
-          platformConfig, "password_min_other", "ocredit") {
+          platformConfig, "password_min_other",
+          fic::platform::PamPolicyFeature::PasswordMinOther) {
 }

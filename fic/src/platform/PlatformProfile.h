@@ -82,18 +82,93 @@ struct PamTrustedAuthenticationBypassRule {
         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller;
 };
 
+enum class PamCapability {
+    AuthenticationLockout,
+    PasswordQuality,
+    PasswordHistory
+};
+
+enum class PamProviderKind {
+    PamFaillock,
+    PamTally2,
+    PamTally,
+    PamPwquality,
+    PamPasswdqc,
+    PamCracklib,
+    PamPwhistory,
+    PamUnixHistory
+};
+
+enum class PamScope {
+    EffectiveAuthenticationStack,
+    EffectivePasswordStack,
+    LocalPasswordChange
+};
+
+enum class PamConfigGrammar {
+    KeyValue,
+    Passwdqc
+};
+
+enum class PamTopologyStrategyKind {
+    StaticReadOnly,
+    ExternalOptIn,
+    AltTcbManaged
+};
+
+enum class PamPolicyFeature {
+    PasswordMinLength,
+    PasswordMinClasses,
+    PasswordCheckUsername,
+    PasswordCheckGecos,
+    PasswordQualityEnforceForRoot,
+    PasswordMinChangedCharacters,
+    PasswordMinLowercase,
+    PasswordMinUppercase,
+    PasswordMinDigits,
+    PasswordMinOther,
+    PasswdqcStrengthThresholds,
+    PasswdqcPassphraseWords,
+    PasswdqcMatchLength,
+    PasswdqcSimilarPassword,
+    PasswdqcRetryCount,
+    PasswordHistoryDepth,
+    PasswordHistoryEnforceForRoot,
+    FailedAuthenticationAttempts,
+    FailedAuthenticationCountingPeriod,
+    FailedAuthenticationEnforceForRoot,
+    FailedAuthenticationUnlockTime
+};
+
+enum class PamPolicySupport {
+    Unsupported,
+    Supported,
+    RequiresTopologyActivation,
+    ReadOnly
+};
+
+struct PamScopeConfig {
+    PamScope scope = PamScope::EffectiveAuthenticationStack;
+    std::vector<std::string> services;
+};
+
+struct PamCapabilityConfig {
+    PamCapability capability = PamCapability::AuthenticationLockout;
+    PamProviderKind provider = PamProviderKind::PamFaillock;
+    PamScope scope = PamScope::EffectiveAuthenticationStack;
+    std::filesystem::path configPath;
+    PamConfigGrammar grammar = PamConfigGrammar::KeyValue;
+    PamTopologyStrategyKind topology = PamTopologyStrategyKind::StaticReadOnly;
+    std::filesystem::path topologyTarget;
+};
+
 struct PamPlatformConfig {
     std::vector<std::filesystem::path> configDirectories;
     std::vector<std::filesystem::path> moduleDirectories;
-    std::vector<std::string> authenticationServices;
-    std::vector<std::string> passwordServices;
+    std::vector<PamScopeConfig> scopes;
+    std::vector<PamCapabilityConfig> capabilities;
     std::vector<PamTrustedAuthenticationBypassRule>
         trustedAuthenticationBypasses;
-    std::filesystem::path faillockConfigPath;
-    std::filesystem::path passwordQualityConfigPath;
-    std::filesystem::path passwordHistoryConfigPath;
-    // Empty on platforms without a native FIC-owned PAM topology facility.
-    std::filesystem::path localAuthenticationStackPath;
 };
 
 enum class LocalShadowKind {

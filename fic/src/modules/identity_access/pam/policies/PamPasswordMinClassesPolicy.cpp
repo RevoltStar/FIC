@@ -4,11 +4,7 @@ PamPasswordMinClassesPolicy::PamPasswordMinClassesPolicy(
     const fic::platform::PamPlatformConfig& platformConfig)
     : PamOptionPolicy(
           platformConfig,
-          fic::identity::pam::PamCapability::PasswordQuality,
-          fic::identity::pam::PamProviderKind::PamPwquality,
-          platformConfig.passwordQualityConfigPath,
-          "minclass",
-          platformConfig.passwordServices) {
+          fic::platform::PamPolicyFeature::PasswordMinClasses) {
     this->policyName = "password_min_classes";
     this->policyTypeValue =
         std::make_unique<IntPolicyTypeValue>(1, 4, 3);

@@ -217,12 +217,13 @@ def main():
         "sudo.mainConfigPath",
         "pam.configDirectories",
         "pam.moduleDirectories",
-        "pam.authenticationServices",
-        "pam.passwordServices",
+        "pam.scopes",
+        "PamScope::EffectiveAuthenticationStack",
+        "PamScope::EffectivePasswordStack",
         "pam.trustedAuthenticationBypasses",
-        "pam.faillockConfigPath",
-        "pam.passwordQualityConfigPath",
-        "pam.passwordHistoryConfigPath",
+        "pam.capabilities",
+        "PamCapability::AuthenticationLockout",
+        "PamCapability::PasswordQuality",
         "displayManager.sddmConfigPath",
         "displayManager.gdmConfigCandidates",
         "grub.defaultsPath",
@@ -251,11 +252,23 @@ def main():
         "ALT p11 profile does not select the TCB backend",
     )
     require(
-        'pam.localAuthenticationStackPath =\n        "/etc/pam.d/system-auth-local-only"'
-        in profiles["alt-p11"]
-        and "localAuthenticationStackPath" in platform_profile,
+        'PamTopologyStrategyKind::AltTcbManaged' in profiles["alt-p11"]
+        and '"/etc/pam.d/system-auth-local-only"' in profiles["alt-p11"]
+        and "topologyTarget" in platform_profile,
         "ALT p11 profile does not declare its native local PAM topology target",
     )
+    require(
+        'PamProviderKind::PamPasswdqc' in profiles["alt-p11"]
+        and '"/etc/passwdqc.conf"' in profiles["alt-p11"]
+        and 'PamConfigGrammar::Passwdqc' in profiles["alt-p11"],
+        "ALT p11 profile does not select the native passwdqc backend",
+    )
+    for name in ("debian-12", "debian-13", "ubuntu-24.04", "ubuntu-26.04"):
+        require(
+            "PamCapability::PasswordHistory" in profiles[name]
+            and "PamProviderKind::PamPwhistory" in profiles[name],
+            f"{name} does not compose the password-history capability",
+        )
 
     platform_cmake = (
         root / "cmake/FicTargetPlatform.cmake"
@@ -455,6 +468,11 @@ def main():
         "const fic::platform::PlatformExecutableResolver& executables" in registry,
         "PolicyRegistry and lock operations must receive the platform executable resolver",
     )
+    require(
+        "pamPolicySupport(platform.pam, feature)" in registry
+        and "PamPolicySupport::Unsupported" in registry,
+        "PAM registry exposure is not derived from platform capabilities",
+    )
     for policy_class in (
         "PamPasswordMinLengthPolicy",
         "PamPasswordMinClassesPolicy",
@@ -466,6 +484,11 @@ def main():
         "PamPasswordMinUppercasePolicy",
         "PamPasswordMinDigitsPolicy",
         "PamPasswordMinOtherPolicy",
+        "PamPasswdqcStrengthThresholdsPolicy",
+        "PamPasswdqcPassphraseWordsPolicy",
+        "PamPasswdqcMatchLengthPolicy",
+        "PamPasswdqcSimilarPasswordPolicy",
+        "PamPasswdqcRetryCountPolicy",
         "PamPasswordHistoryDepthPolicy",
         "PamPasswordHistoryEnforceForRootPolicy",
         "PamFailedAuthenticationAttemptsPolicy",
@@ -496,6 +519,8 @@ def main():
         )
     identity_config = (
         root / "fic/src/resources/config/IDENTITY_ACCESS.conf.in"
+    ).read_text(encoding="utf-8") + (
+        root / "fic/CMakeLists.txt"
     ).read_text(encoding="utf-8")
     for policy_name in (
         "password_min_length",
@@ -508,6 +533,11 @@ def main():
         "password_min_uppercase",
         "password_min_digits",
         "password_min_other",
+        "passwdqc_strength_thresholds",
+        "passwdqc_passphrase_words",
+        "passwdqc_match_length",
+        "passwdqc_similar_password",
+        "passwdqc_retry_count",
         "password_history_depth",
         "password_history_enforce_for_root",
         "failed_authentication_attempts",

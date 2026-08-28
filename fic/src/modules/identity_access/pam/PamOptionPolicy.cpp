@@ -3,35 +3,43 @@
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/pam/PamOptionFile.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamProviderCatalog.h"
+#include "modules/identity_access/pam/PasswdqcConfigFile.h"
 
 #include <utility>
 
 PamOptionPolicy::PamOptionPolicy(
     fic::platform::PamPlatformConfig platformConfig,
-    fic::identity::pam::PamCapability capability,
-    fic::identity::pam::PamProviderKind provider,
-    std::filesystem::path optionFile,
-    std::string option,
-    std::vector<std::string> services,
-    PamOptionSyntax syntax,
-    std::vector<std::string> conflictingOptionsWhenFlagDisabled,
-    fic::identity::pam::PamOptionValueEncoding valueEncoding)
+    fic::platform::PamPolicyFeature feature)
     : PamPolicy(),
       platformConfig_(std::move(platformConfig)),
-      capability_(capability),
-      provider_(provider),
-      optionFile_(std::move(optionFile)),
-      option_(std::move(option)),
-      services_(std::move(services)),
-      syntax_(syntax),
-      conflictingOptionsWhenFlagDisabled_(
-          std::move(conflictingOptionsWhenFlagDisabled)),
-      valueEncoding_(valueEncoding) {
+      feature_(feature) {
 }
 
 bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
+    const fic::platform::PamCapabilityConfig* capability = nullptr;
+    const std::vector<std::string>* services = nullptr;
+    std::string error;
+    if (!fic::identity::pam::resolveCapability(
+            platformConfig_,
+            fic::identity::pam::pamPolicyCapability(feature_),
+            capability, services, error)) {
+        this->log("PAM platform composition failed for " +
+                      this->policyName + ": " + error,
+                  logLevel::ERROR);
+        return false;
+    }
+    const auto* binding = fic::identity::pam::pamProviderPolicyBinding(
+        capability->provider, feature_);
+    if (binding == nullptr) {
+        this->log("PAM provider does not support policy " + this->policyName,
+                  logLevel::ERROR);
+        return false;
+    }
     bool expectedFlagEnabled = false;
-    if (syntax_ == PamOptionSyntax::Flag) {
+    if (binding->syntax ==
+        fic::identity::pam::PamNativeOptionSyntax::Flag) {
         if (expectedValue == "yes") {
             expectedFlagEnabled = true;
         } else if (expectedValue != "no") {
@@ -44,10 +52,10 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
 
     std::string nativeExpectedValue;
-    std::string error;
-    if (syntax_ == PamOptionSyntax::Assignment &&
-        !fic::identity::pam::PamOptionValueCodec::encode(
-            valueEncoding_, expectedValue, nativeExpectedValue, error)) {
+    if (binding->syntax ==
+            fic::identity::pam::PamNativeOptionSyntax::Assignment &&
+        !fic::identity::pam::encodePamNativeValue(
+            binding->encoding, expectedValue, nativeExpectedValue, error)) {
         this->log(
             "Invalid PAM option policy value for " + this->policyName +
                 ": " + error,
@@ -60,9 +68,9 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     if (!fic::identity::pam::PamCapabilityVerifier::verify(
             configuration,
             platformConfig_,
-            services_,
-            capability_,
-            provider_,
+            *services,
+            capability->capability,
+            capability->provider,
             capabilityVerification)) {
         this->log(
             "PAM capability preflight failed for " + this->policyName +
@@ -72,14 +80,15 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
     const auto& inspection = capabilityVerification.inspection;
-    const bool overridesValid = syntax_ == PamOptionSyntax::Assignment
+    const bool overridesValid = binding->syntax ==
+            fic::identity::pam::PamNativeOptionSyntax::Assignment
         ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
-              inspection, optionFile_.string(), option_, nativeExpectedValue,
-              error)
+              inspection, capability->configPath.string(), binding->option,
+              nativeExpectedValue, error)
         : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
-              inspection, optionFile_.string(), option_,
+              inspection, capability->configPath.string(), binding->option,
               expectedFlagEnabled, error,
-              conflictingOptionsWhenFlagDisabled_);
+              binding->conflictingOptionsWhenDisabled);
     if (!overridesValid) {
         this->log(
             "PAM option override preflight failed for " + this->policyName +
@@ -87,9 +96,11 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             logLevel::ERROR);
         return false;
     }
-    if (syntax_ == PamOptionSyntax::Flag && !expectedFlagEnabled &&
+    if (binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
+        !expectedFlagEnabled &&
         !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
-            optionFile_, conflictingOptionsWhenFlagDisabled_, error)) {
+            capability->configPath,
+            binding->conflictingOptionsWhenDisabled, error)) {
         this->log(
             "PAM flag dependency preflight failed for " +
                 this->policyName + ": " + error,
@@ -98,18 +109,34 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
 
     const auto hasExpectedState = [&](std::string& stateError) {
-        return syntax_ == PamOptionSyntax::Assignment
+        if (capability->grammar == fic::platform::PamConfigGrammar::Passwdqc) {
+            return fic::identity::pam::PasswdqcConfigFile::hasOnlyValue(
+                capability->configPath, binding->option,
+                nativeExpectedValue, stateError);
+        }
+        return binding->syntax ==
+                fic::identity::pam::PamNativeOptionSyntax::Assignment
             ? fic::identity::pam::PamOptionFile::hasOnlyValue(
-                  optionFile_, option_, nativeExpectedValue, stateError)
+                  capability->configPath, binding->option,
+                  nativeExpectedValue, stateError)
             : fic::identity::pam::PamOptionFile::hasFlag(
-                  optionFile_, option_, expectedFlagEnabled, stateError);
+                  capability->configPath, binding->option,
+                  expectedFlagEnabled, stateError);
     };
     const auto setExpectedState = [&](std::string& stateError) {
-        return syntax_ == PamOptionSyntax::Assignment
+        if (capability->grammar == fic::platform::PamConfigGrammar::Passwdqc) {
+            return fic::identity::pam::PasswdqcConfigFile::setValue(
+                capability->configPath, binding->option,
+                nativeExpectedValue, stateError);
+        }
+        return binding->syntax ==
+                fic::identity::pam::PamNativeOptionSyntax::Assignment
             ? fic::identity::pam::PamOptionFile::setValue(
-                  optionFile_, option_, nativeExpectedValue, stateError)
+                  capability->configPath, binding->option,
+                  nativeExpectedValue, stateError)
             : fic::identity::pam::PamOptionFile::setFlag(
-                  optionFile_, option_, expectedFlagEnabled, stateError);
+                  capability->configPath, binding->option,
+                  expectedFlagEnabled, stateError);
     };
 
     std::string currentError;
@@ -130,9 +157,11 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             logLevel::ERROR);
         return false;
     }
-    if (syntax_ == PamOptionSyntax::Flag && !expectedFlagEnabled &&
+    if (binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
+        !expectedFlagEnabled &&
         !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
-            optionFile_, conflictingOptionsWhenFlagDisabled_, error)) {
+            capability->configPath,
+            binding->conflictingOptionsWhenDisabled, error)) {
         this->log(
             "PAM flag dependency postcondition failed for " +
                 this->policyName + ": " + error,
@@ -145,22 +174,23 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     if (!fic::identity::pam::PamCapabilityVerifier::verify(
             verification,
             platformConfig_,
-            services_,
-            capability_,
-            provider_,
+            *services,
+            capability->capability,
+            capability->provider,
             verifiedCapability) ||
-        !(syntax_ == PamOptionSyntax::Assignment
+        !(binding->syntax ==
+                  fic::identity::pam::PamNativeOptionSyntax::Assignment
               ? fic::identity::pam::PamProviderInspector::
                     verifyOptionOverrides(
                         verifiedCapability.inspection,
-                        optionFile_.string(), option_,
+                        capability->configPath.string(), binding->option,
                         nativeExpectedValue, error)
               : fic::identity::pam::PamProviderInspector::
                     verifyFlagOverrides(
                         verifiedCapability.inspection,
-                        optionFile_.string(), option_,
+                        capability->configPath.string(), binding->option,
                         expectedFlagEnabled, error,
-                        conflictingOptionsWhenFlagDisabled_))) {
+                        binding->conflictingOptionsWhenDisabled))) {
         if (!verifiedCapability.detail.empty() &&
             verifiedCapability.state !=
                 fic::identity::pam::PamEnforcementState::Effective) {

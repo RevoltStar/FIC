@@ -2,6 +2,8 @@
 
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamRequiredProviders.h"
 #include "platform/RequiredPamEnforcementDefaultsGenerated.h"
 
@@ -65,26 +67,6 @@ public:
     }
 };
 
-std::pair<fic::identity::pam::PamCapability, std::vector<std::string>>
-capabilityAndServices(
-    fic::identity::pam::PamProviderKind provider,
-    const fic::platform::PamPlatformConfig& platform) {
-    switch (provider) {
-    case fic::identity::pam::PamProviderKind::PamFaillock:
-        return {fic::identity::pam::PamCapability::AuthenticationLockout,
-                platform.authenticationServices};
-    case fic::identity::pam::PamProviderKind::PamPwquality:
-    case fic::identity::pam::PamProviderKind::PamPasswdqc:
-        return {fic::identity::pam::PamCapability::PasswordQuality,
-                platform.passwordServices};
-    case fic::identity::pam::PamProviderKind::PamPwhistory:
-        return {fic::identity::pam::PamCapability::PasswordHistory,
-                platform.passwordServices};
-    default:
-        return {fic::identity::pam::PamCapability::PasswordQuality, {}};
-    }
-}
-
 } // namespace
 
 RequiredPamEnforcementPolicy::RequiredPamEnforcementPolicy(
@@ -109,13 +91,26 @@ bool RequiredPamEnforcementPolicy::applyPam(
     fic::identity::pam::PamConfiguration configuration(platformConfig_);
     bool allEffective = true;
     for (const auto provider : providers) {
-        const auto [capability, services] =
-            capabilityAndServices(provider, platformConfig_);
+        const auto capability =
+            fic::identity::pam::pamProviderDescriptor(provider).capability;
+        const fic::platform::PamCapabilityConfig* configuredCapability = nullptr;
+        const std::vector<std::string>* services = nullptr;
+        if (!fic::identity::pam::resolveCapability(
+                platformConfig_, capability, configuredCapability, services,
+                error) || configuredCapability->provider != provider) {
+            allEffective = false;
+            this->log(
+                "Required PAM provider is not part of the platform "
+                "composition: " +
+                    fic::identity::pam::pamProviderName(provider),
+                logLevel::ERROR);
+            continue;
+        }
         fic::identity::pam::PamCapabilityVerification verification;
         if (!fic::identity::pam::PamCapabilityVerifier::verify(
                 configuration,
                 platformConfig_,
-                services,
+                *services,
                 capability,
                 provider,
                 verification)) {

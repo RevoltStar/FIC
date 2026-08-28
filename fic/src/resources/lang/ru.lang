@@ -9,6 +9,7 @@
 [utils:policytypevalue][type:multilinepolicytypevalue] = Ограничений на значение политики не накладывается
 [utils:policytypevalue][type:possiblelistpolicytypevalue] = Политика может принимать только одно из следующих значений:
 [utils:policytypevalue][type:fixedpolicytypevalue] = Политика не допускает конфигурирования
+[utils:policytypevalue][type:passwdqcminimums] = Ровно пять порогов passwdqc через запятую; каждое следующее значение не должно превышать предыдущее, допускается disabled
 #
 [module:all][col:is_policy_active]=Включено?
 [module:all][col:policy_name]=Название политики
@@ -75,7 +76,7 @@
 [module:IDENTITY_ACCESS][policy:password_check_gecos]=Проверка данных GECOS в пароле
 [module:IDENTITY_ACCESS][policy:password_check_gecos][description]=Проверяет, не содержит ли новый пароль значимые слова из поля GECOS локальной учётной записи.
 [module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root]=Проверять качество паролей, устанавливаемых root
-[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Управляет беззначным флагом enforce_for_root в pam_pwquality. Значение yes применяет проверки качества и при установке пароля пользователем root, значение no удаляет флаг; сравнение с предыдущим паролем для root недоступно.
+[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Применяет проверки качества при установке пароля пользователем root. Provider backend отображает yes/no в native representation pam_pwquality или pam_passwdqc.
 [module:IDENTITY_ACCESS][policy:password_min_changed_characters]=Минимальное отличие от предыдущего пароля
 [module:IDENTITY_ACCESS][policy:password_min_changed_characters][description]=Задаёт difok — минимальное число изменений нового пароля относительно предыдущего. Значение 0 отключает проверки сходства, кроме запрета полного совпадения; для root сравнение обычно недоступно из-за отсутствия предыдущего пароля.
 [module:IDENTITY_ACCESS][policy:password_min_lowercase]=Минимальное число строчных букв
@@ -86,6 +87,16 @@
 [module:IDENTITY_ACCESS][policy:password_min_digits][description]=Требует указанное минимальное число цифр через dcredit pam_pwquality; значение 0 отключает отдельный минимум этого класса.
 [module:IDENTITY_ACCESS][policy:password_min_other]=Минимальное число прочих символов
 [module:IDENTITY_ACCESS][policy:password_min_other][description]=Требует указанное минимальное число символов других классов через ocredit pam_pwquality; значение 0 отключает отдельный минимум этого класса.
+[module:IDENTITY_ACCESS][policy:passwdqc_strength_thresholds]=Пороги стойкости passwdqc
+[module:IDENTITY_ACCESS][policy:passwdqc_strength_thresholds][description]=Задаёт native tuple min passwdqc из пяти невозрастающих числовых полей либо disabled.
+[module:IDENTITY_ACCESS][policy:passwdqc_passphrase_words]=Число слов парольной фразы passwdqc
+[module:IDENTITY_ACCESS][policy:passwdqc_passphrase_words][description]=Задаёт native параметр passphrase passwdqc; 0 отключает специальную проверку парольных фраз.
+[module:IDENTITY_ACCESS][policy:passwdqc_match_length]=Длина совпадения passwdqc
+[module:IDENTITY_ACCESS][policy:passwdqc_match_length][description]=Задаёт native параметр match passwdqc; 0 отключает проверку совпадающих подстрок.
+[module:IDENTITY_ACCESS][policy:passwdqc_similar_password]=Обработка похожих паролей passwdqc
+[module:IDENTITY_ACCESS][policy:passwdqc_similar_password][description]=Выбирает native значение similar passwdqc: deny или permit.
+[module:IDENTITY_ACCESS][policy:passwdqc_retry_count]=Число повторных попыток passwdqc
+[module:IDENTITY_ACCESS][policy:passwdqc_retry_count][description]=Задаёт native число попыток retry, используемое pam_passwdqc.
 [module:IDENTITY_ACCESS][policy:password_history_depth]=Глубина истории паролей
 [module:IDENTITY_ACCESS][policy:password_history_depth][description]=Задаёт remember в каноническом конфиге pam_pwhistory. pam_unix remember= распознаётся как отдельный неподдерживаемый provider и автоматически не переписывается.
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Применять историю паролей для root

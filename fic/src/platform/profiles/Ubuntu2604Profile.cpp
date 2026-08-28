@@ -76,20 +76,32 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.pam.moduleDirectories.push_back(
         std::filesystem::path("/usr/lib") / FIC_LIBRARY_ARCHITECTURE / "security");
 #endif
-    profile.pam.authenticationServices = {
-        "login", "sshd", "sudo", "su", "su-l", "sddm", "gdm-password",
-        "lightdm"
+    profile.pam.scopes = {
+        {PamScope::EffectiveAuthenticationStack,
+         {"login", "sshd", "sudo", "su", "su-l", "sddm",
+          "gdm-password", "lightdm"}},
+        {PamScope::EffectivePasswordStack, {"passwd", "common-password"}}
     };
-    profile.pam.passwordServices = {"passwd", "common-password"};
     profile.pam.trustedAuthenticationBypasses = {
         {"su", "pam_rootok.so",
          PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller},
         {"su-l", "pam_rootok.so",
          PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller}
     };
-    profile.pam.faillockConfigPath = "/etc/security/faillock.conf";
-    profile.pam.passwordQualityConfigPath = "/etc/security/pwquality.conf";
-    profile.pam.passwordHistoryConfigPath = "/etc/security/pwhistory.conf";
+    profile.pam.capabilities = {
+        {PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock,
+         PamScope::EffectiveAuthenticationStack,
+         "/etc/security/faillock.conf", PamConfigGrammar::KeyValue,
+         PamTopologyStrategyKind::ExternalOptIn, {}},
+        {PamCapability::PasswordQuality, PamProviderKind::PamPwquality,
+         PamScope::EffectivePasswordStack,
+         "/etc/security/pwquality.conf", PamConfigGrammar::KeyValue,
+         PamTopologyStrategyKind::ExternalOptIn, {}},
+        {PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
+         PamScope::EffectivePasswordStack,
+         "/etc/security/pwhistory.conf", PamConfigGrammar::KeyValue,
+         PamTopologyStrategyKind::ExternalOptIn, {}}
+    };
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {

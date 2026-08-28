@@ -2,6 +2,7 @@
 #define FIC_ALT_PAM_FAILLOCK_TOPOLOGY_MANAGER_H
 
 #include "platform/PlatformProfile.h"
+#include "modules/identity_access/pam/PamTopologyManager.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
@@ -27,7 +28,7 @@ struct AltPamFaillockTopologyOptions {
     std::function<bool(std::string&)> semanticVerifier;
 };
 
-class AltPamFaillockTopologyManager {
+class AltPamFaillockTopologyManager final : public PamTopologyManager {
 public:
     inline static constexpr const char* PREAUTH_BEGIN =
         "# BEGIN FIC pam_faillock preauth";
@@ -55,8 +56,10 @@ public:
         AltPamFaillockTopologyOptions options);
 
     bool status(AltPamFaillockTopologyState& state, std::string& error);
-    bool enable(std::string& error);
-    bool disable(std::string& error);
+    bool inspect(PamTopologyStatus& status, std::string& error) override;
+    bool canEnable(std::string& error) const override;
+    bool enable(std::string& error) override;
+    bool disable(std::string& error) override;
 
 private:
     fic::platform::PamPlatformConfig platformConfig_;

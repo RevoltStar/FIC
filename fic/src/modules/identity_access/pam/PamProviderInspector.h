@@ -9,22 +9,8 @@
 
 namespace fic::identity::pam {
 
-enum class PamCapability {
-    AuthenticationLockout,
-    PasswordQuality,
-    PasswordHistory
-};
-
-enum class PamProviderKind {
-    PamFaillock,
-    PamTally2,
-    PamTally,
-    PamPwquality,
-    PamPasswdqc,
-    PamCracklib,
-    PamPwhistory,
-    PamUnixHistory
-};
+using PamCapability = fic::platform::PamCapability;
+using PamProviderKind = fic::platform::PamProviderKind;
 
 struct PamProviderInspection {
     PamProviderKind provider = PamProviderKind::PamFaillock;

@@ -1,5 +1,7 @@
 #include "modules/identity_access/pam/PamProviderInspector.h"
 
+#include "modules/identity_access/pam/PamProviderCatalog.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <map>
@@ -19,36 +21,9 @@ std::optional<PamProviderKind> providerForRule(
     const PamRule& rule,
     PamCapability capability) {
     const std::string module = moduleBaseName(rule);
-    if (capability == PamCapability::AuthenticationLockout) {
-        if (module == "pam_faillock.so") {
-            return PamProviderKind::PamFaillock;
-        }
-        if (module == "pam_tally2.so") {
-            return PamProviderKind::PamTally2;
-        }
-        if (module == "pam_tally.so") {
-            return PamProviderKind::PamTally;
-        }
-    } else if (capability == PamCapability::PasswordQuality) {
-        if (module == "pam_pwquality.so") {
-            return PamProviderKind::PamPwquality;
-        }
-        if (module == "pam_passwdqc.so") {
-            return PamProviderKind::PamPasswdqc;
-        }
-        if (module == "pam_cracklib.so") {
-            return PamProviderKind::PamCracklib;
-        }
-    } else if (capability == PamCapability::PasswordHistory) {
-        if (module == "pam_pwhistory.so") {
-            return PamProviderKind::PamPwhistory;
-        }
-        if (module == "pam_unix.so" &&
-            PamProviderInspector::argumentValue(rule, "remember").has_value()) {
-            return PamProviderKind::PamUnixHistory;
-        }
-    }
-    return std::nullopt;
+    return pamProviderForModule(
+        capability, module,
+        PamProviderInspector::argumentValue(rule, "remember").has_value());
 }
 
 bool inspectFaillockTopology(const std::vector<PamRule>& authRules,
@@ -93,6 +68,28 @@ bool inspectFaillockTopology(const std::vector<PamRule>& authRules,
             ": expected one authfail plus one authsucc, or one preauth, "
             "one authfail and one account call; duplicate calls are rejected";
         return false;
+    }
+    return true;
+}
+
+bool uniqueArgumentValue(const PamRule& rule,
+                         const std::string& option,
+                         std::optional<std::string>& value,
+                         std::string& error)
+{
+    value.reset();
+    const std::string prefix = option + "=";
+    for (const auto& argument : rule.arguments) {
+        if (argument.compare(0, prefix.size(), prefix) != 0) {
+            continue;
+        }
+        if (value.has_value()) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) + ": duplicate PAM argument " +
+                option;
+            return false;
+        }
+        value = argument.substr(prefix.size());
     }
     return true;
 }
@@ -272,8 +269,16 @@ bool PamProviderInspector::verifyOptionOverrides(
     const std::string& option,
     const std::string& expectedValue,
     std::string& error) {
+    error.clear();
+    const auto& descriptor = pamProviderDescriptor(inspection.provider);
     for (const auto& rule : inspection.providerRules) {
-        const auto configuredPath = argumentValue(rule, "conf");
+        std::optional<std::string> configuredPath;
+        if (descriptor.externalConfigArgument[0] != '\0' &&
+            !uniqueArgumentValue(
+                rule, descriptor.externalConfigArgument,
+                configuredPath, error)) {
+            return false;
+        }
         if (configuredPath.has_value() &&
             std::filesystem::path(*configuredPath).lexically_normal() !=
                 std::filesystem::path(expectedConfigPath).lexically_normal()) {
@@ -283,7 +288,10 @@ bool PamProviderInspector::verifyOptionOverrides(
             return false;
         }
 
-        const auto overrideValue = argumentValue(rule, option);
+        std::optional<std::string> overrideValue;
+        if (!uniqueArgumentValue(rule, option, overrideValue, error)) {
+            return false;
+        }
         if (overrideValue.has_value() && *overrideValue != expectedValue) {
             error = rule.source.string() + ":" + std::to_string(rule.line) +
                 ": PAM argument " + option + "=" + *overrideValue +
@@ -301,9 +309,17 @@ bool PamProviderInspector::verifyFlagOverrides(
     bool expectedEnabled,
     std::string& error,
     const std::vector<std::string>& conflictingOptionsWhenDisabled) {
+    error.clear();
     const std::string assignmentPrefix = flag + "=";
+    const auto& descriptor = pamProviderDescriptor(inspection.provider);
     for (const auto& rule : inspection.providerRules) {
-        const auto configuredPath = argumentValue(rule, "conf");
+        std::optional<std::string> configuredPath;
+        if (descriptor.externalConfigArgument[0] != '\0' &&
+            !uniqueArgumentValue(
+                rule, descriptor.externalConfigArgument,
+                configuredPath, error)) {
+            return false;
+        }
         if (configuredPath.has_value() &&
             std::filesystem::path(*configuredPath).lexically_normal() !=
                 std::filesystem::path(expectedConfigPath).lexically_normal()) {
@@ -312,7 +328,9 @@ bool PamProviderInspector::verifyFlagOverrides(
                 *configuredPath;
             return false;
         }
+        std::size_t flagOccurrences = 0;
         for (const auto& argument : rule.arguments) {
+            flagOccurrences += argument == flag ? 1U : 0U;
             if (argument.compare(0, assignmentPrefix.size(),
                                  assignmentPrefix) == 0) {
                 error = rule.source.string() + ":" +
@@ -320,6 +338,11 @@ bool PamProviderInspector::verifyFlagOverrides(
                     " must not have a value";
                 return false;
             }
+        }
+        if (flagOccurrences > 1) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) + ": duplicate PAM flag " + flag;
+            return false;
         }
         if (!expectedEnabled && hasArgument(rule, flag)) {
             error = rule.source.string() + ":" + std::to_string(rule.line) +
@@ -435,47 +458,11 @@ bool PamProviderInspector::hasArgument(const PamRule& rule,
 }
 
 std::string pamProviderName(PamProviderKind provider) {
-    switch (provider) {
-    case PamProviderKind::PamFaillock:
-        return "pam_faillock";
-    case PamProviderKind::PamTally2:
-        return "pam_tally2";
-    case PamProviderKind::PamTally:
-        return "pam_tally";
-    case PamProviderKind::PamPwquality:
-        return "pam_pwquality";
-    case PamProviderKind::PamPasswdqc:
-        return "pam_passwdqc";
-    case PamProviderKind::PamCracklib:
-        return "pam_cracklib";
-    case PamProviderKind::PamPwhistory:
-        return "pam_pwhistory";
-    case PamProviderKind::PamUnixHistory:
-        return "pam_unix remember";
-    }
-    return "unknown";
+    return pamProviderDescriptor(provider).name;
 }
 
 std::string pamProviderModuleName(PamProviderKind provider) {
-    switch (provider) {
-    case PamProviderKind::PamFaillock:
-        return "pam_faillock.so";
-    case PamProviderKind::PamTally2:
-        return "pam_tally2.so";
-    case PamProviderKind::PamTally:
-        return "pam_tally.so";
-    case PamProviderKind::PamPwquality:
-        return "pam_pwquality.so";
-    case PamProviderKind::PamPasswdqc:
-        return "pam_passwdqc.so";
-    case PamProviderKind::PamCracklib:
-        return "pam_cracklib.so";
-    case PamProviderKind::PamPwhistory:
-        return "pam_pwhistory.so";
-    case PamProviderKind::PamUnixHistory:
-        return "pam_unix.so";
-    }
-    return "unknown.so";
+    return pamProviderDescriptor(provider).moduleName;
 }
 
 } // namespace fic::identity::pam

@@ -41,6 +41,57 @@ private:
     std::filesystem::path path_;
 };
 
+struct TestPamPlatformConfig : fic::platform::PamPlatformConfig {
+    std::vector<std::string>& authenticationServices;
+    std::vector<std::string>& passwordServices;
+    std::filesystem::path& faillockConfigPath;
+    std::filesystem::path& passwordQualityConfigPath;
+    std::filesystem::path& passwordHistoryConfigPath;
+
+    TestPamPlatformConfig()
+        : fic::platform::PamPlatformConfig(initial()),
+          authenticationServices(scopes[0].services),
+          passwordServices(scopes[1].services),
+          faillockConfigPath(capabilities[0].configPath),
+          passwordQualityConfigPath(capabilities[1].configPath),
+          passwordHistoryConfigPath(capabilities[2].configPath) {}
+
+    TestPamPlatformConfig(const TestPamPlatformConfig& other)
+        : fic::platform::PamPlatformConfig(other),
+          authenticationServices(scopes[0].services),
+          passwordServices(scopes[1].services),
+          faillockConfigPath(capabilities[0].configPath),
+          passwordQualityConfigPath(capabilities[1].configPath),
+          passwordHistoryConfigPath(capabilities[2].configPath) {}
+
+private:
+    static fic::platform::PamPlatformConfig initial() {
+        fic::platform::PamPlatformConfig result;
+        result.scopes = {
+            {fic::platform::PamScope::EffectiveAuthenticationStack, {}},
+            {fic::platform::PamScope::EffectivePasswordStack, {}}
+        };
+        result.capabilities = {
+            {fic::platform::PamCapability::AuthenticationLockout,
+             fic::platform::PamProviderKind::PamFaillock,
+             fic::platform::PamScope::EffectiveAuthenticationStack, {},
+             fic::platform::PamConfigGrammar::KeyValue,
+             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+            {fic::platform::PamCapability::PasswordQuality,
+             fic::platform::PamProviderKind::PamPwquality,
+             fic::platform::PamScope::EffectivePasswordStack, {},
+             fic::platform::PamConfigGrammar::KeyValue,
+             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+            {fic::platform::PamCapability::PasswordHistory,
+             fic::platform::PamProviderKind::PamPwhistory,
+             fic::platform::PamScope::EffectivePasswordStack, {},
+             fic::platform::PamConfigGrammar::KeyValue,
+             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
+        };
+        return result;
+    }
+};
+
 void require(bool condition, const std::string& message) {
     if (!condition) {
         throw std::runtime_error(message);
@@ -62,8 +113,8 @@ void writeFile(const std::filesystem::path& path,
     }
 }
 
-fic::platform::PamPlatformConfig makePlatform(const TempDirectory& temp) {
-    fic::platform::PamPlatformConfig platform;
+TestPamPlatformConfig makePlatform(const TempDirectory& temp) {
+    TestPamPlatformConfig platform;
     platform.configDirectories = {temp.path() / "pam.d"};
     platform.moduleDirectories = {temp.path() / "security"};
     platform.authenticationServices = {"login", "sshd"};
@@ -1503,6 +1554,66 @@ void testPasswordHistoryAlternativeIsDetected() {
         "alternative history provider diagnostic is missing");
 }
 
+void testPasswdqcConfigArgumentAndInlineOverride() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.capabilities[1].provider =
+        fic::platform::PamProviderKind::PamPasswdqc;
+    platform.capabilities[1].grammar =
+        fic::platform::PamConfigGrammar::Passwdqc;
+    platform.passwordQualityConfigPath = temp.path() / "passwdqc.conf";
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_passwdqc.so config=" +
+            platform.passwordQualityConfigPath.string() + " min=24,11,8,7,7\n");
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            configuration, platform.passwordServices,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPasswdqc,
+            inspection, error),
+        error);
+    require(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection, platform.passwordQualityConfigPath.string(),
+            "min", "24,11,8,7,7", error),
+        error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection, "/other/passwdqc.conf", "min",
+            "24,11,8,7,7", error) &&
+            error.find("another configuration file") != std::string::npos,
+        "passwdqc config= path mismatch was not rejected");
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection, platform.passwordQualityConfigPath.string(),
+            "min", "disabled,24,11,8,7", error) &&
+            error.find("overrides") != std::string::npos,
+        "passwdqc inline min override was not rejected");
+    auto duplicateConfig = inspection;
+    duplicateConfig.providerRules.front().arguments.push_back(
+        "config=" + platform.passwordQualityConfigPath.string());
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            duplicateConfig, platform.passwordQualityConfigPath.string(),
+            "min", "24,11,8,7,7", error) &&
+            error.find("duplicate PAM argument config") != std::string::npos,
+        "duplicate passwdqc config argument was accepted");
+    auto duplicateOption = inspection;
+    duplicateOption.providerRules.front().arguments.push_back(
+        "min=24,11,8,7,7");
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            duplicateOption, platform.passwordQualityConfigPath.string(),
+            "min", "24,11,8,7,7", error) &&
+            error.find("duplicate PAM argument min") != std::string::npos,
+        "duplicate passwdqc inline option was accepted");
+}
+
 } // namespace
 
 int main() {
@@ -1545,6 +1656,7 @@ int main() {
         testRequiredProviderListParsing();
         testPamOptionValueCodec();
         testPasswordHistoryAlternativeIsDetected();
+        testPasswdqcConfigArgumentAndInlineOverride();
     } catch (const std::exception& error) {
         std::cerr << "PamConfigurationTests failed: " << error.what() << '\n';
         return 1;
