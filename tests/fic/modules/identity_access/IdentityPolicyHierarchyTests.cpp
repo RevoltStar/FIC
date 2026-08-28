@@ -3,6 +3,7 @@
 #include "modules/identity_access/nss/NssPolicy.h"
 #include "modules/identity_access/pam/PamOptionFile.h"
 #include "modules/identity_access/pam/PamOptionPolicy.h"
+#include "modules/identity_access/pam/PamConfigFileTransaction.h"
 #include "modules/identity_access/pam/PamPolicy.h"
 #include "modules/identity_access/pam/PasswdqcConfigFile.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
@@ -14,6 +15,7 @@
 #include "modules/identity_access/sssd/SssdPolicy.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <filesystem>
 #include <fstream>
@@ -471,6 +473,32 @@ private:
     VerificationHook verificationHook_;
 };
 
+bool commitTransactionContent(
+    fic::identity::pam::PamConfigFileSnapshot& snapshot,
+    const std::string& content,
+    std::string& error)
+{
+    return fic::identity::pam::PamConfigFileTransaction::mutate(
+        snapshot,
+        [&](const fic::identity::pam::PamConfigFileTransaction::Writer& writer,
+            std::string& mutationError) {
+            AtomicWriteOptions options;
+            options.createIfMissing = true;
+            options.rejectSymlink = true;
+            options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+            options.fileMode = 0644;
+            options.fileOwner = ::geteuid();
+            options.fileGroup = ::getegid();
+            if (!writer(
+                    snapshot.path.string(), content, options,
+                    &mutationError)) {
+                return false;
+            }
+            return true;
+        },
+        error);
+}
+
 template <typename PolicyType>
 void requireLeaf(PolicyType& policy, const std::string& submodule) {
     require(
@@ -525,6 +553,95 @@ int main() {
         writeFile(
             transactionPlatform.passwordQualityConfigPath,
             transactionOriginal);
+
+        const auto transactionPath =
+            transactionPlatform.passwordQualityConfigPath;
+        std::string transactionError;
+        fic::identity::pam::PamConfigFileSnapshot replacedSnapshot;
+        require(
+            fic::identity::pam::PamConfigFileTransaction::capture(
+                transactionPath, replacedSnapshot, transactionError),
+            transactionError);
+        require(
+            AtomicFileWriter::write(
+                transactionPath.string(), "external replacement\n", {},
+                &transactionError),
+            transactionError);
+        require(
+            !commitTransactionContent(
+                replacedSnapshot, "fic mutation\n", transactionError),
+            "transaction replaced a target changed after capture");
+        require(
+            readFile(transactionPath) == "external replacement\n",
+            "transaction overwrote the replacement made after capture");
+        require(
+            fic::identity::pam::PamConfigFileTransaction::rollback(
+                replacedSnapshot, transactionError) &&
+                readFile(transactionPath) == "external replacement\n",
+            "uncommitted transaction rollback changed external state");
+
+        writeFile(transactionPath, transactionOriginal);
+        fic::identity::pam::PamConfigFileSnapshot inPlaceSnapshot;
+        require(
+            fic::identity::pam::PamConfigFileTransaction::capture(
+                transactionPath, inPlaceSnapshot, transactionError),
+            transactionError);
+        struct stat beforeInPlace {};
+        require(::stat(transactionPath.c_str(), &beforeInPlace) == 0,
+                "could not stat in-place race fixture");
+        writeFile(transactionPath, "external same-inode rewrite\n");
+        struct stat afterInPlace {};
+        require(::stat(transactionPath.c_str(), &afterInPlace) == 0 &&
+                    beforeInPlace.st_dev == afterInPlace.st_dev &&
+                    beforeInPlace.st_ino == afterInPlace.st_ino,
+                "same-inode race fixture unexpectedly replaced its inode");
+        require(
+            !commitTransactionContent(
+                inPlaceSnapshot, "fic mutation\n", transactionError) &&
+                readFile(transactionPath) ==
+                    "external same-inode rewrite\n",
+            "transaction missed a same-inode content change");
+
+        writeFile(transactionPath, transactionOriginal, 0644);
+        fic::identity::pam::PamConfigFileSnapshot metadataSnapshot;
+        require(
+            fic::identity::pam::PamConfigFileTransaction::capture(
+                transactionPath, metadataSnapshot, transactionError),
+            transactionError);
+        require(::chmod(transactionPath.c_str(), 0600) == 0,
+                "could not inject PAM config metadata change");
+        require(
+            !commitTransactionContent(
+                metadataSnapshot, "fic mutation\n", transactionError),
+            "transaction missed a metadata change after capture");
+        struct stat preservedMetadata {};
+        require(::stat(transactionPath.c_str(), &preservedMetadata) == 0 &&
+                    (preservedMetadata.st_mode & 07777) == 0600 &&
+                    readFile(transactionPath) == transactionOriginal,
+                "transaction overwrote external metadata state");
+
+        const fs::path missingTransactionPath =
+            transactionRoot / "security-config/appeared.conf";
+        fic::identity::pam::PamConfigFileSnapshot missingSnapshot;
+        require(
+            fic::identity::pam::PamConfigFileTransaction::capture(
+                missingTransactionPath, missingSnapshot, transactionError),
+            transactionError);
+        writeFile(missingTransactionPath, "external appeared file\n");
+        require(
+            !commitTransactionContent(
+                missingSnapshot, "fic mutation\n", transactionError) &&
+                readFile(missingTransactionPath) ==
+                    "external appeared file\n",
+            "transaction replaced a file created after missing capture");
+        require(
+            fic::identity::pam::PamConfigFileTransaction::rollback(
+                missingSnapshot, transactionError) &&
+                readFile(missingTransactionPath) ==
+                    "external appeared file\n",
+            "uncommitted missing-target rollback removed external file");
+
+        writeFile(transactionPath, transactionOriginal, 0644);
         FaultInjectedPamOptionPolicy rollbackPolicy(transactionPlatform);
         require(
             !rollbackPolicy.applyValue("13"),
