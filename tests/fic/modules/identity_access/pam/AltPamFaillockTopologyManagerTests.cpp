@@ -95,7 +95,7 @@ public:
             {fic::platform::PamCapability::AuthenticationLockout,
              fic::platform::PamProviderKind::PamFaillock,
              fic::platform::PamScope::EffectiveAuthenticationStack,
-             root / "faillock.conf",
+             "/etc/security/faillock.conf",
              fic::platform::PamTopologyStrategyKind::AltTcbManaged,
              root / "pam.d/system-auth-local-only"},
             {fic::platform::PamCapability::PasswordQuality,

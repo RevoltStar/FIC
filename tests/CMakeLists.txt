@@ -399,6 +399,7 @@ add_executable(alt_pam_faillock_topology_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
 )
 target_include_directories(alt_pam_faillock_topology_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
