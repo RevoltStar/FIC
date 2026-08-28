@@ -569,15 +569,20 @@ policy participant. `SssdOfflineCredentialsExpirationPolicy` выполняет 
 topology strategy → platform profile`. Профиль декларативно задаёт независимые
 capabilities `PasswordQuality`, `PasswordHistory` и `AuthenticationLockout`,
 их service scope, provider, config path и topology strategy. Policy-классы не
-ветвятся по идентификатору дистрибутива.
+ветвятся по идентификатору дистрибутива. `PamProviderCatalog` является единым
+источником provider → capability/module/config-argument/grammar/policy binding;
+platform profile выбирает provider, но не дублирует его grammar.
 
 `PamConfiguration` строит effective-граф каждой существующей целевой службы с
 учётом `@include`, `include` и `substack`, ограничивает глубину и размер графа и
 отклоняет циклы или неподдерживаемый синтаксис. `PamProviderInspector`
 сопоставляет модуль с provider descriptor, в том числе использует правильное
 имя внешнего config-аргумента: `conf=` для pwquality/faillock/pwhistory и
-`config=` для passwdqc. Одновременное присутствие двух providers одной
-capability является конфликтом.
+`config=` для passwdqc. Descriptor также задаёт, является argument optional
+или required. Для управляемого passwdqc `config=/etc/passwdqc.conf` обязателен:
+отсутствующий, повторный, относительный либо отличный от platform path argument
+отклоняется. У key/value providers `conf=` остаётся optional. Одновременное
+присутствие двух providers одной capability является конфликтом.
 
 Registry создаётся по support map выбранной composition. Поэтому pwquality-only
 политики не показываются на passwdqc-платформе, а passwdqc-native политики — на
@@ -588,6 +593,11 @@ passwdqc. `pam_cracklib`, `pam_tally*` и `pam_unix remember=` распозна�
 Неподдерживаемый policy ID не регистрируется: его наличие в устаревшем config
 не создаёт скрытую no-op policy, а запросы mutation/apply получают штатный
 ответ `policy does not exist`.
+
+Generated `IDENTITY_ACCESS.conf` также строится по mechanism composition:
+quality/history defaults выбираются по provider capabilities, а не по literal
+platform id. Поэтому synthetic `passwdqc+pwhistory` и `pwquality` без history
+не требуют distro-specific ветки в central `fic/CMakeLists.txt`.
 
 | Платформы | Capability | Provider | Config grammar | Topology |
 | --- | --- | --- | --- | --- |
@@ -609,13 +619,22 @@ topology: `authfail` + `authsucc` (с необязательным `preauth`) л
 После preflight проверяются тип, владелец и права всех посещённых PAM
 service/include-файлов и используемых `.so`, внешний config-аргумент и inline
 options, способные перекрыть управляемое значение. Key/value providers меняет
-`PamOptionFile`; passwdqc использует отдельный strict parser/writer, который
-принимает только native `option=value` без пробелов, сохраняет комментарии и
-неизвестные параметры, отклоняет malformed/duplicate state, symlink и
-non-regular target. Сложный `min` разбирается typed codec'ом как пять
-невозрастающих числовых/`disabled` полей. Запись атомарна, затем проверяются
-file postcondition и effective PAM graph; ошибка postcondition вызывает
-rollback.
+`PamOptionFile`; passwdqc использует отдельные typed parser/evaluator/writer.
+Parser принимает native leading/trailing whitespace, comments, assignments и
+flags, но не принимает неизвестные либо невалидные параметры. Повторные
+assignments вычисляются последовательно по native last-wins semantics.
+`config=` рекурсивно загружается в месте появления; глубина и общий input
+ограничены, loop, missing/relative path, symlink, non-regular либо небезопасно
+доступный nested file приводят к fail-closed. Сложный `min` разбирается typed
+codec'ом как пять невозрастающих числовых/`disabled` полей. Writer заменяет
+только управляемую root-directive в canonical `option=value`, после чего
+повторно вычисляет весь effective state.
+
+`PamOptionPolicy` держит общую transaction boundary: snapshot raw config и
+metadata → mutation → effective file postcondition → повторная проверка PAM
+graph/provider. Любая ошибка после записи восстанавливает исходный файл и
+проверяет rollback; невозможность rollback возвращает failure с CRITICAL
+диагностикой о потенциально degraded PAM state.
 
 На ALT p11 package-level topology `pam_faillock` управляется отдельно от
 policy values через `control fic-pam-faillock enabled|disabled`. Facility

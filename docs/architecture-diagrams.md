@@ -581,8 +581,8 @@ PAM-политики разделяют намерение политики, pro
 ```mermaid
 flowchart TD
     authPolicy[logical PAM policy] --> capability[security capability]
-    capability --> provider[provider descriptor / backend]
-    provider --> grammar[typed codec and config grammar]
+    capability --> provider[provider descriptor / backend single source]
+    provider --> grammar[module / external config contract / grammar / bindings]
     grammar --> topology[topology strategy]
     topology --> profile[platform composition]
     profile --> services[capability-specific scope and search roots]
@@ -594,10 +594,12 @@ flowchart TD
     checks --> flow[PamControlFlowAnalyzer successful-path proof]
     flow --> verifier[PamCapabilityVerifier enforcement state]
     verifier --> overrides[provider-specific config path and inline overrides]
-    overrides --> optionFile[PamOptionFile or strict PasswdqcConfigFile]
-    optionFile --> writer[AtomicFileWriter root:root 0644]
-    writer --> reload[reparse file and PAM graphs]
+    overrides --> optionFile[PamOptionFile or Passwdqc typed evaluator]
+    optionFile --> snapshot[raw config and metadata snapshot]
+    snapshot --> writer[AtomicFileWriter root:root 0644]
+    writer --> reload[reparse effective config and PAM graphs]
     reload --> postcondition[provider / module / value postcondition]
+    postcondition -->|failure| rollback[restore and verify snapshot]
 ```
 
 Граф учитывает `@include`, `include` и `substack`; границы `substack`
@@ -615,6 +617,23 @@ five-field `min`, passphrase, match, similar и retry. Общий
 `password_quality_enforce_for_root` кодируется provider backend'ом как
 pwquality flag либо passwdqc `enforce=everyone|users`. Конфликтующие или
 неподдерживаемые alternative providers диагностируются, но не мигрируются.
+Descriptor является единственным источником provider capability, module name,
+config grammar, policy bindings и required/optional external config argument.
+Для passwdqc required `config=` должен присутствовать ровно один раз и
+совпадать с platform path; тот же contract использует
+`required_pam_enforcement`. Optional `conf=` остальных текущих providers не
+становится обязательным.
+
+`PasswdqcConfigEvaluator` разбирает все поддерживаемые native directives в
+typed state, применяет last-wins порядок и рекурсивно вычисляет `config=` точно
+в месте directive. Ввод ограничен по глубине/размеру; include loop, missing,
+symlink/non-regular, небезопасные ownership/permissions, unknown либо invalid
+native directive отклоняют весь state до mutation. После canonical изменения
+root-файла сравнивается effective значение с учётом nested configs. Общий
+`PamOptionPolicy` дополнительно сохраняет raw snapshot и metadata до записи:
+ошибка любой последующей file/provider/PAM-graph postcondition вызывает
+rollback с обязательной проверкой; failure rollback диагностируется как
+potentially degraded state.
 Daemon PAM
 policies не переписывают PAM service-файлы: меняется канонический
 provider-конфиг только после доказательства, что topology уже effective во
@@ -624,6 +643,11 @@ manager для ALT p11 может атомарно включать и откл�
 `required_pam_enforcement` независимо проверяет выбранные известные providers
 как системный invariant; он не объявляет dependencies другим policies, не
 устанавливает пакеты и не исправляет чужой PAM stack.
+
+Generated PAM policy defaults разрешаются из выбранных quality/history
+providers. Central CMake не ветвится по distro id, поэтому composition может
+независимо сочетать passwdqc или pwquality с наличием либо отсутствием
+pwhistory.
 
 `PamTopologyManager` отделяет `inspect/canEnable/enable/disable` от provider
 configuration. Текущая mutable strategy — ALT/tcb manager для `pam_faillock`;
