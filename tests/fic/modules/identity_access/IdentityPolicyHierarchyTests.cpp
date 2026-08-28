@@ -530,7 +530,9 @@ int main() {
             [&](const std::string& arguments = "") {
                 writeFile(
                     root / "pam.d/passwd",
-                    "password requisite pam_pwquality.so" + arguments +
+                    "password requisite pam_pwquality.so conf=" +
+                        passwordQualityPlatform.passwordQualityConfigPath.string() +
+                        arguments +
                         "\npassword required pam_unix.so\n");
                 const auto provider = root / "security/pam_pwquality.so";
                 if (!std::filesystem::exists(provider)) {
@@ -545,7 +547,8 @@ int main() {
             makePasswordQualityPlatform(transactionRoot);
         writeFile(
             transactionRoot / "pam.d/passwd",
-            "password requisite pam_pwquality.so\n"
+            "password requisite pam_pwquality.so conf=" +
+                transactionPlatform.passwordQualityConfigPath.string() + "\n"
             "password required pam_unix.so\n");
         writeFile(
             transactionRoot / "security/pam_pwquality.so", "test", 0555);
@@ -799,7 +802,9 @@ int main() {
             makePasswordHistoryPlatform(root);
         writeFile(
             root / "pam.d/passwd",
-            "password required pam_pwhistory.so\n");
+            "password required pam_pwhistory.so conf=" +
+                passwordHistoryPlatform.passwordHistoryConfigPath.string() +
+                "\n");
         writeFile(root / "security/pam_pwhistory.so", "test", 0555);
         writeFile(
             passwordHistoryPlatform.passwordHistoryConfigPath,
@@ -854,10 +859,13 @@ int main() {
             makeAuthenticationPlatform(root);
         writeFile(
             root / "pam.d/login",
-            "auth required pam_faillock.so preauth\n"
+            "auth required pam_faillock.so preauth conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth [success=1 default=bad] pam_unix.so\n"
-            "auth [default=die] pam_faillock.so authfail\n"
-            "auth sufficient pam_faillock.so authsucc\n"
+            "auth [default=die] pam_faillock.so authfail conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
+            "auth sufficient pam_faillock.so authsucc conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth required pam_deny.so\n");
         writeFile(root / "security/pam_faillock.so", "test", 0555);
         writeFile(
@@ -952,10 +960,13 @@ int main() {
         writeFile(
             root / "pam.d/login",
             "auth sufficient pam_permit.so\n"
-            "auth required pam_faillock.so preauth\n"
+            "auth required pam_faillock.so preauth conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth [success=1 default=bad] pam_unix.so\n"
-            "auth [default=die] pam_faillock.so authfail\n"
-            "auth sufficient pam_faillock.so authsucc\n"
+            "auth [default=die] pam_faillock.so authfail conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
+            "auth sufficient pam_faillock.so authsucc conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth required pam_deny.so\n");
         require(!requiredPam.apply(),
                 "required-PAM policy accepted an authentication bypass");
@@ -963,10 +974,13 @@ int main() {
                 "broken faillock must not block an independent history policy");
         writeFile(
             root / "pam.d/login",
-            "auth required pam_faillock.so preauth\n"
+            "auth required pam_faillock.so preauth conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth [success=1 default=bad] pam_unix.so\n"
-            "auth [default=die] pam_faillock.so authfail\n"
-            "auth sufficient pam_faillock.so authsucc\n"
+            "auth [default=die] pam_faillock.so authfail conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
+            "auth sufficient pam_faillock.so authsucc conf=" +
+                authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth required pam_deny.so\n");
 
         writeIdentityConfig(
@@ -1039,7 +1053,9 @@ int main() {
                     passwdqcConfig + passwdqcError);
         writeFile(
             root / "pam.d/passwd",
-            "password required pam_pwhistory.so\n");
+            "password required pam_pwhistory.so conf=" +
+                passwordHistoryPlatform.passwordHistoryConfigPath.string() +
+                "\n");
 
         writeFile(
             authenticationPlatform.faillockConfigPath,

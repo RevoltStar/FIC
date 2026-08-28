@@ -301,6 +301,23 @@ bool PamProviderInspector::verifyExternalConfigContract(
                     expected.string();
                 return false;
             }
+            if (!descriptor.defaultConfigPath.has_value()) {
+                error = rule.source.string() + ":" +
+                    std::to_string(rule.line) +
+                    ": optional PAM provider has no native default "
+                    "configuration path metadata";
+                return false;
+            }
+            if (expected != *descriptor.defaultConfigPath) {
+                error = rule.source.string() + ":" +
+                    std::to_string(rule.line) +
+                    ": PAM configuration argument " +
+                    descriptor.externalConfigArgument +
+                    "= is absent, but managed path " + expected.string() +
+                    " does not match native default configuration path " +
+                    descriptor.defaultConfigPath->string();
+                return false;
+            }
             continue;
         }
         const std::filesystem::path configured(*configuredPath);

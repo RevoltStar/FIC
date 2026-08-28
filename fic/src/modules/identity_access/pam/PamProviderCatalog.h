@@ -3,6 +3,7 @@
 
 #include "platform/PlatformProfile.h"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -45,6 +46,7 @@ struct PamProviderDescriptor {
     const char* moduleName = "";
     const char* externalConfigArgument = "";
     PamExternalConfigMode externalConfigMode = PamExternalConfigMode::None;
+    std::optional<std::filesystem::path> defaultConfigPath;
     fic::platform::PamConfigGrammar grammar =
         fic::platform::PamConfigGrammar::KeyValue;
     std::vector<PamProviderPolicyBinding> policies;

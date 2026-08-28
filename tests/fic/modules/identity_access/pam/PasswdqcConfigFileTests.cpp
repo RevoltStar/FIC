@@ -392,6 +392,11 @@ void testProviderCatalogAndSupport() {
             (descriptor.externalConfigMode == PamExternalConfigMode::None) ==
                 (descriptor.externalConfigArgument[0] == '\0'),
             "PAM provider external config mode/argument are inconsistent");
+        require(
+            (descriptor.externalConfigMode ==
+                 PamExternalConfigMode::Optional) ==
+                descriptor.defaultConfigPath.has_value(),
+            "optional PAM provider default-path metadata are inconsistent");
         std::set<PamPolicyFeature> features;
         for (const auto& binding : descriptor.policies) {
             require(features.insert(binding.feature).second,

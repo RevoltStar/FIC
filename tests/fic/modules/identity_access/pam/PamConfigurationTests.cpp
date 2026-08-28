@@ -2,12 +2,15 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/pam/PamOptionFile.h"
 #include "modules/identity_access/pam/PamOptionValueCodec.h"
+#include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamProviderInspector.h"
 #include "modules/identity_access/pam/PamRequiredProviders.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -126,6 +129,9 @@ TestPamPlatformConfig makePlatform(const TempDirectory& temp) {
 
 void createFaillockGraph(const TempDirectory& temp,
                          const std::string& authExtra = "") {
+    const std::string configArgument =
+        " conf=" +
+        (temp.path() / "security-config/faillock.conf").string();
     writeFile(
         temp.path() / "pam.d/login",
         "auth include common-auth\n"
@@ -136,10 +142,11 @@ void createFaillockGraph(const TempDirectory& temp,
         "@include common-account\n");
     writeFile(
         temp.path() / "pam.d/common-auth",
-        "auth required pam_faillock.so preauth\n"
+        "auth required pam_faillock.so preauth" + configArgument + "\n"
         "auth [success=1 default=bad] pam_unix.so\n"
-        "auth [default=die] pam_faillock.so authfail " + authExtra + "\n"
-        "auth sufficient pam_faillock.so authsucc\n"
+        "auth [default=die] pam_faillock.so authfail" + configArgument +
+            " " + authExtra + "\n"
+        "auth sufficient pam_faillock.so authsucc" + configArgument + "\n"
         "auth required pam_deny.so\n");
     writeFile(
         temp.path() / "pam.d/common-account",
@@ -152,6 +159,56 @@ fic::identity::pam::PamCapabilityVerification verifyCapability(
     fic::identity::pam::PamCapability capability,
     fic::identity::pam::PamProviderKind provider,
     const std::vector<std::string>& services) {
+    const auto& descriptor =
+        fic::identity::pam::pamProviderDescriptor(provider);
+    const auto capabilityConfig = std::find_if(
+        platform.capabilities.begin(), platform.capabilities.end(),
+        [capability](const auto& candidate) {
+            return candidate.capability == capability;
+        });
+    if (descriptor.externalConfigMode ==
+            fic::identity::pam::PamExternalConfigMode::Optional &&
+        capabilityConfig != platform.capabilities.end() &&
+        descriptor.defaultConfigPath.has_value() &&
+        capabilityConfig->configPath != *descriptor.defaultConfigPath) {
+        const std::string assignment =
+            " " + std::string(descriptor.externalConfigArgument) + "=" +
+            capabilityConfig->configPath.string();
+        for (const auto& directory : platform.configDirectories) {
+            std::error_code iterationError;
+            std::filesystem::directory_iterator entries(
+                directory, iterationError);
+            if (iterationError) {
+                continue;
+            }
+            for (const auto& entry : entries) {
+                if (!entry.is_regular_file()) {
+                    continue;
+                }
+                std::ifstream input(entry.path(), std::ios::binary);
+                std::string content{
+                    std::istreambuf_iterator<char>(input),
+                    std::istreambuf_iterator<char>()};
+                std::istringstream lines(content);
+                std::string line;
+                std::string rewritten;
+                bool changed = false;
+                while (std::getline(lines, line)) {
+                    if (line.find(descriptor.moduleName) != std::string::npos &&
+                        line.find(
+                            std::string(descriptor.externalConfigArgument) +
+                            "=") == std::string::npos) {
+                        line += assignment;
+                        changed = true;
+                    }
+                    rewritten += line + "\n";
+                }
+                if (changed) {
+                    writeFile(entry.path(), rewritten);
+                }
+            }
+        }
+    }
     fic::identity::pam::PamConfiguration configuration(platform);
     fic::identity::pam::PamCapabilityVerification verification;
     fic::identity::pam::PamCapabilityVerifier::verify(
@@ -413,7 +470,9 @@ void testPasswordHistoryFlagOverride() {
     const auto platform = makePlatform(temp);
     writeFile(
         temp.path() / "pam.d/passwd",
-        "password required pam_pwhistory.so enforce_for_root\n");
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " enforce_for_root\n");
 
     fic::identity::pam::PamConfiguration configuration(platform);
     fic::identity::pam::PamProviderInspection inspection;
@@ -453,7 +512,9 @@ void testPasswordHistoryFlagAssignmentFails() {
     const auto platform = makePlatform(temp);
     writeFile(
         temp.path() / "pam.d/passwd",
-        "password required pam_pwhistory.so enforce_for_root=yes\n");
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " enforce_for_root=yes\n");
 
     fic::identity::pam::PamConfiguration configuration(platform);
     fic::identity::pam::PamProviderInspection inspection;
@@ -834,7 +895,8 @@ void testEffectiveKnownProviders() {
         const auto platform = makePlatform(temp);
         writeFile(
             temp.path() / "pam.d/passwd",
-            "password requisite pam_pwquality.so\n"
+            "password requisite pam_pwquality.so conf=" +
+                platform.passwordQualityConfigPath.string() + "\n"
             "password required pam_unix.so\n");
         writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
         const auto verification = verifyCapability(
@@ -880,7 +942,8 @@ void testEffectiveKnownProviders() {
             "password include common-password\n");
         writeFile(
             temp.path() / "pam.d/common-password",
-            "password required pam_pwhistory.so\n"
+            "password required pam_pwhistory.so conf=" +
+                platform.passwordHistoryConfigPath.string() + "\n"
             "password required pam_unix.so\n");
         writeFile(temp.path() / "security/pam_pwhistory.so", "test", 0555);
         const auto verification = verifyCapability(
@@ -910,18 +973,23 @@ void testDebianPamAuthUpdateGeneratedStackIsEffective() {
         "password include common-password\n");
     writeFile(
         temp.path() / "pam.d/common-auth",
-        "auth requisite pam_faillock.so preauth\n"
+        "auth requisite pam_faillock.so preauth conf=" +
+            platform.faillockConfigPath.string() + "\n"
         "auth sufficient pam_unix.so\n"
-        "auth [default=die] pam_faillock.so authfail\n"
+        "auth [default=die] pam_faillock.so authfail conf=" +
+            platform.faillockConfigPath.string() + "\n"
         "auth requisite pam_deny.so\n");
     writeFile(
         temp.path() / "pam.d/common-account",
-        "account required pam_faillock.so\n"
+        "account required pam_faillock.so conf=" +
+            platform.faillockConfigPath.string() + "\n"
         "account required pam_unix.so\n");
     writeFile(
         temp.path() / "pam.d/common-password",
-        "password requisite pam_pwquality.so\n"
-        "password requisite pam_pwhistory.so use_authtok\n"
+        "password requisite pam_pwquality.so conf=" +
+            platform.passwordQualityConfigPath.string() + "\n"
+        "password requisite pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() + " use_authtok\n"
         "password required pam_unix.so\n");
     for (const auto* module : {
              "pam_faillock.so",
@@ -962,7 +1030,8 @@ void testSubstackBoundaryIsEffective() {
         "password required pam_unix.so\n");
     writeFile(
         temp.path() / "pam.d/common-password",
-        "password requisite pam_pwquality.so\n");
+        "password requisite pam_pwquality.so conf=" +
+            platform.passwordQualityConfigPath.string() + "\n");
     writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
     const auto verification = verifyCapability(
         platform,
@@ -980,11 +1049,14 @@ void testFaillockAccountTopologyIsEffective() {
     platform.authenticationServices = {"login"};
     writeFile(
         temp.path() / "pam.d/login",
-        "auth required pam_faillock.so preauth\n"
+        "auth required pam_faillock.so preauth conf=" +
+            platform.faillockConfigPath.string() + "\n"
         "auth sufficient pam_unix.so\n"
-        "auth [default=die] pam_faillock.so authfail\n"
+        "auth [default=die] pam_faillock.so authfail conf=" +
+            platform.faillockConfigPath.string() + "\n"
         "auth required pam_deny.so\n"
-        "account required pam_faillock.so\n"
+        "account required pam_faillock.so conf=" +
+            platform.faillockConfigPath.string() + "\n"
         "account required pam_unix.so\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
     const auto verification = verifyCapability(
