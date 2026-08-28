@@ -130,34 +130,33 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
                   capability->configPath, binding->option,
                   expectedFlagEnabled, stateError);
     };
-    const auto setExpectedState = [&](std::string& stateError) {
+    const auto setExpectedState = [&]
+        (const fic::identity::pam::PamConfigFileTransaction::Writer& writer,
+         std::string& stateError) {
         if (provider.grammar == fic::platform::PamConfigGrammar::Passwdqc) {
             return fic::identity::pam::PasswdqcConfigFile::setValue(
                 capability->configPath, binding->option,
-                nativeExpectedValue, stateError);
+                nativeExpectedValue, stateError, writer);
         }
         return binding->syntax ==
                 fic::identity::pam::PamNativeOptionSyntax::Assignment
             ? fic::identity::pam::PamOptionFile::setValue(
                   capability->configPath, binding->option,
-                  nativeExpectedValue, stateError)
+                  nativeExpectedValue, stateError, writer)
             : fic::identity::pam::PamOptionFile::setFlag(
                   capability->configPath, binding->option,
-                  expectedFlagEnabled, stateError);
+                  expectedFlagEnabled, stateError, writer);
     };
 
     std::string currentError;
     fic::identity::pam::PamConfigFileSnapshot snapshot;
-    bool mutationAttempted = false;
     const auto failAfterMutation = [&](const std::string& failure) {
         std::string diagnostic = failure;
-        if (mutationAttempted) {
-            std::string rollbackError;
-            if (!fic::identity::pam::PamConfigFileTransaction::rollback(
-                    snapshot, rollbackError)) {
-                diagnostic += "; CRITICAL: PAM policy rollback failed: " +
-                    rollbackError + "; PAM configuration may be degraded";
-            }
+        std::string rollbackError;
+        if (!fic::identity::pam::PamConfigFileTransaction::rollback(
+                snapshot, rollbackError)) {
+            diagnostic += "; CRITICAL: PAM policy rollback failed: " +
+                rollbackError + "; PAM configuration may be degraded";
         }
         this->log(diagnostic, logLevel::ERROR);
         return false;
@@ -171,17 +170,15 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
                 logLevel::ERROR);
             return false;
         }
-        mutationAttempted = true;
-        if (!setExpectedState(error)) {
+        if (!fic::identity::pam::PamConfigFileTransaction::mutate(
+                snapshot,
+                [&](const auto& writer, std::string& mutationError) {
+                    return setExpectedState(writer, mutationError);
+                },
+                error)) {
             return failAfterMutation(
                 "Could not update PAM option for " + this->policyName +
                     ": " + error);
-        }
-        if (!fic::identity::pam::PamConfigFileTransaction::recordMutation(
-                snapshot, error)) {
-            return failAfterMutation(
-                "Could not record mutated PAM option for " +
-                    this->policyName + ": " + error);
         }
     }
 

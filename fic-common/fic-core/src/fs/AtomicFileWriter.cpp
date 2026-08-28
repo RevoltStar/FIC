@@ -88,6 +88,58 @@ bool matchesExpectedIdentity(const std::filesystem::path& path,
         current.st_ino == options.expectedTargetIdentity->inode;
 }
 
+bool matchesExpectedState(const std::filesystem::path& path,
+                          const AtomicWriteOptions& options) {
+    if (!options.expectedTargetState.has_value()) {
+        return true;
+    }
+    const auto& expected = *options.expectedTargetState;
+    int descriptor = ::open(
+        path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) {
+        return false;
+    }
+    struct stat current {};
+    if (::fstat(descriptor, &current) != 0 || !S_ISREG(current.st_mode) ||
+        current.st_dev != expected.identity.device ||
+        current.st_ino != expected.identity.inode ||
+        (current.st_mode & 07777) != expected.mode ||
+        current.st_uid != expected.owner || current.st_gid != expected.group) {
+        closeFd(descriptor);
+        return false;
+    }
+    std::size_t offset = 0;
+    char buffer[8192];
+    while (true) {
+        const ssize_t count = ::read(descriptor, buffer, sizeof(buffer));
+        if (count == 0) {
+            break;
+        }
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            closeFd(descriptor);
+            return false;
+        }
+        const std::size_t size = static_cast<std::size_t>(count);
+        if (offset + size > expected.content.size() ||
+            expected.content.compare(offset, size, buffer, size) != 0) {
+            closeFd(descriptor);
+            return false;
+        }
+        offset += size;
+    }
+    const bool matches = offset == expected.content.size();
+    return closeFd(descriptor) && matches;
+}
+
+bool matchesExpectedTarget(const std::filesystem::path& path,
+                           const AtomicWriteOptions& options) {
+    return matchesExpectedIdentity(path, options) &&
+        matchesExpectedState(path, options);
+}
+
 void cleanup(int& fd, const std::filesystem::path& path) {
     closeFd(fd);
     std::error_code ignored;
@@ -100,6 +152,18 @@ bool AtomicFileWriter::write(const std::string& path,
                              const std::string& content,
                              const AtomicWriteOptions& options,
                              std::string* errorMessage) {
+    return writeWithResult(path, content, options, errorMessage, nullptr);
+}
+
+bool AtomicFileWriter::writeWithResult(
+    const std::string& path,
+    const std::string& content,
+    const AtomicWriteOptions& options,
+    std::string* errorMessage,
+    AtomicWriteResult* result) {
+    if (result != nullptr) {
+        *result = AtomicWriteResult{};
+    }
     std::error_code error;
     const std::filesystem::path requestedPath(path);
 
@@ -121,9 +185,9 @@ bool AtomicFileWriter::write(const std::string& path,
         setError(errorMessage, "refusing to replace symbolic link: " + path);
         return false;
     }
-    if (!matchesExpectedIdentity(requestedPath, options)) {
+    if (!matchesExpectedTarget(requestedPath, options)) {
         setError(errorMessage,
-                 "target identity changed before atomic write: " + path);
+                 "target state changed before atomic write: " + path);
         return false;
     }
 
@@ -210,9 +274,9 @@ bool AtomicFileWriter::write(const std::string& path,
         cleanup(tempFd, tempPath);
         return false;
     }
-    if (!matchesExpectedIdentity(targetPath, options)) {
+    if (!matchesExpectedTarget(targetPath, options)) {
         setError(errorMessage,
-                 "target identity changed before atomic replacement: " +
+                 "target state changed before atomic replacement: " +
                      targetPath.string());
         cleanup(tempFd, tempPath);
         return false;
@@ -221,6 +285,9 @@ bool AtomicFileWriter::write(const std::string& path,
         setError(errorMessage, "could not replace " + targetPath.string() + ": " + errnoMessage());
         cleanup(tempFd, tempPath);
         return false;
+    }
+    if (result != nullptr) {
+        result->installed = true;
     }
 
     int dirFd = ::open(targetDir.c_str(), O_RDONLY | O_DIRECTORY);

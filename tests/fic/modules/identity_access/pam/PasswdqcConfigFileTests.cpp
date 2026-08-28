@@ -308,7 +308,7 @@ void testSymlinkAndNonRegularRejection() {
             "unsafe passwdqc root was modified");
 }
 
-void testPostconditionRollback() {
+void testPostconditionFailureLeavesRollbackToTransaction() {
     TemporaryDirectory temp;
     const auto path = temp.path / "passwdqc.conf";
     const std::string original = "# keep\nretry=3\n";
@@ -328,11 +328,13 @@ void testPostconditionRollback() {
     require(!fic::identity::pam::PasswdqcConfigFile::setValue(
                 path, "retry", "4", error, writer),
             "failed passwdqc postcondition was reported as success");
-    require(writes == 2 && readFile(path) == original,
-            "passwdqc postcondition failure was not rolled back");
+    require(writes == 1 &&
+                readFile(path) == "# externally changed\nretry=999\n",
+            "passwdqc primitive attempted its own postcondition rollback");
 
     const auto child = temp.path / "child.conf";
     writeFile(child, "retry=9\n");
+    writeFile(path, original);
     writes = 0;
     const auto nestedOverrideWriter =
         [&](const std::string& target,
@@ -349,8 +351,9 @@ void testPostconditionRollback() {
     require(!fic::identity::pam::PasswdqcConfigFile::setValue(
                 path, "retry", "4", error, nestedOverrideWriter),
             "nested effective override was reported as success");
-    require(writes == 2 && readFile(path) == original,
-            "nested effective override failure was not rolled back");
+    require(writes == 1 && readFile(path) ==
+                "retry=4\nconfig=" + child.string() + "\n",
+            "passwdqc primitive attempted a nested override rollback");
 
     const auto failingWriter =
         [](const std::string&,
@@ -362,6 +365,7 @@ void testPostconditionRollback() {
             }
             return false;
         };
+    writeFile(path, original);
     require(!fic::identity::pam::PasswdqcConfigFile::setValue(
                 path, "retry", "4", error, failingWriter),
             "injected passwdqc write failure was reported as success");
@@ -480,7 +484,7 @@ int main() {
         testIncludesAndEffectiveOrdering();
         testManagedEffectiveValuesAndMutation();
         testSymlinkAndNonRegularRejection();
-        testPostconditionRollback();
+        testPostconditionFailureLeavesRollbackToTransaction();
         testProviderCatalogAndSupport();
     } catch (const std::exception& error) {
         std::cerr << "PasswdqcConfigFileTests failed: " << error.what() << '\n';

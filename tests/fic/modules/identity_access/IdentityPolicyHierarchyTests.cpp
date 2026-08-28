@@ -983,6 +983,9 @@ int main() {
                 passwdqcPlatform.passwordQualityConfigPath.string() + "\n"
             "password required pam_unix.so\n");
         writeFile(root / "security/pam_passwdqc.so", "test", 0555);
+        writeFile(
+            passwdqcPlatform.passwordQualityConfigPath,
+            "enforce=everyone\n");
         RequiredPamEnforcementPolicy requiredPasswdqc(passwdqcPlatform);
         require(
             requiredPasswdqc.apply(),

@@ -98,6 +98,7 @@ bool PamConfigFileTransaction::capture(
     if (::lstat(path.c_str(), &linkInfo) != 0) {
         if (errno == ENOENT) {
             snapshot.existed = false;
+            snapshot.state = PamConfigFileTransactionState::Captured;
             error.clear();
             return true;
         }
@@ -113,34 +114,136 @@ bool PamConfigFileTransaction::capture(
     snapshot.mode = info.st_mode & 07777;
     snapshot.owner = info.st_uid;
     snapshot.group = info.st_gid;
+    snapshot.device = info.st_dev;
+    snapshot.inode = info.st_ino;
+    snapshot.state = PamConfigFileTransactionState::Captured;
     error.clear();
     return true;
 }
 
-bool PamConfigFileTransaction::recordMutation(
+bool PamConfigFileTransaction::mutate(
     PamConfigFileSnapshot& snapshot,
+    const Mutation& mutation,
     std::string& error)
 {
-    struct stat current {};
-    std::string content;
-    if (!readRegularFile(snapshot.path, content, current, error)) {
+    if (snapshot.state != PamConfigFileTransactionState::Captured) {
+        error = "PAM config transaction is not in captured state";
         return false;
     }
-    snapshot.mutationRecorded = true;
-    snapshot.mutatedContent = std::move(content);
-    snapshot.mutatedDevice = current.st_dev;
-    snapshot.mutatedInode = current.st_ino;
-    snapshot.mutatedMode = current.st_mode & 07777;
-    snapshot.mutatedOwner = current.st_uid;
-    snapshot.mutatedGroup = current.st_gid;
-    error.clear();
-    return true;
+    bool writerInvoked = false;
+    const Writer conditionalWriter =
+        [&](const std::string& target,
+            const std::string& content,
+            const AtomicWriteOptions& requestedOptions,
+            std::string* writerError) {
+            if (writerInvoked) {
+                if (writerError != nullptr) {
+                    *writerError =
+                        "PAM config transaction writer may be called once";
+                }
+                return false;
+            }
+            writerInvoked = true;
+            if (std::filesystem::path(target) != snapshot.path) {
+                if (writerError != nullptr) {
+                    *writerError =
+                        "PAM config transaction target does not match snapshot";
+                }
+                return false;
+            }
+
+            AtomicWriteOptions options = requestedOptions;
+            options.rejectSymlink = true;
+            if (snapshot.existed) {
+                options.createIfMissing = false;
+                options.exclusiveCreate = false;
+                options.expectedTargetIdentity = AtomicTargetIdentity{
+                    snapshot.device, snapshot.inode};
+                options.expectedTargetState = AtomicTargetState{
+                    {snapshot.device, snapshot.inode}, snapshot.content,
+                    snapshot.mode, snapshot.owner, snapshot.group};
+            } else {
+                options.createIfMissing = true;
+                options.exclusiveCreate = true;
+                options.expectedTargetIdentity.reset();
+                options.expectedTargetState.reset();
+            }
+
+            std::string atomicError;
+            AtomicWriteResult writeResult;
+            const bool written = AtomicFileWriter::writeWithResult(
+                target, content, options, &atomicError, &writeResult);
+
+            struct stat current {};
+            std::string observedContent;
+            std::string observationError;
+            const bool observed = readRegularFile(
+                snapshot.path, observedContent, current, observationError);
+            mode_t expectedMode = 0600;
+            uid_t expectedOwner = ::geteuid();
+            gid_t expectedGroup = ::getegid();
+            if (snapshot.existed) {
+                expectedMode = snapshot.mode;
+                expectedOwner = snapshot.owner;
+                expectedGroup = snapshot.group;
+            }
+            if (options.metadataPolicy == FileMetadataPolicy::EnforceProvided) {
+                expectedMode = options.fileMode.value_or(expectedMode);
+                expectedOwner = options.fileOwner.value_or(expectedOwner);
+                expectedGroup = options.fileGroup.value_or(expectedGroup);
+            } else if (!snapshot.existed) {
+                expectedMode = options.fileMode.value_or(expectedMode);
+                expectedOwner = options.fileOwner.value_or(expectedOwner);
+                expectedGroup = options.fileGroup.value_or(expectedGroup);
+            }
+            const bool owned = observed && observedContent == content &&
+                (current.st_mode & 07777) == expectedMode &&
+                current.st_uid == expectedOwner &&
+                current.st_gid == expectedGroup;
+            if (writeResult.installed && owned) {
+                snapshot.state =
+                    PamConfigFileTransactionState::MutationCommitted;
+                snapshot.mutatedContent = std::move(observedContent);
+                snapshot.mutatedDevice = current.st_dev;
+                snapshot.mutatedInode = current.st_ino;
+                snapshot.mutatedMode = current.st_mode & 07777;
+                snapshot.mutatedOwner = current.st_uid;
+                snapshot.mutatedGroup = current.st_gid;
+            }
+            if (!written) {
+                if (writerError != nullptr) {
+                    *writerError = atomicError;
+                }
+                return false;
+            }
+            if (!owned) {
+                if (writerError != nullptr) {
+                    *writerError =
+                        "PAM config changed before mutation ownership could "
+                        "be recorded: " + observationError;
+                }
+                return false;
+            }
+            return true;
+        };
+
+    const bool result = mutation(conditionalWriter, error);
+    if (result && !writerInvoked) {
+        error = "PAM config mutation did not invoke transaction writer";
+        return false;
+    }
+    return result;
 }
 
 bool PamConfigFileTransaction::rollback(
     const PamConfigFileSnapshot& snapshot,
     std::string& error)
 {
+    if (snapshot.state !=
+        PamConfigFileTransactionState::MutationCommitted) {
+        error.clear();
+        return true;
+    }
     struct stat current {};
     if (::lstat(snapshot.path.c_str(), &current) != 0) {
         if (!snapshot.existed && errno == ENOENT) {
@@ -156,24 +259,22 @@ bool PamConfigFileTransaction::rollback(
             snapshot.path.string();
         return false;
     }
-    if (snapshot.mutationRecorded) {
-        struct stat observed {};
-        std::string content;
-        if (!readRegularFile(snapshot.path, content, observed, error)) {
-            return false;
-        }
-        if (observed.st_dev != snapshot.mutatedDevice ||
-            observed.st_ino != snapshot.mutatedInode ||
-            content != snapshot.mutatedContent ||
-            (observed.st_mode & 07777) != snapshot.mutatedMode ||
-            observed.st_uid != snapshot.mutatedOwner ||
-            observed.st_gid != snapshot.mutatedGroup) {
-            error = "PAM config target changed after mutation: " +
-                snapshot.path.string();
-            return false;
-        }
-        current = observed;
+    struct stat observed {};
+    std::string content;
+    if (!readRegularFile(snapshot.path, content, observed, error)) {
+        return false;
     }
+    if (observed.st_dev != snapshot.mutatedDevice ||
+        observed.st_ino != snapshot.mutatedInode ||
+        content != snapshot.mutatedContent ||
+        (observed.st_mode & 07777) != snapshot.mutatedMode ||
+        observed.st_uid != snapshot.mutatedOwner ||
+        observed.st_gid != snapshot.mutatedGroup) {
+        error = "PAM config target changed after mutation: " +
+            snapshot.path.string();
+        return false;
+    }
+    current = observed;
 
     if (!snapshot.existed) {
         if (::unlink(snapshot.path.c_str()) != 0) {
@@ -201,17 +302,21 @@ bool PamConfigFileTransaction::rollback(
     options.fileGroup = snapshot.group;
     options.expectedTargetIdentity =
         AtomicTargetIdentity{current.st_dev, current.st_ino};
+    options.expectedTargetState = AtomicTargetState{
+        {current.st_dev, current.st_ino}, snapshot.mutatedContent,
+        snapshot.mutatedMode, snapshot.mutatedOwner, snapshot.mutatedGroup};
     if (!AtomicFileWriter::write(
             snapshot.path.string(), snapshot.content, options, &error)) {
         return false;
     }
 
     struct stat restored {};
-    std::string content;
-    if (!readRegularFile(snapshot.path, content, restored, error)) {
+    std::string restoredContent;
+    if (!readRegularFile(
+            snapshot.path, restoredContent, restored, error)) {
         return false;
     }
-    if (content != snapshot.content ||
+    if (restoredContent != snapshot.content ||
         (restored.st_mode & 07777) != snapshot.mode ||
         restored.st_uid != snapshot.owner || restored.st_gid != snapshot.group) {
         error = "PAM config rollback verification failed";

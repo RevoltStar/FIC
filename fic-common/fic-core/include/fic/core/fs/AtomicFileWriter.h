@@ -18,6 +18,14 @@ struct AtomicTargetIdentity {
     ino_t inode = 0;
 };
 
+struct AtomicTargetState {
+    AtomicTargetIdentity identity;
+    std::string content;
+    mode_t mode = 0;
+    uid_t owner = 0;
+    gid_t group = 0;
+};
+
 struct AtomicWriteOptions {
     // Applies both to a direct write and to a file disappearing before write.
     bool createIfMissing = false;
@@ -31,6 +39,12 @@ struct AtomicWriteOptions {
     std::optional<gid_t> fileGroup;
     // When set, refuse replacement unless the target still names this inode.
     std::optional<AtomicTargetIdentity> expectedTargetIdentity;
+    // Stronger CAS precondition, checked again immediately before replacement.
+    std::optional<AtomicTargetState> expectedTargetState;
+};
+
+struct AtomicWriteResult {
+    bool installed = false;
 };
 
 class AtomicFileWriter {
@@ -39,6 +53,12 @@ public:
                       const std::string& content,
                       const AtomicWriteOptions& options = {},
                       std::string* errorMessage = nullptr);
+
+    static bool writeWithResult(const std::string& path,
+                                const std::string& content,
+                                const AtomicWriteOptions& options,
+                                std::string* errorMessage,
+                                AtomicWriteResult* result);
 };
 
 #endif // ATOMICFILEWRITER_H

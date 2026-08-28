@@ -547,28 +547,6 @@ bool readRootForMutation(const std::filesystem::path& path,
     return true;
 }
 
-bool verifyRawContent(const std::filesystem::path& path,
-                      bool expectedToExist,
-                      const std::string& expected,
-                      std::string& error)
-{
-    bool existed = false;
-    std::string content;
-    if (!readRootForMutation(path, existed, content, error)) {
-        if (!expectedToExist && error.find("No such file") !=
-                std::string::npos) {
-            error.clear();
-            return true;
-        }
-        return false;
-    }
-    if (existed != expectedToExist || (existed && content != expected)) {
-        error = "rollback content verification failed for " + path.string();
-        return false;
-    }
-    return true;
-}
-
 } // namespace
 
 PasswdqcEffectiveState::PasswdqcEffectiveState()
@@ -819,39 +797,16 @@ bool PasswdqcConfigFile::setValue(const std::filesystem::path& path,
     if (!writer) {
         writer = AtomicFileWriter::write;
     }
-    const auto rollback = [&](const std::string& failure) {
-        std::string rollbackError;
-        bool restored = false;
-        if (existed) {
-            restored = writer(
-                path.string(), original, writeOptions(), &rollbackError);
-        } else {
-            std::error_code removeError;
-            std::filesystem::remove(path, removeError);
-            restored = !removeError;
-            if (removeError) {
-                rollbackError = removeError.message();
-            }
-        }
-        if (restored && !verifyRawContent(
-                path, existed, original, rollbackError)) {
-            restored = false;
-        }
-        error = failure;
-        if (!restored) {
-            error += "; CRITICAL: rollback failed: " + rollbackError;
-        }
-        return false;
-    };
-
     std::string writeError;
     if (!writer(
             path.string(), joinLines(outputLines), writeOptions(),
             &writeError)) {
-        return rollback("passwdqc write failed: " + writeError);
+        error = "passwdqc write failed: " + writeError;
+        return false;
     }
     if (!hasEffectiveValue(path, option, value, error)) {
-        return rollback("passwdqc effective postcondition failed: " + error);
+        error = "passwdqc effective postcondition failed: " + error;
+        return false;
     }
     return true;
 }

@@ -158,7 +158,8 @@ std::string joinLines(const std::vector<std::string>& lines) {
 bool PamOptionFile::setValue(const std::filesystem::path& path,
                              const std::string& key,
                              const std::string& value,
-                             std::string& error) {
+                             std::string& error,
+                             Writer writer) {
     if (!validKey(key) || value.empty() ||
         value.find_first_of("\r\n") != std::string::npos) {
         error = "invalid PAM option assignment";
@@ -191,28 +192,14 @@ bool PamOptionFile::setValue(const std::filesystem::path& path,
         lines.push_back(key + " = " + value);
     }
 
-    if (!AtomicFileWriter::write(
+    if (!writer) {
+        writer = AtomicFileWriter::write;
+    }
+    if (!writer(
             path.string(), joinLines(lines), writeOptions(), &error)) {
         return false;
     }
-    if (hasOnlyValue(path, key, value, error)) {
-        return true;
-    }
-
-    std::string rollbackError;
-    if (existed) {
-        if (!AtomicFileWriter::write(
-                path.string(), originalContent, writeOptions(), &rollbackError)) {
-            error += "; rollback failed: " + rollbackError;
-        }
-    } else {
-        std::error_code removeError;
-        std::filesystem::remove(path, removeError);
-        if (removeError) {
-            error += "; rollback failed: " + removeError.message();
-        }
-    }
-    return false;
+    return hasOnlyValue(path, key, value, error);
 }
 
 bool PamOptionFile::hasOnlyValue(
@@ -253,7 +240,8 @@ bool PamOptionFile::hasOnlyValue(
 bool PamOptionFile::setFlag(const std::filesystem::path& path,
                             const std::string& key,
                             bool enabled,
-                            std::string& error) {
+                            std::string& error,
+                            Writer writer) {
     if (!validKey(key)) {
         error = "invalid PAM flag";
         return false;
@@ -301,28 +289,14 @@ bool PamOptionFile::setFlag(const std::filesystem::path& path,
         lines.push_back(key);
     }
 
-    if (!AtomicFileWriter::write(
+    if (!writer) {
+        writer = AtomicFileWriter::write;
+    }
+    if (!writer(
             path.string(), joinLines(lines), writeOptions(), &error)) {
         return false;
     }
-    if (hasFlag(path, key, enabled, error)) {
-        return true;
-    }
-
-    std::string rollbackError;
-    if (existed) {
-        if (!AtomicFileWriter::write(
-                path.string(), originalContent, writeOptions(), &rollbackError)) {
-            error += "; rollback failed: " + rollbackError;
-        }
-    } else {
-        std::error_code removeError;
-        std::filesystem::remove(path, removeError);
-        if (removeError) {
-            error += "; rollback failed: " + removeError.message();
-        }
-    }
-    return false;
+    return hasFlag(path, key, enabled, error);
 }
 
 bool PamOptionFile::hasFlag(const std::filesystem::path& path,
