@@ -3,72 +3,72 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit задачи: `354725f`.
-- Реализация: `9158bd2`, `4d600cc`.
+- Базовый commit задачи: `cce073e`.
+- Реализация: `0173c24`..`6fb7004`.
 
 ## Current task
 
-- Review-fixes capability-oriented PAM: required passwdqc external config,
-  effective native evaluation, full policy rollback и extensible defaults.
+- Закрыты review-проблемы capability-oriented PAM: полная native-семантика
+  passwdqc, snapshot-conditional config transaction, безопасные optional
+  provider defaults и проверка согласованности generated defaults.
 
 ## Accepted architecture / invariants
 
-- `PamProviderCatalog` — single source provider capability/module/grammar,
-  external config contract и policy bindings; platform выбирает composition.
-- Для managed passwdqc PAM argument `config=` required; `conf=` текущих
-  key/value providers optional.
-- Passwdqc state вычисляется последовательно и рекурсивно с native last-wins
-  semantics; ambiguous/unsafe/unknown state отклоняется fail-closed.
-- `PamOptionPolicy` откатывает raw config и metadata при любой ошибке после
-  mutation; config topology не активируется policy неявно.
-- API version и configuration schema version остаются равны 1.
+- Effective passwdqc state вычисляется в native порядке: defaults, все PAM argv,
+  рекурсивный `config=`, затем оставшиеся argv; любой неизвестный или невалидный
+  аргумент отклоняется fail-closed.
+- Structural verification допускает исправляемый `enforce=none` только до
+  mutation; postcondition и `required_pam_enforcement` требуют security-effective
+  state.
+- `PamConfigFileTransaction` — единственный владелец conditional commit и
+  rollback. Commit сверяет captured identity/content/metadata непосредственно
+  перед заменой, отсутствующий target создаётся exclusive, rollback разрешён
+  только для точно распознанного committed output.
+- Optional external config path берётся из provider descriptor. Явный path
+  обязан совпадать с managed path; отсутствие аргумента допустимо только для
+  native default path.
+- CMake provider selection и active platform composition пока остаются двумя
+  representations, но их расхождение блокируется direct profile test.
 
 ## Completed
 
-- Required `config=` contract используется обычными policies и
-  `required_pam_enforcement`; missing/wrong/duplicate/malformed paths rejected.
-- Добавлены typed `PasswdqcDirective`, `PasswdqcEffectiveState` и recursive
-  evaluator с limits, loop/symlink/ownership/permissions validation.
-- Все managed passwdqc postconditions проверяют effective state; native unknown
-  и invalid directives fail before mutation.
-- Добавлен `PamConfigFileTransaction` и fault-injection rollback tests, включая
-  refusal перезаписать concurrent external change.
-- Grammar удалена из platform capability и определяется provider descriptor.
-- Generated PAM defaults выбираются по quality/history providers; synthetic
-  passwdqc+pwhistory и pwquality-without-history compositions покрыты tests.
-- Реальный read-only PAM graph ALT Workstation 11.2/p11 подтверждён на
-  `10.88.0.86`: passwd → system-auth → system-auth-local-only →
-  `pam_passwdqc.so config=/etc/passwdqc.conf`.
+- Passwdqc verifier использует один recursive evaluator для PAM argv и config
+  files, проверяет все invocations/services и cross-option semantics, включая
+  `random=N,only` и финальный `enforce=none`.
+- Устранено capture-to-mutation окно: atomic writer получил expected target
+  state, transaction state machine и ownership-aware rollback; вложенные
+  rollback-механизмы удалены.
+- Для `pam_faillock`, `pam_pwquality` и `pam_pwhistory` зафиксированы native
+  default paths; generic inspector не содержит provider-specific ветвлений.
+- Добавлены regression/fault-injection tests для argv ordering, invalid state,
+  нескольких services, replacement/in-place/metadata races, missing-target race
+  и отказа rollback поверх внешнего изменения.
+- Добавлен cross-profile consistency gate generated PAM defaults.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/pam/`, passwdqc policies.
-- `fic/src/platform/`, PAM platform profiles.
-- `cmake/FicTargetPlatform.cmake`, `cmake/FicPamPolicyDefaults.cmake`,
-  generated IDENTITY_ACCESS defaults path.
-- PAM/platform unit tests, static checks и architecture documentation.
+- `fic-common/fic-core` atomic file writer.
+- `fic/src/modules/identity_access/pam/` и passwdqc policies.
+- PAM provider metadata и platform/CMake composition selection.
+- PAM, transaction, topology и platform profile tests.
 
 ## Validation
 
-- Target `fic` успешно собран для всех пяти profiles: Debian 12/13,
-  Ubuntu 24.04/26.04, ALT p11.
-- На каждом profile успешно прошли 8 tests:
+- Target `fic` успешно собран для Debian 12/13, Ubuntu 24.04/26.04 и ALT p11.
+- На каждом из пяти profiles успешно прошли 8 tests:
   `platform_profile_static_checks`, `pam_packaging_static_checks`,
   `pam_configuration_tests`, `passwdqc_config_file_tests`,
   `alt_pam_faillock_topology_tests`, `identity_policy_hierarchy_tests`,
   `platform_profile_tests`, `pam_policy_defaults_tests`.
-- Read-only runtime topology/package inspection ALT p11 выполнен; system PAM не
-  изменялся.
-- Full Ubuntu build запущен: `fic`, `fic-cli` и affected targets собраны, общий
-  build остановился на отсутствующем dependency header `systemd/sd-login.h` у
-  `fic-session-agent`.
-- Full Ubuntu CTest: 50 passed, 4 skipped environment-dependent, 1 unrelated
-  `ipc_protocol_validation_tests` failed из-за старого ожидания, что валидный
-  `api_version: 1` должен отклоняться.
+- Configure использовал только pkg-config stub для отсутствующего на host
+  `libsystemd`; `fic-session-agent` этой матрицей не собирался.
+- `git diff --check` пройден; stale transaction/verifier API поиском не найден.
 
 ## Remaining
 
-- Live weak/strong password и FIC policy apply не выполнялись: текущие binaries
-  не устанавливались на disposable ALT userspace, host PAM не изменялся.
-- Для полного build требуется development header `systemd/sd-login.h`;
-  unrelated `ipc_protocol_validation_tests` не исправлялся в PAM scope.
+- Live weak/strong password и FIC policy apply не выполнялись: доступного
+  disposable ALT окружения с текущими binaries нет, host PAM не изменялся.
+- Полная сборка всех executable и полный CTest в этой задаче не запускались;
+  проверены daemon и непосредственно затронутые tests на всех profiles.
+- Generated defaults не сведены к единственному runtime representation: выбран
+  допустимый review fallback с обязательной test-time consistency assertion.
