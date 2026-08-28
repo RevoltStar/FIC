@@ -78,8 +78,12 @@ fail instead of triggering blind cleanup.
 The `fic` RPM depends on `control`, `pam >= 1.7.1` (the ALT p11 owner of
 `pam_faillock.so`) and `pam-config >= 1.10.0` (the owner of
 `system-auth-local-only`). Native `pam_passwdqc` topology remains unchanged and
-has no FIC activation facility. ALT activation of `pam_pwhistory` is currently
-unsupported pending a separately proven safe password-history storage design.
+has no FIC activation facility. The ALT platform composition uses the strict
+native `/etc/passwdqc.conf` backend (`option=value`, PAM argument `config=`)
+for passwdqc thresholds, passphrase, match, similar, retry and root-enforcement
+settings. It does not expose pwquality-only policies. ALT activation of
+`pam_pwhistory` is currently unsupported pending a separately proven safe
+password-history storage design.
 
 ## Package contents
 

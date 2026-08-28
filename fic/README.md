@@ -564,21 +564,41 @@ policy participant. `SssdOfflineCredentialsExpirationPolicy` выполняет 
 
 ### Работа с PAM
 
-Это намеренно не универсальный редактор `/etc/pam.d`. Перед записью
-`PamConfiguration` строит effective-граф каждой существующей целевой службы с
-учетом `@include`, `include` и `substack`, ограничивает глубину и размер графа и
-отклоняет циклы или неподдерживаемый синтаксис. Наборы authentication/password
-services и порядок каталогов конфигурации задаются compile-time профилем
-дистрибутива.
+Это намеренно не универсальный редактор `/etc/pam.d`. PAM composition строится
+по цепочке `logical policy → capability → provider backend → config grammar →
+topology strategy → platform profile`. Профиль декларативно задаёт независимые
+capabilities `PasswordQuality`, `PasswordHistory` и `AuthenticationLockout`,
+их service scope, provider, config path и topology strategy. Policy-классы не
+ветвятся по идентификатору дистрибутива.
 
-`PamProviderInspector` сопоставляет семантическую возможность с provider.
-Например, для блокировки входа распознаются `pam_faillock`, `pam_tally2` и
-`pam_tally`; одновременное присутствие двух providers является конфликтом.
-Политики первой версии поддерживают изменение только `pam_faillock`,
-`pam_pwquality` и `pam_pwhistory`. `pam_passwdqc`, `pam_cracklib` и
-`pam_unix remember=` распознаются, но не переписываются как будто они
-эквивалентны. Миграция между providers и изменение PAM topology автоматически
-не выполняются.
+`PamConfiguration` строит effective-граф каждой существующей целевой службы с
+учётом `@include`, `include` и `substack`, ограничивает глубину и размер графа и
+отклоняет циклы или неподдерживаемый синтаксис. `PamProviderInspector`
+сопоставляет модуль с provider descriptor, в том числе использует правильное
+имя внешнего config-аргумента: `conf=` для pwquality/faillock/pwhistory и
+`config=` для passwdqc. Одновременное присутствие двух providers одной
+capability является конфликтом.
+
+Registry создаётся по support map выбранной composition. Поэтому pwquality-only
+политики не показываются на passwdqc-платформе, а passwdqc-native политики — на
+pwquality-платформе. Общая `password_quality_enforce_for_root` отображается
+backend'ом в `enforce_for_root` для pwquality и в `enforce=everyone|users` для
+passwdqc. `pam_cracklib`, `pam_tally*` и `pam_unix remember=` распознаются как
+альтернативные providers, но не получают приблизительных mappings.
+Неподдерживаемый policy ID не регистрируется: его наличие в устаревшем config
+не создаёт скрытую no-op policy, а запросы mutation/apply получают штатный
+ответ `policy does not exist`.
+
+| Платформы | Capability | Provider | Config grammar | Topology |
+| --- | --- | --- | --- | --- |
+| Debian 12/13, Ubuntu 24.04/26.04 | PasswordQuality | pam_pwquality | key/value | external opt-in/static PAM stack |
+| Debian 12/13, Ubuntu 24.04/26.04 | PasswordHistory | pam_pwhistory | key/value | external opt-in через pam-auth-update |
+| Debian 12/13, Ubuntu 24.04/26.04 | AuthenticationLockout | pam_faillock | key/value | external opt-in через pam-auth-update |
+| ALT p11 | PasswordQuality | pam_passwdqc | strict `option=value` | native static topology |
+| ALT p11 | AuthenticationLockout | pam_faillock | key/value | FIC-owned ALT/tcb manager, explicit opt-in |
+
+ALT p11 не объявляет `PasswordHistory`: безопасная topology и storage contract
+для этой capability пока отсутствуют.
 
 Для `pam_faillock` дополнительно требуется одна из двух полных непротиворечивых
 topology: `authfail` + `authsucc` (с необязательным `preauth`) либо `preauth` +
@@ -586,15 +606,16 @@ topology: `authfail` + `authsucc` (с необязательным `preauth`) л
 хотя бы в одной целевой службе и отсутствие provider приводят к fail-closed
 ошибке до записи.
 
-После preflight проверяются тип, владелец и права всех посещённых
-PAM service/include-файлов и используемых `.so`, аргумент `conf=` и аргументы,
-способные перекрыть управляемое значение. Затем меняется только канонический
-файл `/etc/security/faillock.conf`,
-`pwquality.conf` или `pwhistory.conf` через `AtomicFileWriter`; посторонние
-параметры, флаги и комментарии сохраняются. После записи файл и весь PAM-граф
-перечитываются. Отсутствующий канонический файл разрешено создать как
-`root:root 0644`, но только если поддерживаемый provider уже корректно включен
-во всех найденных целевых службах.
+После preflight проверяются тип, владелец и права всех посещённых PAM
+service/include-файлов и используемых `.so`, внешний config-аргумент и inline
+options, способные перекрыть управляемое значение. Key/value providers меняет
+`PamOptionFile`; passwdqc использует отдельный strict parser/writer, который
+принимает только native `option=value` без пробелов, сохраняет комментарии и
+неизвестные параметры, отклоняет malformed/duplicate state, symlink и
+non-regular target. Сложный `min` разбирается typed codec'ом как пять
+невозрастающих числовых/`disabled` полей. Запись атомарна, затем проверяются
+file postcondition и effective PAM graph; ошибка postcondition вызывает
+rollback.
 
 На ALT p11 package-level topology `pam_faillock` управляется отдельно от
 policy values через `control fic-pam-faillock enabled|disabled`. Facility
@@ -609,9 +630,12 @@ facility; глобальная policy `required_pam_enforcement` не ослаб
 `pam_faillock`, а `pam_tcb` должен быть последним исполняемым auth rule.
 Moved managed blocks и заменённый после snapshot target inode отклоняются без
 записи. Внешняя topology никогда не присваивается FIC.
-Штатный ALT `pam_passwdqc` остаётся без FIC activation facility, а активация
-`pam_pwhistory` на ALT не поддерживается до появления безопасного storage
-contract для истории паролей.
+Штатный ALT `pam_passwdqc` остаётся без FIC activation facility: его уже
+подключённая native topology проверяется как `PasswordQuality`. FIC управляет
+native settings `min`, `passphrase`, `match`, `similar`, `retry` и enforcement
+scope; pwquality-only `minlen`, `minclass`, `difok`, user/GECOS checks и class
+credits на ALT отсутствуют. Активация `pam_pwhistory` на ALT не поддерживается
+до появления безопасного storage contract для истории паролей.
 
 При отключении `failed_authentication_enforce_for_root` параметр
 `root_unlock_time` считается конфликтом, потому что в `pam_faillock` он сам

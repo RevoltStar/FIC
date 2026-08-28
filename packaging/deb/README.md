@@ -157,6 +157,9 @@ PAM topology. After activation, `required_pam_enforcement` can be enabled to
 check the system invariant independently: `PamConfiguration`,
 `PamControlFlowAnalyzer` and `PamCapabilityVerifier` analyze the resulting
 effective PAM graph instead of trusting profile selection state.
+The platform composition keeps `pam_pwhistory` configuration separate from
+this external opt-in topology state; changing a history value never invokes
+`pam-auth-update` or claims that an inactive profile is operational.
 
 ## Bundled Qt runtime for fic-gui
 

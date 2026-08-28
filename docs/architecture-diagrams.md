@@ -580,17 +580,21 @@ PAM-политики разделяют намерение политики, pro
 
 ```mermaid
 flowchart TD
-    authPolicy[IDENTITY_ACCESS / PAM policy] --> profile[PAM platform profile]
-    profile --> services[target services and search roots]
+    authPolicy[logical PAM policy] --> capability[security capability]
+    capability --> provider[provider descriptor / backend]
+    provider --> grammar[typed codec and config grammar]
+    grammar --> topology[topology strategy]
+    topology --> profile[platform composition]
+    profile --> services[capability-specific scope and search roots]
     services --> graph[PamConfiguration effective include graph]
-    graph --> providers[PamProviderInspector capability providers]
+    graph --> providers[PamProviderInspector provider verification]
     providers --> conflict{exactly one supported provider per service?}
     conflict -->|no| reject[fail closed without write]
-    conflict -->|yes| topology[topology and config/module file checks]
-    topology --> flow[PamControlFlowAnalyzer successful-path proof]
+    conflict -->|yes| checks[topology and config/module file checks]
+    checks --> flow[PamControlFlowAnalyzer successful-path proof]
     flow --> verifier[PamCapabilityVerifier enforcement state]
-    verifier --> overrides[conf path and argument override checks]
-    overrides --> optionFile[canonical option file]
+    verifier --> overrides[provider-specific config path and inline overrides]
+    overrides --> optionFile[PamOptionFile or strict PasswdqcConfigFile]
     optionFile --> writer[AtomicFileWriter root:root 0644]
     writer --> reload[reparse file and PAM graphs]
     reload --> postcondition[provider / module / value postcondition]
@@ -604,9 +608,14 @@ flowchart TD
 неподдерживаемый control syntax отклоняются fail-closed. Capability lockout распознает
 `pam_faillock`, `pam_tally2` и `pam_tally`, quality — `pam_pwquality`,
 `pam_passwdqc` и `pam_cracklib`, history — `pam_pwhistory` и
-`pam_unix remember=`. Первая версия применяет политики только к
-`pam_faillock`, `pam_pwquality` и `pam_pwhistory`; конфликтующие или
-альтернативные providers диагностируются, но не мигрируются. Daemon PAM
+`pam_unix remember=`. Capability-aware registry публикует только точные
+mappings выбранного provider. `pam_pwquality` получает minlen/minclass,
+user/GECOS checks, difok и class credits; `pam_passwdqc` получает native
+five-field `min`, passphrase, match, similar и retry. Общий
+`password_quality_enforce_for_root` кодируется provider backend'ом как
+pwquality flag либо passwdqc `enforce=everyone|users`. Конфликтующие или
+неподдерживаемые alternative providers диагностируются, но не мигрируются.
+Daemon PAM
 policies не переписывают PAM service-файлы: меняется канонический
 provider-конфиг только после доказательства, что topology уже effective во
 всех существующих целевых службах. Отдельный offline package-integration
@@ -615,6 +624,14 @@ manager для ALT p11 может атомарно включать и откл�
 `required_pam_enforcement` независимо проверяет выбранные известные providers
 как системный invariant; он не объявляет dependencies другим policies, не
 устанавливает пакеты и не исправляет чужой PAM stack.
+
+`PamTopologyManager` отделяет `inspect/canEnable/enable/disable` от provider
+configuration. Текущая mutable strategy — ALT/tcb manager для `pam_faillock`;
+Debian/Ubuntu описывают `pam-auth-update` как external opt-in, а native
+passwdqc topology ALT — как static/read-only. Config policies не активируют
+topology неявно. Password-history config и topology также являются разными
+состояниями: Debian/Ubuntu изменяют `pwhistory.conf` только после доказательства
+active effective stack, ALT эту capability не объявляет.
 
 Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют плоским
 `/etc/login.defs` через общий для identity configuration
