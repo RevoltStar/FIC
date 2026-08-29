@@ -39,7 +39,10 @@ struct AtomicWriteOptions {
     std::optional<gid_t> fileGroup;
     // When set, refuse replacement unless the target still names this inode.
     std::optional<AtomicTargetIdentity> expectedTargetIdentity;
-    // Stronger CAS precondition, checked again immediately before replacement.
+    // Optimistic snapshot precondition, checked again immediately before
+    // replacement. This is not an atomic compare-and-swap against arbitrary
+    // non-cooperating writers: they can still race between this check and
+    // rename(2).
     std::optional<AtomicTargetState> expectedTargetState;
 };
 

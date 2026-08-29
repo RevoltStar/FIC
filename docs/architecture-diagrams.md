@@ -581,8 +581,8 @@ PAM-политики разделяют намерение политики, pro
 ```mermaid
 flowchart TD
     authPolicy[logical PAM policy] --> capability[security capability]
-    capability --> provider[provider descriptor / backend single source]
-    provider --> grammar[module / external config contract / grammar / bindings]
+    capability --> provider[provider descriptor / semantic backend single source]
+    provider --> grammar[module / config topology / grammar / bindings]
     grammar --> topology[topology strategy]
     topology --> profile[platform composition]
     profile --> services[capability-specific scope and search roots]
@@ -591,10 +591,10 @@ flowchart TD
     providers --> conflict{exactly one supported provider per service?}
     conflict -->|no| reject[fail closed without write]
     conflict -->|yes| checks[topology and config/module file checks]
-    checks --> flow[PamControlFlowAnalyzer successful-path proof]
+    checks --> semantics[provider-specific effective-state evaluation]
+    semantics --> flow[PamControlFlowAnalyzer successful-path proof]
     flow --> verifier[PamCapabilityVerifier enforcement state]
-    verifier --> overrides[provider-specific config path and inline overrides]
-    overrides --> optionFile[PamOptionFile or Passwdqc typed evaluator]
+    verifier --> optionFile[raw PamOptionFile / Passwdqc mutation codec]
     optionFile --> snapshot[raw config and metadata snapshot]
     snapshot --> writer[AtomicFileWriter root:root 0644]
     writer --> reload[reparse effective config and PAM graphs]
@@ -618,11 +618,31 @@ five-field `min`, passphrase, match, similar и retry. Общий
 pwquality flag либо passwdqc `enforce=everyone|users`. Конфликтующие или
 неподдерживаемые alternative providers диагностируются, но не мигрируются.
 Descriptor является единственным источником provider capability, module name,
-config grammar, policy bindings и required/optional external config argument.
+config grammar, semantic backend, config topology, policy bindings и
+required/optional external config argument. Topology отдельно описывает
+primary path, fallback paths, drop-in directories, precedence и semantics
+explicit PAM config argument; platform composition может заменить эти данные.
 Для passwdqc required `config=` должен присутствовать ровно один раз и
 совпадать с platform path; тот же contract использует
-`required_pam_enforcement`. Optional `conf=` остальных текущих providers не
-становится обязательным.
+`required_pam_enforcement`. В текущих target versions optional `conf=`
+поддерживают `pam_faillock` и `pam_pwhistory`. `pam_pwquality` из
+libpwquality 1.4.5 читает native default topology и не поддерживает `conf=`;
+такой argument отклоняется fail-closed.
+
+`PwqualityConfigEvaluator` начинает с native defaults libpwquality 1.4.5,
+читает lexical `pwquality.conf.d/*.conf`, затем main `pwquality.conf` и после
+этого применяет argv каждой `pam_pwquality` invocation. Он вычисляет typed
+state, включая integer clamps, signed credits, `enforcing` и SET-style
+`enforce_for_root`. Unknown/invalid/unreadable/untrusted input даёт `Broken`;
+валидный final `enforcing=0` даёт `Ineffective` в `SecurityEffective`, но
+остаётся допустимым в `Structural`. Все ordinary quality policies и
+`required_pam_enforcement` используют один semantic backend. Для generic
+providers, пока нет полного evaluator, unmanaged drop-in либо fallback при
+отсутствующем managed primary не служит доказательством disabled state.
+Для `password_min_length` положительный credit отклоняет positive
+postcondition: libpwquality может зачесть его и принять пароль короче
+effective `minlen`; нулевые и отрицательные credits сохраняют true-length
+semantics.
 
 `PasswdqcConfigEvaluator` разбирает все поддерживаемые native directives в
 typed state, применяет last-wins порядок и рекурсивно вычисляет `config=` точно
@@ -634,6 +654,11 @@ root-файла сравнивается effective значение с учёт�
 ошибка любой последующей file/provider/PAM-graph postcondition вызывает
 rollback с обязательной проверкой; failure rollback диагностируется как
 potentially degraded state.
+Snapshot validation является optimistic, а не строгим atomic CAS для
+arbitrary non-cooperating writers: identity/content/metadata проверяются перед
+`rename(2)`, а installed output повторно читается сразу после него. Это сужает
+и обнаруживает часть гонок, но не устраняет окно между последней precondition
+check и `rename(2)`; rollback разрешён только для точно распознанного output.
 Daemon PAM
 policies не переписывают PAM service-файлы: меняется канонический
 provider-конфиг только после доказательства, что topology уже effective во

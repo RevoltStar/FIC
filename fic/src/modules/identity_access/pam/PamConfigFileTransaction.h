@@ -38,6 +38,9 @@ struct PamConfigFileSnapshot {
 
 class PamConfigFileTransaction {
 public:
+    // Mutation uses optimistic snapshot validation. It detects changes before
+    // replacement and verifies the installed output immediately afterwards,
+    // but cannot provide strict CAS semantics against non-cooperating writers.
     using Writer = std::function<bool(
         const std::string&,
         const std::string&,

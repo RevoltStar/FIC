@@ -174,6 +174,9 @@ bool PamConfigFileTransaction::mutate(
             const bool written = AtomicFileWriter::writeWithResult(
                 target, content, options, &atomicError, &writeResult);
 
+            // This second-stage observation narrows the remaining rename race
+            // and prevents rollback ownership from being claimed for output
+            // that an external writer replaced immediately after installation.
             struct stat current {};
             std::string observedContent;
             std::string observationError;
