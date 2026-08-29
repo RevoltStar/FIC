@@ -85,16 +85,15 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
     const auto& inspection = capabilityVerification.inspection;
-    const bool overridesValid =
-        provider.grammar == fic::platform::PamConfigGrammar::Passwdqc
-        ? true
-        : binding->syntax ==
-                fic::identity::pam::PamNativeOptionSyntax::Assignment
-            ? fic::identity::pam::PamProviderInspector::verifyDirectOptionOverride(
-                  inspection, binding->option, nativeExpectedValue, error)
-            : fic::identity::pam::PamProviderInspector::verifyDirectFlagOverride(
-                  inspection, binding->option, expectedFlagEnabled, error,
-                  binding->conflictingOptionsWhenDisabled);
+    const bool overridesValid = binding->syntax ==
+            fic::identity::pam::PamNativeOptionSyntax::Assignment
+        ? fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+              inspection, *capability, binding->option,
+              nativeExpectedValue, error)
+        : fic::identity::pam::PamProviderSemanticVerifier::canApplyFlag(
+              inspection, *capability, binding->option,
+              expectedFlagEnabled,
+              binding->conflictingOptionsWhenDisabled, error);
     if (!overridesValid) {
         this->log(
             "PAM option override preflight failed for " + this->policyName +

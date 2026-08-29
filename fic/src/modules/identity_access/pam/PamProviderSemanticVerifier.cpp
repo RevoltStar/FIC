@@ -32,11 +32,15 @@ using FlagVerifier = bool (*)(
     bool,
     const std::vector<std::string>&,
     std::string&);
+using CanApplyOptionVerifier = OptionVerifier;
+using CanApplyFlagVerifier = FlagVerifier;
 
 struct SemanticBackend {
     CapabilityVerifier verifyCapability = nullptr;
     OptionVerifier verifyOption = nullptr;
     FlagVerifier verifyFlag = nullptr;
+    CanApplyOptionVerifier canApplyOption = nullptr;
+    CanApplyFlagVerifier canApplyFlag = nullptr;
 };
 
 bool uniqueArgumentValue(const PamRule& rule,
@@ -67,12 +71,21 @@ bool uniqueArgumentValue(const PamRule& rule,
     return true;
 }
 
-bool genericCapability(const PamProviderInspection&,
-                       const fic::platform::PamCapabilityConfig&,
+bool verifyNoUnmanagedGenericInputs(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    std::string& error);
+
+bool genericCapability(const PamProviderInspection& inspection,
+                       const fic::platform::PamCapabilityConfig& capability,
                        bool,
                        PamProviderSemanticFailure& failure,
                        std::string& error)
 {
+    if (!verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        failure = PamProviderSemanticFailure::Broken;
+        return false;
+    }
     failure = PamProviderSemanticFailure::None;
     error.clear();
     return true;
@@ -166,17 +179,12 @@ bool verifyNoUnmanagedGenericInputs(
     return true;
 }
 
-bool genericOption(const PamProviderInspection& inspection,
-                   const fic::platform::PamCapabilityConfig& capability,
-                   const std::string& option,
-                   const std::string& expectedValue,
-                   std::string& error)
+bool verifyGenericOptionArguments(
+    const PamProviderInspection& inspection,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
 {
-    if (!PamProviderInspector::verifyExternalConfigContract(
-            inspection, capability, error) ||
-        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
-        return false;
-    }
     for (const auto& rule : inspection.providerRules) {
         std::optional<std::string> overrideValue;
         if (!uniqueArgumentValue(rule, option, overrideValue, error)) {
@@ -189,22 +197,32 @@ bool genericOption(const PamProviderInspection& inspection,
             return false;
         }
     }
+    error.clear();
     return true;
 }
 
-bool genericFlag(
-    const PamProviderInspection& inspection,
-    const fic::platform::PamCapabilityConfig& capability,
-    const std::string& flag,
-    bool expectedEnabled,
-    const std::vector<std::string>& conflictingOptionsWhenDisabled,
-    std::string& error)
+bool genericOption(const PamProviderInspection& inspection,
+                   const fic::platform::PamCapabilityConfig& capability,
+                   const std::string& option,
+                   const std::string& expectedValue,
+                   std::string& error)
 {
     if (!PamProviderInspector::verifyExternalConfigContract(
             inspection, capability, error) ||
         !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
         return false;
     }
+    return verifyGenericOptionArguments(
+        inspection, option, expectedValue, error);
+}
+
+bool verifyGenericFlagArguments(
+    const PamProviderInspection& inspection,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
     const std::string assignmentPrefix = flag + "=";
     for (const auto& rule : inspection.providerRules) {
         std::size_t occurrences = 0;
@@ -241,7 +259,50 @@ bool genericFlag(
             }
         }
     }
+    error.clear();
     return true;
+}
+
+bool genericFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
+    if (!PamProviderInspector::verifyExternalConfigContract(
+            inspection, capability, error) ||
+        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        return false;
+    }
+    return verifyGenericFlagArguments(
+        inspection, flag, expectedEnabled,
+        conflictingOptionsWhenDisabled, error);
+}
+
+bool genericCanApplyOption(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig&,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
+    return verifyGenericOptionArguments(
+        inspection, option, expectedValue, error);
+}
+
+bool genericCanApplyFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig&,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
+    return verifyGenericFlagArguments(
+        inspection, flag, expectedEnabled,
+        conflictingOptionsWhenDisabled, error);
 }
 
 bool passwdqcCapability(const PamProviderInspection& inspection,
@@ -312,6 +373,29 @@ bool passwdqcFlag(const PamProviderInspection& inspection,
         inspection, capability, flag, expectedEnabled, conflicts, error);
 }
 
+bool typedManagedConfigCanApplyOption(
+    const PamProviderInspection&,
+    const fic::platform::PamCapabilityConfig&,
+    const std::string&,
+    const std::string&,
+    std::string& error)
+{
+    error.clear();
+    return true;
+}
+
+bool typedManagedConfigCanApplyFlag(
+    const PamProviderInspection&,
+    const fic::platform::PamCapabilityConfig&,
+    const std::string&,
+    bool,
+    const std::vector<std::string>&,
+    std::string& error)
+{
+    error.clear();
+    return true;
+}
+
 fic::platform::PamProviderConfigTopology pwqualityTopology(
     const PamProviderInspection& inspection,
     const fic::platform::PamCapabilityConfig& capability)
@@ -361,8 +445,48 @@ bool pwqualityCapability(const PamProviderInspection& inspection,
                 "by effective enforcing=0";
             return false;
         }
+        if (requireSecurityEnforcement && state.localUsersOnly &&
+            capability.subjectScope ==
+                fic::platform::PamIdentitySubjectScope::AllPamSubjects) {
+            failure = PamProviderSemanticFailure::Ineffective;
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": pam_pwquality is restricted to local users but the "
+                "password-quality capability covers all PAM subjects";
+            return false;
+        }
     }
     failure = PamProviderSemanticFailure::None;
+    error.clear();
+    return true;
+}
+
+bool pwqualityStateSatisfiesOption(
+    const PwqualityEffectiveState& state,
+    const PamRule& rule,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
+    std::string effectiveValue;
+    if (!state.managedValue(option, effectiveValue, error)) {
+        return false;
+    }
+    if (option == "minlen" &&
+        (state.dcredit > 0 || state.ucredit > 0 ||
+         state.lcredit > 0 || state.ocredit > 0)) {
+        error = rule.source.string() + ":" +
+            std::to_string(rule.line) +
+            ": effective pwquality credits can reduce the actual "
+            "minimum password length below minlen=" + expectedValue;
+        return false;
+    }
+    if (effectiveValue != expectedValue) {
+        error = rule.source.string() + ":" +
+            std::to_string(rule.line) + ": effective pwquality " + option +
+            " is " + effectiveValue + ", expected " + expectedValue;
+        return false;
+    }
     error.clear();
     return true;
 }
@@ -382,26 +506,34 @@ bool pwqualityOption(const PamProviderInspection& inspection,
         if (!evaluatePwquality(inspection, capability, rule, state, error)) {
             return false;
         }
-        std::string effectiveValue;
-        if (!state.managedValue(option, effectiveValue, error)) {
-            return false;
-        }
-        if (option == "minlen" &&
-            (state.dcredit > 0 || state.ucredit > 0 ||
-             state.lcredit > 0 || state.ocredit > 0)) {
-            error = rule.source.string() + ":" +
-                std::to_string(rule.line) +
-                ": effective pwquality credits can reduce the actual "
-                "minimum password length below minlen=" + expectedValue;
-            return false;
-        }
-        if (effectiveValue != expectedValue) {
-            error = rule.source.string() + ":" +
-                std::to_string(rule.line) + ": effective pwquality " + option +
-                " is " + effectiveValue + ", expected " + expectedValue;
+        if (!pwqualityStateSatisfiesOption(
+                state, rule, option, expectedValue, error)) {
             return false;
         }
     }
+    return true;
+}
+
+bool pwqualityStateSatisfiesFlag(
+    const PwqualityEffectiveState& state,
+    const PamRule& rule,
+    const std::string& flag,
+    bool expectedEnabled,
+    std::string& error)
+{
+    if (flag != "enforce_for_root") {
+        error = "unsupported managed pwquality flag " + flag;
+        return false;
+    }
+    if (state.enforceForRoot != expectedEnabled) {
+        error = rule.source.string() + ":" +
+            std::to_string(rule.line) +
+            ": effective pwquality enforce_for_root is " +
+            (state.enforceForRoot ? "enabled" : "disabled") +
+            ", expected " + (expectedEnabled ? "enabled" : "disabled");
+        return false;
+    }
+    error.clear();
     return true;
 }
 
@@ -413,10 +545,6 @@ bool pwqualityFlag(
     const std::vector<std::string>&,
     std::string& error)
 {
-    if (flag != "enforce_for_root") {
-        error = "unsupported managed pwquality flag " + flag;
-        return false;
-    }
     if (!PamProviderInspector::verifyExternalConfigContract(
             inspection, capability, error)) {
         return false;
@@ -426,26 +554,80 @@ bool pwqualityFlag(
         if (!evaluatePwquality(inspection, capability, rule, state, error)) {
             return false;
         }
-        if (state.enforceForRoot != expectedEnabled) {
-            error = rule.source.string() + ":" +
-                std::to_string(rule.line) +
-                ": effective pwquality enforce_for_root is " +
-                (state.enforceForRoot ? "enabled" : "disabled") +
-                ", expected " + (expectedEnabled ? "enabled" : "disabled");
+        if (!pwqualityStateSatisfiesFlag(
+                state, rule, flag, expectedEnabled, error)) {
             return false;
         }
     }
     return true;
 }
 
+bool pwqualityCanApplyOption(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
+    PamProviderSemanticFailure failure = PamProviderSemanticFailure::None;
+    if (!pwqualityCapability(
+            inspection, capability, true, failure, error)) {
+        return false;
+    }
+    const auto topology = pwqualityTopology(inspection, capability);
+    for (const auto& rule : inspection.providerRules) {
+        PwqualityEffectiveState state;
+        if (!PwqualityConfigEvaluator::evaluateInvocationWithManagedOption(
+                rule.arguments, rule.source, rule.line, topology,
+                option, expectedValue, state, error) ||
+            !pwqualityStateSatisfiesOption(
+                state, rule, option, expectedValue, error)) {
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool pwqualityCanApplyFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>&,
+    std::string& error)
+{
+    PamProviderSemanticFailure failure = PamProviderSemanticFailure::None;
+    if (!pwqualityCapability(
+            inspection, capability, true, failure, error)) {
+        return false;
+    }
+    const auto topology = pwqualityTopology(inspection, capability);
+    for (const auto& rule : inspection.providerRules) {
+        PwqualityEffectiveState state;
+        if (!PwqualityConfigEvaluator::evaluateInvocationWithManagedFlag(
+                rule.arguments, rule.source, rule.line, topology,
+                flag, expectedEnabled, state, error) ||
+            !pwqualityStateSatisfiesFlag(
+                state, rule, flag, expectedEnabled, error)) {
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 const SemanticBackend& backendFor(PamProviderSemanticBackendKind kind)
 {
     static const SemanticBackend generic{
-        genericCapability, genericOption, genericFlag};
+        genericCapability, genericOption, genericFlag,
+        genericCanApplyOption, genericCanApplyFlag};
     static const SemanticBackend pwquality{
-        pwqualityCapability, pwqualityOption, pwqualityFlag};
+        pwqualityCapability, pwqualityOption, pwqualityFlag,
+        pwqualityCanApplyOption, pwqualityCanApplyFlag};
     static const SemanticBackend passwdqc{
-        passwdqcCapability, passwdqcOption, passwdqcFlag};
+        passwdqcCapability, passwdqcOption, passwdqcFlag,
+        typedManagedConfigCanApplyOption, typedManagedConfigCanApplyFlag};
     switch (kind) {
     case PamProviderSemanticBackendKind::Generic:
         return generic;
@@ -495,6 +677,30 @@ bool PamProviderSemanticVerifier::verifyFlag(
     std::string& error)
 {
     return backendFor(inspection).verifyFlag(
+        inspection, capability, flag, expectedEnabled,
+        conflictingOptionsWhenDisabled, error);
+}
+
+bool PamProviderSemanticVerifier::canApplyOption(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
+    return backendFor(inspection).canApplyOption(
+        inspection, capability, option, expectedValue, error);
+}
+
+bool PamProviderSemanticVerifier::canApplyFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
+    return backendFor(inspection).canApplyFlag(
         inspection, capability, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);
 }

@@ -64,23 +64,9 @@ public:
         const std::string& expectedValue,
         std::string& error);
 
-    static bool verifyDirectOptionOverride(
-        const PamProviderInspection& inspection,
-        const std::string& option,
-        const std::string& expectedValue,
-        std::string& error);
-
     static bool verifyFlagOverrides(
         const PamProviderInspection& inspection,
         const std::string& expectedConfigPath,
-        const std::string& flag,
-        bool expectedEnabled,
-        std::string& error,
-        const std::vector<std::string>&
-            conflictingOptionsWhenDisabled = {});
-
-    static bool verifyDirectFlagOverride(
-        const PamProviderInspection& inspection,
         const std::string& flag,
         bool expectedEnabled,
         std::string& error,

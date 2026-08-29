@@ -1070,6 +1070,43 @@ int main() {
         require(requiredPam.apply(),
                 "required-PAM policy rejected effective providers");
 
+        auto fallbackRequiredPlatform = requiredPlatform;
+        auto historyTopology = fic::identity::pam::pamProviderDescriptor(
+            fic::platform::PamProviderKind::PamPwhistory).
+                defaultConfigTopology;
+        historyTopology.primaryPath =
+            fallbackRequiredPlatform.passwordHistoryConfigPath;
+        const auto historyFallback = root / "vendor/pwhistory.conf";
+        historyTopology.fallbackPaths = {historyFallback};
+        fallbackRequiredPlatform.capabilities[2].configTopology =
+            historyTopology;
+        std::filesystem::remove(
+            fallbackRequiredPlatform.passwordHistoryConfigPath);
+        writeFile(historyFallback, "remember = 99\n");
+        writeFile(
+            root / "pam.d/passwd",
+            "password required pam_pwhistory.so\n");
+        writeIdentityConfig(
+            root, "no", "no", "", "pam_pwhistory");
+        RequiredPamEnforcementPolicy fallbackRequiredPam(
+            fallbackRequiredPlatform);
+        require(
+            !fallbackRequiredPam.apply(),
+            "required-PAM policy accepted unmanaged pwhistory fallback");
+        writeFile(
+            fallbackRequiredPlatform.passwordHistoryConfigPath,
+            "remember = 5\n");
+        writeFile(
+            root / "pam.d/passwd",
+            "password required pam_pwhistory.so conf=" +
+                fallbackRequiredPlatform.passwordHistoryConfigPath.string() +
+                "\n");
+        require(
+            fallbackRequiredPam.apply(),
+            "explicit pwhistory config did not replace native fallback for "
+            "required PAM");
+        writeIdentityConfig(root, "no", "no");
+
         writeFile(
             root / "pam.d/login",
             "auth sufficient pam_permit.so\n"

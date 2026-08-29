@@ -126,6 +126,11 @@ enum class PamExplicitConfigSemantics {
     ReplacesNativeTopology
 };
 
+enum class PamIdentitySubjectScope {
+    AllPamSubjects,
+    LocalUsersOnly
+};
+
 struct PamProviderConfigTopology {
     std::optional<std::filesystem::path> primaryPath;
     std::vector<std::filesystem::path> fallbackPaths;
@@ -180,6 +185,8 @@ struct PamCapabilityConfig {
     PamTopologyStrategyKind topology = PamTopologyStrategyKind::StaticReadOnly;
     std::filesystem::path topologyTarget;
     std::optional<PamProviderConfigTopology> configTopology;
+    PamIdentitySubjectScope subjectScope =
+        PamIdentitySubjectScope::AllPamSubjects;
 };
 
 struct PamPlatformConfig {

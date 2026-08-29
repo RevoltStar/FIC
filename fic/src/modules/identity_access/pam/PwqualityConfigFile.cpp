@@ -17,6 +17,18 @@ namespace {
 
 constexpr std::size_t MaximumLineLength = 1023;
 
+enum class ManagedOverrideKind {
+    Assignment,
+    Flag
+};
+
+struct ManagedOverride {
+    ManagedOverrideKind kind = ManagedOverrideKind::Assignment;
+    std::string option;
+    std::string value;
+    bool enabled = false;
+};
+
 std::string trimCopy(std::string value)
 {
     const auto first = std::find_if_not(
@@ -148,7 +160,8 @@ bool applyParameter(const std::string& name,
 
 bool parseConfigLine(const std::string& raw,
                      PwqualityEffectiveState& state,
-                     std::string& error)
+                     std::string& error,
+                     const ManagedOverride* managedOverride = nullptr)
 {
     std::string line = raw;
     const std::size_t comment = line.find('#');
@@ -184,6 +197,9 @@ bool parseConfigLine(const std::string& raw,
             break;
         }
         ++valueStart;
+    }
+    if (managedOverride != nullptr && name == managedOverride->option) {
+        return true;
     }
     return applyParameter(name, line.substr(valueStart), state, error);
 }
@@ -223,7 +239,8 @@ bool inspectTrustedPath(const std::filesystem::path& path,
 
 bool evaluateFile(const std::filesystem::path& path,
                   PwqualityEffectiveState& state,
-                  std::string& error)
+                  std::string& error,
+                  const ManagedOverride* managedOverride = nullptr)
 {
     bool exists = false;
     if (!inspectTrustedPath(path, false, exists, error) || !exists) {
@@ -248,7 +265,7 @@ bool evaluateFile(const std::filesystem::path& path,
             return false;
         }
         std::string lineError;
-        if (!parseConfigLine(line, state, lineError)) {
+        if (!parseConfigLine(line, state, lineError, managedOverride)) {
             error = path.string() + ":" + std::to_string(lineNumber) +
                 ": " + lineError;
             return false;
@@ -340,6 +357,49 @@ bool evaluateTopology(
     return true;
 }
 
+bool evaluateProspectiveTopology(
+    const fic::platform::PamProviderConfigTopology& topology,
+    const ManagedOverride& managedOverride,
+    PwqualityEffectiveState& state,
+    std::string& error)
+{
+    if (topology.precedence !=
+        fic::platform::PamConfigPrecedence::DropInsThenPrimary) {
+        error = "unsupported pwquality configuration precedence";
+        return false;
+    }
+    for (const auto& directory : topology.dropInDirectories) {
+        if (!evaluateDropInDirectory(directory, state, error)) {
+            return false;
+        }
+    }
+    if (!topology.primaryPath.has_value()) {
+        error = "pwquality managed topology has no primary path";
+        return false;
+    }
+
+    bool primaryExists = false;
+    if (!inspectTrustedPath(
+            *topology.primaryPath, false, primaryExists, error)) {
+        return false;
+    }
+    if (primaryExists &&
+        !evaluateFile(
+            *topology.primaryPath, state, error, &managedOverride)) {
+        return false;
+    }
+
+    if (managedOverride.kind == ManagedOverrideKind::Assignment) {
+        return applyParameter(
+            managedOverride.option, managedOverride.value, state, error);
+    }
+    if (managedOverride.enabled) {
+        return applyParameter(
+            managedOverride.option, std::string{}, state, error);
+    }
+    return true;
+}
+
 bool ignoredPamArgument(const std::string& argument)
 {
     return argument == "debug" ||
@@ -350,6 +410,32 @@ bool ignoredPamArgument(const std::string& argument)
         argument.compare(0, 11, "use_authtok") == 0 ||
         argument.compare(0, 14, "use_first_pass") == 0 ||
         argument.compare(0, 14, "try_first_pass") == 0;
+}
+
+bool applyPamArguments(const std::vector<std::string>& arguments,
+                       const std::filesystem::path& source,
+                       std::size_t line,
+                       PwqualityEffectiveState& state,
+                       std::string& error)
+{
+    for (const auto& argument : arguments) {
+        if (ignoredPamArgument(argument)) {
+            continue;
+        }
+        const std::size_t equals = argument.find('=');
+        const std::string name = lowercaseCopy(argument.substr(0, equals));
+        const std::string value = equals == std::string::npos
+            ? std::string{}
+            : argument.substr(equals + 1);
+        std::string parameterError;
+        if (!applyParameter(name, value, state, parameterError)) {
+            error = source.string() + ":" + std::to_string(line) +
+                ": invalid pam_pwquality argument " + argument + ": " +
+                parameterError;
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -390,24 +476,51 @@ bool PwqualityConfigEvaluator::evaluateInvocation(
     if (!evaluateTopology(topology, state, error)) {
         return false;
     }
-    for (const auto& argument : arguments) {
-        if (ignoredPamArgument(argument)) {
-            continue;
-        }
-        const std::size_t equals = argument.find('=');
-        const std::string name = lowercaseCopy(argument.substr(0, equals));
-        const std::string value = equals == std::string::npos
-            ? std::string{}
-            : argument.substr(equals + 1);
-        std::string parameterError;
-        if (!applyParameter(name, value, state, parameterError)) {
-            error = source.string() + ":" + std::to_string(line) +
-                ": invalid pam_pwquality argument " + argument + ": " +
-                parameterError;
-            return false;
-        }
-    }
-    return true;
+    return applyPamArguments(arguments, source, line, state, error);
+}
+
+bool PwqualityConfigEvaluator::evaluateInvocationWithManagedOption(
+    const std::vector<std::string>& arguments,
+    const std::filesystem::path& source,
+    std::size_t line,
+    const fic::platform::PamProviderConfigTopology& topology,
+    const std::string& option,
+    const std::string& expectedValue,
+    PwqualityEffectiveState& state,
+    std::string& error)
+{
+    error.clear();
+    state = PwqualityEffectiveState{};
+    const ManagedOverride managedOverride{
+        ManagedOverrideKind::Assignment,
+        lowercaseCopy(option),
+        expectedValue,
+        false};
+    return evaluateProspectiveTopology(
+               topology, managedOverride, state, error) &&
+        applyPamArguments(arguments, source, line, state, error);
+}
+
+bool PwqualityConfigEvaluator::evaluateInvocationWithManagedFlag(
+    const std::vector<std::string>& arguments,
+    const std::filesystem::path& source,
+    std::size_t line,
+    const fic::platform::PamProviderConfigTopology& topology,
+    const std::string& flag,
+    bool expectedEnabled,
+    PwqualityEffectiveState& state,
+    std::string& error)
+{
+    error.clear();
+    state = PwqualityEffectiveState{};
+    const ManagedOverride managedOverride{
+        ManagedOverrideKind::Flag,
+        lowercaseCopy(flag),
+        {},
+        expectedEnabled};
+    return evaluateProspectiveTopology(
+               topology, managedOverride, state, error) &&
+        applyPamArguments(arguments, source, line, state, error);
 }
 
 } // namespace fic::identity::pam

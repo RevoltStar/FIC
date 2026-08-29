@@ -34,6 +34,21 @@ public:
         bool expectedEnabled,
         const std::vector<std::string>& conflictingOptionsWhenDisabled,
         std::string& error);
+
+    static bool canApplyOption(
+        const PamProviderInspection& inspection,
+        const fic::platform::PamCapabilityConfig& capability,
+        const std::string& option,
+        const std::string& expectedValue,
+        std::string& error);
+
+    static bool canApplyFlag(
+        const PamProviderInspection& inspection,
+        const fic::platform::PamCapabilityConfig& capability,
+        const std::string& flag,
+        bool expectedEnabled,
+        const std::vector<std::string>& conflictingOptionsWhenDisabled,
+        std::string& error);
 };
 
 } // namespace fic::identity::pam

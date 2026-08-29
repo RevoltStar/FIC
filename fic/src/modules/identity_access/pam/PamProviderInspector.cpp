@@ -369,28 +369,6 @@ bool PamProviderInspector::verifyOptionOverrides(
         inspection, capability, option, expectedValue, error);
 }
 
-bool PamProviderInspector::verifyDirectOptionOverride(
-    const PamProviderInspection& inspection,
-    const std::string& option,
-    const std::string& expectedValue,
-    std::string& error)
-{
-    for (const auto& rule : inspection.providerRules) {
-        std::optional<std::string> overrideValue;
-        if (!uniqueArgumentValue(rule, option, overrideValue, error)) {
-            return false;
-        }
-        if (overrideValue.has_value() && *overrideValue != expectedValue) {
-            error = rule.source.string() + ":" + std::to_string(rule.line) +
-                ": PAM argument " + option + "=" + *overrideValue +
-                " overrides the requested value " + expectedValue;
-            return false;
-        }
-    }
-    error.clear();
-    return true;
-}
-
 bool PamProviderInspector::verifyFlagOverrides(
     const PamProviderInspection& inspection,
     const std::string& expectedConfigPath,
@@ -405,53 +383,6 @@ bool PamProviderInspector::verifyFlagOverrides(
     return PamProviderSemanticVerifier::verifyFlag(
         inspection, capability, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);
-}
-
-bool PamProviderInspector::verifyDirectFlagOverride(
-    const PamProviderInspection& inspection,
-    const std::string& flag,
-    bool expectedEnabled,
-    std::string& error,
-    const std::vector<std::string>& conflictingOptionsWhenDisabled)
-{
-    const std::string assignmentPrefix = flag + "=";
-    for (const auto& rule : inspection.providerRules) {
-        std::size_t occurrences = 0;
-        for (const auto& argument : rule.arguments) {
-            occurrences += argument == flag ? 1U : 0U;
-            if (argument.compare(0, assignmentPrefix.size(),
-                                 assignmentPrefix) == 0) {
-                error = rule.source.string() + ":" +
-                    std::to_string(rule.line) + ": PAM flag " + flag +
-                    " must not have a value";
-                return false;
-            }
-        }
-        if (occurrences > 1) {
-            error = rule.source.string() + ":" +
-                std::to_string(rule.line) + ": duplicate PAM flag " + flag;
-            return false;
-        }
-        if (!expectedEnabled && hasArgument(rule, flag)) {
-            error = rule.source.string() + ":" + std::to_string(rule.line) +
-                ": PAM argument " + flag +
-                " overrides the requested disabled state";
-            return false;
-        }
-        if (!expectedEnabled) {
-            for (const auto& option : conflictingOptionsWhenDisabled) {
-                if (hasArgument(rule, option) ||
-                    argumentValue(rule, option).has_value()) {
-                    error = rule.source.string() + ":" +
-                        std::to_string(rule.line) + ": PAM argument " + option +
-                        " conflicts with the requested disabled state";
-                    return false;
-                }
-            }
-        }
-    }
-    error.clear();
-    return true;
 }
 
 bool PamProviderInspector::verifyProviderFiles(

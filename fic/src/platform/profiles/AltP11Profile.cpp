@@ -97,7 +97,8 @@ PlatformProfile makeBuildPlatformProfile() {
         {PamCapability::PasswordQuality, PamProviderKind::PamPasswdqc,
          PamScope::EffectivePasswordStack,
          "/etc/passwdqc.conf",
-         PamTopologyStrategyKind::StaticReadOnly, {}}
+         PamTopologyStrategyKind::StaticReadOnly, {}, std::nullopt,
+         PamIdentitySubjectScope::AllPamSubjects}
     };
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";

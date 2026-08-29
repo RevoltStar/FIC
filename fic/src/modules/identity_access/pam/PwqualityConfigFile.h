@@ -45,6 +45,26 @@ public:
         const fic::platform::PamProviderConfigTopology& topology,
         PwqualityEffectiveState& state,
         std::string& error);
+
+    static bool evaluateInvocationWithManagedOption(
+        const std::vector<std::string>& arguments,
+        const std::filesystem::path& source,
+        std::size_t line,
+        const fic::platform::PamProviderConfigTopology& topology,
+        const std::string& option,
+        const std::string& expectedValue,
+        PwqualityEffectiveState& state,
+        std::string& error);
+
+    static bool evaluateInvocationWithManagedFlag(
+        const std::vector<std::string>& arguments,
+        const std::filesystem::path& source,
+        std::size_t line,
+        const fic::platform::PamProviderConfigTopology& topology,
+        const std::string& flag,
+        bool expectedEnabled,
+        PwqualityEffectiveState& state,
+        std::string& error);
 };
 
 } // namespace fic::identity::pam
