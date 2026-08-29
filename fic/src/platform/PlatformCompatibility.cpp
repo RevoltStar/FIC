@@ -224,6 +224,116 @@ bool validatePamTrustedAuthenticationBypasses(
     return true;
 }
 
+bool validatePamProviderConfigTopology(
+    const PamCapabilityConfig& capability,
+    const fic::identity::pam::PamProviderDescriptor& provider,
+    std::string& error)
+{
+    const PamProviderConfigTopology& topology =
+        capability.configTopology.has_value()
+        ? *capability.configTopology
+        : provider.defaultConfigTopology;
+
+    switch (topology.precedence) {
+    case PamConfigPrecedence::DropInsThenPrimary:
+        break;
+    default:
+        error = "PAM provider configuration topology has unsupported "
+            "precedence";
+        return false;
+    }
+    switch (topology.explicitConfig) {
+    case PamExplicitConfigSemantics::Unsupported:
+        break;
+    case PamExplicitConfigSemantics::ReplacesNativeTopology:
+        if (provider.externalConfigMode ==
+                fic::identity::pam::PamExternalConfigMode::None ||
+            provider.externalConfigArgument[0] == '\0') {
+            error = "PAM provider topology declares explicit config "
+                "replacement without a supported config argument";
+            return false;
+        }
+        break;
+    default:
+        error = "PAM provider configuration topology has unsupported "
+            "explicit config semantics";
+        return false;
+    }
+
+    if (capability.configTopology.has_value() &&
+        topology.explicitConfig !=
+            provider.defaultConfigTopology.explicitConfig) {
+        error = "PAM provider topology override changes provider-owned "
+            "explicit config semantics";
+        return false;
+    }
+
+    std::set<std::filesystem::path> filePaths;
+    if (topology.primaryPath.has_value()) {
+        if (!validAbsolutePath(*topology.primaryPath)) {
+            error = "PAM topology primary path must be an absolute "
+                "normalized path";
+            return false;
+        }
+        if (*topology.primaryPath != capability.configPath) {
+            error = "PAM topology primary path does not match the managed "
+                "provider configuration path";
+            return false;
+        }
+        filePaths.insert(*topology.primaryPath);
+    } else if (!topology.fallbackPaths.empty() ||
+               !topology.dropInDirectories.empty()) {
+        error = "PAM provider topology cannot declare fallback or drop-in "
+            "paths without a primary path";
+        return false;
+    }
+
+    for (const auto& fallback : topology.fallbackPaths) {
+        if (!validAbsolutePath(fallback)) {
+            error = "PAM topology fallback path must be an absolute "
+                "normalized path";
+            return false;
+        }
+        if (!filePaths.insert(fallback).second) {
+            error = "PAM topology file path is duplicated: " +
+                fallback.string();
+            return false;
+        }
+    }
+
+    std::set<std::filesystem::path> dropInPaths;
+    for (const auto& directory : topology.dropInDirectories) {
+        if (!validAbsolutePath(directory)) {
+            error = "PAM topology drop-in directory must be an absolute "
+                "normalized path";
+            return false;
+        }
+        if (filePaths.find(directory) != filePaths.end()) {
+            error = "PAM topology path cannot be both a file and a drop-in "
+                "directory: " + directory.string();
+            return false;
+        }
+        if (!dropInPaths.insert(directory).second) {
+            error = "PAM topology drop-in directory is duplicated: " +
+                directory.string();
+            return false;
+        }
+    }
+
+    if (provider.semanticBackend ==
+        fic::identity::pam::PamProviderSemanticBackendKind::Pwquality) {
+        if (!topology.primaryPath.has_value() ||
+            topology.explicitConfig !=
+                PamExplicitConfigSemantics::Unsupported ||
+            topology.precedence != PamConfigPrecedence::DropInsThenPrimary) {
+            error = "pam_pwquality platform topology is incompatible with "
+                "the target semantic backend";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool validatePamComposition(const PamPlatformConfig& pam,
                             std::string& error) {
     if (pam.scopes.empty() || pam.capabilities.empty()) {
@@ -263,9 +373,27 @@ bool validatePamComposition(const PamPlatformConfig& pam,
             error = "PAM provider does not implement its declared capability";
             return false;
         }
+        switch (capability.subjectScope) {
+        case PamIdentitySubjectScope::AllPamSubjects:
+            break;
+        case PamIdentitySubjectScope::LocalUsersOnly:
+            if (capability.capability != PamCapability::PasswordQuality) {
+                error = "local-only PAM subject scope is only supported for "
+                    "password-quality capability";
+                return false;
+            }
+            break;
+        default:
+            error = "PAM capability has an unsupported identity subject scope";
+            return false;
+        }
         if (!validatePath(
                 capability.configPath, "PAM provider configuration path",
                 error)) {
+            return false;
+        }
+        if (!validatePamProviderConfigTopology(
+                capability, provider, error)) {
             return false;
         }
         if (!configPaths.insert(capability.configPath).second) {

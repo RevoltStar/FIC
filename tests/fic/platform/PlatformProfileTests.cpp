@@ -309,6 +309,10 @@ void testSelectedProfile() {
                          : std::filesystem::path(
                                "/etc/security/pwquality.conf")),
             "password-quality provider configuration path is incorrect");
+    require(
+        quality->subjectScope ==
+            fic::platform::PamIdentitySubjectScope::AllPamSubjects,
+        "password-quality capability subject scope is not explicit/all-subject");
     require((history != nullptr) == (profile.id != "alt-p11") &&
                 (history == nullptr || history->configPath ==
                     "/etc/security/pwhistory.conf"),
@@ -727,6 +731,14 @@ void testInvalidProfileIsRejected() {
         "/usr/lib/security/pwquality.conf.d"};
     require(fic::platform::validatePlatformProfile(profile, error),
             "valid synthetic PAM topology was rejected: " + error);
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    pamCapability(
+        profile.pam,
+        fic::platform::PamCapability::AuthenticationLockout)->subjectScope =
+            fic::platform::PamIdentitySubjectScope::LocalUsersOnly;
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "non-quality PAM capability accepted local-only subject scope");
 
     profile = fic::platform::makeBuildPlatformProfile();
     pamCapability(profile.pam,
