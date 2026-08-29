@@ -13,6 +13,12 @@ PamOptionKeyMatchMode keyMatchMode(const PamProviderDescriptor& provider) {
         : PamOptionKeyMatchMode::CaseSensitive;
 }
 
+PamOptionFlagSyntax flagSyntax(const PamProviderDescriptor& provider) {
+    return provider.semanticBackend == PamProviderSemanticBackendKind::Pwquality
+        ? PamOptionFlagSyntax::SetPresence
+        : PamOptionFlagSyntax::BareOnly;
+}
+
 bool isPasswdqc(const PamProviderDescriptor& provider) {
     return provider.semanticBackend == PamProviderSemanticBackendKind::Passwdqc;
 }
@@ -35,7 +41,8 @@ bool PamProviderConfigFile::hasExpectedState(
         ? PamOptionFile::hasOnlyValue(
               path, binding.option, expectedValue, error, matchMode)
         : PamOptionFile::hasFlag(
-              path, binding.option, expectedFlagEnabled, error, matchMode);
+              path, binding.option, expectedFlagEnabled, error, matchMode,
+              flagSyntax(provider));
 }
 
 bool PamProviderConfigFile::setExpectedState(
@@ -57,7 +64,7 @@ bool PamProviderConfigFile::setExpectedState(
               std::move(writer), matchMode)
         : PamOptionFile::setFlag(
               path, binding.option, expectedFlagEnabled, error,
-              std::move(writer), matchMode);
+              std::move(writer), matchMode, flagSyntax(provider));
 }
 
 bool PamProviderConfigFile::verifyNoActiveDirectives(
@@ -66,7 +73,7 @@ bool PamProviderConfigFile::verifyNoActiveDirectives(
     const std::vector<std::string>& directives,
     std::string& error) {
     return PamOptionFile::verifyNoActiveDirectives(
-        path, directives, error, keyMatchMode(provider));
+        path, directives, error, keyMatchMode(provider), flagSyntax(provider));
 }
 
 } // namespace fic::identity::pam

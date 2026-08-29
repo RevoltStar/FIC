@@ -15,6 +15,11 @@ enum class PamOptionKeyMatchMode {
     AsciiCaseInsensitive
 };
 
+enum class PamOptionFlagSyntax {
+    BareOnly,
+    SetPresence
+};
+
 class PamOptionFile {
 public:
     using Writer = std::function<bool(
@@ -44,21 +49,26 @@ public:
                         std::string& error,
                         Writer writer = {},
                         PamOptionKeyMatchMode matchMode =
-                            PamOptionKeyMatchMode::CaseSensitive);
+                            PamOptionKeyMatchMode::CaseSensitive,
+                        PamOptionFlagSyntax syntax =
+                            PamOptionFlagSyntax::BareOnly);
 
     static bool hasFlag(const std::filesystem::path& path,
                         const std::string& key,
                         bool expectedEnabled,
                         std::string& error,
                         PamOptionKeyMatchMode matchMode =
-                            PamOptionKeyMatchMode::CaseSensitive);
+                            PamOptionKeyMatchMode::CaseSensitive,
+                        PamOptionFlagSyntax syntax =
+                            PamOptionFlagSyntax::BareOnly);
 
     static bool verifyNoActiveDirectives(
         const std::filesystem::path& path,
         const std::vector<std::string>& directives,
         std::string& error,
         PamOptionKeyMatchMode matchMode =
-            PamOptionKeyMatchMode::CaseSensitive);
+            PamOptionKeyMatchMode::CaseSensitive,
+        PamOptionFlagSyntax syntax = PamOptionFlagSyntax::BareOnly);
 };
 
 } // namespace fic::identity::pam

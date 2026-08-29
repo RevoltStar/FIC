@@ -83,6 +83,7 @@ bool parseAssignment(const std::string& line,
 bool parseFlagLine(const std::string& line,
                    const std::string& expectedKey,
                    PamOptionKeyMatchMode matchMode,
+                   PamOptionFlagSyntax syntax,
                    bool& isFlag,
                    bool& malformed) {
     isFlag = false;
@@ -94,6 +95,17 @@ bool parseFlagLine(const std::string& line,
     }
     code = trimCopy(std::move(code));
     if (code.empty()) {
+        return true;
+    }
+    if (syntax == PamOptionFlagSyntax::SetPresence) {
+        std::size_t delimiter = 0;
+        while (delimiter < code.size() && code[delimiter] != '=' &&
+               std::isspace(
+                   static_cast<unsigned char>(code[delimiter])) == 0) {
+            ++delimiter;
+        }
+        isFlag = keysEqual(
+            code.substr(0, delimiter), expectedKey, matchMode);
         return true;
     }
     if (keysEqual(code, expectedKey, matchMode)) {
@@ -271,7 +283,8 @@ bool PamOptionFile::setFlag(const std::filesystem::path& path,
                             bool enabled,
                             std::string& error,
                             Writer writer,
-                            PamOptionKeyMatchMode matchMode) {
+                            PamOptionKeyMatchMode matchMode,
+                            PamOptionFlagSyntax syntax) {
     if (!validKey(key)) {
         error = "invalid PAM flag";
         return false;
@@ -291,7 +304,8 @@ bool PamOptionFile::setFlag(const std::filesystem::path& path,
     for (auto& line : lines) {
         bool isFlag = false;
         bool malformed = false;
-        parseFlagLine(line, key, matchMode, isFlag, malformed);
+        parseFlagLine(
+            line, key, matchMode, syntax, isFlag, malformed);
         if (malformed) {
             error = "malformed PAM flag " + key + " in " + path.string();
             return false;
@@ -326,14 +340,15 @@ bool PamOptionFile::setFlag(const std::filesystem::path& path,
             path.string(), joinLines(lines), writeOptions(), &error)) {
         return false;
     }
-    return hasFlag(path, key, enabled, error, matchMode);
+    return hasFlag(path, key, enabled, error, matchMode, syntax);
 }
 
 bool PamOptionFile::hasFlag(const std::filesystem::path& path,
                             const std::string& key,
                             bool expectedEnabled,
                             std::string& error,
-                            PamOptionKeyMatchMode matchMode) {
+                            PamOptionKeyMatchMode matchMode,
+                            PamOptionFlagSyntax syntax) {
     if (!validKey(key)) {
         error = "invalid PAM flag";
         return false;
@@ -356,7 +371,8 @@ bool PamOptionFile::hasFlag(const std::filesystem::path& path,
     for (const auto& line : splitLines(content)) {
         bool isFlag = false;
         bool malformed = false;
-        parseFlagLine(line, key, matchMode, isFlag, malformed);
+        parseFlagLine(
+            line, key, matchMode, syntax, isFlag, malformed);
         if (malformed) {
             error = "malformed PAM flag " + key + " in " + path.string();
             return false;
@@ -374,7 +390,8 @@ bool PamOptionFile::verifyNoActiveDirectives(
     const std::filesystem::path& path,
     const std::vector<std::string>& directives,
     std::string& error,
-    PamOptionKeyMatchMode matchMode) {
+    PamOptionKeyMatchMode matchMode,
+    PamOptionFlagSyntax syntax) {
     if (std::any_of(directives.begin(), directives.end(),
                     [](const std::string& directive) {
                         return !validKey(directive);
@@ -412,7 +429,7 @@ bool PamOptionFile::verifyNoActiveDirectives(
             bool isFlag = false;
             bool malformed = false;
             parseFlagLine(
-                line, directive, matchMode, isFlag, malformed);
+                line, directive, matchMode, syntax, isFlag, malformed);
             if (isFlag || malformed) {
                 error = "PAM directive " + directive + " in " +
                     path.string() +
