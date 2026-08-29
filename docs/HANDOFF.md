@@ -3,53 +3,54 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit review-задачи: `d83e955`.
-- Коммиты задачи: `c136ab7`, `8261cb9`, `1f72c7b`.
+- Базовый commit corrective pass: `bd818ca`.
+- Коммиты кода задачи: `c3faa48`, `ccfa815`, `514acb1`.
 
 ## Current task
 
-- Закрыты release-blocking PAM review findings: effective semantics
-  `pam_pwquality`, provider config topology/fallback metadata и точное описание
-  optimistic snapshot transaction guarantee.
+- Закрыты четыре оставшихся PAM review finding: `local_users_only` subject
+  scope, единый provider preflight/postcondition, generic required-capability
+  topology safety и validation `PamProviderConfigTopology`.
 
 ## Accepted architecture / invariants
 
-- `PamCapabilityVerifier` делегирует Structural/SecurityEffective проверку
-  единому provider semantic backend; policy layer не знает provider filesystem
-  topology или grammar.
+- Password-quality capability всех пяти profiles имеет explicit
+  `AllPamSubjects`; `local_users_only` является `Ineffective` для
+  `SecurityEffective`, включая `required_pam_enforcement`.
+- `PamOptionPolicy` делегирует preflight единому provider semantic backend;
+  pwquality prospective и final state используют один sequential evaluator.
 - `pam_pwquality` для target libpwquality 1.4.5 вычисляется из native defaults,
   lexical `pwquality.conf.d/*.conf`, main config и argv каждой invocation.
-- Invalid/unknown/unreadable/untrusted semantic input даёт `Broken`; валидный
-  final `enforcing=0` даёт `Ineffective` только в SecurityEffective.
+- Invalid/unknown/unreadable/untrusted semantic input даёт `Broken`; валидные
+  `enforcing=0` и `local_users_only` при `AllPamSubjects` дают `Ineffective`
+  только в SecurityEffective.
 - `PamOptionFile` остаётся raw mutation codec; успех возможен только после full
   effective provider postcondition. Положительные credits не служат
   доказательством policy `password_min_length`, потому что уменьшают реальную
   минимальную длину.
-- Provider/platform topology отдельно выражает primary, fallbacks, drop-ins,
-  precedence и explicit-config semantics. Generic provider fail-closed при
-  активном unmanaged fallback/drop-in, пока нет полного evaluator.
+- Generic capability, option и flag одинаково fail-closed при активном
+  unmanaged fallback/drop-in, кроме topology, заменённой explicit config.
+- Platform validation проверяет normalized absolute paths, uniqueness,
+  primary/config consistency, precedence, explicit semantics и compatibility
+  topology с provider backend.
 - File transaction использует optimistic snapshot validation и post-install
   observation, а не строгий atomic CAS против non-cooperating writers.
 
 ## Completed
 
-- Добавлены typed `PwqualityEffectiveState`, native config/argv evaluator и
-  centralized Pwquality/Passwdqc/Generic semantic backend dispatch.
-- Ordinary pwquality policies и `required_pam_enforcement` используют один
-  security-effective contract; проверяются все services/invocations.
-- Учтены SET flags, integer clamps, signed credits, main/drop-in/argv ordering,
-  malformed/unknown inputs и target-version отсутствие `pam_pwquality conf=`.
-- Аудит target metadata зафиксировал native `/etc/security` primary paths;
-  fallback lists faillock/pwhistory/pwquality для текущих profiles пусты.
-- CAS contract и оставшееся rename race window документированы без ложного
-  заявления об atomic compare-and-swap.
+- Добавлены typed subject scope и profile declarations для всех target
+  distributions.
+- Pwquality preflight учитывает immutable argv тем же evaluator'ом, включая
+  SET-style flags и sequential duplicate options.
+- Generic required capability проверяет unmanaged native topology.
+- Добавлена fail-closed validation provider topology и regression tests.
 
 ## Changed areas
 
 - `fic/src/modules/identity_access/pam/`.
-- PAM provider/platform metadata.
-- PAM hierarchy/config/topology/default tests и их CMake wiring.
-- Atomic writer/transaction contract comments и PAM architecture docs.
+- `fic/src/platform/` и пять platform profiles.
+- PAM hierarchy/config и platform-profile tests.
+- PAM architecture documentation.
 
 ## Validation
 
@@ -61,21 +62,17 @@
   `platform_profile_tests`, `pam_policy_defaults_tests`.
 - Configure использовал только pkg-config stub для отсутствующего на host
   `libsystemd`; `fic-session-agent` этой матрицей не собирался.
-- В disposable Debian 13 и Ubuntu 26.04 containers с libpwquality 1.4.5:
-  baseline FIC minlen/required apply прошёл, weak password отклонён, strong
-  принят; при `enforcing=0` обе FIC проверки отклонены как ineffective, а weak
-  password принят warning-only. Containers удаляемые, host PAM не менялся.
-- `git diff --check` пройден; stale `defaultConfigPath`,
-  `verifyInvocationSemantics` и `pam_pwquality.so conf=` не найдены.
+- Tests-first запуск воспроизвёл false-positive `local_users_only`, direct
+  preflight divergence и отсутствие topology validation до production fix.
+- `git diff --check` пройден; удалённые direct preflight helpers не найдены.
 
 ## Remaining
 
-- Live drop-in `enforce_for_root` и PAM argv override сценарии не завершены:
-  повторный Docker run заблокирован лимитом внешнего выполнения.
-- ALT live weak/strong test не запускался по той же причине; ALT daemon build и
-  passwdqc regressions пройдены статически/тестами.
+- Live `local_users_only` с non-local SSSD/LDAP identity не запускался:
+  disposable identity-provider environment недоступен; unit/integration tests
+  не выдаются за live proof.
+- Live pwquality drop-in `enforce_for_root` и PAM argv override не завершены:
+  повторный Docker run ранее был заблокирован лимитом внешнего выполнения.
+- ALT live test не запускался; ALT daemon build и passwdqc regressions пройдены.
 - Полная сборка всех executables и полный CTest не запускались; проверены daemon
   и непосредственно затронутые tests на всех profiles.
-- Между последней snapshot precondition и `rename(2)` остаётся узкое TOCTOU
-  окно против arbitrary non-cooperating writer; post-install observation
-  обнаруживает только часть таких гонок.

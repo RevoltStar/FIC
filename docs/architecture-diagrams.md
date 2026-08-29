@@ -635,10 +635,22 @@ libpwquality 1.4.5 читает native default topology и не поддержи
 state, включая integer clamps, signed credits, `enforcing` и SET-style
 `enforce_for_root`. Unknown/invalid/unreadable/untrusted input даёт `Broken`;
 валидный final `enforcing=0` даёт `Ineffective` в `SecurityEffective`, но
-остаётся допустимым в `Structural`. Все ordinary quality policies и
-`required_pam_enforcement` используют один semantic backend. Для generic
-providers, пока нет полного evaluator, unmanaged drop-in либо fallback при
-отсутствующем managed primary не служит доказательством disabled state.
+остаётся допустимым в `Structural`. Password-quality capability всех
+поддерживаемых profiles явно имеет subject scope `AllPamSubjects`, поэтому
+валидный final `local_users_only` также даёт `Ineffective` в
+`SecurityEffective`: FIC не объявляет enforcement для всех PAM identities,
+когда provider ограничен локальными пользователями. Эта semantics одинакова
+для ordinary quality policies и `required_pam_enforcement`.
+
+Preflight и postcondition проходят через один provider semantic backend.
+Для pwquality prospective state вычисляется тем же последовательным parser'ом,
+что и final state: SET-style `enforce_for_root=0` означает присутствующий flag,
+а повторные argv options имеют last-wins semantics. Policy layer не реализует
+отдельную pwquality grammar. Для generic providers, пока нет полного evaluator,
+capability, option и flag одинаково отклоняют unmanaged drop-in либо fallback
+при отсутствующем managed primary как `Broken`. Если explicit config argument
+по descriptor semantics заменяет native topology, неактивные native inputs в
+эту проверку не входят.
 Для `password_min_length` положительный credit отклоняет positive
 postcondition: libpwquality может зачесть его и принять пароль короче
 effective `minlen`; нулевые и отрицательные credits сохраняют true-length
@@ -673,6 +685,15 @@ Generated PAM policy defaults разрешаются из выбранных qua
 providers. Central CMake не ветвится по distro id, поэтому composition может
 независимо сочетать passwdqc или pwquality с наличием либо отсутствием
 pwhistory.
+
+`validatePlatformProfile()` проверяет PAM config topology до runtime:
+primary, fallback и drop-in paths должны быть абсолютными и нормализованными;
+file paths и drop-in directories не могут дублироваться или конфликтовать;
+fallback/drop-ins требуют primary, а primary совпадает с managed
+`capability.configPath`. Precedence и explicit-config semantics проверяются
+exhaustive switch'ами и согласуются с provider descriptor. Pwquality backend
+дополнительно требует native primary, `DropInsThenPrimary` и отсутствие
+explicit config replacement.
 
 `PamTopologyManager` отделяет `inspect/canEnable/enable/disable` от provider
 configuration. Текущая mutable strategy — ALT/tcb manager для `pam_faillock`;
