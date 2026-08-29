@@ -16,3 +16,4 @@ devices.db-wal
 log.txt
 res.log
 .qtcreator/
+*.py
