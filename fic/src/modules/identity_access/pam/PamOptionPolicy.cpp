@@ -6,6 +6,7 @@
 #include "modules/identity_access/pam/PamOptionFile.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
+#include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 #include "modules/identity_access/pam/PasswdqcConfigFile.h"
 
 #include <utility>
@@ -89,12 +90,10 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         ? true
         : binding->syntax ==
                 fic::identity::pam::PamNativeOptionSyntax::Assignment
-            ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
-                  inspection, capability->configPath.string(), binding->option,
-                  nativeExpectedValue, error)
-            : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
-                  inspection, capability->configPath.string(), binding->option,
-                  expectedFlagEnabled, error,
+            ? fic::identity::pam::PamProviderInspector::verifyDirectOptionOverride(
+                  inspection, binding->option, nativeExpectedValue, error)
+            : fic::identity::pam::PamProviderInspector::verifyDirectFlagOverride(
+                  inspection, binding->option, expectedFlagEnabled, error,
                   binding->conflictingOptionsWhenDisabled);
     if (!overridesValid) {
         this->log(
@@ -234,13 +233,13 @@ bool PamOptionPolicy::verifyPostMutationPamState(
     }
     const bool overridesValid = binding.syntax ==
             fic::identity::pam::PamNativeOptionSyntax::Assignment
-        ? fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
-              verifiedCapability.inspection, capability.configPath.string(),
+        ? fic::identity::pam::PamProviderSemanticVerifier::verifyOption(
+              verifiedCapability.inspection, capability,
               binding.option, nativeExpectedValue, error)
-        : fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
-              verifiedCapability.inspection, capability.configPath.string(),
-              binding.option, expectedFlagEnabled, error,
-              binding.conflictingOptionsWhenDisabled);
+        : fic::identity::pam::PamProviderSemanticVerifier::verifyFlag(
+              verifiedCapability.inspection, capability,
+              binding.option, expectedFlagEnabled,
+              binding.conflictingOptionsWhenDisabled, error);
     if (!overridesValid) {
         return false;
     }

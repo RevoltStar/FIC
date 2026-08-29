@@ -367,8 +367,10 @@ add_executable(pam_configuration_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamRequiredProviders.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
 )
 target_include_directories(pam_configuration_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -399,7 +401,9 @@ add_executable(alt_pam_faillock_topology_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
 )
 target_include_directories(alt_pam_faillock_topology_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -438,12 +442,15 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamRequiredProviders.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswdqcPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordQualityPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/RequiredPamEnforcementPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdPolicy.cpp

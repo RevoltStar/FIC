@@ -5,11 +5,13 @@
 #include "modules/identity_access/pam/PamOptionPolicy.h"
 #include "modules/identity_access/pam/PamConfigFileTransaction.h"
 #include "modules/identity_access/pam/PamPolicy.h"
+#include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PasswdqcConfigFile.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswdqcPolicies.h"
+#include "modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordQualityPolicies.h"
 #include "modules/identity_access/pam/policies/RequiredPamEnforcementPolicy.h"
 #include "modules/identity_access/sssd/SssdPolicy.h"
@@ -163,6 +165,13 @@ TestPamPlatformConfig makePasswordQualityPlatform(
     platform.passwordServices = {"passwd"};
     platform.passwordQualityConfigPath =
         root / "security-config/pwquality.conf";
+    auto topology = fic::identity::pam::pamProviderDescriptor(
+        fic::platform::PamProviderKind::PamPwquality).defaultConfigTopology;
+    topology.primaryPath = platform.passwordQualityConfigPath;
+    topology.dropInDirectories = {
+        std::filesystem::path(
+            platform.passwordQualityConfigPath.string() + ".d")};
+    platform.capabilities[1].configTopology = std::move(topology);
     return platform;
 }
 
@@ -530,9 +539,7 @@ int main() {
             [&](const std::string& arguments = "") {
                 writeFile(
                     root / "pam.d/passwd",
-                    "password requisite pam_pwquality.so conf=" +
-                        passwordQualityPlatform.passwordQualityConfigPath.string() +
-                        arguments +
+                    "password requisite pam_pwquality.so" + arguments +
                         "\npassword required pam_unix.so\n");
                 const auto provider = root / "security/pam_pwquality.so";
                 if (!std::filesystem::exists(provider)) {
@@ -542,13 +549,67 @@ int main() {
         writePasswordQualityGraph();
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
 
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_min_length.status=ENABLE\n"
+            "password_min_length.value=20\n",
+            "pam_pwquality");
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "minlen = 20\n"
+            "enforcing = 0\n");
+        const std::string nonEnforcingConfig =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
+        PamPasswordMinLengthPolicy nonEnforcingMinLength(
+            passwordQualityPlatform);
+        require(
+            !nonEnforcingMinLength.apply(),
+            "password_min_length accepted pwquality enforcing=0");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                nonEnforcingConfig,
+            "failed non-enforcing pwquality policy changed managed config");
+        RequiredPamEnforcementPolicy nonEnforcingRequiredPam(
+            passwordQualityPlatform);
+        require(
+            !nonEnforcingRequiredPam.apply(),
+            "required PAM accepted pwquality enforcing=0");
+
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "minlen = 20\n"
+            "enforcing = 1\n");
+        PamPasswordMinLengthPolicy enforcingMinLength(passwordQualityPlatform);
+        RequiredPamEnforcementPolicy enforcingRequiredPam(
+            passwordQualityPlatform);
+        require(
+            enforcingMinLength.apply() && enforcingRequiredPam.apply(),
+            "enforcing pwquality was rejected by policy semantic verification");
+
+        const auto qualityDropIn =
+            passwordQualityPlatform.passwordQualityConfigPath.parent_path() /
+            "pwquality.conf.d/10-root.conf";
+        writeFile(qualityDropIn, "enforce_for_root\n");
+        writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=no\n",
+            "pam_pwquality");
+        PamPasswordQualityEnforceForRootPolicy hiddenRootEnforcement(
+            passwordQualityPlatform);
+        require(
+            !hiddenRootEnforcement.apply(),
+            "main-file absence hid drop-in enforce_for_root");
+        std::filesystem::remove(qualityDropIn);
+        writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+
         const fs::path transactionRoot = root / "pam-transaction";
         const auto transactionPlatform =
             makePasswordQualityPlatform(transactionRoot);
         writeFile(
             transactionRoot / "pam.d/passwd",
-            "password requisite pam_pwquality.so conf=" +
-                transactionPlatform.passwordQualityConfigPath.string() + "\n"
+            "password requisite pam_pwquality.so\n"
             "password required pam_unix.so\n");
         writeFile(
             transactionRoot / "security/pam_pwquality.so", "test", 0555);

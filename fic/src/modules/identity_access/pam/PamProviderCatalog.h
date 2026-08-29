@@ -28,6 +28,12 @@ enum class PamExternalConfigMode {
     Required
 };
 
+enum class PamProviderSemanticBackendKind {
+    Generic,
+    Pwquality,
+    Passwdqc
+};
+
 struct PamProviderPolicyBinding {
     fic::platform::PamPolicyFeature feature =
         fic::platform::PamPolicyFeature::PasswordMinLength;
@@ -46,9 +52,11 @@ struct PamProviderDescriptor {
     const char* moduleName = "";
     const char* externalConfigArgument = "";
     PamExternalConfigMode externalConfigMode = PamExternalConfigMode::None;
-    std::optional<std::filesystem::path> defaultConfigPath;
+    fic::platform::PamProviderConfigTopology defaultConfigTopology;
     fic::platform::PamConfigGrammar grammar =
         fic::platform::PamConfigGrammar::KeyValue;
+    PamProviderSemanticBackendKind semanticBackend =
+        PamProviderSemanticBackendKind::Generic;
     std::vector<PamProviderPolicyBinding> policies;
 };
 

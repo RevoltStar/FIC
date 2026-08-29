@@ -49,12 +49,12 @@ public:
 
     static bool verifyExternalConfigContract(
         const PamProviderInspection& inspection,
-        const std::string& expectedConfigPath,
+        const fic::platform::PamCapabilityConfig& capability,
         std::string& error);
 
-    static bool verifyInvocationSemantics(
+    static bool verifyExternalConfigContract(
         const PamProviderInspection& inspection,
-        bool requirePasswordQualityEnforcement,
+        const std::string& expectedConfigPath,
         std::string& error);
 
     static bool verifyOptionOverrides(
@@ -64,9 +64,23 @@ public:
         const std::string& expectedValue,
         std::string& error);
 
+    static bool verifyDirectOptionOverride(
+        const PamProviderInspection& inspection,
+        const std::string& option,
+        const std::string& expectedValue,
+        std::string& error);
+
     static bool verifyFlagOverrides(
         const PamProviderInspection& inspection,
         const std::string& expectedConfigPath,
+        const std::string& flag,
+        bool expectedEnabled,
+        std::string& error,
+        const std::vector<std::string>&
+            conflictingOptionsWhenDisabled = {});
+
+    static bool verifyDirectFlagOverride(
+        const PamProviderInspection& inspection,
         const std::string& flag,
         bool expectedEnabled,
         std::string& error,

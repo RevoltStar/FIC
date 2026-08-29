@@ -1,7 +1,7 @@
 #include "modules/identity_access/pam/PamProviderInspector.h"
 
 #include "modules/identity_access/pam/PamProviderCatalog.h"
-#include "modules/identity_access/pam/PasswdqcConfigFile.h"
+#include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -272,7 +272,7 @@ PamProviderFileState PamProviderInspector::inspectExpectedProviderFile(
 
 bool PamProviderInspector::verifyExternalConfigContract(
     const PamProviderInspection& inspection,
-    const std::string& expectedConfigPath,
+    const fic::platform::PamCapabilityConfig& capability,
     std::string& error)
 {
     error.clear();
@@ -280,7 +280,7 @@ bool PamProviderInspector::verifyExternalConfigContract(
     if (descriptor.externalConfigMode == PamExternalConfigMode::None) {
         return true;
     }
-    const std::filesystem::path expected(expectedConfigPath);
+    const std::filesystem::path expected(capability.configPath);
     if (!expected.is_absolute() || expected != expected.lexically_normal()) {
         error = "managed PAM configuration path is not absolute and normalized";
         return false;
@@ -301,21 +301,24 @@ bool PamProviderInspector::verifyExternalConfigContract(
                     expected.string();
                 return false;
             }
-            if (!descriptor.defaultConfigPath.has_value()) {
+            const auto& topology = capability.configTopology.has_value()
+                ? *capability.configTopology
+                : descriptor.defaultConfigTopology;
+            if (!topology.primaryPath.has_value()) {
                 error = rule.source.string() + ":" +
                     std::to_string(rule.line) +
                     ": optional PAM provider has no native default "
                     "configuration path metadata";
                 return false;
             }
-            if (expected != *descriptor.defaultConfigPath) {
+            if (expected != *topology.primaryPath) {
                 error = rule.source.string() + ":" +
                     std::to_string(rule.line) +
                     ": PAM configuration argument " +
                     descriptor.externalConfigArgument +
                     "= is absent, but managed path " + expected.string() +
                     " does not match native default configuration path " +
-                    descriptor.defaultConfigPath->string();
+                    topology.primaryPath->string();
                 return false;
             }
             continue;
@@ -340,40 +343,38 @@ bool PamProviderInspector::verifyExternalConfigContract(
     return true;
 }
 
+bool PamProviderInspector::verifyExternalConfigContract(
+    const PamProviderInspection& inspection,
+    const std::string& expectedConfigPath,
+    std::string& error)
+{
+    fic::platform::PamCapabilityConfig capability;
+    capability.capability = pamProviderDescriptor(inspection.provider).capability;
+    capability.provider = inspection.provider;
+    capability.configPath = expectedConfigPath;
+    return verifyExternalConfigContract(inspection, capability, error);
+}
+
 bool PamProviderInspector::verifyOptionOverrides(
     const PamProviderInspection& inspection,
     const std::string& expectedConfigPath,
     const std::string& option,
     const std::string& expectedValue,
     std::string& error) {
-    error.clear();
-    if (!verifyExternalConfigContract(
-            inspection, expectedConfigPath, error)) {
-        return false;
-    }
-    const auto& descriptor = pamProviderDescriptor(inspection.provider);
-    if (descriptor.grammar == fic::platform::PamConfigGrammar::Passwdqc) {
-        for (const auto& rule : inspection.providerRules) {
-            PasswdqcEffectiveState state;
-            if (!PasswdqcConfigEvaluator::evaluateInvocation(
-                    rule.arguments, rule.source, rule.line, state, error)) {
-                return false;
-            }
-            std::string effectiveValue;
-            if (!state.managedValue(option, effectiveValue, error)) {
-                return false;
-            }
-            if (effectiveValue != expectedValue) {
-                error = rule.source.string() + ":" +
-                    std::to_string(rule.line) + ": effective passwdqc " +
-                    option + " is " + effectiveValue + ", expected " +
-                    expectedValue;
-                return false;
-            }
-        }
-        error.clear();
-        return true;
-    }
+    fic::platform::PamCapabilityConfig capability;
+    capability.capability = pamProviderDescriptor(inspection.provider).capability;
+    capability.provider = inspection.provider;
+    capability.configPath = expectedConfigPath;
+    return PamProviderSemanticVerifier::verifyOption(
+        inspection, capability, option, expectedValue, error);
+}
+
+bool PamProviderInspector::verifyDirectOptionOverride(
+    const PamProviderInspection& inspection,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
     for (const auto& rule : inspection.providerRules) {
         std::optional<std::string> overrideValue;
         if (!uniqueArgumentValue(rule, option, overrideValue, error)) {
@@ -386,33 +387,7 @@ bool PamProviderInspector::verifyOptionOverrides(
             return false;
         }
     }
-    return true;
-}
-
-bool PamProviderInspector::verifyInvocationSemantics(
-    const PamProviderInspection& inspection,
-    bool requirePasswordQualityEnforcement,
-    std::string& error)
-{
     error.clear();
-    const auto& descriptor = pamProviderDescriptor(inspection.provider);
-    if (descriptor.grammar != fic::platform::PamConfigGrammar::Passwdqc) {
-        return true;
-    }
-    for (const auto& rule : inspection.providerRules) {
-        PasswdqcEffectiveState state;
-        if (!PasswdqcConfigEvaluator::evaluateInvocation(
-                rule.arguments, rule.source, rule.line, state, error)) {
-            return false;
-        }
-        if (requirePasswordQualityEnforcement && state.enforce == "none") {
-            error = rule.source.string() + ":" +
-                std::to_string(rule.line) +
-                ": pam_passwdqc password quality enforcement is disabled "
-                "by effective enforce=none";
-            return false;
-        }
-    }
     return true;
 }
 
@@ -423,16 +398,27 @@ bool PamProviderInspector::verifyFlagOverrides(
     bool expectedEnabled,
     std::string& error,
     const std::vector<std::string>& conflictingOptionsWhenDisabled) {
-    error.clear();
+    fic::platform::PamCapabilityConfig capability;
+    capability.capability = pamProviderDescriptor(inspection.provider).capability;
+    capability.provider = inspection.provider;
+    capability.configPath = expectedConfigPath;
+    return PamProviderSemanticVerifier::verifyFlag(
+        inspection, capability, flag, expectedEnabled,
+        conflictingOptionsWhenDisabled, error);
+}
+
+bool PamProviderInspector::verifyDirectFlagOverride(
+    const PamProviderInspection& inspection,
+    const std::string& flag,
+    bool expectedEnabled,
+    std::string& error,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled)
+{
     const std::string assignmentPrefix = flag + "=";
-    if (!verifyExternalConfigContract(
-            inspection, expectedConfigPath, error)) {
-        return false;
-    }
     for (const auto& rule : inspection.providerRules) {
-        std::size_t flagOccurrences = 0;
+        std::size_t occurrences = 0;
         for (const auto& argument : rule.arguments) {
-            flagOccurrences += argument == flag ? 1U : 0U;
+            occurrences += argument == flag ? 1U : 0U;
             if (argument.compare(0, assignmentPrefix.size(),
                                  assignmentPrefix) == 0) {
                 error = rule.source.string() + ":" +
@@ -441,7 +427,7 @@ bool PamProviderInspector::verifyFlagOverrides(
                 return false;
             }
         }
-        if (flagOccurrences > 1) {
+        if (occurrences > 1) {
             error = rule.source.string() + ":" +
                 std::to_string(rule.line) + ": duplicate PAM flag " + flag;
             return false;
@@ -457,14 +443,14 @@ bool PamProviderInspector::verifyFlagOverrides(
                 if (hasArgument(rule, option) ||
                     argumentValue(rule, option).has_value()) {
                     error = rule.source.string() + ":" +
-                        std::to_string(rule.line) + ": PAM argument " +
-                        option +
+                        std::to_string(rule.line) + ": PAM argument " + option +
                         " conflicts with the requested disabled state";
                     return false;
                 }
             }
         }
     }
+    error.clear();
     return true;
 }
 

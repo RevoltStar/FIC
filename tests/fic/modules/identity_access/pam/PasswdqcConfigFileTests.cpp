@@ -11,6 +11,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -393,9 +394,8 @@ void testProviderCatalogAndSupport() {
                 (descriptor.externalConfigArgument[0] == '\0'),
             "PAM provider external config mode/argument are inconsistent");
         require(
-            (descriptor.externalConfigMode ==
-                 PamExternalConfigMode::Optional) ==
-                descriptor.defaultConfigPath.has_value(),
+            descriptor.externalConfigMode != PamExternalConfigMode::Optional ||
+                descriptor.defaultConfigTopology.primaryPath.has_value(),
             "optional PAM provider default-path metadata are inconsistent");
         std::set<PamPolicyFeature> features;
         for (const auto& binding : descriptor.policies) {
@@ -405,6 +405,30 @@ void testProviderCatalogAndSupport() {
                         descriptor.capability,
                     "PAM provider binding belongs to another capability");
         }
+    }
+    const auto& pwquality =
+        pamProviderDescriptor(PamProviderKind::PamPwquality);
+    require(
+        pwquality.semanticBackend ==
+                PamProviderSemanticBackendKind::Pwquality &&
+            pwquality.externalConfigMode == PamExternalConfigMode::None &&
+            pwquality.defaultConfigTopology.primaryPath ==
+                std::filesystem::path("/etc/security/pwquality.conf") &&
+            pwquality.defaultConfigTopology.fallbackPaths.empty() &&
+            pwquality.defaultConfigTopology.dropInDirectories ==
+                std::vector<std::filesystem::path>{
+                    "/etc/security/pwquality.conf.d"},
+        "pwquality descriptor does not match target libpwquality 1.4.5 topology");
+    for (const auto provider : {
+             PamProviderKind::PamFaillock,
+             PamProviderKind::PamPwhistory}) {
+        const auto& descriptor = pamProviderDescriptor(provider);
+        require(
+            descriptor.defaultConfigTopology.fallbackPaths.empty() &&
+                descriptor.defaultConfigTopology.dropInDirectories.empty() &&
+                descriptor.defaultConfigTopology.explicitConfig ==
+                    PamExplicitConfigSemantics::ReplacesNativeTopology,
+            "current target generic PAM provider topology is inaccurate");
     }
     std::string native;
     std::string error;

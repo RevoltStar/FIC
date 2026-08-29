@@ -1,6 +1,7 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 
 #include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 
 namespace fic::identity::pam {
 
@@ -68,9 +69,7 @@ bool PamCapabilityVerifier::verify(
         configuredCapability->provider != provider ||
         !PamProviderInspector::verifyExternalConfigContract(
             verification.inspection,
-            configuredCapability->configPath.string(), error) ||
-        !PamProviderInspector::verifyInvocationSemantics(
-            verification.inspection, false, error)) {
+            *configuredCapability, error)) {
         verification.state = PamEnforcementState::Broken;
         verification.detail = configuredCapability == nullptr
             ? "PAM capability is absent from platform composition"
@@ -78,10 +77,18 @@ bool PamCapabilityVerifier::verify(
         return false;
     }
 
-    if (mode == PamCapabilityVerificationMode::SecurityEffective &&
-        !PamProviderInspector::verifyInvocationSemantics(
-            verification.inspection, true, error)) {
-        verification.state = PamEnforcementState::Ineffective;
+    PamProviderSemanticFailure semanticFailure =
+        PamProviderSemanticFailure::None;
+    if (!PamProviderSemanticVerifier::verifyCapability(
+            verification.inspection,
+            *configuredCapability,
+            mode == PamCapabilityVerificationMode::SecurityEffective,
+            semanticFailure,
+            error)) {
+        verification.state = semanticFailure ==
+                PamProviderSemanticFailure::Ineffective
+            ? PamEnforcementState::Ineffective
+            : PamEnforcementState::Broken;
         verification.detail = error;
         return false;
     }

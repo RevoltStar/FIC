@@ -5,6 +5,7 @@
 #include "platform/UserCreationPolicyDefaultsGenerated.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <sys/types.h>
 #include <vector>
@@ -116,6 +117,25 @@ enum class PamTopologyStrategyKind {
     AltTcbManaged
 };
 
+enum class PamConfigPrecedence {
+    DropInsThenPrimary
+};
+
+enum class PamExplicitConfigSemantics {
+    Unsupported,
+    ReplacesNativeTopology
+};
+
+struct PamProviderConfigTopology {
+    std::optional<std::filesystem::path> primaryPath;
+    std::vector<std::filesystem::path> fallbackPaths;
+    std::vector<std::filesystem::path> dropInDirectories;
+    PamConfigPrecedence precedence = PamConfigPrecedence::DropInsThenPrimary;
+    bool primaryOptionalIfMissing = true;
+    PamExplicitConfigSemantics explicitConfig =
+        PamExplicitConfigSemantics::Unsupported;
+};
+
 enum class PamPolicyFeature {
     PasswordMinLength,
     PasswordMinClasses,
@@ -159,6 +179,7 @@ struct PamCapabilityConfig {
     std::filesystem::path configPath;
     PamTopologyStrategyKind topology = PamTopologyStrategyKind::StaticReadOnly;
     std::filesystem::path topologyTarget;
+    std::optional<PamProviderConfigTopology> configTopology;
 };
 
 struct PamPlatformConfig {

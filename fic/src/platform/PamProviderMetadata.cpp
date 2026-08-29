@@ -10,6 +10,20 @@ namespace {
 using Capability = fic::platform::PamCapability;
 using Feature = fic::platform::PamPolicyFeature;
 using Grammar = fic::platform::PamConfigGrammar;
+using Semantic = PamProviderSemanticBackendKind;
+
+fic::platform::PamProviderConfigTopology primaryConfig(
+    const std::filesystem::path& path,
+    std::vector<std::filesystem::path> dropIns = {},
+    fic::platform::PamExplicitConfigSemantics explicitConfig =
+        fic::platform::PamExplicitConfigSemantics::Unsupported)
+{
+    fic::platform::PamProviderConfigTopology topology;
+    topology.primaryPath = path;
+    topology.dropInDirectories = std::move(dropIns);
+    topology.explicitConfig = explicitConfig;
+    return topology;
+}
 using Provider = fic::platform::PamProviderKind;
 
 PamProviderPolicyBinding assignment(
@@ -36,8 +50,11 @@ const std::vector<PamProviderDescriptor>& pamProviderDescriptors()
     static const std::vector<PamProviderDescriptor> values{
         {Provider::PamFaillock, Capability::AuthenticationLockout,
          "pam_faillock", "pam_faillock.so", "conf",
-         PamExternalConfigMode::Optional, "/etc/security/faillock.conf",
-         Grammar::KeyValue,
+         PamExternalConfigMode::Optional,
+         primaryConfig(
+             "/etc/security/faillock.conf", {},
+             fic::platform::PamExplicitConfigSemantics::ReplacesNativeTopology),
+         Grammar::KeyValue, Semantic::Generic,
          {assignment(Feature::FailedAuthenticationAttempts, "deny"),
           assignment(Feature::FailedAuthenticationCountingPeriod,
                      "fail_interval"),
@@ -45,9 +62,12 @@ const std::vector<PamProviderDescriptor>& pamProviderDescriptors()
                "even_deny_root", {"root_unlock_time"}),
           assignment(Feature::FailedAuthenticationUnlockTime, "unlock_time")}},
         {Provider::PamPwquality, Capability::PasswordQuality,
-         "pam_pwquality", "pam_pwquality.so", "conf",
-         PamExternalConfigMode::Optional, "/etc/security/pwquality.conf",
-         Grammar::KeyValue,
+         "pam_pwquality", "pam_pwquality.so", "",
+         PamExternalConfigMode::None,
+         primaryConfig(
+             "/etc/security/pwquality.conf",
+             {"/etc/security/pwquality.conf.d"}),
+         Grammar::KeyValue, Semantic::Pwquality,
          {assignment(Feature::PasswordMinLength, "minlen"),
           assignment(Feature::PasswordMinClasses, "minclass"),
           assignment(Feature::PasswordCheckUsername, "usercheck",
@@ -66,7 +86,8 @@ const std::vector<PamProviderDescriptor>& pamProviderDescriptors()
                      PamNativeValueEncoding::MinimumCredit)}},
         {Provider::PamPasswdqc, Capability::PasswordQuality,
          "pam_passwdqc", "pam_passwdqc.so", "config",
-         PamExternalConfigMode::Required, std::nullopt, Grammar::Passwdqc,
+         PamExternalConfigMode::Required, {}, Grammar::Passwdqc,
+         Semantic::Passwdqc,
          {assignment(Feature::PasswordQualityEnforceForRoot, "enforce",
                      PamNativeValueEncoding::PasswdqcEnforceForRoot),
           assignment(Feature::PasswdqcStrengthThresholds, "min"),
@@ -76,22 +97,29 @@ const std::vector<PamProviderDescriptor>& pamProviderDescriptors()
           assignment(Feature::PasswdqcRetryCount, "retry")}},
         {Provider::PamPwhistory, Capability::PasswordHistory,
          "pam_pwhistory", "pam_pwhistory.so", "conf",
-         PamExternalConfigMode::Optional, "/etc/security/pwhistory.conf",
-         Grammar::KeyValue,
+         PamExternalConfigMode::Optional,
+         primaryConfig(
+             "/etc/security/pwhistory.conf", {},
+             fic::platform::PamExplicitConfigSemantics::ReplacesNativeTopology),
+         Grammar::KeyValue, Semantic::Generic,
          {assignment(Feature::PasswordHistoryDepth, "remember"),
           flag(Feature::PasswordHistoryEnforceForRoot, "enforce_for_root")}},
         {Provider::PamTally2, Capability::AuthenticationLockout,
          "pam_tally2", "pam_tally2.so", "",
-         PamExternalConfigMode::None, std::nullopt, Grammar::KeyValue, {}},
+         PamExternalConfigMode::None, {}, Grammar::KeyValue,
+         Semantic::Generic, {}},
         {Provider::PamTally, Capability::AuthenticationLockout,
          "pam_tally", "pam_tally.so", "",
-         PamExternalConfigMode::None, std::nullopt, Grammar::KeyValue, {}},
+         PamExternalConfigMode::None, {}, Grammar::KeyValue,
+         Semantic::Generic, {}},
         {Provider::PamCracklib, Capability::PasswordQuality,
          "pam_cracklib", "pam_cracklib.so", "",
-         PamExternalConfigMode::None, std::nullopt, Grammar::KeyValue, {}},
+         PamExternalConfigMode::None, {}, Grammar::KeyValue,
+         Semantic::Generic, {}},
         {Provider::PamUnixHistory, Capability::PasswordHistory,
          "pam_unix remember", "pam_unix.so", "",
-         PamExternalConfigMode::None, std::nullopt, Grammar::KeyValue, {}}
+         PamExternalConfigMode::None, {}, Grammar::KeyValue,
+         Semantic::Generic, {}}
     };
     return values;
 }
