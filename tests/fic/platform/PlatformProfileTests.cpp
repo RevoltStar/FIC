@@ -589,6 +589,18 @@ void testCmakePamProviderSelectionMatchesProfile() {
 void testInvalidProfileIsRejected() {
     fic::platform::PlatformProfile profile =
         fic::platform::makeBuildPlatformProfile();
+    const auto configurePwqualityTopology = [](auto& candidate) -> auto& {
+        auto* quality = pamCapability(
+            candidate.pam, fic::platform::PamCapability::PasswordQuality);
+        require(quality != nullptr, "selected profile has no quality capability");
+        quality->provider = fic::platform::PamProviderKind::PamPwquality;
+        quality->configPath = "/etc/security/pwquality.conf";
+        quality->configTopology.emplace();
+        quality->configTopology->primaryPath = quality->configPath;
+        quality->configTopology->dropInDirectories = {
+            "/etc/security/pwquality.conf.d"};
+        return *quality->configTopology;
+    };
     profile.ssh.configPath = "etc/ssh/sshd_config";
     std::string error;
     require(!fic::platform::validatePlatformProfile(profile, error),
@@ -669,6 +681,52 @@ void testInvalidProfileIsRejected() {
         "etc/security/pwquality.conf";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM option file path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    configurePwqualityTopology(profile).primaryPath =
+        "etc/security/pwquality.conf";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative PAM topology primary path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    configurePwqualityTopology(profile).dropInDirectories = {
+        "etc/security/pwquality.conf.d"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative PAM topology drop-in path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    configurePwqualityTopology(profile).fallbackPaths = {
+        "/usr/lib/security/pwquality.conf",
+        "/usr/lib/security/pwquality.conf"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "duplicate PAM topology fallback paths must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    configurePwqualityTopology(profile).fallbackPaths = {
+        "/etc/security/pwquality.conf"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "PAM topology primary path duplicated as fallback must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    configurePwqualityTopology(profile).primaryPath =
+        "/etc/security/other-pwquality.conf";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "pwquality topology primary diverging from managed path must fail");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    configurePwqualityTopology(profile).explicitConfig =
+        fic::platform::PamExplicitConfigSemantics::ReplacesNativeTopology;
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "pwquality topology accepted unsupported explicit config semantics");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    auto& validTopology = configurePwqualityTopology(profile);
+    validTopology.fallbackPaths = {"/usr/lib/security/pwquality.conf"};
+    validTopology.dropInDirectories = {
+        "/etc/security/pwquality.conf.d",
+        "/usr/lib/security/pwquality.conf.d"};
+    require(fic::platform::validatePlatformProfile(profile, error),
+            "valid synthetic PAM topology was rejected: " + error);
 
     profile = fic::platform::makeBuildPlatformProfile();
     pamCapability(profile.pam,

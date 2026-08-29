@@ -586,6 +586,25 @@ int main() {
             enforcingMinLength.apply() && enforcingRequiredPam.apply(),
             "enforcing pwquality was rejected by policy semantic verification");
 
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "minlen = 20\n"
+            "enforcing = 1\n"
+            "local_users_only\n");
+        PamPasswordMinLengthPolicy localOnlyMinLength(passwordQualityPlatform);
+        RequiredPamEnforcementPolicy localOnlyRequiredPam(
+            passwordQualityPlatform);
+        require(
+            !localOnlyMinLength.apply(),
+            "password_min_length accepted local-users-only enforcement");
+        require(
+            !localOnlyRequiredPam.apply(),
+            "required PAM accepted local-users-only pwquality enforcement");
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "minlen = 20\n"
+            "enforcing = 1\n");
+
         const auto qualityDropIn =
             passwordQualityPlatform.passwordQualityConfigPath.parent_path() /
             "pwquality.conf.d/10-root.conf";
@@ -791,6 +810,39 @@ int main() {
                 readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
                     enabledFlagContent,
             "enforce_for_root enable is not idempotent");
+
+        writePasswordQualityGraph(" enforce_for_root=0");
+        writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+        require(
+            qualityForRootEnabled.apply(),
+            "SET-style enforce_for_root=0 argv diverged in policy preflight");
+
+        writePasswordQualityGraph(" minlen=10 minlen=20");
+        writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_min_length.status=ENABLE\n"
+            "password_min_length.value=20\n",
+            "pam_pwquality");
+        PamPasswordMinLengthPolicy lastWinningMinLength(
+            passwordQualityPlatform);
+        require(
+            lastWinningMinLength.apply(),
+            "last-wins repeated minlen argv was rejected by preflight");
+        const std::string lastWinningConfig =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
+        writePasswordQualityGraph(" minlen=20 minlen=10");
+        PamPasswordMinLengthPolicy lastLosingMinLength(
+            passwordQualityPlatform);
+        require(
+            !lastLosingMinLength.apply(),
+            "last-wins repeated minlen argv accepted the wrong final value");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                lastWinningConfig,
+            "repeated minlen preflight failure modified managed config");
+
+        writePasswordQualityGraph();
         writeIdentityConfig(
             root, "yes", "yes",
             "password_quality_enforce_for_root.status=ENABLE\n"

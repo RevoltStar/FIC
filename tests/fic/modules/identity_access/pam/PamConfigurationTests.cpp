@@ -947,6 +947,32 @@ void testPwqualityEnforcingStateAndServices() {
     writeFile(
         platform.passwordQualityConfigPath,
         "minlen = 20\n"
+        "enforcing = 1\n"
+        "local_users_only\n");
+    verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "pam_pwquality local_users_only was reported effective for all PAM "
+        "subjects");
+    verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices,
+        fic::identity::pam::PamCapabilityVerificationMode::Structural);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Effective,
+        "structurally valid pwquality local_users_only was reported broken");
+
+    writeFile(
+        platform.passwordQualityConfigPath,
+        "minlen = 20\n"
         "enforcing = 0\n");
     verification = verifyCapability(
         platform,
@@ -1164,6 +1190,14 @@ void testGenericFallbackFailsClosed() {
             inspection, platform.capabilities[2], "enforce_for_root", false,
             {}, error) && error.find("fallback") != std::string::npos,
         "missing managed file hid an active provider fallback: " + error);
+    auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordHistory,
+        fic::identity::pam::PamProviderKind::PamPwhistory,
+        platform.passwordServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Broken,
+        "generic required-PAM capability ignored an active fallback");
 
     writeFile(platform.passwordHistoryConfigPath, "# managed primary\n");
     require(
@@ -1171,6 +1205,35 @@ void testGenericFallbackFailsClosed() {
             inspection, platform.capabilities[2], "enforce_for_root", false,
             {}, error),
         "managed primary did not shadow the provider fallback: " + error);
+
+    const auto dropIn = temp.path() / "vendor/pwhistory.conf.d";
+    topology.dropInDirectories = {dropIn};
+    platform.capabilities[2].configTopology = topology;
+    writeFile(dropIn / "10-vendor.conf", "remember = 99\n");
+    verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordHistory,
+        fic::identity::pam::PamProviderKind::PamPwhistory,
+        platform.passwordServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Broken,
+        "generic required-PAM capability ignored unmanaged drop-ins");
+
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password requisite pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() + "\n"
+        "password required pam_unix.so use_authtok\n");
+    verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordHistory,
+        fic::identity::pam::PamProviderKind::PamPwhistory,
+        platform.passwordServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Effective,
+        "explicit pwhistory config did not replace inactive native topology: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
 }
 
 void testEffectiveKnownProviders() {
