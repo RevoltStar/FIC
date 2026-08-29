@@ -658,8 +658,11 @@ pwquality и сохраняет case-sensitive поведение generic provid
 не выбирает native equality rules. Изменяемые case-variant assignments
 переписываются canonical lowercase key и одинаковым requested value, поэтому
 более поздний variant не может восстановить старое effective state. SET flags
-сопоставляются без учёта регистра; уже effective mixed-case flag не вызывает
-запись, а disable удаляет его effective presence.
+сопоставляются без учёта регистра. Для pwquality provider strategy использует
+native `SetPresence` syntax: bare directive, assignment с любым value и
+whitespace-value form одинаково означают enabled. Уже effective occurrence не
+вызывает запись и не создаёт semantic duplicate; disable neutralizes все такие
+case-insensitive occurrences. Generic providers сохраняют `BareOnly` syntax.
 
 Line reader повторяет boundary libpwquality 1.4.5
 `PWQSETTINGS_MAX_LINELEN=1023`: допустимо не более 1022 байт до newline либо

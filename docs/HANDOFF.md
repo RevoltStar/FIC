@@ -3,41 +3,36 @@
 ## Current base
 
 - Ветка: `main`.
-- Базовый commit corrective pass: `77d2c99`.
-- Коммиты кода задачи: `ee3fb0d`, `1a1a601`, `ff0d841`.
+- Базовый commit corrective pass: `02c16a6`.
+- Коммиты кода задачи: `b599f8c`, `7378633`.
 
 ## Current task
 
-- Закрыты два `pam_pwquality` P2 finding: case-insensitive raw mutation и
-  точная line-length boundary semantics libpwquality 1.4.5.
+- Закрыт последний известный `pam_pwquality` P2: raw mutation SET-style config
+  directives совпадает с native libpwquality 1.4.5 presence semantics.
 
 ## Accepted architecture / invariants
 
 - `PamOptionPolicy` делегирует raw state/mutation в `PamProviderConfigFile`;
   provider strategy, а не policy layer, выбирает native key matching.
-- Pwquality assignment/flag keys сопоставляются ASCII case-insensitive;
-  generic `PamOptionFile` по умолчанию остаётся case-sensitive.
-- Case-variant assignments канонизируются в lowercase и получают одинаковое
-  requested value; уже effective mixed-case flag не переписывается.
-- `pam_pwquality` для target libpwquality 1.4.5 вычисляется из native defaults,
-  lexical `pwquality.conf.d/*.conf`, main config и argv каждой invocation.
-- Pwquality config принимает максимум 1022 non-newline bytes в строке;
-  1023-byte строка malformed и перед newline, и в exact EOF boundary.
-- Prospective evaluator, raw mutation и final evaluator согласованы для
-  case variants; transaction/rollback contract не изменён.
+- Pwquality использует `AsciiCaseInsensitive` + `SetPresence`: bare directive,
+  assignment с любым value и whitespace-value form означают enabled.
+- Policy `yes` принимает любое active SET occurrence без duplicate/write;
+  policy `no` neutralizes все case-insensitive occurrences.
+- Generic providers сохраняют case-sensitive `BareOnly`; passwdqc не изменён.
+- Final provider semantic postcondition и transaction contract сохранены.
 
 ## Completed
 
-- Добавлен provider-specific raw config dispatch без pwquality branching в
-  policy class.
-- `PamOptionFile` параметризован key-match mode с case-sensitive default.
-- Исправлена boundary проверка, соответствующая upstream `fgets(char[1024])`.
-- Добавлены production apply и evaluator boundary regression tests.
+- Добавлен explicit `PamOptionFlagSyntax::{BareOnly,SetPresence}`.
+- Provider strategy выбирает `SetPresence` только для pwquality backend.
+- Добавлены production apply tests для idempotent enable и полного disable
+  bare/assignment case variants.
 
 ## Changed areas
 
 - `fic/src/modules/identity_access/pam/`.
-- PAM hierarchy/config tests и их CMake wiring.
+- PAM hierarchy production-path tests.
 - PAM architecture documentation.
 
 ## Validation
@@ -50,8 +45,8 @@
   `platform_profile_tests`, `pam_policy_defaults_tests`.
 - Configure использовал только pkg-config stub для отсутствующего на host
   `libsystemd`; `fic-session-agent` этой матрицей не собирался.
-- Tests-first запуск воспроизвёл case-sensitive assignment gap и ошибочное
-  принятие 1023-byte newline-terminated строки.
+- Tests-first запуск воспроизвёл ошибочное `malformed PAM flag` на валидном
+  pwquality SET assignment.
 - `git diff --check` пройден.
 
 ## Remaining
