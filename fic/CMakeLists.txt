@@ -91,7 +91,7 @@ target_link_libraries(fic PRIVATE fic-platform)
 set(FIC_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/config")
-include("${CMAKE_SOURCE_DIR}/cmake/FicPamPolicyDefaults.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicPamPolicyDefaults.cmake")
 fic_resolve_pam_policy_defaults(
     "${FIC_PAM_PASSWORD_QUALITY_PROVIDER}"
     "${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"
