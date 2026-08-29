@@ -943,6 +943,7 @@ build_fic_dick_package() {
     install_cmake_component "$FIC_DICK_BUILD_DIR" fic-dick "$package_root"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-dick")"
+    package_depends="$(join_depends "$binary_depends" "udev")"
 
     write_control_file \
         "$package_root" \
