@@ -15,7 +15,10 @@
 namespace fic::identity::pam {
 namespace {
 
-constexpr std::size_t MaximumLineLength = 1023;
+// libpwquality 1.4.5 reads into char[PWQSETTINGS_MAX_LINELEN + 1]. A full
+// 1023-byte fgets payload without a newline is malformed, including at the
+// exact EOF boundary; therefore at most 1022 non-newline bytes are accepted.
+constexpr std::size_t MaximumFgetsPayloadLength = 1023;
 
 enum class ManagedOverrideKind {
     Assignment,
@@ -259,7 +262,7 @@ bool evaluateFile(const std::filesystem::path& path,
     std::size_t lineNumber = 0;
     while (std::getline(input, line)) {
         ++lineNumber;
-        if (line.size() > MaximumLineLength) {
+        if (line.size() >= MaximumFgetsPayloadLength) {
             error = path.string() + ":" + std::to_string(lineNumber) +
                 ": pwquality configuration line is too long";
             return false;
