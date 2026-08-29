@@ -651,6 +651,20 @@ capability, option и flag одинаково отклоняют unmanaged drop-
 при отсутствующем managed primary как `Broken`. Если explicit config argument
 по descriptor semantics заменяет native topology, неактивные native inputs в
 эту проверку не входят.
+
+Raw config mutation также dispatch'ится через provider strategy.
+`PamProviderConfigFile` использует ASCII case-insensitive key matching для
+pwquality и сохраняет case-sensitive поведение generic providers; policy layer
+не выбирает native equality rules. Изменяемые case-variant assignments
+переписываются canonical lowercase key и одинаковым requested value, поэтому
+более поздний variant не может восстановить старое effective state. SET flags
+сопоставляются без учёта регистра; уже effective mixed-case flag не вызывает
+запись, а disable удаляет его effective presence.
+
+Line reader повторяет boundary libpwquality 1.4.5
+`PWQSETTINGS_MAX_LINELEN=1023`: допустимо не более 1022 байт до newline либо
+EOF. Строка из 1023 байт отклоняется как malformed и с newline, и как exact
+final EOF chunk; короткая финальная строка без newline допустима.
 Для `password_min_length` положительный credit отклоняет positive
 postcondition: libpwquality может зачесть его и принять пароль короче
 effective `minlen`; нулевые и отрицательные credits сохраняют true-length
