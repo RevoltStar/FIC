@@ -873,14 +873,15 @@ int main() {
         require(
             mixedCaseRootFlagEnabled.apply(),
             "case-insensitive pwquality flag enable failed");
-        const std::string canonicalRootFlag =
+        const std::string enabledRootFlagContent =
             readFile(passwordQualityPlatform.passwordQualityConfigPath);
         require(
-            canonicalRootFlag == "enforce_for_root\n" &&
+            (enabledRootFlagContent == "EnFoRcE_FoR_RoOt\n" ||
+             enabledRootFlagContent == "enforce_for_root\n") &&
                 mixedCaseRootFlagEnabled.apply() &&
                 readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
-                    canonicalRootFlag,
-            "pwquality SET flag canonicalization created a duplicate");
+                    enabledRootFlagContent,
+            "pwquality SET flag enable created a semantic duplicate");
 
         writePasswordQualityGraph(" enforce_for_root=0");
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");

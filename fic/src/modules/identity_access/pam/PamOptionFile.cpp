@@ -23,6 +23,30 @@ bool validKey(const std::string& key) {
         });
 }
 
+bool keysEqual(const std::string& left,
+               const std::string& right,
+               PamOptionKeyMatchMode matchMode) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    if (matchMode == PamOptionKeyMatchMode::CaseSensitive) {
+        return left == right;
+    }
+    return std::equal(
+        left.begin(), left.end(), right.begin(),
+        [](unsigned char leftCharacter, unsigned char rightCharacter) {
+            return std::tolower(leftCharacter) ==
+                std::tolower(rightCharacter);
+        });
+}
+
+bool startsWithKey(const std::string& value,
+                   const std::string& key,
+                   PamOptionKeyMatchMode matchMode) {
+    return value.size() >= key.size() &&
+        keysEqual(value.substr(0, key.size()), key, matchMode);
+}
+
 std::string trimCopy(std::string value) {
     const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
         return std::isspace(c) != 0;
@@ -58,6 +82,7 @@ bool parseAssignment(const std::string& line,
 
 bool parseFlagLine(const std::string& line,
                    const std::string& expectedKey,
+                   PamOptionKeyMatchMode matchMode,
                    bool& isFlag,
                    bool& malformed) {
     isFlag = false;
@@ -71,11 +96,11 @@ bool parseFlagLine(const std::string& line,
     if (code.empty()) {
         return true;
     }
-    if (code == expectedKey) {
+    if (keysEqual(code, expectedKey, matchMode)) {
         isFlag = true;
         return true;
     }
-    if (code.compare(0, expectedKey.size(), expectedKey) == 0 &&
+    if (startsWithKey(code, expectedKey, matchMode) &&
         code.size() > expectedKey.size()) {
         const unsigned char delimiter =
             static_cast<unsigned char>(code[expectedKey.size()]);
@@ -159,7 +184,8 @@ bool PamOptionFile::setValue(const std::filesystem::path& path,
                              const std::string& key,
                              const std::string& value,
                              std::string& error,
-                             Writer writer) {
+                             Writer writer,
+                             PamOptionKeyMatchMode matchMode) {
     if (!validKey(key) || value.empty() ||
         value.find_first_of("\r\n") != std::string::npos) {
         error = "invalid PAM option assignment";
@@ -177,7 +203,8 @@ bool PamOptionFile::setValue(const std::filesystem::path& path,
     for (auto& line : lines) {
         std::string parsedKey;
         std::string parsedValue;
-        if (parseAssignment(line, parsedKey, parsedValue) && parsedKey == key) {
+        if (parseAssignment(line, parsedKey, parsedValue) &&
+            keysEqual(parsedKey, key, matchMode)) {
             const std::size_t first = line.find_first_not_of(" \t");
             const std::string indentation =
                 first == std::string::npos ? "" : line.substr(0, first);
@@ -199,14 +226,15 @@ bool PamOptionFile::setValue(const std::filesystem::path& path,
             path.string(), joinLines(lines), writeOptions(), &error)) {
         return false;
     }
-    return hasOnlyValue(path, key, value, error);
+    return hasOnlyValue(path, key, value, error, matchMode);
 }
 
 bool PamOptionFile::hasOnlyValue(
     const std::filesystem::path& path,
     const std::string& key,
     const std::string& expectedValue,
-    std::string& error) {
+    std::string& error,
+    PamOptionKeyMatchMode matchMode) {
     bool existed = false;
     std::string content;
     if (!readFile(path, existed, content, error) || !existed) {
@@ -220,7 +248,8 @@ bool PamOptionFile::hasOnlyValue(
     for (const auto& line : splitLines(content)) {
         std::string parsedKey;
         std::string parsedValue;
-        if (!parseAssignment(line, parsedKey, parsedValue) || parsedKey != key) {
+        if (!parseAssignment(line, parsedKey, parsedValue) ||
+            !keysEqual(parsedKey, key, matchMode)) {
             continue;
         }
         found = true;
@@ -241,7 +270,8 @@ bool PamOptionFile::setFlag(const std::filesystem::path& path,
                             const std::string& key,
                             bool enabled,
                             std::string& error,
-                            Writer writer) {
+                            Writer writer,
+                            PamOptionKeyMatchMode matchMode) {
     if (!validKey(key)) {
         error = "invalid PAM flag";
         return false;
@@ -261,7 +291,7 @@ bool PamOptionFile::setFlag(const std::filesystem::path& path,
     for (auto& line : lines) {
         bool isFlag = false;
         bool malformed = false;
-        parseFlagLine(line, key, isFlag, malformed);
+        parseFlagLine(line, key, matchMode, isFlag, malformed);
         if (malformed) {
             error = "malformed PAM flag " + key + " in " + path.string();
             return false;
@@ -296,13 +326,14 @@ bool PamOptionFile::setFlag(const std::filesystem::path& path,
             path.string(), joinLines(lines), writeOptions(), &error)) {
         return false;
     }
-    return hasFlag(path, key, enabled, error);
+    return hasFlag(path, key, enabled, error, matchMode);
 }
 
 bool PamOptionFile::hasFlag(const std::filesystem::path& path,
                             const std::string& key,
                             bool expectedEnabled,
-                            std::string& error) {
+                            std::string& error,
+                            PamOptionKeyMatchMode matchMode) {
     if (!validKey(key)) {
         error = "invalid PAM flag";
         return false;
@@ -325,7 +356,7 @@ bool PamOptionFile::hasFlag(const std::filesystem::path& path,
     for (const auto& line : splitLines(content)) {
         bool isFlag = false;
         bool malformed = false;
-        parseFlagLine(line, key, isFlag, malformed);
+        parseFlagLine(line, key, matchMode, isFlag, malformed);
         if (malformed) {
             error = "malformed PAM flag " + key + " in " + path.string();
             return false;
@@ -342,7 +373,8 @@ bool PamOptionFile::hasFlag(const std::filesystem::path& path,
 bool PamOptionFile::verifyNoActiveDirectives(
     const std::filesystem::path& path,
     const std::vector<std::string>& directives,
-    std::string& error) {
+    std::string& error,
+    PamOptionKeyMatchMode matchMode) {
     if (std::any_of(directives.begin(), directives.end(),
                     [](const std::string& directive) {
                         return !validKey(directive);
@@ -363,17 +395,24 @@ bool PamOptionFile::verifyNoActiveDirectives(
     for (const auto& line : splitLines(content)) {
         std::string parsedKey;
         std::string parsedValue;
-        if (parseAssignment(line, parsedKey, parsedValue) &&
-            std::find(directives.begin(), directives.end(), parsedKey) !=
-                directives.end()) {
-            error = "PAM directive " + parsedKey + " in " + path.string() +
-                " conflicts with the requested disabled state";
-            return false;
+        if (parseAssignment(line, parsedKey, parsedValue)) {
+            const auto matched = std::find_if(
+                directives.begin(), directives.end(),
+                [&](const std::string& directive) {
+                    return keysEqual(parsedKey, directive, matchMode);
+                });
+            if (matched != directives.end()) {
+                error = "PAM directive " + parsedKey + " in " +
+                    path.string() +
+                    " conflicts with the requested disabled state";
+                return false;
+            }
         }
         for (const auto& directive : directives) {
             bool isFlag = false;
             bool malformed = false;
-            parseFlagLine(line, directive, isFlag, malformed);
+            parseFlagLine(
+                line, directive, matchMode, isFlag, malformed);
             if (isFlag || malformed) {
                 error = "PAM directive " + directive + " in " +
                     path.string() +

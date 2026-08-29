@@ -6,8 +6,8 @@
 #include "modules/identity_access/pam/PamOptionFile.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
+#include "modules/identity_access/pam/PamProviderConfigFile.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
-#include "modules/identity_access/pam/PasswdqcConfigFile.h"
 
 #include <utility>
 
@@ -103,7 +103,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
     if (binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
         !expectedFlagEnabled &&
-        !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
+        !fic::identity::pam::PamProviderConfigFile::verifyNoActiveDirectives(
+            provider,
             capability->configPath,
             binding->conflictingOptionsWhenDisabled, error)) {
         this->log(
@@ -114,36 +115,16 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
 
     const auto hasExpectedState = [&](std::string& stateError) {
-        if (provider.grammar == fic::platform::PamConfigGrammar::Passwdqc) {
-            return fic::identity::pam::PasswdqcConfigFile::hasOnlyValue(
-                capability->configPath, binding->option,
-                nativeExpectedValue, stateError);
-        }
-        return binding->syntax ==
-                fic::identity::pam::PamNativeOptionSyntax::Assignment
-            ? fic::identity::pam::PamOptionFile::hasOnlyValue(
-                  capability->configPath, binding->option,
-                  nativeExpectedValue, stateError)
-            : fic::identity::pam::PamOptionFile::hasFlag(
-                  capability->configPath, binding->option,
-                  expectedFlagEnabled, stateError);
+        return fic::identity::pam::PamProviderConfigFile::hasExpectedState(
+            provider, *binding, capability->configPath,
+            nativeExpectedValue, expectedFlagEnabled, stateError);
     };
     const auto setExpectedState = [&]
         (const fic::identity::pam::PamConfigFileTransaction::Writer& writer,
          std::string& stateError) {
-        if (provider.grammar == fic::platform::PamConfigGrammar::Passwdqc) {
-            return fic::identity::pam::PasswdqcConfigFile::setValue(
-                capability->configPath, binding->option,
-                nativeExpectedValue, stateError, writer);
-        }
-        return binding->syntax ==
-                fic::identity::pam::PamNativeOptionSyntax::Assignment
-            ? fic::identity::pam::PamOptionFile::setValue(
-                  capability->configPath, binding->option,
-                  nativeExpectedValue, stateError, writer)
-            : fic::identity::pam::PamOptionFile::setFlag(
-                  capability->configPath, binding->option,
-                  expectedFlagEnabled, stateError, writer);
+        return fic::identity::pam::PamProviderConfigFile::setExpectedState(
+            provider, *binding, capability->configPath,
+            nativeExpectedValue, expectedFlagEnabled, stateError, writer);
     };
 
     std::string currentError;
@@ -187,7 +168,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     }
     if (binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
         !expectedFlagEnabled &&
-        !fic::identity::pam::PamOptionFile::verifyNoActiveDirectives(
+        !fic::identity::pam::PamProviderConfigFile::verifyNoActiveDirectives(
+            provider,
             capability->configPath,
             binding->conflictingOptionsWhenDisabled, error)) {
         return failAfterMutation(

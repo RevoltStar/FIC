@@ -10,6 +10,11 @@
 
 namespace fic::identity::pam {
 
+enum class PamOptionKeyMatchMode {
+    CaseSensitive,
+    AsciiCaseInsensitive
+};
+
 class PamOptionFile {
 public:
     using Writer = std::function<bool(
@@ -22,28 +27,38 @@ public:
                          const std::string& key,
                          const std::string& value,
                          std::string& error,
-                         Writer writer = {});
+                         Writer writer = {},
+                         PamOptionKeyMatchMode matchMode =
+                             PamOptionKeyMatchMode::CaseSensitive);
 
     static bool hasOnlyValue(const std::filesystem::path& path,
                              const std::string& key,
                              const std::string& expectedValue,
-                             std::string& error);
+                             std::string& error,
+                             PamOptionKeyMatchMode matchMode =
+                                 PamOptionKeyMatchMode::CaseSensitive);
 
     static bool setFlag(const std::filesystem::path& path,
                         const std::string& key,
                         bool enabled,
                         std::string& error,
-                        Writer writer = {});
+                        Writer writer = {},
+                        PamOptionKeyMatchMode matchMode =
+                            PamOptionKeyMatchMode::CaseSensitive);
 
     static bool hasFlag(const std::filesystem::path& path,
                         const std::string& key,
                         bool expectedEnabled,
-                        std::string& error);
+                        std::string& error,
+                        PamOptionKeyMatchMode matchMode =
+                            PamOptionKeyMatchMode::CaseSensitive);
 
     static bool verifyNoActiveDirectives(
         const std::filesystem::path& path,
         const std::vector<std::string>& directives,
-        std::string& error);
+        std::string& error,
+        PamOptionKeyMatchMode matchMode =
+            PamOptionKeyMatchMode::CaseSensitive);
 };
 
 } // namespace fic::identity::pam
