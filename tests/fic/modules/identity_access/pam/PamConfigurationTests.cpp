@@ -158,7 +158,9 @@ fic::identity::pam::PamCapabilityVerification verifyCapability(
     const fic::platform::PamPlatformConfig& platform,
     fic::identity::pam::PamCapability capability,
     fic::identity::pam::PamProviderKind provider,
-    const std::vector<std::string>& services) {
+    const std::vector<std::string>& services,
+    fic::identity::pam::PamCapabilityVerificationMode mode =
+        fic::identity::pam::PamCapabilityVerificationMode::SecurityEffective) {
     const auto& descriptor =
         fic::identity::pam::pamProviderDescriptor(provider);
     const auto capabilityConfig = std::find_if(
@@ -217,7 +219,8 @@ fic::identity::pam::PamCapabilityVerification verifyCapability(
         services,
         capability,
         provider,
-        verification);
+        verification,
+        mode);
     return verification;
 }
 
@@ -873,6 +876,187 @@ void testMalformedOptionFileFlagFailsWithoutWrite() {
     require(
         !std::filesystem::exists(missing),
         "disabling an absent PAM flag must not create a file");
+}
+
+void createPwqualityGraph(
+    const TempDirectory& temp,
+    const TestPamPlatformConfig& platform,
+    const std::string& service,
+    const std::string& arguments = "") {
+    writeFile(
+        temp.path() / "pam.d" / service,
+        "password requisite pam_pwquality.so conf=" +
+            platform.passwordQualityConfigPath.string() + arguments + "\n"
+        "password required pam_unix.so use_authtok\n");
+    writeFile(temp.path() / "security/pam_pwquality.so", "test", 0555);
+}
+
+fic::identity::pam::PamProviderInspection inspectPwquality(
+    const TestPamPlatformConfig& platform) {
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::inspect(
+            configuration,
+            platform.passwordServices,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            inspection,
+            error),
+        error);
+    return inspection;
+}
+
+void testPwqualityEnforcingStateAndServices() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.passwordServices = {"passwd"};
+    createPwqualityGraph(temp, platform, "passwd");
+    writeFile(
+        platform.passwordQualityConfigPath,
+        "minlen = 20\n"
+        "enforcing = 1\n");
+
+    auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Effective,
+        fic::identity::pam::formatPamCapabilityVerification(verification));
+
+    writeFile(
+        platform.passwordQualityConfigPath,
+        "minlen = 20\n"
+        "enforcing = 0\n");
+    verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "pam_pwquality enforcing=0 was reported as security-effective");
+    verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices,
+        fic::identity::pam::PamCapabilityVerificationMode::Structural);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Effective,
+        "structurally valid pwquality enforcing=0 was reported broken");
+
+    writeFile(platform.passwordQualityConfigPath, "enforcing = 1\n");
+    platform.passwordServices = {"passwd", "chpasswd"};
+    createPwqualityGraph(temp, platform, "passwd");
+    createPwqualityGraph(temp, platform, "chpasswd", " enforcing=0");
+    verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPwquality,
+        platform.passwordServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Ineffective,
+        "one non-enforcing pwquality service was hidden by another service");
+}
+
+void testPwqualityEffectiveTopologyAndArguments() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.passwordServices = {"passwd"};
+    createPwqualityGraph(temp, platform, "passwd");
+    writeFile(
+        platform.passwordQualityConfigPath.parent_path() /
+            "pwquality.conf.d/10-base.conf",
+        "minlen = 8\n"
+        "enforce_for_root\n");
+    writeFile(
+        platform.passwordQualityConfigPath.parent_path() /
+            "pwquality.conf.d/20-later.conf",
+        "minlen = 12\n");
+    writeFile(
+        platform.passwordQualityConfigPath,
+        "minlen = 20\n"
+        "enforcing = 1\n");
+
+    auto inspection = inspectPwquality(platform);
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection, platform.passwordQualityConfigPath.string(),
+            "minlen", "20", error),
+        "pwquality main file did not override sorted drop-ins: " + error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection, platform.passwordQualityConfigPath.string(),
+            "minlen", "12", error),
+        "pwquality verification ignored main-file precedence");
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyFlagOverrides(
+            inspection, platform.passwordQualityConfigPath.string(),
+            "enforce_for_root", false, error),
+        "pwquality SET flag from a drop-in was hidden by its absence in main");
+
+    createPwqualityGraph(temp, platform, "passwd", " minlen=9");
+    inspection = inspectPwquality(platform);
+    require(
+        fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection, platform.passwordQualityConfigPath.string(),
+            "minlen", "9", error),
+        "pwquality PAM argv did not override config topology: " + error);
+    require(
+        !fic::identity::pam::PamProviderInspector::verifyOptionOverrides(
+            inspection, platform.passwordQualityConfigPath.string(),
+            "minlen", "20", error),
+        "pwquality config value hid a later PAM argv override");
+}
+
+void testPwqualityInvalidInputsAreBroken() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.passwordServices = {"passwd"};
+    createPwqualityGraph(temp, platform, "passwd");
+    writeFile(platform.passwordQualityConfigPath, "minlen = 20\n");
+    const auto dropIn = platform.passwordQualityConfigPath.parent_path() /
+        "pwquality.conf.d/00-broken.conf";
+
+    const auto requireBroken = [&](const std::string& message) {
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            platform.passwordServices);
+        require(
+            verification.state ==
+                fic::identity::pam::PamEnforcementState::Broken,
+            message + ": " +
+                fic::identity::pam::formatPamCapabilityVerification(
+                    verification));
+    };
+
+    writeFile(dropIn, "vendor_bad_option = 1\n");
+    requireBroken("unknown pwquality drop-in option was accepted");
+    writeFile(dropIn, "minlen = garbage\n");
+    requireBroken("malformed pwquality drop-in integer was accepted");
+    writeFile(dropIn, "# valid again\n");
+    writeFile(platform.passwordQualityConfigPath, "enforcing = maybe\n");
+    requireBroken("invalid known pwquality main option was accepted");
+
+    writeFile(platform.passwordQualityConfigPath, "minlen = 20\n", 0000);
+    requireBroken("unreadable pwquality main config was accepted");
+    require(::chmod(platform.passwordQualityConfigPath.c_str(), 0644) == 0,
+            "could not restore pwquality test config mode");
+
+    writeFile(platform.passwordQualityConfigPath, "minlen = 20\n");
+    createPwqualityGraph(temp, platform, "passwd", " minlen=garbage");
+    requireBroken("invalid pwquality PAM argv was accepted");
 }
 
 void testEffectiveKnownProviders() {
@@ -1879,6 +2063,9 @@ int main() {
         testOptionFileSymlinkFails();
         testOptionFileFlagEnableDisable();
         testMalformedOptionFileFlagFailsWithoutWrite();
+        testPwqualityEnforcingStateAndServices();
+        testPwqualityEffectiveTopologyAndArguments();
+        testPwqualityInvalidInputsAreBroken();
         testEffectiveKnownProviders();
         testDebianPamAuthUpdateGeneratedStackIsEffective();
         testSubstackBoundaryIsEffective();
