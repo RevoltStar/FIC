@@ -929,22 +929,57 @@ int main() {
                 passwordQualityPlatform.passwordQualityConfigPath,
                 "enforce_for_root", false, optionError),
             optionError);
-        writeFile(
-            passwordQualityPlatform.passwordQualityConfigPath,
-            "enforce_for_root=1\n");
         writeIdentityConfig(
             root, "yes", "yes",
             "password_quality_enforce_for_root.status=ENABLE\n"
             "password_quality_enforce_for_root.value=yes\n");
-        PamPasswordQualityEnforceForRootPolicy malformedQualityFlag(
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "enforce_for_root=0\n");
+        PamPasswordQualityEnforceForRootPolicy assignedQualityFlagEnabled(
             passwordQualityPlatform);
         require(
-            !malformedQualityFlag.apply(),
-            "valued enforce_for_root directive must fail");
+            assignedQualityFlagEnabled.apply(),
+            "pwquality SET assignment was not treated as enabled");
+        const std::string assignedFlagContent =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
+        require(
+            assignedFlagContent == "enforce_for_root=0\n" &&
+                assignedQualityFlagEnabled.apply() &&
+                readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                    assignedFlagContent,
+            "enabled pwquality SET assignment was not idempotent");
+
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=no\n");
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "ENFORCE_FOR_ROOT=0\n");
+        PamPasswordQualityEnforceForRootPolicy assignedQualityFlagDisabled(
+            passwordQualityPlatform);
+        require(
+            assignedQualityFlagDisabled.apply(),
+            "uppercase pwquality SET assignment could not be disabled");
         require(
             readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
-                "enforce_for_root=1\n",
-            "malformed flag failure modified canonical config");
+                "\n",
+            "uppercase pwquality SET assignment remained active");
+
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "enforce_for_root\n"
+            "EnFoRcE_FoR_RoOt=0\n");
+        PamPasswordQualityEnforceForRootPolicy duplicateQualityFlagsDisabled(
+            passwordQualityPlatform);
+        require(
+            duplicateQualityFlagsDisabled.apply(),
+            "mixed pwquality SET forms could not be disabled together");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                "\n\n",
+            "not all active pwquality SET forms were neutralized");
 
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
         applyPasswordQualityAssignment<
