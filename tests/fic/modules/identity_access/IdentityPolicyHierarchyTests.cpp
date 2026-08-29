@@ -811,6 +811,77 @@ int main() {
                     enabledFlagContent,
             "enforce_for_root enable is not idempotent");
 
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_min_length.status=ENABLE\n"
+            "password_min_length.value=20\n",
+            "pam_pwquality");
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "MINLEN = 10\n");
+        PamPasswordMinLengthPolicy uppercaseMinLength(
+            passwordQualityPlatform);
+        require(
+            uppercaseMinLength.apply(),
+            "case-insensitive pwquality assignment mutation failed");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                "minlen = 20\n",
+            "pwquality assignment was not canonicalized to lowercase");
+
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "minlen = 15\n"
+            "MINLEN = 10\n");
+        PamPasswordMinLengthPolicy duplicateCaseMinLength(
+            passwordQualityPlatform);
+        require(
+            duplicateCaseMinLength.apply(),
+            "case-variant pwquality assignment duplicate caused rollback");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                "minlen = 20\n"
+                "minlen = 20\n",
+            "conflicting case-variant pwquality assignment remained active");
+
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=no\n");
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "ENFORCE_FOR_ROOT\n");
+        PamPasswordQualityEnforceForRootPolicy uppercaseRootFlagDisabled(
+            passwordQualityPlatform);
+        require(
+            uppercaseRootFlagDisabled.apply(),
+            "case-insensitive pwquality flag disable failed");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                "\n",
+            "uppercase pwquality SET flag remained active after disable");
+
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_quality_enforce_for_root.status=ENABLE\n"
+            "password_quality_enforce_for_root.value=yes\n");
+        writeFile(
+            passwordQualityPlatform.passwordQualityConfigPath,
+            "EnFoRcE_FoR_RoOt\n");
+        PamPasswordQualityEnforceForRootPolicy mixedCaseRootFlagEnabled(
+            passwordQualityPlatform);
+        require(
+            mixedCaseRootFlagEnabled.apply(),
+            "case-insensitive pwquality flag enable failed");
+        const std::string canonicalRootFlag =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
+        require(
+            canonicalRootFlag == "enforce_for_root\n" &&
+                mixedCaseRootFlagEnabled.apply() &&
+                readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                    canonicalRootFlag,
+            "pwquality SET flag canonicalization created a duplicate");
+
         writePasswordQualityGraph(" enforce_for_root=0");
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
         require(

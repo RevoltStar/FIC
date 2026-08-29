@@ -1119,6 +1119,56 @@ void testPwqualityEffectiveTopologyAndArguments() {
             error);
 }
 
+void testPwqualityLineLengthBoundary() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.passwordServices = {"passwd"};
+    createPwqualityGraph(temp, platform, "passwd");
+
+    const auto paddedDirective = [](std::size_t length) {
+        const std::string prefix = "minlen = 20 #";
+        require(length >= prefix.size(), "invalid boundary test length");
+        return prefix + std::string(length - prefix.size(), 'x');
+    };
+    const auto requireState = [&](fic::identity::pam::PamEnforcementState state,
+                                  const std::string& message) {
+        const auto verification = verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::PasswordQuality,
+            fic::identity::pam::PamProviderKind::PamPwquality,
+            platform.passwordServices);
+        require(
+            verification.state == state,
+            message + ": " +
+                fic::identity::pam::formatPamCapabilityVerification(
+                    verification));
+    };
+
+    // libpwquality 1.4.5 uses char[1024] with fgets(): 1022 bytes plus the
+    // terminating newline fit, while 1023 bytes leave no room for that newline.
+    writeFile(platform.passwordQualityConfigPath,
+              paddedDirective(1022) + "\n");
+    requireState(
+        fic::identity::pam::PamEnforcementState::Effective,
+        "1022-byte newline-terminated pwquality line was rejected");
+
+    writeFile(platform.passwordQualityConfigPath,
+              paddedDirective(1023) + "\n");
+    requireState(
+        fic::identity::pam::PamEnforcementState::Broken,
+        "1023-byte newline-terminated pwquality line was accepted");
+
+    writeFile(platform.passwordQualityConfigPath, paddedDirective(1023));
+    requireState(
+        fic::identity::pam::PamEnforcementState::Broken,
+        "1023-byte final pwquality line without newline was accepted");
+
+    writeFile(platform.passwordQualityConfigPath, "minlen = 20");
+    requireState(
+        fic::identity::pam::PamEnforcementState::Effective,
+        "short final pwquality line without newline was rejected");
+}
+
 void testPwqualityInvalidInputsAreBroken() {
     TempDirectory temp;
     auto platform = makePlatform(temp);
@@ -2253,6 +2303,7 @@ int main() {
         testMalformedOptionFileFlagFailsWithoutWrite();
         testPwqualityEnforcingStateAndServices();
         testPwqualityEffectiveTopologyAndArguments();
+        testPwqualityLineLengthBoundary();
         testPwqualityInvalidInputsAreBroken();
         testGenericFallbackFailsClosed();
         testEffectiveKnownProviders();
