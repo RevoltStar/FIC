@@ -594,8 +594,11 @@ flowchart TD
     checks --> semantics[provider-specific effective-state evaluation]
     semantics --> flow[PamControlFlowAnalyzer successful-path proof]
     flow --> verifier[PamCapabilityVerifier enforcement state]
-    verifier --> optionFile[raw PamOptionFile / Passwdqc mutation codec]
+    verifier --> storage[capability configuration mode]
+    storage --> optionFile[provider config codec]
+    storage --> moduleArgs[parsed PAM module argv codec]
     optionFile --> snapshot[raw config and metadata snapshot]
+    moduleArgs --> snapshot
     snapshot --> writer[AtomicFileWriter root:root 0644]
     writer --> reload[reparse effective config and PAM graphs]
     reload --> postcondition[provider / module / value postcondition]
@@ -619,13 +622,17 @@ pwquality flag либо passwdqc `enforce=everyone|users`. Конфликтую�
 неподдерживаемые alternative providers диагностируются, но не мигрируются.
 Descriptor является единственным источником provider capability, module name,
 config grammar, semantic backend, config topology, policy bindings и
-required/optional external config argument. Topology отдельно описывает
+required/optional external config argument. Capability composition дополнительно
+выбирает storage mode: provider config file либо arguments существующего PAM
+module rule. Topology отдельно описывает
 primary path, fallback paths, drop-in directories, precedence и semantics
 explicit PAM config argument; platform composition может заменить эти данные.
 Для passwdqc required `config=` должен присутствовать ровно один раз и
 совпадать с platform path; тот же contract использует
-`required_pam_enforcement`. В текущих target versions optional `conf=`
-поддерживают `pam_faillock` и `pam_pwhistory`. `pam_pwquality` из
+`required_pam_enforcement`. В modern target versions optional `conf=`
+поддерживает `pam_pwhistory`; Debian 12 с Linux-PAM 1.5.2 выбирает argv-backed
+semantics без external config contract. `pam_faillock` сохраняет optional
+`conf=`. `pam_pwquality` из
 libpwquality 1.4.5 читает native default topology и не поддерживает `conf=`;
 такой argument отклоняется fail-closed.
 
@@ -688,10 +695,13 @@ arbitrary non-cooperating writers: identity/content/metadata проверяют�
 `rename(2)`, а installed output повторно читается сразу после него. Это сужает
 и обнаруживает часть гонок, но не устраняет окно между последней precondition
 check и `rename(2)`; rollback разрешён только для точно распознанного output.
-Daemon PAM
-policies не переписывают PAM service-файлы: меняется канонический
-provider-конфиг только после доказательства, что topology уже effective во
-всех существующих целевых службах. Отдельный offline package-integration
+Daemon PAM policies обычно меняют канонический provider-конфиг только после
+доказательства, что topology уже effective во всех существующих целевых
+службах. Исключение задаётся capability metadata: legacy `pam_pwhistory`
+атомарно меняет только `remember=` и `enforce_for_root` в однозначно найденном
+parsed module rule, сохраняя `use_authtok` и разрешённые unrelated arguments.
+Source читается через проверенный `O_NOFOLLOW` fd, после записи заново строится
+effective graph; ошибка postcondition откатывает exact snapshot. Отдельный offline package-integration
 manager для ALT p11 может атомарно включать и отключать FIC-owned topology по
 явной команде администратора; он не вызывается daemon policies.
 `required_pam_enforcement` независимо проверяет выбранные известные providers
@@ -717,8 +727,9 @@ configuration. Текущая mutable strategy — ALT/tcb manager для `pam_f
 Debian/Ubuntu описывают `pam-auth-update` как external opt-in, а native
 passwdqc topology ALT — как static/read-only. Config policies не активируют
 topology неявно. Password-history config и topology также являются разными
-состояниями: Debian/Ubuntu изменяют `pwhistory.conf` только после доказательства
-active effective stack, ALT эту capability не объявляет.
+состояниями: Debian 13 и Ubuntu изменяют `pwhistory.conf` только после
+доказательства active effective stack, Debian 12 изменяет argv существующего
+`pam_pwhistory.so`, а ALT эту capability не объявляет.
 
 Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют плоским
 `/etc/login.defs` через общий для identity configuration
@@ -807,7 +818,8 @@ Package integration не меняет эту границу. DEB-пакет `fic
 password-history check. `postinst configure` вызывает только
 `pam-auth-update --package`; активацию администратор выполняет явно, после чего
 semantic verifier анализирует получившийся effective graph. Policy values
-остаются в `faillock.conf` и `pwhistory.conf`. ALT p11 не получает эти files и
+остаются в `faillock.conf`; history values находятся в `pwhistory.conf` на
+modern profiles и в `pam_pwhistory.so` argv на Debian 12. ALT p11 не получает эти files и
 не вызывает Debian-specific mechanism. RPM устанавливает выключенную facility
 `control fic-pam-faillock`, которая через offline `fic` manager управляет
 только FIC-owned blocks в platform path `system-auth-local-only`. Manager

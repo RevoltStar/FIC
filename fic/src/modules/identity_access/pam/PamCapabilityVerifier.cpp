@@ -67,9 +67,11 @@ bool PamCapabilityVerifier::verify(
         platformConfig, capability);
     if (configuredCapability == nullptr ||
         configuredCapability->provider != provider ||
-        !PamProviderInspector::verifyExternalConfigContract(
-            verification.inspection,
-            *configuredCapability, error)) {
+        (configuredCapability->configurationMode ==
+             fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile &&
+         !PamProviderInspector::verifyExternalConfigContract(
+             verification.inspection,
+             *configuredCapability, error))) {
         verification.state = PamEnforcementState::Broken;
         verification.detail = configuredCapability == nullptr
             ? "PAM capability is absent from platform composition"

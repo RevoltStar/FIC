@@ -313,9 +313,17 @@ void testSelectedProfile() {
         quality->subjectScope ==
             fic::platform::PamIdentitySubjectScope::AllPamSubjects,
         "password-quality capability subject scope is not explicit/all-subject");
+    const bool legacyHistory = profile.id == "debian-12";
     require((history != nullptr) == (profile.id != "alt-p11") &&
-                (history == nullptr || history->configPath ==
-                    "/etc/security/pwhistory.conf"),
+                (history == nullptr ||
+                 (legacyHistory
+                      ? history->configPath.empty() &&
+                            history->configurationMode ==
+                                fic::platform::PamCapabilityConfigurationMode::ModuleArguments
+                      : history->configPath ==
+                            "/etc/security/pwhistory.conf" &&
+                            history->configurationMode ==
+                                fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile)),
             "password-history capability composition is incorrect");
     const std::filesystem::path expectedLocalPamStack =
         profile.id == "alt-p11"

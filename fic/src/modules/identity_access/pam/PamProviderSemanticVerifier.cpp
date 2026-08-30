@@ -2,6 +2,7 @@
 
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PasswdqcConfigFile.h"
+#include "modules/identity_access/pam/PamPwhistoryArguments.h"
 #include "modules/identity_access/pam/PwqualityConfigFile.h"
 
 #include <algorithm>
@@ -396,6 +397,86 @@ bool typedManagedConfigCanApplyFlag(
     return true;
 }
 
+bool pwhistoryArgumentsCapability(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig&,
+    bool requireSecurityEnforcement,
+    PamProviderSemanticFailure& failure,
+    std::string& error)
+{
+    for (const auto& rule : inspection.providerRules) {
+        PamPwhistoryArgumentState state;
+        if (!PamPwhistoryArguments::evaluate(rule, state, error)) {
+            failure = PamProviderSemanticFailure::Broken;
+            return false;
+        }
+        if (requireSecurityEnforcement && state.remember == 0) {
+            failure = PamProviderSemanticFailure::Ineffective;
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": pam_pwhistory remember is absent or disabled";
+            return false;
+        }
+    }
+    failure = PamProviderSemanticFailure::None;
+    error.clear();
+    return true;
+}
+
+bool pwhistoryArgumentsOption(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig&,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
+    PamProviderPolicyBinding binding;
+    binding.option = option;
+    binding.syntax = PamNativeOptionSyntax::Assignment;
+    return PamPwhistoryArguments::hasExpectedState(
+        inspection, binding, expectedValue, false, error);
+}
+
+bool pwhistoryArgumentsFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig&,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>&,
+    std::string& error)
+{
+    PamProviderPolicyBinding binding;
+    binding.option = flag;
+    binding.syntax = PamNativeOptionSyntax::Flag;
+    return PamPwhistoryArguments::hasExpectedState(
+        inspection, binding, {}, expectedEnabled, error);
+}
+
+bool pwhistoryArgumentsCanApplyOption(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string&,
+    const std::string&,
+    std::string& error)
+{
+    PamProviderSemanticFailure failure = PamProviderSemanticFailure::None;
+    return pwhistoryArgumentsCapability(
+        inspection, capability, false, failure, error);
+}
+
+bool pwhistoryArgumentsCanApplyFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string&,
+    bool,
+    const std::vector<std::string>&,
+    std::string& error)
+{
+    PamProviderSemanticFailure failure = PamProviderSemanticFailure::None;
+    return pwhistoryArgumentsCapability(
+        inspection, capability, false, failure, error);
+}
+
 fic::platform::PamProviderConfigTopology pwqualityTopology(
     const PamProviderInspection& inspection,
     const fic::platform::PamCapabilityConfig& capability)
@@ -639,8 +720,20 @@ const SemanticBackend& backendFor(PamProviderSemanticBackendKind kind)
     return generic;
 }
 
-const SemanticBackend& backendFor(const PamProviderInspection& inspection)
+const SemanticBackend& backendFor(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability)
 {
+    static const SemanticBackend pwhistoryArguments{
+        pwhistoryArgumentsCapability,
+        pwhistoryArgumentsOption,
+        pwhistoryArgumentsFlag,
+        pwhistoryArgumentsCanApplyOption,
+        pwhistoryArgumentsCanApplyFlag};
+    if (capability.configurationMode ==
+        fic::platform::PamCapabilityConfigurationMode::ModuleArguments) {
+        return pwhistoryArguments;
+    }
     return backendFor(pamProviderDescriptor(inspection.provider).semanticBackend);
 }
 
@@ -653,7 +746,7 @@ bool PamProviderSemanticVerifier::verifyCapability(
     PamProviderSemanticFailure& failure,
     std::string& error)
 {
-    return backendFor(inspection).verifyCapability(
+    return backendFor(inspection, capability).verifyCapability(
         inspection, capability, requireSecurityEnforcement, failure, error);
 }
 
@@ -664,7 +757,7 @@ bool PamProviderSemanticVerifier::verifyOption(
     const std::string& expectedValue,
     std::string& error)
 {
-    return backendFor(inspection).verifyOption(
+    return backendFor(inspection, capability).verifyOption(
         inspection, capability, option, expectedValue, error);
 }
 
@@ -676,7 +769,7 @@ bool PamProviderSemanticVerifier::verifyFlag(
     const std::vector<std::string>& conflictingOptionsWhenDisabled,
     std::string& error)
 {
-    return backendFor(inspection).verifyFlag(
+    return backendFor(inspection, capability).verifyFlag(
         inspection, capability, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);
 }
@@ -688,7 +781,7 @@ bool PamProviderSemanticVerifier::canApplyOption(
     const std::string& expectedValue,
     std::string& error)
 {
-    return backendFor(inspection).canApplyOption(
+    return backendFor(inspection, capability).canApplyOption(
         inspection, capability, option, expectedValue, error);
 }
 
@@ -700,7 +793,7 @@ bool PamProviderSemanticVerifier::canApplyFlag(
     const std::vector<std::string>& conflictingOptionsWhenDisabled,
     std::string& error)
 {
-    return backendFor(inspection).canApplyFlag(
+    return backendFor(inspection, capability).canApplyFlag(
         inspection, capability, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);
 }

@@ -99,9 +99,10 @@ PlatformProfile makeBuildPlatformProfile() {
          PamTopologyStrategyKind::ExternalOptIn, {}, std::nullopt,
          PamIdentitySubjectScope::AllPamSubjects},
         {PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
-         PamScope::EffectivePasswordStack,
-         "/etc/security/pwhistory.conf",
-         PamTopologyStrategyKind::ExternalOptIn, {}}
+         PamScope::EffectivePasswordStack, {},
+         PamTopologyStrategyKind::ExternalOptIn, {}, std::nullopt,
+         PamIdentitySubjectScope::AllPamSubjects,
+         PamCapabilityConfigurationMode::ModuleArguments}
     };
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";

@@ -1,17 +1,64 @@
 #include "modules/identity_access/pam/PamConfiguration.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <sstream>
 #include <utility>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace fic::identity::pam {
 namespace {
 
 constexpr std::size_t kMaximumIncludeDepth = 32;
 constexpr std::size_t kMaximumCollectedRules = 4096;
+
+bool readTrustedPamSource(const std::filesystem::path& path,
+                          std::string& content,
+                          std::string& error) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        error = errno == ELOOP
+            ? "PAM service is a symbolic link: " + path.string()
+            : "could not open PAM service " + path.string() + ": " +
+                std::strerror(errno);
+        return false;
+    }
+    struct stat info {};
+    if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
+        error = "PAM service is not a regular file: " + path.string();
+        ::close(fd);
+        return false;
+    }
+    content.clear();
+    char buffer[8192];
+    for (;;) {
+        const ssize_t count = ::read(fd, buffer, sizeof(buffer));
+        if (count > 0) {
+            content.append(buffer, static_cast<std::size_t>(count));
+        } else if (count == 0) {
+            break;
+        } else if (errno != EINTR) {
+            error = "could not read PAM service " + path.string() + ": " +
+                std::strerror(errno);
+            ::close(fd);
+            return false;
+        }
+    }
+    if (::close(fd) != 0) {
+        error = "could not close PAM service " + path.string() + ": " +
+            std::strerror(errno);
+        return false;
+    }
+    error.clear();
+    return true;
+}
 
 bool validServiceName(const std::string& service) {
     if (service.empty() || service.size() > 255) {
@@ -290,22 +337,22 @@ bool PamConfiguration::resolveServicePath(
     }
     for (const auto& directory : platformConfig_.configDirectories) {
         const std::filesystem::path candidate = directory / service;
-        std::error_code filesystemError;
-        const bool candidateExists =
-            std::filesystem::exists(candidate, filesystemError);
-        if (filesystemError) {
+        struct stat info {};
+        if (::lstat(candidate.c_str(), &info) != 0) {
+            if (errno == ENOENT) {
+                continue;
+            }
             error = "could not inspect PAM service " + candidate.string() +
-                ": " + filesystemError.message();
+                ": " + std::strerror(errno);
             return false;
         }
-        if (!candidateExists) {
-            continue;
+        if (S_ISLNK(info.st_mode)) {
+            error = "PAM service is a symbolic link: " + candidate.string();
+            return false;
         }
-        if (!std::filesystem::is_regular_file(candidate, filesystemError)) {
-            error = filesystemError
-                ? "could not inspect PAM service " + candidate.string() +
-                    ": " + filesystemError.message()
-                : "PAM service is not a regular file: " + candidate.string();
+        if (!S_ISREG(info.st_mode)) {
+            error = "PAM service is not a regular file: " +
+                candidate.string();
             return false;
         }
         exists = true;
@@ -361,17 +408,8 @@ bool PamConfiguration::parseService(const std::string& service,
         return false;
     }
 
-    std::ifstream input(path);
-    if (!input.is_open()) {
-        error = "could not open PAM service: " + path.string();
-        return false;
-    }
-
-    const std::string content(
-        (std::istreambuf_iterator<char>(input)),
-        std::istreambuf_iterator<char>());
-    if (input.bad()) {
-        error = "could not read PAM service: " + path.string();
+    std::string content;
+    if (!readTrustedPamSource(path, content, error)) {
         return false;
     }
     ParsedService candidate;

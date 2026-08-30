@@ -98,9 +98,9 @@
 [module:IDENTITY_ACCESS][policy:passwdqc_retry_count]=passwdqc retry count
 [module:IDENTITY_ACCESS][policy:passwdqc_retry_count][description]=Sets the native passwdqc retry count used by pam_passwdqc.
 [module:IDENTITY_ACCESS][policy:password_history_depth]=Password history depth
-[module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets remember in the canonical pam_pwhistory configuration. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
+[module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets native pam_pwhistory remember semantics using the platform-selected configuration-file or module-argument strategy. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Enforce password history for root
-[module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Controls the enforce_for_root flag in the canonical pam_pwhistory configuration. The value yes enables history checks when root changes a password, while no removes the flag; a PAM argument that forces the flag on prevents applying no.
+[module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Controls native pam_pwhistory enforce_for_root semantics using the platform-selected configuration-file or module-argument strategy.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Failed PAM authentications before lockout
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Sets deny in the canonical pam_faillock configuration. All configured authentication services must use one complete pam_faillock topology; pam_tally and pam_tally2 are treated as conflicting providers.
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period]=Failed authentication counting period

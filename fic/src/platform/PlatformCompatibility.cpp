@@ -387,18 +387,37 @@ bool validatePamComposition(const PamPlatformConfig& pam,
             error = "PAM capability has an unsupported identity subject scope";
             return false;
         }
-        if (!validatePath(
-                capability.configPath, "PAM provider configuration path",
-                error)) {
-            return false;
-        }
-        if (!validatePamProviderConfigTopology(
-                capability, provider, error)) {
-            return false;
-        }
-        if (!configPaths.insert(capability.configPath).second) {
-            error = "PAM provider configuration path is shared by multiple "
-                "capabilities";
+        switch (capability.configurationMode) {
+        case PamCapabilityConfigurationMode::ProviderConfigFile:
+            if (!validatePath(
+                    capability.configPath, "PAM provider configuration path",
+                    error) ||
+                !validatePamProviderConfigTopology(
+                    capability, provider, error)) {
+                return false;
+            }
+            if (!configPaths.insert(capability.configPath).second) {
+                error = "PAM provider configuration path is shared by multiple "
+                    "capabilities";
+                return false;
+            }
+            break;
+        case PamCapabilityConfigurationMode::ModuleArguments:
+            if (capability.provider != PamProviderKind::PamPwhistory ||
+                capability.capability != PamCapability::PasswordHistory) {
+                error = "PAM module-argument configuration is only supported "
+                    "for pam_pwhistory";
+                return false;
+            }
+            if (!capability.configPath.empty() ||
+                capability.configTopology.has_value()) {
+                error = "PAM module-argument configuration must not declare "
+                    "an external provider configuration path or topology";
+                return false;
+            }
+            break;
+        default:
+            error = "PAM capability has an unsupported configuration mode";
             return false;
         }
         if (capability.topology == PamTopologyStrategyKind::AltTcbManaged) {

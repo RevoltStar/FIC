@@ -10,6 +10,7 @@
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
+#include "modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswdqcPolicies.h"
 #include "modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordQualityPolicies.h"
@@ -154,6 +155,15 @@ TestPamPlatformConfig makePasswordHistoryPlatform(
     platform.passwordServices = {"passwd"};
     platform.passwordHistoryConfigPath =
         root / "security-config/pwhistory.conf";
+    return platform;
+}
+
+TestPamPlatformConfig makeLegacyPasswordHistoryPlatform(
+    const std::filesystem::path& root) {
+    TestPamPlatformConfig platform = makePasswordHistoryPlatform(root);
+    platform.passwordHistoryConfigPath.clear();
+    platform.capabilities[2].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
     return platform;
 }
 
@@ -448,10 +458,11 @@ public:
 
     explicit FaultInjectedPamOptionPolicy(
         TestPamPlatformConfig platform,
-        VerificationHook verificationHook = {})
+        VerificationHook verificationHook = {},
+        fic::platform::PamPolicyFeature feature =
+            fic::platform::PamPolicyFeature::PasswordMinLength)
         : PamOptionPolicy(
-              std::move(platform),
-              fic::platform::PamPolicyFeature::PasswordMinLength),
+              std::move(platform), feature),
           verificationHook_(std::move(verificationHook)) {
         moduleName = "IDENTITY_ACCESS";
         submoduleName = "PAM";
@@ -1018,6 +1029,177 @@ int main() {
             root, passwordQualityPlatform,
             "password_min_other", "ocredit");
 
+        const fs::path legacyRoot = root / "legacy-pwhistory";
+        const auto legacyHistoryPlatform =
+            makeLegacyPasswordHistoryPlatform(legacyRoot);
+        writeFile(
+            legacyRoot / "pam.d/passwd",
+            "-password requisite pam_pwhistory.so use_authtok remember=3 "
+            "debug retry=2  # managed history\n"
+            "password required pam_unix.so use_authtok\n");
+        writeFile(
+            legacyRoot / "security/pam_pwhistory.so", "test", 0555);
+        const fs::path ignoredLegacyConfig =
+            legacyRoot / "security-config/pwhistory.conf";
+        writeFile(ignoredLegacyConfig, "remember = 99\n");
+        writeIdentityConfig(
+            root, "no", "yes",
+            "password_history_depth.status=ENABLE\n"
+            "password_history_depth.value=5\n");
+        PamPasswordHistoryDepthPolicy legacyDepth(legacyHistoryPlatform);
+        require(legacyDepth.apply(),
+                "legacy pwhistory depth mutation failed");
+        const std::string legacyDepthContent =
+            readFile(legacyRoot / "pam.d/passwd");
+        require(
+            legacyDepthContent.find("remember=5") != std::string::npos &&
+                legacyDepthContent.find("remember=3") == std::string::npos &&
+                legacyDepthContent.find("-password requisite") !=
+                    std::string::npos &&
+                legacyDepthContent.find("use_authtok") != std::string::npos &&
+                legacyDepthContent.find("debug retry=2") != std::string::npos,
+            "legacy pwhistory mutation did not preserve safe argv");
+        require(
+            legacyDepthContent.find("  # managed history") !=
+                std::string::npos,
+            "legacy pwhistory mutation did not preserve inline comment");
+        require(readFile(ignoredLegacyConfig) == "remember = 99\n",
+                "legacy pwhistory mutated non-authoritative config file");
+        const std::string legacyIdempotent = legacyDepthContent;
+        require(legacyDepth.apply() &&
+                    readFile(legacyRoot / "pam.d/passwd") == legacyIdempotent,
+                "legacy pwhistory depth apply is not idempotent");
+
+        writeIdentityConfig(root, "yes");
+        PamPasswordHistoryEnforceForRootPolicy legacyRootEnabled(
+            legacyHistoryPlatform);
+        require(legacyRootEnabled.apply() &&
+                    readFile(legacyRoot / "pam.d/passwd").find(
+                        "enforce_for_root") != std::string::npos,
+                "legacy pwhistory enforce_for_root enable failed");
+        writeIdentityConfig(root, "no");
+        PamPasswordHistoryEnforceForRootPolicy legacyRootDisabled(
+            legacyHistoryPlatform);
+        require(legacyRootDisabled.apply() &&
+                    readFile(legacyRoot / "pam.d/passwd").find(
+                        "enforce_for_root") == std::string::npos,
+                "legacy pwhistory enforce_for_root disable failed");
+
+        const std::string validLegacy =
+            readFile(legacyRoot / "pam.d/passwd");
+        writeFile(
+            legacyRoot / "pam.d/passwd",
+            "password requisite pam_pwhistory.so use_authtok remember=3 "
+            "remember=4\n");
+        writeIdentityConfig(
+            root, "no", "yes",
+            "password_history_depth.status=ENABLE\n"
+            "password_history_depth.value=5\n");
+        PamPasswordHistoryDepthPolicy duplicateRemember(legacyHistoryPlatform);
+        require(!duplicateRemember.apply() &&
+                    readFile(legacyRoot / "pam.d/passwd").find(
+                        "remember=3 remember=4") != std::string::npos,
+                "duplicate legacy remember was not rejected unchanged");
+        writeFile(
+            legacyRoot / "pam.d/passwd",
+            "password requisite pam_pwhistory.so use_authtok remember=3 "
+            "conf=/tmp/ignored\n");
+        PamPasswordHistoryDepthPolicy invalidLegacyArgument(
+            legacyHistoryPlatform);
+        require(!invalidLegacyArgument.apply(),
+                "unsupported legacy pwhistory argv was accepted");
+
+        writeFile(
+            legacyRoot / "pam.d/passwd",
+            "password requisite pam_pwhistory.so use_authtok remember=3\n"
+            "password required pam_pwhistory.so use_authtok remember=3\n");
+        const std::string duplicateProviderContent =
+            readFile(legacyRoot / "pam.d/passwd");
+        PamPasswordHistoryDepthPolicy duplicateLegacyProvider(
+            legacyHistoryPlatform);
+        require(!duplicateLegacyProvider.apply() &&
+                    readFile(legacyRoot / "pam.d/passwd") ==
+                        duplicateProviderContent,
+                "duplicate legacy pwhistory provider was not rejected unchanged");
+
+        writeFile(legacyRoot / "pam.d/passwd",
+                  "password [success=1 pam_pwhistory.so use_authtok\n");
+        const std::string malformedLegacy =
+            readFile(legacyRoot / "pam.d/passwd");
+        PamPasswordHistoryDepthPolicy malformedLegacyPolicy(
+            legacyHistoryPlatform);
+        require(!malformedLegacyPolicy.apply() &&
+                    readFile(legacyRoot / "pam.d/passwd") == malformedLegacy,
+                "malformed legacy PAM source was not rejected unchanged");
+
+        writeFile(legacyRoot / "pam.d/passwd",
+                  "password include common-password\n");
+        writeFile(legacyRoot / "pam.d/common-password",
+                  "password include passwd\n");
+        PamPasswordHistoryDepthPolicy legacyIncludeCycle(
+            legacyHistoryPlatform);
+        require(!legacyIncludeCycle.apply(),
+                "legacy pwhistory include cycle was accepted");
+        std::filesystem::remove(legacyRoot / "pam.d/common-password");
+        writeFile(legacyRoot / "pam.d/passwd", validLegacy);
+
+        writeIdentityConfig(root, "no", "yes", "", "pam_pwhistory");
+        writeFile(
+            legacyRoot / "pam.d/passwd",
+            "password requisite pam_pwhistory.so use_authtok remember=0\n");
+        RequiredPamEnforcementPolicy ineffectiveLegacyRequired(
+            legacyHistoryPlatform);
+        require(!ineffectiveLegacyRequired.apply(),
+                "required PAM trusted pwhistory.conf instead of legacy argv");
+        writeFile(legacyRoot / "pam.d/passwd", validLegacy);
+        RequiredPamEnforcementPolicy effectiveLegacyRequired(
+            legacyHistoryPlatform);
+        require(effectiveLegacyRequired.apply(),
+                "required PAM rejected effective legacy pwhistory argv");
+
+        FaultInjectedPamOptionPolicy legacyRollback(
+            legacyHistoryPlatform, {},
+            fic::platform::PamPolicyFeature::PasswordHistoryDepth);
+        require(!legacyRollback.applyValue("7") &&
+                    readFile(legacyRoot / "pam.d/passwd") == validLegacy,
+                "legacy pwhistory final-verification failure did not rollback");
+
+        const fs::path symlinkRoot = root / "pam-service-symlink";
+        const auto symlinkHistoryPlatform =
+            makePasswordHistoryPlatform(symlinkRoot);
+        writeFile(
+            symlinkRoot / "pam-target",
+            "password required pam_pwhistory.so conf=" +
+                symlinkHistoryPlatform.passwordHistoryConfigPath.string() +
+                "\n");
+        std::filesystem::create_directories(symlinkRoot / "pam.d");
+        std::filesystem::create_symlink(
+            symlinkRoot / "pam-target", symlinkRoot / "pam.d/passwd");
+        writeFile(symlinkRoot / "security/pam_pwhistory.so", "test", 0555);
+        writeFile(
+            symlinkHistoryPlatform.passwordHistoryConfigPath,
+            "remember = 5\n");
+        PamPasswordHistoryDepthPolicy symlinkedTopLevel(
+            symlinkHistoryPlatform);
+        require(!symlinkedTopLevel.apply() &&
+                    readFile(symlinkHistoryPlatform.passwordHistoryConfigPath) ==
+                        "remember = 5\n",
+                "symlinked PAM service mutated provider configuration");
+
+        std::filesystem::remove(symlinkRoot / "pam.d/passwd");
+        writeFile(symlinkRoot / "pam.d/passwd",
+                  "password include common-password\n");
+        std::filesystem::create_symlink(
+            symlinkRoot / "pam-target",
+            symlinkRoot / "pam.d/common-password");
+        PamPasswordHistoryDepthPolicy symlinkedInclude(
+            symlinkHistoryPlatform);
+        require(!symlinkedInclude.apply() &&
+                    readFile(symlinkHistoryPlatform.passwordHistoryConfigPath) ==
+                        "remember = 5\n",
+                "symlinked included PAM service mutated provider configuration");
+
+        writeIdentityConfig(root, "yes");
         const auto passwordHistoryPlatform =
             makePasswordHistoryPlatform(root);
         writeFile(

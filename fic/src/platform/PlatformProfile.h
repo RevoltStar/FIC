@@ -177,6 +177,11 @@ struct PamScopeConfig {
     std::vector<std::string> services;
 };
 
+enum class PamCapabilityConfigurationMode {
+    ProviderConfigFile,
+    ModuleArguments
+};
+
 struct PamCapabilityConfig {
     PamCapability capability = PamCapability::AuthenticationLockout;
     PamProviderKind provider = PamProviderKind::PamFaillock;
@@ -187,6 +192,8 @@ struct PamCapabilityConfig {
     std::optional<PamProviderConfigTopology> configTopology;
     PamIdentitySubjectScope subjectScope =
         PamIdentitySubjectScope::AllPamSubjects;
+    PamCapabilityConfigurationMode configurationMode =
+        PamCapabilityConfigurationMode::ProviderConfigFile;
 };
 
 struct PamPlatformConfig {

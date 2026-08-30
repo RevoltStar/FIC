@@ -7,6 +7,7 @@
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamProviderConfigFile.h"
+#include "modules/identity_access/pam/PamProviderModuleArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 
 #include <utility>
@@ -85,6 +86,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
     const auto& inspection = capabilityVerification.inspection;
+    const bool moduleArguments = capability->configurationMode ==
+        fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
     const bool overridesValid = binding->syntax ==
             fic::identity::pam::PamNativeOptionSyntax::Assignment
         ? fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
@@ -101,7 +104,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             logLevel::ERROR);
         return false;
     }
-    if (binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
+    if (!moduleArguments &&
+        binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
         !expectedFlagEnabled &&
         !fic::identity::pam::PamProviderConfigFile::verifyNoActiveDirectives(
             provider,
@@ -114,12 +118,37 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
 
+    fic::identity::pam::PamRule moduleArgumentRule;
+    if (moduleArguments &&
+        !fic::identity::pam::PamProviderModuleArguments::uniqueRule(
+            inspection, moduleArgumentRule, error)) {
+        this->log(
+            "PAM module-argument mutation preflight failed for " +
+                this->policyName + ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
     const auto hasExpectedState = [&](std::string& stateError) {
-        return fic::identity::pam::PamProviderConfigFile::hasExpectedState(
-            provider, *binding, capability->configPath,
-            nativeExpectedValue, expectedFlagEnabled, stateError);
+        if (!moduleArguments) {
+            return fic::identity::pam::PamProviderConfigFile::hasExpectedState(
+                provider, *binding, capability->configPath,
+                nativeExpectedValue, expectedFlagEnabled, stateError);
+        }
+        fic::identity::pam::PamConfiguration current(platformConfig_);
+        fic::identity::pam::PamCapabilityVerification currentVerification;
+        if (!fic::identity::pam::PamCapabilityVerifier::verify(
+                current, platformConfig_, *services, capability->capability,
+                capability->provider, currentVerification,
+                fic::identity::pam::PamCapabilityVerificationMode::Structural)) {
+            stateError = fic::identity::pam::formatPamCapabilityVerification(
+                currentVerification);
+            return false;
+        }
+        return fic::identity::pam::PamProviderModuleArguments::hasExpectedState(
+            currentVerification.inspection, *binding, nativeExpectedValue,
+            expectedFlagEnabled, stateError);
     };
-    const auto setExpectedState = [&]
+    const auto setExpectedConfigState = [&]
         (const fic::identity::pam::PamConfigFileTransaction::Writer& writer,
          std::string& stateError) {
         return fic::identity::pam::PamProviderConfigFile::setExpectedState(
@@ -132,7 +161,9 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
     const auto failAfterMutation = [&](const std::string& failure) {
         std::string diagnostic = failure;
         std::string rollbackError;
-        if (!fic::identity::pam::PamConfigFileTransaction::rollback(
+        if (snapshot.state !=
+                fic::identity::pam::PamConfigFileTransactionState::Uninitialized &&
+            !fic::identity::pam::PamConfigFileTransaction::rollback(
                 snapshot, rollbackError)) {
             diagnostic += "; CRITICAL: PAM policy rollback failed: " +
                 rollbackError + "; PAM configuration may be degraded";
@@ -141,20 +172,28 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     };
     if (!hasExpectedState(currentError)) {
+        const std::filesystem::path mutationPath = moduleArguments
+            ? moduleArgumentRule.source
+            : capability->configPath;
         if (!fic::identity::pam::PamConfigFileTransaction::capture(
-                capability->configPath, snapshot, error)) {
+                mutationPath, snapshot, error)) {
             this->log(
                 "Could not snapshot PAM option for " + this->policyName +
                     ": " + error,
                 logLevel::ERROR);
             return false;
         }
-        if (!fic::identity::pam::PamConfigFileTransaction::mutate(
-                snapshot,
-                [&](const auto& writer, std::string& mutationError) {
-                    return setExpectedState(writer, mutationError);
-                },
-                error)) {
+        const bool mutated = moduleArguments
+            ? fic::identity::pam::PamProviderModuleArguments::setExpectedState(
+                  capability->provider, moduleArgumentRule, *binding,
+                  nativeExpectedValue, expectedFlagEnabled, snapshot, error)
+            : fic::identity::pam::PamConfigFileTransaction::mutate(
+                  snapshot,
+                  [&](const auto& writer, std::string& mutationError) {
+                      return setExpectedConfigState(writer, mutationError);
+                  },
+                  error);
+        if (!mutated) {
             return failAfterMutation(
                 "Could not update PAM option for " + this->policyName +
                     ": " + error);
@@ -166,7 +205,8 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
             "PAM option postcondition failed for " + this->policyName +
                 ": " + error);
     }
-    if (binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
+    if (!moduleArguments &&
+        binding->syntax == fic::identity::pam::PamNativeOptionSyntax::Flag &&
         !expectedFlagEnabled &&
         !fic::identity::pam::PamProviderConfigFile::verifyNoActiveDirectives(
             provider,

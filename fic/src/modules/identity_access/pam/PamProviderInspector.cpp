@@ -438,7 +438,17 @@ bool PamProviderInspector::verifyConfigurationFiles(
     std::string& error) {
     for (const auto& path : inspection.configurationFiles) {
         struct stat info {};
-        if (::stat(path.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
+        if (::lstat(path.c_str(), &info) != 0) {
+            error = "PAM configuration source is not a regular file: " +
+                path.string();
+            return false;
+        }
+        if (S_ISLNK(info.st_mode)) {
+            error = "PAM configuration source is a symbolic link: " +
+                path.string();
+            return false;
+        }
+        if (!S_ISREG(info.st_mode)) {
             error = "PAM configuration source is not a regular file: " +
                 path.string();
             return false;

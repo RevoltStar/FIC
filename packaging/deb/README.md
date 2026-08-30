@@ -151,9 +151,13 @@ sudo pam-auth-update --enable fic-pwhistory
 
 The profiles contain only topology and fixed role arguments (`preauth`,
 `authfail`, `use_authtok`). Policy values remain in
-`/etc/security/faillock.conf` and `/etc/security/pwhistory.conf`. FIC policies
-do not install packages, invoke `pam-auth-update`, activate modules or rewrite
-PAM topology. After activation, `required_pam_enforcement` can be enabled to
+`/etc/security/faillock.conf`; history values use
+`/etc/security/pwhistory.conf` on modern Linux-PAM and the already activated
+`pam_pwhistory.so` rule arguments on Debian 12/Linux-PAM 1.5.2. FIC policies
+do not install packages, invoke `pam-auth-update`, or activate modules. The
+legacy argv strategy changes only managed arguments on the existing parsed
+rule; it does not create a second provider call. After activation,
+`required_pam_enforcement` can be enabled to
 check the system invariant independently: `PamConfiguration`,
 `PamControlFlowAnalyzer` and `PamCapabilityVerifier` analyze the resulting
 effective PAM graph instead of trusting profile selection state.
