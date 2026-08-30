@@ -935,6 +935,7 @@ build_fic_dick_package() {
     local package_name="fic-dick"
     local package_root
     local binary_depends
+    local package_depends
     local output_deb
 
     package_root="$(init_package_root "$package_name")"
@@ -948,7 +949,7 @@ build_fic_dick_package() {
     write_control_file \
         "$package_root" \
         "$package_name" \
-        "$binary_depends" \
+        "$package_depends" \
         "Free Integrity Control device collector binary"
 
     write_fic_preinst "$package_root"

@@ -92,6 +92,7 @@ def main() -> int:
     fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
 
     fic_package = function_body(deb_builder, "build_fic_package")
+    fic_dick_package = function_body(deb_builder, "build_fic_dick_package")
     fic_postinst = function_body(deb_builder, "write_system_integration_symlink_postinst")
     fic_prerm = function_body(deb_builder, "write_system_integration_symlink_prerm")
     generic_prerm = function_body(deb_builder, "write_symlink_prerm")
@@ -104,6 +105,10 @@ def main() -> int:
             "PAM profiles must be staged only in the Debian fic package")
     require('"libpam-runtime" "libpam-modules"' in fic_package,
             "Debian fic package lacks direct PAM dependencies")
+    require('package_depends="$(join_depends "$binary_depends" "udev")"' in fic_dick_package,
+            "Debian fic-dick package does not compose the udev runtime dependency")
+    require('"$package_name" \\\n        "$package_depends" \\' in fic_dick_package,
+            "Debian fic-dick control file does not use its composed runtime dependencies")
     require("DEBIAN/conffiles" not in deb_builder,
             "package-owned PAM declarations must not be conffiles")
     require("pam-auth-update --package" in fic_postinst,
