@@ -1,11 +1,13 @@
 #include "modules/identity_access/pam/PamConfiguration.h"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cctype>
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits.h>
 #include <sstream>
 #include <utility>
 
@@ -20,6 +22,9 @@ constexpr std::size_t kMaximumIncludeDepth = 32;
 constexpr std::size_t kMaximumCollectedRules = 4096;
 
 bool readTrustedPamSource(const std::filesystem::path& path,
+                          std::uintmax_t expectedDevice,
+                          std::uintmax_t expectedInode,
+                          bool identityRequired,
                           std::string& content,
                           std::string& error) {
     const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -33,6 +38,21 @@ bool readTrustedPamSource(const std::filesystem::path& path,
     struct stat info {};
     if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
         error = "PAM service is not a regular file: " + path.string();
+        ::close(fd);
+        return false;
+    }
+    if (identityRequired &&
+        (static_cast<std::uintmax_t>(info.st_dev) != expectedDevice ||
+         static_cast<std::uintmax_t>(info.st_ino) != expectedInode)) {
+        error = "trusted PAM alias target changed before read: " +
+            path.string();
+        ::close(fd);
+        return false;
+    }
+    if (identityRequired &&
+        (info.st_uid != ::geteuid() || (info.st_mode & 0022) != 0)) {
+        error = "trusted PAM alias target has unsafe ownership or mode: " +
+            path.string();
         ::close(fd);
         return false;
     }
@@ -326,11 +346,9 @@ bool PamConfiguration::parseRulesContent(
 
 bool PamConfiguration::resolveServicePath(
     const std::string& service,
-    bool& exists,
-    std::filesystem::path& path,
+    ResolvedServicePath& resolved,
     std::string& error) const {
-    exists = false;
-    path.clear();
+    resolved = ResolvedServicePath{};
     if (!validServiceName(service)) {
         error = "invalid PAM service name: " + service;
         return false;
@@ -347,16 +365,102 @@ bool PamConfiguration::resolveServicePath(
             return false;
         }
         if (S_ISLNK(info.st_mode)) {
-            error = "PAM service is a symbolic link: " + candidate.string();
-            return false;
+            const auto alias = std::find_if(
+                platformConfig_.trustedServiceAliases.begin(),
+                platformConfig_.trustedServiceAliases.end(),
+                [&candidate](const auto& allowed) {
+                    return allowed.aliasPath == candidate;
+                });
+            if (alias == platformConfig_.trustedServiceAliases.end()) {
+                error = "PAM service is a symbolic link: " + candidate.string();
+                return false;
+            }
+            if (info.st_uid != ::geteuid()) {
+                error = "trusted PAM service alias has an unsafe owner: " +
+                    candidate.string();
+                return false;
+            }
+            const int directoryFd = ::open(
+                candidate.parent_path().c_str(),
+                O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+            if (directoryFd < 0) {
+                error = "could not open trusted PAM alias directory " +
+                    candidate.parent_path().string() + ": " +
+                    std::strerror(errno);
+                return false;
+            }
+            std::array<char, PATH_MAX + 1> targetBuffer{};
+            const ssize_t targetLength = ::readlinkat(
+                directoryFd, candidate.filename().c_str(),
+                targetBuffer.data(), PATH_MAX);
+            if (targetLength <= 0 || targetLength >= PATH_MAX) {
+                error = "could not read trusted PAM service alias " +
+                    candidate.string() + ": " +
+                    (targetLength < 0 ? std::strerror(errno) :
+                                      "empty or overlong target");
+                ::close(directoryFd);
+                return false;
+            }
+            const std::filesystem::path targetName(
+                std::string(targetBuffer.data(),
+                            static_cast<std::size_t>(targetLength)));
+            if (targetName.is_absolute() || targetName.empty() ||
+                targetName != targetName.filename() ||
+                targetName == "." || targetName == "..") {
+                error = "trusted PAM service alias target escapes its "
+                    "configuration directory: " + candidate.string();
+                ::close(directoryFd);
+                return false;
+            }
+            const std::filesystem::path target =
+                (candidate.parent_path() / targetName).lexically_normal();
+            if (std::find(alias->allowedTargets.begin(),
+                          alias->allowedTargets.end(), target) ==
+                alias->allowedTargets.end()) {
+                error = "trusted PAM service alias has an unapproved target: " +
+                    candidate.string() + " -> " + targetName.string();
+                ::close(directoryFd);
+                return false;
+            }
+            const int targetFd = ::openat(
+                directoryFd, targetName.c_str(),
+                O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+            if (targetFd < 0) {
+                error = "could not open trusted PAM service alias target " +
+                    target.string() + ": " + std::strerror(errno);
+                ::close(directoryFd);
+                return false;
+            }
+            struct stat targetInfo {};
+            const bool targetSafe =
+                ::fstat(targetFd, &targetInfo) == 0 &&
+                S_ISREG(targetInfo.st_mode) &&
+                targetInfo.st_uid == ::geteuid() &&
+                (targetInfo.st_mode & 0022) == 0;
+            if (!targetSafe) {
+                error = "trusted PAM service alias target is not a safe "
+                    "regular file: " + target.string();
+                ::close(targetFd);
+                ::close(directoryFd);
+                return false;
+            }
+            resolved.exists = true;
+            resolved.path = target;
+            resolved.device = static_cast<std::uintmax_t>(targetInfo.st_dev);
+            resolved.inode = static_cast<std::uintmax_t>(targetInfo.st_ino);
+            resolved.identityRequired = true;
+            ::close(targetFd);
+            ::close(directoryFd);
+            error.clear();
+            return true;
         }
         if (!S_ISREG(info.st_mode)) {
             error = "PAM service is not a regular file: " +
                 candidate.string();
             return false;
         }
-        exists = true;
-        path = candidate;
+        resolved.exists = true;
+        resolved.path = candidate;
         error.clear();
         return true;
     }
@@ -365,10 +469,9 @@ bool PamConfiguration::resolveServicePath(
 }
 
 bool PamConfiguration::serviceExists(const std::string& service) const {
-    bool exists = false;
-    std::filesystem::path path;
+    ResolvedServicePath resolved;
     std::string error;
-    return resolveServicePath(service, exists, path, error) && exists;
+    return resolveServicePath(service, resolved, error) && resolved.exists;
 }
 
 bool PamConfiguration::existingServices(
@@ -377,12 +480,11 @@ bool PamConfiguration::existingServices(
     std::string& error) const {
     existing.clear();
     for (const auto& service : services) {
-        bool exists = false;
-        std::filesystem::path path;
-        if (!resolveServicePath(service, exists, path, error)) {
+        ResolvedServicePath resolved;
+        if (!resolveServicePath(service, resolved, error)) {
             return false;
         }
-        if (exists) {
+        if (resolved.exists) {
             existing.push_back(service);
         }
     }
@@ -398,23 +500,39 @@ bool PamConfiguration::parseService(const std::string& service,
         return true;
     }
 
-    std::filesystem::path path;
-    bool exists = false;
-    if (!resolveServicePath(service, exists, path, error)) {
+    ResolvedServicePath resolved;
+    if (!resolveServicePath(service, resolved, error)) {
         return false;
     }
-    if (!exists) {
+    if (!resolved.exists) {
         error = "PAM service was not found: " + service;
         return false;
     }
 
     std::string content;
-    if (!readTrustedPamSource(path, content, error)) {
+    if (!readTrustedPamSource(
+            resolved.path, resolved.device, resolved.inode,
+            resolved.identityRequired, content, error)) {
         return false;
     }
+    if (resolved.identityRequired) {
+        ResolvedServicePath confirmed;
+        if (!resolveServicePath(service, confirmed, error)) {
+            return false;
+        }
+        if (!confirmed.exists || !confirmed.identityRequired ||
+            confirmed.path != resolved.path ||
+            confirmed.device != resolved.device ||
+            confirmed.inode != resolved.inode) {
+            error = "trusted PAM service alias changed during read: " +
+                service;
+            return false;
+        }
+    }
     ParsedService candidate;
-    candidate.path = path;
-    if (!parseRulesContent(path, content, candidate.rules, error)) {
+    candidate.path = resolved.path;
+    if (!parseRulesContent(
+            resolved.path, content, candidate.rules, error)) {
         return false;
     }
 

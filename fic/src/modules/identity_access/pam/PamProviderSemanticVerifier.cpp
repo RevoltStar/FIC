@@ -410,11 +410,11 @@ bool pwhistoryArgumentsCapability(
             failure = PamProviderSemanticFailure::Broken;
             return false;
         }
-        if (requireSecurityEnforcement && state.remember == 0) {
+        if (requireSecurityEnforcement && state.effectiveRemember() == 0) {
             failure = PamProviderSemanticFailure::Ineffective;
             error = rule.source.string() + ":" +
                 std::to_string(rule.line) +
-                ": pam_pwhistory remember is absent or disabled";
+                ": pam_pwhistory effective remember is disabled";
             return false;
         }
     }

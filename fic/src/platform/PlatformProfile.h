@@ -83,6 +83,11 @@ struct PamTrustedAuthenticationBypassRule {
         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller;
 };
 
+struct PamTrustedServiceAlias {
+    std::filesystem::path aliasPath;
+    std::vector<std::filesystem::path> allowedTargets;
+};
+
 enum class PamCapability {
     AuthenticationLockout,
     PasswordQuality,
@@ -203,6 +208,7 @@ struct PamPlatformConfig {
     std::vector<PamCapabilityConfig> capabilities;
     std::vector<PamTrustedAuthenticationBypassRule>
         trustedAuthenticationBypasses;
+    std::vector<PamTrustedServiceAlias> trustedServiceAliases;
 };
 
 enum class LocalShadowKind {

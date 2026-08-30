@@ -4,6 +4,7 @@
 #include "platform/PlatformProfile.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <set>
@@ -84,6 +85,14 @@ public:
                                   std::string& error);
 
 private:
+    struct ResolvedServicePath {
+        bool exists = false;
+        std::filesystem::path path;
+        std::uintmax_t device = 0;
+        std::uintmax_t inode = 0;
+        bool identityRequired = false;
+    };
+
     struct ParsedService {
         std::filesystem::path path;
         std::vector<PamRule> rules;
@@ -93,8 +102,7 @@ private:
     std::map<std::string, ParsedService> cache_;
 
     bool resolveServicePath(const std::string& service,
-                            bool& exists,
-                            std::filesystem::path& path,
+                            ResolvedServicePath& resolved,
                             std::string& error) const;
     bool parseService(const std::string& service,
                       const ParsedService*& parsed,

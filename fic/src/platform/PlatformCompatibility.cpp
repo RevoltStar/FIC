@@ -224,6 +224,50 @@ bool validatePamTrustedAuthenticationBypasses(
     return true;
 }
 
+bool validatePamTrustedServiceAliases(const PamPlatformConfig& pam,
+                                      std::string& error) {
+    std::set<std::filesystem::path> aliases;
+    for (const auto& alias : pam.trustedServiceAliases) {
+        if (!validAbsolutePath(alias.aliasPath) ||
+            std::find(pam.configDirectories.begin(),
+                      pam.configDirectories.end(),
+                      alias.aliasPath.parent_path()) ==
+                pam.configDirectories.end()) {
+            error = "trusted PAM service alias must be a normalized path "
+                "inside a declared PAM configuration directory: " +
+                alias.aliasPath.string();
+            return false;
+        }
+        if (!aliases.insert(alias.aliasPath).second) {
+            error = "trusted PAM service alias is duplicated: " +
+                alias.aliasPath.string();
+            return false;
+        }
+        if (alias.allowedTargets.empty()) {
+            error = "trusted PAM service alias target allowlist is empty: " +
+                alias.aliasPath.string();
+            return false;
+        }
+        std::set<std::filesystem::path> targets;
+        for (const auto& target : alias.allowedTargets) {
+            if (!validAbsolutePath(target) ||
+                target.parent_path() != alias.aliasPath.parent_path() ||
+                target == alias.aliasPath) {
+                error = "trusted PAM service alias target must be a distinct "
+                    "normalized path in the alias directory: " +
+                    target.string();
+                return false;
+            }
+            if (!targets.insert(target).second) {
+                error = "trusted PAM service alias target is duplicated: " +
+                    target.string();
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool validatePamProviderConfigTopology(
     const PamCapabilityConfig& capability,
     const fic::identity::pam::PamProviderDescriptor& provider,
@@ -531,6 +575,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
         !validatePaths(profile.pam.moduleDirectories,
                        "PAM module directory", error) ||
         !validatePamComposition(profile.pam, error) ||
+        !validatePamTrustedServiceAliases(profile.pam, error) ||
         !validatePamTrustedAuthenticationBypasses(profile.pam, error) ||
         !validatePath(profile.passwordAging.loginDefsPath,
                       "login.defs path", error) ||

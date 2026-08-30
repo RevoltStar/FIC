@@ -3,62 +3,67 @@
 ## Current base
 
 - Ветка: `main`.
-- HEAD до текущих незакоммиченных изменений: `9b6707a`.
+- HEAD до текущих незакоммиченных изменений: `1bf2477`.
 
 ## Current task
 
-- Исправлены fail-open symlink PAM service sources и legacy
-  `pam_pwhistory` semantics Debian 12/Linux-PAM 1.5.2.
+- Исправлены native default semantics legacy `pam_pwhistory` и безопасная
+  поддержка штатных PAM service aliases ALT p11.
 
 ## Accepted architecture / invariants
 
-- `PamCapabilityConfigurationMode` выбирает `ProviderConfigFile` либо
-  `ModuleArguments`; policy layer не ветвится по distro/version.
-- Debian 12 PasswordHistory выбирает `ModuleArguments`; Debian 13 и Ubuntu
-  сохраняют `pwhistory.conf`; ALT p11 не объявляет capability.
-- `PamProviderModuleArguments` является generic strategy boundary, а
-  `PamPwhistoryArguments` реализует case-insensitive legacy native grammar.
-- Legacy mutation изменяет только однозначный parsed `pam_pwhistory.so` rule,
-  сохраняет `use_authtok` и разрешённые argv, использует atomic snapshot,
-  reread/reparse/effective-graph postcondition и rollback.
-- PAM service sources открываются через `O_NOFOLLOW|O_CLOEXEC`, читаются из
-  проверенного regular-file fd; top-level и included symlink fail closed.
+- `PamPwhistoryArgumentState` хранит `remember=` как optional override;
+  effective native default legacy Linux-PAM равен 10, explicit 0 остаётся
+  ineffective.
+- `PamTrustedServiceAlias` задаёт exact alias path и exact allowlist targets.
+  Обычные top-level/included symlink остаются запрещены.
+- ALT p11 разрешает только selectors `system-auth` и `system-policy` с
+  package-owned targets, подтверждёнными на `pam-config-1.10.0-alt0.p11.2`.
+- Alias target ограничен relative basename в том же PAM directory, читается
+  через `openat(O_NOFOLLOW)`, проверяется по owner/mode/type/device/inode и
+  повторно разрешается после чтения. `PamRule::source` указывает на regular
+  authoritative target.
 
 ## Completed
 
-- Legacy `remember=N` и `enforce_for_root` mutation/verification реализованы
-  без использования или создания `/etc/security/pwhistory.conf` на Debian 12.
-- Required PAM в legacy mode проверяет фактические argv и считает
-  `remember=0` ineffective.
-- Добавлены production-path regressions: initial/change/idempotent depth,
-  enable/disable flag, argv preservation, invalid/duplicate argv/provider,
-  malformed source, include cycle, symlink sources, ignored config file и
-  postcondition rollback.
-- Обновлены profile validation, localization и PAM/package architecture docs.
+- Разделены absent `remember=`, explicit 0 и explicit N; capability и explicit
+  policy postconditions используют effective semantics.
+- Добавлены platform metadata validation и production regressions для trusted,
+  undeclared, escaping, unapproved, chained, writable, non-regular и cyclic
+  aliases, malformed/include-cycle targets и сохранения ALT selectors при
+  enable/disable roundtrip.
+- Обновлена PAM architecture documentation.
 
 ## Changed areas
 
 - `fic/src/modules/identity_access/pam/`.
-- PAM platform metadata и Debian 12 profile.
-- PAM hierarchy/profile tests, localization и PAM documentation.
+- PAM platform metadata и ALT p11 profile.
+- PAM hierarchy/configuration/topology/profile tests.
+- `fic/README.md`, `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- Target `fic` собран для Debian 12/13, Ubuntu 24.04/26.04 и ALT p11.
-- На каждом из пяти profiles прошли 8/8 targeted PAM/profile tests.
-- Полный Debian 12 CTest: 49 passed, 4 skipped, 2 unrelated failed из 55.
-  `path_layout_static_checks` видит существующие ignored obsolete directories;
-  `ipc_protocol_validation_tests` падает на существующем IPC assertion. PAM
-  tests в полном прогоне прошли.
-- Configure использовал pkg-config stub для отсутствующего `libsystemd-dev`;
-  daemon и все test executables собраны, `fic-session-agent` не собирался.
+- На Debian 12/13, Ubuntu 24.04/26.04 и ALT p11 прошли 8/8 targeted
+  PAM/profile tests; после уточнения `system-policy` отдельно повторены ALT
+  affected tests.
+- Package E2E без изменения harness: Debian 12 — 33 PASS/0 FAIL/2 SKIP;
+  Debian 13, Ubuntu 24.04 и Ubuntu 26.04 — по 32 PASS/0 FAIL/3 SKIP; финальный
+  ALT p11 corrective run — 21 PASS/0 FAIL/14 platform-expected SKIP.
+- Full CTest: 49 PASS, 4 environment SKIP, 2 unrelated existing FAIL из 55:
+  `path_layout_static_checks`, `ipc_protocol_validation_tests`. Все PAM tests
+  прошли.
 - `git diff --check` пройден.
+- Полная локальная all-target сборка остановилась на отсутствующем development
+  header `systemd/sd-login.h`; daemon и все пять package artifacts собирались
+  в profile/E2E pipelines.
 
 ## Remaining
 
-- Live PAM E2E (`live_pwhistory`, topology activation/roundtrip и service
-  symlink fixture) не запускались: host PAM не изменялся.
-- Полная сборка всех product executables не выполнена из-за отсутствующего
-  `libsystemd-dev`.
-- Два unrelated full-CTest failure требуют отдельной задачи, если они ещё
-  актуальны в чистом checkout.
+- Exact allowlists намеренно fail closed: появление нового штатного target в
+  будущей версии ALT `pam-config` потребует обновления profile metadata.
+- Между финальной проверкой alias и дальнейшим использованием graph остаётся
+  неизбежная гонка с внешним privileged writer; target read защищён fd,
+  identity comparison и повторным alias resolution.
+- E2E reports сохранены вне worktree:
+  `/tmp/fic-pam-e2e-results-20260830-184408` и
+  `/tmp/fic-pam-e2e-results-20260830-205336`.

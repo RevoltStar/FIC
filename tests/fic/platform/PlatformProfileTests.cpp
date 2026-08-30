@@ -257,6 +257,30 @@ void testSelectedProfile() {
             "PAM configuration directories are missing");
     require(!profile.pam.moduleDirectories.empty(),
             "PAM module directories are missing");
+    if (profile.id == "alt-p11") {
+        require(profile.pam.trustedServiceAliases.size() == 2 &&
+                    profile.pam.trustedServiceAliases.front().aliasPath ==
+                        "/etc/pam.d/system-auth" &&
+                    profile.pam.trustedServiceAliases.front().allowedTargets ==
+                        std::vector<std::filesystem::path>{
+                            "/etc/pam.d/system-auth-local",
+                            "/etc/pam.d/system-auth-ldap",
+                            "/etc/pam.d/system-auth-krb5",
+                            "/etc/pam.d/system-auth-krb5_ccreds",
+                            "/etc/pam.d/system-auth-winbind",
+                            "/etc/pam.d/system-auth-multi",
+                            "/etc/pam.d/system-auth-pkcs11"} &&
+                    profile.pam.trustedServiceAliases[1].aliasPath ==
+                        "/etc/pam.d/system-policy" &&
+                    profile.pam.trustedServiceAliases[1].allowedTargets ==
+                        std::vector<std::filesystem::path>{
+                            "/etc/pam.d/system-policy-local",
+                            "/etc/pam.d/system-policy-remote"},
+                "ALT trusted native system-auth alias contract is incorrect");
+    } else {
+        require(profile.pam.trustedServiceAliases.empty(),
+                "Debian-family profile unexpectedly permits PAM aliases");
+    }
     const auto& authenticationServices = pamScope(
         profile.pam,
         fic::platform::PamScope::EffectiveAuthenticationStack).services;
@@ -659,6 +683,31 @@ void testInvalidProfileIsRejected() {
     profile.pam.configDirectories.front() = "etc/pam.d";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM configuration directory must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.trustedServiceAliases = {
+        {profile.pam.configDirectories.front() / "system-auth", {}}
+    };
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an empty trusted PAM alias allowlist must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.trustedServiceAliases = {
+        {profile.pam.configDirectories.front() / "system-auth",
+         {"/tmp/system-auth-local"}}
+    };
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a trusted PAM alias target outside its directory must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.pam.trustedServiceAliases = {
+        {profile.pam.configDirectories.front() / "system-auth",
+         {profile.pam.configDirectories.front() / "system-auth-local"}},
+        {profile.pam.configDirectories.front() / "system-auth",
+         {profile.pam.configDirectories.front() / "system-auth-local"}}
+    };
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a duplicate trusted PAM alias must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     auto& authenticationServices = pamScope(

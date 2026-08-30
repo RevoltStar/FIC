@@ -182,12 +182,14 @@ bool PamPwhistoryArguments::evaluate(
             enforceSeen = true;
             state.enforceForRoot = true;
         } else if (asciiPrefix(argument, "remember=")) {
+            unsigned remember = 0;
             if (rememberSeen ||
-                !parseUnsigned(argument.substr(9), state.remember)) {
+                !parseUnsigned(argument.substr(9), remember)) {
                 error = "invalid or duplicate pam_pwhistory remember argument";
                 return false;
             }
             rememberSeen = true;
+            state.rememberOverride = remember;
         } else if (asciiEqual(argument, "debug")) {
             if (debugSeen) {
                 error = "duplicate pam_pwhistory argument debug";
@@ -267,7 +269,7 @@ bool PamPwhistoryArguments::hasExpectedState(
         if (binding.option == "remember") {
             unsigned expected = 0;
             if (!parseUnsigned(expectedValue, expected) ||
-                state.remember != expected) {
+                state.effectiveRemember() != expected) {
                 error = "effective pam_pwhistory remember does not match requested value";
                 return false;
             }

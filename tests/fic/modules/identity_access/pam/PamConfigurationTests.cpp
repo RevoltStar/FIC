@@ -4,6 +4,7 @@
 #include "modules/identity_access/pam/PamOptionValueCodec.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamProviderInspector.h"
+#include "modules/identity_access/pam/PamPwhistoryArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 #include "modules/identity_access/pam/PamRequiredProviders.h"
 
@@ -2065,6 +2066,304 @@ void testPamOptionValueCodec() {
         "negative logical minimum must be rejected");
 }
 
+void testTrustedPamServiceAliasSecurityContract() {
+    const auto collect = [](
+                             const fic::platform::PamPlatformConfig& platform,
+                             const std::string& service,
+                             std::vector<fic::identity::pam::PamRule>& rules,
+                             std::set<std::filesystem::path>& sources,
+                             std::string& error) {
+        fic::identity::pam::PamConfiguration configuration(platform);
+        return configuration.collectRules(
+            service, fic::identity::pam::PamManagementGroup::Auth,
+            rules, error, &sources);
+    };
+    const auto platformFor = [](const TempDirectory& temp, bool allow) {
+        auto platform = makePlatform(temp);
+        platform.authenticationServices = {"system-auth"};
+        if (allow) {
+            platform.trustedServiceAliases = {
+                {temp.path() / "pam.d/system-auth",
+                 {temp.path() / "pam.d/system-auth-local"}}
+            };
+        }
+        return platform;
+    };
+
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "pam.d/system-auth-local",
+                  "auth required pam_permit.so\n");
+        std::filesystem::create_symlink(
+            "system-auth-local", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(collect(platform, "system-auth", rules, sources, error), error);
+        require(rules.size() == 1 &&
+                    rules.front().source ==
+                        temp.path() / "pam.d/system-auth-local" &&
+                    sources.count(temp.path() / "pam.d/system-auth-local") == 1,
+                "trusted alias did not expose its authoritative regular source");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, false);
+        writeFile(temp.path() / "pam.d/system-auth-local",
+                  "auth required pam_permit.so\n");
+        std::filesystem::create_symlink(
+            "system-auth-local", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error) &&
+                    error.find("symbolic link") != std::string::npos,
+                "undeclared PAM service alias was accepted");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "evil", "auth required pam_permit.so\n");
+        std::filesystem::create_directories(temp.path() / "pam.d");
+        std::filesystem::create_symlink(
+            "../evil", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error) &&
+                    error.find("escapes") != std::string::npos,
+                "trusted alias ../ escape was accepted");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "evil", "auth required pam_permit.so\n");
+        std::filesystem::create_directories(temp.path() / "pam.d");
+        std::filesystem::create_symlink(
+            temp.path() / "evil", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error) &&
+                    error.find("escapes") != std::string::npos,
+                "trusted alias absolute directory escape was accepted");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "pam.d/system-auth-vendor",
+                  "auth required pam_permit.so\n");
+        std::filesystem::create_symlink(
+            "system-auth-vendor", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error) &&
+                    error.find("unapproved target") != std::string::npos,
+                "same-directory target outside exact allowlist was accepted");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "pam.d/real",
+                  "auth required pam_permit.so\n");
+        std::filesystem::create_symlink(
+            "real", temp.path() / "pam.d/system-auth-local");
+        std::filesystem::create_symlink(
+            "system-auth-local", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error),
+                "trusted alias symlink chain was accepted");
+    }
+    for (const mode_t mode : {0664, 0646}) {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "pam.d/system-auth-local",
+                  "auth required pam_permit.so\n", mode);
+        std::filesystem::create_symlink(
+            "system-auth-local", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error),
+                "writable trusted alias target was accepted");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        std::filesystem::create_directories(
+            temp.path() / "pam.d/system-auth-local");
+        std::filesystem::create_symlink(
+            "system-auth-local", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error),
+                "non-regular trusted alias target was accepted");
+    }
+    {
+        TempDirectory temp;
+        auto platform = platformFor(temp, true);
+        platform.trustedServiceAliases.front().allowedTargets = {
+            temp.path() / "pam.d/system-auth"};
+        std::filesystem::create_directories(temp.path() / "pam.d");
+        std::filesystem::create_symlink(
+            "system-auth", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error),
+                "trusted alias cycle was accepted");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "pam.d/system-auth-local",
+                  "auth include system-auth\n");
+        std::filesystem::create_symlink(
+            "system-auth-local", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error) &&
+                    error.find("cycle") != std::string::npos,
+                "include cycle through trusted alias was accepted");
+    }
+    {
+        TempDirectory temp;
+        const auto platform = platformFor(temp, true);
+        writeFile(temp.path() / "pam.d/system-auth-local", "auth [ broken\n");
+        std::filesystem::create_symlink(
+            "system-auth-local", temp.path() / "pam.d/system-auth");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-auth", rules, sources, error),
+                "malformed trusted alias target was accepted");
+    }
+    {
+        TempDirectory temp;
+        auto platform = platformFor(temp, true);
+        platform.authenticationServices = {"passwd"};
+        writeFile(temp.path() / "evil", "auth required pam_permit.so\n");
+        std::filesystem::create_directories(temp.path() / "pam.d");
+        std::filesystem::create_symlink(
+            temp.path() / "evil", temp.path() / "pam.d/passwd");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "passwd", rules, sources, error) &&
+                    error.find("symbolic link") != std::string::npos,
+                "arbitrary top-level symlink was accepted beside trusted alias");
+
+        std::filesystem::remove(temp.path() / "pam.d/passwd");
+        writeFile(temp.path() / "pam.d/passwd", "auth include included\n");
+        std::filesystem::create_symlink(
+            temp.path() / "evil", temp.path() / "pam.d/included");
+        rules.clear();
+        sources.clear();
+        require(!collect(platform, "passwd", rules, sources, error) &&
+                    error.find("symbolic link") != std::string::npos,
+                "arbitrary included symlink was accepted beside trusted alias");
+    }
+}
+
+void testLegacyPwhistoryNativeRememberSemantics() {
+    using fic::identity::pam::PamPwhistoryArgumentState;
+    using fic::identity::pam::PamPwhistoryArguments;
+
+    const auto evaluate = [](const std::vector<std::string>& arguments,
+                             PamPwhistoryArgumentState& state,
+                             std::string& error) {
+        fic::identity::pam::PamRule rule;
+        rule.source = "/etc/pam.d/passwd";
+        rule.line = 1;
+        rule.group = fic::identity::pam::PamManagementGroup::Password;
+        rule.control = "required";
+        rule.module = "pam_pwhistory.so";
+        rule.arguments = arguments;
+        return PamPwhistoryArguments::evaluate(rule, state, error);
+    };
+
+    PamPwhistoryArgumentState state;
+    std::string error;
+    require(evaluate({"use_authtok"}, state, error) &&
+                !state.rememberOverride.has_value() &&
+                state.effectiveRemember() == 10,
+            "absent legacy remember did not use native default");
+    require(evaluate({"use_authtok", "remember=10"}, state, error) &&
+                state.rememberOverride == 10 &&
+                state.effectiveRemember() == 10,
+            "explicit legacy remember=10 was not preserved");
+    require(evaluate({"use_authtok", "remember=3"}, state, error) &&
+                state.effectiveRemember() == 3,
+            "explicit legacy remember=3 was not preserved");
+    require(evaluate({"use_authtok", "remember=0"}, state, error) &&
+                state.effectiveRemember() == 0,
+            "explicit legacy remember=0 was not preserved");
+    for (const auto& invalid : std::vector<std::vector<std::string>>{
+             {"use_authtok", "remember="},
+             {"use_authtok", "remember=abc"},
+             {"use_authtok", "remember=-1"},
+             {"use_authtok", "remember=3", "remember=5"},
+             {"use_authtok", "remember"},
+             {"remember=3"}}) {
+        require(!evaluate(invalid, state, error),
+                "invalid legacy pwhistory arguments were accepted");
+    }
+    require(evaluate(
+                {"use_authtok", "enforce_for_root"}, state, error) &&
+                state.enforceForRoot && state.effectiveRemember() == 10,
+            "legacy enforce_for_root semantics regressed");
+
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.passwordServices = {"passwd"};
+    platform.capabilities[2].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
+    platform.capabilities[2].configPath = "/etc/security/pwhistory.conf";
+    writeFile(temp.path() / "security/pam_pwhistory.so", "test", 0555);
+    writeFile(temp.path() / "pam.d/passwd",
+              "password required pam_pwhistory.so use_authtok\n"
+              "password required pam_unix.so use_authtok\n");
+    auto verification = verifyCapability(
+        platform, fic::identity::pam::PamCapability::PasswordHistory,
+        fic::identity::pam::PamProviderKind::PamPwhistory,
+        platform.passwordServices);
+    require(verification.state ==
+                fic::identity::pam::PamEnforcementState::Effective,
+            "native default remember=10 was not security-effective: " +
+                verification.detail);
+
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamProviderInspection inspection;
+    require(fic::identity::pam::PamProviderInspector::inspect(
+                configuration, platform.passwordServices,
+                fic::identity::pam::PamCapability::PasswordHistory,
+                fic::identity::pam::PamProviderKind::PamPwhistory,
+                inspection, error), error);
+    fic::identity::pam::PamProviderPolicyBinding binding;
+    binding.option = "remember";
+    binding.syntax = fic::identity::pam::PamNativeOptionSyntax::Assignment;
+    require(!PamPwhistoryArguments::hasExpectedState(
+                inspection, binding, "3", false, error),
+            "native default remember=10 satisfied explicit policy depth 3");
+
+    writeFile(temp.path() / "pam.d/passwd",
+              "password required pam_pwhistory.so use_authtok remember=0\n"
+              "password required pam_unix.so use_authtok\n");
+    verification = verifyCapability(
+        platform, fic::identity::pam::PamCapability::PasswordHistory,
+        fic::identity::pam::PamProviderKind::PamPwhistory,
+        platform.passwordServices);
+    require(verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective,
+            "explicit legacy remember=0 was considered effective");
+}
+
 void testPasswordHistoryAlternativeIsDetected() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -2326,6 +2625,8 @@ int main() {
         testFailureAccountingBypass();
         testRequiredProviderListParsing();
         testPamOptionValueCodec();
+        testTrustedPamServiceAliasSecurityContract();
+        testLegacyPwhistoryNativeRememberSemantics();
         testPasswordHistoryAlternativeIsDetected();
         testPasswdqcConfigArgumentAndInlineOverride();
     } catch (const std::exception& error) {

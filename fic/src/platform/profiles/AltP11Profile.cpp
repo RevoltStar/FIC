@@ -88,6 +88,19 @@ PlatformProfile makeBuildPlatformProfile() {
         {"su", "pam_rootok.so",
          PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller}
     };
+    profile.pam.trustedServiceAliases = {
+        {"/etc/pam.d/system-auth",
+         {"/etc/pam.d/system-auth-local",
+          "/etc/pam.d/system-auth-ldap",
+          "/etc/pam.d/system-auth-krb5",
+          "/etc/pam.d/system-auth-krb5_ccreds",
+          "/etc/pam.d/system-auth-winbind",
+          "/etc/pam.d/system-auth-multi",
+          "/etc/pam.d/system-auth-pkcs11"}},
+        {"/etc/pam.d/system-policy",
+         {"/etc/pam.d/system-policy-local",
+          "/etc/pam.d/system-policy-remote"}}
+    };
     profile.pam.capabilities = {
         {PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock,
          PamScope::EffectiveAuthenticationStack,

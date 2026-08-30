@@ -46,11 +46,15 @@ public:
         fs::create_directories(root / "pam.d");
         fs::create_directories(root / "security-modules");
         fs::create_directories(root / "run");
-        write(root / "pam.d/system-auth",
+        write(root / "pam.d/system-auth-local",
               "auth include system-auth-local-only\n"
               "account include system-auth-local-only\n"
               "password include system-auth-local-only\n"
               "session include system-auth-local-only\n");
+        fs::create_symlink("system-auth-local", root / "pam.d/system-auth");
+        write(root / "pam.d/system-policy-local", "#%PAM-1.0\n");
+        fs::create_symlink(
+            "system-policy-local", root / "pam.d/system-policy");
         write(root / "pam.d/system-auth-local-only", kCanonical);
         write(root / "security-modules/pam_faillock.so", "fixture\n", 0555);
     }
@@ -103,6 +107,12 @@ public:
              fic::platform::PamScope::LocalPasswordChange,
              root / "passwdqc.conf",
              fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
+        };
+        result.trustedServiceAliases = {
+            {root / "pam.d/system-auth",
+             {root / "pam.d/system-auth-local"}},
+            {root / "pam.d/system-policy",
+             {root / "pam.d/system-policy-local"}}
         };
         return result;
     }
@@ -599,6 +609,26 @@ void testGeneratedRulesContainNoPolicyValues() {
             "generated topology has an unexpected faillock call count");
 }
 
+void testRoundTripPreservesNativeServiceAlias() {
+    TemporaryTree tree;
+    AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
+    std::string error;
+    require(manager.enable(error), error);
+    require(fs::is_symlink(tree.root / "pam.d/system-auth") &&
+                fs::read_symlink(tree.root / "pam.d/system-auth") ==
+                    "system-auth-local",
+            "enable replaced the native system-auth alias");
+    require(manager.disable(error), error);
+    require(fs::is_symlink(tree.root / "pam.d/system-auth") &&
+                fs::read_symlink(tree.root / "pam.d/system-auth") ==
+                    "system-auth-local",
+            "disable replaced the native system-auth alias");
+    require(fs::is_symlink(tree.root / "pam.d/system-policy") &&
+                fs::read_symlink(tree.root / "pam.d/system-policy") ==
+                    "system-policy-local",
+            "roundtrip replaced the native system-policy alias");
+}
+
 } // namespace
 
 int main() {
@@ -619,6 +649,7 @@ int main() {
         testRollbackFailureIsCritical();
         testDisablePreservesExternalLines();
         testGeneratedRulesContainNoPolicyValues();
+        testRoundTripPreservesNativeServiceAlias();
         return 0;
     } catch (const std::exception& exception) {
         std::cerr << exception.what() << std::endl;

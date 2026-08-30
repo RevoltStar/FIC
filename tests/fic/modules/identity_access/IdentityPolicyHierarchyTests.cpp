@@ -1042,6 +1042,25 @@ int main() {
         const fs::path ignoredLegacyConfig =
             legacyRoot / "security-config/pwhistory.conf";
         writeFile(ignoredLegacyConfig, "remember = 99\n");
+        writeFile(
+            legacyRoot / "pam.d/passwd",
+            "password requisite pam_pwhistory.so use_authtok debug retry=2\n"
+            "password required pam_unix.so use_authtok\n");
+        writeIdentityConfig(
+            root, "no", "yes",
+            "password_history_depth.status=ENABLE\n"
+            "password_history_depth.value=3\n");
+        PamPasswordHistoryDepthPolicy legacyAbsentDepth(
+            legacyHistoryPlatform);
+        require(legacyAbsentDepth.apply() &&
+                    readFile(legacyRoot / "pam.d/passwd").find(
+                        "remember=3") != std::string::npos,
+                "legacy pwhistory absent remember was not mutated to 3");
+        writeFile(
+            legacyRoot / "pam.d/passwd",
+            "-password requisite pam_pwhistory.so use_authtok remember=3 "
+            "debug retry=2  # managed history\n"
+            "password required pam_unix.so use_authtok\n");
         writeIdentityConfig(
             root, "no", "yes",
             "password_history_depth.status=ENABLE\n"

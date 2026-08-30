@@ -10,9 +10,16 @@
 
 namespace fic::identity::pam {
 
+inline constexpr unsigned kLegacyPamPwhistoryDefaultRemember = 10;
+
 struct PamPwhistoryArgumentState {
-    unsigned remember = 0;
+    std::optional<unsigned> rememberOverride;
     bool enforceForRoot = false;
+
+    unsigned effectiveRemember() const {
+        return rememberOverride.value_or(
+            kLegacyPamPwhistoryDefaultRemember);
+    }
 };
 
 class PamPwhistoryArguments {

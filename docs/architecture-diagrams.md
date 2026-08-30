@@ -631,7 +631,12 @@ explicit PAM config argument; platform composition может заменить �
 совпадать с platform path; тот же contract использует
 `required_pam_enforcement`. В modern target versions optional `conf=`
 поддерживает `pam_pwhistory`; Debian 12 с Linux-PAM 1.5.2 выбирает argv-backed
-semantics без external config contract. `pam_faillock` сохраняет optional
+semantics без external config contract. В этом legacy backend отсутствие
+`remember=` означает native default `remember=10`, тогда как явный
+`remember=0` отключает effective history. Typed state хранит assignment как
+optional override: capability verification использует effective default, а
+postcondition конкретной depth policy сравнивает requested effective value.
+`pam_faillock` сохраняет optional
 `conf=`. `pam_pwquality` из
 libpwquality 1.4.5 читает native default topology и не поддерживает `conf=`;
 такой argument отклоняется fail-closed.
@@ -704,6 +709,19 @@ Source читается через проверенный `O_NOFOLLOW` fd, по�
 effective graph; ошибка postcondition откатывает exact snapshot. Отдельный offline package-integration
 manager для ALT p11 может атомарно включать и отключать FIC-owned topology по
 явной команде администратора; он не вызывается daemon policies.
+
+Обычные symlink в PAM service/include paths отклоняются. Единственное
+исключение — точный native alias и конечный набор его targets, явно заданные
+`PamTrustedServiceAlias` выбранного platform profile. Resolver принимает
+только relative basename внутри того же declared PAM config directory,
+сверяет exact target allowlist, открывает target через directory fd и
+`openat(O_NOFOLLOW|O_CLOEXEC)`, затем проверяет regular type, trusted owner и
+отсутствие group/other write. Symlink chain, absolute target, `..`, directory
+escape и неизвестный target fail closed. Device/inode сверяются при чтении,
+alias повторно разрешается после чтения, а `PamRule::source` указывает на
+authoritative regular target. ALT p11 описывает таким способом только штатные
+selectors `/etc/pam.d/system-auth` и `/etc/pam.d/system-policy` с их отдельными
+package-owned allowlists; Debian/Ubuntu alias permissions не объявляют.
 `required_pam_enforcement` независимо проверяет выбранные известные providers
 как системный invariant; он не объявляет dependencies другим policies, не
 устанавливает пакеты и не исправляет чужой PAM stack.
