@@ -1,10 +1,29 @@
 #!/usr/bin/env python3
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import subprocess
 import sys
 
 
 root = Path(sys.argv[1])
 errors = []
+
+try:
+    tracked_result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+except OSError as error:
+    print(f"could not execute git ls-files: {error}", file=sys.stderr)
+    raise SystemExit(2)
+if tracked_result.returncode != 0:
+    detail = tracked_result.stderr.strip() or "unknown git error"
+    print(f"could not obtain Git-tracked paths: {detail}", file=sys.stderr)
+    raise SystemExit(2)
+tracked_paths = tuple(
+    path for path in tracked_result.stdout.split("\0") if path
+)
 
 required_layout = (
     "fic-common/fic-core/include/fic/core/config",
@@ -46,14 +65,21 @@ forbidden_layout = (
     "fic-gui/src/pages",
 )
 for relative_path in forbidden_layout:
-    if (root / relative_path).exists():
+    if any(
+        path == relative_path or path.startswith(relative_path + "/")
+        for path in tracked_paths
+    ):
         errors.append(f"obsolete source layout remains: {relative_path}")
 
-for submodules_path in (root / "fic/src/modules").rglob("submodules"):
-    if submodules_path.is_dir():
-        errors.append(
-            f"obsolete source layout remains: {submodules_path.relative_to(root)}"
-        )
+obsolete_submodules_paths = set()
+for tracked_path in tracked_paths:
+    parts = PurePosixPath(tracked_path).parts
+    if parts[:3] != ("fic", "src", "modules") or "submodules" not in parts[3:]:
+        continue
+    component_index = parts.index("submodules", 3)
+    obsolete_submodules_paths.add("/".join(parts[:component_index + 1]))
+for relative_path in sorted(obsolete_submodules_paths):
+    errors.append(f"obsolete source layout remains: {relative_path}")
 
 tmpfiles_config = (root / "fic/src/resources/tmpfiles/fic.conf.in").read_text(
     encoding="utf-8"

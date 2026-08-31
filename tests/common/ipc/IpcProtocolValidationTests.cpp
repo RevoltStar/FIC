@@ -10,18 +10,28 @@ int main() {
     fic::ipc::json request;
     std::string error;
 
+    const std::string currentVersionRequest = fic::ipc::json{
+        {"api_version", fic::ipc::API_VERSION},
+        {"command", "status"}
+    }.dump();
     assert(fic::ipc::parse_request_json(
-        R"({"api_version":1,"command":"status"})", request, error));
+        currentVersionRequest, request, error));
     assert(!fic::ipc::parse_request_json(
         R"({"command":"status"})", request, error));
     assert(error.find("api_version") != std::string::npos);
+    const std::string unsupportedVersionRequest = fic::ipc::json{
+        {"api_version", fic::ipc::API_VERSION + 1},
+        {"command", "status"}
+    }.dump();
     assert(!fic::ipc::parse_request_json(
-        R"({"api_version":1,"command":"status"})", request, error));
+        unsupportedVersionRequest, request, error));
     assert(error.find("unsupported") != std::string::npos);
     assert(!fic::ipc::parse_request_json("[]", request, error));
     assert(!fic::ipc::parse_request_json(R"({"command":7})", request, error));
 
-    std::string deep = R"({"api_version":1,"command":"status","value":)";
+    std::string deep = "{\"api_version\":" +
+        std::to_string(fic::ipc::API_VERSION) +
+        ",\"command\":\"status\",\"value\":";
     for (std::size_t index = 0; index < fic::ipc::MAX_JSON_DEPTH + 2U; ++index) {
         deep += '[';
     }
