@@ -2,6 +2,18 @@
 
 namespace fic::platform {
 
+namespace {
+
+PamProviderConfigTopology ficPwhistoryConfigTopology() {
+    PamProviderConfigTopology topology;
+    topology.primaryPath = "/etc/security/fic-pwhistory.conf";
+    topology.explicitConfig =
+        PamExplicitConfigSemantics::ReplacesNativeTopology;
+    return topology;
+}
+
+} // namespace
+
 PlatformProfile makeBuildPlatformProfile() {
     PlatformProfile profile;
     profile.id = "alt-p11";
@@ -111,7 +123,13 @@ PlatformProfile makeBuildPlatformProfile() {
          PamScope::EffectivePasswordStack,
          "/etc/passwdqc.conf",
          PamTopologyStrategyKind::StaticReadOnly, {}, std::nullopt,
-         PamIdentitySubjectScope::AllPamSubjects}
+         PamIdentitySubjectScope::AllPamSubjects},
+        {PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
+         PamScope::LocalPasswordChange,
+         "/etc/security/fic-pwhistory.conf",
+         PamTopologyStrategyKind::AltTcbManaged,
+         "/etc/pam.d/system-auth-local-only",
+         ficPwhistoryConfigTopology()}
     };
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";

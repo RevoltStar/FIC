@@ -1348,7 +1348,7 @@ int main() {
             readFile(FIC_GENERATED_IDENTITY_CONFIG_PATH);
         const std::string expectedRequiredPamDefault =
             std::string(FIC_TARGET_PLATFORM_NAME) == "alt-p11"
-            ? "pam_faillock,pam_passwdqc"
+            ? "pam_faillock,pam_passwdqc,pam_pwhistory"
             : "pam_faillock,pam_pwquality,pam_pwhistory";
         require(
             requiredPam.getPolicyTypeValue().getEditorSpec().editor ==

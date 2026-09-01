@@ -245,7 +245,7 @@ void testSelectedProfile() {
     require(
         std::string(FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT) ==
             (profile.id == "alt-p11"
-                 ? "pam_faillock,pam_passwdqc"
+                 ? "pam_faillock,pam_passwdqc,pam_pwhistory"
                  : "pam_faillock,pam_pwquality,pam_pwhistory"),
         "required-PAM platform default is incorrect");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",
@@ -338,16 +338,18 @@ void testSelectedProfile() {
             fic::platform::PamIdentitySubjectScope::AllPamSubjects,
         "password-quality capability subject scope is not explicit/all-subject");
     const bool legacyHistory = profile.id == "debian-12";
-    require((history != nullptr) == (profile.id != "alt-p11") &&
-                (history == nullptr ||
-                 (legacyHistory
-                      ? history->configPath.empty() &&
-                            history->configurationMode ==
-                                fic::platform::PamCapabilityConfigurationMode::ModuleArguments
-                      : history->configPath ==
-                            "/etc/security/pwhistory.conf" &&
-                            history->configurationMode ==
-                                fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile)),
+    const std::filesystem::path expectedHistoryConfig =
+        profile.id == "alt-p11"
+        ? "/etc/security/fic-pwhistory.conf"
+        : "/etc/security/pwhistory.conf";
+    require(history != nullptr &&
+                (legacyHistory
+                     ? history->configPath.empty() &&
+                           history->configurationMode ==
+                               fic::platform::PamCapabilityConfigurationMode::ModuleArguments
+                     : history->configPath == expectedHistoryConfig &&
+                           history->configurationMode ==
+                               fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile),
             "password-history capability composition is incorrect");
     const std::filesystem::path expectedLocalPamStack =
         profile.id == "alt-p11"
@@ -355,6 +357,8 @@ void testSelectedProfile() {
             : std::filesystem::path{};
     require(faillock->topologyTarget == expectedLocalPamStack,
             "ALT PAM topology target metadata is incorrect");
+    require(history->topologyTarget == expectedLocalPamStack,
+            "ALT password-history topology target metadata is incorrect");
     const std::filesystem::path expectedGrubDefaults =
         profile.id == "alt-p11"
             ? "/etc/sysconfig/grub2"

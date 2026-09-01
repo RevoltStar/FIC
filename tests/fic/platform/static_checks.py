@@ -374,7 +374,9 @@ def main():
         '",pam_${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"' in platform_cmake and
         'set(FIC_PAM_PASSWORD_QUALITY_PROVIDER "passwdqc")'
             in platform_cmake and
-        'set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "none")' in platform_cmake,
+        'set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "pwhistory")'
+            in platform_cmake and
+        'set(FIC_PAM_PASSWORD_TRANSACTION_MODULE ON)' in platform_cmake,
         "required-PAM platform defaults are incomplete",
     )
     require(
@@ -758,8 +760,10 @@ def main():
         "ALT p11 packaging does not preserve the native PAM facility lifecycle",
     )
     require(
-        "%config" not in rpm_builder,
-        "ALT p11 packaging still registers working configs as RPM configs",
+        rpm_builder.count("%config") == 1
+        and "%%config(noreplace)" in rpm_builder
+        and "/etc/security/fic-pwhistory.conf" in rpm_builder,
+        "ALT p11 packaging must preserve only the pam_pwhistory provider config",
     )
     fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
     require(

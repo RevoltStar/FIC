@@ -422,6 +422,34 @@ target_link_libraries(alt_pam_faillock_topology_tests PRIVATE
 add_test(NAME alt_pam_faillock_topology_tests
          COMMAND alt_pam_faillock_topology_tests)
 
+add_executable(alt_pam_password_history_topology_tests
+    fic/modules/identity_access/pam/AltPamPasswordHistoryTopologyManagerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+)
+target_include_directories(alt_pam_password_history_topology_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(alt_pam_password_history_topology_tests PRIVATE
+    fic-core
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME alt_pam_password_history_topology_tests
+         COMMAND alt_pam_password_history_topology_tests)
+
 add_executable(identity_configuration_transaction_tests
     fic/modules/identity_access/composite/ConfigurationTransactionTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp

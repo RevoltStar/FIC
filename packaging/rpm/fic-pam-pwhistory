@@ -1,0 +1,36 @@
+#!/bin/sh
+
+. /etc/control.d/functions
+
+FIC_HELPER=/opt/fic/bin/fic
+
+new_summary 'FIC-managed pam_pwhistory topology for ALT local password changes'
+new_help enabled 'Enable the FIC-owned pam_pwhistory transaction topology'
+new_help disabled 'Disable the FIC-owned pam_pwhistory transaction topology'
+
+REQUEST="$*"
+
+case "$REQUEST" in
+help|'help '*)
+    control_help "${REQUEST#help}"
+    ;;
+list)
+    control_list
+    ;;
+summary)
+    control_summary
+    ;;
+status)
+    exec "$FIC_HELPER" --maintenance pam-alt-pwhistory status
+    ;;
+enabled)
+    exec "$FIC_HELPER" --maintenance pam-alt-pwhistory enable
+    ;;
+disabled)
+    exec "$FIC_HELPER" --maintenance pam-alt-pwhistory disable
+    ;;
+*)
+    printf '%s: %s\n' "${0##*/}" "Invalid mode: $REQUEST" >&2
+    exit 1
+    ;;
+esac

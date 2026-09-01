@@ -76,6 +76,21 @@ endif()
 # Создаем исполняемый файл
 add_executable(fic ${SRC_FILES} ${HDR_FILES})
 
+if(FIC_PAM_PASSWORD_TRANSACTION_MODULE)
+    enable_language(C)
+    find_path(FIC_PAM_INCLUDE_DIR security/pam_modules.h)
+    find_library(FIC_PAM_LIBRARY pam)
+    if(NOT FIC_PAM_INCLUDE_DIR OR NOT FIC_PAM_LIBRARY)
+        message(FATAL_ERROR "ALT pam_fic_pwtxn requires PAM development files")
+    endif()
+    add_library(pam_fic_pwtxn MODULE src/pam-modules/pam_fic_pwtxn.c)
+    set_target_properties(pam_fic_pwtxn PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "pam_fic_pwtxn")
+    target_include_directories(pam_fic_pwtxn PRIVATE "${FIC_PAM_INCLUDE_DIR}")
+    target_link_libraries(pam_fic_pwtxn PRIVATE "${FIC_PAM_LIBRARY}")
+endif()
+
 # Подключаем заголовки
 target_include_directories(fic PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -121,6 +136,12 @@ configure_file(
     @ONLY)
 
 install(TARGETS fic RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
+if(FIC_PAM_PASSWORD_TRANSACTION_MODULE)
+    install(TARGETS pam_fic_pwtxn LIBRARY DESTINATION "/lib64/security"
+            COMPONENT fic)
+    install(FILES src/resources/pam/fic-pwhistory.conf
+            DESTINATION "/etc/security" COMPONENT fic)
+endif()
 install(PROGRAMS
         "${FIC_GENERATED_SCRIPTS_DIR}/notify/fic-notify-dispatcher"
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-udevadm-trigger"

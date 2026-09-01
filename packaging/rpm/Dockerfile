@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     gcc-c++ \
     glibc-devel \
     libglvnd-devel \
+    libpam0-devel \
     libsqlite3-devel \
     libsystemd-devel \
     make \

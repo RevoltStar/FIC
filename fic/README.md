@@ -607,9 +607,14 @@ platform id. Поэтому synthetic `passwdqc+pwhistory` и `pwquality` без
 | Debian 12/13, Ubuntu 24.04/26.04 | AuthenticationLockout | pam_faillock | key/value | external opt-in через pam-auth-update |
 | ALT p11 | PasswordQuality | pam_passwdqc | strict `option=value` | native static topology |
 | ALT p11 | AuthenticationLockout | pam_faillock | key/value | FIC-owned ALT/tcb manager, explicit opt-in |
+| ALT p11 | PasswordHistory | pam_pwhistory | key/value в `/etc/security/fic-pwhistory.conf` | FIC-owned serialized TCB transaction, explicit opt-in |
 
-ALT p11 не объявляет `PasswordHistory`: безопасная topology и storage contract
-для этой capability пока отсутствуют.
+ALT p11 хранит историю в `/var/lib/fic-pwhistory/opasswd` и сериализует общую
+history update вместе с последующей записью `pam_tcb` через
+`pam_fic_pwtxn.so`. Пакетная конфигурация содержит `remember=0`, поэтому одна
+установка пакета не включает enforcement; администратор сначала активирует
+topology через `control fic-pam-pwhistory enabled`, затем применяет history
+policy.
 
 Debian 12 хранит history settings в arguments существующего
 `pam_pwhistory.so`: отсутствие `remember=` означает native default 10, а

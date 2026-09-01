@@ -28,6 +28,7 @@
 
 #include "daemon/main_function.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
+#include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
@@ -1035,6 +1036,65 @@ int main(int argc, char* argv[]) {
                 return 0;
             }
             std::cerr << "unknown ALT pam_faillock topology action: "
+                      << action << std::endl;
+            return 1;
+        }
+        if (command == "pam-alt-pwhistory") {
+            if (::geteuid() != 0) {
+                std::cerr << "ALT PAM topology maintenance must be run as root"
+                          << std::endl;
+                return 1;
+            }
+            const struct group* shadowGroup = ::getgrnam("shadow");
+            if (shadowGroup == nullptr) {
+                std::cerr << "ALT pam_pwhistory requires the shadow group"
+                          << std::endl;
+                return 1;
+            }
+            fic::identity::pam::AltPamPasswordHistoryTopologyOptions options;
+            options.lockFilePath =
+                paths.runtimeDir / "pam-alt-pwhistory-topology.lock";
+            options.lockDebugLogPath = paths.lockDebugLogFile;
+            options.storageGroup = shadowGroup->gr_gid;
+            fic::identity::pam::AltPamPasswordHistoryTopologyManager manager(
+                platform.pam, std::move(options));
+            const std::string action = get_arg_value(argc, argv, 3);
+            if (action == "prepare") {
+                if (!manager.prepareStorage(maintenanceError)) {
+                    std::cerr << "ALT pam_pwhistory storage preparation failed: "
+                              << maintenanceError << std::endl;
+                    return 1;
+                }
+                return 0;
+            }
+            if (action == "status") {
+                fic::identity::pam::AltPamPasswordHistoryTopologyState state;
+                if (!manager.status(state, maintenanceError)) {
+                    std::cerr << "ALT pam_pwhistory topology status failed: "
+                              << maintenanceError << std::endl;
+                    return 1;
+                }
+                std::cout << fic::identity::pam::
+                    altPamPasswordHistoryTopologyStateName(state) << std::endl;
+                return 0;
+            }
+            if (action == "enable") {
+                if (!manager.enable(maintenanceError)) {
+                    std::cerr << "ALT pam_pwhistory topology enable failed: "
+                              << maintenanceError << std::endl;
+                    return 1;
+                }
+                return 0;
+            }
+            if (action == "disable") {
+                if (!manager.disable(maintenanceError)) {
+                    std::cerr << "ALT pam_pwhistory topology disable failed: "
+                              << maintenanceError << std::endl;
+                    return 1;
+                }
+                return 0;
+            }
+            std::cerr << "unknown ALT pam_pwhistory topology action: "
                       << action << std::endl;
             return 1;
         }

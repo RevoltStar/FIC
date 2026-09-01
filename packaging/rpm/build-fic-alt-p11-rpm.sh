@@ -538,7 +538,14 @@ write_file_list() {
     find "$package_root" \( -type f -o -type l \) | sort | while IFS= read -r path; do
         path="${path#$package_root}"
         [ -n "$path" ] || continue
-        printf '%s\n' "$path" >> "$file_list"
+        case "$path" in
+            /etc/security/fic-pwhistory.conf)
+                printf '%%config(noreplace) %s\n' "$path" >> "$file_list"
+                ;;
+            *)
+                printf '%s\n' "$path" >> "$file_list"
+                ;;
+        esac
     done
 }
 
@@ -887,13 +894,20 @@ fic_pam_facility_pre_upgrade_script() {
 if [ "$1" -ge 2 ] && [ -x /etc/control.d/facilities/fic-pam-faillock ]; then
     /usr/sbin/control-dump fic-pam-faillock || exit 1
 fi
+if [ "$1" -ge 2 ] && [ -x /etc/control.d/facilities/fic-pam-pwhistory ]; then
+    /usr/sbin/control-dump fic-pam-pwhistory || exit 1
+fi
 EOF
 }
 
 fic_pam_facility_post_script() {
     cat <<'EOF'
+/opt/fic/bin/fic --maintenance pam-alt-pwhistory prepare || exit 1
 if [ "$1" -ge 2 ] && [ -s /var/run/control/fic-pam-faillock ]; then
     /usr/sbin/control-restore fic-pam-faillock || exit 1
+fi
+if [ "$1" -ge 2 ] && [ -s /var/run/control/fic-pam-pwhistory ]; then
+    /usr/sbin/control-restore fic-pam-pwhistory || exit 1
 fi
 EOF
 }
@@ -901,6 +915,10 @@ EOF
 fic_pam_facility_preun_script() {
     cat <<'EOF'
 if [ "$1" -eq 0 ]; then
+    /usr/sbin/control fic-pam-pwhistory disabled || {
+        echo "refusing to remove fic with unsafe FIC-owned pam_pwhistory topology" >&2
+        exit 1
+    }
     /usr/sbin/control fic-pam-faillock disabled || {
         echo "refusing to remove fic with unsafe FIC-owned PAM topology" >&2
         exit 1
@@ -1036,6 +1054,9 @@ build_fic_package() {
     install -m 0755 \
         "$ROOT_DIR/packaging/rpm/fic-pam-faillock" \
         "$package_root/etc/control.d/facilities/fic-pam-faillock"
+    install -m 0755 \
+        "$ROOT_DIR/packaging/rpm/fic-pam-pwhistory" \
+        "$package_root/etc/control.d/facilities/fic-pam-pwhistory"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \

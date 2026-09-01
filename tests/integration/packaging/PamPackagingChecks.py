@@ -89,6 +89,8 @@ def main() -> int:
     rpm_builder = (root / "packaging/rpm/build-fic-alt-p11-rpm.sh").read_text(encoding="utf-8")
     rpm_facility_path = root / "packaging/rpm/fic-pam-faillock"
     rpm_facility = rpm_facility_path.read_text(encoding="utf-8")
+    rpm_history_facility_path = root / "packaging/rpm/fic-pam-pwhistory"
+    rpm_history_facility = rpm_history_facility_path.read_text(encoding="utf-8")
     fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
 
     fic_package = function_body(deb_builder, "build_fic_package")
@@ -154,26 +156,52 @@ def main() -> int:
         require(forbidden not in rpm_facility,
                 f"ALT facility contains topology implementation: {forbidden}")
 
+    require(rpm_history_facility_path.is_file() and
+            not rpm_history_facility_path.is_symlink(),
+            "ALT fic-pam-pwhistory facility is missing")
+    require(rpm_history_facility_path.stat().st_mode & 0o111,
+            "ALT fic-pam-pwhistory facility is not executable")
+    for operation in ("help", "list", "summary", "status", "enabled", "disabled"):
+        require(operation in rpm_history_facility,
+                f"ALT password-history facility lacks operation: {operation}")
+    require("--maintenance pam-alt-pwhistory" in rpm_history_facility,
+            "ALT password-history facility does not dispatch to FIC")
+    for forbidden in ("sed ", "sed\t", "pam_tcb.so"):
+        require(forbidden not in rpm_history_facility,
+                f"ALT password-history facility implements topology: {forbidden}")
+
     rpm_fic_package = function_body(rpm_builder, "build_fic_package")
     require('"$ROOT_DIR/packaging/rpm/fic-pam-faillock"' in rpm_fic_package and
             '"$package_root/etc/control.d/facilities/fic-pam-faillock"' in rpm_fic_package,
             "ALT fic package does not stage its control facility")
+    require('"$ROOT_DIR/packaging/rpm/fic-pam-pwhistory"' in rpm_fic_package and
+            '"$package_root/etc/control.d/facilities/fic-pam-pwhistory"' in rpm_fic_package,
+            "ALT fic package does not stage its password-history facility")
     for dependency in ("control", "pam >= 1.7.1", "pam-config >= 1.10.0"):
         require(dependency in rpm_fic_package,
                 f"ALT fic package lacks PAM facility dependency: {dependency}")
-    require("control-dump fic-pam-faillock" in rpm_builder and
-            "control-restore fic-pam-faillock" in rpm_builder,
-            "ALT RPM upgrade does not preserve control facility state")
+    for facility in ("fic-pam-faillock", "fic-pam-pwhistory"):
+        require(f"control-dump {facility}" in rpm_builder and
+                f"control-restore {facility}" in rpm_builder,
+                f"ALT RPM upgrade does not preserve {facility} state")
     require('if [ "$1" -eq 0 ]; then' in
             function_body(rpm_builder, "fic_pam_facility_preun_script") and
-            "control fic-pam-faillock disabled" in rpm_builder,
+            "control fic-pam-faillock disabled" in rpm_builder and
+            "control fic-pam-pwhistory disabled" in rpm_builder,
             "ALT RPM final erase does not remove FIC-owned PAM topology")
     post_hook = function_body(rpm_builder, "fic_pam_facility_post_script")
     require("control fic-pam-faillock enabled" not in post_hook and
+            "control fic-pam-pwhistory enabled" not in post_hook and
+            "pam-alt-pwhistory prepare" in post_hook and
             "control-restore" in post_hook,
-            "ALT RPM install must not automatically enable pam_faillock")
-    require("fic-pam-pwhistory" not in rpm_builder and
-            "fic-pam-passwdqc" not in rpm_builder,
+            "ALT RPM install must prepare storage without enabling PAM topology")
+    require("%config(noreplace)" in rpm_builder and
+            "/etc/security/fic-pwhistory.conf" in rpm_builder,
+            "ALT pam_pwhistory config is not preserved across upgrades")
+    require("pam_fic_pwtxn" in fic_cmake and
+            "fic-pwhistory.conf" in fic_cmake,
+            "ALT PAM transaction module/config are not installed by CMake")
+    require("fic-pam-passwdqc" not in rpm_builder,
             "ALT RPM must not install unsupported PAM facilities")
 
     print("PAM packaging checks passed")

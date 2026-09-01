@@ -20,18 +20,23 @@ container. The resulting daemon validates `ID=altlinux` and
 
 ALT packages do not install `/usr/share/pam-configs/fic-*`, do not depend on
 the Debian package `libpam-runtime` and do not invoke `pam-auth-update`. The
-`fic` RPM installs the native ALT control facility
-`/etc/control.d/facilities/fic-pam-faillock`. Installation does not activate
-it; PAM topology remains an explicit administrator choice.
+`fic` RPM installs native ALT control facilities
+`/etc/control.d/facilities/fic-pam-faillock` and
+`/etc/control.d/facilities/fic-pam-pwhistory`. Installation does not activate
+them; PAM topology remains an explicit administrator choice.
 
 ## ALT PAM topology integration
 
-The supported package-level integration is limited to `pam_faillock`:
+The package provides independent explicit activation for `pam_faillock` and
+`pam_pwhistory`:
 
 ```bash
 sudo control fic-pam-faillock status
 sudo control fic-pam-faillock enabled
 sudo control fic-pam-faillock disabled
+sudo control fic-pam-pwhistory status
+sudo control fic-pam-pwhistory enabled
+sudo control fic-pam-pwhistory disabled
 ```
 
 The facility is `disabled` after a clean install. It is a thin dispatcher to
@@ -70,20 +75,46 @@ is preserved. Moved managed blocks make disable fail without mutation. Atomic
 replacement also refuses a target whose `dev+ino` changed since the secure
 snapshot. The facility never changes `control system-auth` or its symlinks.
 
+The password-history facility manages only the password path in
+`system-auth-local-only`. It requires the unique native `pam_tcb.so
+write_to=tcb` rule and rejects an existing external `pam_pwhistory` or
+`pam_fic_pwtxn` rule. Enable keeps that `pam_tcb` line byte-for-byte and wraps
+it in the following owned block:
+
+```text
+password requisite pam_fic_pwtxn.so begin timeout=15
+password requisite pam_pwhistory.so use_authtok conf=/etc/security/fic-pwhistory.conf
+<original pam_tcb password rule>
+password required pam_fic_pwtxn.so end
+```
+
+`pam_fic_pwtxn.so` serializes the complete history/backend update using
+`/var/lib/fic-pwhistory/.lock`; PAM cleanup releases the lock even when the
+requisite history check terminates dispatch before the explicit `end` call.
+The history database is `/var/lib/fic-pwhistory/opasswd`. The directory is
+`root:shadow 2730`, while both `opasswd` and `.lock` are one-link regular
+`root:shadow 0660` files. The module has a fixed lock path and rejects unsafe
+metadata. The manager likewise verifies trusted module/config files and
+requires exactly `file=/var/lib/fic-pwhistory/opasswd`.
+
+The RPM prepares this storage but ships `remember=0`, so installation and
+topology activation do not themselves enforce password history. Administrator
+order is: install/update `fic`, run `control fic-pam-pwhistory enabled`, verify
+`status`, then apply the FIC history-depth/root policy. Disable restores the
+exact pre-enable PAM bytes but deliberately retains the history database.
+
 RPM upgrade uses ALT `control-dump` / `control-restore` to preserve the selected
 enabled/disabled state. Final erase invokes the same safe disable operation
 before removing the helper and facility; malformed managed state makes erase
 fail instead of triggering blind cleanup.
 
 The `fic` RPM depends on `control`, `pam >= 1.7.1` (the ALT p11 owner of
-`pam_faillock.so`) and `pam-config >= 1.10.0` (the owner of
+`pam_faillock.so` and `pam_pwhistory.so`) and `pam-config >= 1.10.0` (the owner of
 `system-auth-local-only`). Native `pam_passwdqc` topology remains unchanged and
 has no FIC activation facility. The ALT platform composition uses the strict
 native `/etc/passwdqc.conf` backend (`option=value`, PAM argument `config=`)
 for passwdqc thresholds, passphrase, match, similar, retry and root-enforcement
-settings. It does not expose pwquality-only policies. ALT activation of
-`pam_pwhistory` is currently unsupported pending a separately proven safe
-password-history storage design.
+settings. It does not expose pwquality-only policies.
 
 ## Package contents
 
@@ -108,6 +139,10 @@ password-history storage design.
 - `/usr/lib/systemd/system/*` from `fic/src/resources/service`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 - `/etc/control.d/facilities/fic-pam-faillock` (disabled by default)
+- `/etc/control.d/facilities/fic-pam-pwhistory` (disabled by default)
+- `/lib64/security/pam_fic_pwtxn.so`
+- `/etc/security/fic-pwhistory.conf`
+- persistent `/var/lib/fic-pwhistory/{opasswd,.lock}` storage
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`
 are enabled and started automatically. `fic-device.service` performs initial
