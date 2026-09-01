@@ -254,8 +254,11 @@ def main():
     require(
         'PamTopologyStrategyKind::AltTcbManaged' in profiles["alt-p11"]
         and '"/etc/pam.d/system-auth-local-only"' in profiles["alt-p11"]
-        and "topologyTarget" in platform_profile,
-        "ALT p11 profile does not declare its native local PAM topology target",
+        and '"/etc/pam.d/system-auth-use_first_pass-local-only"'
+        in profiles["alt-p11"]
+        and "managedTopologyTargets" in platform_profile
+        and "PamManagedTopologyTargetRole" in platform_profile,
+        "ALT p11 profile does not declare its typed managed PAM topology targets",
     )
     require(
         'PamProviderKind::PamPasswdqc' in profiles["alt-p11"]

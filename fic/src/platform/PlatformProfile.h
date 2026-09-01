@@ -187,6 +187,17 @@ enum class PamCapabilityConfigurationMode {
     ModuleArguments
 };
 
+enum class PamManagedTopologyTargetRole {
+    Authentication,
+    AuthenticationAndAccount
+};
+
+struct PamManagedTopologyTarget {
+    std::filesystem::path path;
+    PamManagedTopologyTargetRole role =
+        PamManagedTopologyTargetRole::Authentication;
+};
+
 struct PamCapabilityConfig {
     PamCapability capability = PamCapability::AuthenticationLockout;
     PamProviderKind provider = PamProviderKind::PamFaillock;
@@ -199,6 +210,7 @@ struct PamCapabilityConfig {
         PamIdentitySubjectScope::AllPamSubjects;
     PamCapabilityConfigurationMode configurationMode =
         PamCapabilityConfigurationMode::ProviderConfigFile;
+    std::vector<PamManagedTopologyTarget> managedTopologyTargets;
 };
 
 struct PamPlatformConfig {

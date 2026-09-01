@@ -126,7 +126,7 @@ PlatformProfile makeBuildPlatformProfile() {
          PamScope::EffectiveAuthenticationStack,
          "/etc/security/faillock.conf",
          PamTopologyStrategyKind::AltTcbManaged,
-         "/etc/pam.d/system-auth-local-only"},
+         {}},
         {PamCapability::PasswordQuality, PamProviderKind::PamPasswdqc,
          PamScope::EffectivePasswordStack,
          "/etc/passwdqc.conf",
@@ -138,6 +138,12 @@ PlatformProfile makeBuildPlatformProfile() {
          PamTopologyStrategyKind::AltTcbManaged,
          "/etc/pam.d/system-auth-local-only",
          ficPwhistoryConfigTopology()}
+    };
+    profile.pam.capabilities.front().managedTopologyTargets = {
+        {"/etc/pam.d/system-auth-local-only",
+         PamManagedTopologyTargetRole::AuthenticationAndAccount},
+        {"/etc/pam.d/system-auth-use_first_pass-local-only",
+         PamManagedTopologyTargetRole::Authentication}
     };
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";

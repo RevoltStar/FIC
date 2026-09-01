@@ -397,6 +397,7 @@ add_test(NAME passwdqc_config_file_tests COMMAND passwdqc_config_file_tests)
 add_executable(alt_pam_faillock_topology_tests
     fic/modules/identity_access/pam/AltPamFaillockTopologyManagerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamFaillockTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp

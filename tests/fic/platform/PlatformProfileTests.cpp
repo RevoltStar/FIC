@@ -366,8 +366,27 @@ void testSelectedProfile() {
         profile.id == "alt-p11"
             ? std::filesystem::path("/etc/pam.d/system-auth-local-only")
             : std::filesystem::path{};
-    require(faillock->topologyTarget == expectedLocalPamStack,
-            "ALT PAM topology target metadata is incorrect");
+    const std::vector<fic::platform::PamManagedTopologyTarget>
+        expectedFaillockTargets = profile.id == "alt-p11"
+        ? std::vector<fic::platform::PamManagedTopologyTarget>{
+              {"/etc/pam.d/system-auth-local-only",
+               fic::platform::PamManagedTopologyTargetRole::
+                   AuthenticationAndAccount},
+              {"/etc/pam.d/system-auth-use_first_pass-local-only",
+               fic::platform::PamManagedTopologyTargetRole::Authentication}}
+        : std::vector<fic::platform::PamManagedTopologyTarget>{};
+    require(faillock->topologyTarget.empty() &&
+                faillock->managedTopologyTargets.size() ==
+                    expectedFaillockTargets.size() &&
+                std::equal(
+                    faillock->managedTopologyTargets.begin(),
+                    faillock->managedTopologyTargets.end(),
+                    expectedFaillockTargets.begin(),
+                    [](const auto& actual, const auto& expected) {
+                        return actual.path == expected.path &&
+                            actual.role == expected.role;
+                    }),
+            "ALT PAM managed topology target metadata is incorrect");
     require(history->topologyTarget == expectedLocalPamStack,
             "ALT password-history topology target metadata is incorrect");
     const std::filesystem::path expectedGrubDefaults =
@@ -836,6 +855,37 @@ void testInvalidProfileIsRejected() {
     lockout->topologyTarget = "etc/pam.d/system-auth-local-only";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative PAM topology target must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    lockout = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    lockout->managedTopologyTargets.clear();
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an empty ALT managed topology target list must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    lockout = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    lockout->managedTopologyTargets.push_back(
+        lockout->managedTopologyTargets.front());
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a duplicate ALT managed topology target must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    lockout = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    lockout->managedTopologyTargets.front().role =
+        fic::platform::PamManagedTopologyTargetRole::Authentication;
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "ALT managed topology without an account target must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    lockout = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    lockout->managedTopologyTargets.back().path =
+        "etc/pam.d/system-auth-use_first_pass-local-only";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative ALT managed topology target must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.userCreation.useraddDefaultsPath = "etc/default/useradd";

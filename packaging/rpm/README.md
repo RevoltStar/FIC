@@ -43,9 +43,12 @@ The facility is `disabled` after a clean install. It is a thin dispatcher to
 the offline FIC PAM manager and never generates or edits PAM content in shell.
 Enable acquires an inter-process lock, rejects symlink or untrusted targets,
 uses the shared PAM parser to find the unique local `pam_tcb` auth/account
-anchors, and atomically installs FIC-owned marked blocks. The native ALT
-`pam_tcb` auth rule is retained byte-for-byte in marker metadata while its
-active control is `sufficient`, as required by the ALT faillock topology.
+anchors in typed platform targets, and atomically installs FIC-owned marked
+blocks. `system-auth-local-only` carries authentication+account blocks, while
+`system-auth-use_first_pass-local-only` carries the authentication blocks used
+by the stock SSH path. The native ALT `pam_tcb` auth rule in each target is
+retained byte-for-byte in marker metadata, including `use_first_pass`, while
+its active control is `sufficient`, as required by the ALT faillock topology.
 Enable therefore requires `pam_tcb` to be the final executable auth rule in
 the local stack; comments and blank lines may follow it, but another PAM rule
 would be bypassed by `sufficient` success and is rejected before any write.
@@ -60,13 +63,15 @@ account required pam_faillock.so
 Policy values such as `deny`, `fail_interval`, `unlock_time` and
 `even_deny_root` remain in `/etc/security/faillock.conf`. After enable, the
 same `PamCapabilityVerifier` used by daemon policies must prove the resulting
-AuthenticationLockout capability Effective for `system-auth-local-only`.
-This explicit local scope also applies in the native ALT `sss` routing mode;
-the global `required_pam_enforcement` policy keeps its broader semantics.
+AuthenticationLockout capability Effective for `system-auth-local-only` and
+for configured services whose authentication graph uses the additional typed
+target, including stock `sshd`. This explicit target scope does not reinterpret
+unrelated native ALT `sss` routing; the global `required_pam_enforcement`
+policy keeps its broader semantics.
 Before mutation the manager inspects the effective include/substack graph of
 configured authentication services and rejects external `pam_faillock` rules.
-Failed postconditions restore the exact original bytes atomically; a failed
-rollback is reported as a critical inconsistent-state error.
+Failed postconditions restore the exact original bytes of every written target;
+a failed rollback is reported as a critical inconsistent-state error.
 
 FIC never adopts or removes administrator-owned `pam_faillock` rules. Partial,
 duplicated or modified FIC markers fail closed. Disable removes only valid

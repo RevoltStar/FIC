@@ -465,13 +465,59 @@ bool validatePamComposition(const PamPlatformConfig& pam,
             return false;
         }
         if (capability.topology == PamTopologyStrategyKind::AltTcbManaged) {
-            if (!validatePath(
-                    capability.topologyTarget, "PAM topology target", error)) {
-                return false;
+            if (capability.capability == PamCapability::AuthenticationLockout) {
+                if (!capability.topologyTarget.empty()) {
+                    error = "ALT managed pam_faillock must use typed topology "
+                        "targets instead of a singular topology target";
+                    return false;
+                }
+                if (capability.managedTopologyTargets.empty()) {
+                    error = "ALT managed pam_faillock topology target list is empty";
+                    return false;
+                }
+                std::set<std::filesystem::path> targetPaths;
+                std::size_t accountTargets = 0;
+                for (const auto& target : capability.managedTopologyTargets) {
+                    if (!validatePath(
+                            target.path, "PAM managed topology target", error)) {
+                        return false;
+                    }
+                    if (!targetPaths.insert(target.path).second) {
+                        error = "PAM managed topology target is duplicated: " +
+                            target.path.string();
+                        return false;
+                    }
+                    switch (target.role) {
+                    case PamManagedTopologyTargetRole::Authentication:
+                        break;
+                    case PamManagedTopologyTargetRole::AuthenticationAndAccount:
+                        ++accountTargets;
+                        break;
+                    default:
+                        error = "PAM managed topology target has an unsupported role";
+                        return false;
+                    }
+                }
+                if (accountTargets != 1) {
+                    error = "ALT managed pam_faillock requires exactly one "
+                        "authentication-and-account target";
+                    return false;
+                }
+            } else {
+                if (!validatePath(
+                        capability.topologyTarget, "PAM topology target", error)) {
+                    return false;
+                }
+                if (!capability.managedTopologyTargets.empty()) {
+                    error = "typed PAM managed topology targets are only supported "
+                        "for authentication lockout";
+                    return false;
+                }
             }
-        } else if (!capability.topologyTarget.empty()) {
-            error = "PAM topology target is set for a strategy that does not "
-                "manage a target";
+        } else if (!capability.topologyTarget.empty() ||
+                   !capability.managedTopologyTargets.empty()) {
+            error = "PAM topology target metadata is set for a strategy that "
+                "does not manage a target";
             return false;
         }
     }

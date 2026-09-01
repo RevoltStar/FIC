@@ -840,12 +840,15 @@ semantic verifier анализирует получившийся effective grap
 modern profiles и в `pam_pwhistory.so` argv на Debian 12. ALT p11 не получает эти files и
 не вызывает Debian-specific mechanism. RPM устанавливает выключенную facility
 `control fic-pam-faillock`, которая через offline `fic` manager управляет
-только FIC-owned blocks в platform path `system-auth-local-only`. Manager
-сохраняет исходную строку `pam_tcb` для exact disable, доказывает resulting
-AuthenticationLockout именно для изменяемого local stack через общий
-analyzer/verifier и откатывает exact bytes при failed postcondition. Это
-сохраняет local-only contract в `sss` mode, не ослабляя глобальную semantics
-`required_pam_enforcement`. До записи manager обходит effective include/substack
+только FIC-owned blocks в typed platform targets: authentication+account в
+`system-auth-local-only` и authentication в
+`system-auth-use_first_pass-local-only`. Manager сохраняет отдельную исходную
+строку `pam_tcb` каждого target, включая `use_first_pass`, для exact disable,
+доказывает resulting AuthenticationLockout для основного local stack и
+configured services, использующих дополнительный auth target, через общий
+analyzer/verifier и откатывает exact bytes всех записанных targets при failed
+postcondition. Это сохраняет local-only contract в `sss` mode, не ослабляя
+глобальную semantics `required_pam_enforcement`. До записи manager обходит effective include/substack
 graph целевых authentication services и отклоняет любой не принадлежащий FIC
 `pam_faillock`; простой global grep не используется. Замена `pam_tcb required`
 на `sufficient` разрешена только когда `pam_tcb` является последним

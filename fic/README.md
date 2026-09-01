@@ -659,16 +659,22 @@ graph/provider. Любая ошибка после записи восстана
 На ALT p11 package-level topology `pam_faillock` управляется отдельно от
 policy values через `control fic-pam-faillock enabled|disabled`. Facility
 вызывает offline manager основного `fic`; daemon policies сами facility не
-активируют. Manager изменяет только platform path
-`/etc/pam.d/system-auth-local-only`, использует FIC-owned markers, atomic write,
-inter-process lock, semantic postcondition через `PamCapabilityVerifier` и
-rollback exact original bytes. Проверка postcondition ограничена изменяемым
-local stack, поэтому штатный `sss` router не считается bypass этой package-level
-facility; глобальная policy `required_pam_enforcement` не ослабляется. Перед
-записью effective include/substack graph проверяется на внешний
+активируют. Manager изменяет только platform targets:
+`/etc/pam.d/system-auth-local-only` с ролью authentication+account и отдельный
+authentication path `/etc/pam.d/system-auth-use_first_pass-local-only`.
+Роли и пути заданы typed platform metadata; имена файлов manager не выводит
+строковой заменой. В каждом target используются отдельные FIC-owned markers и
+сохраняется именно его исходная строка `pam_tcb`, включая `use_first_pass`.
+Обе записи охвачены одним inter-process lock и verified multi-file rollback
+exact original bytes. Semantic postcondition через `PamCapabilityVerifier`
+проверяет основной local stack и configured services, чья auth-ветка реально
+проходит через дополнительный target (на штатном ALT p11 — `sshd`). Это не
+расширяет проверку на посторонние ветки штатного `sss` router; глобальная policy
+`required_pam_enforcement` не ослабляется. Перед записью effective
+include/substack graph проверяется на внешний
 `pam_faillock`, а `pam_tcb` должен быть последним исполняемым auth rule.
-Moved managed blocks и заменённый после snapshot target inode отклоняются без
-записи. Внешняя topology никогда не присваивается FIC.
+Moved managed blocks и заменённый после snapshot target inode любого target
+отклоняются без записи. Внешняя topology никогда не присваивается FIC.
 Штатный ALT `pam_passwdqc` остаётся без FIC activation facility: его уже
 подключённая native topology проверяется как `PasswordQuality`. FIC управляет
 native settings `min`, `passphrase`, `match`, `similar`, `retry` и enforcement

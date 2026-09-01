@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -46,6 +47,22 @@ struct ManagedInspection {
     std::set<std::size_t> blockLines;
     std::set<std::size_t> ruleLines;
     std::optional<std::string> originalAuthLine;
+};
+
+using ManagedTargetRole =
+    fic::platform::PamManagedTopologyTargetRole;
+
+bool managesAccount(ManagedTargetRole role) {
+    return role == ManagedTargetRole::AuthenticationAndAccount;
+}
+
+struct ManagedTargetState {
+    fic::platform::PamManagedTopologyTarget target;
+    TargetSnapshot snapshot;
+    std::vector<PhysicalLine> lines;
+    std::vector<PamRule> rules;
+    ManagedInspection managed;
+    std::string candidate;
 };
 
 struct BlockSpec {
@@ -166,10 +183,13 @@ std::string renderLines(const std::vector<PhysicalLine>& lines) {
 }
 
 bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
+                          ManagedTargetRole role,
                           ManagedInspection& inspection,
                           std::string& error) {
     inspection = ManagedInspection{};
     std::size_t presentBlocks = 0;
+    bool authfailPresent = false;
+    bool accountPresent = false;
 
     std::vector<std::size_t> preauthBegins;
     std::vector<std::size_t> preauthEnds;
@@ -257,6 +277,12 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
             continue;
         }
         ++presentBlocks;
+        authfailPresent = authfailPresent ||
+            std::strcmp(block.begin,
+                        AltPamFaillockTopologyManager::AUTHFAIL_BEGIN) == 0;
+        accountPresent = accountPresent ||
+            std::strcmp(block.begin,
+                        AltPamFaillockTopologyManager::ACCOUNT_BEGIN) == 0;
         if (begins.size() != 1 || ends.size() != 1 ||
             begins.front() + 2 != ends.front() ||
             lines[begins.front() + 1].text != block.rule) {
@@ -293,7 +319,10 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
         error.clear();
         return true;
     }
-    if (presentBlocks != 3) {
+    const bool expectedAccount = managesAccount(role);
+    const std::size_t expectedBlocks = expectedAccount ? 3U : 2U;
+    if (presentBlocks != expectedBlocks || preauthBegins.empty() ||
+        !authfailPresent || accountPresent != expectedAccount) {
         inspection.state = ManagedState::Broken;
         error = "incomplete FIC pam_faillock managed topology";
         return false;
@@ -323,7 +352,7 @@ enum class ExternalFaillockGraphState { Clear, Present, Error };
 
 ExternalFaillockGraphState inspectExternalFaillockInRelevantGraph(
     const fic::platform::PamPlatformConfig& platformConfig,
-    const ManagedInspection& managed,
+    const std::vector<ManagedTargetState>& managedTargets,
     std::string& error) {
     PamConfiguration configuration(platformConfig);
     const fic::platform::PamCapabilityConfig* capability = nullptr;
@@ -342,7 +371,6 @@ ExternalFaillockGraphState inspectExternalFaillockInRelevantGraph(
         error = "none of the configured PAM authentication services exists";
         return ExternalFaillockGraphState::Error;
     }
-    const auto target = capability->topologyTarget.lexically_normal();
     for (const std::string& service : services) {
         for (const PamManagementGroup group : {
                  PamManagementGroup::Auth, PamManagementGroup::Account}) {
@@ -355,8 +383,14 @@ ExternalFaillockGraphState inspectExternalFaillockInRelevantGraph(
                 if (moduleBaseName(rule) != "pam_faillock.so") {
                     continue;
                 }
-                const bool owned = rule.source.lexically_normal() == target &&
-                    managed.ruleLines.find(rule.line) != managed.ruleLines.end();
+                const bool owned = std::any_of(
+                    managedTargets.begin(), managedTargets.end(),
+                    [&rule](const ManagedTargetState& target) {
+                        return rule.source.lexically_normal() ==
+                                target.target.path.lexically_normal() &&
+                            target.managed.ruleLines.find(rule.line) !=
+                                target.managed.ruleLines.end();
+                    });
                 if (!owned) {
                     error = "external pam_faillock topology is effective for PAM "
                         "service " + service + " at " + rule.source.string() +
@@ -494,6 +528,7 @@ void appendPreauthBlock(std::vector<PhysicalLine>& output,
 
 bool findAnchors(const std::vector<PamRule>& rules,
                  const std::vector<PhysicalLine>& lines,
+                 ManagedTargetRole role,
                  std::size_t& authLine,
                  std::size_t& accountLine,
                  std::string& error) {
@@ -515,38 +550,43 @@ bool findAnchors(const std::vector<PamRule>& rules,
             std::to_string(authCandidates.size());
         return false;
     }
-    if (accountCandidates.size() != 1) {
-        error = "expected exactly one local account pam_tcb.so anchor, found " +
+    const std::size_t expectedAccountAnchors = managesAccount(role) ? 1U : 0U;
+    if (accountCandidates.size() != expectedAccountAnchors) {
+        error = "expected " + std::to_string(expectedAccountAnchors) +
+            " local account pam_tcb.so anchor(s), found " +
             std::to_string(accountCandidates.size());
         return false;
     }
     const PamRule& auth = *authCandidates.front();
-    const PamRule& account = *accountCandidates.front();
     if ((auth.control != "required" && auth.control != "sufficient") ||
-        account.control != "required") {
+        (managesAccount(role) &&
+         accountCandidates.front()->control != "required")) {
         error = "unsupported pam_tcb.so control topology in ALT local stack";
         return false;
     }
-    if (auth.line == 0 || account.line == 0 || auth.line > lines.size() ||
-        account.line > lines.size() ||
+    accountLine = managesAccount(role) ? accountCandidates.front()->line : 0;
+    if (auth.line == 0 || auth.line > lines.size() ||
+        (managesAccount(role) &&
+         (accountLine == 0 || accountLine > lines.size())) ||
         (!lines[auth.line - 1].text.empty() &&
          lines[auth.line - 1].text.back() == '\\') ||
-        (!lines[account.line - 1].text.empty() &&
-         lines[account.line - 1].text.back() == '\\')) {
+        (managesAccount(role) &&
+         !lines[accountLine - 1].text.empty() &&
+         lines[accountLine - 1].text.back() == '\\')) {
         error = "unsupported continued or invalid pam_tcb.so anchor line";
         return false;
     }
     authLine = auth.line;
-    accountLine = account.line;
     return true;
 }
 
 bool verifyManagedPlacement(const std::vector<PamRule>& rules,
                             const std::vector<PhysicalLine>& lines,
+                            ManagedTargetRole role,
                             std::string& error) {
     std::size_t authLine = 0;
     std::size_t accountLine = 0;
-    if (!findAnchors(rules, lines, authLine, accountLine, error)) {
+    if (!findAnchors(rules, lines, role, authLine, accountLine, error)) {
         return false;
     }
     const auto preauth = std::find_if(
@@ -565,7 +605,8 @@ bool verifyManagedPlacement(const std::vector<PamRule>& rules,
                 AltPamFaillockTopologyManager::ACCOUNT_BEGIN;
         });
     if (preauth == lines.end() || authfail == lines.end() ||
-        account == lines.end()) {
+        (managesAccount(role) ? account == lines.end()
+                              : account != lines.end())) {
         error = "complete FIC pam_faillock markers are missing";
         return false;
     }
@@ -573,13 +614,19 @@ bool verifyManagedPlacement(const std::vector<PamRule>& rules,
         static_cast<std::size_t>(std::distance(lines.begin(), preauth));
     const std::size_t authfailIndex =
         static_cast<std::size_t>(std::distance(lines.begin(), authfail));
-    const std::size_t accountIndex =
-        static_cast<std::size_t>(std::distance(lines.begin(), account));
     if (authLine != preauthIndex + 4 ||
-        authfailIndex != preauthIndex + 5 ||
-        accountLine != accountIndex + 4) {
+        authfailIndex != preauthIndex + 5) {
         error = "FIC pam_faillock blocks are not at the required pam_tcb anchors";
         return false;
+    }
+    if (managesAccount(role)) {
+        const std::size_t accountIndex =
+            static_cast<std::size_t>(std::distance(lines.begin(), account));
+        if (accountLine != accountIndex + 4) {
+            error = "FIC pam_faillock account block is not at the required "
+                "pam_tcb anchor";
+            return false;
+        }
     }
     error.clear();
     return true;
@@ -588,11 +635,12 @@ bool verifyManagedPlacement(const std::vector<PamRule>& rules,
 bool verifyNoExecutableAuthTail(
     const std::vector<PamRule>& rules,
     const std::vector<PhysicalLine>& lines,
+    ManagedTargetRole role,
     const ManagedInspection& managed,
     std::string& error) {
     std::size_t authLine = 0;
     std::size_t accountLine = 0;
-    if (!findAnchors(rules, lines, authLine, accountLine, error)) {
+    if (!findAnchors(rules, lines, role, authLine, accountLine, error)) {
         return false;
     }
     (void)accountLine;
@@ -610,6 +658,7 @@ bool verifyNoExecutableAuthTail(
 
 std::string buildEnabledContent(const std::vector<PhysicalLine>& lines,
                                 const std::vector<PamRule>& rules,
+                                ManagedTargetRole role,
                                 std::size_t authLine,
                                 std::size_t accountLine) {
     std::vector<PhysicalLine> output;
@@ -626,7 +675,7 @@ std::string buildEnabledContent(const std::vector<PhysicalLine>& lines,
             appendBlock(output, kSimpleBlocks[0]);
             continue;
         }
-        if (line == accountLine) {
+        if (managesAccount(role) && line == accountLine) {
             appendBlock(output, kSimpleBlocks[1]);
         }
         output.push_back(lines[line - 1]);
@@ -652,6 +701,7 @@ std::string buildDisabledContent(const std::vector<PhysicalLine>& lines,
 
 bool parseAndInspect(const std::filesystem::path& path,
                      const std::string& content,
+                     ManagedTargetRole role,
                      std::vector<PhysicalLine>& lines,
                      std::vector<PamRule>& rules,
                      ManagedInspection& managed,
@@ -660,7 +710,188 @@ bool parseAndInspect(const std::filesystem::path& path,
     if (!parseTarget(path, content, rules, error)) {
         return false;
     }
-    return inspectManagedBlocks(lines, managed, error);
+    return inspectManagedBlocks(lines, role, managed, error);
+}
+
+bool loadManagedTargets(
+    const fic::platform::PamCapabilityConfig& capability,
+    std::vector<ManagedTargetState>& targets,
+    std::string& error) {
+    targets.clear();
+    targets.reserve(capability.managedTopologyTargets.size());
+    for (const auto& configured : capability.managedTopologyTargets) {
+        ManagedTargetState target;
+        target.target = configured;
+        if (!inspectSecureTarget(configured.path, target.snapshot, error) ||
+            !parseAndInspect(
+                configured.path, target.snapshot.content, configured.role,
+                target.lines, target.rules, target.managed, error)) {
+            error = "could not inspect managed PAM target " +
+                configured.path.string() + ": " + error;
+            return false;
+        }
+        targets.push_back(std::move(target));
+    }
+    error.clear();
+    return true;
+}
+
+bool validatePresentTarget(const ManagedTargetState& target,
+                           std::string& error) {
+    if (target.managed.state != ManagedState::Present) {
+        error = "managed PAM target is not enabled: " +
+            target.target.path.string();
+        return false;
+    }
+    if (hasExternalFaillock(target.rules, target.managed)) {
+        error = "FIC pam_faillock blocks coexist with external topology in " +
+            target.target.path.string();
+        return false;
+    }
+    if (!verifyManagedPlacement(
+            target.rules, target.lines, target.target.role, error)) {
+        error = "FIC pam_faillock placement is invalid in " +
+            target.target.path.string() + ": " + error;
+        return false;
+    }
+    if (!verifyNoExecutableAuthTail(
+            target.rules, target.lines, target.target.role,
+            target.managed, error)) {
+        error = "FIC pam_faillock target has an unsafe auth tail in " +
+            target.target.path.string() + ": " + error;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool prepareEnabledCandidate(ManagedTargetState& target,
+                             std::string& error) {
+    if (target.managed.state != ManagedState::Absent) {
+        error = "managed PAM target is not disabled: " +
+            target.target.path.string();
+        return false;
+    }
+    if (hasExternalFaillock(target.rules, target.managed)) {
+        error = "external pam_faillock topology already exists in " +
+            target.target.path.string() + "; FIC will not take ownership";
+        return false;
+    }
+    std::size_t authLine = 0;
+    std::size_t accountLine = 0;
+    if (!findAnchors(
+            target.rules, target.lines, target.target.role,
+            authLine, accountLine, error) ||
+        !verifyNoExecutableAuthTail(
+            target.rules, target.lines, target.target.role,
+            target.managed, error)) {
+        error = "unsafe ALT local authentication topology in " +
+            target.target.path.string() + ": " + error;
+        return false;
+    }
+    target.candidate = buildEnabledContent(
+        target.lines, target.rules, target.target.role,
+        authLine, accountLine);
+    ManagedTargetState checked;
+    checked.target = target.target;
+    checked.snapshot.content = target.candidate;
+    if (!parseAndInspect(
+            checked.target.path, checked.snapshot.content,
+            checked.target.role, checked.lines, checked.rules,
+            checked.managed, error) ||
+        !validatePresentTarget(checked, error)) {
+        error = "generated PAM topology is invalid for " +
+            target.target.path.string() + ": " + error;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool restoreOriginalTargets(
+    const std::vector<ManagedTargetState>& originals,
+    const AltPamFaillockTopologyOptions& options,
+    const std::string& failure,
+    std::string& error,
+    std::size_t targetCount = std::numeric_limits<std::size_t>::max()) {
+    std::string rollbackFailures;
+    const std::size_t restoreCount = std::min(targetCount, originals.size());
+    for (std::size_t index = restoreCount; index > 0; --index) {
+        const auto& original = originals[index - 1];
+        TargetSnapshot current;
+        std::string targetError;
+        if (!inspectSecureTarget(
+                original.target.path, current, targetError)) {
+            if (!rollbackFailures.empty()) rollbackFailures += "; ";
+            rollbackFailures += original.target.path.string() + ": " +
+                targetError;
+            continue;
+        }
+        if (current.content != original.snapshot.content &&
+            !options.writer(
+                original.target.path.string(), original.snapshot.content,
+                writeOptionsForSnapshot(options.writeOptions, current),
+                &targetError)) {
+            if (!rollbackFailures.empty()) rollbackFailures += "; ";
+            rollbackFailures += original.target.path.string() +
+                ": rollback write failed: " + targetError;
+            continue;
+        }
+        TargetSnapshot restored;
+        std::vector<PhysicalLine> restoredLines;
+        std::vector<PamRule> restoredRules;
+        ManagedInspection restoredManaged;
+        if (!inspectSecureTarget(
+                original.target.path, restored, targetError) ||
+            restored.content != original.snapshot.content ||
+            !parseAndInspect(
+                original.target.path, restored.content,
+                original.target.role, restoredLines, restoredRules,
+                restoredManaged, targetError)) {
+            if (!rollbackFailures.empty()) rollbackFailures += "; ";
+            rollbackFailures += original.target.path.string() +
+                ": rollback verification failed: " + targetError;
+        }
+    }
+    if (!rollbackFailures.empty()) {
+        error = failure + "; CRITICAL: rollback failed: " + rollbackFailures +
+            "; PAM configuration may be inconsistent";
+        return false;
+    }
+    error = failure + "; original PAM configuration restored";
+    return false;
+}
+
+bool writeCandidates(
+    const std::vector<ManagedTargetState>& targets,
+    const AltPamFaillockTopologyOptions& options,
+    const std::string& action,
+    std::string& error) {
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        const auto& target = targets[index];
+        if (!targetStillMatches(
+                target.target.path, target.snapshot, error)) {
+            return restoreOriginalTargets(
+                targets, options,
+                "could not " + action + " FIC pam_faillock topology: " +
+                    error,
+                error, index);
+        }
+        std::string writeError;
+        if (!options.writer(
+                target.target.path.string(), target.candidate,
+                writeOptionsForSnapshot(options.writeOptions, target.snapshot),
+                &writeError)) {
+            return restoreOriginalTargets(
+                targets, options,
+                "could not atomically " + action +
+                    " FIC pam_faillock topology at " +
+                    target.target.path.string() + ": " + writeError,
+                error, index);
+        }
+    }
+    error.clear();
+    return true;
 }
 
 } // namespace
@@ -683,20 +914,64 @@ bool AltPamFaillockTopologyManager::verifySemanticEffectiveness(
         return options_.semanticVerifier(error);
     }
     PamConfiguration configuration(platformConfig_);
-    PamCapabilityVerification verification;
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::AuthenticationLockout);
-    const std::string localService = capability == nullptr
-        ? std::string()
-        : capability->topologyTarget.filename().string();
-    if (localService.empty()) {
-        error = "local PAM authentication stack service name is empty";
+    const std::vector<std::string>* configuredServices = nullptr;
+    if (capability == nullptr ||
+        !resolveCapability(
+            platformConfig_, PamCapability::AuthenticationLockout,
+            capability, configuredServices, error) ||
+        configuredServices == nullptr) {
+        if (error.empty()) {
+            error = "ALT pam_faillock capability services are unavailable";
+        }
         return false;
     }
+
+    std::vector<std::string> services;
+    for (const auto& target : capability->managedTopologyTargets) {
+        if (managesAccount(target.role)) {
+            services.push_back(target.path.filename().string());
+        }
+    }
+    std::vector<std::string> existingServices;
+    if (!configuration.existingServices(
+            *configuredServices, existingServices, error)) {
+        return false;
+    }
+    for (const std::string& service : existingServices) {
+        std::vector<PamRule> authRules;
+        if (!configuration.collectRules(
+                service, PamManagementGroup::Auth, authRules, error)) {
+            return false;
+        }
+        const bool usesAuthenticationTarget = std::any_of(
+            authRules.begin(), authRules.end(),
+            [&](const PamRule& rule) {
+                return std::any_of(
+                    capability->managedTopologyTargets.begin(),
+                    capability->managedTopologyTargets.end(),
+                    [&](const auto& target) {
+                        return !managesAccount(target.role) &&
+                            rule.source.lexically_normal() ==
+                                target.path.lexically_normal();
+                    });
+            });
+        if (usesAuthenticationTarget &&
+            std::find(services.begin(), services.end(), service) ==
+                services.end()) {
+            services.push_back(service);
+        }
+    }
+    if (services.empty()) {
+        error = "ALT pam_faillock topology has no verification services";
+        return false;
+    }
+    PamCapabilityVerification verification;
     if (!PamCapabilityVerifier::verify(
             configuration,
             platformConfig_,
-            {localService},
+            services,
             PamCapability::AuthenticationLockout,
             PamProviderKind::PamFaillock,
             verification)) {
@@ -712,12 +987,7 @@ bool AltPamFaillockTopologyManager::status(
     std::string& error) {
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::AuthenticationLockout);
-    if (capability == nullptr ||
-        capability->topology !=
-            fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
-        capability->topologyTarget.empty() ||
-        options_.lockFilePath.empty()) {
-        error = "ALT pam_faillock topology is unsupported by this platform profile";
+    if (!canEnable(error) || capability == nullptr) {
         return false;
     }
     ExclusivePidLock lock(
@@ -727,42 +997,30 @@ bool AltPamFaillockTopologyManager::status(
             options_.lockFilePath.string();
         return false;
     }
-    TargetSnapshot snapshot;
-    if (!inspectSecureTarget(
-            capability->topologyTarget, snapshot, error)) {
+    std::vector<ManagedTargetState> targets;
+    if (!loadManagedTargets(*capability, targets, error)) {
         return false;
     }
-    std::vector<PhysicalLine> lines;
-    std::vector<PamRule> rules;
-    ManagedInspection managed;
-    if (!parseAndInspect(capability->topologyTarget,
-                         snapshot.content, lines, rules, managed, error)) {
-        return false;
-    }
-    if (managed.state == ManagedState::Absent) {
+    const std::size_t present = static_cast<std::size_t>(std::count_if(
+        targets.begin(), targets.end(), [](const ManagedTargetState& target) {
+            return target.managed.state == ManagedState::Present;
+        }));
+    if (present == 0) {
         state = AltPamFaillockTopologyState::Disabled;
         error.clear();
         return true;
     }
-    if (managed.state != ManagedState::Present) {
-        error = "broken FIC pam_faillock managed topology";
+    if (present != targets.size()) {
+        error = "partial FIC pam_faillock topology across managed targets";
         return false;
     }
-    if (!verifyManagedPlacement(rules, lines, error)) {
-        error = "FIC pam_faillock managed topology placement is invalid: " + error;
-        return false;
-    }
-    if (!verifyNoExecutableAuthTail(rules, lines, managed, error)) {
-        error = "FIC pam_faillock managed topology has unsafe auth tail: " +
-            error;
-        return false;
-    }
-    if (hasExternalFaillock(rules, managed)) {
-        error = "FIC pam_faillock blocks coexist with external pam_faillock topology";
-        return false;
+    for (const auto& target : targets) {
+        if (!validatePresentTarget(target, error)) {
+            return false;
+        }
     }
     const auto externalGraph = inspectExternalFaillockInRelevantGraph(
-        platformConfig_, managed, error);
+        platformConfig_, targets, error);
     if (externalGraph == ExternalFaillockGraphState::Error) {
         error = "could not inspect relevant PAM graph for external "
             "pam_faillock topology: " + error;
@@ -804,8 +1062,35 @@ bool AltPamFaillockTopologyManager::canEnable(std::string& error) const
     if (capability == nullptr ||
         capability->topology !=
             fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
-        capability->topologyTarget.empty() || options_.lockFilePath.empty()) {
+        capability->managedTopologyTargets.empty() ||
+        options_.lockFilePath.empty()) {
         error = "ALT pam_faillock topology is unsupported by this platform profile";
+        return false;
+    }
+    std::set<std::filesystem::path> paths;
+    std::size_t accountTargets = 0;
+    for (const auto& target : capability->managedTopologyTargets) {
+        if (target.path.empty() || !target.path.is_absolute() ||
+            target.path.lexically_normal() != target.path ||
+            !paths.insert(target.path).second) {
+            error = "ALT pam_faillock topology contains an invalid or duplicate "
+                "managed target";
+            return false;
+        }
+        switch (target.role) {
+        case ManagedTargetRole::Authentication:
+            break;
+        case ManagedTargetRole::AuthenticationAndAccount:
+            ++accountTargets;
+            break;
+        default:
+            error = "ALT pam_faillock topology contains an unsupported target role";
+            return false;
+        }
+    }
+    if (accountTargets != 1) {
+        error = "ALT pam_faillock topology requires exactly one "
+            "authentication-and-account target";
         return false;
     }
     error.clear();
@@ -815,12 +1100,7 @@ bool AltPamFaillockTopologyManager::canEnable(std::string& error) const
 bool AltPamFaillockTopologyManager::enable(std::string& error) {
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::AuthenticationLockout);
-    if (capability == nullptr ||
-        capability->topology !=
-            fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
-        capability->topologyTarget.empty() ||
-        options_.lockFilePath.empty()) {
-        error = "ALT pam_faillock topology is unsupported by this platform profile";
+    if (!canEnable(error) || capability == nullptr) {
         return false;
     }
     ExclusivePidLock lock(
@@ -831,61 +1111,47 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
         return false;
     }
 
-    const auto& path = capability->topologyTarget;
-    TargetSnapshot original;
-    if (!inspectSecureTarget(path, original, error)) {
+    std::vector<ManagedTargetState> targets;
+    if (!loadManagedTargets(*capability, targets, error)) {
         return false;
     }
-    std::vector<PhysicalLine> lines;
-    std::vector<PamRule> rules;
-    ManagedInspection managed;
-    if (!parseAndInspect(path, original.content, lines, rules, managed, error)) {
-        return false;
-    }
-    if (managed.state == ManagedState::Present) {
-        if (hasExternalFaillock(rules, managed)) {
-            error = "FIC pam_faillock blocks coexist with external topology";
+    const std::size_t present = static_cast<std::size_t>(std::count_if(
+        targets.begin(), targets.end(), [](const ManagedTargetState& target) {
+            return target.managed.state == ManagedState::Present;
+        }));
+    if (present != 0) {
+        if (present != targets.size()) {
+            error = "partial FIC pam_faillock topology across managed targets";
             return false;
         }
-        if (!verifyManagedPlacement(rules, lines, error)) {
-            error = "existing FIC pam_faillock topology placement is invalid: " +
-                error;
-            return false;
-        }
-        if (!verifyNoExecutableAuthTail(rules, lines, managed, error)) {
-            error = "existing FIC pam_faillock topology has unsafe auth tail: " +
-                error;
-            return false;
+        for (const auto& target : targets) {
+            if (!validatePresentTarget(target, error)) {
+                return false;
+            }
         }
         const auto externalGraph = inspectExternalFaillockInRelevantGraph(
-            platformConfig_, managed, error);
+            platformConfig_, targets, error);
         if (externalGraph == ExternalFaillockGraphState::Error) {
             error = "could not inspect relevant PAM graph for external "
                 "pam_faillock topology: " + error;
             return false;
         }
         if (externalGraph == ExternalFaillockGraphState::Present) {
-            error = "existing FIC pam_faillock topology conflicts with external "
-                "topology: " + error;
+            error = "existing FIC pam_faillock topology conflicts with "
+                "external topology: " + error;
             return false;
         }
         if (!verifySemanticEffectiveness(error)) {
-            error = "existing FIC pam_faillock topology is not effective: " + error;
+            error = "existing FIC pam_faillock topology is not effective: " +
+                error;
             return false;
         }
         error.clear();
         return true;
     }
-    if (managed.state != ManagedState::Absent) {
-        error = "broken FIC pam_faillock managed topology";
-        return false;
-    }
-    if (hasExternalFaillock(rules, managed)) {
-        error = "external pam_faillock topology already exists; FIC will not take ownership";
-        return false;
-    }
+
     const auto externalGraph = inspectExternalFaillockInRelevantGraph(
-        platformConfig_, managed, error);
+        platformConfig_, targets, error);
     if (externalGraph == ExternalFaillockGraphState::Error) {
         error = "could not inspect relevant PAM graph for external "
             "pam_faillock topology: " + error;
@@ -896,88 +1162,41 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
             "take ownership: " + error;
         return false;
     }
-
-    std::size_t authLine = 0;
-    std::size_t accountLine = 0;
-    if (!findAnchors(rules, lines, authLine, accountLine, error)) {
-        return false;
+    for (auto& target : targets) {
+        if (!prepareEnabledCandidate(target, error)) {
+            return false;
+        }
     }
-    if (!verifyNoExecutableAuthTail(rules, lines, managed, error)) {
-        error = "unsafe ALT local authentication topology: " + error;
-        return false;
-    }
-    const std::string candidate =
-        buildEnabledContent(lines, rules, authLine, accountLine);
-    std::vector<PamRule> candidateRules;
-    if (!parseTarget(path, candidate, candidateRules, error)) {
-        error = "generated PAM topology does not parse: " + error;
-        return false;
-    }
-    if (!targetStillMatches(path, original, error)) {
-        return false;
-    }
-    std::string writeError;
-    if (!options_.writer(
-            path.string(), candidate,
-            writeOptionsForSnapshot(options_.writeOptions, original),
-            &writeError)) {
-        error = "could not atomically enable FIC pam_faillock topology: " +
-            writeError;
+    if (!writeCandidates(targets, options_, "enable", error)) {
         return false;
     }
 
-    auto rollback = [&](const std::string& failure) -> bool {
-        std::string rollbackError;
-        TargetSnapshot rollbackTarget;
-        if (!inspectSecureTarget(path, rollbackTarget, rollbackError)) {
-            error = failure + "; CRITICAL: could not inspect rollback target: " +
-                rollbackError + "; PAM configuration may be inconsistent";
-            return false;
-        }
-        if (!options_.writer(path.string(), original.content,
-                             writeOptionsForSnapshot(
-                                 options_.writeOptions, rollbackTarget),
-                             &rollbackError)) {
-            error = failure + "; CRITICAL: rollback write failed: " + rollbackError +
-                "; PAM configuration may be inconsistent";
-            return false;
-        }
-        TargetSnapshot restored;
-        std::vector<PhysicalLine> restoredLines;
-        std::vector<PamRule> restoredRules;
-        ManagedInspection restoredManaged;
-        if (!inspectSecureTarget(path, restored, rollbackError) ||
-            restored.content != original.content ||
-            !parseAndInspect(path, restored.content, restoredLines, restoredRules,
-                             restoredManaged, rollbackError)) {
-            error = failure + "; CRITICAL: rollback verification failed: " +
-                rollbackError + "; PAM configuration may be inconsistent";
-            return false;
-        }
-        error = failure + "; original PAM configuration restored";
-        return false;
-    };
-
-    TargetSnapshot written;
-    std::vector<PhysicalLine> writtenLines;
-    std::vector<PamRule> writtenRules;
-    ManagedInspection writtenManaged;
+    std::vector<ManagedTargetState> written;
     std::string verificationError;
-    if (!inspectSecureTarget(path, written, verificationError) ||
-        written.content != candidate ||
-        !parseAndInspect(path, written.content, writtenLines, writtenRules,
-                         writtenManaged, verificationError) ||
-        writtenManaged.state != ManagedState::Present ||
-        hasExternalFaillock(writtenRules, writtenManaged) ||
-        !verifyManagedPlacement(
-            writtenRules, writtenLines, verificationError) ||
-        !verifyNoExecutableAuthTail(
-            writtenRules, writtenLines, writtenManaged, verificationError) ||
-        inspectExternalFaillockInRelevantGraph(
-            platformConfig_, writtenManaged, verificationError) !=
-            ExternalFaillockGraphState::Clear ||
+    if (!loadManagedTargets(*capability, written, verificationError) ||
+        written.size() != targets.size()) {
+        return restoreOriginalTargets(
+            targets, options_,
+            "post-enable PAM verification failed: " + verificationError,
+            error);
+    }
+    for (std::size_t index = 0; index < written.size(); ++index) {
+        if (written[index].snapshot.content != targets[index].candidate ||
+            !validatePresentTarget(written[index], verificationError)) {
+            return restoreOriginalTargets(
+                targets, options_,
+                "post-enable PAM verification failed: " + verificationError,
+                error);
+        }
+    }
+    const auto writtenExternal = inspectExternalFaillockInRelevantGraph(
+        platformConfig_, written, verificationError);
+    if (writtenExternal != ExternalFaillockGraphState::Clear ||
         !verifySemanticEffectiveness(verificationError)) {
-        return rollback("post-enable PAM verification failed: " + verificationError);
+        return restoreOriginalTargets(
+            targets, options_,
+            "post-enable PAM verification failed: " + verificationError,
+            error);
     }
     error.clear();
     return true;
@@ -986,12 +1205,7 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
 bool AltPamFaillockTopologyManager::disable(std::string& error) {
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::AuthenticationLockout);
-    if (capability == nullptr ||
-        capability->topology !=
-            fic::platform::PamTopologyStrategyKind::AltTcbManaged ||
-        capability->topologyTarget.empty() ||
-        options_.lockFilePath.empty()) {
-        error = "ALT pam_faillock topology is unsupported by this platform profile";
+    if (!canEnable(error) || capability == nullptr) {
         return false;
     }
     ExclusivePidLock lock(
@@ -1001,96 +1215,67 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
             options_.lockFilePath.string();
         return false;
     }
-    const auto& path = capability->topologyTarget;
-    TargetSnapshot original;
-    if (!inspectSecureTarget(path, original, error)) {
+
+    std::vector<ManagedTargetState> targets;
+    if (!loadManagedTargets(*capability, targets, error)) {
         return false;
     }
-    std::vector<PhysicalLine> lines;
-    std::vector<PamRule> rules;
-    ManagedInspection managed;
-    if (!parseAndInspect(path, original.content, lines, rules, managed, error)) {
-        return false;
-    }
-    if (managed.state == ManagedState::Absent) {
+    const std::size_t present = static_cast<std::size_t>(std::count_if(
+        targets.begin(), targets.end(), [](const ManagedTargetState& target) {
+            return target.managed.state == ManagedState::Present;
+        }));
+    if (present == 0) {
         error.clear();
         return true;
     }
-    if (managed.state != ManagedState::Present) {
-        error = "broken FIC pam_faillock managed topology";
-        return false;
-    }
-    if (!verifyManagedPlacement(rules, lines, error)) {
-        error = "refusing to disable invalid FIC pam_faillock placement: " +
-            error;
-        return false;
-    }
-    const std::string candidate = buildDisabledContent(lines, managed);
-    std::vector<PamRule> candidateRules;
-    if (!parseTarget(path, candidate, candidateRules, error)) {
-        error = "PAM topology after disable does not parse: " + error;
-        return false;
-    }
-    if (!targetStillMatches(path, original, error)) {
-        return false;
-    }
-    std::string writeError;
-    if (!options_.writer(
-            path.string(), candidate,
-            writeOptionsForSnapshot(options_.writeOptions, original),
-            &writeError)) {
-        error = "could not atomically disable FIC pam_faillock topology: " +
-            writeError;
+    if (present != targets.size()) {
+        error = "partial FIC pam_faillock topology across managed targets";
         return false;
     }
 
-    auto rollback = [&](const std::string& failure) -> bool {
-        std::string rollbackError;
-        TargetSnapshot rollbackTarget;
-        if (!inspectSecureTarget(path, rollbackTarget, rollbackError)) {
-            error = failure + "; CRITICAL: could not inspect rollback target: " +
-                rollbackError + "; PAM configuration may be inconsistent";
+    for (auto& target : targets) {
+        if (!verifyManagedPlacement(
+                target.rules, target.lines, target.target.role, error)) {
+            error = "refusing to disable invalid FIC pam_faillock placement in " +
+                target.target.path.string() + ": " + error;
             return false;
         }
-        if (!options_.writer(path.string(), original.content,
-                             writeOptionsForSnapshot(
-                                 options_.writeOptions, rollbackTarget),
-                             &rollbackError)) {
-            error = failure + "; CRITICAL: rollback write failed: " + rollbackError +
-                "; PAM configuration may be inconsistent";
+        target.candidate = buildDisabledContent(
+            target.lines, target.managed);
+        std::vector<PhysicalLine> checkedLines;
+        std::vector<PamRule> checkedRules;
+        ManagedInspection checkedManaged;
+        if (!parseAndInspect(
+                target.target.path, target.candidate, target.target.role,
+                checkedLines, checkedRules, checkedManaged, error) ||
+            checkedManaged.state != ManagedState::Absent) {
+            error = "PAM topology after disable is invalid for " +
+                target.target.path.string() + ": " + error;
             return false;
         }
-        TargetSnapshot restored;
-        std::vector<PhysicalLine> restoredLines;
-        std::vector<PamRule> restoredRules;
-        ManagedInspection restoredManaged;
-        if (!inspectSecureTarget(path, restored, rollbackError) ||
-            restored.content != original.content ||
-            !parseAndInspect(path, restored.content, restoredLines, restoredRules,
-                             restoredManaged, rollbackError) ||
-            restoredManaged.state != ManagedState::Present ||
-            !verifyManagedPlacement(
-                restoredRules, restoredLines, rollbackError) ||
-            !verifySemanticEffectiveness(rollbackError)) {
-            error = failure + "; CRITICAL: rollback verification failed: " +
-                rollbackError + "; PAM configuration may be inconsistent";
-            return false;
-        }
-        error = failure + "; original PAM configuration restored";
+    }
+    if (!writeCandidates(targets, options_, "disable", error)) {
         return false;
-    };
+    }
 
-    TargetSnapshot written;
-    std::vector<PhysicalLine> writtenLines;
-    std::vector<PamRule> writtenRules;
-    ManagedInspection writtenManaged;
+    std::vector<ManagedTargetState> written;
     std::string verificationError;
-    if (!inspectSecureTarget(path, written, verificationError) ||
-        written.content != candidate ||
-        !parseAndInspect(path, written.content, writtenLines, writtenRules,
-                         writtenManaged, verificationError) ||
-        writtenManaged.state != ManagedState::Absent) {
-        return rollback("post-disable PAM verification failed: " + verificationError);
+    if (!loadManagedTargets(*capability, written, verificationError) ||
+        written.size() != targets.size()) {
+        return restoreOriginalTargets(
+            targets, options_,
+            "post-disable PAM verification failed: " + verificationError,
+            error);
+    }
+    for (std::size_t index = 0; index < written.size(); ++index) {
+        if (written[index].snapshot.content != targets[index].candidate ||
+            written[index].managed.state != ManagedState::Absent) {
+            return restoreOriginalTargets(
+                targets, options_,
+                "post-disable PAM verification failed for " +
+                    written[index].target.path.string(),
+                error);
+        }
     }
     error.clear();
     return true;

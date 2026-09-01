@@ -4,53 +4,67 @@
 
 - Ветка: `main`.
 - HEAD до текущих незакоммиченных изменений:
-  `340329c9a0119660a18415a0e0eebc3c11da90a0`.
+  `81001cca5cb2d924d745a8c4ea103191b094cd64`.
 
 ## Current task
 
-- Исправлена активация FIC-managed `pam_faillock` topology на ALT p11, где
-  штатный SSH PAM graph проходит через selector
-  `/etc/pam.d/system-auth-use_first_pass`.
+- Исправлена FIC-managed `pam_faillock` topology на ALT p11 для штатного
+  split graph: SSH authentication идёт через
+  `system-auth-use_first_pass-local-only`, а account — через
+  `system-auth-local-only`.
 
 ## Accepted architecture / invariants
 
-- PAM service symlink остаются запрещены по умолчанию; ALT profile разрешает
-  только точные package-owned selectors и их явные allowlist targets.
-- `control system-auth` переключает согласованную пару selectors:
-  `system-auth` и `system-auth-use_first_pass`; FIC должен безопасно разрешать
-  оба при анализе effective authentication graph.
-- Ошибка чтения/разрешения PAM graph не является доказательством внешней
-  `pam_faillock` topology и диагностируется отдельно.
-- `pam_faillock` topology по-прежнему активируется администратором явно через
-  `control fic-pam-faillock enabled`.
+- ALT lockout capability задаёт typed managed targets с ролями, а manager не
+  выводит второй путь строковой заменой.
+- `system-auth-local-only` владеет authentication+account blocks;
+  `system-auth-use_first_pass-local-only` владеет authentication blocks и
+  сохраняет штатные аргументы `pam_tcb`, включая `use_first_pass`.
+- Все targets проверяются до первой записи, изменяются под одним lock и
+  откатываются до exact original bytes при write/postcondition failure.
+- `PamProviderInspector` и глобальная semantics
+  `required_pam_enforcement` не ослаблены.
+- `pam_faillock` и `pam_pwhistory` используют независимые markers и должны
+  безопасно сосуществовать в общем primary target.
 
 ## Completed
 
-- В ALT p11 profile добавлен exact allowlist для
-  `system-auth-use_first_pass-{local,ldap,krb5,krb5_ccreds,winbind,multi,pkcs11}`.
-- Проверка relevant PAM graph различает `Clear`, подтверждённую external
-  topology и ошибку инспекции; неизвестный symlink больше не выдаётся за
-  найденный внешний `pam_faillock`.
-- Добавлены regression-тест фактической цепочки
-  `sshd -> common-login-use_first_pass -> system-auth-use_first_pass` и
-  негативный тест неизвестного alias без PAM mutation.
+- В platform profile добавлены два typed ALT p11 targets и строгая validation
+  их путей, уникальности и ролей.
+- `AltPamFaillockTopologyManager` переведён на multi-target preflight,
+  mutation, verification и rollback.
+- Semantic postcondition проверяет primary local stack и configured services,
+  реально использующие дополнительный authentication target, включая штатный
+  `sshd` graph.
+- Реалистичный SSH regression fixture больше не подменяет
+  `system-auth-use_first_pass-local-only` обычным local-only файлом.
+- Добавлены negative, idempotence, multi-target rollback и
+  faillock/pwhistory coexistence tests.
+- Обновлено описание ALT RPM/runtime contract.
 
 ## Changed areas
 
-- `fic/src/platform/profiles/AltP11Profile.cpp`.
+- `fic/src/platform/` и ALT p11 profile.
 - `fic/src/modules/identity_access/pam/AltPamFaillockTopologyManager.cpp`.
-- ALT topology/platform tests.
+- ALT PAM topology/platform tests.
+- `fic/README.md`, `packaging/rpm/README.md`,
+  `docs/architecture-diagrams.md`.
 
 ## Validation
 
-- Собраны targets `alt_pam_faillock_topology_tests`,
-  `platform_profile_tests`, `fic` в `build-hardening-altp11`.
-- Passed 4/4:
-  `platform_profile_static_checks`, `pam_configuration_tests`,
-  `alt_pam_faillock_topology_tests`, `platform_profile_tests`.
-- `git diff --check` passed после обновления HANDOFF.
+- Успешно собраны targets: `fic`, `alt_pam_faillock_topology_tests`,
+  `alt_pam_password_history_topology_tests`, `pam_configuration_tests`,
+  `identity_configuration_transaction_tests`,
+  `identity_policy_hierarchy_tests`, `identity_configuration_editors_tests`,
+  `identity_concrete_policies_tests`, `platform_profile_tests`.
+- Passed 11/11 relevant CTest: platform/static/packaging, PAM topology and
+  configuration, identity policy/configuration и defaults tests.
+- Полная сборка `cmake --build build-hardening-altp11 -j2` остановилась на
+  незатронутом `fic-session-agent`: в окружении отсутствует
+  `systemd/sd-login.h`.
+- `git diff --check` passed.
 
 ## Remaining
 
 - Исправленная сборка не развёртывалась на `10.88.0.86`; runtime-повтор
-  `control fic-pam-faillock enabled` требует сборки/установки нового RPM.
+  `control fic-pam-faillock enabled` требует сборки и установки нового RPM.
