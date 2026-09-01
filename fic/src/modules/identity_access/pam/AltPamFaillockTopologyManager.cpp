@@ -319,7 +319,9 @@ bool hasExternalFaillock(const std::vector<PamRule>& rules,
         });
 }
 
-bool verifyNoExternalFaillockInRelevantGraph(
+enum class ExternalFaillockGraphState { Clear, Present, Error };
+
+ExternalFaillockGraphState inspectExternalFaillockInRelevantGraph(
     const fic::platform::PamPlatformConfig& platformConfig,
     const ManagedInspection& managed,
     std::string& error) {
@@ -329,16 +331,16 @@ bool verifyNoExternalFaillockInRelevantGraph(
     if (!resolveCapability(
             platformConfig, PamCapability::AuthenticationLockout,
             capability, configuredServices, error)) {
-        return false;
+        return ExternalFaillockGraphState::Error;
     }
     std::vector<std::string> services;
     if (!configuration.existingServices(
             *configuredServices, services, error)) {
-        return false;
+        return ExternalFaillockGraphState::Error;
     }
     if (services.empty()) {
         error = "none of the configured PAM authentication services exists";
-        return false;
+        return ExternalFaillockGraphState::Error;
     }
     const auto target = capability->topologyTarget.lexically_normal();
     for (const std::string& service : services) {
@@ -347,7 +349,7 @@ bool verifyNoExternalFaillockInRelevantGraph(
             std::vector<PamRule> rules;
             if (!configuration.collectRules(
                     service, group, rules, error)) {
-                return false;
+                return ExternalFaillockGraphState::Error;
             }
             for (const PamRule& rule : rules) {
                 if (moduleBaseName(rule) != "pam_faillock.so") {
@@ -359,13 +361,13 @@ bool verifyNoExternalFaillockInRelevantGraph(
                     error = "external pam_faillock topology is effective for PAM "
                         "service " + service + " at " + rule.source.string() +
                         ":" + std::to_string(rule.line);
-                    return false;
+                    return ExternalFaillockGraphState::Present;
                 }
             }
         }
     }
     error.clear();
-    return true;
+    return ExternalFaillockGraphState::Clear;
 }
 
 bool inspectSecureTarget(const std::filesystem::path& path,
@@ -759,8 +761,14 @@ bool AltPamFaillockTopologyManager::status(
         error = "FIC pam_faillock blocks coexist with external pam_faillock topology";
         return false;
     }
-    if (!verifyNoExternalFaillockInRelevantGraph(
-            platformConfig_, managed, error)) {
+    const auto externalGraph = inspectExternalFaillockInRelevantGraph(
+        platformConfig_, managed, error);
+    if (externalGraph == ExternalFaillockGraphState::Error) {
+        error = "could not inspect relevant PAM graph for external "
+            "pam_faillock topology: " + error;
+        return false;
+    }
+    if (externalGraph == ExternalFaillockGraphState::Present) {
         error = "FIC pam_faillock blocks coexist with external pam_faillock "
             "topology: " + error;
         return false;
@@ -849,8 +857,14 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
                 error;
             return false;
         }
-        if (!verifyNoExternalFaillockInRelevantGraph(
-                platformConfig_, managed, error)) {
+        const auto externalGraph = inspectExternalFaillockInRelevantGraph(
+            platformConfig_, managed, error);
+        if (externalGraph == ExternalFaillockGraphState::Error) {
+            error = "could not inspect relevant PAM graph for external "
+                "pam_faillock topology: " + error;
+            return false;
+        }
+        if (externalGraph == ExternalFaillockGraphState::Present) {
             error = "existing FIC pam_faillock topology conflicts with external "
                 "topology: " + error;
             return false;
@@ -870,8 +884,14 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
         error = "external pam_faillock topology already exists; FIC will not take ownership";
         return false;
     }
-    if (!verifyNoExternalFaillockInRelevantGraph(
-            platformConfig_, managed, error)) {
+    const auto externalGraph = inspectExternalFaillockInRelevantGraph(
+        platformConfig_, managed, error);
+    if (externalGraph == ExternalFaillockGraphState::Error) {
+        error = "could not inspect relevant PAM graph for external "
+            "pam_faillock topology: " + error;
+        return false;
+    }
+    if (externalGraph == ExternalFaillockGraphState::Present) {
         error = "external pam_faillock topology already exists; FIC will not "
             "take ownership: " + error;
         return false;
@@ -953,8 +973,9 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
             writtenRules, writtenLines, verificationError) ||
         !verifyNoExecutableAuthTail(
             writtenRules, writtenLines, writtenManaged, verificationError) ||
-        !verifyNoExternalFaillockInRelevantGraph(
-            platformConfig_, writtenManaged, verificationError) ||
+        inspectExternalFaillockInRelevantGraph(
+            platformConfig_, writtenManaged, verificationError) !=
+            ExternalFaillockGraphState::Clear ||
         !verifySemanticEffectiveness(verificationError)) {
         return rollback("post-enable PAM verification failed: " + verificationError);
     }

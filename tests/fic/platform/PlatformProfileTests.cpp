@@ -258,7 +258,7 @@ void testSelectedProfile() {
     require(!profile.pam.moduleDirectories.empty(),
             "PAM module directories are missing");
     if (profile.id == "alt-p11") {
-        require(profile.pam.trustedServiceAliases.size() == 2 &&
+        require(profile.pam.trustedServiceAliases.size() == 3 &&
                     profile.pam.trustedServiceAliases.front().aliasPath ==
                         "/etc/pam.d/system-auth" &&
                     profile.pam.trustedServiceAliases.front().allowedTargets ==
@@ -271,12 +271,23 @@ void testSelectedProfile() {
                             "/etc/pam.d/system-auth-multi",
                             "/etc/pam.d/system-auth-pkcs11"} &&
                     profile.pam.trustedServiceAliases[1].aliasPath ==
-                        "/etc/pam.d/system-policy" &&
+                        "/etc/pam.d/system-auth-use_first_pass" &&
                     profile.pam.trustedServiceAliases[1].allowedTargets ==
+                        std::vector<std::filesystem::path>{
+                            "/etc/pam.d/system-auth-use_first_pass-local",
+                            "/etc/pam.d/system-auth-use_first_pass-ldap",
+                            "/etc/pam.d/system-auth-use_first_pass-krb5",
+                            "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds",
+                            "/etc/pam.d/system-auth-use_first_pass-winbind",
+                            "/etc/pam.d/system-auth-use_first_pass-multi",
+                            "/etc/pam.d/system-auth-use_first_pass-pkcs11"} &&
+                    profile.pam.trustedServiceAliases[2].aliasPath ==
+                        "/etc/pam.d/system-policy" &&
+                    profile.pam.trustedServiceAliases[2].allowedTargets ==
                         std::vector<std::filesystem::path>{
                             "/etc/pam.d/system-policy-local",
                             "/etc/pam.d/system-policy-remote"},
-                "ALT trusted native system-auth alias contract is incorrect");
+                "ALT trusted native PAM alias contract is incorrect");
     } else {
         require(profile.pam.trustedServiceAliases.empty(),
                 "Debian-family profile unexpectedly permits PAM aliases");

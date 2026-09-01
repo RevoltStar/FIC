@@ -155,6 +155,25 @@ std::string enabledFixture() {
     return TemporaryTree::read(tree.target());
 }
 
+void writeSshUseFirstPassGraph(TemporaryTree& tree) {
+    TemporaryTree::write(
+        tree.root / "pam.d/sshd",
+        "auth include common-login-use_first_pass\n"
+        "account include common-login\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/common-login-use_first_pass",
+        "auth substack system-auth-use_first_pass\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/common-login",
+        "account substack system-auth\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth-use_first_pass-local",
+        "auth include system-auth-local-only\n");
+    fs::create_symlink(
+        "system-auth-use_first_pass-local",
+        tree.root / "pam.d/system-auth-use_first_pass");
+}
+
 void testCanonicalRoundTrip() {
     TemporaryTree tree;
     AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
@@ -282,6 +301,58 @@ void testIncludedExternalFaillockRejectedBeforeWrite() {
             "included external pam_faillock was detected only after mutation");
     require(TemporaryTree::read(tree.target()) == original,
             "included external topology changed the target");
+}
+
+void testTrustedUseFirstPassAliasInSshGraph() {
+    TemporaryTree tree;
+    writeSshUseFirstPassGraph(tree);
+    auto platform = tree.platform();
+    platform.scopes.front().services = {"sshd", "system-auth"};
+    platform.trustedServiceAliases.push_back(
+        {tree.root / "pam.d/system-auth-use_first_pass",
+         {tree.root / "pam.d/system-auth-use_first_pass-local"}});
+    AltPamFaillockTopologyManager manager(
+        std::move(platform), tree.options());
+    std::string error;
+    require(manager.enable(error),
+            "trusted ALT use_first_pass alias was rejected: " + error);
+    require(fs::is_symlink(
+                tree.root / "pam.d/system-auth-use_first_pass") &&
+                fs::read_symlink(
+                    tree.root / "pam.d/system-auth-use_first_pass") ==
+                    "system-auth-use_first_pass-local",
+            "enable replaced the native use_first_pass alias");
+    require(manager.disable(error), error);
+}
+
+void testUntrustedGraphAliasHasAccurateDiagnostic() {
+    TemporaryTree tree;
+    writeSshUseFirstPassGraph(tree);
+    auto platform = tree.platform();
+    platform.scopes.front().services = {"sshd", "system-auth"};
+    const std::string original = TemporaryTree::read(tree.target());
+    auto options = tree.options();
+    std::size_t writes = 0;
+    options.writer = [&writes](const std::string& path,
+                               const std::string& content,
+                               const AtomicWriteOptions& writeOptions,
+                               std::string* error) {
+        ++writes;
+        return AtomicFileWriter::write(path, content, writeOptions, error);
+    };
+    AltPamFaillockTopologyManager manager(
+        std::move(platform), std::move(options));
+    std::string error;
+    require(!manager.enable(error),
+            "untrusted PAM service alias was accepted");
+    require(error.find("could not inspect relevant PAM graph") !=
+                std::string::npos &&
+                error.find("symbolic link") != std::string::npos &&
+                error.find("already exists") == std::string::npos,
+            "PAM graph inspection failure was reported as external topology: " +
+                error);
+    require(writes == 0 && TemporaryTree::read(tree.target()) == original,
+            "untrusted alias rejection happened after PAM mutation");
 }
 
 void testSssModeVerifiesManagedLocalBranch() {
@@ -639,6 +710,8 @@ int main() {
         testAtomicWriteRejectsReplacementAfterSnapshotCheck();
         testManagedPlacementChangeRejectedWithoutMutation();
         testIncludedExternalFaillockRejectedBeforeWrite();
+        testTrustedUseFirstPassAliasInSshGraph();
+        testUntrustedGraphAliasHasAccurateDiagnostic();
         testExecutableAuthTailRejectedBeforeWrite();
         testExternalTopologyRejected();
         testBrokenMarkersRejected();
