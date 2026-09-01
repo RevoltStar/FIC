@@ -68,6 +68,10 @@ for configured services whose authentication graph uses the additional typed
 target, including stock `sshd`. This explicit target scope does not reinterpret
 unrelated native ALT `sss` routing; the global `required_pam_enforcement`
 policy keeps its broader semantics.
+An operational failure of `pam_faillock preauth` that itself terminates the
+stack fail-closed is not reported as an `authfail` accounting bypass. A
+credential failure terminating before `pam_faillock` is reached remains a
+rejected bypass.
 Before mutation the manager inspects the effective include/substack graph of
 configured authentication services and rejects external `pam_faillock` rules.
 Failed postconditions restore the exact original bytes of every written target;

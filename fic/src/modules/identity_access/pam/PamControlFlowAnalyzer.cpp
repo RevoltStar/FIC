@@ -64,6 +64,7 @@ struct Evidence {
     bool providerSucceeded = false;
     bool preauthSucceeded = false;
     bool preauthDenied = false;
+    bool preauthFailedClosed = false;
     bool authfailReached = false;
     bool authsuccSucceeded = false;
     bool accountSucceeded = false;
@@ -364,6 +365,22 @@ void recordEvidence(ExecutionState& state,
     }
 }
 
+void recordProviderFailClosedEvidence(
+    ExecutionState& state,
+    const PamRule& rule,
+    const std::string& result,
+    const ControlAction& action,
+    PamProviderKind provider) {
+    if (provider != PamProviderKind::PamFaillock ||
+        moduleBaseName(rule) != "pam_faillock.so" ||
+        !hasArgument(rule, "preauth") || result == "success" ||
+        result == "new_authtok_reqd" || result == "auth_err") {
+        return;
+    }
+    state.evidence.preauthFailedClosed |=
+        action.kind == ActionKind::Bad || action.kind == ActionKind::Die;
+}
+
 void recordTrustedAuthenticationBypass(
     ExecutionState& state,
     const PamRule& rule,
@@ -433,6 +450,7 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
         a.providerSucceeded == b.providerSucceeded &&
         a.preauthSucceeded == b.preauthSucceeded &&
         a.preauthDenied == b.preauthDenied &&
+        a.preauthFailedClosed == b.preauthFailedClosed &&
         a.authfailReached == b.authfailReached &&
         a.authsuccSucceeded == b.authsuccSucceeded &&
         a.accountSucceeded == b.accountSucceeded &&
@@ -532,6 +550,8 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                 const ControlAction action = found == control.actions.end()
                     ? control.defaultAction
                     : found->second;
+                recordProviderFailClosedEvidence(
+                    state, entry.rule, result, action, provider);
                 if (state.trace.size() < kMaximumTraceSteps) {
                     state.trace.push_back({
                         entry.rule.source,
@@ -805,7 +825,8 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
         } else if (state.evidence.authenticationFailureObserved &&
                    !state.evidence.authenticationSuccessObserved &&
                    !state.evidence.authfailReached &&
-                   !state.evidence.preauthDenied) {
+                   !state.evidence.preauthDenied &&
+                   !state.evidence.preauthFailedClosed) {
             addFirstViolation(analysis, violationForState(
                 PamFlowViolationKind::FailureAccountingBypass,
                 authStack,

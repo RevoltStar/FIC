@@ -1960,6 +1960,33 @@ void testFailureAccountingBypass() {
         "failure-accounting diagnostic is missing: " + verification.detail);
 }
 
+void testCredentialFailureBeforeFaillockRemainsABypass() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"sshd"};
+    writeFile(
+        temp.path() / "pam.d/sshd",
+        "auth requisite pam_userpass.so\n"
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+            verification.detail.find("failure_accounting_bypass") !=
+                std::string::npos,
+        "credential failure before pam_faillock must remain a bypass: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
 void testRequiredProviderListParsing() {
     std::vector<fic::identity::pam::PamProviderKind> providers;
     std::string normalized;
@@ -2623,6 +2650,7 @@ int main() {
         testBypassThroughIncludeAndSubstack();
         testUnknownAuthModuleCannotProveEnforcement();
         testFailureAccountingBypass();
+        testCredentialFailureBeforeFaillockRemainsABypass();
         testRequiredProviderListParsing();
         testPamOptionValueCodec();
         testTrustedPamServiceAliasSecurityContract();

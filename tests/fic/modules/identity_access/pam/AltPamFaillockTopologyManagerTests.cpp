@@ -168,17 +168,57 @@ std::string enabledFixture() {
 void writeSshUseFirstPassGraph(TemporaryTree& tree) {
     TemporaryTree::write(
         tree.root / "pam.d/sshd",
+        "#%PAM-1.0\n"
+        "auth required pam_userpass.so\n"
         "auth include common-login-use_first_pass\n"
-        "account include common-login\n");
+        "account include common-login\n"
+        "password include common-login\n"
+        "session include common-login\n");
     TemporaryTree::write(
         tree.root / "pam.d/common-login-use_first_pass",
-        "auth substack system-auth-use_first_pass\n");
+        "#%PAM-1.0\n"
+        "auth substack system-auth-use_first_pass\n"
+        "auth required pam_nologin.so\n");
     TemporaryTree::write(
         tree.root / "pam.d/common-login",
-        "account substack system-auth\n");
+        "#%PAM-1.0\n"
+        "auth substack system-auth\n"
+        "auth substack system-policy\n"
+        "auth required pam_nologin.so\n"
+        "account substack system-auth\n"
+        "account substack system-policy\n"
+        "account required pam_nologin.so\n"
+        "password include system-auth\n"
+        "password include system-policy\n"
+        "session substack system-auth\n"
+        "session required pam_loginuid.so\n"
+        "-session optional pam_systemd.so\n"
+        "session substack system-policy\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth-local",
+        "#%PAM-1.0\n"
+        "auth include system-auth-local-only\n"
+        "auth include system-auth-common\n"
+        "account include system-auth-local-only\n"
+        "account include system-auth-common\n"
+        "password include system-auth-local-only\n"
+        "password include system-auth-common\n"
+        "session include system-auth-local-only\n"
+        "session include system-auth-common\n");
     TemporaryTree::write(
         tree.root / "pam.d/system-auth-use_first_pass-local",
-        "auth include system-auth-use_first_pass-local-only\n");
+        "#%PAM-1.0\n"
+        "auth include system-auth-use_first_pass-local-only\n"
+        "auth include system-auth-common\n"
+        "password include system-auth-use_first_pass-local-only\n"
+        "password include system-auth-common\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth-common",
+        "#%PAM-1.0\n"
+        "#auth required pam_canonicalize_user.so\n"
+        "#account required pam_access.so\n"
+        "session required pam_mktemp.so\n"
+        "session required pam_limits.so\n");
     TemporaryTree::write(
         tree.root / "pam.d/system-auth-use_first_pass-local-only",
         "#%PAM-1.0\n"

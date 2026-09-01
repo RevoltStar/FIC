@@ -673,14 +673,17 @@ exact original bytes. Semantic postcondition через `PamCapabilityVerifier`
 `required_pam_enforcement` не ослабляется. Перед записью effective
 include/substack graph проверяется на внешний
 `pam_faillock`, а `pam_tcb` должен быть последним исполняемым auth rule.
+Operational error самого `pam_faillock preauth`, который завершает stack
+fail-closed, не классифицируется как обход `authfail`; credential failure,
+завершившийся до достижения `pam_faillock`, по-прежнему считается обходом.
 Moved managed blocks и заменённый после snapshot target inode любого target
 отклоняются без записи. Внешняя topology никогда не присваивается FIC.
 Штатный ALT `pam_passwdqc` остаётся без FIC activation facility: его уже
 подключённая native topology проверяется как `PasswordQuality`. FIC управляет
 native settings `min`, `passphrase`, `match`, `similar`, `retry` и enforcement
 scope; pwquality-only `minlen`, `minclass`, `difok`, user/GECOS checks и class
-credits на ALT отсутствуют. Активация `pam_pwhistory` на ALT не поддерживается
-до появления безопасного storage contract для истории паролей.
+credits на ALT отсутствуют. `pam_pwhistory` активируется отдельной facility
+`control fic-pam-pwhistory enabled|disabled`.
 
 При отключении `failed_authentication_enforce_for_root` параметр
 `root_unlock_time` считается конфликтом, потому что в `pam_faillock` он сам

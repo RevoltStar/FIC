@@ -852,10 +852,15 @@ postcondition. Это сохраняет local-only contract в `sss` mode, не
 graph целевых authentication services и отклоняет любой не принадлежащий FIC
 `pam_faillock`; простой global grep не используется. Замена `pam_tcb required`
 на `sufficient` разрешена только когда `pam_tcb` является последним
-исполняемым auth rule локального файла. Disable требует неизменного placement
+исполняемым auth rule локального файла. Operational failure самого
+`pam_faillock preauth`, завершивший stack fail-closed, не считается обходом
+`authfail`; credential failure до достижения provider остаётся нарушением.
+Это различение не создаёт успешного authentication path и не ослабляет
+проверку bypass. Disable требует неизменного placement
 managed blocks. Atomic replacement получает ожидаемые `dev+ino` target и
 отклоняет уже заменённый inode непосредственно перед commit. Внешняя topology
-не присваивается FIC; ALT activation для `pam_pwhistory` намеренно отсутствует.
+не присваивается FIC. ALT `pam_pwhistory` активируется отдельной facility
+`control fic-pam-pwhistory enabled|disabled` и использует собственные markers.
 
 Классы identity-модуля разделяют policy metadata и владение системной
 конфигурацией:
