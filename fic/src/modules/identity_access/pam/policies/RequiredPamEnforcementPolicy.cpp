@@ -74,6 +74,10 @@ RequiredPamEnforcementPolicy::RequiredPamEnforcementPolicy(
     : PamPolicy(), platformConfig_(platformConfig) {
     this->policyName = "required_pam_enforcement";
     this->policyTypeValue = std::make_unique<RequiredPamPolicyTypeValue>();
+    if (platformConfig_.passwordlessLoginControl.has_value()) {
+        addRecommendedDependency(
+            {"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"});
+    }
 }
 
 bool RequiredPamEnforcementPolicy::applyPam(

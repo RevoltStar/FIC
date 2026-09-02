@@ -1693,6 +1693,131 @@ void testRootokOutsideTrustedServiceIsRejected() {
             fic::identity::pam::formatPamCapabilityVerification(verification));
 }
 
+void testPamSucceedIfTrustedBypassMustMatchExactRule() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"gdm-password"};
+    platform.trustedAuthenticationBypasses = {
+        {"gdm-password", "pam_succeed_if.so",
+         fic::platform::PamTrustedAuthenticationBypassReason::
+             ExplicitPasswordlessLogin,
+         "sufficient", {"user", "ingroup", "nopasswdlogin"},
+         temp.path() / "pam.d/gdm-password"}
+    };
+    const auto stack = [](const std::string& rule) {
+        return rule + "\n" +
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n";
+    };
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verify = [&](const std::string& service,
+                            const std::string& content) {
+        writeFile(temp.path() / ("pam.d/" + service), content);
+        return verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::AuthenticationLockout,
+            fic::identity::pam::PamProviderKind::PamFaillock,
+            {service});
+    };
+
+    writeFile(
+        temp.path() / "pam.d/common-login",
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    const auto exact = verify(
+        "gdm-password",
+        "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n"
+        "auth substack common-login\n");
+    require(exact.state == fic::identity::pam::PamEnforcementState::Effective,
+            "exact ALT passwordless path was rejected: " +
+                fic::identity::pam::formatPamCapabilityVerification(exact));
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamControlFlowAnalysis analysis;
+    std::string error;
+    require(fic::identity::pam::PamControlFlowAnalyzer::analyze(
+                configuration, platform, "gdm-password",
+                fic::identity::pam::PamCapability::AuthenticationLockout,
+                fic::identity::pam::PamProviderKind::PamFaillock,
+                analysis, error), error);
+    require(analysis.acceptedTrustedAuthenticationBypasses.size() == 1 &&
+                analysis.acceptedTrustedAuthenticationBypasses.front().service ==
+                    "gdm-password" &&
+                analysis.acceptedTrustedAuthenticationBypasses.front().module ==
+                    "pam_succeed_if.so" &&
+                analysis.acceptedTrustedAuthenticationBypasses.front().reason ==
+                    fic::platform::PamTrustedAuthenticationBypassReason::
+                        ExplicitPasswordlessLogin &&
+                analysis.acceptedTrustedAuthenticationBypasses.front().source ==
+                    temp.path() / "pam.d/gdm-password",
+            "exact passwordless acceptance evidence is incomplete");
+
+    for (const std::string& control : {"required", "optional"}) {
+        (void)verify(
+            "gdm-password",
+            stack("auth " + control +
+                  " pam_succeed_if.so user ingroup nopasswdlogin"));
+        fic::identity::pam::PamConfiguration controlConfiguration(platform);
+        analysis = {};
+        require(fic::identity::pam::PamControlFlowAnalyzer::analyze(
+                    controlConfiguration, platform, "gdm-password",
+                    fic::identity::pam::PamCapability::AuthenticationLockout,
+                    fic::identity::pam::PamProviderKind::PamFaillock,
+                    analysis, error), error);
+        require(analysis.acceptedTrustedAuthenticationBypasses.empty(),
+                "non-sufficient passwordless rule was trusted: " + control);
+    }
+
+    for (const std::string& untrusted : {
+             "auth sufficient pam_succeed_if.so user ingroup wheel",
+             "auth sufficient pam_succeed_if.so user ingroup other-group",
+             "auth sufficient pam_succeed_if.so quiet user ingroup nopasswdlogin",
+             "auth sufficient pam_succeed_if.so user ingroup",
+             "auth sufficient pam_succeed_if.so ingroup nopasswdlogin user"}) {
+        const auto rejected = verify("gdm-password", stack(untrusted));
+        require(rejected.state ==
+                    fic::identity::pam::PamEnforcementState::Ineffective &&
+                    rejected.detail.find("authentication_bypass") !=
+                        std::string::npos,
+                "non-exact pam_succeed_if bypass was trusted: " + untrusted);
+    }
+
+    platform.authenticationServices.push_back("other-service");
+    const auto otherService = verify(
+        "other-service",
+        stack("auth sufficient pam_succeed_if.so user ingroup nopasswdlogin"));
+    require(otherService.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective,
+            "passwordless rule was trusted for another service");
+
+    writeFile(temp.path() / "pam.d/gdm-password-include",
+              "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n");
+    const auto included = verify(
+        "gdm-password",
+        "auth include gdm-password-include\n"
+        "auth substack common-login\n");
+    require(included.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+                included.detail.find("authentication_bypass") !=
+                    std::string::npos,
+            "passwordless rule from an include source was not rejected: " +
+                fic::identity::pam::formatPamCapabilityVerification(included));
+    fic::identity::pam::PamConfiguration includedConfiguration(platform);
+    analysis = {};
+    require(fic::identity::pam::PamControlFlowAnalyzer::analyze(
+                includedConfiguration, platform, "gdm-password",
+                fic::identity::pam::PamCapability::AuthenticationLockout,
+                fic::identity::pam::PamProviderKind::PamFaillock,
+                analysis, error), error);
+    require(analysis.acceptedTrustedAuthenticationBypasses.empty(),
+            "passwordless rule from an untrusted source was accepted");
+}
+
 void testSddmSucceedIfGateIsEffective() {
     TempDirectory temp;
     auto platform = makePlatform(temp);
@@ -2640,6 +2765,7 @@ int main() {
         testAuthenticationEarlySuccessBypass();
         testTrustedSuRootokPathIsAccepted();
         testRootokOutsideTrustedServiceIsRejected();
+        testPamSucceedIfTrustedBypassMustMatchExactRule();
         testSddmSucceedIfGateIsEffective();
         testSucceedIfSufficientBypassIsRejected();
         testGateSuccessDoesNotMaskCredentialFailure();

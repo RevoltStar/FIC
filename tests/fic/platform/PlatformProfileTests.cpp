@@ -328,6 +328,36 @@ void testSelectedProfile() {
             "trusted PAM root transition for su is missing");
     require(hasTrustedRootok("su-l") == expectedSuLoginService,
             "trusted PAM root transition for su-l is incorrect");
+    const auto passwordless = std::find_if(
+        profile.pam.trustedAuthenticationBypasses.begin(),
+        profile.pam.trustedAuthenticationBypasses.end(),
+        [](const auto& rule) {
+            return rule.reason == fic::platform::
+                PamTrustedAuthenticationBypassReason::
+                    ExplicitPasswordlessLogin;
+        });
+    if (profile.id == "alt-p11") {
+        require(passwordless !=
+                    profile.pam.trustedAuthenticationBypasses.end() &&
+                    passwordless->service == "gdm-password" &&
+                    passwordless->module == "pam_succeed_if.so" &&
+                    passwordless->control == "sufficient" &&
+                    passwordless->arguments ==
+                        std::vector<std::string>{
+                            "user", "ingroup", "nopasswdlogin"} &&
+                    passwordless->source ==
+                        std::optional<std::filesystem::path>{
+                            "/etc/pam.d/gdm-password"} &&
+                    profile.pam.passwordlessLoginControl.has_value() &&
+                    profile.pam.passwordlessLoginControl->groupName ==
+                        "nopasswdlogin",
+                "ALT exact passwordless-login contract is incorrect");
+    } else {
+        require(passwordless ==
+                    profile.pam.trustedAuthenticationBypasses.end() &&
+                    !profile.pam.passwordlessLoginControl.has_value(),
+                "non-ALT profile declares ALT passwordless-login contract");
+    }
     const auto* faillock = pamCapability(
         profile.pam, fic::platform::PamCapability::AuthenticationLockout);
     const auto* quality = pamCapability(
@@ -764,6 +794,34 @@ void testInvalidProfileIsRejected() {
             "a trusted PAM bypass for an unverified service must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
+    if (profile.pam.passwordlessLoginControl.has_value()) {
+        auto exact = std::find_if(
+            profile.pam.trustedAuthenticationBypasses.begin(),
+            profile.pam.trustedAuthenticationBypasses.end(),
+            [](const auto& rule) {
+                return rule.reason == fic::platform::
+                    PamTrustedAuthenticationBypassReason::
+                        ExplicitPasswordlessLogin;
+            });
+        exact->arguments.back() = "wheel";
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "mismatched passwordless group metadata must be rejected");
+
+        profile = fic::platform::makeBuildPlatformProfile();
+        exact = std::find_if(
+            profile.pam.trustedAuthenticationBypasses.begin(),
+            profile.pam.trustedAuthenticationBypasses.end(),
+            [](const auto& rule) {
+                return rule.reason == fic::platform::
+                    PamTrustedAuthenticationBypassReason::
+                        ExplicitPasswordlessLogin;
+            });
+        exact->source = "/etc/pam.d/common-login";
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "passwordless bypass from another source must be rejected");
+    }
+
+    profile = fic::platform::makeBuildPlatformProfile();
     pamScope(profile.pam,
              fic::platform::PamScope::EffectivePasswordStack).services =
         {"../passwd"};
@@ -859,33 +917,36 @@ void testInvalidProfileIsRejected() {
     profile = fic::platform::makeBuildPlatformProfile();
     lockout = pamCapability(
         profile.pam, fic::platform::PamCapability::AuthenticationLockout);
-    lockout->managedTopologyTargets.clear();
-    require(!fic::platform::validatePlatformProfile(profile, error),
-            "an empty ALT managed topology target list must be rejected");
+    if (lockout->topology ==
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged) {
+        lockout->managedTopologyTargets.clear();
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "an empty ALT managed topology target list must be rejected");
 
-    profile = fic::platform::makeBuildPlatformProfile();
-    lockout = pamCapability(
-        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
-    lockout->managedTopologyTargets.push_back(
-        lockout->managedTopologyTargets.front());
-    require(!fic::platform::validatePlatformProfile(profile, error),
-            "a duplicate ALT managed topology target must be rejected");
+        profile = fic::platform::makeBuildPlatformProfile();
+        lockout = pamCapability(
+            profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+        lockout->managedTopologyTargets.push_back(
+            lockout->managedTopologyTargets.front());
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "a duplicate ALT managed topology target must be rejected");
 
-    profile = fic::platform::makeBuildPlatformProfile();
-    lockout = pamCapability(
-        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
-    lockout->managedTopologyTargets.front().role =
-        fic::platform::PamManagedTopologyTargetRole::Authentication;
-    require(!fic::platform::validatePlatformProfile(profile, error),
-            "ALT managed topology without an account target must be rejected");
+        profile = fic::platform::makeBuildPlatformProfile();
+        lockout = pamCapability(
+            profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+        lockout->managedTopologyTargets.front().role =
+            fic::platform::PamManagedTopologyTargetRole::Authentication;
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "ALT managed topology without an account target must be rejected");
 
-    profile = fic::platform::makeBuildPlatformProfile();
-    lockout = pamCapability(
-        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
-    lockout->managedTopologyTargets.back().path =
-        "etc/pam.d/system-auth-use_first_pass-local-only";
-    require(!fic::platform::validatePlatformProfile(profile, error),
-            "a relative ALT managed topology target must be rejected");
+        profile = fic::platform::makeBuildPlatformProfile();
+        lockout = pamCapability(
+            profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+        lockout->managedTopologyTargets.back().path =
+            "etc/pam.d/system-auth-use_first_pass-local-only";
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "a relative ALT managed topology target must be rejected");
+    }
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.userCreation.useraddDefaultsPath = "etc/default/useradd";

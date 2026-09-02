@@ -398,7 +398,14 @@ void recordTrustedAuthenticationBypass(
         platformConfig.trustedAuthenticationBypasses.end(),
         [&](const auto& candidate) {
             return candidate.service == service &&
-                candidate.module == module;
+                candidate.module == module &&
+                (candidate.control.empty() ||
+                 candidate.control == rule.control) &&
+                (candidate.arguments.empty() ||
+                 candidate.arguments == rule.arguments) &&
+                (!candidate.source.has_value() ||
+                 candidate.source->lexically_normal() ==
+                     rule.source.lexically_normal());
         });
     if (matched == platformConfig.trustedAuthenticationBypasses.end()) {
         return;

@@ -102,6 +102,8 @@
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Применять историю паролей для root
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Управляет native-семантикой pam_pwhistory enforce_for_root через выбранную platform profile стратегию config-файла или аргументов модуля.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Неудачные PAM-аутентификации до блокировки
+[module:IDENTITY_ACCESS][policy:disable_nopasswdlogin]=Отключение беспарольного входа через nopasswdlogin
+[module:IDENTITY_ACCESS][policy:disable_nopasswdlogin][description]=Удаляет supplementary membership из объявленной платформой группы nopasswdlogin. Не изменяет primary GID и отказывает, если NSS membership не ограничен локальными файлами.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Задаёт deny в каноническом конфиге pam_faillock. Все целевые службы аутентификации должны использовать одну полную схему pam_faillock; pam_tally и pam_tally2 считаются конфликтующими providers.
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period]=Период подсчёта неуспешных попыток входа
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period][description]=Задаёт fail_interval в секундах в каноническом конфиге pam_faillock. При достижении порога deny учитываются неуспешные аутентификации, произошедшие внутри этого временного окна.

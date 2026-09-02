@@ -50,6 +50,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::Chage,
             {"/usr/bin/chage"}
+        },
+        {
+            ExecutableId::Gpasswd,
+            {"/usr/bin/gpasswd", "/usr/sbin/gpasswd"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Dpkg;

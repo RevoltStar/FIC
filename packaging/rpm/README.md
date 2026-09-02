@@ -72,6 +72,15 @@ An operational failure of `pam_faillock preauth` that itself terminates the
 stack fail-closed is not reported as an `authfail` accounting bypass. A
 credential failure terminating before `pam_faillock` is reached remains a
 rejected bypass.
+The stock `gdm-password` rule `auth sufficient pam_succeed_if.so user ingroup
+nopasswdlogin` is accepted only as the exact platform-declared
+`ExplicitPasswordlessLogin` bypass, including service, source, simple control,
+and ordered arguments. The separate `disable_nopasswdlogin` policy clears
+supplementary local membership with hash-verified `gpasswd` after proving that
+the NSS `passwd`, `group`, and explicit `initgroups` databases are files-only;
+primary-GID membership and external NSS
+fail closed. Lockout/authentication policies recommend this policy, while
+password quality and history policies do not depend on it.
 Before mutation the manager inspects the effective include/substack graph of
 configured authentication services and rejects external `pam_faillock` rules.
 Failed postconditions restore the exact original bytes of every written target;

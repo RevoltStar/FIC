@@ -31,6 +31,8 @@ const char* executableIdName(ExecutableId id) {
         return "nft";
     case ExecutableId::Chage:
         return "chage";
+    case ExecutableId::Gpasswd:
+        return "gpasswd";
     }
     return "unknown";
 }
@@ -46,7 +48,8 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Udevadm,
         ExecutableId::UpdateGrub,
         ExecutableId::Nft,
-        ExecutableId::Chage
+        ExecutableId::Chage,
+        ExecutableId::Gpasswd
     };
 }
 

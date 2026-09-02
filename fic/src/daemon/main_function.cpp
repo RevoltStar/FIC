@@ -465,6 +465,10 @@ bool initPolicyRegistry(
         fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot,
         std::make_unique<PamPasswordHistoryEnforceForRootPolicy>(
             platform.pam));
+    if (platform.pam.passwordlessLoginControl.has_value()) {
+        cafArr.push_back(std::make_unique<PamDisableNopasswdloginPolicy>(
+            platform.pam, executables));
+    }
     registerPamPolicy(
         fic::platform::PamPolicyFeature::FailedAuthenticationAttempts,
         std::make_unique<PamFailedAuthenticationAttemptsPolicy>(platform.pam));

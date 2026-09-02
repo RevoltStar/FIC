@@ -63,6 +63,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::Chage,
             {"/usr/bin/chage"}
+        },
+        {
+            ExecutableId::Gpasswd,
+            {"/usr/bin/gpasswd", "/usr/sbin/gpasswd"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Rpm;
@@ -98,7 +102,11 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.pam.trustedAuthenticationBypasses = {
         {"su", "pam_rootok.so",
-         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller}
+         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller},
+        {"gdm-password", "pam_succeed_if.so",
+         PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin,
+         "sufficient", {"user", "ingroup", "nopasswdlogin"},
+         "/etc/pam.d/gdm-password"}
     };
     profile.pam.trustedServiceAliases = {
         {"/etc/pam.d/system-auth",
@@ -145,6 +153,8 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/pam.d/system-auth-use_first_pass-local-only",
          PamManagedTopologyTargetRole::Authentication}
     };
+    profile.pam.passwordlessLoginControl = {
+        "nopasswdlogin", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf"};
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";

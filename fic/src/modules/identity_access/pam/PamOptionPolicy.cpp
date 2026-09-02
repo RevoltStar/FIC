@@ -18,6 +18,12 @@ PamOptionPolicy::PamOptionPolicy(
     : PamPolicy(),
       platformConfig_(std::move(platformConfig)),
       feature_(feature) {
+    if (fic::identity::pam::pamPolicyCapability(feature_) ==
+            fic::platform::PamCapability::AuthenticationLockout &&
+        platformConfig_.passwordlessLoginControl.has_value()) {
+        addRecommendedDependency(
+            {"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"});
+    }
 }
 
 bool PamOptionPolicy::applyPam(const std::string& expectedValue) {

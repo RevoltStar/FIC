@@ -22,7 +22,8 @@ enum class ExecutableId {
     Udevadm,
     UpdateGrub,
     Nft,
-    Chage
+    Chage,
+    Gpasswd
 };
 
 struct PlatformExecutableSpec {
@@ -73,7 +74,8 @@ struct SysctlPlatformConfig {
 };
 
 enum class PamTrustedAuthenticationBypassReason {
-    AlreadyPrivilegedCaller
+    AlreadyPrivilegedCaller,
+    ExplicitPasswordlessLogin
 };
 
 struct PamTrustedAuthenticationBypassRule {
@@ -81,6 +83,9 @@ struct PamTrustedAuthenticationBypassRule {
     std::string module;
     PamTrustedAuthenticationBypassReason reason =
         PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller;
+    std::string control;
+    std::vector<std::string> arguments;
+    std::optional<std::filesystem::path> source;
 };
 
 struct PamTrustedServiceAlias {
@@ -221,6 +226,13 @@ struct PamPlatformConfig {
     std::vector<PamTrustedAuthenticationBypassRule>
         trustedAuthenticationBypasses;
     std::vector<PamTrustedServiceAlias> trustedServiceAliases;
+    struct PasswordlessLoginControl {
+        std::string groupName;
+        std::filesystem::path passwdPath;
+        std::filesystem::path groupPath;
+        std::filesystem::path nsswitchPath;
+    };
+    std::optional<PasswordlessLoginControl> passwordlessLoginControl;
 };
 
 enum class LocalShadowKind {

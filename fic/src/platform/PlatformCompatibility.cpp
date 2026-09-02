@@ -209,7 +209,41 @@ bool validatePamTrustedAuthenticationBypasses(
         }
         switch (rule.reason) {
         case PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller:
+            if (!rule.control.empty() || !rule.arguments.empty() ||
+                rule.source.has_value()) {
+                error = "already-privileged PAM bypass must not declare "
+                    "exact-rule constraints";
+                return false;
+            }
             break;
+        case PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin: {
+            const std::filesystem::path expectedSource =
+                pam.configDirectories.front() / rule.service;
+            if (rule.control != "sufficient" || rule.arguments.empty() ||
+                !rule.source.has_value() ||
+                !validatePath(*rule.source,
+                              "trusted PAM bypass source", error) ||
+                rule.source->lexically_normal() !=
+                    expectedSource.lexically_normal()) {
+                if (error.empty()) {
+                    error = "explicit passwordless PAM bypass must declare "
+                        "exact control, arguments, and service source";
+                }
+                return false;
+            }
+            if (!std::all_of(
+                    rule.arguments.begin(), rule.arguments.end(),
+                    [](const std::string& argument) {
+                        return !argument.empty() &&
+                            argument.find_first_of(" \t\r\n") ==
+                                std::string::npos;
+                    })) {
+                error = "explicit passwordless PAM bypass contains an "
+                    "invalid argument";
+                return false;
+            }
+            break;
+        }
         default:
             error = "trusted PAM authentication bypass contains an "
                 "unsupported reason";
@@ -220,6 +254,45 @@ bool validatePamTrustedAuthenticationBypasses(
                 rule.service + ":" + rule.module;
             return false;
         }
+    }
+    const auto& passwordless = pam.passwordlessLoginControl;
+    const auto explicitRule = std::find_if(
+        pam.trustedAuthenticationBypasses.begin(),
+        pam.trustedAuthenticationBypasses.end(), [](const auto& rule) {
+            return rule.reason ==
+                PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin;
+        });
+    const std::size_t explicitRuleCount = static_cast<std::size_t>(std::count_if(
+        pam.trustedAuthenticationBypasses.begin(),
+        pam.trustedAuthenticationBypasses.end(), [](const auto& rule) {
+            return rule.reason ==
+                PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin;
+        }));
+    if (passwordless.has_value()) {
+        if (passwordless->groupName.empty() ||
+            passwordless->groupName.find_first_of(":, \t\r\n") !=
+                std::string::npos ||
+            !validAbsolutePath(passwordless->passwdPath) ||
+            !validAbsolutePath(passwordless->groupPath) ||
+            !validAbsolutePath(passwordless->nsswitchPath) ||
+            passwordless->passwdPath != "/etc/passwd" ||
+            passwordless->groupPath != "/etc/group" ||
+            passwordless->nsswitchPath != "/etc/nsswitch.conf") {
+            error = "invalid passwordless-login enforcement metadata";
+            return false;
+        }
+        if (explicitRuleCount != 1 ||
+            explicitRule == pam.trustedAuthenticationBypasses.end() ||
+            explicitRule->arguments !=
+                std::vector<std::string>{
+                    "user", "ingroup", passwordless->groupName}) {
+            error = "passwordless-login control does not match an exact "
+                "trusted PAM bypass";
+            return false;
+        }
+    } else if (explicitRuleCount != 0) {
+        error = "explicit passwordless PAM bypass has no enforcement metadata";
+        return false;
     }
     return true;
 }

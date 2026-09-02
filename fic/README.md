@@ -676,6 +676,17 @@ include/substack graph проверяется на внешний
 Operational error самого `pam_faillock preauth`, который завершает stack
 fail-closed, не классифицируется как обход `authfail`; credential failure,
 завершившийся до достижения `pam_faillock`, по-прежнему считается обходом.
+Штатная ALT/GDM строка `auth sufficient pam_succeed_if.so user ingroup
+nopasswdlogin` является отдельным typed trusted bypass
+`ExplicitPasswordlessLogin`: matcher требует exact service `gdm-password`,
+source, simple control и ordered arguments. Evidence сохраняется отдельно и
+не выдаётся за executed `pam_faillock`. Политика `disable_nopasswdlogin`
+административно запрещает этот путь: при files-only `passwd`, `group` и
+явном `initgroups` NSS она оставляет
+отсутствующую/пустую группу без изменений либо очищает supplementary members
+через hash-verified `gpasswd`; primary GID и внешний NSS приводят к fail-closed.
+Она является Recommended dependency только для lockout/authentication PAM
+policies, поэтому её warning не блокирует основную policy.
 Moved managed blocks и заменённый после snapshot target inode любого target
 отклоняются без записи. Внешняя topology никогда не присваивается FIC.
 Штатный ALT `pam_passwdqc` остаётся без FIC activation facility: его уже

@@ -1,4 +1,6 @@
 _schema_version=1
+disable_nopasswdlogin.status=DISABLE
+disable_nopasswdlogin.value=ENABLE
 password_quality_enforce_for_root.status=DISABLE
 password_quality_enforce_for_root.value=yes
 @FIC_PASSWORD_QUALITY_PROVIDER_POLICY_DEFAULTS@

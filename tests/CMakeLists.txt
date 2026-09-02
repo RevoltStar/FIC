@@ -381,6 +381,23 @@ target_include_directories(pam_configuration_tests PRIVATE
 target_link_libraries(pam_configuration_tests PRIVATE fic-core fic-platform)
 add_test(NAME pam_configuration_tests COMMAND pam_configuration_tests)
 
+add_executable(pam_disable_nopasswdlogin_policy_tests
+    fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamDisableNopasswdloginPolicy.cpp
+)
+target_include_directories(pam_disable_nopasswdlogin_policy_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_disable_nopasswdlogin_policy_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(
+    NAME pam_disable_nopasswdlogin_policy_tests
+    COMMAND pam_disable_nopasswdlogin_policy_tests
+)
+
 add_executable(passwdqc_config_file_tests
     fic/modules/identity_access/pam/PasswdqcConfigFileTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
@@ -485,7 +502,9 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamRequiredProviders.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationAttemptsPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationUnlockTimePolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswdqcPolicies.cpp

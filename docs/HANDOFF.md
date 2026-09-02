@@ -4,60 +4,61 @@
 
 - Ветка: `main`.
 - HEAD до текущих незакоммиченных изменений:
-  `55499fee6847f3750907e3579d3476d7b780372b`.
+  `377e669626e2ae6b566d569d2e5be1197a80f04f`.
 
 ## Current task
 
-- Исправлен false positive semantic verification штатного ALT p11 SSH graph:
-  operational error `pam_faillock preauth`, завершающий stack fail-closed,
-  больше не выдаётся за `failure_accounting_bypass` после `pam_userpass`.
+- Реализован exact typed trusted bypass штатной ALT p11 GDM-ветки
+  `pam_succeed_if` и отдельная policy `disable_nopasswdlogin`.
 
 ## Accepted architecture / invariants
 
-- ALT lockout capability задаёт typed managed targets с ролями, а manager не
-  выводит второй путь строковой заменой.
-- `system-auth-local-only` владеет authentication+account blocks;
-  `system-auth-use_first_pass-local-only` владеет authentication blocks и
-  сохраняет штатные аргументы `pam_tcb`, включая `use_first_pass`.
-- Все targets проверяются до первой записи, изменяются под одним lock и
-  откатываются до exact original bytes при write/postcondition failure.
-- `PamProviderInspector` и глобальная semantics
-  `required_pam_enforcement` не ослаблены.
-- Credential failure, завершившийся до достижения `pam_faillock`, остаётся
-  настоящим `failure_accounting_bypass`; исключение относится только к
-  fail-closed результату самого `preauth`.
-- `pam_faillock` и `pam_pwhistory` используют независимые markers и должны
-  безопасно сосуществовать в общем primary target.
+- `ExplicitPasswordlessLogin` описывает понятую platform-specific PAM-ветку,
+  но не утверждает, что на ней был выполнен `pam_faillock`.
+- ALT rule доверяется только при exact service/module/simple control/ordered
+  arguments/source; generic analyzer не содержит ALT-specific исключений.
+- `disable_nopasswdlogin` не редактирует package-owned PAM-файлы. Она требует
+  files-only NSS для `passwd`, `group` и объявленного `initgroups`, очищает
+  supplementary members через verified `gpasswd`, а primary GID и внешний NSS
+  отклоняет fail-closed.
+- Policy является только Recommended dependency authentication/lockout
+  policies; password quality/history policies от неё не зависят.
 
 ## Completed
 
-- Реалистичный SSH fixture дополнен фактическими `pam_userpass`,
-  `pam_nologin`, `system-auth-common` и полным `common-login` graph.
-- В control-flow evidence добавлено различение fail-closed operational result
-  `pam_faillock preauth` и credential failure до provider.
-- Добавлен негативный тест, сохраняющий обнаружение настоящего раннего bypass.
-- Обновлено описание semantic verification ALT RPM/runtime contract.
+- Regression сначала воспроизвёл исходный `authentication_bypass` на реальном
+  `gdm-password -> common-login` fixture.
+- Расширены typed platform metadata и analyzer acceptance evidence для
+  `ExplicitPasswordlessLogin`.
+- Добавлены policy, registration, config defaults, RU/EN resources и
+  `Gpasswd` executable metadata.
+- Добавлены Recommended dependencies для четырёх `failed_authentication_*`
+  policies и `required_pam_enforcement` только на поддерживающей платформе.
+- Добавлены positive/negative analyzer, enforcement, NSS, postcondition и
+  dependency tests; обновлены README, RPM и architecture docs.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp`.
-- PAM configuration и ALT topology tests.
-- `fic/README.md`, `packaging/rpm/README.md`,
-  `docs/architecture-diagrams.md`.
+- ALT/platform PAM profile and compatibility contracts.
+- PAM control-flow analyzer and identity policy dependency metadata.
+- `PamDisableNopasswdloginPolicy`, daemon registration and resources.
+- PAM/platform/identity tests and user-facing documentation.
 
 ## Validation
 
-- Успешно собраны targets: `fic`, `alt_pam_faillock_topology_tests`,
-  `alt_pam_password_history_topology_tests`, `pam_configuration_tests`,
-  `identity_policy_hierarchy_tests`, `platform_profile_tests`.
-- Passed 11/11 relevant CTest: platform/static/packaging, PAM topology and
-  configuration, identity policy/configuration и defaults tests.
-- Полная сборка `cmake --build build-hardening-altp11 -j2` остановилась на
-  незатронутом `fic-session-agent`: в окружении отсутствует
-  `systemd/sd-login.h`.
+- Собраны `fic` и все изменённые PAM/platform/identity/planner test targets.
+- Relevant CTest: 15/15 passed.
+- Полный доступный CTest: 53 passed, 4 штатно skipped, 0 failed из 57.
+- `platform_profile_tests` passed для ALT p11, Debian 12/13 и Ubuntu 24.04/26.04.
+- Полная сборка останавливается на незатронутом `fic-session-agent`: в
+  окружении отсутствует `systemd/sd-login.h`.
 - `git diff --check` passed.
 
 ## Remaining
 
-- Текущая analyzer-правка не развёртывалась на `10.88.0.86`; runtime-повтор
-  `control fic-pam-faillock enabled` требует сборки и установки нового RPM.
+- Изменения не закоммичены по прямому указанию пользователя.
+- Новая сборка не устанавливалась на `10.88.0.86`. Нужна runtime-проверка на
+  реальном ALT p11: exact GDM graph, `disable_nopasswdlogin` для тестовых
+  absent/empty/supplementary/primary/NSS случаев и повторный apply lockout
+  policies. Host-impact PAM проверки выполнять только в согласованном
+  staging/одноразовом окружении.

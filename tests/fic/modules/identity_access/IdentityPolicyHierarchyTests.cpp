@@ -8,7 +8,9 @@
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PasswdqcConfigFile.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.h"
+#include "modules/identity_access/pam/policies/PamFailedAuthenticationAttemptsPolicy.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
+#include "modules/identity_access/pam/policies/PamFailedAuthenticationUnlockTimePolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswdqcPolicies.h"
@@ -1534,6 +1536,41 @@ int main() {
 
         DummyPamPolicy pam;
         PamFailedAuthenticationCountingPeriodPolicy countingPeriod({});
+        TestPamPlatformConfig dependencyPlatform;
+        dependencyPlatform.passwordlessLoginControl = {
+            "nopasswdlogin", "/etc/passwd", "/etc/group",
+            "/etc/nsswitch.conf"};
+        PamFailedAuthenticationAttemptsPolicy attempts(dependencyPlatform);
+        PamFailedAuthenticationCountingPeriodPolicy period(dependencyPlatform);
+        PamFailedAuthenticationEnforceForRootPolicy rootLockout(
+            dependencyPlatform);
+        PamFailedAuthenticationUnlockTimePolicy unlock(dependencyPlatform);
+        RequiredPamEnforcementPolicy required(dependencyPlatform);
+        PamPasswordHistoryDepthPolicy history(dependencyPlatform);
+        PamPasswdqcRetryCountPolicy quality(dependencyPlatform);
+        const PolicyRef passwordlessRef{
+            "IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
+        const auto hasRecommendedPasswordless = [&](const Policy& policy) {
+            return std::count_if(
+                policy.dependencies().begin(), policy.dependencies().end(),
+                [&](const PolicyDependency& dependency) {
+                    return dependency.policy == passwordlessRef &&
+                        dependency.strength ==
+                            PolicyDependencyStrength::Recommended;
+                }) == 1;
+        };
+        require(hasRecommendedPasswordless(attempts) &&
+                    hasRecommendedPasswordless(period) &&
+                    hasRecommendedPasswordless(rootLockout) &&
+                    hasRecommendedPasswordless(unlock) &&
+                    hasRecommendedPasswordless(required),
+                "authentication/lockout policies lack passwordless recommendation");
+        require(!hasRecommendedPasswordless(history) &&
+                    !hasRecommendedPasswordless(quality),
+                "password-only PAM policy gained passwordless dependency");
+        PamFailedAuthenticationAttemptsPolicy unsupportedDependency({});
+        require(unsupportedDependency.dependencies().empty(),
+                "unsupported platform gained passwordless dependency");
         DummySssdPolicy sssd;
         DummyKerberosPolicy kerberos;
         DummyNssPolicy nss;

@@ -856,7 +856,15 @@ graph целевых authentication services и отклоняет любой н
 `pam_faillock preauth`, завершивший stack fail-closed, не считается обходом
 `authfail`; credential failure до достижения provider остаётся нарушением.
 Это различение не создаёт успешного authentication path и не ослабляет
-проверку bypass. Disable требует неизменного placement
+проверку bypass. Штатный early-success `gdm-password` для группы
+`nopasswdlogin` моделируется отдельно как `ExplicitPasswordlessLogin`: trusted
+contract сопоставляет exact service/module/source/simple control/ordered argv,
+а acceptance остаётся видна в analyzer evidence. Политика
+`disable_nopasswdlogin` не меняет PAM topology: она доказывает files-only NSS
+для `passwd`, `group` и, если он объявлен, `initgroups`,
+отклоняет primary-GID/remote membership и очищает только supplementary local
+members через hash-verified `gpasswd`. Это Recommended dependency lockout
+policies, но не password quality/history. Disable требует неизменного placement
 managed blocks. Atomic replacement получает ожидаемые `dev+ino` target и
 отклоняет уже заменённый inode непосредственно перед commit. Внешняя topology
 не присваивается FIC. ALT `pam_pwhistory` активируется отдельной facility
