@@ -103,7 +103,7 @@
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Controls native pam_pwhistory enforce_for_root semantics using the platform-selected configuration-file or module-argument strategy.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Failed PAM authentications before lockout
 [module:IDENTITY_ACCESS][policy:disable_nopasswdlogin]=Disable passwordless login via nopasswdlogin
-[module:IDENTITY_ACCESS][policy:disable_nopasswdlogin][description]=Removes supplementary membership from the platform-declared nopasswdlogin group. It never changes primary GIDs and fails when NSS membership is not limited to local files.
+[module:IDENTITY_ACCESS][policy:disable_nopasswdlogin][description]=Removes local supplementary membership from the platform-declared nopasswdlogin group and verifies that no membership remains effective through the supported ALT NSS topology. It never changes primary GIDs and fails closed for residual, remote, or unknown NSS membership.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Sets deny in the canonical pam_faillock configuration. All configured authentication services must use one complete pam_faillock topology; pam_tally and pam_tally2 are treated as conflicting providers.
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period]=Failed authentication counting period
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period][description]=Sets fail_interval in seconds in the canonical pam_faillock configuration. Only authentication failures within this time window count towards the deny threshold.

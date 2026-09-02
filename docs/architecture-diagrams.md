@@ -860,10 +860,13 @@ graph целевых authentication services и отклоняет любой н
 `nopasswdlogin` моделируется отдельно как `ExplicitPasswordlessLogin`: trusted
 contract сопоставляет exact service/module/source/simple control/ordered argv,
 а acceptance остаётся видна в analyzer evidence. Политика
-`disable_nopasswdlogin` не меняет PAM topology: она доказывает files-only NSS
-для `passwd`, `group` и, если он объявлен, `initgroups`,
-отклоняет primary-GID/remote membership и очищает только supplementary local
-members через hash-verified `gpasswd`. Это Recommended dependency lockout
+`disable_nopasswdlogin` не меняет PAM topology: она принимает только typed
+ALT NSS contract (`files` с опциональным `systemd`, плюс завершающий `role`
+для group/initgroups), отклоняет primary-GID и неизвестные/remote NSS services,
+очищает только supplementary local members через hash-verified `gpasswd`, а
+затем доказывает отсутствие effective membership тем же NSS-путём, который
+использует `pam_succeed_if user ingroup`. Остаточная membership, включая
+полученную через `role`, завершает policy ошибкой. Это Recommended dependency lockout
 policies, но не password quality/history. Disable требует неизменного placement
 managed blocks. Atomic replacement получает ожидаемые `dev+ino` target и
 отклоняет уже заменённый inode непосредственно перед commit. Внешняя topology

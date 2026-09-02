@@ -350,7 +350,21 @@ void testSelectedProfile() {
                             "/etc/pam.d/gdm-password"} &&
                     profile.pam.passwordlessLoginControl.has_value() &&
                     profile.pam.passwordlessLoginControl->groupName ==
-                        "nopasswdlogin",
+                        "nopasswdlogin" &&
+                    profile.pam.passwordlessLoginControl->supportedNss.passwd ==
+                        std::vector<std::vector<std::string>>{
+                            {"files"}, {"files", "systemd"}} &&
+                    profile.pam.passwordlessLoginControl->supportedNss.group ==
+                        std::vector<std::vector<std::string>>{
+                            {"files"}, {"files", "systemd"},
+                            {"files", "role"},
+                            {"files", "systemd", "role"}} &&
+                    profile.pam.passwordlessLoginControl->supportedNss.
+                            initgroups ==
+                        std::vector<std::vector<std::string>>{
+                            {"files"}, {"files", "systemd"},
+                            {"files", "role"},
+                            {"files", "systemd", "role"}},
                 "ALT exact passwordless-login contract is incorrect");
     } else {
         require(passwordless ==
@@ -819,6 +833,17 @@ void testInvalidProfileIsRejected() {
         exact->source = "/etc/pam.d/common-login";
         require(!fic::platform::validatePlatformProfile(profile, error),
                 "passwordless bypass from another source must be rejected");
+
+        profile = fic::platform::makeBuildPlatformProfile();
+        profile.pam.passwordlessLoginControl->supportedNss.group.clear();
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "empty passwordless NSS contract must be rejected");
+
+        profile = fic::platform::makeBuildPlatformProfile();
+        profile.pam.passwordlessLoginControl->supportedNss.group.push_back(
+            {"files", "systemd", "role"});
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "duplicate passwordless NSS contract must be rejected");
     }
 
     profile = fic::platform::makeBuildPlatformProfile();

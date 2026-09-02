@@ -75,11 +75,13 @@ rejected bypass.
 The stock `gdm-password` rule `auth sufficient pam_succeed_if.so user ingroup
 nopasswdlogin` is accepted only as the exact platform-declared
 `ExplicitPasswordlessLogin` bypass, including service, source, simple control,
-and ordered arguments. The separate `disable_nopasswdlogin` policy clears
-supplementary local membership with hash-verified `gpasswd` after proving that
-the NSS `passwd`, `group`, and explicit `initgroups` databases are files-only;
-primary-GID membership and external NSS
-fail closed. Lockout/authentication policies recommend this policy, while
+and ordered arguments. The separate `disable_nopasswdlogin` policy accepts
+only the typed ALT NSS contract (`files` with optional `systemd`, and trailing
+`role` for group/initgroups), clears supplementary local membership with
+hash-verified `gpasswd`, and verifies effective NSS membership using the same
+primary-GID, group-record, and initgroups semantics as `pam_succeed_if`.
+Primary-GID, residual role-derived membership, and unknown or remote NSS
+services fail closed. Lockout/authentication policies recommend this policy, while
 password quality and history policies do not depend on it.
 Before mutation the manager inspects the effective include/substack graph of
 configured authentication services and rejects external `pam_faillock` rules.

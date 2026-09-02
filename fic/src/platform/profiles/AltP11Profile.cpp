@@ -154,7 +154,14 @@ PlatformProfile makeBuildPlatformProfile() {
          PamManagedTopologyTargetRole::Authentication}
     };
     profile.pam.passwordlessLoginControl = {
-        "nopasswdlogin", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf"};
+        "nopasswdlogin", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
+        {
+            {{"files"}, {"files", "systemd"}},
+            {{"files"}, {"files", "systemd"}, {"files", "role"},
+             {"files", "systemd", "role"}},
+            {{"files"}, {"files", "systemd"}, {"files", "role"},
+             {"files", "systemd", "role"}}
+        }};
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";

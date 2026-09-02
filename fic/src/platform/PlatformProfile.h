@@ -227,10 +227,17 @@ struct PamPlatformConfig {
         trustedAuthenticationBypasses;
     std::vector<PamTrustedServiceAlias> trustedServiceAliases;
     struct PasswordlessLoginControl {
+        struct NssServiceContract {
+            std::vector<std::vector<std::string>> passwd;
+            std::vector<std::vector<std::string>> group;
+            std::vector<std::vector<std::string>> initgroups;
+        };
+
         std::string groupName;
         std::filesystem::path passwdPath;
         std::filesystem::path groupPath;
         std::filesystem::path nsswitchPath;
+        NssServiceContract supportedNss;
     };
     std::optional<PasswordlessLoginControl> passwordlessLoginControl;
 };

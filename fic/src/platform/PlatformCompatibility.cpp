@@ -178,6 +178,34 @@ bool validatePamServices(const std::vector<std::string>& services,
     return true;
 }
 
+bool validateNssServiceContract(
+    const std::vector<std::vector<std::string>>& alternatives,
+    const std::string& database,
+    std::string& error) {
+    if (alternatives.empty()) {
+        error = "passwordless-login NSS " + database +
+            " contract has no supported service lists";
+        return false;
+    }
+    std::set<std::vector<std::string>> unique;
+    for (const auto& services : alternatives) {
+        if (services.empty() || !unique.insert(services).second) {
+            error = "invalid passwordless-login NSS " + database +
+                " service-list contract";
+            return false;
+        }
+        for (const std::string& service : services) {
+            if (service.empty() ||
+                service.find_first_of("[]=:, \t\r\n") != std::string::npos) {
+                error = "invalid passwordless-login NSS service in " +
+                    database + " contract";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool validatePamTrustedAuthenticationBypasses(
     const PamPlatformConfig& pam,
     std::string& error) {
@@ -279,6 +307,14 @@ bool validatePamTrustedAuthenticationBypasses(
             passwordless->groupPath != "/etc/group" ||
             passwordless->nsswitchPath != "/etc/nsswitch.conf") {
             error = "invalid passwordless-login enforcement metadata";
+            return false;
+        }
+        if (!validateNssServiceContract(
+                passwordless->supportedNss.passwd, "passwd", error) ||
+            !validateNssServiceContract(
+                passwordless->supportedNss.group, "group", error) ||
+            !validateNssServiceContract(
+                passwordless->supportedNss.initgroups, "initgroups", error)) {
             return false;
         }
         if (explicitRuleCount != 1 ||

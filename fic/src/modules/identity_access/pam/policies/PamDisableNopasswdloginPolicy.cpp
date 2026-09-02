@@ -1,4 +1,5 @@
 #include "modules/identity_access/pam/policies/PamDisableNopasswdloginPolicy.h"
+#include "modules/identity_access/nss/NssConfiguration.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
@@ -69,55 +70,65 @@ bool parseUnsigned(const std::string& value, unsigned long& parsed) {
     }
 }
 
-bool verifyFilesOnlyNss(const std::filesystem::path& path,
-                        std::string& error) {
-    std::string content;
-    if (!readRegularFile(path, content, error)) return false;
-    std::istringstream input(content);
-    std::string line;
-    bool passwdFound = false;
-    bool groupFound = false;
-    bool initgroupsFound = false;
-    while (std::getline(input, line)) {
-        const auto comment = line.find('#');
-        if (comment != std::string::npos) line.erase(comment);
-        const auto colon = line.find(':');
-        if (colon == std::string::npos) continue;
-        std::string database = line.substr(0, colon);
-        database.erase(std::remove_if(database.begin(), database.end(),
-                                      [](unsigned char ch) {
-                                          return std::isspace(ch) != 0;
-                                      }), database.end());
-        bool* found = nullptr;
-        if (database == "passwd") {
-            found = &passwdFound;
-        } else if (database == "group") {
-            found = &groupFound;
-        } else if (database == "initgroups") {
-            found = &initgroupsFound;
-        } else {
-            continue;
-        }
-        if (*found) {
+bool matchesSupportedServices(
+    const std::vector<fic::identity::nss::NssService>& services,
+    const std::vector<std::vector<std::string>>& supported,
+    const std::string& database,
+    std::string& error) {
+    std::vector<std::string> names;
+    for (const auto& service : services) {
+        if (!service.actions.empty()) {
             error = "NSS " + database +
-                " database must have exactly one explicit entry";
+                " uses service actions outside the platform contract";
             return false;
         }
-        *found = true;
-        std::istringstream services(line.substr(colon + 1));
-        std::string service;
-        std::vector<std::string> values;
-        while (services >> service) values.push_back(service);
-        if (values != std::vector<std::string>{"files"}) {
-            error = "NSS " + database + " database is not local-files-only";
-            return false;
-        }
+        names.push_back(service.name);
     }
-    if (!passwdFound || !groupFound) {
-        error = "NSS passwd and group databases must have explicit entries";
+    if (std::find(supported.begin(), supported.end(), names) ==
+        supported.end()) {
+        std::ostringstream actual;
+        for (const std::string& name : names) {
+            if (actual.tellp() > 0) actual << ' ';
+            actual << name;
+        }
+        error = "unsupported NSS " + database + " service list: " +
+            actual.str();
         return false;
     }
     return true;
+}
+
+bool verifySupportedNss(
+    const fic::platform::PamPlatformConfig::PasswordlessLoginControl& control,
+    std::string& error) {
+    fic::identity::nss::NssConfigurationOptions options;
+    options.mainFile.path = control.nsswitchPath;
+    options.mainFile.expectedOwner = ::geteuid();
+    options.mainFile.expectedGroup.reset();
+    options.mainFile.forbiddenMode = 0022;
+    fic::identity::nss::NssConfiguration configuration(std::move(options));
+
+    std::optional<std::vector<fic::identity::nss::NssService>> passwd;
+    std::optional<std::vector<fic::identity::nss::NssService>> group;
+    std::optional<std::vector<fic::identity::nss::NssService>> initgroups;
+    if (!configuration.tryGetServices("passwd", passwd, error) ||
+        !configuration.tryGetServices("group", group, error) ||
+        !configuration.tryGetServices("initgroups", initgroups, error)) {
+        return false;
+    }
+    if (!passwd.has_value() || !group.has_value()) {
+        error = "NSS passwd and group databases must have explicit entries";
+        return false;
+    }
+    if (!matchesSupportedServices(
+            *passwd, control.supportedNss.passwd, "passwd", error) ||
+        !matchesSupportedServices(
+            *group, control.supportedNss.group, "group", error)) {
+        return false;
+    }
+    // glibc getgrouplist() uses the group database when initgroups is absent.
+    return !initgroups.has_value() || matchesSupportedServices(
+        *initgroups, control.supportedNss.initgroups, "initgroups", error);
 }
 
 bool readGroupState(const std::filesystem::path& path,
@@ -189,9 +200,11 @@ bool hasPrimaryGroup(const std::filesystem::path& path,
 PamDisableNopasswdloginPolicy::PamDisableNopasswdloginPolicy(
     fic::platform::PamPlatformConfig platform,
     const fic::platform::PlatformExecutableResolver& executables,
-    Runner runner)
+    Runner runner,
+    EffectiveMembershipResolver membershipResolver)
     : platform_(std::move(platform)), executables_(executables),
-      runner_(std::move(runner)) {
+      runner_(std::move(runner)),
+      membershipResolver_(std::move(membershipResolver)) {
     policyName = "disable_nopasswdlogin";
     policyTypeValue = std::make_unique<FixedPolicyTypeValue>("ENABLE");
     if (!runner_) {
@@ -199,6 +212,10 @@ PamDisableNopasswdloginPolicy::PamDisableNopasswdloginPolicy(
                      const std::vector<std::string>& arguments) {
             return VerifiedProcessExecutor::execute(executable, arguments);
         };
+    }
+    if (!membershipResolver_) {
+        membershipResolver_ =
+            fic::identity::pam::resolvePamEffectiveGroupMembership;
     }
 }
 
@@ -210,8 +227,8 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
     }
     const auto& control = *platform_.passwordlessLoginControl;
     std::string error;
-    if (!verifyFilesOnlyNss(control.nsswitchPath, error)) {
-        log("Cannot prove passwordless group is locally enforceable: " + error,
+    if (!verifySupportedNss(control, error)) {
+        log("Cannot prove passwordless group is safely enforceable: " + error,
             logLevel::ERROR);
         return false;
     }
@@ -220,8 +237,29 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
         log("Could not inspect passwordless group: " + error, logLevel::ERROR);
         return false;
     }
-    if (!group.exists) return true;
+    fic::identity::pam::PamEffectiveGroupMembership effective;
+    if (!membershipResolver_(control.groupName, effective, error)) {
+        log("Could not verify effective passwordless group membership: " +
+                error,
+            logLevel::ERROR);
+        return false;
+    }
+    if (!group.exists) {
+        if (!effective.users.empty()) {
+            log("Passwordless membership remains effective through NSS, but "
+                "the local group does not exist",
+                logLevel::ERROR);
+            return false;
+        }
+        return true;
+    }
+    if (!effective.groupExists || effective.groupId != group.gid) {
+        log("Local and effective NSS passwordless groups are inconsistent",
+            logLevel::ERROR);
+        return false;
+    }
     std::string primaryUser;
+    error.clear();
     if (hasPrimaryGroup(
             control.passwdPath, group.gid, primaryUser, error)) {
         log(error.empty()
@@ -230,7 +268,15 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
             logLevel::ERROR);
         return false;
     }
-    if (group.members.empty()) return true;
+    if (group.members.empty()) {
+        if (!effective.users.empty()) {
+            log("Passwordless membership remains effective through NSS; "
+                "systemd/role-derived membership is not locally mutable",
+                logLevel::ERROR);
+            return false;
+        }
+        return true;
+    }
 
     std::filesystem::path gpasswd;
     if (!executables_.resolve(
@@ -247,13 +293,21 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
         return false;
     }
     GroupState verified;
+    fic::identity::pam::PamEffectiveGroupMembership verifiedEffective;
     primaryUser.clear();
-    if (!verifyFilesOnlyNss(control.nsswitchPath, error) ||
+    error.clear();
+    if (!verifySupportedNss(control, error) ||
         !readGroupState(
             control.groupPath, control.groupName, verified, error) ||
-        !verified.exists || !verified.members.empty() ||
+        !verified.exists || verified.gid != group.gid ||
+        !verified.members.empty() ||
         hasPrimaryGroup(
-            control.passwdPath, verified.gid, primaryUser, error)) {
+            control.passwdPath, verified.gid, primaryUser, error) ||
+        !membershipResolver_(
+            control.groupName, verifiedEffective, error) ||
+        !verifiedEffective.groupExists ||
+        verifiedEffective.groupId != verified.gid ||
+        !verifiedEffective.users.empty()) {
         log("Passwordless group postcondition failed: " +
                 (error.empty() ? "membership remains effective" : error),
             logLevel::ERROR);
