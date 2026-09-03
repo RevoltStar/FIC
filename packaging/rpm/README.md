@@ -251,18 +251,36 @@ leaves the existing hash store unchanged.
 
 ## Bundled Qt runtime for fic-gui
 
-`fic-gui` bundles the Qt runtime inside the package to reduce dependency on the
-Qt version installed on the target host.
+`fic-gui` dynamically links to a minimal Qt runtime bundled inside the package.
+FIC remains under SUL-1.0; bundled Qt files retain their RPM-declared
+third-party licenses. The generated `fic-gui` spec uses
+`SUL-1.0 AND LGPL-3.0-only`: this describes the separately licensed payload and
+does not relicense FIC under LGPL.
 
 The package:
 
 - installs the real GUI binary as `/opt/fic/bin/fic-gui.real`;
 - installs a launcher script as `/opt/fic/bin/fic-gui`;
 - installs `/opt/fic/bin/qt.conf` to point Qt to the bundled runtime;
-- copies the required Qt libraries into `/opt/fic/qt/lib`;
-- copies the required Qt plugins into `/opt/fic/qt/plugins`;
-- copies the shared-library dependency closure required by the bundled GUI runtime,
-  excluding the base glibc loader/runtime components.
+- starts the closure from `fic-gui.real`, `platforms/libqxcb.so`, and
+  `imageformats/libqjpeg.so`;
+- recursively copies only required `libQt6*.so*` files from the `qt6-base`
+  source RPM;
+- leaves package-owned non-Qt libraries as system dependencies and rejects an
+  unexpected unowned dependency;
+- generates `/usr/share/doc/fic-gui/third-party-components.json`, source-RPM
+  provenance, RPM license notices, SUL-1.0, LGPLv3/GPLv3 texts, and
+  `SOURCE_OFFER.md` from the actual payload.
+
+Set `FIC_QT_ROOT=/path/to/custom/qt` to make the launcher use that compatible
+`lib/` and `plugins/` tree instead of `/opt/fic/qt`. `fic-gui.real` can also be
+run directly with caller-supplied loader/plugin paths.
+
+Packaging fails if Qt is not dynamically linked, required notices are missing,
+the manifest and `/opt/fic/qt` differ, or a Qt file does not originate from
+`qt6-base`. Official releases must also satisfy the Corresponding Source gate
+documented in
+[`docs/third-party-licensing.md`](../../docs/third-party-licensing.md).
 
 ## Docker build for ALT p11
 

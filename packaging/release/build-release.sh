@@ -33,6 +33,13 @@ if [ "$VERIFY_ONLY" -eq 1 ]; then
     exit 0
 fi
 
+if [ -z "${FIC_CORRESPONDING_SOURCE_DIR:-}" ] || \
+   [ ! -d "$FIC_CORRESPONDING_SOURCE_DIR" ]; then
+    echo "FIC_CORRESPONDING_SOURCE_DIR must name the retained source artifact set" >&2
+    exit 1
+fi
+FIC_CORRESPONDING_SOURCE_DIR="$(cd "$FIC_CORRESPONDING_SOURCE_DIR" && pwd)"
+
 SNAPSHOT_PARENT="$(mktemp -d /tmp/fic-release-XXXXXX)"
 SNAPSHOT_DIR="$SNAPSHOT_PARENT/source"
 OUTPUT_PARENT="$ROOT_DIR/dist/release"
@@ -76,6 +83,23 @@ if [ "${#ARTIFACTS[@]}" -ne 25 ]; then
     exit 1
 fi
 
+mapfile -d '' THIRD_PARTY_MANIFESTS < <(
+    find "$SNAPSHOT_DIR/dist" -maxdepth 1 -type f \
+        -name 'fic-gui*.third-party-components.json' -print0 | sort -z
+)
+if [ "${#THIRD_PARTY_MANIFESTS[@]}" -ne 5 ]; then
+    echo "Expected 5 fic-gui third-party manifests, found ${#THIRD_PARTY_MANIFESTS[@]}" >&2
+    exit 1
+fi
+
+source_verify_args=()
+for manifest in "${THIRD_PARTY_MANIFESTS[@]}"; do
+    source_verify_args+=(--manifest "$manifest")
+done
+python3 "$SNAPSHOT_DIR/packaging/lib/corresponding-source.py" \
+    --source-dir "$FIC_CORRESPONDING_SOURCE_DIR" \
+    "${source_verify_args[@]}"
+
 current_head="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 current_status="$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all)"
 if [ "$current_head" != "$FIC_RELEASE_COMMIT" ] || [ -n "$current_status" ]; then
@@ -88,6 +112,11 @@ OUTPUT_STAGING="$(mktemp -d "$OUTPUT_PARENT/.${FIC_PRODUCT_VERSION}-XXXXXX")"
 for artifact in "${ARTIFACTS[@]}"; do
     cp "$artifact" "$OUTPUT_STAGING/"
 done
+mkdir -p "$OUTPUT_STAGING/compliance-manifests" "$OUTPUT_STAGING/corresponding-source"
+for manifest in "${THIRD_PARTY_MANIFESTS[@]}"; do
+    cp "$manifest" "$OUTPUT_STAGING/compliance-manifests/"
+done
+cp -a "$FIC_CORRESPONDING_SOURCE_DIR"/. "$OUTPUT_STAGING/corresponding-source/"
 
 MANIFEST="$OUTPUT_STAGING/release-manifest.json"
 {
@@ -96,6 +125,8 @@ MANIFEST="$OUTPUT_STAGING/release-manifest.json"
     printf '  "package_version": "%s",\n' "$FIC_PACKAGE_VERSION"
     printf '  "tag": "%s",\n' "$FIC_RELEASE_TAG"
     printf '  "commit": "%s",\n' "$FIC_RELEASE_COMMIT"
+    printf '  "corresponding_source_index_sha256": "%s",\n' \
+        "$(sha256sum "$OUTPUT_STAGING/corresponding-source/corresponding-source.json" | cut -d ' ' -f 1)"
     printf '  "artifacts": [\n'
     for index in "${!ARTIFACTS[@]}"; do
         artifact_name="$(basename "${ARTIFACTS[$index]}")"

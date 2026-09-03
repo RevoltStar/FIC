@@ -32,6 +32,7 @@ export LANG="$BUILD_LOCALE"
 export LC_ALL="$BUILD_LOCALE"
 
 source "$ROOT_DIR/packaging/lib/build-resources.sh"
+source "$ROOT_DIR/packaging/lib/gui-runtime-compliance.sh"
 fic_configure_build_resources
 fic_apply_build_priority
 
@@ -110,6 +111,17 @@ verify_rpm_metadata() {
     fi
 }
 
+verify_rpm_gui_license_metadata() {
+    local package_path="$1"
+    local actual_license
+
+    actual_license="$(rpm -qp --queryformat '%{LICENSE}' "$package_path")"
+    if [ "$actual_license" != "SUL-1.0 AND LGPL-3.0-only" ]; then
+        echo "Unexpected fic-gui RPM License metadata: $actual_license" >&2
+        return 1
+    fi
+}
+
 copy_tree_contents() {
     local source_dir="$1"
     local target_dir="$2"
@@ -148,54 +160,6 @@ append_unique_line() {
     if ! grep -Fxq "$value" "$file_path"; then
         printf '%s\n' "$value" >> "$file_path"
     fi
-}
-
-copy_shared_library_with_metadata() {
-    local source_path="$1"
-    local destination_dir="$2"
-    local real_source
-    local source_dir
-    local source_base
-    local real_base
-    local library_prefix
-    local soname
-    local candidate
-    local candidate_name
-
-    [ -e "$source_path" ] || return 0
-
-    mkdir -p "$destination_dir"
-
-    real_source="$(readlink -f "$source_path")"
-    source_dir="$(dirname "$source_path")"
-    source_base="$(basename "$source_path")"
-    real_base="$(basename "$real_source")"
-    library_prefix="${real_base%%.so*}.so"
-
-    install -m 0644 "$real_source" "$destination_dir/$real_base"
-
-    if [ "$source_base" != "$real_base" ] && [ ! -e "$destination_dir/$source_base" ]; then
-        ln -s "$real_base" "$destination_dir/$source_base"
-    fi
-
-    soname="$(objdump -p "$real_source" 2>/dev/null | awk '/SONAME/ { print $2; exit }')"
-    if [ -n "$soname" ] && [ "$soname" != "$real_base" ] && [ ! -e "$destination_dir/$soname" ]; then
-        ln -s "$real_base" "$destination_dir/$soname"
-    fi
-
-    for candidate in "$source_dir"/"$library_prefix"*; do
-        [ -e "$candidate" ] || continue
-        [ "$(readlink -f "$candidate")" = "$real_source" ] || continue
-
-        candidate_name="$(basename "$candidate")"
-        if [ "$candidate_name" = "$real_base" ]; then
-            continue
-        fi
-
-        if [ -L "$candidate" ] && [ ! -e "$destination_dir/$candidate_name" ]; then
-            ln -s "$real_base" "$destination_dir/$candidate_name"
-        fi
-    done
 }
 
 find_qt_plugin_dir() {
@@ -248,214 +212,6 @@ find_qt_plugin_dir() {
     done
 
     return 1
-}
-
-find_qt_lib_dir() {
-    local candidate
-
-    if command -v qtpaths6 >/dev/null 2>&1; then
-        qtpaths6 --query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    for candidate in /usr/lib64/qt6/bin/qtpaths6 /usr/lib/qt6/bin/qtpaths6; do
-        if [ -x "$candidate" ]; then
-            "$candidate" --query QT_INSTALL_LIBS 2>/dev/null && return 0
-        fi
-    done
-
-    if command -v qtpaths >/dev/null 2>&1; then
-        qtpaths --query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    for candidate in /usr/lib64/qt6/bin/qtpaths /usr/lib/qt6/bin/qtpaths; do
-        if [ -x "$candidate" ]; then
-            "$candidate" --query QT_INSTALL_LIBS 2>/dev/null && return 0
-        fi
-    done
-
-    if command -v qmake6 >/dev/null 2>&1; then
-        qmake6 -query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    for candidate in /usr/lib64/qt6/bin/qmake6 /usr/lib/qt6/bin/qmake6; do
-        if [ -x "$candidate" ]; then
-            "$candidate" -query QT_INSTALL_LIBS 2>/dev/null && return 0
-        fi
-    done
-
-    if command -v qmake >/dev/null 2>&1; then
-        qmake -query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    for candidate in /usr/lib64 /usr/lib64/qt6/lib /usr/lib /usr/lib/qt6/lib; do
-        if find "$candidate" -maxdepth 1 \( -type f -o -type l \) -name 'libQt6Core.so*' | grep -q .; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-should_bundle_gui_runtime_library() {
-    local library_name="$1"
-
-    case "$library_name" in
-        ld-linux*.so*|libc.so*|libm.so*|libpthread.so*|librt.so*|libdl.so*|libutil.so*|libanl.so*|libnsl.so*|libresolv.so*|libnss_*.so*)
-            return 1
-            ;;
-        *)
-            return 0
-            ;;
-    esac
-}
-
-collect_bundled_runtime_closure() {
-    local list_file="$1"
-    shift
-    local pending=("$@")
-    local seen_file
-    local current
-    local dep_path
-    local dep_name
-
-    seen_file="$(mktemp "$STAGING_BASE/gui-runtime-seen-XXXXXX")"
-    : > "$list_file"
-
-    while [ "${#pending[@]}" -gt 0 ]; do
-        current="${pending[0]}"
-        pending=("${pending[@]:1}")
-
-        if [ -z "$current" ] || [ ! -e "$current" ]; then
-            continue
-        fi
-
-        if grep -Fxq "$current" "$seen_file"; then
-            continue
-        fi
-
-        printf '%s\n' "$current" >> "$seen_file"
-
-        while IFS= read -r dep_path; do
-            [ -n "$dep_path" ] || continue
-
-            dep_name="$(basename "$dep_path")"
-            if ! should_bundle_gui_runtime_library "$dep_name"; then
-                continue
-            fi
-
-            append_unique_line "$list_file" "$dep_path"
-            pending+=("$dep_path")
-        done < <(ldd "$current" 2>/dev/null | awk '/=> \// { print $3 }')
-    done
-
-    rm -f "$seen_file"
-}
-
-create_fic_gui_launcher() {
-    local package_root="$1"
-
-    cat > "$package_root/opt/fic/bin/fic-gui" <<'EOF'
-#!/bin/sh
-set -e
-
-SCRIPT_PATH="$(readlink -f "$0")"
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
-FIC_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
-
-export LD_LIBRARY_PATH="$FIC_ROOT/qt/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export QT_PLUGIN_PATH="$FIC_ROOT/qt/plugins"
-export QT_QPA_PLATFORM_PLUGIN_PATH="$FIC_ROOT/qt/plugins/platforms"
-
-exec "$SCRIPT_DIR/fic-gui.real" "$@"
-EOF
-
-    chmod 0755 "$package_root/opt/fic/bin/fic-gui"
-}
-
-create_fic_gui_qt_conf() {
-    local package_root="$1"
-
-    cat > "$package_root/opt/fic/bin/qt.conf" <<'EOF'
-[Paths]
-Prefix = ../qt
-Plugins = plugins
-Libraries = lib
-EOF
-
-    chmod 0644 "$package_root/opt/fic/bin/qt.conf"
-}
-
-bundle_fic_gui_qt_runtime() {
-    local package_root="$1"
-    local qt_plugin_dir
-    local qt_lib_dir
-    local qt_runtime_list
-    local plugin_subdir
-    local plugin_dir
-    local plugin_file
-    local qt_lib_file
-
-    qt_plugin_dir="$(find_qt_plugin_dir)" || {
-        echo "Failed to locate Qt plugin directory for fic-gui bundling" >&2
-        exit 1
-    }
-    qt_lib_dir="$(find_qt_lib_dir)" || {
-        echo "Failed to locate Qt library directory for fic-gui bundling" >&2
-        exit 1
-    }
-
-    if [ -z "$qt_plugin_dir" ] || [ ! -d "$qt_plugin_dir" ]; then
-        echo "Qt plugin directory is empty or does not exist: '$qt_plugin_dir'" >&2
-        exit 1
-    fi
-
-    if [ -z "$qt_lib_dir" ] || [ ! -d "$qt_lib_dir" ]; then
-        echo "Qt library directory is empty or does not exist: '$qt_lib_dir'" >&2
-        exit 1
-    fi
-
-    qt_runtime_list="$(mktemp "$STAGING_BASE/gui-runtime-list-XXXXXX")"
-
-    mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
-    mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/plugins"
-
-    find "$qt_lib_dir" -maxdepth 1 \( -type f -o -type l \) -name 'libQt6*.so*' | while IFS= read -r qt_lib_file; do
-        copy_shared_library_with_metadata "$qt_lib_file" "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
-    done
-
-    for plugin_subdir in platforms platformthemes xcbglintegrations imageformats iconengines styles platforminputcontexts; do
-        plugin_dir="$qt_plugin_dir/$plugin_subdir"
-        if [ -d "$plugin_dir" ]; then
-            mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/plugins/$plugin_subdir"
-            find "$plugin_dir" -maxdepth 1 -type f -name '*.so*' | while IFS= read -r plugin_file; do
-                if [ "$plugin_subdir" = "platformthemes" ] && [ "$(basename "$plugin_file")" = "libqgtk3.so" ]; then
-                    continue
-                fi
-                install -m 0755 "$plugin_file" "$package_root${GUI_QT_BUNDLE_ROOT}/plugins/$plugin_subdir/$(basename "$plugin_file")"
-            done
-        fi
-    done
-
-    collect_bundled_runtime_closure \
-        "$qt_runtime_list" \
-        "$FIC_GUI_BUILD_DIR/fic-gui"
-
-    while IFS= read -r plugin_file; do
-        [ -n "$plugin_file" ] || continue
-        append_unique_line "$qt_runtime_list" "$plugin_file"
-    done < <(
-        find "$package_root${GUI_QT_BUNDLE_ROOT}/plugins" -type f -name '*.so*' 2>/dev/null || true
-    )
-
-    collect_bundled_runtime_closure "$qt_runtime_list" $(cat "$qt_runtime_list")
-
-    while IFS= read -r plugin_file; do
-        [ -n "$plugin_file" ] || continue
-        copy_shared_library_with_metadata "$plugin_file" "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
-    done < "$qt_runtime_list"
-
-    rm -f "$qt_runtime_list"
 }
 
 build_project() {
@@ -542,6 +298,9 @@ write_file_list() {
             /etc/security/fic-pwhistory.conf)
                 printf '%%config(noreplace) %s\n' "$path" >> "$file_list"
                 ;;
+            /usr/share/doc/fic-gui/*)
+                printf '%%doc %s\n' "$path" >> "$file_list"
+                ;;
             *)
                 printf '%s\n' "$path" >> "$file_list"
                 ;;
@@ -560,13 +319,18 @@ write_spec_file() {
     local pre_script="$8"
     local post_script="$9"
     local preun_script="${10}"
+    local package_license="SUL-1.0"
+
+    if [ "$package_name" = "fic-gui" ]; then
+        package_license="SUL-1.0 AND LGPL-3.0-only"
+    fi
 
     {
         printf 'Name: %s\n' "$package_name"
         printf 'Version: %s\n' "$PACKAGE_VERSION"
         printf 'Release: %s\n' "$RPM_RELEASE"
         printf 'Summary: %s\n' "$summary"
-        printf 'License: Proprietary\n'
+        printf 'License: %s\n' "$package_license"
         printf 'Group: System/Configuration/Other\n'
         printf 'BuildArch: %s\n' "$ARCH"
         printf '%%undefine __find_debuginfo_files\n'
@@ -1075,14 +839,20 @@ build_fic_gui_package() {
     local package_name="fic-gui"
     local package_root
     local output_rpm
+    local qt_plugin_dir
 
     package_root="$(init_package_root "$package_name")"
     mkdir -p "$package_root/opt/fic/bin"
     install_cmake_component "$FIC_GUI_BUILD_DIR" fic-gui "$package_root"
     mv "$package_root/opt/fic/bin/fic-gui" "$package_root/opt/fic/bin/fic-gui.real"
-    create_fic_gui_launcher "$package_root"
-    create_fic_gui_qt_conf "$package_root"
-    bundle_fic_gui_qt_runtime "$package_root"
+    qt_plugin_dir="$(find_qt_plugin_dir)" || {
+        echo "Failed to locate Qt plugin directory for fic-gui bundling" >&2
+        exit 1
+    }
+    fic_gui_create_launcher "$package_root" || return 1
+    fic_gui_create_qt_conf "$package_root" || return 1
+    fic_gui_bundle_qt_runtime "$package_root" rpm "$qt_plugin_dir" || return 1
+    fic_gui_verify_runtime_compliance "$package_root" || return 1
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
@@ -1093,6 +863,9 @@ build_fic_gui_package() {
         "$(common_pre_script)" \
         "$(symlink_post_script "fic-gui" "/opt/fic/bin/fic-gui")" \
         "$(symlink_preun_script "fic-gui" "/opt/fic/bin/fic-gui")")" || return 1
+
+    cp "$package_root/usr/share/doc/fic-gui/third-party-components.json" \
+        "$output_rpm.third-party-components.json"
 
     printf '%s\n' "$output_rpm"
 }
@@ -1106,6 +879,8 @@ main() {
     require_command ld
     require_command ldd
     require_command objdump
+    require_command python3
+    require_command readelf
     require_command readlink
     require_command rpm
     require_command rpmbuild
@@ -1143,6 +918,7 @@ main() {
     verify_rpm_metadata "$session_agent_rpm" fic-session-agent
     verify_rpm_metadata "$cli_rpm" fic-cli
     verify_rpm_metadata "$gui_rpm" fic-gui
+    verify_rpm_gui_license_metadata "$gui_rpm"
 
     echo "Packages created:"
     echo "  $dick_rpm"

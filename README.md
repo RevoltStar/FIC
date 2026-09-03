@@ -93,3 +93,8 @@ License:
   non-commercial purposes.
 - `SUL-1.0` is not an OSI-approved open-source license. Third-party components
   retain their own license terms.
+- Binary `fic-gui` packages dynamically link to and bundle a minimal Qt runtime.
+  Qt and every other bundled third-party component remain under their own
+  licenses; their inclusion does not relicense FIC. Runtime notices, provenance,
+  replacement instructions, and the release source-artifact contract are
+  documented in [`docs/third-party-licensing.md`](docs/third-party-licensing.md).

@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon-dev \
     nlohmann-json3-dev \
     pkg-config \
+    python3 \
     qt6-base-dev \
     qt6-base-dev-tools \
     qt6-qpa-plugins \

@@ -53,21 +53,27 @@ success.
    ./packaging/release/build-release.sh --verify-only
    ```
 
-5. Build all supported package sets:
+5. Prepare the exact, checksummed Corresponding Source set described in
+   [`third-party-licensing.md`](third-party-licensing.md).
+
+6. Build all supported package sets:
 
    ```bash
-   ./packaging/release/build-release.sh
+   FIC_CORRESPONDING_SOURCE_DIR=/path/to/retained-sources \
+       ./packaging/release/build-release.sh
    ```
 
 The build refuses a dirty tree, a non-exact or lightweight tag, a tag/version
-mismatch, an abbreviated commit, or a missing changelog heading. It archives
-the tagged commit into a temporary source tree and builds Debian 12, Debian 13,
-Ubuntu 24.04, Ubuntu 26.04, and ALT p11 packages from that immutable snapshot.
+mismatch, an abbreviated commit, a missing changelog heading, or an incomplete
+Corresponding Source index. It archives the tagged commit into a temporary
+source tree and builds Debian 12, Debian 13, Ubuntu 24.04, Ubuntu 26.04, and ALT
+p11 packages from that immutable snapshot.
 
 Successful output is written to `dist/release/VERSION/`. The directory contains
-25 packages and a deterministic `release-manifest.json` with product version,
-native package version, tag, full commit, artifact names, and SHA-256 hashes.
-Existing release output is never overwritten.
+25 packages, per-platform third-party manifests, the retained Corresponding
+Source set, and a deterministic `release-manifest.json` with product version,
+native package version, tag, full commit, artifact names, source-index hash, and
+package SHA-256 hashes. Existing release output is never overwritten.
 
 Package signing, SBOM generation and publication are deliberately not claimed
 by this contract and remain separate release-engineering work.

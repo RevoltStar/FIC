@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     nlohmann-json-devel \
     openssl-devel \
     pkg-config \
+    python3 \
     qt6-base-devel \
     rpm-build \
     && apt-get clean && rm -rf /var/cache/apt/archives/*

@@ -168,6 +168,27 @@ cmake --build build-fic-gui
 
 а `/opt/fic/bin/fic-gui` является launcher-скриптом, который выставляет Qt-переменные окружения и запускает реальный бинарник.
 
+Qt остаётся динамически подключаемой third-party библиотекой и не становится
+частью лицензии FIC SUL-1.0. По умолчанию launcher использует минимальный runtime
+из `/opt/fic/qt`. Совместимую пользовательскую сборку Qt можно подставить без
+изменения FIC:
+
+```bash
+FIC_QT_ROOT=/path/to/custom/qt /opt/fic/bin/fic-gui
+```
+
+В этом каталоге ожидаются `lib/` и `plugins/`; launcher использует их вместо
+bundled путей в `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH` и
+`QT_QPA_PLATFORM_PLUGIN_PATH`. `/opt/fic/bin/fic-gui.real` также можно запускать
+напрямую с системной Qt или с самостоятельно выставленными loader/plugin paths.
+Расположенный рядом `qt.conf` обеспечивает bundled layout по умолчанию, но не
+запрещает замену библиотек.
+
+Состав bundle, package provenance, license declarations и хеши файлов находятся
+в `/usr/share/doc/fic-gui/third-party-components.json`; сопровождающие тексты —
+в `/usr/share/doc/fic-gui/licenses/`. Полный release/compliance flow описан в
+[`docs/third-party-licensing.md`](../docs/third-party-licensing.md).
+
 ## Связанные файлы
 
 - `fic-gui/src/app/main.cpp` - точка входа приложения;

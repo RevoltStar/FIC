@@ -17,3 +17,5 @@ log.txt
 res.log
 .qtcreator/
 *.py
+!packaging/lib/gui-runtime-manifest.py
+!packaging/lib/corresponding-source.py

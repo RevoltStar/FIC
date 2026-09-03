@@ -44,6 +44,7 @@ DEB_COMPRESSOR="${DEB_COMPRESSOR:-gzip}"
 GUI_QT_BUNDLE_ROOT="/opt/fic/qt"
 
 source "$ROOT_DIR/packaging/lib/build-resources.sh"
+source "$ROOT_DIR/packaging/lib/gui-runtime-compliance.sh"
 fic_configure_build_resources
 fic_apply_build_priority
 
@@ -119,52 +120,19 @@ verify_deb_metadata() {
     fi
 }
 
-copy_shared_library_with_metadata() {
-    local source_path="$1"
-    local destination_dir="$2"
-    local real_source
-    local source_dir
-    local source_base
-    local real_base
-    local library_prefix
-    local soname
-    local candidate
-    local candidate_name
+verify_deb_gui_compliance_metadata() {
+    local package_path="$1"
+    local dependency
 
-    [ -e "$source_path" ] || return 0
-
-    mkdir -p "$destination_dir"
-
-    real_source="$(readlink -f "$source_path")"
-    source_dir="$(dirname "$source_path")"
-    source_base="$(basename "$source_path")"
-    real_base="$(basename "$real_source")"
-    library_prefix="${real_base%%.so*}.so"
-
-    install -m 0644 "$real_source" "$destination_dir/$real_base"
-
-    if [ "$source_base" != "$real_base" ] && [ ! -e "$destination_dir/$source_base" ]; then
-        ln -s "$real_base" "$destination_dir/$source_base"
-    fi
-
-    soname="$(objdump -p "$real_source" 2>/dev/null | awk '/SONAME/ { print $2; exit }')"
-    if [ -n "$soname" ] && [ "$soname" != "$real_base" ] && [ ! -e "$destination_dir/$soname" ]; then
-        ln -s "$real_base" "$destination_dir/$soname"
-    fi
-
-    for candidate in "$source_dir"/"$library_prefix"*; do
-        [ -e "$candidate" ] || continue
-        [ "$(readlink -f "$candidate")" = "$real_source" ] || continue
-
-        candidate_name="$(basename "$candidate")"
-        if [ "$candidate_name" = "$real_base" ]; then
-            continue
-        fi
-
-        if [ -L "$candidate" ] && [ ! -e "$destination_dir/$candidate_name" ]; then
-            ln -s "$real_base" "$destination_dir/$candidate_name"
-        fi
-    done
+    while IFS= read -r dependency; do
+        dependency="$(printf '%s' "$dependency" | sed 's/^[[:space:]]*//')"
+        case "$dependency" in
+            libqt5*|libqt6*|qt5-*|qt6-*)
+                echo "Bundled fic-gui package retains a system Qt dependency: $dependency" >&2
+                return 1
+                ;;
+        esac
+    done < <(dpkg-deb -f "$package_path" Depends | tr ',' '\n')
 }
 
 append_unique_line() {
@@ -240,39 +208,6 @@ find_qt_plugin_dir() {
     return 1
 }
 
-find_qt_lib_dir() {
-    if command -v qtpaths6 >/dev/null 2>&1; then
-        qtpaths6 --query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    if command -v qtpaths >/dev/null 2>&1; then
-        qtpaths --query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    if command -v qmake6 >/dev/null 2>&1; then
-        qmake6 -query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    if command -v qmake >/dev/null 2>&1; then
-        qmake -query QT_INSTALL_LIBS 2>/dev/null && return 0
-    fi
-
-    return 1
-}
-
-should_bundle_gui_runtime_library() {
-    local library_name="$1"
-
-    case "$library_name" in
-        ld-linux*.so*|libc.so*|libm.so*|libpthread.so*|librt.so*|libdl.so*|libutil.so*|libanl.so*|libnsl.so*|libresolv.so*|libnss_*.so*)
-            return 1
-            ;;
-        *)
-            return 0
-            ;;
-    esac
-}
-
 detect_binary_depends() {
     local binary_path="$1"
     local deps
@@ -294,16 +229,68 @@ sanitize_gui_depends() {
         tr ',' '\n' |
         sed 's/^[[:space:]]*//; s/[[:space:]]*$//' |
         sed '/^$/d' |
-        grep -Evi '^(libqt5|libqt6|qt5-|qt6-|libicu[0-9]+|libdouble-conversion[0-9-]*|libpcre2-16-0)( |$)' || true
+        grep -Evi '^(libqt5|libqt6|qt5-|qt6-)' || true
     )"
 
-    sanitized="$(printf '%s\n' "$sanitized" | paste -sd ', ' - | sed 's/,/, /g; s/,,*/,/g; s/^, //; s/, $//')"
+    sanitized="$(printf '%s\n' "$sanitized" | paste -sd, - | sed 's/,/, /g; s/^, //; s/, $//')"
 
     if [ -z "$sanitized" ]; then
         sanitized="libc6, libstdc++6"
     fi
 
     printf '%s' "$sanitized"
+}
+
+detect_gui_depends() {
+    local package_root="$1"
+    local binaries=("$FIC_GUI_BUILD_DIR/fic-gui")
+    local elf_file
+    local deps
+    local shlibdeps_work
+    local shlibdeps_output
+    local shlibdeps_error
+
+    while IFS= read -r elf_file; do
+        binaries+=("$elf_file")
+    done < <(
+        python3 - "$package_root/usr/share/doc/fic-gui/third-party-components.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+for source_path in sorted({entry["source_path"] for entry in manifest["components"]}):
+    print(source_path)
+PY
+    )
+
+    shlibdeps_work="$(mktemp -d "$STAGING_BASE/gui-shlibdeps-XXXXXX")"
+    shlibdeps_error="$shlibdeps_work/error"
+    mkdir -p "$shlibdeps_work/debian"
+    cat > "$shlibdeps_work/debian/control" <<'EOF'
+Source: fic-gui-runtime
+
+Package: fic-gui-runtime
+Architecture: any
+Description: temporary dependency analysis package
+EOF
+    if ! shlibdeps_output="$(
+        cd "$shlibdeps_work"
+        dpkg-shlibdeps \
+            --ignore-missing-info \
+            -O \
+            "${binaries[@]}" 2>"$shlibdeps_error"
+    )"; then
+        cat "$shlibdeps_error" >&2
+        rm -rf "$shlibdeps_work"
+        return 1
+    fi
+    deps="$(printf '%s\n' "$shlibdeps_output" | sed -n 's/^shlibs:Depends=//p')"
+    rm -rf "$shlibdeps_work"
+    if [ -z "$deps" ]; then
+        echo "Failed to derive system dependencies for bundled fic-gui runtime" >&2
+        exit 1
+    fi
+    sanitize_gui_depends "$deps"
 }
 
 join_depends() {
@@ -782,155 +769,6 @@ install_fic_pam_profiles() {
     done
 }
 
-collect_bundled_runtime_closure() {
-    local list_file="$1"
-    shift
-    local pending=("$@")
-    local seen_file
-    local current
-    local dep_path
-    local dep_name
-
-    seen_file="$(mktemp "$STAGING_BASE/gui-runtime-seen-XXXXXX")"
-    : > "$list_file"
-
-    while [ "${#pending[@]}" -gt 0 ]; do
-        current="${pending[0]}"
-        pending=("${pending[@]:1}")
-
-        if [ -z "$current" ] || [ ! -e "$current" ]; then
-            continue
-        fi
-
-        if grep -Fxq "$current" "$seen_file"; then
-            continue
-        fi
-
-        printf '%s\n' "$current" >> "$seen_file"
-
-        while IFS= read -r dep_path; do
-            [ -n "$dep_path" ] || continue
-
-            dep_name="$(basename "$dep_path")"
-            if ! should_bundle_gui_runtime_library "$dep_name"; then
-                continue
-            fi
-
-            append_unique_line "$list_file" "$dep_path"
-            pending+=("$dep_path")
-        done < <(ldd "$current" 2>/dev/null | awk '/=> \// { print $3 }')
-    done
-
-    rm -f "$seen_file"
-}
-
-create_fic_gui_launcher() {
-    local package_root="$1"
-
-    cat > "$package_root/opt/fic/bin/fic-gui" <<'EOF'
-#!/bin/sh
-set -e
-
-SCRIPT_PATH="$(readlink -f "$0")"
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
-FIC_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
-
-export LD_LIBRARY_PATH="$FIC_ROOT/qt/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export QT_PLUGIN_PATH="$FIC_ROOT/qt/plugins"
-export QT_QPA_PLATFORM_PLUGIN_PATH="$FIC_ROOT/qt/plugins/platforms"
-
-exec "$SCRIPT_DIR/fic-gui.real" "$@"
-EOF
-
-    chmod 0755 "$package_root/opt/fic/bin/fic-gui"
-}
-
-create_fic_gui_qt_conf() {
-    local package_root="$1"
-
-    cat > "$package_root/opt/fic/bin/qt.conf" <<'EOF'
-[Paths]
-Prefix = ../qt
-Plugins = plugins
-Libraries = lib
-EOF
-
-    chmod 0644 "$package_root/opt/fic/bin/qt.conf"
-}
-
-bundle_fic_gui_qt_runtime() {
-    local package_root="$1"
-    local qt_plugin_dir
-    local qt_lib_dir
-    local qt_runtime_list
-    local plugin_subdir
-    local plugin_dir
-    local plugin_file
-    local qt_lib_file
-
-    qt_plugin_dir="$(find_qt_plugin_dir)" || {
-        echo "Failed to locate Qt plugin directory for fic-gui bundling" >&2
-        exit 1
-    }
-    qt_lib_dir="$(find_qt_lib_dir)" || {
-        echo "Failed to locate Qt library directory for fic-gui bundling" >&2
-        exit 1
-    }
-
-    if [ -z "$qt_plugin_dir" ] || [ ! -d "$qt_plugin_dir" ]; then
-        echo "Qt plugin directory is empty or does not exist: '$qt_plugin_dir'" >&2
-        exit 1
-    fi
-
-    if [ -z "$qt_lib_dir" ] || [ ! -d "$qt_lib_dir" ]; then
-        echo "Qt library directory is empty or does not exist: '$qt_lib_dir'" >&2
-        exit 1
-    fi
-    qt_runtime_list="$(mktemp "$STAGING_BASE/gui-runtime-list-XXXXXX")"
-
-    mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
-    mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/plugins"
-
-    # Bundle the whole Qt6 shared runtime from the build environment to avoid
-    # mixing packaged Qt modules with system Qt modules on the target host.
-    find "$qt_lib_dir" -maxdepth 1 \( -type f -o -type l \) -name 'libQt6*.so*' | while IFS= read -r qt_lib_file; do
-        copy_shared_library_with_metadata "$qt_lib_file" "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
-    done
-
-    for plugin_subdir in platforms platformthemes xcbglintegrations imageformats iconengines styles platforminputcontexts; do
-        plugin_dir="$qt_plugin_dir/$plugin_subdir"
-        if [ -d "$plugin_dir" ]; then
-            mkdir -p "$package_root${GUI_QT_BUNDLE_ROOT}/plugins/$plugin_subdir"
-            find "$plugin_dir" -maxdepth 1 -type f -name '*.so*' | while IFS= read -r plugin_file; do
-                if [ "$plugin_subdir" = "platformthemes" ] && [ "$(basename "$plugin_file")" = "libqgtk3.so" ]; then
-                    continue
-                fi
-                install -m 0755 "$plugin_file" "$package_root${GUI_QT_BUNDLE_ROOT}/plugins/$plugin_subdir/$(basename "$plugin_file")"
-            done
-        fi
-    done
-
-    collect_bundled_runtime_closure \
-        "$qt_runtime_list" \
-        "$FIC_GUI_BUILD_DIR/fic-gui"
-
-    while IFS= read -r plugin_dir; do
-        [ -n "$plugin_dir" ] || continue
-        append_unique_line "$qt_runtime_list" "$plugin_dir"
-    done < <(
-        find "$package_root${GUI_QT_BUNDLE_ROOT}/plugins" -type f -name '*.so*' 2>/dev/null || true
-    )
-
-    collect_bundled_runtime_closure "$qt_runtime_list" $(cat "$qt_runtime_list")
-
-    while IFS= read -r plugin_file; do
-        [ -n "$plugin_file" ] || continue
-        copy_shared_library_with_metadata "$plugin_file" "$package_root${GUI_QT_BUNDLE_ROOT}/lib"
-    done < "$qt_runtime_list"
-
-    rm -f "$qt_runtime_list"
-}
-
 build_fic_dick_package() {
     local package_name="fic-dick"
     local package_root
@@ -958,7 +796,6 @@ build_fic_dick_package() {
 
     rm -f "$output_deb"
     build_deb_package "$package_root" "$output_deb"
-
     printf '%s\n' "$output_deb"
 }
 
@@ -1069,6 +906,7 @@ build_fic_gui_package() {
     local binary_depends
     local package_depends
     local output_deb
+    local qt_plugin_dir
 
     package_root="$(init_package_root "$package_name")"
     output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
@@ -1076,12 +914,16 @@ build_fic_gui_package() {
     mkdir -p "$package_root/opt/fic/bin"
     install_cmake_component "$FIC_GUI_BUILD_DIR" fic-gui "$package_root"
     mv "$package_root/opt/fic/bin/fic-gui" "$package_root/opt/fic/bin/fic-gui.real"
-    create_fic_gui_launcher "$package_root"
-    create_fic_gui_qt_conf "$package_root"
-    bundle_fic_gui_qt_runtime "$package_root"
+    qt_plugin_dir="$(find_qt_plugin_dir)" || {
+        echo "Failed to locate Qt plugin directory for fic-gui bundling" >&2
+        exit 1
+    }
+    fic_gui_create_launcher "$package_root" || return 1
+    fic_gui_create_qt_conf "$package_root" || return 1
+    fic_gui_bundle_qt_runtime "$package_root" deb "$qt_plugin_dir" || return 1
+    fic_gui_verify_runtime_compliance "$package_root" || return 1
 
-    binary_depends="$(detect_binary_depends "$FIC_GUI_BUILD_DIR/fic-gui")"
-    binary_depends="$(sanitize_gui_depends "$binary_depends")"
+    binary_depends="$(detect_gui_depends "$package_root")" || return 1
     package_depends="$(join_depends "$binary_depends" "fic (= ${PACKAGE_VERSION})" "fic-dick (= ${PACKAGE_VERSION})")"
 
     write_control_file \
@@ -1095,7 +937,9 @@ build_fic_gui_package() {
     write_symlink_prerm "$package_root" "fic-gui" "/opt/fic/bin/fic-gui"
 
     rm -f "$output_deb"
-    build_deb_package "$package_root" "$output_deb"
+    build_deb_package "$package_root" "$output_deb" || return 1
+    cp "$package_root/usr/share/doc/fic-gui/third-party-components.json" \
+        "$output_deb.third-party-components.json"
 
     printf '%s\n' "$output_deb"
 }
@@ -1108,6 +952,8 @@ main() {
     require_command getent
     require_command ldd
     require_command objdump
+    require_command python3
+    require_command readelf
     require_command readlink
 
     mkdir -p "$DIST_DIR"
@@ -1134,13 +980,14 @@ main() {
     fic_deb="$(build_fic_package)"
     session_agent_deb="$(build_fic_session_agent_package)"
     cli_deb="$(build_fic_cli_package)"
-    gui_deb="$(build_fic_gui_package)"
+    gui_deb="$(build_fic_gui_package)" || exit 1
 
     verify_deb_metadata "$dick_deb" fic-dick
     verify_deb_metadata "$fic_deb" fic
     verify_deb_metadata "$session_agent_deb" fic-session-agent
     verify_deb_metadata "$cli_deb" fic-cli
     verify_deb_metadata "$gui_deb" fic-gui
+    verify_deb_gui_compliance_metadata "$gui_deb"
 
     echo "Packages created:"
     echo "  $dick_deb"

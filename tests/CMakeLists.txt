@@ -39,6 +39,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_SOURCE_DIR}
     )
     add_test(
+        NAME gui_runtime_compliance_static_checks
+        COMMAND bash
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/gui-runtime-compliance-test.sh
+                ${CMAKE_SOURCE_DIR}
+    )
+    add_test(
         NAME firewall_static_checks
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/firewall/static_checks.py
