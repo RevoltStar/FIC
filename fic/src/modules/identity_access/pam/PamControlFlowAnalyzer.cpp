@@ -33,6 +33,7 @@ enum class ActionKind {
 
 enum class PamModuleRole {
     CredentialAuthenticator,
+    Auxiliary,
     Gate,
     Enforcement,
     TrustedAuthenticator,
@@ -268,6 +269,29 @@ std::vector<std::string> moduleOutcomes(const PamRule& rule) {
                 "user_unknown", "maxtries", "try_again", "incomplete",
                 "ignore"};
     }
+    if (module == "pam_tcb.so") {
+        // ALT p11 pam0_tcb-1.2-alt2, pam_tcb/pam_unix_auth.c: the auth
+        // entry point obtains the user/token and calls _unix_verify_password.
+        // PAM_NEW_AUTHTOK_REQD is returned only by pam_sm_acct_mgmt(), not by
+        // pam_sm_authenticate(). Keep management-group contracts separate.
+        if (rule.group == PamManagementGroup::Auth) {
+            return {"success", "abort", "system_err", "buf_err",
+                    "conv_err", "incomplete", "user_unknown", "auth_err",
+                    "authtok_err", "authinfo_unavail"};
+        }
+        if (rule.group == PamManagementGroup::Account) {
+            return {"success", "abort", "user_unknown", "authinfo_unavail",
+                    "cred_insufficient", "acct_expired",
+                    "new_authtok_reqd"};
+        }
+    }
+    if (module == "pam_gnome_keyring.so" &&
+        rule.group == PamManagementGroup::Auth) {
+        // GNOME Keyring 48 gkr-pam-module.c consumes PAM_AUTHTOK to unlock the
+        // login keyring; it does not authenticate the login password.
+        return {"success", "service_err", "authtok_recover_err",
+                "system_err", "buf_err", "bad_item"};
+    }
     if (module == "pam_unix.so") {
         if (rule.group == PamManagementGroup::Password) {
             return {"success", "authtok_err", "authtok_recover_err",
@@ -309,12 +333,18 @@ PamModuleRole moduleRole(const std::string& module) {
         "pam_shells.so", "pam_succeed_if.so", "pam_time.so",
         "pam_wheel.so"
     };
+    static const std::set<std::string> auxiliaries = {
+        "pam_gnome_keyring.so"
+    };
     if (credentialAuthenticators.find(module) !=
         credentialAuthenticators.end()) {
         return PamModuleRole::CredentialAuthenticator;
     }
     if (gates.find(module) != gates.end()) {
         return PamModuleRole::Gate;
+    }
+    if (auxiliaries.find(module) != auxiliaries.end()) {
+        return PamModuleRole::Auxiliary;
     }
     if (module == "pam_faillock.so") {
         return PamModuleRole::Enforcement;

@@ -1818,6 +1818,95 @@ void testPamSucceedIfTrustedBypassMustMatchExactRule() {
             "passwordless rule from an untrusted source was accepted");
 }
 
+void testAltGdmAuxiliaryKeyringPathIsEffective() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"gdm-password"};
+    platform.trustedAuthenticationBypasses = {
+        {"gdm-password", "pam_succeed_if.so",
+         fic::platform::PamTrustedAuthenticationBypassReason::
+             ExplicitPasswordlessLogin,
+         "sufficient", {"user", "ingroup", "nopasswdlogin"},
+         temp.path() / "pam.d/gdm-password"}
+    };
+    writeFile(
+        temp.path() / "pam.d/gdm-password",
+        "#%PAM-1.0\n"
+        "auth required pam_shells.so\n"
+        "auth required pam_succeed_if.so quiet uid ne 0\n"
+        "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n"
+        "auth substack common-login\n"
+        "auth optional pam_gnome_keyring.so\n"
+        "account required pam_nologin.so\n"
+        "account include common-login\n");
+    writeFile(
+        temp.path() / "pam.d/common-login",
+        "#%PAM-1.0\n"
+        "auth substack system-auth\n"
+        "auth substack system-policy\n"
+        "auth required pam_nologin.so\n"
+        "account substack system-auth\n"
+        "account substack system-policy\n"
+        "account required pam_nologin.so\n");
+    writeFile(
+        temp.path() / "pam.d/system-auth",
+        "#%PAM-1.0\n"
+        "auth include system-auth-local-only\n"
+        "auth include system-auth-common\n"
+        "account include system-auth-local-only\n"
+        "account include system-auth-common\n");
+    writeFile(
+        temp.path() / "pam.d/system-auth-local-only",
+        "#%PAM-1.0\n"
+        "auth requisite pam_faillock.so preauth\n"
+        "auth sufficient pam_tcb.so shadow fork nullok\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "account required pam_faillock.so\n"
+        "account required pam_tcb.so shadow fork\n");
+    writeFile(temp.path() / "pam.d/system-auth-common", "#%PAM-1.0\n");
+    writeFile(temp.path() / "pam.d/system-policy", "#%PAM-1.0\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        "real ALT GDM keyring path was rejected: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testPamTcbCredentialFailureBypassingAuthfailIsRejected() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"login"};
+    writeFile(
+        temp.path() / "pam.d/login",
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 auth_err=done default=bad] pam_tcb.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth required pam_permit.so\n"
+        "account required pam_faillock.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+            verification.detail.find("failure_accounting_bypass") !=
+                std::string::npos &&
+            verification.detail.find("pam_tcb.so -> PAM_AUTH_ERR") !=
+                std::string::npos,
+        "pam_tcb credential failure bypass was not detected: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
 void testSddmSucceedIfGateIsEffective() {
     TempDirectory temp;
     auto platform = makePlatform(temp);
@@ -2766,6 +2855,8 @@ int main() {
         testTrustedSuRootokPathIsAccepted();
         testRootokOutsideTrustedServiceIsRejected();
         testPamSucceedIfTrustedBypassMustMatchExactRule();
+        testAltGdmAuxiliaryKeyringPathIsEffective();
+        testPamTcbCredentialFailureBypassingAuthfailIsRejected();
         testSddmSucceedIfGateIsEffective();
         testSucceedIfSufficientBypassIsRejected();
         testGateSuccessDoesNotMaskCredentialFailure();

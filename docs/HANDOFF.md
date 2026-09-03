@@ -3,74 +3,63 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущего task commit:
-  `377e669626e2ae6b566d569d2e5be1197a80f04f`.
+- Родитель текущей незакоммиченной правки:
+  `6cc52b186412bd357ee8cff146ad86bd3c0d5209`.
 
 ## Current task
 
-- Исправлен NSS proof policy `disable_nopasswdlogin` для штатной ALT p11
-  topology `passwd: files systemd`, `group: files systemd role`.
+- Исправлен false `failure_accounting_bypass` анализатора PAM на штатном ALT
+  p11 GDM graph с `pam_tcb.so` и `pam_gnome_keyring.so`.
 
 ## Accepted architecture / invariants
 
-- `ExplicitPasswordlessLogin` описывает понятую platform-specific PAM-ветку,
-  но не утверждает, что на ней был выполнен `pam_faillock`.
-- ALT rule доверяется только при exact service/module/simple control/ordered
-  arguments/source; generic analyzer не содержит ALT-specific исключений.
-- `disable_nopasswdlogin` не редактирует package-owned PAM-файлы. Typed ALT
-  contract разрешает только exact поддержанные последовательности `files`,
-  `systemd`, `role`; remote/unknown services и NSS action overrides отклоняются.
-- Mutation ограничена local `/etc/group` через verified `gpasswd`. Security
-  postcondition вычисляется через libc NSS: primary GID, `gr_mem` и
-  `getgrouplist`, то есть соответствует `pam_succeed_if user ingroup`.
-- Отсутствующая `initgroups:` использует glibc fallback к `group:`. Остаточная
-  effective membership, включая `libnss-role`, завершается fail-closed.
-- Policy является только Recommended dependency authentication/lockout
-  policies; password quality/history policies от неё не зависят.
+- Exact trusted bypass `gdm-password` / `pam_succeed_if.so user ingroup
+  nopasswdlogin`, `ExplicitPasswordlessLogin`, NSS contract, Recommended
+  dependencies и topology managers не изменялись.
+- Return codes моделируются отдельно по PAM module и management group;
+  невозможный результат не переосмысливается как успешная аутентификация.
+- `pam_gnome_keyring.so` — известный auxiliary consumer `PAM_AUTHTOK`; его
+  auth result не является evidence первичной проверки credentials.
+- Generic control-action/evidence semantics осталась fail-closed и не получила
+  blanket-исключения для `action=ignore`.
 
 ## Completed
 
-- Regression сначала воспроизвёл исходный `authentication_bypass` на реальном
-  `gdm-password -> common-login` fixture.
-- Расширены typed platform metadata и analyzer acceptance evidence для
-  `ExplicitPasswordlessLogin`.
-- Добавлены policy, registration, config defaults, RU/EN resources и
-  `Gpasswd` executable metadata.
-- Добавлены Recommended dependencies для четырёх `failed_authentication_*`
-  policies и `required_pam_enforcement` только на поддерживающей платформе.
-- Добавлены positive/negative analyzer, enforcement, NSS, postcondition и
-  dependency tests; обновлены README, RPM и architecture docs.
-- Удалён параллельный parser `nsswitch.conf`: policy использует существующий
-  `NssConfiguration`; добавлен injectable effective-membership resolver.
-- Regression покрывает реальную ALT topology, systemd-only, supported/absent/
-  remote initgroups, role residual, primary GID, gpasswd failure и повторный
-  apply.
+- По ALT `tcb-1.2-alt2` подтверждено: `pam_sm_authenticate()` не возвращает
+  `PAM_NEW_AUTHTOK_REQD`; этот code формируется account entry point для
+  истёкшего пароля.
+- Для `pam_tcb.so` добавлены отдельные точные Auth/Account outcome contracts.
+- Для `pam_gnome_keyring.so` добавлены Auth outcomes и роль `Auxiliary`.
+- Добавлен positive regression на реальный ALT GDM graph и negative regression
+  на настоящий `pam_tcb PAM_AUTH_ERR`, обходящий `pam_faillock authfail`.
+- Собран ALT p11 RPM и установлен daemon package на `10.88.0.86`; перед
+  установкой создан `/var/tmp/fic-pam-analyzer-backup-20260903-1.tar.gz`.
+- Runtime apply: `total=30, applied=20, failed=0, disabled=10`; все четыре
+  `failed_authentication_*` и `required_pam_enforcement` применились.
 
 ## Changed areas
 
-- ALT/platform PAM profile and typed NSS compatibility contract.
-- PAM control-flow analyzer and identity policy dependency metadata.
-- `PamDisableNopasswdloginPolicy`, libc/NSS resolver, daemon registration and
-  resources.
-- PAM/platform/identity tests and user-facing documentation.
+- `PamControlFlowAnalyzer.cpp`.
+- `PamConfigurationTests.cpp`.
+- Этот HANDOFF.
 
 ## Validation
 
-- Собраны `fic` и изменённые PAM/platform/identity/planner test targets.
-- Relevant CTest: 18/18 passed.
+- Собраны `fic` и все relevant PAM/platform/planner targets.
+- Relevant CTest: 7/7 passed.
 - Полный доступный CTest: 53 passed, 4 штатно skipped, 0 failed из 57.
-- `platform_profile_tests` passed для ALT p11, Debian 12/13 и Ubuntu 24.04/26.04.
-- Полная сборка останавливается на незатронутом `fic-session-agent`: в
-  окружении отсутствует `systemd/sd-login.h`.
-- `git diff --check` passed.
-- Read-only `10.88.0.86`: подтверждены `files systemd` / `files systemd role`,
-  отсутствие отдельной `initgroups:`, `nopasswdlogin: ABSENT`, exact GDM rule и
-  пакеты pam 1.7.1, libnss-systemd 257.9, libnss-role 0.5.6.
+- Локальная full build остановилась на отсутствующем `systemd/sd-login.h` в
+  host environment; полная ALT p11 container/RPM build завершилась успешно.
+- На host SHA-256 `/opt/fic/bin/fic` совпал с daemon из RPM; daemon active,
+  свежий SSH login успешен, post-restart journal без warning/error.
+- `control fic-pam-faillock status` и `control fic-pam-pwhistory status`:
+  `enabled`.
 
 ## Remaining
 
-- Новая сборка не устанавливалась на `10.88.0.86`; фактический вызов новой
-  policy там не выполнялся. Текущее read-only состояние соответствует её
-  Applied/no-op ветке, поскольку effective NSS group отсутствует.
-- Host-impact absent/empty/supplementary/primary/role runtime cases проверять
-  только в согласованном staging/одноразовом окружении.
+- Изменения не коммитить без явной команды пользователя.
+- На текущем host `disable_nopasswdlogin` оказался enabled/applied, поэтому
+  disabled Recommended-dependency WARN в этом runtime запуске не наблюдался.
+- ALT `rpm --replacepkgs` сообщил `erase failed` при cleanup старой копии того
+  же NEVRA, но RPMDB содержит одну запись, установленный binary совпадает с
+  новым RPM и daemon успешно перезапущен.
