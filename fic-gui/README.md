@@ -184,7 +184,13 @@ bundled путей в `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH` и
 Расположенный рядом `qt.conf` обеспечивает bundled layout по умолчанию, но не
 запрещает замену библиотек.
 
-Состав bundle, package provenance, license declarations и хеши файлов находятся
+Команда `fic-gui --license-info` без запуска Qt GUI показывает границу лицензий
+FIC/Qt и путь к установленным текстам. Внутренняя packaging-проверка
+`--gui-smoke-test` создаёт `QApplication` и `QWidget`, загружает JPEG через Qt
+plugin и кратко выполняет event loop; она не создаёт `MainWindow` и не
+обращается к daemon.
+
+Состав bundle, package provenance, package-level license summary и хеши файлов находятся
 в `/usr/share/doc/fic-gui/third-party-components.json`; сопровождающие тексты —
 в `/usr/share/doc/fic-gui/licenses/`. Полный release/compliance flow описан в
 [`docs/third-party-licensing.md`](../docs/third-party-licensing.md).

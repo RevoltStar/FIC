@@ -43,7 +43,7 @@ for mock_builder in \
         '    touch "$MOCK_ROOT/dist/${component}_${builder}.${extension}"' \
         'done' \
         'cat > "$MOCK_ROOT/dist/fic-gui_${builder}.${extension}.third-party-components.json" <<EOF' \
-        '{"components":[{"source_package":"qt6-base","source_version":"6.test"}]}' \
+        '{"components":[{"source_family":"deb","source_package":"qt6-base","source_version":"6.test"}]}' \
         'EOF' > "$TEMP_DIR/$mock_builder"
     chmod +x "$TEMP_DIR/$mock_builder"
 done
@@ -52,13 +52,26 @@ printf 'release fixture\n' > "$TEMP_DIR/README.md"
 mkdir -p "$TEMP_DIR/release-sources"
 printf 'qt source fixture\n' > "$TEMP_DIR/release-sources/qt6-base-6.test.tar.xz"
 source_hash="$(sha256sum "$TEMP_DIR/release-sources/qt6-base-6.test.tar.xz" | cut -d ' ' -f 1)"
+source_size="$(stat -c %s "$TEMP_DIR/release-sources/qt6-base-6.test.tar.xz")"
+cat > "$TEMP_DIR/release-sources/qt6-base_6.test.dsc" <<EOF
+Format: 3.0 (quilt)
+Source: qt6-base
+Version: 6.test
+Checksums-Sha256:
+ $source_hash $source_size qt6-base-6.test.tar.xz
+EOF
+descriptor_hash="$(sha256sum "$TEMP_DIR/release-sources/qt6-base_6.test.dsc" | cut -d ' ' -f 1)"
 cat > "$TEMP_DIR/release-sources/corresponding-source.json" <<EOF
 {
   "schema_version": 1,
   "sources": [{
+    "family": "deb",
     "source_package": "qt6-base",
     "source_version": "6.test",
-    "artifacts": [{"file": "qt6-base-6.test.tar.xz", "sha256": "$source_hash"}]
+    "descriptor": {
+      "file": "qt6-base_6.test.dsc",
+      "sha256": "$descriptor_hash"
+    }
   }]
 }
 EOF

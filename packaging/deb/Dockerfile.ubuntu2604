@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qt6-base-dev \
     qt6-base-dev-tools \
     qt6-qpa-plugins \
+    xauth \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

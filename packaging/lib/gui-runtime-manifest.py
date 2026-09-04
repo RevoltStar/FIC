@@ -70,7 +70,10 @@ def deb_metadata(source_path: Path) -> dict[str, str]:
         "version": version,
         "source_package": source_package,
         "source_version": source_version,
-        "license": "; ".join(license_values) or "unknown; see packaged copyright file",
+        "package_license_summary": (
+            "; ".join(license_values) or "unknown; see packaged copyright file"
+        ),
+        "license_metadata_scope": "distribution-package-summary",
         "notice_sources": [str(copyright_path.resolve())],
     }
 
@@ -107,7 +110,8 @@ def rpm_metadata(source_path: Path) -> dict[str, str]:
         "version": version,
         "source_package": source_package,
         "source_version": source_version,
-        "license": license_value or "unknown; see packaged license file",
+        "package_license_summary": license_value or "unknown; see packaged license file",
+        "license_metadata_scope": "rpm-package-metadata",
         "notice_sources": notice_sources,
     }
 
@@ -177,7 +181,7 @@ def generate(args: argparse.Namespace) -> None:
         cache_key = str(source_path)
         metadata = metadata_cache.setdefault(cache_key, metadata_reader(source_path))
         assert_qt_base_component(metadata, installed_path)
-        if metadata["license"].startswith("unknown"):
+        if metadata["package_license_summary"].startswith("unknown"):
             print(
                 f"warning: no machine-readable license declaration for {metadata['package']}; "
                 "packaged notice is authoritative",
@@ -213,12 +217,17 @@ def generate(args: argparse.Namespace) -> None:
             "source_path": str(source_path),
             "package": metadata["package"],
             "version": metadata["version"],
-            "license": metadata["license"],
+            "package_license_summary": metadata["package_license_summary"],
+            "license_metadata_scope": metadata["license_metadata_scope"],
             "source_package": metadata["source_package"],
             "source_version": metadata["source_version"],
-            "license_file": f"/usr/share/doc/fic-gui/{notice_relatives[0].as_posix()}",
+            "source_family": args.family,
             "license_files": [
-                f"/usr/share/doc/fic-gui/{path.as_posix()}" for path in notice_relatives
+                {
+                    "path": f"/usr/share/doc/fic-gui/{path.as_posix()}",
+                    "sha256": sha256(doc_root / path),
+                }
+                for path in notice_relatives
             ],
             "sha256": sha256(real_installed_file),
         }
@@ -274,6 +283,19 @@ def payload_paths(package_root: Path) -> set[str]:
     }
 
 
+def package_path(package_root: Path, path_text: object, purpose: str) -> Path:
+    if not isinstance(path_text, str):
+        raise RuntimeError(f"{purpose} path is not a string: {path_text!r}")
+    path = Path(path_text)
+    if not path.is_absolute() or ".." in path.parts:
+        raise RuntimeError(f"unsafe {purpose} path: {path_text!r}")
+    candidate = package_root.joinpath(*path.parts[1:])
+    resolved = candidate.resolve()
+    if resolved == package_root or package_root not in resolved.parents:
+        raise RuntimeError(f"{purpose} path escapes package root: {path_text!r}")
+    return candidate
+
+
 def verify(args: argparse.Namespace) -> None:
     package_root = Path(args.package_root).resolve()
     doc_root = package_root / DOC_ROOT
@@ -289,6 +311,8 @@ def verify(args: argparse.Namespace) -> None:
         raise RuntimeError("missing compliance payload: " + ", ".join(missing))
 
     manifest = json.loads((doc_root / MANIFEST_NAME).read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != 1:
+        raise RuntimeError("unsupported runtime manifest schema_version")
     entries = manifest.get("components", [])
     if not isinstance(entries, list) or not entries:
         raise RuntimeError("runtime manifest has no components")
@@ -310,25 +334,50 @@ def verify(args: argparse.Namespace) -> None:
             "source_path",
             "package",
             "version",
-            "license",
+            "package_license_summary",
+            "license_metadata_scope",
             "source_package",
             "source_version",
+            "source_family",
             "sha256",
         ):
             if not entry.get(field):
                 raise RuntimeError(f"manifest entry {entry!r} has empty {field}")
         if entry["kind"] not in ("library", "plugin"):
             raise RuntimeError(f"manifest entry has invalid kind: {entry!r}")
-        installed_file = package_root / entry["installed_path"].lstrip("/")
+        if entry["source_family"] not in ("deb", "rpm"):
+            raise RuntimeError(f"manifest entry has invalid source_family: {entry!r}")
+        installed_file = package_path(
+            package_root, entry["installed_path"], "component"
+        )
         if not installed_file.is_file():
             raise RuntimeError(f"manifest component is missing: {entry['installed_path']}")
         if not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
             raise RuntimeError(f"invalid component SHA-256: {entry['installed_path']}")
         if sha256(installed_file.resolve()) != entry["sha256"]:
             raise RuntimeError(f"component SHA-256 mismatch: {entry['installed_path']}")
-        license_file = package_root / entry["license_file"].lstrip("/")
-        if not license_file.is_file():
-            raise RuntimeError(f"missing component notice {entry['license_file']}")
+        license_files = entry.get("license_files")
+        if not isinstance(license_files, list) or not license_files:
+            raise RuntimeError(
+                f"manifest entry has no authoritative license_files: {entry!r}"
+            )
+        for notice in license_files:
+            if not isinstance(notice, dict):
+                raise RuntimeError(f"invalid component notice entry: {notice!r}")
+            notice_path = package_path(
+                package_root, notice.get("path"), "component notice"
+            )
+            if not notice_path.is_file() or notice_path.is_symlink():
+                raise RuntimeError(f"missing component notice {notice.get('path')}")
+            notice_hash = notice.get("sha256", "")
+            if not isinstance(notice_hash, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", notice_hash
+            ):
+                raise RuntimeError(f"invalid component notice SHA-256: {notice!r}")
+            if sha256(notice_path.resolve()) != notice_hash:
+                raise RuntimeError(
+                    f"component notice SHA-256 mismatch: {notice.get('path')}"
+                )
 
 
 def main() -> int:

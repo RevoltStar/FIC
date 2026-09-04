@@ -60,6 +60,7 @@ target_link_libraries(fic-gui PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     OpenSSL::SSL
     OpenSSL::Crypto
+    ${CMAKE_DL_LIBS}
     fic-ipc
 )
 

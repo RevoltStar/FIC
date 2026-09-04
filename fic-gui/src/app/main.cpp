@@ -1,12 +1,72 @@
 #include "app/MainWindow.h"
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QImageReader>
+#include <QTimer>
+#include <QWidget>
+#include <QtGlobal>
 
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 
+#include <dlfcn.h>
 #include <iostream>
 #include <string>
+
+namespace {
+
+void writeLicenseInfo()
+{
+    std::cout
+        << "FIC is licensed under the Sustainable Use License 1.0.\n"
+        << "fic-gui uses Qt as separately licensed third-party software.\n"
+        << "Bundled Qt is distributed under the applicable Qt open-source license terms; "
+           "FIC packaging selects the LGPLv3-compatible distribution path where applicable.\n"
+        << "Distribution package metadata may contain alternative or additional license terms.\n"
+        << "Full license texts, package notices, the provenance manifest, and Corresponding "
+           "Source information are installed in /usr/share/doc/fic-gui/.\n";
+}
+
+std::string loadedQtCorePath()
+{
+    Dl_info information{};
+    if (dladdr(reinterpret_cast<void*>(&qVersion), &information) == 0 ||
+        information.dli_fname == nullptr) {
+        return {};
+    }
+    return information.dli_fname;
+}
+
+int runGuiSmokeTest(QApplication& application)
+{
+    QImageReader reader(QStringLiteral(":/fic/FIC.jpg"), "JPEG");
+    const QImage image = reader.read();
+    if (image.isNull()) {
+        std::cerr << "JPEG smoke check failed: "
+                  << reader.errorString().toStdString() << std::endl;
+        return 1;
+    }
+
+    QWidget widget;
+    widget.setWindowTitle(QStringLiteral("FIC GUI smoke test"));
+    widget.resize(64, 64);
+    widget.show();
+
+    const std::string qtCorePath = loadedQtCorePath();
+    if (qtCorePath.empty()) {
+        std::cerr << "Unable to determine the loaded Qt Core library path" << std::endl;
+        return 1;
+    }
+
+    std::cout << "qpa-platform=" << QApplication::platformName().toStdString() << '\n'
+              << "jpeg-plugin=ok\n"
+              << "qt-core-path=" << qtCorePath << std::endl;
+    QTimer::singleShot(50, &application, &QCoreApplication::quit);
+    return application.exec();
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -19,7 +79,14 @@ int main(int argc, char *argv[])
         fic::version::writeBuildInfo(std::cout, "fic-gui");
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--license-info") {
+        writeLicenseInfo();
+        return 0;
+    }
     QApplication a(argc, argv);
+    if (argc == 2 && std::string(argv[1]) == "--gui-smoke-test") {
+        return runGuiSmokeTest(a);
+    }
     MainWindow w;
     w.show();
     return a.exec();

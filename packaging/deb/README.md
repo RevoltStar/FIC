@@ -186,6 +186,14 @@ The package now:
   copyright notices, SUL-1.0, LGPLv3/GPLv3 texts, and `SOURCE_OFFER.md` from the
   actual payload and `dpkg` database.
 
+The generated manifest treats the `dpkg` license value as a package-level
+summary, records and hashes every applicable notice, and never presents that
+summary as a per-library license conclusion. During packaging, `--license-info`
+is checked without a display. An Xvfb smoke test then creates a real Qt widget,
+loads the JPEG plugin, enters the event loop, and verifies from loader/plugin
+diagnostics that both the default bundle and a separate `FIC_QT_ROOT` tree were
+actually loaded. The smoke path does not contact the daemon.
+
 The launcher sets `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH`, and
 `QT_QPA_PLATFORM_PLUGIN_PATH` before starting `fic-gui.real`. Set
 `FIC_QT_ROOT=/path/to/custom/qt` to use compatible replacement `lib/` and

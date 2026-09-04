@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y \
     python3 \
     qt6-base-devel \
     rpm-build \
+    xauth \
+    xvfb-run \
     && apt-get clean && rm -rf /var/cache/apt/archives/*
 
 WORKDIR /workspace

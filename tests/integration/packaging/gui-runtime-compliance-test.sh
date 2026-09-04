@@ -71,22 +71,40 @@ printf 'library\n' > "$PACKAGE_ROOT/opt/fic/qt/lib/libQt6Core.so.6"
 for license_file in FIC-SUL-1.0.txt LGPL-3.0-only.txt GPL-3.0-only.txt; do
     printf 'license\n' > "$DOC_ROOT/licenses/$license_file"
 done
-printf 'notice\n' > "$DOC_ROOT/licenses/packages/qt.txt"
+for notice_file in qt-main.txt qt-exception.txt qt-third-party.txt; do
+    printf '%s\n' "$notice_file" > "$DOC_ROOT/licenses/packages/$notice_file"
+done
 printf 'source offer\n' > "$DOC_ROOT/SOURCE_OFFER.md"
 cat > "$DOC_ROOT/third-party-components.json" <<EOF
 {
+  "schema_version": 1,
   "components": [{
     "name": "libQt6Core.so.6",
     "installed_path": "/opt/fic/qt/lib/libQt6Core.so.6",
     "source_path": "/usr/lib/libQt6Core.so.6",
     "package": "qt6-base",
     "version": "6.test",
-    "license": "LGPL-3.0-only",
+    "package_license_summary": "LGPL-3.0-only",
+    "license_metadata_scope": "distribution-package-summary",
     "source_package": "qt6-base",
     "source_version": "6.test",
+    "source_family": "deb",
     "kind": "library",
     "sha256": "$(sha256sum "$PACKAGE_ROOT/opt/fic/qt/lib/libQt6Core.so.6" | awk '{print $1}')",
-    "license_file": "/usr/share/doc/fic-gui/licenses/packages/qt.txt"
+    "license_files": [
+      {
+        "path": "/usr/share/doc/fic-gui/licenses/packages/qt-main.txt",
+        "sha256": "$(sha256sum "$DOC_ROOT/licenses/packages/qt-main.txt" | awk '{print $1}')"
+      },
+      {
+        "path": "/usr/share/doc/fic-gui/licenses/packages/qt-exception.txt",
+        "sha256": "$(sha256sum "$DOC_ROOT/licenses/packages/qt-exception.txt" | awk '{print $1}')"
+      },
+      {
+        "path": "/usr/share/doc/fic-gui/licenses/packages/qt-third-party.txt",
+        "sha256": "$(sha256sum "$DOC_ROOT/licenses/packages/qt-third-party.txt" | awk '{print $1}')"
+      }
+    ]
   }]
 }
 EOF
@@ -100,6 +118,22 @@ if python3 "$ROOT_DIR/packaging/lib/gui-runtime-manifest.py" verify \
     exit 1
 fi
 printf 'license\n' > "$DOC_ROOT/licenses/LGPL-3.0-only.txt"
+
+rm "$DOC_ROOT/licenses/packages/qt-exception.txt"
+if python3 "$ROOT_DIR/packaging/lib/gui-runtime-manifest.py" verify \
+    --package-root "$PACKAGE_ROOT" >/dev/null 2>&1; then
+    echo "Manifest verification accepted a missing secondary notice" >&2
+    exit 1
+fi
+printf 'qt-exception.txt\n' > "$DOC_ROOT/licenses/packages/qt-exception.txt"
+
+printf 'modified notice\n' > "$DOC_ROOT/licenses/packages/qt-third-party.txt"
+if python3 "$ROOT_DIR/packaging/lib/gui-runtime-manifest.py" verify \
+    --package-root "$PACKAGE_ROOT" >/dev/null 2>&1; then
+    echo "Manifest verification accepted a notice SHA-256 mismatch" >&2
+    exit 1
+fi
+printf 'qt-third-party.txt\n' > "$DOC_ROOT/licenses/packages/qt-third-party.txt"
 
 printf 'modified library\n' > "$PACKAGE_ROOT/opt/fic/qt/lib/libQt6Core.so.6"
 if python3 "$ROOT_DIR/packaging/lib/gui-runtime-manifest.py" verify \

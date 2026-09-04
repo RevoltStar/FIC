@@ -292,4 +292,94 @@ fic_gui_verify_runtime_compliance() {
         --package-root "$package_root"
 
     "$package_root/opt/fic/bin/fic-gui" --version >/dev/null
+
+    local license_output
+    license_output="$("$package_root/opt/fic/bin/fic-gui" --license-info)" || return 1
+    printf '%s\n' "$license_output" | grep -Fq 'Sustainable Use License 1.0' || {
+        fic_gui_runtime_error "fic-gui --license-info omits the FIC license"
+        return 1
+    }
+    printf '%s\n' "$license_output" | grep -Fq '/usr/share/doc/fic-gui/' || {
+        fic_gui_runtime_error "fic-gui --license-info omits the package documentation path"
+        return 1
+    }
+
+    fic_gui_verify_gui_smoke "$package_root"
+}
+
+fic_gui_assert_smoke_output() {
+    local output="$1"
+    local qt_root="$2"
+    local qt_library
+
+    printf '%s\n' "$output" | grep -Fq 'qpa-platform=xcb' || {
+        fic_gui_runtime_error "GUI smoke test did not load the XCB QPA plugin"
+        return 1
+    }
+    printf '%s\n' "$output" | grep -Fq 'jpeg-plugin=ok' || {
+        fic_gui_runtime_error "GUI smoke test did not decode the JPEG fixture"
+        return 1
+    }
+    printf '%s\n' "$output" | grep -F "qt-core-path=$qt_root/lib/" >/dev/null || {
+        fic_gui_runtime_error "GUI smoke test loaded Qt Core outside $qt_root"
+        return 1
+    }
+    printf '%s\n' "$output" | grep -F "$qt_root/plugins/platforms/libqxcb.so" >/dev/null || {
+        fic_gui_runtime_error "GUI smoke test did not load bundled libqxcb.so"
+        return 1
+    }
+    printf '%s\n' "$output" | grep -F "$qt_root/plugins/imageformats/libqjpeg.so" >/dev/null || {
+        fic_gui_runtime_error "GUI smoke test did not load bundled libqjpeg.so"
+        return 1
+    }
+    for qt_library in Core Gui Widgets; do
+        printf '%s\n' "$output" |
+            grep -E "calling init: ${qt_root}/lib/libQt6${qt_library}\\.so" >/dev/null || {
+            fic_gui_runtime_error \
+                "GUI smoke test did not load Qt ${qt_library} from $qt_root"
+            return 1
+        }
+    done
+    if printf '%s\n' "$output" |
+        grep -E 'calling init: .*libQt6[^/]*\.so' |
+        grep -Fv "calling init: $qt_root/lib/" >/dev/null; then
+        fic_gui_runtime_error "GUI smoke test loaded a Qt library outside $qt_root"
+        return 1
+    fi
+}
+
+fic_gui_verify_gui_smoke() {
+    local package_root="$1"
+    local launcher="$package_root/opt/fic/bin/fic-gui"
+    local bundled_root="$package_root${GUI_QT_BUNDLE_ROOT}"
+    local override_root
+    local smoke_output
+
+    command -v xvfb-run >/dev/null 2>&1 || {
+        fic_gui_runtime_error "xvfb-run is required for the packaged GUI smoke test"
+        return 1
+    }
+
+    smoke_output="$(LD_DEBUG=libs QT_DEBUG_PLUGINS=1 \
+        xvfb-run -a "$launcher" --gui-smoke-test 2>&1)" || {
+        printf '%s\n' "$smoke_output" >&2
+        fic_gui_runtime_error "bundled Qt GUI smoke test failed"
+        return 1
+    }
+    fic_gui_assert_smoke_output "$smoke_output" "$bundled_root" || return 1
+
+    override_root="$(mktemp -d "$STAGING_BASE/gui-qt-override-XXXXXX")"
+    cp -a "$bundled_root/." "$override_root/"
+    smoke_output="$(FIC_QT_ROOT="$override_root" LD_DEBUG=libs QT_DEBUG_PLUGINS=1 \
+        xvfb-run -a "$launcher" --gui-smoke-test 2>&1)" || {
+        printf '%s\n' "$smoke_output" >&2
+        rm -rf "$override_root"
+        fic_gui_runtime_error "FIC_QT_ROOT GUI smoke test failed"
+        return 1
+    }
+    fic_gui_assert_smoke_output "$smoke_output" "$override_root" || {
+        rm -rf "$override_root"
+        return 1
+    }
+    rm -rf "$override_root"
 }

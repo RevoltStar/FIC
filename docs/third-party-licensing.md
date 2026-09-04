@@ -46,6 +46,10 @@ The selected root must contain `lib/` and `plugins/`. The launcher places only
 that root in the Qt-specific environment variables. Advanced users may execute
 `fic-gui.real` directly with system or manually configured Qt paths.
 
+`fic-gui --license-info` prints the license boundary and installed
+documentation location without creating a `QApplication`, connecting to the
+daemon, or requiring a graphical display.
+
 ## Installed compliance payload
 
 Every `fic-gui` binary package installs:
@@ -58,12 +62,17 @@ Every `fic-gui` binary package installs:
 - `/usr/share/doc/fic-gui/third-party-components.json`;
 - `/usr/share/doc/fic-gui/SOURCE_OFFER.md`.
 
-The deterministic JSON manifest is sorted by installed path. Each library,
-SONAME link and plugin records its installed/source paths, kind, binary package,
-binary version, distribution-declared license, source package and exact source
-version, notice path, and SHA-256. Generation fails if a component cannot be
-attributed to the allowed Qt source package. The package compliance check fails
-if the manifest and actual `/opt/fic/qt` payload differ.
+The deterministic JSON manifest uses `schema_version: 1` and is sorted by
+installed path. Each
+library, SONAME link and plugin records its installed/source paths, kind, binary
+package, binary version, source family, source package and exact source version,
+notice paths, and SHA-256. Package-manager license metadata is recorded once as
+`package_license_summary` together with `license_metadata_scope`; it is a
+package-level summary, not an exact per-file license declaration. Generation
+fails if a component cannot be attributed to the allowed Qt source package.
+The package compliance check fails if the manifest and actual `/opt/fic/qt`
+payload differ, or if any declared notice is missing, escapes the package root,
+is not a regular file, or has the wrong SHA-256.
 
 The distro copyright/license file is authoritative for the particular build.
 Maintainers must review it when the Qt package version changes; they must not
@@ -86,20 +95,30 @@ contain `corresponding-source.json` with this shape:
 {
   "schema_version": 1,
   "sources": [{
+    "family": "deb",
     "source_package": "qt6-base",
     "source_version": "exact distro source version",
-    "artifacts": [{
-      "file": "relative/path/to/source-artifact",
+    "descriptor": {
+      "file": "relative/path/to/qt6-base_version.dsc",
       "sha256": "64 lowercase hexadecimal characters"
-    }]
+    }
   }]
 }
 ```
 
-Each referenced file must be inside that directory and match its SHA-256. After
-all platform packages are built, `packaging/release/build-release.sh` compares
-their generated manifests with the index. Missing source identities, files, or
-hashes stop publication. On success, both the source set and per-platform
+For a Debian-family entry, `descriptor` must name a real `.dsc`. Its own hash,
+`Source`, and exact `Version` (including an epoch) are checked. Every file in
+its `Checksums-Sha256` stanza must be present beside the descriptor with the
+declared size and hash; that complete set is retained. An RPM-family entry uses
+`"family": "rpm"` and a `source_rpm` object with `file` and `sha256`.
+The referenced file must be a real source RPM whose queried name and exact
+version-release match the manifest; a renamed binary RPM is rejected.
+
+Every referenced path must remain inside the retained artifact directory.
+After all platform packages are built, `packaging/release/build-release.sh`
+compares their generated manifests with this semantic index. Wrong source
+identities, incomplete descriptor sets, unsafe paths, files, sizes, or hashes
+stop publication. On success, both the complete source set and per-platform
 third-party manifests are copied into the release output.
 
 For Debian-family platforms, obtain the exact recorded version from the matching

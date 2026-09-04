@@ -53,8 +53,10 @@ success.
    ./packaging/release/build-release.sh --verify-only
    ```
 
-5. Prepare the exact, checksummed Corresponding Source set described in
-   [`third-party-licensing.md`](third-party-licensing.md).
+5. Prepare the exact Corresponding Source set described in
+   [`third-party-licensing.md`](third-party-licensing.md): a real Debian `.dsc`
+   plus its complete `Checksums-Sha256` file set for each Debian-family build,
+   and a real metadata-matching source RPM for ALT p11.
 
 6. Build all supported package sets:
 

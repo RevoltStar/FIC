@@ -45,6 +45,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_SOURCE_DIR}
     )
     add_test(
+        NAME corresponding_source_contract_tests
+        COMMAND bash
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/corresponding-source-test.sh
+                ${CMAKE_SOURCE_DIR}
+    )
+    add_test(
         NAME firewall_static_checks
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/firewall/static_checks.py
@@ -63,6 +69,13 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_SOURCE_DIR}
     )
 endif()
+
+add_test(
+    NAME fic_gui_license_info
+    COMMAND bash
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/fic-gui-license-info-test.sh
+            $<TARGET_FILE:fic-gui>
+)
 
 add_executable(module_registry_tests
     fic-gui/policies/ModuleRegistryTests.cpp

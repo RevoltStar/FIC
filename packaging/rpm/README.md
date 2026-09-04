@@ -272,6 +272,13 @@ The package:
   provenance, RPM license notices, SUL-1.0, LGPLv3/GPLv3 texts, and
   `SOURCE_OFFER.md` from the actual payload.
 
+The manifest labels RPM `LICENSE` metadata as a package-level summary and
+records a SHA-256 for every applicable notice. Packaging checks
+`--license-info` without a display, then runs the real widget/JPEG/event-loop
+smoke path under Xvfb. Loader and plugin diagnostics must prove both the default
+bundle and a separate `FIC_QT_ROOT` copy were actually used; the smoke path does
+not contact the daemon.
+
 Set `FIC_QT_ROOT=/path/to/custom/qt` to make the launcher use that compatible
 `lib/` and `plugins/` tree instead of `/opt/fic/qt`. `fic-gui.real` can also be
 run directly with caller-supplied loader/plugin paths.
