@@ -43,9 +43,11 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
     return result.str();
 }
 
-ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy)
+ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy,
+                           PolicyPathResolution pathResolution)
     : DAC(),
-      missingFilePolicy_(missingFilePolicy) {
+      missingFilePolicy_(missingFilePolicy),
+      pathResolution_(pathResolution) {
     this->submoduleName = "Mode_and_Owner";
 }
 
@@ -73,7 +75,7 @@ bool ModeAndOwner::apply() {
         const FileStats& expectedStats = expectation.stats;
         ++total;
         FileStats currentStats = FileStats::openPolicyPath(
-            filename, expectation.allowedFinalSymlinkTargets);
+            filename, expectation.allowedFinalSymlinkTargets, pathResolution_);
 
         if (currentStats.is_missing()) {
             if (missingFilePolicy_ == MissingFilePolicy::Ignore) {

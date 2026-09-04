@@ -11,7 +11,9 @@
 #include <filesystem>
 #include <fstream>
 #include <grp.h>
+#include <iomanip>
 #include <pwd.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -58,6 +60,26 @@ mode_t fileMode(const fs::path& path) {
     require(::lstat(path.c_str(), &info) == 0,
             "could not stat " + path.string());
     return info.st_mode & 07777;
+}
+
+bool applyCustomRule(const fs::path& configRoot,
+                     const fs::path& path,
+                     mode_t mode) {
+    std::ostringstream modeText;
+    modeText << std::setfill('0') << std::setw(4) << std::oct << mode;
+    const std::string customValue =
+        "[{\"path\":\"" + path.string() +
+        "\",\"owner\":\"" + currentOwner() +
+        "\",\"group\":\"" + currentGroup() +
+        "\",\"mode\":\"" + modeText.str() + "\"}]";
+    writeFile(
+        configRoot / "config/DAC.conf",
+        "_schema_version=1\n"
+        "custom_mode_and_owner.status=ENABLE\n"
+        "custom_mode_and_owner.value=" + customValue + "\n",
+        0640);
+    DAC_custom_mode_and_owner policy;
+    return policy.apply();
 }
 
 void initializeRuntimePaths(const fs::path& root,
@@ -318,22 +340,66 @@ void testCustomSymlinkRemainsFailClosed(const fs::path& root) {
     const fs::path link = root / "custom-symlink-rule";
     writeFile(target, "custom", 0644);
     fs::create_symlink(target, link);
-    const std::string customValue =
-        "[{\"path\":\"" + link.string() +
-        "\",\"owner\":\"" + currentOwner() +
-        "\",\"group\":\"" + currentGroup() +
-        "\",\"mode\":\"0600\"}]";
-    writeFile(
-        root / "config/DAC.conf",
-        "_schema_version=1\n"
-        "custom_mode_and_owner.status=ENABLE\n"
-        "custom_mode_and_owner.value=" + customValue + "\n",
-        0640);
-
-    DAC_custom_mode_and_owner policy;
-    require(!policy.apply(), "custom policy accepted a final symlink");
+    require(!applyCustomRule(root, link, 0600),
+            "custom policy accepted a final symlink");
     require(fileMode(target) == 0644,
             "custom policy modified a symlink target");
+}
+
+void testCustomTrustedIntermediateResolution(const fs::path& root) {
+    const fs::path regular = root / "custom-regular";
+    writeFile(regular, "regular", 0644);
+    require(applyCustomRule(root, regular, 0600),
+            "custom policy rejected a regular trusted path");
+    require(fileMode(regular) == 0600,
+            "custom regular path was not remediated");
+
+    const fs::path trustedTargetDirectory = root / "trusted-target";
+    const fs::path trustedTarget = trustedTargetDirectory / "file";
+    const fs::path trustedLink = root / "trusted-link";
+    writeFile(trustedTarget, "trusted", 0644);
+    fs::create_directory_symlink("trusted-target", trustedLink);
+    require(applyCustomRule(root, trustedLink / "file", 0600),
+            "custom policy rejected a trusted intermediate symlink");
+    require(fileMode(trustedTarget) == 0600,
+            "trusted intermediate symlink target was not remediated");
+
+    const fs::path usrBin = root / "usr/bin";
+    const fs::path usrmergeTarget = usrBin / "tool";
+    const fs::path binLink = root / "bin";
+    writeFile(usrmergeTarget, "usrmerge", 0755);
+    fs::create_directory_symlink("usr/bin", binLink);
+    require(applyCustomRule(root, binLink / "tool", 0700),
+            "custom policy rejected an usrmerge-like intermediate symlink");
+    require(fileMode(usrmergeTarget) == 0700,
+            "usrmerge-like target was not remediated");
+
+    const fs::path victimDirectory = root / "victim";
+    const fs::path victim = victimDirectory / "target";
+    const fs::path attackerDirectory = root / "attacker-controlled";
+    const fs::path redirect = attackerDirectory / "redirect";
+    writeFile(victim, "victim", 0644);
+    fs::create_directories(attackerDirectory);
+    require(::chmod(attackerDirectory.c_str(), 0777) == 0,
+            "could not make the attacker directory writable");
+    fs::create_directory_symlink(victimDirectory, redirect);
+    require(!applyCustomRule(root, redirect / "target", 0600),
+            "custom policy accepted an attacker-controlled redirect");
+    require(fileMode(victim) == 0644,
+            "attacker-controlled redirect changed the victim mode");
+
+    if (::geteuid() == 0) {
+        const fs::path unprivilegedDirectory = root / "unprivileged-owned";
+        const fs::path unprivilegedTarget = unprivilegedDirectory / "target";
+        fs::create_directories(unprivilegedDirectory);
+        writeFile(unprivilegedTarget, "unprivileged", 0644);
+        require(::chown(unprivilegedDirectory.c_str(), 65534, 65534) == 0,
+                "could not assign the directory to an unprivileged UID");
+        require(!applyCustomRule(root, unprivilegedTarget, 0600),
+                "custom policy accepted an unprivileged-owned directory");
+        require(fileMode(unprivilegedTarget) == 0644,
+                "unprivileged-owned path changed the target mode");
+    }
 }
 
 void testChownThenRestoresSpecialBits(const fs::path& root) {
@@ -472,6 +538,7 @@ int main() {
     testSymlinkIsRejected(root);
     testProfileDrivenFinalSymlinks(root);
     testCustomSymlinkRemainsFailClosed(root);
+    testCustomTrustedIntermediateResolution(root);
     testChownThenRestoresSpecialBits(root);
     testUnknownIdentitiesAndDiagnostics(root);
     testChownFailureReturnsFalse(root);

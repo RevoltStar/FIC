@@ -36,6 +36,7 @@ protected:
     //Переменная с эталонными правами
     std::map<std::string, ModeAndOwnerExpectation> expected;
     MissingFilePolicy missingFilePolicy_;
+    PolicyPathResolution pathResolution_;
     void addExpectedRule(
         const std::filesystem::path& path,
         const std::string& owner,
@@ -43,7 +44,9 @@ protected:
         mode_t permissions,
         std::vector<std::filesystem::path> allowedFinalSymlinkTargets = {});
 public:
-    explicit ModeAndOwner(MissingFilePolicy missingFilePolicy);
+    explicit ModeAndOwner(
+        MissingFilePolicy missingFilePolicy,
+        PolicyPathResolution pathResolution = PolicyPathResolution::Standard);
     virtual ~ModeAndOwner() = default;
     bool apply () override;
 };

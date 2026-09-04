@@ -151,6 +151,12 @@ public:
         descriptor_ = -1;
         return result;
     }
+    void reset(int descriptor) {
+        if (descriptor_ >= 0) {
+            ::close(descriptor_);
+        }
+        descriptor_ = descriptor;
+    }
 
 private:
     int descriptor_;
@@ -183,6 +189,126 @@ FileStatsOperationResult readSymlinkDescriptor(
         }
         buffer.resize(std::min(buffer.size() * 2, MAX_SYMLINK_LENGTH));
     }
+}
+
+struct TrustedPathOpenResult {
+    int descriptor = -1;
+    int errorNumber = 0;
+    std::string message;
+};
+
+bool isPrivilegedOwner(uid_t owner) {
+    // The daemon runs as root. Accepting the effective UID as privileged keeps
+    // the same trust model for non-root unit-test and library callers.
+    return owner == 0 || owner == ::geteuid();
+}
+
+bool isTrustedIntermediateDirectory(const struct stat& info) {
+    if (!S_ISDIR(info.st_mode) || !isPrivilegedOwner(info.st_uid)) {
+        return false;
+    }
+    if ((info.st_mode & (S_IWGRP | S_IWOTH)) == 0) {
+        return true;
+    }
+    return info.st_uid == 0 && (info.st_mode & S_ISVTX) != 0;
+}
+
+TrustedPathOpenResult openTrustedPolicyPath(
+    const std::filesystem::path& inputPath,
+    unsigned int followedSymlinks = 0) {
+    if (!inputPath.is_absolute()) {
+        return {-1, 0, "trusted policy path must be absolute: " +
+                           inputPath.string()};
+    }
+    if (followedSymlinks > 40) {
+        return {-1, ELOOP, {}};
+    }
+
+    const std::filesystem::path normalizedPath = inputPath.lexically_normal();
+    ScopedDescriptor directory(::open("/", O_PATH | O_DIRECTORY | O_CLOEXEC));
+    if (directory.get() < 0) {
+        return {-1, errno, {}};
+    }
+    struct stat directoryInfo {};
+    if (::fstat(directory.get(), &directoryInfo) != 0) {
+        return {-1, errno, {}};
+    }
+    if (!isTrustedIntermediateDirectory(directoryInfo)) {
+        return {-1, 0, "root directory is not trusted while resolving " +
+                           inputPath.string()};
+    }
+
+    std::vector<std::filesystem::path> components;
+    for (const auto& component : normalizedPath.relative_path()) {
+        if (component != ".") {
+            components.push_back(component);
+        }
+    }
+    if (components.empty()) {
+        const int descriptor = ::open(
+            "/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NONBLOCK);
+        return descriptor < 0
+            ? TrustedPathOpenResult{-1, errno, {}}
+            : TrustedPathOpenResult{descriptor, 0, {}};
+    }
+
+    std::filesystem::path logicalParent = "/";
+    for (std::size_t index = 0; index < components.size(); ++index) {
+        const std::string name = components[index].string();
+        const bool finalComponent = index + 1 == components.size();
+        if (finalComponent) {
+            const int descriptor = ::openat(
+                directory.get(), name.c_str(),
+                O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+            return descriptor < 0
+                ? TrustedPathOpenResult{-1, errno, {}}
+                : TrustedPathOpenResult{descriptor, 0, {}};
+        }
+
+        ScopedDescriptor componentDescriptor(::openat(
+            directory.get(), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
+        if (componentDescriptor.get() < 0) {
+            return {-1, errno, {}};
+        }
+        struct stat componentInfo {};
+        if (::fstat(componentDescriptor.get(), &componentInfo) != 0) {
+            return {-1, errno, {}};
+        }
+
+        if (S_ISLNK(componentInfo.st_mode)) {
+            if (!isPrivilegedOwner(componentInfo.st_uid)) {
+                return {-1, 0, "untrusted intermediate symlink while resolving " +
+                                   inputPath.string() + ": " +
+                                   (logicalParent / components[index]).string()};
+            }
+            std::filesystem::path target;
+            const FileStatsOperationResult readResult = readSymlinkDescriptor(
+                componentDescriptor.get(),
+                logicalParent / components[index],
+                target);
+            if (!readResult) {
+                return {-1, readResult.systemError.value(), readResult.message};
+            }
+            std::filesystem::path redirected = target.is_absolute()
+                ? target
+                : logicalParent / target;
+            for (std::size_t remaining = index + 1;
+                 remaining < components.size(); ++remaining) {
+                redirected /= components[remaining];
+            }
+            return openTrustedPolicyPath(
+                redirected.lexically_normal(), followedSymlinks + 1);
+        }
+
+        if (!isTrustedIntermediateDirectory(componentInfo)) {
+            return {-1, 0, "untrusted intermediate directory while resolving " +
+                               inputPath.string() + ": " +
+                               (logicalParent / components[index]).string()};
+        }
+        directory.reset(componentDescriptor.release());
+        logicalParent /= components[index];
+    }
+    return {-1, EINVAL, {}};
 }
 } // namespace
 
@@ -229,8 +355,32 @@ void FileStats::set_open_error(const std::string& operation, int errorNumber) {
 
 FileStats FileStats::openPolicyPath(
     const std::filesystem::path& path,
-    const std::vector<std::filesystem::path>& allowedFinalSymlinkTargets) {
+    const std::vector<std::filesystem::path>& allowedFinalSymlinkTargets,
+    PolicyPathResolution resolution) {
     FileStats result(path.string(), DeferredOpenTag{});
+    if (resolution == PolicyPathResolution::TrustedIntermediateComponents) {
+        const TrustedPathOpenResult openResult = openTrustedPolicyPath(path);
+        if (openResult.descriptor < 0) {
+            if (!openResult.message.empty()) {
+                result.state_ = FileStatsState::Error;
+                result.errorMessage_ = openResult.message;
+            } else {
+                result.set_open_error(
+                    "trusted path resolution for", openResult.errorNumber);
+            }
+            return result;
+        }
+        result.descriptor_ = openResult.descriptor;
+        const FileStatsOperationResult statResult = result.update_from_descriptor();
+        if (!statResult) {
+            result.state_ = FileStatsState::Error;
+            result.systemError_ = statResult.systemError;
+            result.errorMessage_ = statResult.message;
+            result.close_descriptor();
+        }
+        return result;
+    }
+
     result.openRegularPath();
     if (!result.has_error() || result.error_code().value() != ELOOP ||
         allowedFinalSymlinkTargets.empty()) {

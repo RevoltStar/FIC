@@ -16,6 +16,11 @@ enum class FileStatsState {
     Error
 };
 
+enum class PolicyPathResolution {
+    Standard,
+    TrustedIntermediateComponents
+};
+
 struct FileStatsOperationResult {
     bool success = false;
     std::error_code systemError;
@@ -45,7 +50,8 @@ public:
 
     static FileStats openPolicyPath(
         const std::filesystem::path& path,
-        const std::vector<std::filesystem::path>& allowedFinalSymlinkTargets);
+        const std::vector<std::filesystem::path>& allowedFinalSymlinkTargets,
+        PolicyPathResolution resolution = PolicyPathResolution::Standard);
     // The returned object owns a close-on-exec duplicate. The caller retains
     // ownership of descriptor and both descriptors refer to the same inode.
     static FileStats fromBorrowedDescriptor(
