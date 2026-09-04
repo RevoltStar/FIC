@@ -279,6 +279,19 @@ smoke path under Xvfb. Loader and plugin diagnostics must prove both the default
 bundle and a separate `FIC_QT_ROOT` copy were actually used; the smoke path does
 not contact the daemon.
 
+Notice discovery uses RPM file flags. Files marked `%license` are authoritative
+and are selected regardless of their names; ordinary `%doc` files are not
+included when license flags exist. ALT p11's `qt6-base-common` currently marks
+its complete, versioned license corpus as `%doc` because its RPM 4.13 tooling
+does not support `%license`. The only fallback therefore accepts `%doc` regular
+files directly inside `/usr/share/doc/qt6-base-common-VERSION/` and fails if a
+declared file cannot be read. It is not a filename-based license heuristic.
+
+The generated spec filters only automatic `libQt6*` requirements for
+`fic-gui`: those requirements are satisfied by the verified private closure in
+`/opt/fic/qt`. Automatic dependency generation remains enabled for all non-Qt
+runtime libraries. The build fails if external Qt requirements remain.
+
 Set `FIC_QT_ROOT=/path/to/custom/qt` to make the launcher use that compatible
 `lib/` and `plugins/` tree instead of `/opt/fic/qt`. `fic-gui.real` can also be
 run directly with caller-supplied loader/plugin paths.
@@ -313,6 +326,19 @@ This wrapper:
   conflict with host-side CMake caches.
 
 The resulting `.rpm` files are written into `dist/` in the repository.
+
+After building, run the metadata-flags fixture and clean runtime installation
+tests in disposable containers:
+
+```bash
+./packaging/rpm/test-license-file-flags.sh
+./packaging/rpm/test-clean-alt-runtime.sh dist
+```
+
+The second test starts from minimal ALT p11, asserts that no Qt RPM is present,
+installs `fic-dick`, `fic`, and `fic-gui` through `apt-get`, checks again that
+no system Qt package was pulled in, and runs both bundled and `FIC_QT_ROOT`
+Xvfb smoke paths with loader-origin assertions.
 
 ## Build resource policy
 

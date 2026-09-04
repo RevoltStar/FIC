@@ -92,19 +92,12 @@ def rpm_metadata(source_path: Path) -> dict[str, str]:
         related_name, _, related_source_rpm = line.partition("\t")
         if related_source_rpm == source_rpm:
             related_packages.append(related_name)
-    notice_sources = []
-    for related_package in related_packages:
-        for path_text in run("rpm", "-ql", related_package).splitlines():
-            path = Path(path_text)
-            if path.is_file() and re.search(r"(?:license|copying)", path.name, re.IGNORECASE):
-                resolved = str(path.resolve())
-                if resolved not in notice_sources:
-                    notice_sources.append(resolved)
-    if not notice_sources:
-        raise RuntimeError(f"missing RPM license file for {package}")
     source_match = re.fullmatch(r"(qt6-base)-(.+)\.src\.rpm", source_rpm)
     source_package = source_match.group(1) if source_match else source_rpm.removesuffix(".src.rpm")
     source_version = source_match.group(2) if source_match else version
+    notice_sources = rpm_license_notice_paths(
+        source_rpm, source_package, related_packages
+    )
     return {
         "package": package,
         "version": version,
@@ -114,6 +107,75 @@ def rpm_metadata(source_path: Path) -> dict[str, str]:
         "license_metadata_scope": "rpm-package-metadata",
         "notice_sources": notice_sources,
     }
+
+
+def rpm_package_file_flags(package: str) -> list[tuple[Path, str]]:
+    entries = []
+    output = subprocess.check_output(
+        (
+            "rpm",
+            "-q",
+            "--queryformat",
+            "[%{FILENAMES}\\t%{FILEFLAGS:fflags}\\n]",
+            package,
+        ),
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).rstrip("\n")
+    for line in output.splitlines():
+        path_text, separator, flags = line.partition("\t")
+        if not separator or not path_text.startswith("/"):
+            raise RuntimeError(f"invalid RPM file metadata for {package}: {line!r}")
+        entries.append((Path(path_text), flags))
+    return entries
+
+
+def checked_rpm_notice_paths(paths: list[Path], context: str) -> list[str]:
+    if not paths:
+        raise RuntimeError(f"RPM metadata declares no license files for {context}")
+    result = []
+    for path in sorted(set(paths)):
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError(f"RPM-declared license file is unreadable: {path}")
+        try:
+            with path.open("rb") as stream:
+                stream.read(1)
+        except OSError as error:
+            raise RuntimeError(f"RPM-declared license file is unreadable: {path}") from error
+        result.append(str(path.resolve()))
+    return result
+
+
+def rpm_license_notice_paths(
+    source_rpm: str, source_package: str, related_packages: list[str]
+) -> list[str]:
+    file_metadata = {
+        package: rpm_package_file_flags(package) for package in related_packages
+    }
+    license_paths = [
+        path
+        for entries in file_metadata.values()
+        for path, flags in entries
+        if "l" in flags
+    ]
+    if license_paths:
+        return checked_rpm_notice_paths(license_paths, source_rpm)
+
+    # ALT p11's qt6-base-common packages use %doc rather than %license for the
+    # complete license corpus. This fallback is deliberately limited to that
+    # package and its dedicated, versioned top-level documentation directory.
+    if source_package != "qt6-base" or "qt6-base-common" not in file_metadata:
+        raise RuntimeError(f"RPM metadata declares no license files for {source_rpm}")
+    common_version = run(
+        "rpm", "-q", "--queryformat", "%{VERSION}", "qt6-base-common"
+    )
+    notice_root = Path(f"/usr/share/doc/qt6-base-common-{common_version}")
+    doc_paths = [
+        path
+        for path, flags in file_metadata["qt6-base-common"]
+        if "d" in flags and path.parent == notice_root
+    ]
+    return checked_rpm_notice_paths(doc_paths, f"{source_rpm} ALT p11 %doc fallback")
 
 
 def license_text(family: str, name: str) -> Path:

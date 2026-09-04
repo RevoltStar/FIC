@@ -46,7 +46,10 @@ The selected root must contain `lib/` and `plugins/`. The launcher places only
 that root in the Qt-specific environment variables. Advanced users may execute
 `fic-gui.real` directly with system or manually configured Qt paths.
 
-`fic-gui --license-info` prints the license boundary and installed
+`fic-gui --license-info` states that FIC remains under SUL-1.0 and that FIC
+distributes the applicable bundled Qt components under GNU LGPL version 3 where
+that option applies. It also calls out alternative Qt licensing options and
+licenses of embedded third-party components. The command prints the installed
 documentation location without creating a `QApplication`, connecting to the
 daemon, or requiring a graphical display.
 

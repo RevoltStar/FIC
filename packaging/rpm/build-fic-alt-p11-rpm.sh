@@ -122,6 +122,18 @@ verify_rpm_gui_license_metadata() {
     fi
 }
 
+verify_rpm_gui_dependency_metadata() {
+    local package_path="$1"
+    local qt_requirements
+
+    qt_requirements="$(rpm -qp --requires "$package_path" | grep '^libQt6' || true)"
+    if [ -n "$qt_requirements" ]; then
+        echo "fic-gui RPM has external Qt requirements despite its private bundle:" >&2
+        printf '%s\n' "$qt_requirements" >&2
+        return 1
+    fi
+}
+
 copy_tree_contents() {
     local source_dir="$1"
     local target_dir="$2"
@@ -334,6 +346,12 @@ write_spec_file() {
         printf 'Group: System/Configuration/Other\n'
         printf 'BuildArch: %s\n' "$ARCH"
         printf '%%undefine __find_debuginfo_files\n'
+        if [ "$package_name" = "fic-gui" ]; then
+            # Qt dependencies are satisfied by the verified private closure in
+            # /opt/fic/qt. Keep automatic dependency generation for every
+            # non-Qt runtime dependency.
+            printf '%%filter_from_requires /^libQt6/d\n'
+        fi
         printf 'Source0: %s\n' "$source_name"
         printf 'Source1: %s\n' "$file_list_source"
         if [ -n "$requires" ]; then
@@ -919,6 +937,7 @@ main() {
     verify_rpm_metadata "$cli_rpm" fic-cli
     verify_rpm_metadata "$gui_rpm" fic-gui
     verify_rpm_gui_license_metadata "$gui_rpm"
+    verify_rpm_gui_dependency_metadata "$gui_rpm"
 
     echo "Packages created:"
     echo "  $dick_rpm"

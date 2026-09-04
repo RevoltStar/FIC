@@ -19,12 +19,13 @@ namespace {
 void writeLicenseInfo()
 {
     std::cout
-        << "FIC is licensed under the Sustainable Use License 1.0.\n"
-        << "fic-gui uses Qt as separately licensed third-party software.\n"
-        << "Bundled Qt is distributed under the applicable Qt open-source license terms; "
-           "FIC packaging selects the LGPLv3-compatible distribution path where applicable.\n"
-        << "Distribution package metadata may contain alternative or additional license terms.\n"
-        << "Full license texts, package notices, the provenance manifest, and Corresponding "
+        << "FIC is licensed under the Sustainable Use License 1.0.\n\n"
+        << "fic-gui uses Qt as separately licensed third-party software.\n\n"
+        << "The bundled Qt components used by fic-gui are distributed by FIC under GNU LGPL "
+           "version 3 where that license option applies. Distribution package notices may "
+           "describe alternative Qt licensing options and licenses of embedded third-party "
+           "components.\n\n"
+        << "Full license texts, distribution notices, the provenance manifest, and Corresponding "
            "Source information are installed in /usr/share/doc/fic-gui/.\n";
 }
 

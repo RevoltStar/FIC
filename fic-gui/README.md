@@ -184,8 +184,11 @@ bundled путей в `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH` и
 Расположенный рядом `qt.conf` обеспечивает bundled layout по умолчанию, но не
 запрещает замену библиотек.
 
-Команда `fic-gui --license-info` без запуска Qt GUI показывает границу лицензий
-FIC/Qt и путь к установленным текстам. Внутренняя packaging-проверка
+Команда `fic-gui --license-info` без запуска Qt GUI прямо сообщает, что FIC
+остаётся под SUL-1.0, а применимые bundled Qt components распространяются FIC
+по GNU LGPL version 3 там, где доступна эта license option. Вывод также
+указывает на alternative Qt terms, лицензии embedded third-party components и
+полный комплект notices в `/usr/share/doc/fic-gui/`. Внутренняя packaging-проверка
 `--gui-smoke-test` создаёт `QApplication` и `QWidget`, загружает JPEG через Qt
 plugin и кратко выполняет event loop; она не создаёт `MainWindow` и не
 обращается к daemon.

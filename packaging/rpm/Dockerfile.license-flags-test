@@ -1,0 +1,12 @@
+FROM registry.fedoraproject.org/fedora:42
+
+RUN env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+    -u http_proxy -u https_proxy -u all_proxy dnf install -y \
+    findutils \
+    python3 \
+    rpm-build \
+    && dnf clean all
+
+WORKDIR /workspace
+
+CMD ["bash"]
