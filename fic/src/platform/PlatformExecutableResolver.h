@@ -40,6 +40,9 @@ private:
 
     bool validateCandidate(const std::filesystem::path& candidate,
                            std::string& error) const;
+    bool resolveProviderExecutable(const PlatformExecutableSpec& spec,
+                                   std::filesystem::path& executable,
+                                   std::string& error) const;
 };
 
 } // namespace fic::platform

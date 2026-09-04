@@ -155,13 +155,23 @@ void testSelectedProfile() {
     const std::vector<std::filesystem::path> expectedVisudoCandidates =
         profile.id == "ubuntu-26.04"
         ? std::vector<std::filesystem::path>{
-              "/usr/sbin/visudo.ws", "/usr/sbin/visudo"}
+              "/usr/lib/cargo/bin/visudo", "/usr/sbin/visudo.ws"}
         : std::vector<std::filesystem::path>{"/usr/sbin/visudo"};
-    require(executableSpec(
-                profile,
-                fic::platform::ExecutableId::Visudo).candidates ==
+    const auto& visudoSpec = executableSpec(
+        profile, fic::platform::ExecutableId::Visudo);
+    require(visudoSpec.candidates ==
                 expectedVisudoCandidates,
             "visudo candidates are incorrect");
+    if (profile.id == "ubuntu-26.04") {
+        require(visudoSpec.activeProviderSelector == "/usr/bin/sudo",
+                "Ubuntu 26.04 sudo provider selector is incorrect");
+        require(visudoSpec.providerExecutables.size() == 2,
+                "Ubuntu 26.04 sudo provider mappings are incomplete");
+    } else {
+        require(visudoSpec.activeProviderSelector.empty() &&
+                    visudoSpec.providerExecutables.empty(),
+                "fixed-provider platform unexpectedly has provider mappings");
+    }
     require(profile.executables.entries.size() ==
                 fic::platform::allExecutableIds().size(),
             "the executable registry must contain every supported logical command");
@@ -728,6 +738,23 @@ void testInvalidProfileIsRejected() {
             "a relative executable path must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
+    auto& providerSpec = executableSpec(
+        profile, fic::platform::ExecutableId::Sshd);
+    providerSpec.activeProviderSelector = "/usr/bin/ssh";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a provider selector without mappings must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    auto& unmappedCandidateSpec = executableSpec(
+        profile, fic::platform::ExecutableId::Sshd);
+    unmappedCandidateSpec.activeProviderSelector = "/usr/bin/ssh";
+    unmappedCandidateSpec.providerExecutables = {
+        {"/usr/bin/ssh", "/usr/bin/not-a-candidate"}
+    };
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a provider executable outside candidates must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
     profile.executables.entries.push_back(profile.executables.entries.front());
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a duplicate executable identifier must be rejected");
@@ -1099,6 +1126,102 @@ void testExecutableResolver() {
     std::filesystem::remove_all(directory, ignored);
 }
 
+void testProviderLinkedExecutableResolver() {
+    std::string pattern = "/tmp/fic-provider-executables-XXXXXX";
+    char* created = ::mkdtemp(pattern.data());
+    require(created != nullptr,
+            "cannot create provider executable directory");
+    const std::filesystem::path directory = created;
+
+    try {
+        const auto makeExecutable = [&](const std::filesystem::path& path) {
+            std::ofstream stream(path);
+            stream << "#!/bin/sh\nexit 0\n";
+            stream.close();
+            require(::chmod(path.c_str(), 0755) == 0,
+                    "cannot mark provider command executable");
+        };
+        const std::filesystem::path sudoRs = directory / "sudo-rs";
+        const std::filesystem::path visudoRs = directory / "visudo-rs";
+        const std::filesystem::path sudoClassic = directory / "sudo.ws";
+        const std::filesystem::path visudoClassic = directory / "visudo.ws";
+        const std::filesystem::path unknownSudo = directory / "sudo-unknown";
+        const std::filesystem::path activeSudo = directory / "sudo";
+        makeExecutable(sudoRs);
+        makeExecutable(visudoRs);
+        makeExecutable(sudoClassic);
+        makeExecutable(visudoClassic);
+        makeExecutable(unknownSudo);
+        std::filesystem::create_symlink(sudoRs.filename(), activeSudo);
+
+        fic::platform::PlatformExecutableResolverOptions options;
+        options.enforceTrustedOwnership = false;
+        fic::platform::PlatformExecutables fixedRegistry;
+        fixedRegistry.entries = {{
+            fic::platform::ExecutableId::Visudo,
+            {visudoClassic}
+        }};
+        fic::platform::PlatformExecutableResolver fixedResolver(
+            std::move(fixedRegistry), options);
+        std::filesystem::path resolved;
+        std::string error;
+        require(fixedResolver.resolve(
+                    fic::platform::ExecutableId::Visudo, resolved, error),
+                error);
+        require(resolved == visudoClassic,
+                "fixed classic sudo platform did not select visudo");
+
+        fic::platform::PlatformExecutableSpec visudoSpec{
+            fic::platform::ExecutableId::Visudo,
+            {visudoRs, visudoClassic}
+        };
+        visudoSpec.activeProviderSelector = activeSudo;
+        visudoSpec.providerExecutables = {
+            {sudoRs, visudoRs},
+            {sudoClassic, visudoClassic}
+        };
+        fic::platform::PlatformExecutables registry;
+        registry.entries = {visudoSpec};
+        fic::platform::PlatformExecutableResolver resolver(
+            std::move(registry), options);
+
+        require(resolver.resolve(
+                    fic::platform::ExecutableId::Visudo, resolved, error),
+                error);
+        require(resolved == visudoRs,
+                "active sudo-rs provider did not select visudo-rs");
+
+        std::filesystem::remove(activeSudo);
+        std::filesystem::create_symlink(sudoClassic.filename(), activeSudo);
+        require(resolver.resolve(
+                    fic::platform::ExecutableId::Visudo, resolved, error),
+                error);
+        require(resolved == visudoClassic,
+                "classic provider switch did not select visudo.ws");
+
+        std::filesystem::remove(visudoClassic);
+        require(!resolver.resolve(
+                    fic::platform::ExecutableId::Visudo, resolved, error),
+                "missing authoritative validator fell back to another provider");
+        require(error.find("authoritative visudo") != std::string::npos,
+                "missing authoritative validator diagnostic is unclear");
+
+        makeExecutable(visudoClassic);
+        std::filesystem::remove(activeSudo);
+        std::filesystem::create_symlink(unknownSudo.filename(), activeSudo);
+        require(!resolver.resolve(
+                    fic::platform::ExecutableId::Visudo, resolved, error),
+                "unknown active sudo provider was accepted");
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+        throw;
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
 void testOsReleaseParsing() {
     const fic::platform::PlatformProfile profile =
         fic::platform::makeBuildPlatformProfile();
@@ -1129,6 +1252,7 @@ int main() {
         testCmakePamProviderSelectionMatchesProfile();
         testInvalidProfileIsRejected();
         testExecutableResolver();
+        testProviderLinkedExecutableResolver();
         testOsReleaseParsing();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {

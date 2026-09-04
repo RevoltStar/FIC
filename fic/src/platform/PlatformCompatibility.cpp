@@ -115,6 +115,43 @@ bool validateExecutables(const PlatformExecutables& executables,
                 spec.candidates, executableIdName(spec.id), error)) {
             return false;
         }
+        if (spec.activeProviderSelector.empty() !=
+            spec.providerExecutables.empty()) {
+            error = std::string(executableIdName(spec.id)) +
+                    " must define both active provider selector and provider mappings";
+            return false;
+        }
+        if (!spec.activeProviderSelector.empty()) {
+            if (!validAbsolutePath(spec.activeProviderSelector)) {
+                error = std::string(executableIdName(spec.id)) +
+                        " active provider selector must be an absolute normalized path";
+                return false;
+            }
+            std::set<std::filesystem::path> providers;
+            std::set<std::filesystem::path> mappedExecutables;
+            for (const PlatformExecutableSpec::ProviderExecutable& mapping :
+                 spec.providerExecutables) {
+                if (!validAbsolutePath(mapping.provider) ||
+                    !validAbsolutePath(mapping.executable)) {
+                    error = std::string(executableIdName(spec.id)) +
+                            " provider mapping paths must be absolute and normalized";
+                    return false;
+                }
+                if (!providers.insert(mapping.provider).second ||
+                    !mappedExecutables.insert(mapping.executable).second) {
+                    error = std::string(executableIdName(spec.id)) +
+                            " provider mapping is duplicated";
+                    return false;
+                }
+                if (std::find(spec.candidates.begin(), spec.candidates.end(),
+                              mapping.executable) == spec.candidates.end()) {
+                    error = std::string(executableIdName(spec.id)) +
+                            " provider executable is not listed as a candidate: " +
+                            mapping.executable.string();
+                    return false;
+                }
+            }
+        }
     }
     for (const ExecutableId id : supportedIds) {
         const PlatformExecutableSpec* spec =

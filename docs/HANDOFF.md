@@ -3,44 +3,46 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `7fda977`.
+- Родитель текущей правки: `72d49e1`.
 
 ## Current task
 
-- Исправить P0 path resolution `custom_mode_and_owner`, сохранив штатные
-  intermediate symlink вроде usrmerge и запретив attacker-controlled цепочки.
+- На Ubuntu 26.04 валидировать sudoers parser-ом активного sudo provider.
 
 ## Accepted architecture / invariants
 
-- Built-in DAC policies сохраняют прежний `Standard` resolution.
-- Только `custom_mode_and_owner` использует проверку каждого intermediate
-  компонента и по-прежнему отвергает final symlink.
-- Root-owned sticky directory допустим как namespace boundary; следующий
-  компонент всё равно проверяется по descriptor, owner, type и mode.
+- Provider-linked executable определяется по canonical target доверенного
+  selector и строгой platform allowlist provider-to-validator.
+- Неактивный parser не используется как fallback.
+- Выбранный реальный validator сохраняет package ownership/checksum и runtime
+  hash verification; при switch без trust sync применение fail-closed.
 
 ## Completed
 
-- Добавлен component-by-component descriptor traversal для custom policy.
-- Trusted root-owned intermediate symlink поддерживается, его target повторно
-  проходит полную проверку от `/`.
-- Непривилегированный owner либо group/other-writable intermediate directory
-  приводит к fail-closed отказу до `fchmod`/`fchown`.
+- Ubuntu 26.04 profile сопоставляет sudo-rs с
+  `/usr/lib/cargo/bin/visudo`, classic sudo с `/usr/sbin/visudo.ws`.
+- Resolver перечитывает active provider при каждом выборе, поэтому не сохраняет
+  stale cache после alternatives switch.
+- Profile validation проверяет полноту, нормализацию, уникальность mappings и
+  присутствие каждого validator в package-trust candidates.
 
 ## Changed areas
 
-- `fic-common/fic-core`: безопасный режим `PolicyPathResolution`.
-- `fic/src/modules/dac/mode_and_owner`: явный выбор режима custom policy.
-- `tests/fic/modules/dac/ModeAndOwnerTests.cpp`.
+- `fic/src/platform`: provider-linked executable contract и resolver.
+- Ubuntu 26.04 platform profile.
+- Platform profile/resolver tests и sudoers documentation.
 
 ## Validation
 
-- ALT p11 builder container: `mode_and_owner_tests` built and passed for all
-  five target profiles: Debian 12/13, Ubuntu 24.04/26.04, ALT p11, включая
-  regular, final symlink, trusted symlink/usrmerge, writable и unprivileged-owned
-  intermediate directory, unchanged victim.
+- `platform_profile_tests` — passed для всех пяти target profiles.
+- Ubuntu 26.04 profile: `sudoers_configuration_tests` и
+  `command_hash_batch_tests` — passed; target `fic` built successfully.
+- Реальный Ubuntu 26.04 container: default sudo-rs alternatives и switch на
+  classic sudo подтверждены; все пять форм политик FIC приняты обоими parser-ами.
+- Dpkg owner/md5 metadata подтверждены для обоих реальных validator paths.
 
 ## Remaining
 
-- Свежая host-конфигурация CMake недоступна: отсутствует `libsystemd`; проверка
-  выполнена в изолированном ALT p11 builder image.
-- После этого коммита остаются задачи 2-6 из пользовательского списка.
+- Смена alternatives во время уже начатой одной операции остаётся root-only
+  административной гонкой; непривилегированный пользователь selector не меняет.
+- После этого коммита остаются задачи 3-6 из пользовательского списка.

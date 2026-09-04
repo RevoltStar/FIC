@@ -27,9 +27,16 @@ enum class ExecutableId {
 };
 
 struct PlatformExecutableSpec {
+    struct ProviderExecutable {
+        std::filesystem::path provider;
+        std::filesystem::path executable;
+    };
+
     ExecutableId id;
     std::vector<std::filesystem::path> candidates;
     bool required = true;
+    std::filesystem::path activeProviderSelector;
+    std::vector<ProviderExecutable> providerExecutables;
 };
 
 struct PlatformExecutables {

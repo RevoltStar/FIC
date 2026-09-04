@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
 #include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -110,10 +111,80 @@ bool PlatformExecutableResolver::validateCandidate(
     return true;
 }
 
+bool PlatformExecutableResolver::resolveProviderExecutable(
+    const PlatformExecutableSpec& spec,
+    std::filesystem::path& executable,
+    std::string& error) const {
+    struct stat selectorInfo {};
+    if (::lstat(spec.activeProviderSelector.c_str(), &selectorInfo) != 0) {
+        error = "cannot inspect active provider selector " +
+                spec.activeProviderSelector.string() + ": " +
+                std::strerror(errno);
+        return false;
+    }
+    if (!S_ISLNK(selectorInfo.st_mode) && !S_ISREG(selectorInfo.st_mode)) {
+        error = "active provider selector is neither a regular file nor a symlink: " +
+                spec.activeProviderSelector.string();
+        return false;
+    }
+    if (options_.enforceTrustedOwnership &&
+        (selectorInfo.st_uid != 0 ||
+         (!S_ISLNK(selectorInfo.st_mode) &&
+          (selectorInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0))) {
+        error = "active provider selector is not trusted: " +
+                spec.activeProviderSelector.string();
+        return false;
+    }
+
+    std::error_code canonicalError;
+    const std::filesystem::path activeProvider =
+        std::filesystem::canonical(
+            spec.activeProviderSelector, canonicalError);
+    if (canonicalError) {
+        error = "cannot resolve active provider selector " +
+                spec.activeProviderSelector.string() + ": " +
+                canonicalError.message();
+        return false;
+    }
+
+    for (const PlatformExecutableSpec::ProviderExecutable& provider :
+         spec.providerExecutables) {
+        if (activeProvider != provider.provider) {
+            continue;
+        }
+        std::string validationError;
+        if (!validateCandidate(provider.executable, validationError)) {
+            error = "authoritative " + std::string(executableIdName(spec.id)) +
+                    " for active provider " + activeProvider.string() +
+                    " is unusable: " + provider.executable.string() + ": " +
+                    validationError;
+            return false;
+        }
+        executable = provider.executable;
+        error.clear();
+        return true;
+    }
+
+    error = "active provider is not recognized for " +
+            std::string(executableIdName(spec.id)) + ": " +
+            activeProvider.string();
+    return false;
+}
+
 bool PlatformExecutableResolver::resolve(
     ExecutableId id,
     std::filesystem::path& executable,
     std::string& error) const {
+    const PlatformExecutableSpec* spec = findExecutableSpec(executables_, id);
+    if (spec == nullptr) {
+        error = std::string("platform profile does not define executable ") +
+                executableIdName(id);
+        return false;
+    }
+    if (!spec->activeProviderSelector.empty()) {
+        return resolveProviderExecutable(*spec, executable, error);
+    }
+
     {
         std::filesystem::path cachedPath;
         {
@@ -136,13 +207,6 @@ bool PlatformExecutableResolver::resolve(
                 resolved_.erase(cached);
             }
         }
-    }
-
-    const PlatformExecutableSpec* spec = findExecutableSpec(executables_, id);
-    if (spec == nullptr) {
-        error = std::string("platform profile does not define executable ") +
-                executableIdName(id);
-        return false;
     }
 
     std::ostringstream failures;

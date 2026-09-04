@@ -488,6 +488,12 @@ include-граф: если неподдерживаемое правило на�
 выполняется через `VerifiedProcessExecutor`. Эталонный hash выбранного файла
 заполняется package-transaction trust sync. Отсутствующий hash или ошибка
 `visudo` приводят к безопасному отказу без заявления об успешном применении.
+На Ubuntu 26.04 resolver сначала определяет активный sudo provider по
+root-owned alternatives selector `/usr/bin/sudo`: sudo-rs сопоставляется с
+`/usr/lib/cargo/bin/visudo`, а classic sudo — с `/usr/sbin/visudo.ws`.
+Наличие parser-а неактивного provider не является основанием для fallback;
+неизвестный provider или отсутствие соответствующего validator завершаются
+безопасным отказом.
 
 ### Identity and access
 

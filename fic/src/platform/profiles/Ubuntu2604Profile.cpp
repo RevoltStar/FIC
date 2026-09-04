@@ -25,7 +25,13 @@ PlatformProfile makeBuildPlatformProfile() {
         },
         {
             ExecutableId::Visudo,
-            {"/usr/sbin/visudo.ws", "/usr/sbin/visudo"}
+            {"/usr/lib/cargo/bin/visudo", "/usr/sbin/visudo.ws"},
+            true,
+            "/usr/bin/sudo",
+            {
+                {"/usr/lib/cargo/bin/sudo", "/usr/lib/cargo/bin/visudo"},
+                {"/usr/bin/sudo.ws", "/usr/sbin/visudo.ws"}
+            }
         },
         {
             ExecutableId::Lscpu,

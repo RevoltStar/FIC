@@ -179,6 +179,7 @@ flowchart TD
     compiled --> profile
     profile --> executableRegistry[Typed executable registry]
     executableRegistry --> resolver[PlatformExecutableResolver]
+    activeSudo[/Ubuntu 26.04 active sudo provider/] --> resolver
     resolver --> tools[sshd / systemctl / loginctl / visudo / nft]
     profile --> sshProfile[SSH config / units]
     profile --> sudoProfile[sudoers configs]
