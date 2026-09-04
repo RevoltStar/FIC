@@ -1067,7 +1067,11 @@ flowchart TB
 один descriptor. После успешного `fchown` состояние перечитывается до решения о
 необходимости `fchmod`, поскольку Linux может сбросить SUID/SGID при смене
 владельца. Проверка режима учитывает маску `07777`, включая SUID, SGID и sticky
-bit.
+bit. Built-in политики `blocking_user_access_to_system_files` и
+`systemcommandlock` трактуют профильный mode как максимум: состояние compliant,
+если все фактические bits входят в разрешённую маску, а исправление применяет
+`actual & allowed` и поэтому никогда не добавляет отсутствующие permissions или
+special bits. `custom_mode_and_owner` сохраняет exact declarative mode.
 
 Обычный конечный объект открывается с `O_NOFOLLOW`. Platform profile может
 задать для конкретного `FileAccessRule` точный список допустимых целей symlink в

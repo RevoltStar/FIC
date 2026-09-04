@@ -6,7 +6,10 @@
 
 DAC_systemcommandlock::DAC_systemcommandlock(
     const fic::platform::DacPlatformConfig& platformConfig)
-    : ModeAndOwner(MissingFilePolicy::Ignore) {
+    : ModeAndOwner(
+          MissingFilePolicy::Ignore,
+          PolicyPathResolution::Standard,
+          ModeEnforcement::MaximumAllowed) {
     for (const fic::platform::FileAccessRule& rule :
          platformConfig.protectedSystemCommands) {
         this->ModeAndOwner::addExpectedRule(

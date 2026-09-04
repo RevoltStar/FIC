@@ -189,6 +189,83 @@ void testRemediationAndVerification(const fs::path& root) {
     require(fileMode(removeSuid) == 0755, "unexpected SUID bit remained");
 }
 
+void testBuiltInMaximumModeSemantics(const fs::path& root) {
+    const fs::path tightened = root / "maximum-tightened";
+    const fs::path alreadyStricter = root / "maximum-already-stricter";
+    const fs::path excessiveBits = root / "maximum-excessive-bits";
+    const fs::path specialBits = root / "maximum-special-bits";
+    const fs::path allowedSpecialAbsent = root / "maximum-special-absent";
+    writeFile(tightened, "tightened", 0644);
+    writeFile(alreadyStricter, "stricter", 0600);
+    writeFile(excessiveBits, "excessive", 0677);
+    writeFile(specialBits, "special", 06755);
+    writeFile(allowedSpecialAbsent, "no-special", 0755);
+
+    fic::platform::DacPlatformConfig files;
+    files.protectedSystemFiles = {
+        {tightened, currentOwner(), currentGroup(), 0600},
+        {alreadyStricter, currentOwner(), currentGroup(), 0640},
+        {excessiveBits, currentOwner(), currentGroup(), 0640},
+        {specialBits, currentOwner(), currentGroup(), 0755},
+        {allowedSpecialAbsent, currentOwner(), currentGroup(), 04755}
+    };
+    DAC_blocking_user_access_to_system_files filePolicy(files);
+    require(filePolicy.apply(), "built-in maximum file modes failed");
+    require(fileMode(tightened) == 0600,
+            "built-in policy did not remove excessive permissions");
+    require(fileMode(alreadyStricter) == 0600,
+            "built-in policy widened an already stricter mode");
+    require(fileMode(excessiveBits) == 0640,
+            "built-in policy did not remove group/other permissions");
+    require(fileMode(specialBits) == 0755,
+            "built-in policy did not remove disallowed special bits");
+    require(fileMode(allowedSpecialAbsent) == 0755,
+            "built-in policy added an allowed but absent SUID bit");
+
+    const fs::path stricterCommand = root / "maximum-command";
+    writeFile(stricterCommand, "command", 0700);
+    fic::platform::DacPlatformConfig commands;
+    commands.protectedSystemCommands = {
+        {stricterCommand, currentOwner(), currentGroup(), 0755}
+    };
+    DAC_systemcommandlock commandPolicy(commands);
+    require(commandPolicy.apply(), "built-in command maximum mode failed");
+    require(fileMode(stricterCommand) == 0700,
+            "systemcommandlock widened an already stricter mode");
+
+    const fs::path customExact = root / "custom-exact-mode";
+    writeFile(customExact, "custom", 0600);
+    require(applyCustomRule(root, customExact, 0640),
+            "custom exact mode application failed");
+    require(fileMode(customExact) == 0640,
+            "custom_mode_and_owner lost exact mode semantics");
+
+    if (::geteuid() == 0) {
+        const fs::path ownership = root / "maximum-owner";
+        writeFile(ownership, "owner", 0600);
+        fic::platform::DacPlatformConfig ownershipConfig;
+        ownershipConfig.protectedSystemFiles = {
+            {ownership, "nobody", "nobody", 0640}
+        };
+        DAC_blocking_user_access_to_system_files ownershipPolicy(
+            ownershipConfig);
+        require(ownershipPolicy.apply(),
+                "built-in owner/group remediation failed");
+        struct stat info {};
+        require(::stat(ownership.c_str(), &info) == 0,
+                "could not stat ownership fixture");
+        const struct passwd* nobody = ::getpwnam("nobody");
+        const struct group* nobodyGroup = ::getgrnam("nobody");
+        require(nobody != nullptr && nobodyGroup != nullptr,
+                "nobody identity is unavailable");
+        require(info.st_uid == nobody->pw_uid &&
+                    info.st_gid == nobodyGroup->gr_gid,
+                "built-in owner/group was not enforced");
+        require((info.st_mode & 07777) == 0600,
+                "owner/group remediation widened the file mode");
+    }
+}
+
 void testMissingFilePolicies(const fs::path& root,
                              const fs::path& customMissing) {
     fic::platform::DacPlatformConfig systemFiles;
@@ -535,6 +612,7 @@ int main() {
     testSpecialPermissionBits(root);
     testRemediationAndVerification(root);
     testMissingFilePolicies(root, customMissing);
+    testBuiltInMaximumModeSemantics(root);
     testSymlinkIsRejected(root);
     testProfileDrivenFinalSymlinks(root);
     testCustomSymlinkRemainsFailClosed(root);

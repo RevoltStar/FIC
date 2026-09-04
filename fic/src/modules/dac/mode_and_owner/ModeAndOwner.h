@@ -24,6 +24,11 @@ enum class MissingFilePolicy {
     Fail
 };
 
+enum class ModeEnforcement {
+    Exact,
+    MaximumAllowed
+};
+
 struct ModeAndOwnerExpectation {
     FileStats stats;
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
@@ -37,6 +42,7 @@ protected:
     std::map<std::string, ModeAndOwnerExpectation> expected;
     MissingFilePolicy missingFilePolicy_;
     PolicyPathResolution pathResolution_;
+    ModeEnforcement modeEnforcement_;
     void addExpectedRule(
         const std::filesystem::path& path,
         const std::string& owner,
@@ -46,7 +52,8 @@ protected:
 public:
     explicit ModeAndOwner(
         MissingFilePolicy missingFilePolicy,
-        PolicyPathResolution pathResolution = PolicyPathResolution::Standard);
+        PolicyPathResolution pathResolution = PolicyPathResolution::Standard,
+        ModeEnforcement modeEnforcement = ModeEnforcement::Exact);
     virtual ~ModeAndOwner() = default;
     bool apply () override;
 };

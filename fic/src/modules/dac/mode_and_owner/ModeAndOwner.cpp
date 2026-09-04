@@ -44,10 +44,12 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
 }
 
 ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy,
-                           PolicyPathResolution pathResolution)
+                           PolicyPathResolution pathResolution,
+                           ModeEnforcement modeEnforcement)
     : DAC(),
       missingFilePolicy_(missingFilePolicy),
-      pathResolution_(pathResolution) {
+      pathResolution_(pathResolution),
+      modeEnforcement_(modeEnforcement) {
     this->submoduleName = "Mode_and_Owner";
 }
 
@@ -152,16 +154,26 @@ bool ModeAndOwner::apply() {
             }
         }
 
-        if (currentStateReadable &&
-            !currentStats.check_permission(expectedStats)) {
+        const auto permissionRequirementSatisfied = [&]() {
+            if (modeEnforcement_ == ModeEnforcement::Exact) {
+                return currentStats.check_permission(expectedStats);
+            }
+            return (currentStats._permissions &
+                    static_cast<mode_t>(~expectedStats._permissions)) == 0;
+        };
+        if (currentStateReadable && !permissionRequirementSatisfied()) {
+            const mode_t targetPermissions =
+                modeEnforcement_ == ModeEnforcement::Exact
+                    ? expectedStats._permissions
+                    : currentStats._permissions & expectedStats._permissions;
             const FileStatsOperationResult changeResult =
-                currentStats.change_permissions(expectedStats._permissions);
+                currentStats.change_permissions(targetPermissions);
             if (changeResult) {
                 ++fixed;
                 changed = true;
                 this->log("Права для " + filename + " изменены [" +
                               formatPermissions(originalPermissions) +
-                              " → " + expectedStats.permToString() + "]",
+                              " → " + formatPermissions(targetPermissions) + "]",
                           logLevel::DEBUG);
             } else {
                 permissionRequirementMet = false;
@@ -183,7 +195,7 @@ bool ModeAndOwner::apply() {
                 currentStats.owner_id() == expectedOwnerId &&
                 currentStats.group_id() == expectedGroupId;
             permissionRequirementMet =
-                currentStats.check_permission(expectedStats);
+                permissionRequirementSatisfied();
             if (!ownershipRequirementMet) {
                 diagnostics.push_back(
                     "Контрольная проверка владельца/группы не пройдена для " +

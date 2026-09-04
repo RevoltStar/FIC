@@ -167,7 +167,7 @@
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:sudo_require_authentication][description]=Заменяет локальные правила NOPASSWD на PASSWD и запрещает отключение аутентификации в активных sudoers-файлах. Не учитывает действующий кэш sudo, PAM и внешние LDAP/SSSD-источники.
 [module:DAC][policy:systemcommandlock][description]=Устанавливает безопасные права для системных команд. Точный список определяется профилем целевого дистрибутива и приведён ниже.
-[module:DAC][message:platform_access_rules]=Правила для выбранного профиля целевого дистрибутива:
+[module:DAC][message:platform_access_rules]=Правила для выбранного профиля целевого дистрибутива (режимы являются максимально допустимыми):
 
 
 #Настройки ОС
