@@ -57,5 +57,4 @@
 ## Remaining
 
 - Технических blockers текущей задачи нет.
-- Публичный release не создавался; release gate по-прежнему требует exact
-  Corresponding Source set, tag/version, clean tree, signing и publication.
+- Публичный release не создавался; release gate по-прежнему требует exact Corresponding Source set, exact tag/version и clean tree. Package signing, SBOM generation и publication остаются отдельными release-engineering этапами.
