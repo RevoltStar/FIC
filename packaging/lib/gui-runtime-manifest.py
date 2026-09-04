@@ -152,30 +152,27 @@ def rpm_license_notice_paths(
     file_metadata = {
         package: rpm_package_file_flags(package) for package in related_packages
     }
-    license_paths = [
+    notice_paths = [
         path
         for entries in file_metadata.values()
         for path, flags in entries
         if "l" in flags
     ]
-    if license_paths:
-        return checked_rpm_notice_paths(license_paths, source_rpm)
 
     # ALT p11's qt6-base-common packages use %doc rather than %license for the
     # complete license corpus. This fallback is deliberately limited to that
     # package and its dedicated, versioned top-level documentation directory.
-    if source_package != "qt6-base" or "qt6-base-common" not in file_metadata:
-        raise RuntimeError(f"RPM metadata declares no license files for {source_rpm}")
-    common_version = run(
-        "rpm", "-q", "--queryformat", "%{VERSION}", "qt6-base-common"
-    )
-    notice_root = Path(f"/usr/share/doc/qt6-base-common-{common_version}")
-    doc_paths = [
-        path
-        for path, flags in file_metadata["qt6-base-common"]
-        if "d" in flags and path.parent == notice_root
-    ]
-    return checked_rpm_notice_paths(doc_paths, f"{source_rpm} ALT p11 %doc fallback")
+    if source_package == "qt6-base" and "qt6-base-common" in file_metadata:
+        common_version = run(
+            "rpm", "-q", "--queryformat", "%{VERSION}", "qt6-base-common"
+        )
+        notice_root = Path(f"/usr/share/doc/qt6-base-common-{common_version}")
+        notice_paths.extend(
+            path
+            for path, flags in file_metadata["qt6-base-common"]
+            if "d" in flags and path.parent == notice_root
+        )
+    return checked_rpm_notice_paths(notice_paths, source_rpm)
 
 
 def license_text(family: str, name: str) -> Path:

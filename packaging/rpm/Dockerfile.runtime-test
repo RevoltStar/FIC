@@ -3,7 +3,9 @@ FROM registry.altlinux.org/p11/alt:latest
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-RUN env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
+    && sed -i '/^#rpm \[p11\] http:/s/^#//' /etc/apt/sources.list.d/yandex.list \
+    && env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
     -u http_proxy -u https_proxy -u all_proxy apt-get update \
     && env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
     -u http_proxy -u https_proxy -u all_proxy apt-get install -y \

@@ -280,12 +280,13 @@ bundle and a separate `FIC_QT_ROOT` copy were actually used; the smoke path does
 not contact the daemon.
 
 Notice discovery uses RPM file flags. Files marked `%license` are authoritative
-and are selected regardless of their names; ordinary `%doc` files are not
-included when license flags exist. ALT p11's `qt6-base-common` currently marks
-its complete, versioned license corpus as `%doc` because its RPM 4.13 tooling
-does not support `%license`. The only fallback therefore accepts `%doc` regular
-files directly inside `/usr/share/doc/qt6-base-common-VERSION/` and fails if a
-declared file cannot be read. It is not a filename-based license heuristic.
+and are selected regardless of their names. ALT p11's current
+`qt6-base-common` package marks its complete, versioned license corpus as `%doc`
+rather than `%license`. The compatibility fallback is therefore deliberately
+restricted to that package and to regular `%doc` files directly inside
+`/usr/share/doc/qt6-base-common-VERSION/`. Its results are combined with all
+declared `%license` files, and discovery fails if any selected file cannot be
+read. It is not a filename-based license heuristic.
 
 The generated spec filters only automatic `libQt6*` requirements for
 `fic-gui`: those requirements are satisfied by the verified private closure in

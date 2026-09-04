@@ -312,11 +312,11 @@ fic_gui_assert_smoke_output() {
     local qt_root="$2"
     local qt_library
 
-    printf '%s\n' "$output" | grep -Fq 'qpa-platform=xcb' || {
+    grep -Fq 'qpa-platform=xcb' <<<"$output" || {
         fic_gui_runtime_error "GUI smoke test did not load the XCB QPA plugin"
         return 1
     }
-    printf '%s\n' "$output" | grep -Fq 'jpeg-plugin=ok' || {
+    grep -Fq 'jpeg-plugin=ok' <<<"$output" || {
         fic_gui_runtime_error "GUI smoke test did not decode the JPEG fixture"
         return 1
     }

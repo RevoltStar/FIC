@@ -3,7 +3,9 @@ FROM registry.altlinux.org/p11/alt:latest
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-RUN apt-get update && apt-get install -y \
+RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
+    && sed -i '/^#rpm \[p11\] http:/s/^#//' /etc/apt/sources.list.d/yandex.list \
+    && apt-get update && apt-get install -y \
     cmake \
     gcc-c++ \
     glibc-devel \
