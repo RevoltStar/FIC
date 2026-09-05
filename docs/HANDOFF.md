@@ -3,44 +3,47 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `90abe22`.
+- Родитель текущей правки: `42b1609`.
 
 ## Current task
 
-- Сделать `/etc/resolv.conf` provider-aware без борьбы с generated files.
+- Покрыть реальное ALT p11 TCB credential storage политикой DAC.
 
 ## Accepted architecture / invariants
 
-- Static resolver file остаётся remediate-capable.
-- Provider-managed final symlink target проверяется по exact profile allowlist,
-  owner/group и maximum mode, но FIC не выполняет для него `fchown`/`fchmod`.
-- Descriptor pinning и повторная проверка inode policy symlink сохранены.
+- TCB topology задаётся typed metadata только в ALT p11 profile.
+- Каталоги пользователей обнаруживаются динамически; recursive chmod запрещён.
+- Сначала открывается и проверяется вся topology, затем применяются изменения
+  через pinned descriptors; symlink, hardlink, неизвестные объекты и races
+  приводят к fail-closed результату.
+- Access bits не расширяются; SGID account directory обязателен для TCB runtime.
 
 ## Completed
 
-- Debian 12/13: systemd-resolved, NetworkManager и resolvconf targets.
-- Ubuntu 24.04/26.04: systemd-resolved и NetworkManager targets.
-- ALT p11: NetworkManager target; openresolv остаётся static topology.
-- NetworkManager `no-stub-resolv.conf` и произвольные targets отклоняются.
+- Подтверждена реальная ALT p11 topology: `/etc/tcb` `root:shadow 0710`,
+  account dirs `<account>:auth 2710`, `shadow`/`shadow-` `0640`,
+  `shadow.lock` `0600`; backup/lock files optional.
+- Политика охватывает существующие и новые account directories.
+- Исправлена legacy `/etc/shadow` metadata ALT: `root:root 0400`.
 
 ## Changed areas
 
-- Platform DAC provider metadata во всех пяти profiles и validation.
-- `FileStats` сообщает закреплённый policy target; `ModeAndOwner` разделяет
-  remediate и provider validate-only handling.
+- ALT DAC profile metadata и profile validation.
+- Descriptor-safe TCB topology handling в built-in file policy.
+- Общий `ModeAndOwner` hook для дополнительных уже открытых правил.
 - Mode/profile tests и архитектурная документация.
 
 ## Validation
 
-- `mode_and_owner_tests` и `platform_profile_tests` — passed для всех пяти
-  target profiles в ALT builder container.
-- Target `fic` built successfully для ALT p11 profile.
-- Покрыты static/resolved stub/resolved non-stub/NetworkManager/resolvconf,
-  arbitrary target, validate-only owner/mode и symlink replacement pinning.
-- Реальные package experiments выполнены на Debian 12/13, Ubuntu 24.04/26.04
-  и ALT p11; target matrix подтверждена package binaries/manpages/tmpfiles.
+- ALT builder: `mode_and_owner_tests` — passed прямым запуском (образ не
+  содержит `ctest`).
+- `platform_profile_tests` — passed для Debian 12/13, Ubuntu 24.04/26.04 и
+  ALT p11; ALT target `fic` built successfully.
+- Покрыты отсутствующие optional entries, новый account, stricter mode,
+  owner/mode remediation, missing required file, symlink и hardlink rejection.
+- Реальный ALT p11 package/container experiment выполнен с `useradd` и сменой
+  пароля; metadata подтверждена до реализации.
 
 ## Remaining
 
-- Host CMake не имеет `libsystemd`; validation выполнена в контейнере.
-- После этого коммита остаются задачи 5-6 из пользовательского списка.
+- После этого коммита остаётся задача 6 из пользовательского списка.

@@ -187,7 +187,7 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/logrotate.conf", "root", "root", 0644},
         {"/etc/inittab", "root", "root", 0644},
         {"/etc/passwd", "root", "root", 0644},
-        {"/etc/shadow", "root", "shadow", 0640},
+        {"/etc/shadow", "root", "root", 0400},
         {"/etc/grub.cfg", "root", "root", 0600, {
             "/boot/grub/grub.cfg"
         }},
@@ -195,6 +195,11 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.dac.protectedSystemFiles.push_back(
         {profile.sudo.mainConfigPath, "root", "root", 0440});
+    profile.dac.tcbCredentialStorage = TcbCredentialStorageConfig{
+        "/etc/tcb", "root", "shadow", 0710, "auth", 02710,
+        {{"shadow", 0640, true},
+         {"shadow-", 0640, false},
+         {"shadow.lock", 0600, false}}};
     profile.dac.protectedSystemCommands = {
         {"/bin/df", "root", "root", 0750},
         {"/usr/bin/chattr", "root", "root", 0750},

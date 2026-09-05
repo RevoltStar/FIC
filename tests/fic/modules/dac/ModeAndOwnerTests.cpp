@@ -269,6 +269,111 @@ void testBuiltInMaximumModeSemantics(const fs::path& root) {
     }
 }
 
+void testTcbCredentialTopology(const fs::path& root) {
+    const fs::path tcbRoot = root / "tcb";
+
+    fic::platform::DacPlatformConfig config;
+    config.tcbCredentialStorage =
+        fic::platform::TcbCredentialStorageConfig{
+            tcbRoot, currentOwner(), currentGroup(), 0710,
+            currentGroup(), 02710,
+            {{"shadow", 0640, true},
+             {"shadow-", 0640, false},
+             {"shadow.lock", 0600, false}}};
+    FileAccessRulesPolicyTypeValue restrictionInfo(
+        {}, config.tcbCredentialStorage);
+    const std::string displayed = restrictionInfo.getPolicyRestrictionInfo();
+    require(displayed.find((tcbRoot / "<account>/shadow").string()) !=
+                std::string::npos,
+            "dynamic TCB topology is absent from policy restriction info");
+
+    DAC_blocking_user_access_to_system_files missingRootPolicy(config);
+    require(!missingRootPolicy.apply(), "missing TCB root was accepted");
+
+    fs::create_directory(tcbRoot);
+    require(::chmod(tcbRoot.c_str(), 0700) == 0,
+            "could not set stricter TCB root mode");
+
+    DAC_blocking_user_access_to_system_files emptyPolicy(config);
+    require(emptyPolicy.apply(),
+            "TCB root without optional account entries was rejected");
+    require(fileMode(tcbRoot) == 0700,
+            "TCB root mode was widened");
+
+    const fs::path accountDirectory = tcbRoot / currentOwner();
+    fs::create_directory(accountDirectory);
+    require(::chmod(accountDirectory.c_str(), 02777) == 0,
+            "could not create permissive TCB account directory");
+    const fs::path shadow = accountDirectory / "shadow";
+    writeFile(shadow, "hash", 0666);
+
+    DAC_blocking_user_access_to_system_files newAccountPolicy(config);
+    require(newAccountPolicy.apply(), "new TCB account entry was not handled");
+    require(fileMode(accountDirectory) == 02710,
+            "TCB account directory mode was not remediated");
+    require(fileMode(shadow) == 0640,
+            "TCB shadow mode was not remediated");
+
+    require(::chmod(shadow.c_str(), 0600) == 0,
+            "could not tighten TCB shadow fixture");
+    DAC_blocking_user_access_to_system_files stricterPolicy(config);
+    require(stricterPolicy.apply(), "stricter TCB shadow mode was rejected");
+    require(fileMode(shadow) == 0600,
+            "stricter TCB shadow mode was widened");
+
+    fs::remove(shadow);
+    DAC_blocking_user_access_to_system_files missingRequiredPolicy(config);
+    require(!missingRequiredPolicy.apply(),
+            "missing required TCB shadow file was accepted");
+    writeFile(shadow, "hash", 0640);
+
+    const fs::path external = root / "tcb-external";
+    writeFile(external, "external", 0644);
+    fs::create_symlink(external, accountDirectory / "shadow-");
+    DAC_blocking_user_access_to_system_files symlinkPolicy(config);
+    require(!symlinkPolicy.apply(), "TCB symlink was accepted");
+    require(fileMode(external) == 0644,
+            "TCB symlink target was modified");
+    fs::remove(accountDirectory / "shadow-");
+
+    fs::create_hard_link(external, accountDirectory / "shadow-");
+    DAC_blocking_user_access_to_system_files hardlinkPolicy(config);
+    require(!hardlinkPolicy.apply(), "TCB hard link was accepted");
+    require(fileMode(external) == 0644,
+            "TCB hard-link target was modified");
+    fs::remove(accountDirectory / "shadow-");
+
+    if (::geteuid() == 0) {
+        const struct passwd* nobody = ::getpwnam("nobody");
+        const struct group* nobodyGroup = ::getgrnam("nobody");
+        require(nobody != nullptr && nobodyGroup != nullptr,
+                "nobody identity is unavailable");
+        const fs::path nobodyDirectory = tcbRoot / "nobody";
+        fs::create_directory(nobodyDirectory);
+        const fs::path nobodyShadow = nobodyDirectory / "shadow";
+        writeFile(nobodyShadow, "hash", 0666);
+        require(::chown(nobodyDirectory.c_str(), 0, 0) == 0 &&
+                    ::chown(nobodyShadow.c_str(), 0, 0) == 0,
+                "could not set incorrect TCB ownership fixture");
+        DAC_blocking_user_access_to_system_files ownershipPolicy(config);
+        require(ownershipPolicy.apply(),
+                "incorrect TCB owner/mode was not remediated");
+        struct stat directoryInfo {};
+        struct stat shadowInfo {};
+        require(::stat(nobodyDirectory.c_str(), &directoryInfo) == 0 &&
+                    ::stat(nobodyShadow.c_str(), &shadowInfo) == 0,
+                "could not inspect remediated TCB ownership");
+        require(directoryInfo.st_uid == nobody->pw_uid &&
+                    directoryInfo.st_gid == ::getegid() &&
+                    shadowInfo.st_uid == nobody->pw_uid &&
+                    shadowInfo.st_gid == ::getegid(),
+                "TCB account ownership was not enforced");
+        require((directoryInfo.st_mode & 07777) == 02710 &&
+                    (shadowInfo.st_mode & 07777) == 0640,
+                "TCB account permissions were not enforced");
+    }
+}
+
 void testMissingFilePolicies(const fs::path& root,
                              const fs::path& customMissing) {
     fic::platform::DacPlatformConfig systemFiles;
@@ -728,6 +833,7 @@ int main() {
     testRemediationAndVerification(root);
     testMissingFilePolicies(root, customMissing);
     testBuiltInMaximumModeSemantics(root);
+    testTcbCredentialTopology(root);
     testSymlinkIsRejected(root);
     testProfileDrivenFinalSymlinks(root);
     testProviderManagedFinalSymlinks(root);

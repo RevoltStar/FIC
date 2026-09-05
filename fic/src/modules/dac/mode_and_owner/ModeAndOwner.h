@@ -5,18 +5,23 @@
 #include "platform/PlatformProfile.h"
 #include <fic/core/fs/FileStats.h>
 #include <map>
+#include <optional>
 #include <vector>
 
 class FileAccessRulesPolicyTypeValue : public FixedPolicyTypeValue
 {
 public:
     explicit FileAccessRulesPolicyTypeValue(
-        std::vector<fic::platform::FileAccessRule> rules);
+        std::vector<fic::platform::FileAccessRule> rules,
+        std::optional<fic::platform::TcbCredentialStorageConfig>
+            tcbCredentialStorage = std::nullopt);
 
     std::string getPolicyRestrictionInfo() override;
 
 private:
     std::vector<fic::platform::FileAccessRule> rules_;
+    std::optional<fic::platform::TcbCredentialStorageConfig>
+        tcbCredentialStorage_;
 };
 
 enum class MissingFilePolicy {
@@ -40,6 +45,13 @@ struct ModeAndOwnerExpectation {
 class ModeAndOwner : public DAC
 {
 protected:
+    struct ApplyCounters {
+        int total = 0;
+        int success = 0;
+        int failed = 0;
+        int fixed = 0;
+    };
+
     //Переменная с эталонными правами
     std::map<std::string, ModeAndOwnerExpectation> expected;
     MissingFilePolicy missingFilePolicy_;
@@ -53,6 +65,13 @@ protected:
         std::vector<std::filesystem::path> allowedFinalSymlinkTargets = {},
         std::vector<fic::platform::ProviderManagedFileTarget>
             providerManagedFinalSymlinkTargets = {});
+    void applyOpenedRule(const std::string& diagnosticPath,
+                         const FileStats& expectedStats,
+                         FileStats currentStats,
+                         bool validateOnly,
+                         ApplyCounters& counters,
+                         mode_t requiredPermissions = 0);
+    virtual void applyAdditionalRules(ApplyCounters& counters);
 public:
     explicit ModeAndOwner(
         MissingFilePolicy missingFilePolicy,

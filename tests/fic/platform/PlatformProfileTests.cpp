@@ -524,6 +524,30 @@ void testSelectedProfile() {
                 "ALT p11 must protect /etc/bashrc");
         require(hasRule(profile.dac.protectedSystemFiles, "/etc/securetty"),
                 "ALT p11 must protect /etc/securetty");
+        const auto& shadowRule = findRule(
+            profile.dac.protectedSystemFiles, "/etc/shadow");
+        require(shadowRule.owner == "root" && shadowRule.group == "root" &&
+                    shadowRule.permissions == 0400,
+                "ALT p11 compatibility shadow metadata is incorrect");
+        require(profile.dac.tcbCredentialStorage.has_value(),
+                "ALT p11 must describe TCB credential storage");
+        const auto& tcb = *profile.dac.tcbCredentialStorage;
+        require(tcb.rootPath == "/etc/tcb" && tcb.rootOwner == "root" &&
+                    tcb.rootGroup == "shadow" && tcb.rootPermissions == 0710 &&
+                    tcb.entryGroup == "auth" &&
+                    tcb.entryDirectoryPermissions == 02710,
+                "ALT p11 TCB directory metadata is incorrect");
+        require(tcb.files.size() == 3 &&
+                    tcb.files[0].name == "shadow" &&
+                    tcb.files[0].permissions == 0640 &&
+                    tcb.files[0].required &&
+                    tcb.files[1].name == "shadow-" &&
+                    tcb.files[1].permissions == 0640 &&
+                    !tcb.files[1].required &&
+                    tcb.files[2].name == "shadow.lock" &&
+                    tcb.files[2].permissions == 0600 &&
+                    !tcb.files[2].required,
+                "ALT p11 TCB credential file metadata is incorrect");
         require(findRule(
                     profile.dac.protectedSystemFiles,
                     "/etc/sysctl.conf").allowedFinalSymlinkTargets ==
@@ -555,6 +579,8 @@ void testSelectedProfile() {
                     std::vector<std::string>({"-o", "/etc/grub.cfg"}),
                 "ALT p11 grub-mkconfig must write /etc/grub.cfg");
     } else if (profile.id == "debian-12") {
+        require(!profile.dac.tcbCredentialStorage.has_value(),
+                "Debian must not enable ALT TCB handling");
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,
                 "Debian 12 must use the dpkg package database");
@@ -581,6 +607,8 @@ void testSelectedProfile() {
         require(profile.grub.rebuildArguments.empty(),
                 "Debian 12 update-grub must not receive arguments");
     } else if (profile.id == "debian-13") {
+        require(!profile.dac.tcbCredentialStorage.has_value(),
+                "Debian must not enable ALT TCB handling");
         require(profile.hostCompatibility.versionIds ==
                     std::vector<std::string>({"13"}),
                 "Debian 13 must accept only VERSION_ID=13");
@@ -613,6 +641,8 @@ void testSelectedProfile() {
                 "Debian 13 update-grub must not receive arguments");
     } else if (profile.id == "ubuntu-24.04" ||
                profile.id == "ubuntu-26.04") {
+        require(!profile.dac.tcbCredentialStorage.has_value(),
+                "Ubuntu must not enable ALT TCB handling");
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,
                 "Ubuntu must use the dpkg package database");
@@ -1056,6 +1086,22 @@ void testInvalidProfileIsRejected() {
     profile.dac.protectedSystemFiles.front().permissions = 0;
     require(!fic::platform::validatePlatformProfile(profile, error),
             "invalid DAC permissions must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.dac.tcbCredentialStorage =
+        fic::platform::TcbCredentialStorageConfig{
+            "etc/tcb", "root", "shadow", 0710, "auth", 02710,
+            {{"shadow", 0640, true}}};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative TCB credential root must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.dac.tcbCredentialStorage =
+        fic::platform::TcbCredentialStorageConfig{
+            "/etc/tcb", "root", "shadow", 0710, "auth", 02710,
+            {{"shadow", 0640, true}, {"shadow", 0600, false}}};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "duplicate TCB credential file metadata must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.dac.protectedSystemFiles.front().allowedFinalSymlinkTargets = {

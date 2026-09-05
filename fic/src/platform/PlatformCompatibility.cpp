@@ -751,6 +751,44 @@ bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
     return true;
 }
 
+bool validateTcbCredentialStorage(
+    const std::optional<TcbCredentialStorageConfig>& optionalConfig,
+    std::string& error) {
+    if (!optionalConfig) {
+        return true;
+    }
+    const TcbCredentialStorageConfig& config = *optionalConfig;
+    if (!validatePath(config.rootPath, "TCB credential root", error)) {
+        return false;
+    }
+    if (config.rootOwner.empty() || config.rootGroup.empty() ||
+        config.entryGroup.empty() || config.rootPermissions == 0 ||
+        (config.rootPermissions & ~07777U) != 0 ||
+        config.entryDirectoryPermissions == 0 ||
+        (config.entryDirectoryPermissions & ~07777U) != 0 ||
+        config.files.empty()) {
+        error = "invalid TCB credential storage metadata";
+        return false;
+    }
+    std::set<std::string> names;
+    bool hasRequiredFile = false;
+    for (const TcbCredentialFileRule& file : config.files) {
+        if (file.name.empty() || file.name == "." || file.name == ".." ||
+            file.name.find('/') != std::string::npos ||
+            file.permissions == 0 || (file.permissions & ~07777U) != 0 ||
+            !names.insert(file.name).second) {
+            error = "invalid TCB credential file metadata";
+            return false;
+        }
+        hasRequiredFile = hasRequiredFile || file.required;
+    }
+    if (!hasRequiredFile) {
+        error = "TCB credential storage has no required credential file";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool validatePlatformProfile(const PlatformProfile& profile, std::string& error) {
@@ -824,7 +862,9 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
         !validateFileAccessRules(profile.dac.protectedSystemFiles,
                                  "DAC protected system file", error) ||
         !validateFileAccessRules(profile.dac.protectedSystemCommands,
-                                 "DAC protected system command", error)) {
+                                 "DAC protected system command", error) ||
+        !validateTcbCredentialStorage(profile.dac.tcbCredentialStorage,
+                                      error)) {
         return false;
     }
     const PasswordAgingPolicyDefaults& aging =

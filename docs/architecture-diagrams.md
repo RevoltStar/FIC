@@ -1073,6 +1073,15 @@ bit. Built-in политики `blocking_user_access_to_system_files` и
 `actual & allowed` и поэтому никогда не добавляет отсутствующие permissions или
 special bits. `custom_mode_and_owner` сохраняет exact declarative mode.
 
+ALT p11 дополнительно задаёт typed TCB topology для
+`blocking_user_access_to_system_files`: `/etc/tcb`, динамически обнаруживаемые
+каталоги локальных учётных записей и известные credential files. Вся topology
+сначала открывается descriptor-relative с `O_NOFOLLOW`, проверяется на
+неизвестные объекты, symlink, hardlink и замену inode, и только затем
+исправляется через закреплённые descriptors. Access bits по-прежнему только
+сужаются; обязательный для штатной TCB-семантики SGID каталога учётной записи
+восстанавливается отдельно. Слепой recursive chmod не используется.
+
 Обычный конечный объект открывается с `O_NOFOLLOW`. Platform profile может
 задать для конкретного `FileAccessRule` точный список допустимых целей symlink в
 самом policy path. Пустой список запрещает такой symlink; пользовательский

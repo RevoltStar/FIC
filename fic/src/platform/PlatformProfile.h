@@ -342,9 +342,26 @@ struct FileAccessRule {
     std::vector<ProviderManagedFileTarget> providerManagedFinalSymlinkTargets;
 };
 
+struct TcbCredentialFileRule {
+    std::string name;
+    unsigned int permissions = 0;
+    bool required = false;
+};
+
+struct TcbCredentialStorageConfig {
+    std::filesystem::path rootPath;
+    std::string rootOwner;
+    std::string rootGroup;
+    unsigned int rootPermissions = 0;
+    std::string entryGroup;
+    unsigned int entryDirectoryPermissions = 0;
+    std::vector<TcbCredentialFileRule> files;
+};
+
 struct DacPlatformConfig {
     std::vector<FileAccessRule> protectedSystemFiles;
     std::vector<FileAccessRule> protectedSystemCommands;
+    std::optional<TcbCredentialStorageConfig> tcbCredentialStorage;
 };
 
 struct PlatformProfile {
