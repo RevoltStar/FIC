@@ -2,6 +2,7 @@
 #define FIC_PLATFORM_PROFILE_H
 
 #include "platform/PasswordAgingPolicyDefaultsGenerated.h"
+#include "platform/SudoSecurePathDefaultGenerated.h"
 #include "platform/UserCreationPolicyDefaultsGenerated.h"
 
 #include <filesystem>
@@ -68,6 +69,7 @@ struct SshPlatformConfig {
 struct SudoPlatformConfig {
     std::filesystem::path mainConfigPath;
     std::filesystem::path managedConfigPath;
+    std::string securePathDefault = FIC_SUDO_SECURE_PATH_DEFAULT;
 };
 
 enum class SysctlLoaderKind {

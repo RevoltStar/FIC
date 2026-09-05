@@ -325,6 +325,17 @@ target_include_directories(sudoers_configuration_tests PRIVATE
 target_link_libraries(sudoers_configuration_tests PRIVATE fic-core Threads::Threads)
 add_test(NAME sudoers_configuration_tests COMMAND sudoers_configuration_tests)
 
+add_executable(sudo_secure_path_policy_type_value_tests
+    fic/modules/dac/SudoSecurePathPolicyTypeValueTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoSecurePathPolicyTypeValue.cpp
+)
+target_include_directories(sudo_secure_path_policy_type_value_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(sudo_secure_path_policy_type_value_tests PRIVATE fic-policy)
+add_test(NAME sudo_secure_path_policy_type_value_tests
+    COMMAND sudo_secure_path_policy_type_value_tests)
+
 add_executable(file_handler_options_tests
     common/core/fs/FileHandlerOptionsTests.cpp
 )

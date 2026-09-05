@@ -530,6 +530,16 @@ flowchart LR
 в источнике только `NOPASSWD`, `authenticate` и `exempt_group`, не расширяя
 список разрешенных команд.
 
+`sudo_securepath` сохраняет exact replacement semantics: заданный список
+полностью заменяет effective `Defaults secure_path`, а не дополняет site-specific
+каталоги. Build-time platform profile одновременно задаёт default политики и
+значение свежего immutable `DAC.conf`: Debian 12/13 используют package default
+classic sudo, Ubuntu 24.04/26.04 добавляют `/snap/bin`, ALT p11 использует свой
+порядок каталогов. Существующий рабочий `DAC.conf` при upgrade не
+перезаписывается. Validator разбирает именно path components: имена каталогов с
+точкой допустимы, а отдельные `.`/`..`, relative, empty и ненормализованные
+компоненты отклоняются.
+
 Для политик `SYSCTL` поток выглядит так:
 
 ```mermaid

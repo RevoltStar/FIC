@@ -57,6 +57,10 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/RequiredPamEnforcementDefaultsGenerated.h.in"
     "${FIC_GENERATED_INCLUDE_DIR}/platform/RequiredPamEnforcementDefaultsGenerated.h"
     @ONLY)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/SudoSecurePathDefaultGenerated.h.in"
+    "${FIC_GENERATED_INCLUDE_DIR}/platform/SudoSecurePathDefaultGenerated.h"
+    @ONLY)
 
 add_library(fic-platform STATIC
     src/platform/PlatformCompatibility.cpp
@@ -116,6 +120,10 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/config/IDENTITY_ACCESS.conf.in"
     "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
     @ONLY)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/config/DAC.conf.in"
+    "${FIC_GENERATED_SCRIPTS_DIR}/config/DAC.conf"
+    @ONLY)
 foreach(template
         service/fic.service
         service/fic-notify.service
@@ -147,8 +155,11 @@ install(PROGRAMS
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic-udevadm-trigger"
         DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
 install(DIRECTORY src/resources/config/ DESTINATION "${FIC_DEFAULT_CONFIG_DIR}"
-        COMPONENT fic PATTERN "IDENTITY_ACCESS.conf.in" EXCLUDE)
-install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
+        COMPONENT fic PATTERN "IDENTITY_ACCESS.conf.in" EXCLUDE
+        PATTERN "DAC.conf.in" EXCLUDE)
+install(FILES
+        "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
+        "${FIC_GENERATED_SCRIPTS_DIR}/config/DAC.conf"
         DESTINATION "${FIC_DEFAULT_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY src/resources/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)

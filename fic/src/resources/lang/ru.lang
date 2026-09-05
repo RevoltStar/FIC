@@ -163,7 +163,7 @@
     /etc/example.conf|root|root|0644
     /opt/app/private|root|fic|0750
 [module:DAC][policy:sudo_passwd_tries][description]=Количество попыток аутентификации
-[module:DAC][policy:sudo_securepath][description]=Описание
+[module:DAC][policy:sudo_securepath][description]=Полностью заменяет effective sudo secure_path указанным списком каталогов. Значение по умолчанию соответствует профилю целевого дистрибутива.
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:sudo_require_authentication][description]=Заменяет локальные правила NOPASSWD на PASSWD и запрещает отключение аутентификации в активных sudoers-файлах. Не учитывает действующий кэш sudo, PAM и внешние LDAP/SSSD-источники.
 [module:DAC][policy:systemcommandlock][description]=Устанавливает безопасные права для системных команд. Точный список определяется профилем целевого дистрибутива и приведён ниже.

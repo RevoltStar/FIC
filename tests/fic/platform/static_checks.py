@@ -486,9 +486,9 @@ def main():
         )
 
     require(
-        '"/etc/resolv.conf", "root", "root", 0644, {' not in alt_profile
+        '"/run/NetworkManager/resolv.conf"' in alt_profile
         and "/run/systemd/resolve/" not in alt_profile,
-        "ALT p11 unexpectedly permits systemd-resolved symlink targets",
+        "ALT p11 resolver provider targets are incorrect",
     )
 
     for language in ("ru", "en"):
@@ -872,7 +872,7 @@ def main():
     for config_name in (
         "AUDIT", "DAC", "DC", "FIREWALL", "GLOBAL", "IDENTITY_ACCESS", "NET", "OSS", "SYSCTL"
     ):
-        suffix = ".conf.in" if config_name == "IDENTITY_ACCESS" else ".conf"
+        suffix = ".conf.in" if config_name in ("DAC", "IDENTITY_ACCESS") else ".conf"
         config = (root / f"fic/src/resources/config/{config_name}{suffix}").read_text(
             encoding="utf-8"
         )
@@ -881,6 +881,17 @@ def main():
             and config.count("_schema_version=") == 1,
             f"{config_name}.conf does not declare exactly one schema version",
         )
+    dac_template = (
+        root / "fic/src/resources/config/DAC.conf.in"
+    ).read_text(encoding="utf-8")
+    require(
+        'sudo_securepath.value=["@FIC_SUDO_SECURE_PATH_DEFAULT_JSON_ITEMS@"]'
+        in dac_template
+        and 'src/resources/config/DAC.conf.in"' in fic_cmake
+        and '${FIC_GENERATED_SCRIPTS_DIR}/config/DAC.conf"' in fic_cmake
+        and 'PATTERN "DAC.conf.in" EXCLUDE' in fic_cmake,
+        "DAC secure_path default is not generated from the target platform",
+    )
     require(
         'FIC_PACKAGING_TARGET_PLATFORM="ubuntu-24.04"' in ubuntu_builder,
         "Ubuntu package entry point does not fix the Ubuntu profile",

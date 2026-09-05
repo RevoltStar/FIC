@@ -751,6 +751,39 @@ bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
     return true;
 }
 
+bool validateSecurePathDefault(const std::string& value, std::string& error) {
+    if (value.empty()) {
+        error = "sudo secure_path default is empty";
+        return false;
+    }
+    std::size_t begin = 0;
+    while (begin <= value.size()) {
+        const std::size_t end = value.find(':', begin);
+        const std::string component = value.substr(
+            begin, end == std::string::npos ? std::string::npos : end - begin);
+        const std::filesystem::path path(component);
+        if (component.empty() || component.find("//") != std::string::npos ||
+            (component.size() > 1 && component.back() == '/') ||
+            !validAbsolutePath(path)) {
+            error = "sudo secure_path default contains an invalid path: " +
+                component;
+            return false;
+        }
+        for (const auto& pathComponent : path) {
+            if (pathComponent == "." || pathComponent == "..") {
+                error = "sudo secure_path default contains a dot component: " +
+                    component;
+                return false;
+            }
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1;
+    }
+    return true;
+}
+
 bool validateTcbCredentialStorage(
     const std::optional<TcbCredentialStorageConfig>& optionalConfig,
     std::string& error) {
@@ -823,6 +856,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
     }
     if (!validatePath(profile.sudo.mainConfigPath, "sudoers main path", error) ||
         !validatePath(profile.sudo.managedConfigPath, "sudoers managed path", error) ||
+        !validateSecurePathDefault(profile.sudo.securePathDefault, error) ||
         !validatePath(profile.sysctl.managedConfigPath, "sysctl managed path", error) ||
         !validatePaths(profile.pam.configDirectories,
                        "PAM configuration directory", error) ||

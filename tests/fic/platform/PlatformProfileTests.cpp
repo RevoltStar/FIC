@@ -452,6 +452,14 @@ void testSelectedProfile() {
     require(hasRule(profile.dac.protectedSystemFiles,
                     profile.sudo.mainConfigPath),
             "the selected sudoers configuration must be protected by DAC policy");
+    const std::string expectedSecurePath =
+        profile.id == "alt-p11"
+            ? "/sbin:/usr/sbin:/usr/local/sbin:/bin:/usr/bin:/usr/local/bin"
+            : (profile.id == "ubuntu-24.04" || profile.id == "ubuntu-26.04")
+                ? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+                : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    require(profile.sudo.securePathDefault == expectedSecurePath,
+            "sudo secure_path platform default is incorrect");
     const auto& resolvConfRule = findRule(
         profile.dac.protectedSystemFiles, "/etc/resolv.conf");
     using ManagedTarget = fic::platform::ProviderManagedFileTarget;
@@ -1076,6 +1084,16 @@ void testInvalidProfileIsRejected() {
     profile.grub.defaultsPath = "etc/default/grub";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative GRUB defaults path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.sudo.securePathDefault = "/usr/bin::/bin";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an empty sudo secure_path default component must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.sudo.securePathDefault = "/usr/bin:relative/bin";
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative sudo secure_path default must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.grub.rebuildArguments.push_back("unsafe\nargument");

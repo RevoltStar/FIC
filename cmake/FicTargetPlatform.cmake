@@ -26,6 +26,8 @@ set(FIC_USER_CREATION_PRIMARY_GROUP_DEFAULT "users")
 set(FIC_PAM_PASSWORD_QUALITY_PROVIDER "pwquality")
 set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "pwhistory")
 set(FIC_PAM_PASSWORD_TRANSACTION_MODULE OFF)
+set(FIC_SUDO_SECURE_PATH_DEFAULT
+    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 
 if(FIC_TARGET_PLATFORM STREQUAL "debian-12")
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
@@ -36,9 +38,13 @@ elseif(FIC_TARGET_PLATFORM STREQUAL "debian-13")
 elseif(FIC_TARGET_PLATFORM STREQUAL "ubuntu-24.04")
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/Ubuntu2404Profile.cpp")
+    set(FIC_SUDO_SECURE_PATH_DEFAULT
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin")
 elseif(FIC_TARGET_PLATFORM STREQUAL "ubuntu-26.04")
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/Ubuntu2604Profile.cpp")
+    set(FIC_SUDO_SECURE_PATH_DEFAULT
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin")
 elseif(FIC_TARGET_PLATFORM STREQUAL "alt-p11")
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/AltP11Profile.cpp")
@@ -48,12 +54,17 @@ elseif(FIC_TARGET_PLATFORM STREQUAL "alt-p11")
     set(FIC_PAM_PASSWORD_QUALITY_PROVIDER "passwdqc")
     set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "pwhistory")
     set(FIC_PAM_PASSWORD_TRANSACTION_MODULE ON)
+    set(FIC_SUDO_SECURE_PATH_DEFAULT
+        "/sbin:/usr/sbin:/usr/local/sbin:/bin:/usr/bin:/usr/local/bin")
 else()
     message(FATAL_ERROR
         "FIC_TARGET_PLATFORM must be explicitly set to one of: "
         "debian-12, debian-13, ubuntu-24.04, ubuntu-26.04, alt-p11. "
         "Example: -DFIC_TARGET_PLATFORM=alt-p11")
 endif()
+
+string(REPLACE ":" "\",\"" FIC_SUDO_SECURE_PATH_DEFAULT_JSON_ITEMS
+    "${FIC_SUDO_SECURE_PATH_DEFAULT}")
 
 set(FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT
     "pam_faillock,pam_${FIC_PAM_PASSWORD_QUALITY_PROVIDER}")

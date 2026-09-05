@@ -163,7 +163,7 @@
     /etc/example.conf|root|root|0644
     /opt/app/private|root|fic|0750
 [module:DAC][policy:sudo_passwd_tries][description]=Number of authentication attempts
-[module:DAC][policy:sudo_securepath][description]=Description
+[module:DAC][policy:sudo_securepath][description]=Completely replaces the effective sudo secure_path with the specified directory list. The default matches the target distribution profile.
 [module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:sudo_require_authentication][description]=Replaces local NOPASSWD rules with PASSWD and prevents authentication from being disabled in active sudoers files. Existing sudo timestamps, PAM, and external LDAP/SSSD sources are out of scope.
 [module:DAC][policy:systemcommandlock][description]=Sets secure permissions for system commands. The exact list is selected by the target distribution profile and is shown below.
