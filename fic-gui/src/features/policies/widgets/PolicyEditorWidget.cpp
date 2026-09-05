@@ -101,10 +101,9 @@ QString applySummary(const nlohmann::json& response)
 QString applyDetails(const nlohmann::json& response)
 {
     QStringList lines;
-    if (!response.contains("results") || !response["results"].is_array()) {
-        return {};
-    }
-    for (const auto& item : response["results"]) {
+    const nlohmann::json results = response.value(
+        "results", nlohmann::json::array());
+    for (const auto& item : results) {
         QString reference = QString::fromStdString(item.value("module", ""));
         const QString submodule = QString::fromStdString(item.value("submodule", ""));
         if (!submodule.isEmpty()) reference += ":" + submodule;
@@ -113,12 +112,22 @@ QString applyDetails(const nlohmann::json& response)
             " - " + QString::fromStdString(item.value("message", ""));
         if (item.contains("diagnostics") && item["diagnostics"].is_array()) {
             for (const auto& diagnostic : item["diagnostics"]) {
-                lines << QString("  [%1] [%2] %3")
+                QString line = QString("  [%1] [%2]")
                     .arg(QString::fromStdString(diagnostic.value("timestamp", "")),
-                         QString::fromStdString(diagnostic.value("level", "UNKNOWN")),
-                         QString::fromStdString(diagnostic.value("message", "")));
+                         QString::fromStdString(diagnostic.value("level", "UNKNOWN")));
+                const QString category = QString::fromStdString(
+                    diagnostic.value("category", ""));
+                if (!category.isEmpty()) line += " [" + category + "]";
+                lines << line + " " + QString::fromStdString(
+                    diagnostic.value("message", ""));
             }
         }
+        if (item.value("diagnostics_truncated", false)) {
+            lines << "  ... diagnostics truncated";
+        }
+    }
+    if (response.value("diagnostics_truncated", false)) {
+        lines << "... response diagnostics truncated";
     }
     return lines.join("\n");
 }
@@ -373,13 +382,13 @@ PolicyEditorWidget::PolicyEditorWidget(
             return;
         }
 
-        nlohmann::json response;
-        QString error;
-        if (!PolicyService().saveAndApplyChanges(
-                moduleName, changes, response, error)) {
-            QMessageBox::warning(this, "Apply errors", error);
+        const PolicyService::ApplyResult result =
+            PolicyService().saveAndApplyChanges(moduleName, changes);
+        if (result.status == PolicyService::ApplyStatus::ServiceError) {
+            QMessageBox::warning(this, "Apply errors", result.error);
             return;
         }
+        const nlohmann::json& response = result.response;
         QMessageBox box(this);
         const bool ok = response.value("ok", false);
         box.setIcon(ok ? QMessageBox::Information : QMessageBox::Warning);

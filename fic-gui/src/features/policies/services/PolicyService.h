@@ -8,6 +8,8 @@
 #include <QString>
 #include <nlohmann/json.hpp>
 
+#include <fic/ipc/FicIpcClient.h>
+
 #include "features/policies/models/ModuleDescriptor.h"
 #include "features/policies/models/PolicyDescriptor.h"
 
@@ -21,7 +23,19 @@ struct PolicyChange {
 class PolicyService
 {
 public:
-    using RequestFunction = std::function<nlohmann::json(const nlohmann::json&)>;
+    enum class ApplyStatus {
+        Completed,
+        ServiceError
+    };
+
+    struct ApplyResult {
+        ApplyStatus status = ApplyStatus::ServiceError;
+        nlohmann::json response;
+        QString error;
+    };
+
+    using RequestResult = fic::ipc::Client::RequestResult;
+    using RequestFunction = std::function<RequestResult(const nlohmann::json&)>;
 
     explicit PolicyService(RequestFunction request = {});
 
@@ -32,13 +46,12 @@ public:
     bool saveChanges(const std::string& module,
                      const std::vector<PolicyChange>& changes,
                      QString& error) const;
-    bool saveAndApplyChanges(const std::string& module,
-                             const std::vector<PolicyChange>& changes,
-                             nlohmann::json& applyResponse,
-                             QString& error) const;
+    ApplyResult saveAndApplyChanges(
+        const std::string& module,
+        const std::vector<PolicyChange>& changes) const;
 
 private:
-    nlohmann::json request(const nlohmann::json& payload) const;
+    RequestResult request(const nlohmann::json& payload) const;
 
     RequestFunction request_;
 };

@@ -198,6 +198,12 @@ inline bool read_until_eof(int fd,
 
 class Client {
 public:
+    struct RequestResult {
+        bool hasResponse = false;
+        json response;
+        std::string error;
+    };
+
     Client();
 
     explicit Client(Endpoint endpoint);
@@ -206,6 +212,7 @@ public:
 
     Client(std::string socketPath, std::chrono::milliseconds timeout);
 
+    RequestResult requestWithStatus(const json& payload) const;
     json request(const json& payload) const;
 
 private:

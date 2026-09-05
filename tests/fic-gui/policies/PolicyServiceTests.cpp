@@ -5,39 +5,77 @@
 #endif
 #include <cassert>
 #include <string>
+#include <utility>
 #include <vector>
+
+namespace {
+PolicyService::RequestResult completed(nlohmann::json response)
+{
+    return {true, std::move(response), {}};
+}
+
+PolicyService::RequestResult serviceError(std::string error)
+{
+    return {false, {}, std::move(error)};
+}
+}
 
 int main()
 {
-    nlohmann::json applyResponse;
     QString error;
     const PolicyChange enabledValue{"sudo_timeout", "10", true, true};
     const PolicyChange disabled{"sudo_env_reset", "", false, false};
     const std::vector<PolicyChange> changes = {enabledValue, disabled};
 
-    PolicyService daemonFailure([](const nlohmann::json&) {
-        return nlohmann::json{{"ok", false}, {"message", "daemon apply failed"}};
+    const nlohmann::json failedApply = {
+        {"ok", false},
+        {"message", "daemon apply failed"},
+        {"summary", {{"total", 1}, {"failed", 1}}},
+        {"results", {{{"module", "DAC"}, {"policy", "sudo_timeout"},
+                      {"status", "failed"}}}}
+    };
+    PolicyService daemonFailure([&failedApply](const nlohmann::json&) {
+        return completed(failedApply);
     });
-    assert(!daemonFailure.saveAndApplyChanges("DAC", {}, applyResponse, error));
-    assert(error == "daemon apply failed");
-    assert(applyResponse["ok"] == false);
+    PolicyService::ApplyResult applyResult =
+        daemonFailure.saveAndApplyChanges("DAC", {});
+    assert(applyResult.status == PolicyService::ApplyStatus::Completed);
+    assert(applyResult.error.isEmpty());
+    assert(applyResult.response == failedApply);
+    assert(applyResult.response["summary"]["failed"] == 1);
+    assert(applyResult.response["results"].size() == 1);
 
     PolicyService transportFailure([](const nlohmann::json&) {
-        return nlohmann::json{{"ok", false}, {"message", "connect failed: refused"}};
+        return serviceError("connect failed: refused");
     });
-    assert(!transportFailure.saveAndApplyChanges("DAC", {}, applyResponse, error));
-    assert(error == "connect failed: refused");
+    applyResult = transportFailure.saveAndApplyChanges("DAC", {});
+    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.error == "connect failed: refused");
+    assert(applyResult.response.is_null());
 
     PolicyService malformed([](const nlohmann::json&) {
-        return nlohmann::json{{"ok", "yes"}, {"message", "invalid"}};
+        return completed({{"ok", "yes"}, {"message", "invalid"}});
     });
-    assert(!malformed.saveAndApplyChanges("DAC", {}, applyResponse, error));
-    assert(error.contains("apply_module protocol error"));
+    applyResult = malformed.saveAndApplyChanges("DAC", {});
+    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.error.contains("apply_module protocol error"));
+    assert(applyResult.response.is_null());
+
+    PolicyService malformedDetails([](const nlohmann::json&) {
+        return completed({
+            {"ok", false}, {"message", "invalid details"},
+            {"results", {{{"diagnostics", {7}}}}}
+        });
+    });
+    applyResult = malformedDetails.saveAndApplyChanges("DAC", {});
+    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.error.contains("invalid diagnostic"));
+    assert(applyResult.response.is_null());
 
     std::vector<std::string> commands;
     PolicyService success([&commands](const nlohmann::json& request) {
         commands.push_back(request.at("command").get<std::string>());
-        return nlohmann::json{{"ok", true}, {"message", "accepted"}};
+        return completed({{"ok", true}, {"message", "accepted"}});
     });
     assert(success.saveChanges("DAC", {enabledValue}, error));
     assert((commands == std::vector<std::string>{
@@ -50,7 +88,10 @@ int main()
     assert(error.isEmpty());
 
     commands.clear();
-    assert(success.saveAndApplyChanges("DAC", changes, applyResponse, error));
+    applyResult = success.saveAndApplyChanges("DAC", changes);
+    assert(applyResult.status == PolicyService::ApplyStatus::Completed);
+    assert(applyResult.response["ok"] == true);
+    assert(applyResult.error.isEmpty());
     assert((commands == std::vector<std::string>{
         "set_policy_value", "enable_policy", "disable_policy", "apply_module"}));
     assert(error.isEmpty());
@@ -60,13 +101,13 @@ int main()
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "set_policy_value") {
-            return nlohmann::json{{"ok", false}, {"message", "value denied"}};
+            return completed({{"ok", false}, {"message", "value denied"}});
         }
-        return nlohmann::json{{"ok", true}, {"message", "accepted"}};
+        return completed({{"ok", true}, {"message", "accepted"}});
     });
-    assert(!valueFailure.saveAndApplyChanges(
-        "DAC", {enabledValue}, applyResponse, error));
-    assert(error == "value denied");
+    applyResult = valueFailure.saveAndApplyChanges("DAC", {enabledValue});
+    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.error == "value denied");
     assert((commands == std::vector<std::string>{"set_policy_value"}));
 
     commands.clear();
@@ -74,13 +115,13 @@ int main()
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "enable_policy") {
-            return nlohmann::json{{"ok", false}, {"message", "enable denied"}};
+            return completed({{"ok", false}, {"message", "enable denied"}});
         }
-        return nlohmann::json{{"ok", true}, {"message", "accepted"}};
+        return completed({{"ok", true}, {"message", "accepted"}});
     });
-    assert(!stateFailure.saveAndApplyChanges(
-        "DAC", {enabledValue}, applyResponse, error));
-    assert(error == "enable denied");
+    applyResult = stateFailure.saveAndApplyChanges("DAC", {enabledValue});
+    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.error == "enable denied");
     assert((commands == std::vector<std::string>{
         "set_policy_value", "enable_policy"}));
 
@@ -89,13 +130,13 @@ int main()
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "disable_policy") {
-            return nlohmann::json{{"ok", false}, {"message", "disable denied"}};
+            return completed({{"ok", false}, {"message", "disable denied"}});
         }
-        return nlohmann::json{{"ok", true}, {"message", "accepted"}};
+        return completed({{"ok", true}, {"message", "accepted"}});
     });
-    assert(!disableFailure.saveAndApplyChanges(
-        "DAC", {disabled}, applyResponse, error));
-    assert(error == "disable denied");
+    applyResult = disableFailure.saveAndApplyChanges("DAC", {disabled});
+    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.error == "disable denied");
     assert((commands == std::vector<std::string>{"disable_policy"}));
 
     commands.clear();
@@ -103,14 +144,14 @@ int main()
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "apply_module") {
-            return nlohmann::json{{"ok", false}, {"message", "apply denied"}};
+            return completed({{"ok", false}, {"message", "apply denied"}});
         }
-        return nlohmann::json{{"ok", true}, {"message", "accepted"}};
+        return completed({{"ok", true}, {"message", "accepted"}});
     });
-    assert(!applyFailure.saveAndApplyChanges(
-        "DAC", changes, applyResponse, error));
-    assert(error == "apply denied");
-    assert(applyResponse["ok"] == false);
+    applyResult = applyFailure.saveAndApplyChanges("DAC", changes);
+    assert(applyResult.status == PolicyService::ApplyStatus::Completed);
+    assert(applyResult.error.isEmpty());
+    assert(applyResult.response["ok"] == false);
     assert((commands == std::vector<std::string>{
         "set_policy_value", "enable_policy", "disable_policy", "apply_module"}));
 

@@ -208,9 +208,12 @@ Client::Client(std::string socketPath, std::chrono::milliseconds timeout)
           : std::move(socketPath)),
       timeout_(timeout) {}
 
-json Client::request(const json& payload) const {
+Client::RequestResult Client::requestWithStatus(const json& payload) const {
+    const auto failure = [](std::string error) {
+        return RequestResult{false, json(), std::move(error)};
+    };
     if (!payload.is_object()) {
-        return make_error_response("IPC request payload must be a JSON object");
+        return failure("IPC request payload must be a JSON object");
     }
     json versionedPayload = payload;
     versionedPayload["api_version"] = API_VERSION;
@@ -218,34 +221,34 @@ json Client::request(const json& payload) const {
     try {
         requestText = versionedPayload.dump();
     } catch (const std::exception& exception) {
-        return make_error_response("could not serialize IPC request: " +
-            std::string(exception.what()));
+        return failure("could not serialize IPC request: " +
+                       std::string(exception.what()));
     }
     if (requestText.empty() || requestText.size() > MAX_REQUEST_BYTES) {
-        return make_error_response("request exceeds the 65536-byte IPC limit");
+        return failure("request exceeds the 65536-byte IPC limit");
     }
     if (timeout_.count() <= 0) {
-        return make_error_response("IPC timeout must be positive");
+        return failure("IPC timeout must be positive");
     }
 
     const int rawFd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (rawFd < 0) {
-        return make_error_response("socket() failed: " + std::string(std::strerror(errno)));
+        return failure("socket() failed: " + std::string(std::strerror(errno)));
     }
     ScopedFd fd(rawFd);
     const Clock::time_point deadline = Clock::now() + timeout_;
 
     std::string error;
     if (!connectWithDeadline(fd.get(), socketPath_, deadline, error)) {
-        return make_error_response("connect(" + socketPath_ + ") failed: " + error);
+        return failure("connect(" + socketPath_ + ") failed: " + error);
     }
     if (!sendPacket(fd.get(), requestText, deadline, error)) {
-        return make_error_response("send failed: " + error);
+        return failure("send failed: " + error);
     }
 
     std::string responseText;
     if (!receiveResponse(fd.get(), deadline, responseText, error)) {
-        return make_error_response("receive failed: " + error);
+        return failure("receive failed: " + error);
     }
 
     try {
@@ -258,14 +261,21 @@ json Client::request(const json& payload) const {
              (response["api_version"].is_number_integer() &&
               response["api_version"].get<std::int64_t>() == API_VERSION));
         if (!supportedApiVersion) {
-            return make_error_response("daemon response has an unsupported IPC API version");
+            return failure("daemon response has an unsupported IPC API version");
         }
-        return response;
+        return {true, std::move(response), {}};
     } catch (const std::exception& exception) {
         const std::string raw = responseText.substr(0, 512);
-        return make_error_response("invalid daemon response: " +
-            std::string(exception.what()) + "; raw=" + raw);
+        return failure("invalid daemon response: " +
+                       std::string(exception.what()) + "; raw=" + raw);
     }
+}
+
+json Client::request(const json& payload) const {
+    RequestResult result = requestWithStatus(payload);
+    return result.hasResponse
+        ? std::move(result.response)
+        : make_error_response(result.error);
 }
 
 } // namespace fic::ipc

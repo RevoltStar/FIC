@@ -7,10 +7,17 @@
 #include <fic/ipc/FicIpcClient.h>
 
 namespace {
-bool requireSuccessfulResponse(const nlohmann::json& response,
+bool requireResponseEnvelope(const PolicyService::RequestResult& requestResult,
                                const char* operation,
+                               bool requireSuccess,
+                               nlohmann::json& response,
                                QString& error)
 {
+    if (!requestResult.hasResponse) {
+        error = QString::fromStdString(requestResult.error);
+        return false;
+    }
+    response = requestResult.response;
     if (!response.is_object() || !response.contains("ok") ||
         !response["ok"].is_boolean() || !response.contains("message") ||
         !response["message"].is_string()) {
@@ -18,9 +25,70 @@ bool requireSuccessfulResponse(const nlohmann::json& response,
             .arg(operation);
         return false;
     }
-    if (!response["ok"].get<bool>()) {
+    if (requireSuccess && !response["ok"].get<bool>()) {
         error = QString::fromStdString(response["message"].get<std::string>());
         return false;
+    }
+    return true;
+}
+
+bool requireApplyResponse(const PolicyService::RequestResult& requestResult,
+                          nlohmann::json& response,
+                          QString& error)
+{
+    if (!requireResponseEnvelope(
+            requestResult, "apply_module", false, response, error)) {
+        return false;
+    }
+    const bool malformed =
+        (response.contains("summary") && !response["summary"].is_object()) ||
+        (response.contains("results") && !response["results"].is_array()) ||
+        (response.contains("diagnostics_truncated") &&
+         !response["diagnostics_truncated"].is_boolean());
+    if (malformed) {
+        error = "apply_module protocol error: invalid result fields";
+        return false;
+    }
+    if (response.contains("summary")) {
+        const auto& summary = response["summary"];
+        for (const char* field : {
+                 "total", "applied", "failed", "disabled", "not_found"}) {
+            if (summary.contains(field) && !summary[field].is_number_integer()) {
+                error = "apply_module protocol error: invalid summary";
+                return false;
+            }
+        }
+    }
+    for (const auto& item : response.value("results", nlohmann::json::array())) {
+        if (!item.is_object() ||
+            (item.contains("diagnostics") && !item["diagnostics"].is_array()) ||
+            (item.contains("diagnostics_truncated") &&
+             !item["diagnostics_truncated"].is_boolean())) {
+            error = "apply_module protocol error: invalid policy result";
+            return false;
+        }
+        for (const char* field : {
+                 "module", "submodule", "policy", "status", "message"}) {
+            if (item.contains(field) && !item[field].is_string()) {
+                error = "apply_module protocol error: invalid policy result";
+                return false;
+            }
+        }
+        for (const auto& diagnostic : item.value(
+                 "diagnostics", nlohmann::json::array())) {
+            if (!diagnostic.is_object()) {
+                error = "apply_module protocol error: invalid diagnostic";
+                return false;
+            }
+            for (const char* field : {
+                     "timestamp", "level", "category", "message"}) {
+                if (diagnostic.contains(field) &&
+                    !diagnostic[field].is_string()) {
+                    error = "apply_module protocol error: invalid diagnostic";
+                    return false;
+                }
+            }
+        }
     }
     return true;
 }
@@ -31,21 +99,27 @@ PolicyService::PolicyService(RequestFunction request)
 {
 }
 
-nlohmann::json PolicyService::request(const nlohmann::json& payload) const
+PolicyService::RequestResult PolicyService::request(
+    const nlohmann::json& payload) const
 {
     if (request_) {
         return request_(payload);
     }
-    return fic::ipc::Client().request(payload);
+    return fic::ipc::Client().requestWithStatus(payload);
 }
 
 bool PolicyService::loadModules(
     std::vector<ModuleDescriptor>& modules,
     QString& error) const
 {
-    const auto response = request({{"command", "module_list"}});
+    const auto requestResult = request({{"command", "module_list"}});
+    if (!requestResult.hasResponse) {
+        error = QString::fromStdString(requestResult.error);
+        return false;
+    }
     std::string parseError;
-    const bool ok = parseModuleDescriptors(response, modules, parseError);
+    const bool ok = parseModuleDescriptors(
+        requestResult.response, modules, parseError);
     error = QString::fromStdString(parseError);
     return ok;
 }
@@ -55,11 +129,16 @@ bool PolicyService::loadPolicies(
     std::vector<PolicyDescriptor>& policies,
     QString& error) const
 {
-    const auto response = request({
+    const auto requestResult = request({
         {"command", "policy_list"}, {"module", module}
     });
+    if (!requestResult.hasResponse) {
+        error = QString::fromStdString(requestResult.error);
+        return false;
+    }
     std::string parseError;
-    const bool ok = parsePolicyDescriptors(response, module, policies, parseError);
+    const bool ok = parsePolicyDescriptors(
+        requestResult.response, module, policies, parseError);
     error = QString::fromStdString(parseError);
     return ok;
 }
@@ -72,41 +151,48 @@ bool PolicyService::saveChanges(
     error.clear();
     for (const PolicyChange& change : changes) {
         if (change.valueConfigurable) {
-            const auto response = request({
+            const auto requestResult = request({
                 {"command", "set_policy_value"},
                 {"module", module},
                 {"policy", change.policyName},
                 {"value", change.value}
             });
-            if (!requireSuccessfulResponse(response, "set_policy_value", error)) {
+            nlohmann::json response;
+            if (!requireResponseEnvelope(
+                    requestResult, "set_policy_value", true, response, error)) {
                 return false;
             }
         }
-        const auto response = request({
+        const auto requestResult = request({
             {"command", change.enabled ? "enable_policy" : "disable_policy"},
             {"module", module},
             {"policy", change.policyName}
         });
-        if (!requireSuccessfulResponse(
-                response,
+        nlohmann::json response;
+        if (!requireResponseEnvelope(
+                requestResult,
                 change.enabled ? "enable_policy" : "disable_policy",
-                error)) {
+                true, response, error)) {
             return false;
         }
     }
     return true;
 }
 
-bool PolicyService::saveAndApplyChanges(
+PolicyService::ApplyResult PolicyService::saveAndApplyChanges(
     const std::string& module,
-    const std::vector<PolicyChange>& changes,
-    nlohmann::json& applyResponse,
-    QString& error) const
+    const std::vector<PolicyChange>& changes) const
 {
-    applyResponse = nlohmann::json();
-    if (!saveChanges(module, changes, error)) {
-        return false;
+    ApplyResult result;
+    if (!saveChanges(module, changes, result.error)) {
+        return result;
     }
-    applyResponse = request({{"command", "apply_module"}, {"module", module}});
-    return requireSuccessfulResponse(applyResponse, "apply_module", error);
+    const RequestResult requestResult = request(
+        {{"command", "apply_module"}, {"module", module}});
+    if (!requireApplyResponse(requestResult, result.response, result.error)) {
+        result.response = nlohmann::json();
+        return result;
+    }
+    result.status = ApplyStatus::Completed;
+    return result;
 }

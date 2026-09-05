@@ -106,6 +106,10 @@ int main() {
                     if (request.value("command", "") == "unversioned-response") {
                         return json{{"ok", true}, {"message", "old daemon"}}.dump();
                     }
+                    if (request.value("command", "") == "daemon-failure") {
+                        return fic::ipc::make_error_response(
+                            "operation failed").dump();
+                    }
                     return fic::ipc::make_ok_response("echo").dump();
                 },
                 error);
@@ -114,6 +118,18 @@ int main() {
     });
 
     fic::ipc::Client client(socketPath.string(), 3s);
+    fic::ipc::Client::RequestResult requestResult =
+        client.requestWithStatus({{"command", "status"}});
+    assert(requestResult.hasResponse);
+    assert(requestResult.error.empty());
+    assert(requestResult.response.value("ok", false));
+
+    requestResult = client.requestWithStatus({{"command", "daemon-failure"}});
+    assert(requestResult.hasResponse);
+    assert(requestResult.error.empty());
+    assert(!requestResult.response.value("ok", true));
+    assert(requestResult.response.value("message", "") == "operation failed");
+
     json response = client.request({{"command", "status"}});
     assert(response.value("ok", false));
 
@@ -124,6 +140,11 @@ int main() {
     response = client.request({{"command", "unversioned-response"}});
     assert(!response.value("ok", true));
     assert(response.value("message", "").find("IPC API version") != std::string::npos);
+
+    requestResult = client.requestWithStatus({{"command", "unversioned-response"}});
+    assert(!requestResult.hasResponse);
+    assert(requestResult.response.is_null());
+    assert(requestResult.error.find("IPC API version") != std::string::npos);
 
     json exactRequest{{"api_version", fic::ipc::API_VERSION},
                       {"command", "echo"}, {"padding", ""}};
