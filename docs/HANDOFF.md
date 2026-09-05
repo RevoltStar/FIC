@@ -28,6 +28,8 @@
   diagnostic классифицируется как service error.
 - GUI показывает warning для `ok=false`, сохраняя `message`, `summary`,
   `results`, diagnostic `category` и truncation markers.
+- При отсутствии `summary` informative text остаётся пустым: daemon `message`
+  выводится только один раз через основной текст `QMessageBox`.
 
 ## Changed areas
 
@@ -41,6 +43,7 @@
 - `policy_service_tests` — passed.
 - `ipc_transport_tests` — passed.
 - `ipc_protocol_validation_tests` — passed.
+- `fic-gui` rebuilt и `policy_service_tests` passed после UX-правки.
 - `git diff --check` выполняется перед завершением.
 
 ## Remaining

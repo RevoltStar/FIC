@@ -87,7 +87,7 @@ QFrame* createSubmoduleHeader(const QString& text, QWidget* parent)
 QString applySummary(const nlohmann::json& response)
 {
     if (!response.contains("summary") || !response["summary"].is_object()) {
-        return QString::fromStdString(response.value("message", "unknown daemon response"));
+        return {};
     }
     const auto& summary = response["summary"];
     return QString("Total: %1, applied: %2, failed: %3, disabled: %4, not found: %5")
