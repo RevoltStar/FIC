@@ -322,12 +322,24 @@ struct GrubPlatformConfig {
     std::vector<std::string> rebuildArguments;
 };
 
+enum class ManagedFileProvider {
+    SystemdResolved,
+    NetworkManager,
+    Resolvconf
+};
+
+struct ProviderManagedFileTarget {
+    std::filesystem::path path;
+    ManagedFileProvider provider;
+};
+
 struct FileAccessRule {
     std::filesystem::path path;
     std::string owner;
     std::string group;
     unsigned int permissions = 0;
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
+    std::vector<ProviderManagedFileTarget> providerManagedFinalSymlinkTargets;
 };
 
 struct DacPlatformConfig {

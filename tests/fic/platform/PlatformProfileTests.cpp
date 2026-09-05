@@ -454,18 +454,45 @@ void testSelectedProfile() {
             "the selected sudoers configuration must be protected by DAC policy");
     const auto& resolvConfRule = findRule(
         profile.dac.protectedSystemFiles, "/etc/resolv.conf");
-    const std::vector<std::filesystem::path> resolvedTargets = {
-        "/run/systemd/resolve/stub-resolv.conf",
-        "/run/systemd/resolve/resolv.conf",
-        "/usr/lib/systemd/resolv.conf"
+    using ManagedTarget = fic::platform::ProviderManagedFileTarget;
+    using ManagedProvider = fic::platform::ManagedFileProvider;
+    std::vector<ManagedTarget> resolverTargets = {
+        {"/run/systemd/resolve/stub-resolv.conf",
+         ManagedProvider::SystemdResolved},
+        {"/run/systemd/resolve/resolv.conf",
+         ManagedProvider::SystemdResolved},
+        {"/usr/lib/systemd/resolv.conf",
+         ManagedProvider::SystemdResolved},
+        {"/run/NetworkManager/resolv.conf",
+         ManagedProvider::NetworkManager}
     };
     if (profile.id == "alt-p11") {
-        require(resolvConfRule.allowedFinalSymlinkTargets.empty(),
-                "ALT p11 must not inherit systemd-resolved exceptions");
-    } else {
-        require(resolvConfRule.allowedFinalSymlinkTargets == resolvedTargets,
-                "Debian/Ubuntu resolv.conf symlink targets are incorrect");
+        resolverTargets.erase(resolverTargets.begin(),
+                              resolverTargets.begin() + 3);
+    } else if (profile.id == "debian-12" || profile.id == "debian-13") {
+        resolverTargets.push_back({
+            "/run/resolvconf/resolv.conf", ManagedProvider::Resolvconf});
     }
+    require(resolvConfRule.allowedFinalSymlinkTargets.empty(),
+            "provider-managed resolv.conf targets must not be remediate aliases");
+    require(resolvConfRule.providerManagedFinalSymlinkTargets.size() ==
+                resolverTargets.size() &&
+            std::equal(
+                resolvConfRule.providerManagedFinalSymlinkTargets.begin(),
+                resolvConfRule.providerManagedFinalSymlinkTargets.end(),
+                resolverTargets.begin(),
+                [](const auto& actual, const auto& expected) {
+                    return actual.path == expected.path &&
+                        actual.provider == expected.provider;
+                }),
+            "resolv.conf provider targets are incorrect");
+    require(std::none_of(
+                resolverTargets.begin(), resolverTargets.end(),
+                [](const auto& target) {
+                    return target.path ==
+                        "/run/NetworkManager/no-stub-resolv.conf";
+                }),
+            "NetworkManager no-stub internal file must not be allowlisted");
     for (const auto& rule : profile.dac.protectedSystemCommands) {
         std::vector<std::filesystem::path> expectedTargets;
         if ((profile.id == "debian-13" || profile.id == "ubuntu-26.04") &&
@@ -1050,6 +1077,25 @@ void testInvalidProfileIsRejected() {
     };
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a duplicate DAC symlink target must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.dac.protectedSystemFiles.front()
+        .providerManagedFinalSymlinkTargets = {{
+            "run/provider-target",
+            fic::platform::ManagedFileProvider::NetworkManager
+        }};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a relative provider-managed target must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    auto& duplicateProviderTarget = profile.dac.protectedSystemFiles.front();
+    duplicateProviderTarget.allowedFinalSymlinkTargets = {"/run/target"};
+    duplicateProviderTarget.providerManagedFinalSymlinkTargets = {{
+        "/run/target",
+        fic::platform::ManagedFileProvider::NetworkManager
+    }};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a target shared by remediate and validate-only lists must be rejected");
 }
 
 void testExecutableResolver() {

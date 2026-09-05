@@ -32,6 +32,8 @@ enum class ModeEnforcement {
 struct ModeAndOwnerExpectation {
     FileStats stats;
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
+    std::vector<fic::platform::ProviderManagedFileTarget>
+        providerManagedFinalSymlinkTargets;
 };
 
 //Класс для работы правами/владельцами файлов и каталогов
@@ -48,7 +50,9 @@ protected:
         const std::string& owner,
         const std::string& group,
         mode_t permissions,
-        std::vector<std::filesystem::path> allowedFinalSymlinkTargets = {});
+        std::vector<std::filesystem::path> allowedFinalSymlinkTargets = {},
+        std::vector<fic::platform::ProviderManagedFileTarget>
+            providerManagedFinalSymlinkTargets = {});
 public:
     explicit ModeAndOwner(
         MissingFilePolicy missingFilePolicy,

@@ -177,7 +177,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/hosts.allow", "root", "root", 0644},
         {"/etc/hosts.deny", "root", "root", 0644},
         {"/etc/group", "root", "root", 0644},
-        {"/etc/resolv.conf", "root", "root", 0644},
+        {"/etc/resolv.conf", "root", "root", 0644, {}, {
+            {"/run/NetworkManager/resolv.conf",
+             ManagedFileProvider::NetworkManager}
+        }},
         {"/etc/sysctl.conf", "root", "root", 0644, {
             "/etc/sysctl.d/99-sysctl.conf"
         }},

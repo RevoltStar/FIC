@@ -17,7 +17,8 @@ DAC_systemcommandlock::DAC_systemcommandlock(
             rule.owner,
             rule.group,
             static_cast<mode_t>(rule.permissions),
-            rule.allowedFinalSymlinkTargets);
+            rule.allowedFinalSymlinkTargets,
+            rule.providerManagedFinalSymlinkTargets);
     }
     this->policyName = "systemcommandlock";
     this->policyTypeValue = std::make_unique<FileAccessRulesPolicyTypeValue>(

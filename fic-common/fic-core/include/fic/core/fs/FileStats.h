@@ -83,6 +83,9 @@ public:
     const std::error_code& error_code() const { return systemError_; }
     uid_t owner_id() const { return ownerId_; }
     gid_t group_id() const { return groupId_; }
+    const std::filesystem::path& opened_policy_path() const {
+        return openedPolicyPath_;
+    }
 
 private:
     struct DeferredOpenTag {};
@@ -91,6 +94,7 @@ private:
 
     int descriptor_ = -1;
     std::string path_;
+    std::filesystem::path openedPolicyPath_;
     FileStatsState state_ = FileStatsState::Available;
     uid_t ownerId_ = 0;
     gid_t groupId_ = 0;

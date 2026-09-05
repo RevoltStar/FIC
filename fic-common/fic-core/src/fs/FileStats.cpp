@@ -318,7 +318,8 @@ FileStats::FileStats(const std::string& path)
 }
 
 FileStats::FileStats(const std::string& path, DeferredOpenTag)
-    : path_(path) {
+    : path_(path),
+      openedPolicyPath_(path) {
 }
 
 void FileStats::openRegularPath() {
@@ -494,6 +495,7 @@ FileStats FileStats::openPolicyPath(
     }
 
     result.descriptor_ = targetDescriptor.release();
+    result.openedPolicyPath_ = normalizedTarget;
     const FileStatsOperationResult statResult = result.update_from_descriptor();
     if (!statResult) {
         result.state_ = FileStatsState::Error;
@@ -563,6 +565,7 @@ void FileStats::move_from(FileStats&& other) noexcept {
     exists = other.exists;
     descriptor_ = other.descriptor_;
     path_ = std::move(other.path_);
+    openedPolicyPath_ = std::move(other.openedPolicyPath_);
     state_ = other.state_;
     ownerId_ = other.ownerId_;
     groupId_ = other.groupId_;

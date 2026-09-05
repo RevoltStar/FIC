@@ -723,6 +723,30 @@ bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
                 return false;
             }
         }
+        for (const ProviderManagedFileTarget& target :
+             rule.providerManagedFinalSymlinkTargets) {
+            if (!validAbsolutePath(target.path)) {
+                error = label +
+                    " provider-managed final symlink target must be a non-empty "
+                    "absolute normalized path: " + target.path.string();
+                return false;
+            }
+            if (!uniqueSymlinkTargets.insert(target.path).second) {
+                error = label + " final symlink target is duplicated: " +
+                    target.path.string();
+                return false;
+            }
+            switch (target.provider) {
+            case ManagedFileProvider::SystemdResolved:
+            case ManagedFileProvider::NetworkManager:
+            case ManagedFileProvider::Resolvconf:
+                break;
+            default:
+                error = label + " has an invalid managed-file provider: " +
+                    rule.path.string();
+                return false;
+            }
+        }
     }
     return true;
 }

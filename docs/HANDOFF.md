@@ -3,41 +3,44 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `21a8efb`.
+- Родитель текущей правки: `90abe22`.
 
 ## Current task
 
-- Не позволять built-in DAC file policies расширять существующие permissions.
+- Сделать `/etc/resolv.conf` provider-aware без борьбы с generated files.
 
 ## Accepted architecture / invariants
 
-- `ModeEnforcement` выбирается явно: built-in правила используют
-  `MaximumAllowed`, custom policy — `Exact`.
-- Maximum-mode применяется ко всей маске `07777`, включая SUID/SGID/sticky.
-- Owner/group остаются exact и проверяются после descriptor-based mutation.
+- Static resolver file остаётся remediate-capable.
+- Provider-managed final symlink target проверяется по exact profile allowlist,
+  owner/group и maximum mode, но FIC не выполняет для него `fchown`/`fchmod`.
+- Descriptor pinning и повторная проверка inode policy symlink сохранены.
 
 ## Completed
 
-- Built-in compliance означает `(actual & ~allowed) == 0`.
-- Remediation применяет `actual & allowed`, только удаляя лишние bits.
-- Более строгие modes и отсутствующие разрешённые special bits не изменяются;
-  custom mode по-прежнему приводится к точному значению.
+- Debian 12/13: systemd-resolved, NetworkManager и resolvconf targets.
+- Ubuntu 24.04/26.04: systemd-resolved и NetworkManager targets.
+- ALT p11: NetworkManager target; openresolv остаётся static topology.
+- NetworkManager `no-stub-resolv.conf` и произвольные targets отклоняются.
 
 ## Changed areas
 
-- `fic/src/modules/dac/mode_and_owner`: explicit mode semantics.
-- Обе built-in ModeAndOwner policies и RU/EN restriction text.
-- `ModeAndOwnerTests` и архитектурная документация.
+- Platform DAC provider metadata во всех пяти profiles и validation.
+- `FileStats` сообщает закреплённый policy target; `ModeAndOwner` разделяет
+  remediate и provider validate-only handling.
+- Mode/profile tests и архитектурная документация.
 
 ## Validation
 
-- ALT p11 builder container: `mode_and_owner_tests` built and passed для всех
-  пяти target profiles: Debian 12/13, Ubuntu 24.04/26.04, ALT p11.
-- Покрыты tightening, already-stricter, group/other bits, SUID/SGID, owner/group,
-  `systemcommandlock` и custom exact semantics.
+- `mode_and_owner_tests` и `platform_profile_tests` — passed для всех пяти
+  target profiles в ALT builder container.
+- Target `fic` built successfully для ALT p11 profile.
+- Покрыты static/resolved stub/resolved non-stub/NetworkManager/resolvconf,
+  arbitrary target, validate-only owner/mode и symlink replacement pinning.
+- Реальные package experiments выполнены на Debian 12/13, Ubuntu 24.04/26.04
+  и ALT p11; target matrix подтверждена package binaries/manpages/tmpfiles.
 
 ## Remaining
 
-- Host CMake по-прежнему не имеет `libsystemd`; validation выполнена в
-  изолированном ALT builder image.
-- После этого коммита остаются задачи 4-6 из пользовательского списка.
+- Host CMake не имеет `libsystemd`; validation выполнена в контейнере.
+- После этого коммита остаются задачи 5-6 из пользовательского списка.

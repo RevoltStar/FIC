@@ -1096,16 +1096,23 @@ special bits. `custom_mode_and_owner` сохраняет exact declarative mode.
 `custom_mode_and_owner` path является ошибкой. Неожиданная цель symlink и ошибки
 открытия не считаются отсутствующим файлом.
 
-В профилях Debian 12/13 и Ubuntu 24.04/26.04 для `/etc/resolv.conf` разрешены
-три динамические цели `systemd-resolved`:
-`/run/systemd/resolve/stub-resolv.conf`,
-`/run/systemd/resolve/resolv.conf` и
-`/usr/lib/systemd/resolv.conf`. Профиль ALT p11 не объявляет это исключение:
-штатная для него конфигурация в проекте не предполагает управление данным
-путём через эти цели. Вместо этого ALT p11 объявляет две собственные
-package-owned связи: `/etc/sysctl.conf` → `/etc/sysctl.d/99-sysctl.conf` и
-`/etc/grub.cfg` → `/boot/grub/grub.cfg`. Разрешены только эти точные конечные
-цели; GRUB-политики редактируют канонический regular file
+Для `/etc/resolv.conf` platform profile различает static regular file и
+provider-managed final symlink targets. Debian 12/13 разрешают три цели
+`systemd-resolved`, `/run/NetworkManager/resolv.conf` и
+`/run/resolvconf/resolv.conf`; Ubuntu 24.04/26.04 — те же цели
+`systemd-resolved` и NetworkManager без resolvconf; ALT p11 — только
+NetworkManager. Внутренний `/run/NetworkManager/no-stub-resolv.conf` и любые
+иные цели не входят в allowlist.
+
+Static `/etc/resolv.conf` остаётся remediate-capable. Для provider-managed
+target FIC проверяет symlink topology, owner/group и maximum mode через уже
+закреплённый descriptor, но при отклонении возвращает ошибку без `fchown` или
+`fchmod`: lifecycle generated-файла принадлежит provider, поэтому FIC не
+вступает с ним в цикл взаимных исправлений. ALT openresolv пишет непосредственно
+в `/etc/resolv.conf` и обрабатывается как static topology. Остальные ALT
+package-owned связи остаются обычными remediate aliases:
+`/etc/sysctl.conf` → `/etc/sysctl.d/99-sysctl.conf` и `/etc/grub.cfg` →
+`/boot/grub/grub.cfg`. GRUB-политики редактируют regular file
 `/etc/sysconfig/grub2`, а не symlink `/etc/default/grub`.
 
 Для защищаемых системных команд исключений также нет;

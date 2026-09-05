@@ -125,10 +125,17 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/hosts.allow", "root", "root", 0644},
         {"/etc/hosts.deny", "root", "root", 0644},
         {"/etc/group", "root", "root", 0644},
-        {"/etc/resolv.conf", "root", "root", 0644, {
-            "/run/systemd/resolve/stub-resolv.conf",
-            "/run/systemd/resolve/resolv.conf",
-            "/usr/lib/systemd/resolv.conf"
+        {"/etc/resolv.conf", "root", "root", 0644, {}, {
+            {"/run/systemd/resolve/stub-resolv.conf",
+             ManagedFileProvider::SystemdResolved},
+            {"/run/systemd/resolve/resolv.conf",
+             ManagedFileProvider::SystemdResolved},
+            {"/usr/lib/systemd/resolv.conf",
+             ManagedFileProvider::SystemdResolved},
+            {"/run/NetworkManager/resolv.conf",
+             ManagedFileProvider::NetworkManager},
+            {"/run/resolvconf/resolv.conf",
+             ManagedFileProvider::Resolvconf}
         }},
         {"/etc/sysctl.conf", "root", "root", 0644},
         {"/etc/logrotate.conf", "root", "root", 0644},

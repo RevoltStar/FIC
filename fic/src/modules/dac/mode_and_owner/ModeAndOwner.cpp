@@ -1,5 +1,6 @@
 #include "modules/dac/mode_and_owner/ModeAndOwner.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 #include <utility>
@@ -10,6 +11,18 @@ std::string formatPermissions(mode_t permissions) {
     output << std::setfill('0') << std::setw(4) << std::oct
            << static_cast<unsigned int>(permissions & 07777);
     return output.str();
+}
+
+const char* providerName(fic::platform::ManagedFileProvider provider) {
+    switch (provider) {
+    case fic::platform::ManagedFileProvider::SystemdResolved:
+        return "systemd-resolved";
+    case fic::platform::ManagedFileProvider::NetworkManager:
+        return "NetworkManager";
+    case fic::platform::ManagedFileProvider::Resolvconf:
+        return "resolvconf";
+    }
+    return "unknown";
 }
 } // namespace
 
@@ -39,6 +52,12 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
             }
             result << ")";
         }
+        for (const auto& target :
+             rule.providerManagedFinalSymlinkTargets) {
+            result << " (provider-managed final symlink -> "
+                   << target.path.string() << ", "
+                   << providerName(target.provider) << ", validate only)";
+        }
     }
     return result.str();
 }
@@ -58,12 +77,15 @@ void ModeAndOwner::addExpectedRule(
     const std::string& owner,
     const std::string& group,
     mode_t permissions,
-    std::vector<std::filesystem::path> allowedFinalSymlinkTargets) {
+    std::vector<std::filesystem::path> allowedFinalSymlinkTargets,
+    std::vector<fic::platform::ProviderManagedFileTarget>
+        providerManagedFinalSymlinkTargets) {
     expected.insert_or_assign(
         path.string(),
         ModeAndOwnerExpectation{
             FileStats(owner, group, permissions),
-            std::move(allowedFinalSymlinkTargets)});
+            std::move(allowedFinalSymlinkTargets),
+            std::move(providerManagedFinalSymlinkTargets)});
 }
 
 bool ModeAndOwner::apply() {
@@ -76,8 +98,14 @@ bool ModeAndOwner::apply() {
     for (const auto& [filename, expectation] : expected) {
         const FileStats& expectedStats = expectation.stats;
         ++total;
+        std::vector<std::filesystem::path> allowedTargets =
+            expectation.allowedFinalSymlinkTargets;
+        for (const auto& target :
+             expectation.providerManagedFinalSymlinkTargets) {
+            allowedTargets.push_back(target.path);
+        }
         FileStats currentStats = FileStats::openPolicyPath(
-            filename, expectation.allowedFinalSymlinkTargets, pathResolution_);
+            filename, allowedTargets, pathResolution_);
 
         if (currentStats.is_missing()) {
             if (missingFilePolicy_ == MissingFilePolicy::Ignore) {
@@ -100,6 +128,14 @@ bool ModeAndOwner::apply() {
         }
 
         this->log("Проверка файла " + filename, logLevel::INFO);
+        const auto providerTarget = std::find_if(
+            expectation.providerManagedFinalSymlinkTargets.begin(),
+            expectation.providerManagedFinalSymlinkTargets.end(),
+            [&](const auto& target) {
+                return target.path == currentStats.opened_policy_path();
+            });
+        const bool providerManaged = providerTarget !=
+            expectation.providerManagedFinalSymlinkTargets.end();
         const std::string originalOwner = currentStats._owner;
         const std::string originalGroup = currentStats._group;
         const mode_t originalPermissions = currentStats._permissions;
@@ -126,6 +162,10 @@ bool ModeAndOwner::apply() {
         if (!identityResult) {
             ownershipRequirementMet = false;
             diagnostics.push_back(identityResult.message);
+        } else if (!ownerInitiallyCorrect && providerManaged) {
+            diagnostics.push_back(
+                "Provider-managed target has incorrect owner/group and is "
+                "validate-only: " + currentStats.opened_policy_path().string());
         } else if (!ownerInitiallyCorrect) {
             const FileStatsOperationResult changeResult =
                 currentStats.change_owner_group(
@@ -161,7 +201,12 @@ bool ModeAndOwner::apply() {
             return (currentStats._permissions &
                     static_cast<mode_t>(~expectedStats._permissions)) == 0;
         };
-        if (currentStateReadable && !permissionRequirementSatisfied()) {
+        if (currentStateReadable && !permissionRequirementSatisfied() &&
+            providerManaged) {
+            diagnostics.push_back(
+                "Provider-managed target has excessive permissions and is "
+                "validate-only: " + currentStats.opened_policy_path().string());
+        } else if (currentStateReadable && !permissionRequirementSatisfied()) {
             const mode_t targetPermissions =
                 modeEnforcement_ == ModeEnforcement::Exact
                     ? expectedStats._permissions

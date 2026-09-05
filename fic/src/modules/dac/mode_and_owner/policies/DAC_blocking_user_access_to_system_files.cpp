@@ -14,7 +14,8 @@ DAC_blocking_user_access_to_system_files::DAC_blocking_user_access_to_system_fil
             rule.owner,
             rule.group,
             static_cast<mode_t>(rule.permissions),
-            rule.allowedFinalSymlinkTargets);
+            rule.allowedFinalSymlinkTargets,
+            rule.providerManagedFinalSymlinkTargets);
     }
     this->policyName = "blocking_user_access_to_system_files";
     this->policyTypeValue = std::make_unique<FileAccessRulesPolicyTypeValue>(

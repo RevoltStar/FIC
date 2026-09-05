@@ -137,9 +137,12 @@ public:
                  const std::string& owner,
                  const std::string& group,
                  mode_t mode,
-                 std::vector<fs::path> allowedTargets = {}) {
+                 std::vector<fs::path> allowedTargets = {},
+                 std::vector<fic::platform::ProviderManagedFileTarget>
+                     providerTargets = {}) {
         addExpectedRule(
-            path, owner, group, mode, std::move(allowedTargets));
+            path, owner, group, mode, std::move(allowedTargets),
+            std::move(providerTargets));
     }
 
     std::string expectedOwner(const fs::path& path) const {
@@ -412,6 +415,118 @@ void testProfileDrivenFinalSymlinks(const fs::path& root) {
             "restriction info showed a symlink exception for a regular rule");
 }
 
+void testProviderManagedFinalSymlinks(const fs::path& root) {
+    using Provider = fic::platform::ManagedFileProvider;
+    const std::string owner = currentOwner();
+    const std::string group = currentGroup();
+    const std::vector<std::pair<std::string, Provider>> cases = {
+        {"resolved-stub", Provider::SystemdResolved},
+        {"resolved-non-stub", Provider::SystemdResolved},
+        {"network-manager", Provider::NetworkManager},
+        {"resolvconf", Provider::Resolvconf}
+    };
+    for (const auto& [name, provider] : cases) {
+        const fs::path target = root / (name + "-target");
+        const fs::path link = root / (name + "-link");
+        writeFile(target, name, 0644);
+        fs::create_symlink(target, link);
+        fic::platform::DacPlatformConfig config;
+        config.protectedSystemFiles = {{
+            link, owner, group, 0644, {}, {{target, provider}}
+        }};
+        DAC_blocking_user_access_to_system_files policy(config);
+        require(policy.apply(),
+                "valid provider-managed resolver target was rejected: " + name);
+        require(fileMode(target) == 0644,
+                "compliant provider-managed target was modified: " + name);
+    }
+
+    const fs::path staticFile = root / "static-resolv.conf";
+    writeFile(staticFile, "static", 0666);
+    fic::platform::DacPlatformConfig staticConfig;
+    staticConfig.protectedSystemFiles = {{
+        staticFile, owner, group, 0644
+    }};
+    DAC_blocking_user_access_to_system_files staticPolicy(staticConfig);
+    require(staticPolicy.apply(), "static resolver file remediation failed");
+    require(fileMode(staticFile) == 0644,
+            "static resolver file was not remediated");
+
+    const fs::path invalidTarget = root / "provider-invalid-mode";
+    const fs::path invalidLink = root / "provider-invalid-link";
+    writeFile(invalidTarget, "invalid", 0666);
+    fs::create_symlink(invalidTarget, invalidLink);
+    fic::platform::DacPlatformConfig invalidConfig;
+    invalidConfig.protectedSystemFiles = {{
+        invalidLink, owner, group, 0644, {},
+        {{invalidTarget, Provider::NetworkManager}}
+    }};
+    DAC_blocking_user_access_to_system_files invalidPolicy(invalidConfig);
+    require(!invalidPolicy.apply(),
+            "provider-managed target with excessive mode was accepted");
+    require(fileMode(invalidTarget) == 0666,
+            "validate-only provider target was chmoded");
+
+    const fs::path arbitraryTarget = root / "evil-resolv.conf";
+    const fs::path arbitraryLink = root / "evil-resolv-link";
+    writeFile(arbitraryTarget, "evil", 0644);
+    fs::create_symlink(arbitraryTarget, arbitraryLink);
+    fic::platform::DacPlatformConfig arbitraryConfig;
+    arbitraryConfig.protectedSystemFiles = {{
+        arbitraryLink, owner, group, 0644, {},
+        {{invalidTarget, Provider::NetworkManager}}
+    }};
+    DAC_blocking_user_access_to_system_files arbitraryPolicy(arbitraryConfig);
+    require(!arbitraryPolicy.apply(), "arbitrary resolver target was accepted");
+    require(fileMode(arbitraryTarget) == 0644,
+            "arbitrary resolver target was modified");
+
+    if (::geteuid() == 0) {
+        const fs::path ownerTarget = root / "provider-invalid-owner";
+        const fs::path ownerLink = root / "provider-owner-link";
+        writeFile(ownerTarget, "owner", 0644);
+        const struct passwd* nobody = ::getpwnam("nobody");
+        const struct group* nobodyGroup = ::getgrnam("nobody");
+        require(nobody != nullptr && nobodyGroup != nullptr,
+                "nobody identity is unavailable");
+        require(::chown(ownerTarget.c_str(), nobody->pw_uid,
+                        nobodyGroup->gr_gid) == 0,
+                "could not alter provider target owner");
+        fs::create_symlink(ownerTarget, ownerLink);
+        fic::platform::DacPlatformConfig ownerConfig;
+        ownerConfig.protectedSystemFiles = {{
+            ownerLink, "root", "root", 0644, {},
+            {{ownerTarget, Provider::NetworkManager}}
+        }};
+        DAC_blocking_user_access_to_system_files ownerPolicy(ownerConfig);
+        require(!ownerPolicy.apply(),
+                "provider-managed target with wrong owner was accepted");
+        struct stat info {};
+        require(::stat(ownerTarget.c_str(), &info) == 0,
+                "could not inspect provider owner target");
+        require(info.st_uid == nobody->pw_uid &&
+                    info.st_gid == nobodyGroup->gr_gid,
+                "validate-only provider target was chowned");
+    }
+
+    const fs::path pinnedTarget = root / "provider-pinned-target";
+    const fs::path replacementTarget = root / "provider-replacement-target";
+    const fs::path racedLink = root / "provider-raced-link";
+    writeFile(pinnedTarget, "pinned", 0644);
+    writeFile(replacementTarget, "replacement", 0644);
+    fs::create_symlink(pinnedTarget, racedLink);
+    FileStats pinned = FileStats::openPolicyPath(racedLink, {pinnedTarget});
+    require(!pinned.has_error() && !pinned.is_missing(),
+            "could not open provider target for replacement test");
+    fs::remove(racedLink);
+    fs::create_symlink(replacementTarget, racedLink);
+    require(static_cast<bool>(pinned.change_permissions(0600)),
+            "descriptor-pinned chmod failed after symlink replacement");
+    require(fileMode(pinnedTarget) == 0600 &&
+                fileMode(replacementTarget) == 0644,
+            "symlink replacement redirected a descriptor-based mutation");
+}
+
 void testCustomSymlinkRemainsFailClosed(const fs::path& root) {
     const fs::path target = root / "custom-symlink-target";
     const fs::path link = root / "custom-symlink-rule";
@@ -615,6 +730,7 @@ int main() {
     testBuiltInMaximumModeSemantics(root);
     testSymlinkIsRejected(root);
     testProfileDrivenFinalSymlinks(root);
+    testProviderManagedFinalSymlinks(root);
     testCustomSymlinkRemainsFailClosed(root);
     testCustomTrustedIntermediateResolution(root);
     testChownThenRestoresSpecialBits(root);
