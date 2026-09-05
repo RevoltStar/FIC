@@ -1818,6 +1818,99 @@ void testPamSucceedIfTrustedBypassMustMatchExactRule() {
             "passwordless rule from an untrusted source was accepted");
 }
 
+void testAltLightdmPasswordlessBypassMustMatchExactRule() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"lightdm", "other-service"};
+    platform.trustedAuthenticationBypasses = {
+        {"lightdm", "pam_succeed_if.so",
+         fic::platform::PamTrustedAuthenticationBypassReason::
+             ExplicitPasswordlessLogin,
+         "sufficient", {"user", "ingroup", "nopasswdlogin"},
+         temp.path() / "pam.d/lightdm"}
+    };
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    writeFile(
+        temp.path() / "pam.d/common-login",
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth sufficient pam_faillock.so authsucc\n"
+        "auth required pam_deny.so\n");
+    const auto stack = [](const std::string& rule) {
+        return rule + "\n" + "auth substack common-login\n";
+    };
+    const auto verify = [&](const std::string& service,
+                            const std::string& content) {
+        writeFile(temp.path() / ("pam.d/" + service), content);
+        return verifyCapability(
+            platform,
+            fic::identity::pam::PamCapability::AuthenticationLockout,
+            fic::identity::pam::PamProviderKind::PamFaillock,
+            {service});
+    };
+    const auto acceptedBypasses = [&](const std::string& service) {
+        fic::identity::pam::PamConfiguration configuration(platform);
+        fic::identity::pam::PamControlFlowAnalysis analysis;
+        std::string error;
+        require(fic::identity::pam::PamControlFlowAnalyzer::analyze(
+                    configuration, platform, service,
+                    fic::identity::pam::PamCapability::AuthenticationLockout,
+                    fic::identity::pam::PamProviderKind::PamFaillock,
+                    analysis, error),
+                error);
+        return analysis.acceptedTrustedAuthenticationBypasses;
+    };
+
+    const auto exact = verify(
+        "lightdm",
+        stack("auth sufficient pam_succeed_if.so user ingroup nopasswdlogin"));
+    require(exact.state == fic::identity::pam::PamEnforcementState::Effective &&
+                exact.detail.find("authentication_bypass") ==
+                    std::string::npos &&
+                acceptedBypasses("lightdm").size() == 1,
+            "exact ALT LightDM passwordless path was rejected: " +
+                fic::identity::pam::formatPamCapabilityVerification(exact));
+
+    const auto wrongArguments = verify(
+        "lightdm",
+        stack("auth sufficient pam_succeed_if.so user ingroup wheel"));
+    require(wrongArguments.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+                wrongArguments.detail.find("authentication_bypass") !=
+                    std::string::npos,
+            "LightDM passwordless rule with different argv was trusted");
+
+    const auto wrongService = verify(
+        "other-service",
+        stack("auth sufficient pam_succeed_if.so user ingroup nopasswdlogin"));
+    require(wrongService.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+                wrongService.detail.find("authentication_bypass") !=
+                    std::string::npos,
+            "LightDM passwordless rule was trusted for another service");
+
+    writeFile(temp.path() / "pam.d/lightdm-passwordless",
+              "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n");
+    const auto wrongSource = verify(
+        "lightdm",
+        "auth include lightdm-passwordless\n"
+        "auth substack common-login\n");
+    require(wrongSource.state ==
+                fic::identity::pam::PamEnforcementState::Ineffective &&
+                wrongSource.detail.find("authentication_bypass") !=
+                    std::string::npos,
+            "LightDM passwordless rule from another source was trusted");
+
+    const auto wrongControl = verify(
+        "lightdm",
+        stack("auth required pam_succeed_if.so user ingroup nopasswdlogin"));
+    require(wrongControl.state ==
+                fic::identity::pam::PamEnforcementState::Effective &&
+                acceptedBypasses("lightdm").empty(),
+            "LightDM passwordless rule with another control was trusted");
+}
+
 void testAltGdmAuxiliaryKeyringPathIsEffective() {
     TempDirectory temp;
     auto platform = makePlatform(temp);
@@ -2855,6 +2948,7 @@ int main() {
         testTrustedSuRootokPathIsAccepted();
         testRootokOutsideTrustedServiceIsRejected();
         testPamSucceedIfTrustedBypassMustMatchExactRule();
+        testAltLightdmPasswordlessBypassMustMatchExactRule();
         testAltGdmAuxiliaryKeyringPathIsEffective();
         testPamTcbCredentialFailureBypassingAuthfailIsRejected();
         testSddmSucceedIfGateIsEffective();

@@ -3,51 +3,46 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `149ba8d`.
+- Родитель текущей правки: `ae1c800`.
 
 ## Current task
 
-- Не терять подробный daemon response при `apply_module` с `ok=false` в GUI.
+- Добавить exact trusted authentication bypass для штатного LightDM
+  passwordless-login пути в ALT p11.
 
 ## Accepted architecture / invariants
 
-- IPC/client failure и валидный daemon response являются разными outcomes.
-- `apply_module` с boolean `ok` считается completed operation; поле `ok`
-  определяет success/warning presentation, а не transport status.
-- Save operations по-прежнему требуют `ok=true`; daemon protocol не изменён.
-- Старый `fic::ipc::Client::request()` сохраняет прежний контракт для остальных
-  consumers; typed status доступен через additive `requestWithStatus()`.
+- `PamControlFlowAnalyzer` остаётся fail-closed и принимает bypass только при
+  точном совпадении service/module/control/argv/source с platform metadata.
+- Несколько display manager могут объявлять отдельные exact bypass rules для
+  одной группы из `passwordlessLoginControl`; generic whitelist не вводится.
 
 ## Completed
 
-- В `fic-ipc` добавлен typed request result, различающий protocol response и
-  client/transport error.
-- `PolicyService::saveAndApplyChanges()` возвращает `Completed/ServiceError` с
-  сохранённым response для обоих значений daemon `ok`.
-- Apply response валидируется до передачи UI; malformed nested result или
-  diagnostic классифицируется как service error.
-- GUI показывает warning для `ok=false`, сохраняя `message`, `summary`,
-  `results`, diagnostic `category` и truncation markers.
-- При отсутствии `summary` informative text остаётся пустым: daemon `message`
-  выводится только один раз через основной текст `QMessageBox`.
+- ALT p11 profile содержит отдельные exact rules для `gdm-password` и
+  `lightdm` с `pam_succeed_if.so user ingroup nopasswdlogin`.
+- Platform validation разрешает несколько explicit passwordless rules, но
+  требует хотя бы одно и проверяет argv каждого против управляемой группы.
+- Добавлены profile и PAM control-flow regressions для LightDM и несовпадений
+  service/source/control/argv.
 
 ## Changed areas
 
-- `fic-common/fic-ipc` client result API.
-- GUI `PolicyService` и apply dialog formatting.
-- GUI documentation и PolicyService/IPC regression tests.
+- ALT p11 platform profile и platform compatibility validation.
+- `PlatformProfileTests` и `PamConfigurationTests`.
 
 ## Validation
 
-- Ubuntu 26.04 container: full project build — passed.
-- `policy_service_tests` — passed.
-- `ipc_transport_tests` — passed.
-- `ipc_protocol_validation_tests` — passed.
-- `fic-gui` rebuilt и `policy_service_tests` passed после UX-правки.
+- ALT p11 `pam_configuration_tests` — passed после полной пересборки target
+  objects по существующим generated recipes.
+- ALT p11 `platform_profile_tests` — passed при прямой сборке из актуальных
+  profile sources.
+- Обычный top-level CMake configure недоступен в текущем окружении: отсутствуют
+  PAM и libsystemd development files.
 - `git diff --check` выполняется перед завершением.
 
 ## Remaining
 
 - Implementation work не осталось.
-- Интерактивный GUI dialog вручную не проверялся; его rendering покрыт сборкой,
-  а service outcome — regression tests.
+- Полная CMake/CTest validation не выполнялась из-за отсутствующих development
+  dependencies; runtime-проверка на ALT p11 host не выполнялась.

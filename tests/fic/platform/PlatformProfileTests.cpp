@@ -338,26 +338,26 @@ void testSelectedProfile() {
             "trusted PAM root transition for su is missing");
     require(hasTrustedRootok("su-l") == expectedSuLoginService,
             "trusted PAM root transition for su-l is incorrect");
-    const auto passwordless = std::find_if(
-        profile.pam.trustedAuthenticationBypasses.begin(),
-        profile.pam.trustedAuthenticationBypasses.end(),
-        [](const auto& rule) {
-            return rule.reason == fic::platform::
-                PamTrustedAuthenticationBypassReason::
-                    ExplicitPasswordlessLogin;
-        });
+    const auto hasExactPasswordless = [&](const std::string& service) {
+        return std::any_of(
+            profile.pam.trustedAuthenticationBypasses.begin(),
+            profile.pam.trustedAuthenticationBypasses.end(),
+            [&](const auto& rule) {
+                return rule.service == service &&
+                    rule.module == "pam_succeed_if.so" &&
+                    rule.reason == fic::platform::
+                        PamTrustedAuthenticationBypassReason::
+                            ExplicitPasswordlessLogin &&
+                    rule.control == "sufficient" &&
+                    rule.arguments == std::vector<std::string>{
+                        "user", "ingroup", "nopasswdlogin"} &&
+                    rule.source == std::optional<std::filesystem::path>{
+                        "/etc/pam.d/" + service};
+            });
+    };
     if (profile.id == "alt-p11") {
-        require(passwordless !=
-                    profile.pam.trustedAuthenticationBypasses.end() &&
-                    passwordless->service == "gdm-password" &&
-                    passwordless->module == "pam_succeed_if.so" &&
-                    passwordless->control == "sufficient" &&
-                    passwordless->arguments ==
-                        std::vector<std::string>{
-                            "user", "ingroup", "nopasswdlogin"} &&
-                    passwordless->source ==
-                        std::optional<std::filesystem::path>{
-                            "/etc/pam.d/gdm-password"} &&
+        require(hasExactPasswordless("gdm-password") &&
+                    hasExactPasswordless("lightdm") &&
                     profile.pam.passwordlessLoginControl.has_value() &&
                     profile.pam.passwordlessLoginControl->groupName ==
                         "nopasswdlogin" &&
@@ -377,8 +377,8 @@ void testSelectedProfile() {
                             {"files", "systemd", "role"}},
                 "ALT exact passwordless-login contract is incorrect");
     } else {
-        require(passwordless ==
-                    profile.pam.trustedAuthenticationBypasses.end() &&
+        require(!hasExactPasswordless("gdm-password") &&
+                    !hasExactPasswordless("lightdm") &&
                     !profile.pam.passwordlessLoginControl.has_value(),
                 "non-ALT profile declares ALT passwordless-login contract");
     }

@@ -106,7 +106,11 @@ PlatformProfile makeBuildPlatformProfile() {
         {"gdm-password", "pam_succeed_if.so",
          PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin,
          "sufficient", {"user", "ingroup", "nopasswdlogin"},
-         "/etc/pam.d/gdm-password"}
+         "/etc/pam.d/gdm-password"},
+        {"lightdm", "pam_succeed_if.so",
+         PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin,
+         "sufficient", {"user", "ingroup", "nopasswdlogin"},
+         "/etc/pam.d/lightdm"}
     };
     profile.pam.trustedServiceAliases = {
         {"/etc/pam.d/system-auth",

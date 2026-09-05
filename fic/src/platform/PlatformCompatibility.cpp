@@ -321,12 +321,6 @@ bool validatePamTrustedAuthenticationBypasses(
         }
     }
     const auto& passwordless = pam.passwordlessLoginControl;
-    const auto explicitRule = std::find_if(
-        pam.trustedAuthenticationBypasses.begin(),
-        pam.trustedAuthenticationBypasses.end(), [](const auto& rule) {
-            return rule.reason ==
-                PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin;
-        });
     const std::size_t explicitRuleCount = static_cast<std::size_t>(std::count_if(
         pam.trustedAuthenticationBypasses.begin(),
         pam.trustedAuthenticationBypasses.end(), [](const auto& rule) {
@@ -354,11 +348,16 @@ bool validatePamTrustedAuthenticationBypasses(
                 passwordless->supportedNss.initgroups, "initgroups", error)) {
             return false;
         }
-        if (explicitRuleCount != 1 ||
-            explicitRule == pam.trustedAuthenticationBypasses.end() ||
-            explicitRule->arguments !=
-                std::vector<std::string>{
-                    "user", "ingroup", passwordless->groupName}) {
+        const bool allExplicitRulesMatch = std::all_of(
+            pam.trustedAuthenticationBypasses.begin(),
+            pam.trustedAuthenticationBypasses.end(),
+            [&](const auto& rule) {
+                return rule.reason != PamTrustedAuthenticationBypassReason::
+                           ExplicitPasswordlessLogin ||
+                    rule.arguments == std::vector<std::string>{
+                        "user", "ingroup", passwordless->groupName};
+            });
+        if (explicitRuleCount == 0 || !allExplicitRulesMatch) {
             error = "passwordless-login control does not match an exact "
                 "trusted PAM bypass";
             return false;
