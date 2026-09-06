@@ -563,13 +563,22 @@ bool initPolicyRegistry(
         platform.grub, executables));
     cafArr.push_back(std::make_unique<OSS_grub_disable_recovery>(
         platform.grub, executables));
+    auto controlledDesktops =
+        std::make_unique<OSS_controlled_desktop_environments>();
+    auto* controlledDesktopsScope = controlledDesktops.get();
+    auto graphicalSessions =
+        std::make_shared<SystemGraphicalSessionInventory>(executables);
+    cafArr.push_back(std::move(controlledDesktops));
     cafArr.push_back(std::make_unique<OSS_screenlock_timeout>(
-        executables));
+        *controlledDesktopsScope, graphicalSessions));
     cafArr.push_back(std::make_unique<OSS_disable_autologin>(
         executables, platform.displayManager));
     cafArr.push_back(
         std::make_unique<OSS_disable_kde_lock_screen_media_controls>(
-            executables));
+            *controlledDesktopsScope, graphicalSessions));
+    cafArr.push_back(
+        std::make_unique<OSS_absence_of_uncontrolled_desktop_environments>(
+            *controlledDesktopsScope, graphicalSessions));
     cafArr.push_back(std::make_unique<OSS_lock_on_tty_switch>());
     cafArr.push_back(std::make_unique<OSS_fstab_tmp_profile>());
     cafArr.push_back(std::make_unique<OSS_fstab_var_tmp_profile>());

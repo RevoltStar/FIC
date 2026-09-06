@@ -1338,3 +1338,26 @@ runtime-каталог `root:root 0755` и сокет `root:fic 0660`. Груп�
 `0640` для обычных файлов и `0750` для `/opt/fic/bin`). Член группы может
 читать конфигурацию и БД для диагностики, но клиентские изменения по-прежнему
 выполняются только через daemon API.
+# Desktop-session reconciliation contract
+
+`controlled_desktop_environments` is an explicit typed administrative scope;
+an empty value is `UNCONFIGURED`. It is never derived from installed packages,
+desktop files, or the platform profile. For an ordinary DE policy, a desktop
+outside the scope is `NotApplicable`, while a controlled desktop without a
+backend is `Unsupported` and fails. The fixed
+`absence_of_uncontrolled_desktop_environments` policy checks the full current
+graphical-session inventory and fails closed for unknown or uncontrolled DEs.
+
+Session-aware policies are discovered through a `PolicyRegistry` capability
+index. After its context socket starts listening, `fic-session-agent` submits
+only `session_ready(session_id)` to the separate unprivileged event socket.
+The hint contains no PID, desktop, display, or policy data. The daemon obtains
+the peer UID, validates the session through logind, queries the existing agent
+socket, classifies the DE, coalesces the bounded work item, acknowledges
+scheduling, and performs targeted reconciliation outside ingress handling.
+
+All currently implemented screen-lock and KDE media-control backends are
+`SessionOnly`. `MandatoryGlobal` is reserved for a backend which applies the
+machine-wide value, installs authoritative lock/immutability protection, and
+verifies persistent effective state. Runtime compliance diagnostics do not
+change historical apply results.

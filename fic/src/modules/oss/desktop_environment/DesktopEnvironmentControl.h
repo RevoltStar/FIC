@@ -1,0 +1,73 @@
+#ifndef FIC_DESKTOP_ENVIRONMENT_CONTROL_H
+#define FIC_DESKTOP_ENVIRONMENT_CONTROL_H
+
+#include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
+#include "session/UserSession.h"
+
+#include <set>
+#include <string>
+#include <vector>
+
+using DesktopEnvironmentSet = std::set<DesktopEnvironmentKind>;
+
+struct ClassifiedGraphicalSession {
+    UserSession session;
+    SessionContext context;
+    DesktopEnvironmentKind desktop = DesktopEnvironmentKind::Unknown;
+    std::string classificationError;
+
+    bool classified() const {
+        return desktop != DesktopEnvironmentKind::Unknown;
+    }
+};
+
+enum class SessionApplicability {
+    Applicable,
+    NotApplicable,
+    Unsupported
+};
+
+enum class EnforcementMode {
+    MandatoryGlobal,
+    SessionOnly,
+    Unsupported
+};
+
+class ControlledDesktopEnvironmentScope {
+public:
+    virtual ~ControlledDesktopEnvironmentScope() = default;
+    virtual bool controlledDesktopEnvironments(
+        DesktopEnvironmentSet& controlled,
+        std::string& error) = 0;
+};
+
+class GraphicalSessionInventory {
+public:
+    virtual ~GraphicalSessionInventory() = default;
+    virtual bool currentSessions(
+        std::vector<ClassifiedGraphicalSession>& sessions,
+        std::string& error) = 0;
+};
+
+class SessionAwarePolicy {
+public:
+    virtual ~SessionAwarePolicy() = default;
+    virtual SessionApplicability sessionApplicability(
+        DesktopEnvironmentKind desktop,
+        std::string& error) = 0;
+    virtual EnforcementMode enforcementMode(
+        DesktopEnvironmentKind desktop) const = 0;
+    virtual bool reconcileSession(
+        const ClassifiedGraphicalSession& session,
+        std::string& error) = 0;
+};
+
+class SessionInventoryCompliancePolicy {
+public:
+    virtual ~SessionInventoryCompliancePolicy() = default;
+    virtual bool evaluateSessionInventory(
+        const std::vector<ClassifiedGraphicalSession>& sessions,
+        std::string& error) = 0;
+};
+
+#endif // FIC_DESKTOP_ENVIRONMENT_CONTROL_H

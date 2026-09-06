@@ -16,6 +16,11 @@
 
 class PolicyRegistry;
 
+enum class PolicyCapability {
+    SessionAware,
+    SessionInventoryCompliance
+};
+
 class Policy
 {
 protected:
@@ -162,6 +167,7 @@ public:
     // Опасные действия активации (например, remount файловых систем) и эффекты,
     // требующие перезагрузки, намеренно не выполняются.
     virtual bool apply() = 0;
+    virtual std::vector<PolicyCapability> capabilities() const { return {}; }
 
 private:
     friend class PolicyRegistry;

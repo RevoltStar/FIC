@@ -97,6 +97,7 @@ for expected in (
     "::chmod(runtimeDir.c_str(), 0755)",
     "verifyPath(runtimeDir, S_IFDIR, 0755, 0, 0",
     "socketMode = 0660",
+    "socketMode = 0622",
 ):
     if expected not in admin_socket:
         errors.append(f"production admin socket metadata check is missing: {expected}")
@@ -110,15 +111,15 @@ device_service = (
     root / "fic/src/resources/service/fic-device.service.in"
 ).read_text(encoding="utf-8")
 for expected in (
-    "pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)",
-    "PkgConfig::LIBSYSTEMD",
+    "pkg_check_modules(FIC_LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)",
+    "PkgConfig::FIC_LIBSYSTEMD",
 ):
     if expected not in fic_cmake:
         errors.append(f"fic does not link systemd notification support: {expected}")
 if "Type=notify" not in fic_service or "Type=simple" in fic_service:
     errors.append("fic.service must use Type=notify")
-if "TimeoutStartSec=120s" not in fic_service or "TimeoutStartSec=infinity" in fic_service:
-    errors.append("fic.service must have a finite 120 second startup timeout")
+if "TimeoutStartSec=600s" not in fic_service or "TimeoutStartSec=infinity" in fic_service:
+    errors.append("fic.service must have a finite 600 second startup timeout")
 if "Type=simple" not in device_service or "Type=notify" in device_service:
     errors.append("fic-device.service must remain Type=simple")
 for dependency in ("After=fic.service", "Requires=fic.service"):
@@ -135,6 +136,8 @@ startup_markers = (
     'run_daemon_apply_all_pass(',
     'STATUS=Creating administrative socket',
     'create_admin_server_socket(socketOptions)',
+    'STATUS=Creating session event socket',
+    'create_admin_server_socket(eventSocketOptions)',
     'READY=1\\nSTATUS=Running',
 )
 cursor = 0

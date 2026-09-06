@@ -14,6 +14,16 @@ own session. Only a root peer is allowed to query the socket. The daemon is the
 authoritative source of the session candidate list and never delegates
 session selection to an agent.
 
+After its context socket is listening, the agent sends the minimal untrusted
+hint `{"event":"session_ready","session_id":"..."}` to the separate
+daemon-owned `/run/fic/fic-session-events.sock`. It never sends a PID, desktop,
+display, policy name, or policy value on this endpoint. If the daemon is still
+starting, notification retries run in a background thread while the context
+socket remains available. A positive ACK means only that reconciliation was
+scheduled. The daemon derives the peer UID from `SO_PEERCRED`, validates the
+claimed session through logind, and then queries the existing context socket;
+the agent is not a privileged identity or a source of policy decisions.
+
 The agent prefers `XDG_SESSION_ID`, but validates the referenced logind session:
 it must belong to the agent UID and have `Class=user`. Remote sessions are
 accepted. The logind type is normally `x11`, `wayland`, or `mir`; a directly
@@ -52,12 +62,20 @@ per-session and must not be converted into a deliberately shared per-user
 service; desktop environments with multiple GUI sessions and no session-bound
 identity handoff cannot be resolved by this fallback.
 
+`controlled_desktop_environments` is the exact administrative scope for all
+desktop-dependent policies. Its default empty list means `UNCONFIGURED`; it is
+not inferred from packages, session descriptors, or distribution identity.
+An ordinary policy ignores a reliably classified desktop outside this scope.
+A controlled desktop without a policy backend is `Unsupported` and fails.
+The fixed `absence_of_uncontrolled_desktop_environments` policy instead checks
+the complete current inventory and fails for an uncontrolled or unclassifiable
+graphical session. It observes compliance only and does not terminate sessions.
+
 For policies that require graphical-session access, the daemon:
 
-1. Uses a policy-specific session selector. `OSS/screenlock_timeout` retains
-   its local native-graphical selector. KDE lock-screen media controls include
-   current foreground/background and remote native graphical sessions, which
-   logind exposes independently of the agent. A `Type=tty` startx session is
+1. Builds one shared inventory of current foreground/background and remote
+   native graphical sessions, which logind exposes independently of the agent.
+   A `Type=tty` startx session is
    included only when its exact session-id endpoint is an owned Unix socket;
    the complete socket owner, peer and response identity checks still happen
    during the query. Closing or dead sessions are excluded. Therefore FIC does
@@ -83,19 +101,35 @@ candidate.
 Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,
 XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
 `~/.fly/theme/current.themerc`. Other desktop environments fail explicitly until
-a dedicated daemon-side backend is implemented.
+a dedicated daemon-side backend is implemented. These existing backends are
+classified `SessionOnly`: none is claimed as `MandatoryGlobal`, because no
+implemented system lock/kiosk mechanism currently proves precedence over user
+configuration. A future `MandatoryGlobal` backend must separately apply the
+global value, apply protection/immutability, and verify persistent effective
+state. Successful authoritative global enforcement makes an optional current
+session convergence failure a warning; a `SessionOnly` failure remains fatal
+for that apply.
 
-`OSS/disable_kde_lock_screen_media_controls` classifies every discovered
-candidate through its matching agent. A successfully identified non-KDE
-desktop from the known GNOME, XFCE or FLY families is outside the policy scope.
-Failure to obtain the context, or an empty or unclassified desktop identity
-(for example `COSMIC` or `MATE`), is a policy failure rather than a
-not-applicable result. The not-applicable diagnostic is emitted only when
-classification and all processing succeeded and no KDE session was found.
+`OSS/disable_kde_lock_screen_media_controls` is applicable only to controlled
+KDE sessions. A successfully identified non-KDE desktop is `NotApplicable`.
+Unclassified inventory entries are ignored by ordinary scoped policies but
+fail the dedicated full-inventory compliance policy.
 
 After installing or upgrading the package, existing graphical sessions must
 be restarted or the agent must be launched manually before session-dependent
 policy apply commands can succeed.
+
+Startup/explicit/periodic apply continues to enumerate existing sessions. A
+later `session_ready` performs only targeted enabled `SessionAwarePolicy`
+reconciliation plus a full-inventory compliance check; it does not re-run all
+OSS policies or repeat normal global apply. Runtime reconciliation diagnostics
+do not rewrite the historical result of an earlier apply operation.
+
+The session-event listener is mandatory startup infrastructure. `fic.service`
+remains `Type=notify`, `NotifyAccess=main`, and `TimeoutStartSec=600s`;
+`READY=1` is sent only after startup apply and successful listen on both the
+administrative and session-event sockets. A session-event listen failure exits
+before readiness.
 
 `fic-session-agent --version` and `fic-session-agent --build-info` report the
 compiled product version and build provenance without requiring a graphical

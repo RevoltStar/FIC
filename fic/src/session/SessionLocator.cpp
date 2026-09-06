@@ -39,11 +39,6 @@ std::unordered_map<std::string, std::string> parse_properties(const std::string&
 
 namespace {
 
-enum class SelectionMode {
-    ActiveGraphical,
-    KdeMediaControls
-};
-
 bool agent_endpoint_present(const UserSession& session)
 {
     return session_agent_client_detail::safeEndpointPresent(
@@ -52,7 +47,6 @@ bool agent_endpoint_present(const UserSession& session)
 
 bool enumerate_sessions(
     const fic::platform::PlatformExecutableResolver& executables,
-    SelectionMode mode,
     std::vector<UserSession>& sessions,
     std::string& error)
 {
@@ -91,9 +85,7 @@ bool enumerate_sessions(
             "--property=Class",
             "--property=Remote"
         };
-        if (mode == SelectionMode::KdeMediaControls) {
-            showArguments.push_back("--property=State");
-        }
+        showArguments.push_back("--property=State");
         showArguments.insert(
             showArguments.end(), {"--property=Type", "--no-pager"});
         ProcessResult showResult = ProcessExecutor::execute(
@@ -115,13 +107,10 @@ bool enumerate_sessions(
         properties.remote = value("Remote") == "yes";
 
         const bool agentEndpointPresent =
-            mode == SelectionMode::KdeMediaControls &&
             properties.session.type == "tty" &&
             agent_endpoint_present(properties.session);
-        const bool selected = mode == SelectionMode::ActiveGraphical
-            ? session_selection::activeGraphicalSession(properties)
-            : session_selection::kdeMediaControlsCandidate(
-                properties, agentEndpointPresent);
+        const bool selected = session_selection::graphicalSessionCandidate(
+            properties, agentEndpointPresent);
         if (selected) {
             sessions.push_back(properties.session);
         }
@@ -136,19 +125,10 @@ bool enumerate_sessions(
 
 } // namespace
 
-bool SessionLocator::activeGraphicalSessions(
-    const fic::platform::PlatformExecutableResolver& executables,
-    std::vector<UserSession>& sessions,
-    std::string& error) {
-    return enumerate_sessions(
-        executables, SelectionMode::ActiveGraphical, sessions, error);
-}
-
-bool SessionLocator::kdeMediaControlsCandidates(
+bool SessionLocator::graphicalSessionCandidates(
     const fic::platform::PlatformExecutableResolver& executables,
     std::vector<UserSession>& sessions,
     std::string& error)
 {
-    return enumerate_sessions(
-        executables, SelectionMode::KdeMediaControls, sessions, error);
+    return enumerate_sessions(executables, sessions, error);
 }

@@ -19,6 +19,7 @@ set(FIC_IMAGE_DIR "/opt/fic/image" CACHE PATH "FIC image directory")
 set(FIC_QT_DIR "/opt/fic/qt" CACHE PATH "Bundled GUI Qt runtime directory")
 set(FIC_RUNTIME_DIR "/run/fic" CACHE PATH "FIC runtime directory")
 set(FIC_DAEMON_SOCKET_FILE "${FIC_RUNTIME_DIR}/fic.sock" CACHE FILEPATH "FIC daemon socket")
+set(FIC_SESSION_EVENT_SOCKET_FILE "${FIC_RUNTIME_DIR}/fic-session-events.sock" CACHE FILEPATH "FIC session event socket")
 set(FIC_DEVICE_SOCKET_FILE "${FIC_RUNTIME_DIR}/fic-device.sock" CACHE FILEPATH "FIC device daemon socket")
 
 set(FIC_LOCK_STATUS_FILE "/opt/fic/lockstatus" CACHE FILEPATH "FIC lock status file")

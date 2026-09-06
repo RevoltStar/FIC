@@ -11,13 +11,7 @@ bool graphicalType(const std::string& type)
 
 namespace session_selection {
 
-bool activeGraphicalSession(const SessionProperties& properties)
-{
-    return properties.sessionClass == "user" && !properties.remote &&
-        graphicalType(properties.session.type);
-}
-
-bool kdeMediaControlsCandidate(const SessionProperties& properties,
+bool graphicalSessionCandidate(const SessionProperties& properties,
                                bool agentEndpointPresent)
 {
     if (properties.sessionClass != "user" ||

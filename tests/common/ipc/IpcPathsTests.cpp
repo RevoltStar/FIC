@@ -1,4 +1,5 @@
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/ipc/FicIpcPathDefaults.h>
 
 #include <cassert>
 #include <cstdlib>
@@ -12,6 +13,9 @@ int main() {
     unsetenv("FIC_DEVICE_SOCKET_PATH");
     assert(endpoint_socket_path(Endpoint::PolicyDaemon) == fic::ipc::DEFAULT_SOCKET_PATH);
     assert(endpoint_socket_path(Endpoint::DeviceDaemon) == fic::ipc::DEFAULT_DEVICE_SOCKET_PATH);
+    assert(std::string(fic::ipc::path_defaults::SESSION_EVENT_SOCKET) ==
+           std::string(fic::ipc::path_defaults::RUNTIME_DIR) +
+               "/fic-session-events.sock");
 
     setenv("FIC_SOCKET_PATH", "/tmp/fic-policy-test.sock", 1);
     setenv("FIC_DEVICE_SOCKET_PATH", "/tmp/fic-device-test.sock", 1);

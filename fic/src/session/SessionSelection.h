@@ -14,8 +14,7 @@ struct SessionProperties {
 
 namespace session_selection {
 
-bool activeGraphicalSession(const SessionProperties& properties);
-bool kdeMediaControlsCandidate(const SessionProperties& properties,
+bool graphicalSessionCandidate(const SessionProperties& properties,
                                bool agentEndpointPresent);
 
 } // namespace session_selection

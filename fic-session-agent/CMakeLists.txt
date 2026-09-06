@@ -4,7 +4,8 @@ project(fic_session_agent LANGUAGES CXX)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/FicInstallLayout.cmake)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+find_package(Threads REQUIRED)
+pkg_check_modules(SESSION_AGENT_LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 
 if(NOT TARGET fic-ipc)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fic-common/fic-ipc ${CMAKE_CURRENT_BINARY_DIR}/fic-ipc)
@@ -19,7 +20,7 @@ add_executable(fic-session-agent
     src/SystemdLogindSessionProvider.cpp
 )
 
-target_link_libraries(fic-session-agent PRIVATE fic-ipc PkgConfig::LIBSYSTEMD)
+target_link_libraries(fic-session-agent PRIVATE fic-ipc PkgConfig::SESSION_AGENT_LIBSYSTEMD Threads::Threads)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/fic-session-agent.desktop.in"

@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+main = (root / "fic/src/main.cpp").read_text()
+agent = (root / "fic-session-agent/src/main.cpp").read_text()
+unit = (root / "fic/src/resources/service/fic.service.in").read_text()
+device_unit = (root / "fic/src/resources/service/fic-device.service.in").read_text()
+config = (root / "fic/src/resources/config/OSS.conf").read_text()
+
+assert "Type=notify" in unit
+assert "NotifyAccess=main" in unit
+assert "TimeoutStartSec=600s" in unit
+assert "Type=notify" not in device_unit
+assert "After=fic.service" in device_unit and "Requires=fic.service" in device_unit
+assert "fic-device.service" not in unit
+assert main.index("STATUS=Applying startup policies") < main.index("STATUS=Creating administrative socket")
+assert main.index("STATUS=Creating administrative socket") < main.index("STATUS=Creating session event socket")
+assert main.index("STATUS=Creating session event socket") < main.index("READY=1")
+event_startup = main[main.index("const fic::ipc::AdminSocketResult eventSocketResult"):
+                     main.index("READY=1", main.index("const fic::ipc::AdminSocketResult eventSocketResult"))]
+assert "eventSocketResult.fileDescriptor < 0" in event_startup
+assert "return 1" in event_startup
+assert "ProductionSessionEvents" in main
+assert "PolicyCapability::SessionAware" in main
+assert "PolicyCapability::SessionInventoryCompliance" in main
+worker = main[main.index("void reconcile_session_ready("):
+              main.index("} // namespace", main.index("void reconcile_session_ready("))]
+assert worker.index("inventory.currentSessions") < worker.index("PolicyCapability::SessionAware")
+assert "run_daemon_apply_all_pass" not in worker
+payload = agent[agent.index("const std::string request = nlohmann::json{"):
+                agent.index(".dump();", agent.index("const std::string request = nlohmann::json{"))]
+assert '"event", "session_ready"' in payload
+assert '"session_id", sessionId' in payload
+for forbidden in ('"pid"', '"desktop"', '"policy"', '"value"'):
+    assert forbidden not in payload
+assert "std::thread readinessNotifier" in agent
+assert "controlled_desktop_environments.value=[]" in config
+assert "absence_of_uncontrolled_desktop_environments.status=DISABLE" in config
+for profile in (root / "fic/src/platform/profiles").glob("*.cpp"):
+    assert "controlled_desktop_environments" not in profile.read_text()
+print("desktop environment architecture static checks: OK")

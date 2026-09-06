@@ -9,12 +9,7 @@
 
 class SessionLocator {
 public:
-    static bool activeGraphicalSessions(
-        const fic::platform::PlatformExecutableResolver& executables,
-        std::vector<UserSession>& sessions,
-        std::string& error);
-
-    static bool kdeMediaControlsCandidates(
+    static bool graphicalSessionCandidates(
         const fic::platform::PlatformExecutableResolver& executables,
         std::vector<UserSession>& sessions,
         std::string& error);

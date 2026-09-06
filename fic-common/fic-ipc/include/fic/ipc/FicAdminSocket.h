@@ -11,6 +11,7 @@ namespace fic::ipc {
 
 enum class AdminSocketSecurityProfile {
     ProductionAdmin,
+    ProductionSessionEvents,
     Development
 };
 

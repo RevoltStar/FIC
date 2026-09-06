@@ -3,47 +3,54 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `7934e18`.
+- Родитель текущей правки: `f4a3adcff0dbb971068530b906a7f84a5a43f519`.
 
 ## Current task
 
-- Перевести основной `fic.service` с `Type=simple` на `Type=notify`.
+- Явная область контролируемых DE, единый session-aware policy framework и
+  targeted reconciliation по недоверенному `session_ready` hint.
 
 ## Accepted architecture / invariants
 
-- `READY=1` отправляется только после успешной registry initialization,
-  завершения startup policy apply и успешного `listen()` admin socket.
-- Ошибки отдельных startup policies остаются non-fatal и отражаются в
-  readiness `STATUS`; fatal startup errors завершают процесс до `READY=1`.
-- `sd_notify()` не влияет на direct run без `NOTIFY_SOCKET`.
-- `fic-device.service` остаётся `Type=simple` и зависит от готовности
-  `fic.service` через существующие `After`/`Requires` без обратной зависимости.
+- `controlled_desktop_environments=[]` означает `UNCONFIGURED`; scope не
+  выводится из platform profile, packages или desktop descriptors.
+- Обычные DE policies различают `NotApplicable` и `Unsupported`; compliance
+  policy проверяет полный inventory и fail-closed для неизвестного DE.
+- Все реализованные screen-lock/KDE media backends остаются `SessionOnly`.
+  `MandatoryGlobal` требует раздельных value/protection/verify фаз.
+- `session_ready` идёт через отдельный `/run/fic/fic-session-events.sock`, не
+  содержит PID/desktop/policy data и только планирует bounded/coalesced work.
+- `fic.service`: `Type=notify`, `NotifyAccess=main`, `TimeoutStartSec=600s`;
+  `READY=1` следует после listen admin и session-event sockets.
 
 ## Completed
 
-- Основной `fic` напрямую связан с `libsystemd` через imported pkg-config
-  target и отправляет phase `STATUS` плюс итоговый `READY=1`.
-- `fic.service` использует `Type=notify` и `TimeoutStartSec=120s`.
-- Static contract фиксирует linkage, unit types, dependency graph и порядок
-  readiness lifecycle.
-- Packaging `wait-daemon` health checks не изменялись.
+- Добавлены typed controlled scope и fixed policy отсутствия неконтролируемых DE.
+- `PolicyRegistry` индексирует session-aware/inventory-compliance capabilities.
+- `screenlock_timeout` и KDE media controls переведены на общий lifecycle;
+  session handlers используют read-before-write/readback verify.
+- Добавлены event ingress, logind/peer validation, targeted worker и agent retry.
+- Обновлены config, localization, architecture/session-agent docs и tests.
 
 ## Changed areas
 
-- `fic/CMakeLists.txt`, daemon startup в `fic/src/main.cpp`.
-- `fic.service.in` и `tests/common/static_checks.py`.
+- `fic-common/fic-policy`, `fic-common/fic-ipc`, `fic/src/session`,
+  `fic/src/modules/oss/desktop_environment`, daemon/agent startup, tests/docs.
 
 ## Validation
 
-- `python3 tests/common/static_checks.py .` — passed.
-- `python3 tests/fic/platform/static_checks.py .` — passed.
-- Fresh Ubuntu 26.04 CMake configure и target `fic` build — passed;
-  `libsystemd 257` найден, бинарник связан с `libsystemd.so.0`.
-- Direct `fic --version` без `NOTIFY_SOCKET` — passed.
-- Generated `fic.service`/`fic-device.service`: `systemd-analyze verify` — exit
-  0; sandbox выдал только non-fatal socket-option warnings.
+- Fresh `/tmp` configure и full build: passed с
+  временными development headers/pkg-config metadata и реальной runtime
+  `/usr/lib/x86_64-linux-gnu/libsystemd.so.0`.
+- Все 17 релевантных DE/session/IPC tests: passed.
+- CTest без уже сломанного в базовом HEAD `module_ui_static_checks`: 65 passed,
+  1 environment-dependent test skipped, 0 failed.
+- `git diff --check`: passed.
 
 ## Remaining
 
-- Implementation work не осталось.
-- Полный CTest и реальный systemd startup не выполнялись.
+- `module_ui_static_checks` требует старую строку `saveChanges(..., error)`, хотя
+  базовый HEAD уже использует `ApplyResult::error`; это вне scope текущей задачи.
+- Повторить native configure/build без временных libsystemd headers после
+  установки `libsystemd-dev`.
+- Реальный systemd/logind multi-session integration не выполнялся.

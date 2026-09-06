@@ -2,87 +2,62 @@
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.h"
-#include "session/SessionAgentClient.h"
-#include "session/SessionLocator.h"
-
 #include <optional>
 #include <string>
-#include <vector>
+#include <utility>
 
 OSS_screenlock_timeout::OSS_screenlock_timeout(
-    const fic::platform::PlatformExecutableResolver& executables)
-    : DesktopEnvironment(),
-      executables_(executables)
+    ControlledDesktopEnvironmentScope& scope,
+    std::shared_ptr<GraphicalSessionInventory> inventory)
+    : SessionAwareDesktopEnvironmentPolicy(scope, std::move(inventory))
 {
     this->policyName = "screenlock_timeout";
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 20, 5);
 }
 
-bool OSS_screenlock_timeout::apply()
+bool OSS_screenlock_timeout::prepare(std::string& error)
 {
     const std::optional<std::string> configuredValue = this->getValue();
     if (!configuredValue.has_value()) {
+        error = "screenlock_timeout has no configured value";
         return false;
     }
 
-    int timeoutMinutes = 0;
     try {
-        timeoutMinutes = std::stoi(configuredValue.value());
+        timeoutMinutes_ = std::stoi(configuredValue.value());
     } catch (...) {
-        this->log("Invalid screen lock timeout value", logLevel::ERROR);
+        error = "Invalid screen lock timeout value";
         return false;
     }
+    error.clear();
+    return true;
+}
 
-    std::vector<UserSession> sessions;
-    std::string error;
-    if (!SessionLocator::activeGraphicalSessions(
-            executables_, sessions, error)) {
-        this->log("Failed to enumerate graphical sessions: " + error, logLevel::ERROR);
+bool OSS_screenlock_timeout::relevantTo(DesktopEnvironmentKind desktop) const
+{
+    return desktop != DesktopEnvironmentKind::Unknown;
+}
+
+EnforcementMode OSS_screenlock_timeout::modeFor(
+    DesktopEnvironmentKind desktop) const
+{
+    return desktop == DesktopEnvironmentKind::Lxqt ||
+           desktop == DesktopEnvironmentKind::Unknown
+        ? EnforcementMode::Unsupported
+        : EnforcementMode::SessionOnly;
+}
+
+bool OSS_screenlock_timeout::reconcileControlledSession(
+    const ClassifiedGraphicalSession& session,
+    std::string& error)
+{
+    std::unique_ptr<ScreenLockTimeoutHandler> handler =
+        ScreenLockTimeoutHandlerFactory::create(
+            session.session, session.context);
+    if (!handler) {
+        error = std::string("screenlock_timeout is not supported for desktop ") +
+            DesktopEnvironmentBackend::kindName(session.desktop);
         return false;
     }
-    if (sessions.empty()) {
-        this->log("No active graphical sessions; screenlock_timeout is not applicable", logLevel::DEBUG);
-        return true;
-    }
-
-    bool success = true;
-    for (const UserSession& session : sessions) {
-        SessionContext context;
-        if (!SessionAgentClient::query(session, context, error)) {
-            this->log(
-                "Session agent is unavailable for user " + session.user +
-                ", session " + session.id + ": " + error,
-                logLevel::ERROR
-            );
-            success = false;
-            continue;
-        }
-
-        std::unique_ptr<ScreenLockTimeoutHandler> handler =
-            ScreenLockTimeoutHandlerFactory::create(session, context);
-        if (!handler) {
-            const std::string desktop = DesktopEnvironmentBackend::normalizeName(context.desktop);
-            this->log(
-                "screenlock_timeout is not supported for desktop " +
-                (desktop.empty() ? std::string("UNKNOWN") : desktop) +
-                ", user " + session.user + ", session " + session.id,
-                logLevel::ERROR
-            );
-            success = false;
-            continue;
-        }
-
-        std::string handlerError;
-        if (!handler->apply(timeoutMinutes, handlerError)) {
-            this->log(
-                "Failed to apply screenlock_timeout for user " + session.user +
-                ", session " + session.id + ", desktop " + handler->desktopName() +
-                ": " + handlerError,
-                logLevel::ERROR
-            );
-            success = false;
-        }
-    }
-
-    return success;
+    return handler->apply(timeoutMinutes_, error);
 }

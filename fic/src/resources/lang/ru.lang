@@ -178,6 +178,8 @@
 [module:OSS][policy:grub_disable_recovery]=Отключить режим восстановления GRUB
 [module:OSS][policy:grub_disable_recovery][description]=Управляет GRUB_DISABLE_RECOVERY в /etc/default/grub. Значение ENABLE запрещает создание записей recovery/single-user, значение DISABLE разрешает их. После изменения конфигурация GRUB пересобирается штатной командой системы.
 [module:OSS][policy:screenlock_timeout]=Таймаут блокировки экрана
+[module:OSS][policy:controlled_desktop_environments]=Контролируемые графические окружения
+[module:OSS][policy:absence_of_uncontrolled_desktop_environments]=Отсутствие неконтролируемых графических окружений
 [module:OSS][policy:disable_autologin]=Отключение автоматического входа
 [module:OSS][policy:disable_kde_lock_screen_media_controls]=Отключение управления мультимедиа на экране блокировки KDE
 [module:OSS][policy:fstab_tmp_profile]=Профиль монтирования /tmp
@@ -194,6 +196,8 @@
 
 [module:OSS][policy:disable_autologin][description]=Отключение автоматического входа
 [module:OSS][policy:screenlock_timeout][description]=Таймаут блокировки экрана
+[module:OSS][policy:controlled_desktop_environments][description]=Точная административная область для DE-зависимых политик. Пустой список означает, что область не настроена.
+[module:OSS][policy:absence_of_uncontrolled_desktop_environments][description]=Проверяет, что каждая текущая графическая пользовательская сессия использует контролируемое DE. Политика не завершает сессии.
 [module:OSS][policy:disable_kde_lock_screen_media_controls][description]=Отключает элементы управления воспроизведением мультимедиа на экране блокировки во всех текущих графических KDE-сессиях, включая фоновые и удалённые. Достоверно определённые сессии других графических окружений не входят в область действия политики и не влияют на её результат. Политика не останавливает само воспроизведение.
 [module:OSS][policy:lock_on_tty_switch]=Блокировка экрана при переключении на другой терминал
 [module:OSS][policy:lock_on_tty_switch][description]=Политика пока не поддерживается. При включении применение завершится ошибкой вместо ложного сообщения об успехе.

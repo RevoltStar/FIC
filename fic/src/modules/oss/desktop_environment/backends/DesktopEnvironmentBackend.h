@@ -11,7 +11,8 @@ enum class DesktopEnvironmentKind {
     Fly,
     Gnome,
     Kde,
-    Xfce
+    Xfce,
+    Lxqt
 };
 
 class DesktopEnvironmentBackend {
@@ -22,6 +23,9 @@ public:
     virtual const char* name() const = 0;
 
     static DesktopEnvironmentKind kindFromName(const std::string& desktop);
+    static DesktopEnvironmentKind kindFromCanonicalName(const std::string& desktop);
+    static const char* kindName(DesktopEnvironmentKind kind);
+    static std::vector<DesktopEnvironmentKind> supportedKinds();
     static std::string normalizeName(std::string desktop);
     static std::string findExecutable(const std::vector<std::string>& paths);
 

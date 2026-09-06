@@ -18,9 +18,9 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-require("pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)" in agent_cmake,
+require("pkg_check_modules(SESSION_AGENT_LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)" in agent_cmake,
         "fic-session-agent does not resolve libsystemd through pkg-config")
-require("PkgConfig::LIBSYSTEMD" in agent_cmake,
+require("PkgConfig::SESSION_AGENT_LIBSYSTEMD" in agent_cmake,
         "fic-session-agent is not linked to the imported libsystemd target")
 require("sd_pid_get_session(0" in provider,
         "agent fallback does not resolve the current process session")

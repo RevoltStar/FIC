@@ -26,6 +26,7 @@
 
 #include <nlohmann/json.hpp>
 #include <systemd/sd-daemon.h>
+#include <systemd/sd-login.h>
 
 #include "daemon/main_function.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
@@ -33,6 +34,7 @@
 #include "policy/registry/PolicyRegistryJson.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/ipc/FicIpcPathDefaults.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 #include <fic/core/logging/Logger.h>
@@ -44,6 +46,12 @@
 #include "platform/PlatformProfile.h"
 #include "trust/PackageTrustSelection.h"
 #include "trust/PackageTrustSync.h"
+#include "session/SessionAgentClient.h"
+#include "session/SessionAgentClientInternal.h"
+#include "session/SessionEventServer.h"
+#include "session/SessionReadyValidation.h"
+#include "session/SystemGraphicalSessionInventory.h"
+#include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 
 using json = nlohmann::json;
 
@@ -876,6 +884,101 @@ bool custom_socket_requested(int argc, char* argv[]) {
     }
     return false;
 }
+
+bool validate_session_ready(
+    uid_t peerUid,
+    const std::string& sessionId,
+    ClassifiedGraphicalSession& classified,
+    std::string& error)
+{
+    uid_t sessionUid = 0;
+    if (::sd_session_get_uid(sessionId.c_str(), &sessionUid) < 0) {
+        error = "session does not belong to the event peer";
+        return false;
+    }
+    char* sessionClass = nullptr;
+    char* state = nullptr;
+    char* type = nullptr;
+    const int classResult = ::sd_session_get_class(sessionId.c_str(), &sessionClass);
+    const int stateResult = ::sd_session_get_state(sessionId.c_str(), &state);
+    const int typeResult = ::sd_session_get_type(sessionId.c_str(), &type);
+    const std::string classValue = sessionClass == nullptr ? "" : sessionClass;
+    const std::string stateValue = state == nullptr ? "" : state;
+    const std::string typeValue = type == nullptr ? "" : type;
+    std::free(sessionClass);
+    std::free(state);
+    std::free(type);
+    const bool safeAgentEndpointPresent = typeValue == "tty" &&
+        session_agent_client_detail::safeEndpointPresent(
+            SessionAgentClient::socketPath(
+                UserSession{sessionId, peerUid, {}, typeValue}),
+            peerUid);
+    if (classResult < 0 || stateResult < 0 || typeResult < 0 ||
+        !session_ready_validation::validLogindClaim(
+            peerUid, sessionUid, classValue, stateValue, typeValue,
+            safeAgentEndpointPresent)) {
+        error = "session is not a live graphical user session";
+        return false;
+    }
+
+    classified.session.id = sessionId;
+    classified.session.uid = peerUid;
+    classified.session.type = typeValue;
+    error.clear();
+    return true;
+}
+
+void reconcile_session_ready(
+    PolicyRegistry& registry,
+    GraphicalSessionInventory& inventory,
+    const ClassifiedGraphicalSession& queuedSession)
+{
+    ClassifiedGraphicalSession session = queuedSession;
+    std::string error;
+    std::vector<ClassifiedGraphicalSession> current;
+    const bool inventoryLoaded = inventory.currentSessions(current, error);
+    for (Policy* policy : registry.capabilityPolicies(
+             PolicyCapability::SessionInventoryCompliance)) {
+        if (!policy->isEnabled()) continue;
+        auto* compliance = dynamic_cast<SessionInventoryCompliancePolicy*>(policy);
+        if (compliance == nullptr || !inventoryLoaded ||
+            !compliance->evaluateSessionInventory(current, error)) {
+            policy->log("Runtime desktop session compliance failed: " + error,
+                        logLevel::ERROR);
+        }
+    }
+
+    if (!SessionAgentClient::query(
+            session.session, session.context, error)) {
+        write_audit_log(
+            "session_ready context query failed for session " +
+            session.session.id + ": " + error);
+        return;
+    }
+    session.desktop = DesktopEnvironmentBackend::kindFromName(
+        session.context.desktop);
+    if (session.desktop == DesktopEnvironmentKind::Unknown) {
+        write_audit_log(
+            "session_ready desktop classification failed for session " +
+            session.session.id);
+        return;
+    }
+    for (Policy* policy : registry.capabilityPolicies(PolicyCapability::SessionAware)) {
+        if (!policy->isEnabled()) continue;
+        auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(policy);
+        if (sessionAware == nullptr) continue;
+        error.clear();
+        const SessionApplicability applicability =
+            sessionAware->sessionApplicability(session.desktop, error);
+        if (applicability == SessionApplicability::NotApplicable) continue;
+        if (applicability == SessionApplicability::Unsupported ||
+            !sessionAware->reconcileSession(session, error)) {
+            policy->log("Runtime session reconciliation failed for session " +
+                            session.session.id + ": " + error,
+                        logLevel::ERROR);
+        }
+    }
+}
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1207,6 +1310,44 @@ int main(int argc, char* argv[]) {
     (void)::sd_notify(
         0,
         startupApplyOk
+            ? "STATUS=Creating session event socket"
+            : "STATUS=Startup policy apply completed with errors; creating session event socket");
+    const bool developmentSocket = custom_socket_requested(argc, argv);
+    const std::string sessionEventSocketPath = developmentSocket
+        ? (std::filesystem::path(socketPath).parent_path() /
+           "fic-session-events.sock").string()
+        : fic::ipc::path_defaults::SESSION_EVENT_SOCKET;
+    fic::ipc::AdminSocketOptions eventSocketOptions;
+    eventSocketOptions.socketPath = sessionEventSocketPath;
+    eventSocketOptions.security = developmentSocket
+        ? fic::ipc::AdminSocketSecurityProfile::Development
+        : fic::ipc::AdminSocketSecurityProfile::ProductionSessionEvents;
+    eventSocketOptions.backlog = 32;
+    eventSocketOptions.label = "FIC session event socket";
+    const fic::ipc::AdminSocketResult eventSocketResult =
+        fic::ipc::create_admin_server_socket(eventSocketOptions);
+    if (eventSocketResult.fileDescriptor < 0) {
+        std::cerr << eventSocketResult.error << std::endl;
+        ::close(serverFd);
+        ::unlink(socketPath.c_str());
+        return 1;
+    }
+    const int sessionEventFd = eventSocketResult.fileDescriptor;
+    SystemGraphicalSessionInventory runtimeInventory(executables);
+    SessionEventServer sessionEvents(
+        sessionEventFd,
+        [&](uid_t uid, const std::string& sessionId,
+            ClassifiedGraphicalSession& session, std::string& error) {
+            return validate_session_ready(
+                uid, sessionId, session, error);
+        },
+        [&](const ClassifiedGraphicalSession& session) {
+            reconcile_session_ready(policyRegistry, runtimeInventory, session);
+        });
+
+    (void)::sd_notify(
+        0,
+        startupApplyOk
             ? "READY=1\nSTATUS=Running"
             : "READY=1\nSTATUS=Running; startup policy apply completed with errors");
 
@@ -1218,7 +1359,7 @@ int main(int argc, char* argv[]) {
 
     while (!g_stop) {
         std::string transportError;
-        if (!transport.pollOnce(1000,
+        if (!transport.pollOnce(100,
                 [&](int clientFd, const std::string& requestText) {
                     return handle_client_packet(clientFd, requestText,
                         policyRegistry, platform, executables);
@@ -1227,6 +1368,11 @@ int main(int argc, char* argv[]) {
             std::cerr << transportError << std::endl;
             break;
         }
+        if (!sessionEvents.pollOnce(0, transportError)) {
+            std::cerr << transportError << std::endl;
+            break;
+        }
+        sessionEvents.processOne();
 
         auto now = std::chrono::steady_clock::now();
         if (now >= nextPeriodicApply) {
@@ -1237,6 +1383,8 @@ int main(int argc, char* argv[]) {
 
     ::close(serverFd);
     ::unlink(socketPath.c_str());
+    ::close(sessionEventFd);
+    ::unlink(sessionEventSocketPath.c_str());
     std::cout << "fic daemon stopped" << std::endl;
     return 0;
 }

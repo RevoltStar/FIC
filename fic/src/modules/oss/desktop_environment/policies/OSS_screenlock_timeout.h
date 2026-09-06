@@ -1,22 +1,28 @@
 #ifndef OSS_SCREENLOCK_TIMEOUT_H
 #define OSS_SCREENLOCK_TIMEOUT_H
 
-#include "modules/oss/desktop_environment/DesktopEnvironment.h"
-#include "platform/PlatformExecutableResolver.h"
+#include "modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.h"
 
 #include <string>
 #include <vector>
 
-class OSS_screenlock_timeout : public DesktopEnvironment
+class OSS_screenlock_timeout final : public SessionAwareDesktopEnvironmentPolicy
 {
 public:
     explicit OSS_screenlock_timeout(
-        const fic::platform::PlatformExecutableResolver& executables);
+        ControlledDesktopEnvironmentScope& scope,
+        std::shared_ptr<GraphicalSessionInventory> inventory);
 
-    bool apply () override;
+protected:
+    bool prepare(std::string& error) override;
+    bool relevantTo(DesktopEnvironmentKind desktop) const override;
+    EnforcementMode modeFor(DesktopEnvironmentKind desktop) const override;
+    bool reconcileControlledSession(
+        const ClassifiedGraphicalSession& session,
+        std::string& error) override;
 
 private:
-    const fic::platform::PlatformExecutableResolver& executables_;
+    int timeoutMinutes_ = 0;
 };
 
 #endif // OSS_SCREENLOCK_TIMEOUT_H

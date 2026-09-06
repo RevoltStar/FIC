@@ -416,14 +416,15 @@ def main():
     require(
         "disable_videodisplay_when_locked" not in policy_registry + oss_config and
         "disable_videodisplay_when_locked" in upgrade_contract and
-        "kdeMediaControlsCandidates" in kde_media_policy_source and
-        "SelectionMode::ActiveGraphical" in session_locator and
-        "SelectionMode::KdeMediaControls" in session_locator and
-        "agentEndpointPresent" in session_selection and
+        "SessionAwareDesktopEnvironmentPolicy" in kde_media_policy_source and
+        "kdeMediaControlsCandidates" not in kde_media_policy_source and
+        "graphicalSessionCandidates" in session_locator and
+        "SelectionMode::" not in session_locator and
+        "graphicalSessionCandidate" in session_selection and
         'properties.state == "closing"' in session_selection and
         'properties.state == "dead"' in session_selection and
         '"--property=Active"' not in session_locator,
-        "KDE media-controls policy still has legacy naming/session filtering",
+        "KDE media-controls policy is not using shared graphical-session filtering",
     )
     require(
         "safeEndpointPresent" in session_locator and

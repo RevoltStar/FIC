@@ -104,6 +104,9 @@ public:
             return false;
         }
         policy->freezeDependencies();
+        for (const PolicyCapability capability : policy->capabilities()) {
+            capabilityPolicies_[capability].push_back(policy.get());
+        }
         policies.emplace(policy->policyName, std::move(policy));
         return true;
     }
@@ -149,6 +152,14 @@ public:
         return refs;
     }
 
+    const std::vector<Policy*>& capabilityPolicies(
+        PolicyCapability capability) const {
+        const auto found = capabilityPolicies_.find(capability);
+        return found == capabilityPolicies_.end()
+            ? emptyCapabilityPolicies_
+            : found->second;
+    }
+
     iterator begin() { return modules_.begin(); }
     const_iterator begin() const { return modules_.begin(); }
     iterator end() { return modules_.end(); }
@@ -157,13 +168,18 @@ public:
     const_iterator find(const std::string& name) const { return modules_.find(name); }
     PolicyModule& at(const std::string& name) { return modules_.at(name); }
     const PolicyModule& at(const std::string& name) const { return modules_.at(name); }
-    void swap(PolicyRegistry& other) noexcept { modules_.swap(other.modules_); }
-    void clear() { modules_.clear(); }
+    void swap(PolicyRegistry& other) noexcept {
+        modules_.swap(other.modules_);
+        capabilityPolicies_.swap(other.capabilityPolicies_);
+    }
+    void clear() { modules_.clear(); capabilityPolicies_.clear(); }
     bool empty() const { return modules_.empty(); }
     std::size_t size() const { return modules_.size(); }
 
 private:
     ModuleMap modules_;
+    std::map<PolicyCapability, std::vector<Policy*>> capabilityPolicies_;
+    inline static const std::vector<Policy*> emptyCapabilityPolicies_{};
 };
 
 #endif // POLICY_REGISTRY_H

@@ -28,7 +28,45 @@ DesktopEnvironmentKind DesktopEnvironmentBackend::kindFromName(const std::string
     if (normalized == "XFCE") {
         return DesktopEnvironmentKind::Xfce;
     }
+    if (normalized == "LXQT") {
+        return DesktopEnvironmentKind::Lxqt;
+    }
     return DesktopEnvironmentKind::Unknown;
+}
+
+DesktopEnvironmentKind DesktopEnvironmentBackend::kindFromCanonicalName(
+    const std::string& desktop)
+{
+    if (desktop == "FLY") return DesktopEnvironmentKind::Fly;
+    if (desktop == "GNOME") return DesktopEnvironmentKind::Gnome;
+    if (desktop == "KDE") return DesktopEnvironmentKind::Kde;
+    if (desktop == "XFCE") return DesktopEnvironmentKind::Xfce;
+    if (desktop == "LXQT") return DesktopEnvironmentKind::Lxqt;
+    return DesktopEnvironmentKind::Unknown;
+}
+
+const char* DesktopEnvironmentBackend::kindName(DesktopEnvironmentKind kind)
+{
+    switch (kind) {
+    case DesktopEnvironmentKind::Fly: return "FLY";
+    case DesktopEnvironmentKind::Gnome: return "GNOME";
+    case DesktopEnvironmentKind::Kde: return "KDE";
+    case DesktopEnvironmentKind::Xfce: return "XFCE";
+    case DesktopEnvironmentKind::Lxqt: return "LXQT";
+    case DesktopEnvironmentKind::Unknown: return "UNKNOWN";
+    }
+    return "UNKNOWN";
+}
+
+std::vector<DesktopEnvironmentKind> DesktopEnvironmentBackend::supportedKinds()
+{
+    return {
+        DesktopEnvironmentKind::Fly,
+        DesktopEnvironmentKind::Gnome,
+        DesktopEnvironmentKind::Kde,
+        DesktopEnvironmentKind::Xfce,
+        DesktopEnvironmentKind::Lxqt
+    };
 }
 
 std::string DesktopEnvironmentBackend::normalizeName(std::string desktop)
@@ -57,6 +95,9 @@ std::string DesktopEnvironmentBackend::normalizeName(std::string desktop)
         }
         if (token == "XFCE" || token == "XFCE4") {
             return "XFCE";
+        }
+        if (token == "LXQT") {
+            return "LXQT";
         }
 
         if (separator == std::string::npos) {

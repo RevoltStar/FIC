@@ -68,6 +68,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/fic-session-agent/static_checks.py
                 ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME desktop_environment_architecture_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/oss/desktop_environment/static_checks.py.in
+                ${CMAKE_SOURCE_DIR}
+    )
 endif()
 
 add_test(
@@ -166,22 +172,69 @@ target_include_directories(gsettings_value_parser_tests PRIVATE
 )
 add_test(NAME gsettings_value_parser_tests COMMAND gsettings_value_parser_tests)
 
-add_executable(kde_lock_screen_media_controls_applicability_tests
-    fic/modules/oss/desktop_environment/KdeLockScreenMediaControlsApplicabilityTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+add_executable(controlled_desktop_environments_tests
+    fic/modules/oss/desktop_environment/ControlledDesktopEnvironmentsTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/ControlledDesktopEnvironmentsPolicyTypeValue.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/KdeLockScreenMediaControlsApplicability.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionSelection.cpp
 )
-target_include_directories(kde_lock_screen_media_controls_applicability_tests PRIVATE
+target_include_directories(controlled_desktop_environments_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(kde_lock_screen_media_controls_applicability_tests PRIVATE fic-core)
-add_test(
-    NAME kde_lock_screen_media_controls_applicability_tests
-    COMMAND kde_lock_screen_media_controls_applicability_tests
+target_link_libraries(controlled_desktop_environments_tests PRIVATE fic-policy fic-core)
+add_test(NAME controlled_desktop_environments_tests
+         COMMAND controlled_desktop_environments_tests)
+
+add_executable(session_event_server_tests
+    fic/modules/oss/desktop_environment/SessionEventServerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionEventServer.cpp
 )
+target_include_directories(session_event_server_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME session_event_server_tests COMMAND session_event_server_tests)
+
+add_executable(session_aware_policy_tests
+    fic/modules/oss/desktop_environment/SessionAwarePolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_absence_of_uncontrolled_desktop_environments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+)
+target_include_directories(session_aware_policy_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(session_aware_policy_tests PRIVATE fic-policy fic-core)
+add_test(NAME session_aware_policy_tests COMMAND session_aware_policy_tests)
+
+add_executable(session_setting_reconciler_tests
+    fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp
+)
+target_include_directories(session_setting_reconciler_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME session_setting_reconciler_tests
+         COMMAND session_setting_reconciler_tests)
+
+add_executable(session_ready_retry_tests
+    fic-session-agent/SessionReadyRetryTests.cpp
+)
+target_include_directories(session_ready_retry_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-session-agent/src
+)
+add_test(NAME session_ready_retry_tests COMMAND session_ready_retry_tests)
+
+add_executable(session_ready_validation_tests
+    fic/modules/oss/desktop_environment/SessionReadyValidationTests.cpp
+)
+target_include_directories(session_ready_validation_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME session_ready_validation_tests COMMAND session_ready_validation_tests)
 
 add_test(
     NAME packaging_build_resource_tests

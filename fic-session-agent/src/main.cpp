@@ -1,6 +1,8 @@
 #include "SessionIdentityResolver.h"
 #include "SystemdLogindSessionProvider.h"
+#include "SessionReadyRetry.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <csignal>
@@ -10,6 +12,8 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <thread>
+#include <chrono>
 #include <utility>
 #include <sys/file.h>
 #include <sys/select.h>
@@ -21,6 +25,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/ipc/FicIpcPathDefaults.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
 
@@ -137,6 +142,56 @@ void serve_client(
 
     fic::ipc::write_all(fd, response.dump() + "\n", error);
 }
+
+bool notify_session_ready_once(const std::string& sessionId) {
+    const int fd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    if (fd < 0) return false;
+    timeval timeout{};
+    timeout.tv_sec = 2;
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    const std::string path = fic::ipc::path_defaults::SESSION_EVENT_SOCKET;
+    if (path.size() >= sizeof(address.sun_path)) {
+        ::close(fd);
+        return false;
+    }
+    std::strncpy(address.sun_path, path.c_str(), sizeof(address.sun_path) - 1);
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+        ::close(fd);
+        return false;
+    }
+    const std::string request = nlohmann::json{
+        {"event", "session_ready"}, {"session_id", sessionId}}.dump();
+    if (::send(fd, request.data(), request.size(), MSG_NOSIGNAL) < 0) {
+        ::close(fd);
+        return false;
+    }
+    char responseBuffer[1024];
+    const ssize_t count = ::recv(fd, responseBuffer, sizeof(responseBuffer), 0);
+    ::close(fd);
+    if (count <= 0) return false;
+    try {
+        const auto response = nlohmann::json::parse(
+            responseBuffer, responseBuffer + count);
+        return response.is_object() && response.value("ok", false);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void notify_session_ready_with_retry(const std::string& sessionId) {
+    fic::session_agent::retrySessionReady(
+        [&]() { return notify_session_ready_once(sessionId); },
+        []() { return stopRequested.load(); },
+        [&](std::chrono::milliseconds retryDelay) {
+        const auto deadline = std::chrono::steady_clock::now() + retryDelay;
+        while (!stopRequested && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        });
+}
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -216,6 +271,9 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
 
+    std::thread readinessNotifier(
+        notify_session_ready_with_retry, std::cref(sessionId));
+
     while (!stopRequested) {
         fd_set readSet;
         FD_ZERO(&readSet);
@@ -239,5 +297,6 @@ int main(int argc, char* argv[]) {
     ::close(serverFd);
     ::unlink(socketPath.c_str());
     ::close(lockFd);
+    if (readinessNotifier.joinable()) readinessNotifier.join();
     return 0;
 }

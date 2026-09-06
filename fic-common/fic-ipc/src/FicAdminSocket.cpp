@@ -142,13 +142,8 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
     group* ficGroup = nullptr;
     std::optional<gid_t> expectedSocketGroup;
     mode_t socketMode = 0600;
-    if (options.security == AdminSocketSecurityProfile::ProductionAdmin) {
-        ficGroup = ::getgrnam("fic");
-        if (ficGroup == nullptr) {
-            result.error = "group 'fic' does not exist; refusing to expose production administrative socket";
-            return result;
-        }
-        expectedSocketGroup = ficGroup->gr_gid;
+    if (options.security == AdminSocketSecurityProfile::ProductionAdmin ||
+        options.security == AdminSocketSecurityProfile::ProductionSessionEvents) {
         if (::chown(runtimeDir.c_str(), 0, 0) != 0 ||
             ::chmod(runtimeDir.c_str(), 0755) != 0) {
             result.error = "failed to enforce production runtime directory metadata: " +
@@ -158,7 +153,19 @@ AdminSocketResult create_admin_server_socket(const AdminSocketOptions& options) 
         if (!verifyPath(runtimeDir, S_IFDIR, 0755, 0, 0, result.error)) {
             return result;
         }
+    }
+    if (options.security == AdminSocketSecurityProfile::ProductionAdmin) {
+        ficGroup = ::getgrnam("fic");
+        if (ficGroup == nullptr) {
+            result.error = "group 'fic' does not exist; refusing to expose production administrative socket";
+            return result;
+        }
+        expectedSocketGroup = ficGroup->gr_gid;
         socketMode = 0660;
+    } else if (options.security == AdminSocketSecurityProfile::ProductionSessionEvents) {
+        // Any local user may submit an untrusted readiness hint. The daemon
+        // derives identity from SO_PEERCRED and validates the session itself.
+        socketMode = 0622;
     } else if (!runtimeDirExisted && ::chmod(runtimeDir.c_str(), 0700) != 0) {
         result.error = "failed to secure development runtime directory: " +
             std::string(std::strerror(errno));
