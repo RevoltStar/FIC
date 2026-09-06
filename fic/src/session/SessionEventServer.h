@@ -25,7 +25,7 @@ public:
 private:
     static constexpr std::size_t MaxRequestBytes = 4096;
     static constexpr std::size_t MaxPending = 128;
-    static constexpr int ClientPayloadTimeoutMilliseconds = 1000;
+    static constexpr int ClientPayloadTimeoutMilliseconds = 200;
     int serverFd_;
     Validator validator_;
     Reconciler reconciler_;
