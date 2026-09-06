@@ -15,6 +15,63 @@ bool writeAck(int fd, bool ok, const std::string& message)
     const std::string text = nlohmann::json{{"ok", ok}, {"message", message}}.dump();
     return ::send(fd, text.data(), text.size(), MSG_NOSIGNAL) >= 0;
 }
+
+bool readPacketWithTimeout(int fd, char* buffer, std::size_t bufferSize,
+                           int timeoutMilliseconds, ssize_t& count,
+                           std::string& error)
+{
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(timeoutMilliseconds);
+    while (true) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            error = "session event payload timeout";
+            return false;
+        }
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - now);
+        const int pollTimeout = std::max(1, static_cast<int>(remaining.count()));
+        pollfd descriptor{fd, POLLIN, 0};
+        const int ready = ::poll(&descriptor, 1, pollTimeout);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            error = "session-event client poll failed: " +
+                std::string(std::strerror(errno));
+            return false;
+        }
+        if (ready == 0) {
+            error = "session event payload timeout";
+            return false;
+        }
+        if ((descriptor.revents & (POLLERR | POLLNVAL)) != 0) {
+            error = "session-event client connection error";
+            return false;
+        }
+        if ((descriptor.revents & POLLIN) == 0) {
+            if ((descriptor.revents & POLLHUP) != 0) {
+                error = "session-event peer closed without a payload";
+                return false;
+            }
+            continue;
+        }
+
+        count = ::recv(fd, buffer, bufferSize, MSG_TRUNC);
+        if (count < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;
+            }
+            error = "session-event receive failed: " +
+                std::string(std::strerror(errno));
+            return false;
+        }
+        if (count == 0) {
+            error = "session-event peer closed without a payload";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+}
 }
 
 SessionEventServer::SessionEventServer(
@@ -51,8 +108,16 @@ bool SessionEventServer::pollOnce(int timeoutMilliseconds, std::string& error)
     }
 
     char buffer[MaxRequestBytes + 1];
-    const ssize_t count = ::recv(client, buffer, sizeof(buffer), MSG_TRUNC);
-    if (count <= 0 || static_cast<std::size_t>(count) > MaxRequestBytes) {
+    ssize_t count = 0;
+    std::string payloadError;
+    if (!readPacketWithTimeout(
+            client, buffer, sizeof(buffer), ClientPayloadTimeoutMilliseconds,
+            count, payloadError)) {
+        writeAck(client, false, payloadError);
+        ::close(client);
+        return true;
+    }
+    if (static_cast<std::size_t>(count) > MaxRequestBytes) {
         writeAck(client, false, "invalid session event size");
         ::close(client);
         return true;

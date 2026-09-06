@@ -8,6 +8,9 @@ agent = (root / "fic-session-agent/src/main.cpp").read_text()
 unit = (root / "fic/src/resources/service/fic.service.in").read_text()
 device_unit = (root / "fic/src/resources/service/fic-device.service.in").read_text()
 config = (root / "fic/src/resources/config/OSS.conf").read_text()
+event_server = (root / "fic/src/session/SessionEventServer.cpp").read_text()
+ru_lang = (root / "fic/src/resources/lang/ru.lang").read_text()
+en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
 
 assert "Type=notify" in unit
 assert "NotifyAccess=main" in unit
@@ -29,6 +32,13 @@ worker = main[main.index("void reconcile_session_ready("):
               main.index("} // namespace", main.index("void reconcile_session_ready("))]
 assert worker.index("inventory.currentSessions") < worker.index("PolicyCapability::SessionAware")
 assert "run_daemon_apply_all_pass" not in worker
+unknown_dispatch = worker[worker.index("DesktopEnvironmentKind::Unknown"):
+                          worker.index("PolicyCapability::SessionAware")]
+assert "return;" in unknown_dispatch
+assert "readPacketWithTimeout" in event_server
+assert "POLLIN" in event_server and "POLLERR" in event_server and "POLLHUP" in event_server
+assert "EAGAIN" in event_server and "EWOULDBLOCK" in event_server and "EINTR" in event_server
+assert "ClientPayloadTimeoutMilliseconds" in event_server
 payload = agent[agent.index("const std::string request = nlohmann::json{"):
                 agent.index(".dump();", agent.index("const std::string request = nlohmann::json{"))]
 assert '"event", "session_ready"' in payload
@@ -38,6 +48,15 @@ for forbidden in ('"pid"', '"desktop"', '"policy"', '"value"'):
 assert "std::thread readinessNotifier" in agent
 assert "controlled_desktop_environments.value=[]" in config
 assert "absence_of_uncontrolled_desktop_environments.status=DISABLE" in config
+for localization in (ru_lang, en_lang):
+    for policy in ("screenlock_timeout", "disable_kde_lock_screen_media_controls"):
+        description = next(
+            line for line in localization.splitlines()
+            if line.startswith(f"[module:OSS][policy:{policy}][description]=")
+        )
+        assert "controlled" in description.lower() or "контролируем" in description.lower()
+        assert "cannot be identified" in description.lower() or "не удалось определить" in description.lower()
+        assert "absence_of_uncontrolled" not in description
 for profile in (root / "fic/src/platform/profiles").glob("*.cpp"):
     assert "controlled_desktop_environments" not in profile.read_text()
 print("desktop environment architecture static checks: OK")

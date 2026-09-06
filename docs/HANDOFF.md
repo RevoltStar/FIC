@@ -7,8 +7,8 @@
 
 ## Current task
 
-- Явная область контролируемых DE, единый session-aware policy framework и
-  targeted reconciliation по недоверенному `session_ready` hint.
+- Устранение connect-before-send race в `SessionEventServer` и явная фиксация
+  scope semantics ordinary DE-dependent policies.
 
 ## Accepted architecture / invariants
 
@@ -25,24 +25,24 @@
 
 ## Completed
 
-- Добавлены typed controlled scope и fixed policy отсутствия неконтролируемых DE.
-- `PolicyRegistry` индексирует session-aware/inventory-compliance capabilities.
-- `screenlock_timeout` и KDE media controls переведены на общий lifecycle;
-  session handlers используют read-before-write/readback verify.
-- Добавлены event ingress, logind/peer validation, targeted worker и agent retry.
-- Обновлены config, localization, architecture/session-agent docs и tests.
+- Accepted nonblocking session-event connection теперь bounded ожидает payload;
+  `EINTR`/`EAGAIN` повторяются, timeout/error/hangup/close обрабатываются безопасно.
+- Добавлен connect-before-send regression, silent-client timeout и recovery
+  следующим запросом.
+- Ordinary policies явно игнорируют uncontrolled/unknown sessions; dedicated
+  compliance policy остаётся fail-closed. Обновлены ru/en descriptions и docs.
 
 ## Changed areas
 
-- `fic-common/fic-policy`, `fic-common/fic-ipc`, `fic/src/session`,
-  `fic/src/modules/oss/desktop_environment`, daemon/agent startup, tests/docs.
+- `fic/src/session/SessionEventServer*`, DE semantic/event tests, ru/en
+  localization и архитектурная/session-agent документация.
 
 ## Validation
 
-- Fresh `/tmp` configure и full build: passed с
-  временными development headers/pkg-config metadata и реальной runtime
-  `/usr/lib/x86_64-linux-gnu/libsystemd.so.0`.
-- Все 17 релевантных DE/session/IPC tests: passed.
+- Full incremental build: passed в `/tmp/fic-de-build` с временными development
+  headers/pkg-config metadata и реальной runtime `libsystemd.so.0`.
+- 6 релевантных DE/session tests: passed.
+- `session_event_server_tests` десять последовательных прогонов: passed.
 - CTest без уже сломанного в базовом HEAD `module_ui_static_checks`: 65 passed,
   1 environment-dependent test skipped, 0 failed.
 - `git diff --check`: passed.

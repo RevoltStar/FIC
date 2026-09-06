@@ -195,10 +195,10 @@
 [module:OSS][policy:fstab_opt_profile]=Secure mount options for /opt
 
 [module:OSS][policy:disable_autologin][description]=Disable automatic login
-[module:OSS][policy:screenlock_timeout][description]=Screen lock timeout
+[module:OSS][policy:screenlock_timeout][description]=Sets the screen lock timeout only for desktop environments listed by the “Controlled desktop environments” policy. Sessions using a desktop outside that list, and sessions whose desktop cannot be identified, are outside this policy's scope, are ignored, and do not affect apply success. The separate “Absence of uncontrolled desktop environments” policy detects them.
 [module:OSS][policy:controlled_desktop_environments][description]=Exact administrative scope for desktop-dependent policies. An empty list is unconfigured.
-[module:OSS][policy:absence_of_uncontrolled_desktop_environments][description]=Checks that every current graphical user session uses a controlled desktop environment. It does not terminate sessions.
-[module:OSS][policy:disable_kde_lock_screen_media_controls][description]=Disables multimedia playback controls on the lock screen in every current graphical KDE session, including background and remote sessions. Reliably identified sessions using other desktop environments are outside this policy's scope and do not affect its result. The policy does not stop media playback.
+[module:OSS][policy:absence_of_uncontrolled_desktop_environments][description]=Checks the complete current graphical user-session inventory and fails if a session's desktop is outside the controlled list or cannot be reliably identified. It does not terminate sessions.
+[module:OSS][policy:disable_kde_lock_screen_media_controls][description]=Disables multimedia playback controls on the lock screen only for KDE when it is listed by the “Controlled desktop environments” policy, including background and remote KDE sessions. Sessions using other desktops, and sessions whose desktop cannot be identified, are outside this policy's scope, are ignored, and do not affect apply success. The separate “Absence of uncontrolled desktop environments” policy detects them. This policy does not stop media playback.
 [module:OSS][policy:lock_on_tty_switch]=Lock screen when switching to another terminal
 [module:OSS][policy:lock_on_tty_switch][description]=This policy is not supported yet. If enabled, applying it fails instead of reporting a false success.
 [module:OSS][policy:lock_on_tty_switch][message:not_implemented]=Locking the screen on TTY switch is not implemented yet

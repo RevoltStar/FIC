@@ -115,11 +115,24 @@ int main() {
     require(ignored.apply() && ignored.reconciled == 0,
             "uncontrolled desktop was not ignored");
 
+    auto unclassified = session(DesktopEnvironmentKind::Unknown);
+    unclassified.classificationError = "unknown desktop";
+    inventory->value = {unclassified};
+    TestPolicy ignoredUnknown(scope, inventory);
+    require(ignoredUnknown.apply() && ignoredUnknown.reconciled == 0,
+            "unclassifiable session failed an ordinary policy apply");
+    std::string targetedError;
+    require(ignoredUnknown.reconcileSession(unclassified, targetedError) &&
+            ignoredUnknown.reconciled == 0,
+            "unclassifiable session failed targeted ordinary reconciliation");
+
     inventory->value.clear();
+    scope.value = {DesktopEnvironmentKind::Lxqt};
     TestPolicy unsupported(scope, inventory);
     unsupported.mode = EnforcementMode::Unsupported;
     require(!unsupported.apply(), "controlled unsupported backend succeeded");
 
+    scope.value = {DesktopEnvironmentKind::Gnome};
     TestPolicy deferred(scope, inventory);
     require(deferred.apply() && deferred.reconciled == 0,
             "zero-session SessionOnly apply was not deferred success");
@@ -153,9 +166,7 @@ int main() {
                 {session(DesktopEnvironmentKind::Gnome),
                  session(DesktopEnvironmentKind::Lxqt)}, error),
             "full inventory ignored an uncontrolled session");
-    auto unknown = session(DesktopEnvironmentKind::Unknown);
-    unknown.classificationError = "unknown desktop";
-    require(!absence.evaluateSessionInventory({unknown}, error),
+    require(!absence.evaluateSessionInventory({unclassified}, error),
             "unclassifiable graphical session passed compliance");
     scope.value.clear();
     require(!absence.evaluateSessionInventory({}, error),

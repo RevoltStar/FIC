@@ -1343,8 +1343,9 @@ runtime-каталог `root:root 0755` и сокет `root:fic 0660`. Груп�
 `controlled_desktop_environments` is an explicit typed administrative scope;
 an empty value is `UNCONFIGURED`. It is never derived from installed packages,
 desktop files, or the platform profile. For an ordinary DE policy, a desktop
-outside the scope is `NotApplicable`, while a controlled desktop without a
-backend is `Unsupported` and fails. The fixed
+outside the scope and an unclassifiable session are ignored and do not affect
+apply success, while a controlled desktop without a required backend is
+`Unsupported` and fails. The fixed
 `absence_of_uncontrolled_desktop_environments` policy checks the full current
 graphical-session inventory and fails closed for unknown or uncontrolled DEs.
 
@@ -1355,6 +1356,10 @@ The hint contains no PID, desktop, display, or policy data. The daemon obtains
 the peer UID, validates the session through logind, queries the existing agent
 socket, classifies the DE, coalesces the bounded work item, acknowledges
 scheduling, and performs targeted reconciliation outside ingress handling.
+After accepting a nonblocking client connection, ingress waits for its single
+packet only for a bounded interval. A client which connects before sending is
+therefore handled without a false `EAGAIN` rejection, while a silent or closed
+peer cannot block the daemon indefinitely.
 
 All currently implemented screen-lock and KDE media-control backends are
 `SessionOnly`. `MandatoryGlobal` is reserved for a backend which applies the

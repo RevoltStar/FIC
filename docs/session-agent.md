@@ -65,11 +65,14 @@ identity handoff cannot be resolved by this fallback.
 `controlled_desktop_environments` is the exact administrative scope for all
 desktop-dependent policies. Its default empty list means `UNCONFIGURED`; it is
 not inferred from packages, session descriptors, or distribution identity.
-An ordinary policy ignores a reliably classified desktop outside this scope.
-A controlled desktop without a policy backend is `Unsupported` and fails.
-The fixed `absence_of_uncontrolled_desktop_environments` policy instead checks
-the complete current inventory and fails for an uncontrolled or unclassifiable
-graphical session. It observes compliance only and does not terminate sessions.
+An ordinary policy ignores both a reliably classified desktop outside this
+scope and an unclassifiable graphical session; neither affects that ordinary
+policy's apply result. A controlled desktop without a required policy backend
+is `Unsupported` and fails. Detection of desktops outside the scope and
+unclassifiable graphical sessions belongs exclusively to the fixed
+`absence_of_uncontrolled_desktop_environments` policy. It checks the complete
+current inventory, fails closed for either case, and observes compliance only;
+it does not terminate sessions.
 
 For policies that require graphical-session access, the daemon:
 
