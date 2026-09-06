@@ -1019,6 +1019,20 @@ def main():
         and 'find("..")' not in command_hash_store,
         "command hash calculation must validate and hash one safely opened fd",
     )
+    verify_hash_body = command_hash_store.split(
+        "bool CommandHashStore::verifyHash", 1
+    )[1]
+    require(
+        "validateCommandHashStoreKey" in command_hash_store
+        and "byte <= 0x1f" not in command_hash_store
+        and "byte > 0x1f" in command_hash_store
+        and "byte != 0x7f" in command_hash_store
+        and "byte != '='" in command_hash_store
+        and "byte != '#'" in command_hash_store
+        and verify_hash_body.find("validateCommandHashStoreKey")
+        < verify_hash_body.find("loadConfig"),
+        "command hash store keys must be format-safe before persistence or lookup",
+    )
     require(
         "S_IRGRP | S_IWGRP" not in exclusive_lock,
         "runtime lock files must not be group-writable",

@@ -9,6 +9,11 @@
 #include <algorithm>
 #include <fic/core/fs/FileHandler.h>
 
+enum class ConfigKeyWhitespacePolicy {
+    Normalize,
+    Preserve,
+};
+
 //Класс для работы с конфигурационными файлами вида
 //ключ1<разделитель>значение1
 //ключ2<разделитель>значение2
@@ -19,7 +24,9 @@ public:
     //delimiter может принимать одно из следующих специальных значений
     ConfigFileHandler(const std::string& filepath,
                       const std::string& delimiter = "=",
-                      FileHandlerOptions options = {});
+                      FileHandlerOptions options = {},
+                      ConfigKeyWhitespacePolicy keyWhitespacePolicy =
+                          ConfigKeyWhitespacePolicy::Normalize);
     //Загружаем конфигурационный файл
     bool loadConfig() override;
 
@@ -55,6 +62,7 @@ public:
 protected:
     //Конфиг
     std::unordered_map<std::string, std::string> config_;
+    ConfigKeyWhitespacePolicy keyWhitespacePolicy_;
 };
 
 

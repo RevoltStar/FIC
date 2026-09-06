@@ -8,6 +8,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 void writeFile(const std::filesystem::path& path, mode_t mode)
@@ -21,6 +22,16 @@ bool calculate(const std::string& path, std::string& error)
     std::string hash;
     return command_hash_store_detail::calculateValidatedExecutableSha256(
         path, hash, error);
+}
+
+void assertUnsafeStoreKeyRejected(const std::string& path)
+{
+    std::string error;
+    assert(!command_hash_store_detail::validateCommandHashStoreKey(path, error));
+    assert(error.find("0x") != std::string::npos);
+    for (const unsigned char byte : error) {
+        assert(byte >= 0x20 && byte != 0x7f);
+    }
 }
 } // namespace
 
@@ -43,6 +54,33 @@ int main()
     const fs::path doubleDotName = root / "foo..bar";
     writeFile(doubleDotName, 0711);
     assert(calculate(doubleDotName.string(), error));
+
+    const fs::path utf8Name = root / u8"исполняемый файл";
+    writeFile(utf8Name, 0755);
+    assert(calculate(utf8Name.string(), error));
+
+    assert(command_hash_store_detail::validateCommandHashStoreKey(
+        executableWithSpaces.string(), error));
+    assert(command_hash_store_detail::validateCommandHashStoreKey(
+        doubleDotName.string(), error));
+    assert(command_hash_store_detail::validateCommandHashStoreKey(
+        utf8Name.string(), error));
+
+    std::vector<std::string> unsafeStoreKeys = {
+        root.string() + "/equals=name",
+        root.string() + "/comment#name",
+        root.string() + "/line\nfeed",
+        root.string() + "/carriage\rreturn",
+        root.string() + "/horizontal\ttab",
+        root.string() + "/control" + std::string(1, '\x01'),
+        root.string() + "/delete" + std::string(1, '\x7f'),
+        root.string() + "/nul" + std::string(1, '\0') + "suffix",
+    };
+    for (const std::string& unsafeStoreKey : unsafeStoreKeys) {
+        assertUnsafeStoreKeyRejected(unsafeStoreKey);
+        assert(!calculate(unsafeStoreKey, error));
+        assert(error.find("0x") != std::string::npos);
+    }
 
     const fs::path nonExecutable = root / "regular-no-execute";
     writeFile(nonExecutable, 0644);

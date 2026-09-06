@@ -4,8 +4,10 @@
 
 ConfigFileHandler::ConfigFileHandler(const std::string& filepath,
                                      const std::string& delimiter,
-                                     FileHandlerOptions options)
-    : FileHandler(filepath, delimiter, std::move(options)) {
+                                     FileHandlerOptions options,
+                                     ConfigKeyWhitespacePolicy keyWhitespacePolicy)
+    : FileHandler(filepath, delimiter, std::move(options)),
+      keyWhitespacePolicy_(keyWhitespacePolicy) {
     //Загружаем файл в переменную (плохо - может возникнуть ошибка с правами когда не надо)
     //this->FileHandler::loadFile();
     //Создаем конфигурационный файл (плохо - создается много массивов одновременно)
@@ -49,7 +51,9 @@ bool ConfigFileHandler::loadConfig() {
         std::string value = line.substr(delimiter_pos + 1);
         //std::cout << parameter + "   " + value << std::endl;
         // Удаляем пробельные символы из параметра и значения
-        trim(parameter, true);
+        if (keyWhitespacePolicy_ == ConfigKeyWhitespacePolicy::Normalize) {
+            trim(parameter, true);
+        }
         trim(value);
 
         line = parameter + this->delimiter_ + value;
@@ -84,7 +88,9 @@ bool ConfigFileHandler::setValue(const std::string& parameter, const std::string
             if (pos == std::string::npos) return false;
 
             std::string param = line.substr(0, pos);
-            this->trim(param);
+            if (keyWhitespacePolicy_ == ConfigKeyWhitespacePolicy::Normalize) {
+                this->trim(param);
+            }
             return param == parameter;
         });
 
@@ -114,7 +120,9 @@ bool ConfigFileHandler::removeValue(const std::string& parameter) {
                     return false;
                 }
                 std::string candidate = line.substr(0, pos);
-                this->trim(candidate);
+                if (keyWhitespacePolicy_ == ConfigKeyWhitespacePolicy::Normalize) {
+                    this->trim(candidate);
+                }
                 return candidate == parameter;
             }),
         original_lines_.end());

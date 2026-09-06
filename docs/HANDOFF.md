@@ -3,50 +3,53 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `b2c32ca`.
+- Родитель текущей правки: `54cfa7a`.
 
 ## Current task
 
-- Безопасная fd-based валидация и SHA-256 hashing executable paths в
-  `CommandHashStore`/`calc_hash`.
+- Совместимость executable pathname с line-based форматом `commandhash.txt`.
 
 ## Accepted architecture / invariants
 
-- Path syntax проверяется component-aware; final symlink запрещён, intermediate
-  symlink-компоненты разрешены для совместимости с distro layouts.
-- Target открывается один раз с `O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK`, затем тот же
-  fd проходит `fstat`, regular/execute-bit validation и SHA-256 read.
-- Формат/path hash store и SHA-256 algorithm не изменены; batch update остаётся
-  all-inputs-before-store-mutation.
+- Filesystem path validation, storage-key validation и opened-object validation
+  остаются отдельными этапами.
+- `commandhash.txt` сохраняет формат `<path>=<sha256>` без migration/escaping.
+- Target по-прежнему открывается один раз с
+  `O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK`; `fstat`, execute-bit validation и
+  SHA-256 выполняются по тому же fd.
+- Общий `ConfigFileHandler` сохраняет прежнюю нормализацию key whitespace по
+  умолчанию; exact whitespace включён только opt-in для `CommandHashStore`.
 
 ## Completed
 
-- `CommandHashStore` переведён с `lstat`/`ifstream` на RAII fd-based open/fstat/read.
-- FIFO/device/directory/non-executable/final-symlink paths отклоняются; FIFO
-  open не блокируется.
-- `calc_hash` handler возвращает безопасную причину ошибки клиенту.
-- Добавлены security, handler, path syntax, deterministic pathname-replacement
-  TOCTOU и batch atomicity regressions.
+- Storage keys fail-closed отклоняют ASCII controls `0x00..0x1F`, `0x7F`, `=`
+  и `#` до open, store mutation/remove или verify lookup.
+- Ошибка на запрещённый byte использует безопасные hex/symbolic diagnostics и
+  не отражает raw pathname.
+- Accepted pathname с повторными/крайними spaces, UTF-8 и `foo..bar` сохраняет
+  exact key и проходит save/load/verify round-trip.
+- Добавлены validator, daemon response, batch atomicity, removal и round-trip
+  regressions.
 
 ## Changed areas
 
-- `fic-common/fic-core` integrity store, daemon `calc_hash` routing,
-  architecture docs и tests.
+- `fic-common/fic-core`: opt-in key whitespace policy и `CommandHashStore`.
+- Tests: command hash security/batch/handler и static contract.
 
 ## Validation
 
-- Fresh configure и full build: passed в `/tmp/fic-hash-build` с
-  временными development headers/pkg-config metadata и реальной runtime
-  `libsystemd.so.0`.
-- Relevant hash/static/handler tests: passed; normal CTest root-only batch test
-  skipped, затем отдельно passed через `unshare -Ur`.
-- CTest без уже сломанного в базовом HEAD `module_ui_static_checks`: 69 passed,
-  1 environment-dependent test skipped, 0 failed.
+- Fresh configure и full build passed в
+  `/tmp/fic-commandhash-key-build-20260906` с временной pkg-config metadata для
+  доступной runtime `libsystemd.so.0`.
+- Relevant command hash tests passed; root-only batch test отдельно passed через
+  `unshare -Ur`.
+- CTest вне sandbox без базово сломанного `module_ui_static_checks`: 69 passed,
+  1 root-only test skipped, 0 failed.
 - `git diff --check`: passed.
 
 ## Remaining
 
-- `module_ui_static_checks` требует старую строку `saveChanges(..., error)`, хотя
-  базовый HEAD уже использует `ApplyResult::error`; это вне scope текущей задачи.
-- Повторить native configure/build без временных libsystemd headers после
-  установки `libsystemd-dev`.
+- `module_ui_static_checks` уже сломан в базовом HEAD: ожидает старую строку
+  `saveChanges(..., error)`, тогда как код использует `ApplyResult::error`.
+- Native configure без временной libsystemd pkg-config metadata требует
+  установки development package `libsystemd-dev`.

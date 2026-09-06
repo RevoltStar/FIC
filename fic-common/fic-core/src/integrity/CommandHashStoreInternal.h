@@ -7,6 +7,8 @@ namespace command_hash_store_detail {
 
 bool validateExecutablePathSyntax(const std::string& executable,
                                   std::string& error);
+bool validateCommandHashStoreKey(const std::string& executable,
+                                 std::string& error);
 bool calculateSha256FromFd(int descriptor, std::string& hash,
                            std::string& error);
 bool calculateValidatedExecutableSha256(const std::string& executable,

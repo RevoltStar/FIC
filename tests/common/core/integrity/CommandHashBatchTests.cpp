@@ -56,21 +56,33 @@ int main() {
 
     const fs::path first = root / "first";
     const fs::path second = root / "second executable";
+    const fs::path unusual = root / u8"исполняемый  foo..bar ";
+    const fs::path equalsName = root / "invalid=name";
+    const fs::path commentName = root / "invalid#name";
     {
         std::ofstream(first) << "first executable\n";
         std::ofstream(second) << "second executable\n";
+        std::ofstream(unusual) << "unusual executable\n";
+        std::ofstream(equalsName) << "invalid store key\n";
+        std::ofstream(commentName) << "invalid store key\n";
         std::ofstream(paths.commandHashFile) << "/manual/path=preserved\n";
     }
     assert(::chmod(first.c_str(), 0755) == 0);
     assert(::chmod(second.c_str(), 0755) == 0);
+    assert(::chmod(unusual.c_str(), 0755) == 0);
+    assert(::chmod(equalsName.c_str(), 0755) == 0);
+    assert(::chmod(commentName.c_str(), 0755) == 0);
 
     assert(CommandHashStore::saveHashes(
-        {first.string(), second.string()}, error));
+        {first.string(), second.string(), unusual.string()}, error));
     assert(CommandHashStore::verifyHash(first.string(), error));
     assert(CommandHashStore::verifyHash(second.string(), error));
+    assert(CommandHashStore::verifyHash(unusual.string(), error));
     assert(fileMode(paths.commandHashFile) == 0640);
     assert(fileMode(paths.commandHashFile.string() + ".lock") == 0640);
     assert(readFile(paths.commandHashFile).find("/manual/path=preserved") !=
+           std::string::npos);
+    assert(readFile(paths.commandHashFile).find(unusual.string() + "=") !=
            std::string::npos);
 
     assert(CommandHashStore::updateHashes(
@@ -91,6 +103,27 @@ int main() {
     assert(!CommandHashStore::saveHashes(
         {first.string(), "relative/path"}, error));
     assert(readFile(paths.commandHashFile) == beforeFailure);
+    assert(!CommandHashStore::saveHashes(
+        {second.string(), equalsName.string(), unusual.string()}, error));
+    assert(error.find("0x3D") != std::string::npos);
+    assert(readFile(paths.commandHashFile) == beforeFailure);
+    assert(!CommandHashStore::saveHash(commentName.string(), error));
+    assert(error.find("0x23") != std::string::npos);
+    assert(readFile(paths.commandHashFile) == beforeFailure);
+    assert(!CommandHashStore::saveHash(
+        root.string() + "/line\nfeed", error));
+    assert(error.find("0x0A") != std::string::npos);
+    assert(readFile(paths.commandHashFile) == beforeFailure);
+    assert(!CommandHashStore::updateHashes(
+        {}, {equalsName.string()}, error));
+    assert(error.find("0x3D") != std::string::npos);
+    assert(readFile(paths.commandHashFile) == beforeFailure);
+
+    const fs::path hashBackup = root / "db/commandhash.backup";
+    fs::rename(paths.commandHashFile, hashBackup);
+    assert(!CommandHashStore::verifyHash(equalsName.string(), error));
+    assert(error.find("0x3D") != std::string::npos);
+    fs::rename(hashBackup, paths.commandHashFile);
 
     fs::remove_all(root);
     return 0;

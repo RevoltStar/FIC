@@ -55,6 +55,14 @@ int main()
                "no execute permission bits") != std::string::npos);
     assert(readFile(paths.commandHashFile) == before);
 
+    const auto storeKeyResponse = calcHashCommandResponse(
+        root.string() + "/invalid\npathname");
+    assert(!storeKeyResponse.value("ok", true));
+    const std::string storeKeyMessage = storeKeyResponse.value("message", "");
+    assert(storeKeyMessage.find("0x0A") != std::string::npos);
+    assert(storeKeyMessage.find('\n') == std::string::npos);
+    assert(readFile(paths.commandHashFile) == before);
+
     fs::remove_all(root);
     return 0;
 }

@@ -59,6 +59,10 @@ bool open_validated_executable(const std::string& executable,
             executable, error)) {
         return false;
     }
+    if (!command_hash_store_detail::validateCommandHashStoreKey(
+            executable, error)) {
+        return false;
+    }
 
     const int rawDescriptor = ::open(
         executable.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
@@ -176,6 +180,40 @@ bool command_hash_file_options(FileHandlerOptions& options, std::string& error) 
 
 namespace command_hash_store_detail {
 
+bool validateCommandHashStoreKey(const std::string& executable,
+                                 std::string& error) {
+    constexpr char HexDigits[] = "0123456789ABCDEF";
+    for (const unsigned char byte : executable) {
+        if (byte > 0x1f && byte != 0x7f && byte != '=' && byte != '#') {
+            continue;
+        }
+
+        std::string byteDescription = "0x";
+        byteDescription.push_back(HexDigits[byte >> 4]);
+        byteDescription.push_back(HexDigits[byte & 0x0f]);
+        if (byte == 0x00) {
+            byteDescription += " (NUL)";
+        } else if (byte == 0x09) {
+            byteDescription += " (TAB)";
+        } else if (byte == 0x0a) {
+            byteDescription += " (LF)";
+        } else if (byte == 0x0d) {
+            byteDescription += " (CR)";
+        } else if (byte == 0x7f) {
+            byteDescription += " (DEL)";
+        } else if (byte == '=') {
+            byteDescription += " (equals sign)";
+        } else if (byte == '#') {
+            byteDescription += " (number sign)";
+        }
+        error = "executable path contains a byte unsupported by the command "
+                "hash store format: " + byteDescription;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool validateExecutablePathSyntax(const std::string& executable,
                                   std::string& error) {
     if (executable.empty()) {
@@ -257,11 +295,10 @@ bool CommandHashStore::updateHashes(
         hashes.emplace_back(executable, hash);
     }
     for (const std::string& executable : removedExecutables) {
-        std::string pathError;
         if (!command_hash_store_detail::validateExecutablePathSyntax(
-                executable, pathError)) {
-            error = "invalid executable path to remove from command hash store: " +
-                    executable + ": " + pathError;
+                executable, error) ||
+            !command_hash_store_detail::validateCommandHashStoreKey(
+                executable, error)) {
             return false;
         }
     }
@@ -270,7 +307,8 @@ bool CommandHashStore::updateHashes(
     if (!command_hash_file_options(fileOptions, error)) {
         return false;
     }
-    ConfigFileHandler commandHashes(hashFile, "=", fileOptions);
+    ConfigFileHandler commandHashes(
+        hashFile, "=", fileOptions, ConfigKeyWhitespacePolicy::Preserve);
     if (!commandHashes.loadConfig()) {
         error = "failed to load command hash file: " + hashFile;
         return false;
@@ -296,8 +334,16 @@ bool CommandHashStore::updateHashes(
 }
 
 bool CommandHashStore::verifyHash(const std::string& executable, std::string& error) {
+    if (!command_hash_store_detail::validateExecutablePathSyntax(
+            executable, error) ||
+        !command_hash_store_detail::validateCommandHashStoreKey(
+            executable, error)) {
+        return false;
+    }
+
     const std::string hashFile = command_hash_file_path().string();
-    ConfigFileHandler commandHashes(hashFile);
+    ConfigFileHandler commandHashes(
+        hashFile, "=", {}, ConfigKeyWhitespacePolicy::Preserve);
     if (!commandHashes.loadConfig()) {
         error = "failed to load command hash file: " + hashFile;
         return false;
