@@ -143,9 +143,6 @@ bool lock(const fic::platform::PlatformExecutableResolver& executables);
 bool unlock();
 //Текущий статус
 bool lockstatus();
-//Вычислить хэш для исполняемого файла
-bool calcHash(const std::string& command);
-
 //Получить значение параметра
 std::string getArgvValue(int argc, char* argv[], int ind);
 

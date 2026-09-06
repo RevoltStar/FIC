@@ -55,12 +55,14 @@ int main() {
     assert(fic::core::FicRuntimePaths::initialize(paths, error));
 
     const fs::path first = root / "first";
-    const fs::path second = root / "second";
+    const fs::path second = root / "second executable";
     {
         std::ofstream(first) << "first executable\n";
         std::ofstream(second) << "second executable\n";
         std::ofstream(paths.commandHashFile) << "/manual/path=preserved\n";
     }
+    assert(::chmod(first.c_str(), 0755) == 0);
+    assert(::chmod(second.c_str(), 0755) == 0);
 
     assert(CommandHashStore::saveHashes(
         {first.string(), second.string()}, error));
@@ -80,6 +82,12 @@ int main() {
            std::string::npos);
 
     const std::string beforeFailure = readFile(paths.commandHashFile);
+    const fs::path nonExecutable = root / "non-executable";
+    std::ofstream(nonExecutable) << "not executable\n";
+    assert(::chmod(nonExecutable.c_str(), 0644) == 0);
+    assert(!CommandHashStore::saveHashes(
+        {first.string(), nonExecutable.string(), second.string()}, error));
+    assert(readFile(paths.commandHashFile) == beforeFailure);
     assert(!CommandHashStore::saveHashes(
         {first.string(), "relative/path"}, error));
     assert(readFile(paths.commandHashFile) == beforeFailure);

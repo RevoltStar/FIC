@@ -29,6 +29,7 @@
 #include <systemd/sd-login.h>
 
 #include "daemon/main_function.h"
+#include "daemon/CalcHashCommand.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "policy/registry/PolicyRegistryJson.h"
@@ -770,9 +771,7 @@ json handle_request(json request,
                 request.value("limit", MAX_LOG_RECORDS_PER_PAGE));
         }
         if (command == "calc_hash") {
-            bool ok = calcHash(value);
-            return ok ? fic::ipc::make_ok_response("command hash updated")
-                      : fic::ipc::make_error_response("failed to update command hash");
+            return calcHashCommandResponse(value);
         }
         if (command == "lock") {
             bool ok = lock(executables);

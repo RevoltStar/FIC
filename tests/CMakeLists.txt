@@ -776,6 +776,27 @@ target_link_libraries(command_hash_batch_tests PRIVATE fic-core)
 add_test(NAME command_hash_batch_tests COMMAND command_hash_batch_tests)
 set_tests_properties(command_hash_batch_tests PROPERTIES SKIP_RETURN_CODE 77)
 
+add_executable(command_hash_security_tests
+    common/core/integrity/CommandHashSecurityTests.cpp
+)
+target_include_directories(command_hash_security_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-core/src
+)
+target_link_libraries(command_hash_security_tests PRIVATE fic-core)
+add_test(NAME command_hash_security_tests COMMAND command_hash_security_tests)
+set_tests_properties(command_hash_security_tests PROPERTIES TIMEOUT 5)
+
+add_executable(calc_hash_command_tests
+    fic/daemon/CalcHashCommandTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp
+)
+target_include_directories(calc_hash_command_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(calc_hash_command_tests PRIVATE fic-core fic-ipc)
+add_test(NAME calc_hash_command_tests COMMAND calc_hash_command_tests)
+set_tests_properties(calc_hash_command_tests PROPERTIES TIMEOUT 5)
+
 add_executable(package_trust_selection_tests
     fic/trust/PackageTrustSelectionTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/trust/PackageTrustSelection.cpp

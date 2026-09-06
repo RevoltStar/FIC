@@ -3,7 +3,6 @@
 #include "policy/registry/PolicyRegistryInitialization.h"
 #include "policy/registry/PolicyRegistryMutation.h"
 
-#include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
@@ -158,16 +157,6 @@ bool lockstatus(){
         std::cout << "    Разблокировано" << std::endl;
     }else{
         std::cout << "    Заблокировано" << std::endl;
-    }
-    return true;
-}
-
-//Вычислить хэш для исполняемого файла
-bool calcHash(const std::string& command){
-    std::string error;
-    if(!CommandHashStore::saveHash(command, error)){
-        std::cerr << error << std::endl;
-        return false;
     }
     return true;
 }

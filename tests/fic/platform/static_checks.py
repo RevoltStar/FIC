@@ -1008,6 +1008,18 @@ def main():
         "command hash runtime writes must preserve group read-only access",
     )
     require(
+        "O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK" in command_hash_store
+        and "::fstat(" in command_hash_store
+        and "S_ISREG(" in command_hash_store
+        and "S_IXUSR | S_IXGRP | S_IXOTH" in command_hash_store
+        and "calculateSha256FromFd(descriptor.get()" in command_hash_store
+        and "::read(descriptor" in command_hash_store
+        and "std::ifstream" not in command_hash_store
+        and "::lstat(" not in command_hash_store
+        and 'find("..")' not in command_hash_store,
+        "command hash calculation must validate and hash one safely opened fd",
+    )
+    require(
         "S_IRGRP | S_IWGRP" not in exclusive_lock,
         "runtime lock files must not be group-writable",
     )

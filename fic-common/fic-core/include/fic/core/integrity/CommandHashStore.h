@@ -13,10 +13,6 @@ public:
                              const std::vector<std::string>& removedExecutables,
                              std::string& error);
     static bool verifyHash(const std::string& executable, std::string& error);
-
-private:
-    static bool isValidExecutablePath(const std::string& executable, std::string& error);
-    static std::string calculateSha256(const std::string& executable, std::string& error);
 };
 
 #endif // COMMAND_HASH_STORE_H

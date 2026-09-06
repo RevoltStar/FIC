@@ -505,6 +505,14 @@ flowchart LR
     atomic --> checked
 ```
 
+`CommandHashStore` принимает только абсолютный путь к обычному файлу хотя бы с
+одним execute mode bit. Target открывается один раз с `O_CLOEXEC`,
+`O_NOFOLLOW` и `O_NONBLOCK`; тип и mode проверяются через `fstat`, а SHA-256
+читается из того же descriptor. Поэтому final symlink и special files
+отклоняются, FIFO не блокирует daemon, а между pathname validation и hashing
+нет повторного открытия target. Intermediate symlink-компоненты сохраняются
+для совместимости с usr-merge и другими platform layouts.
+
 Для политик `Sudo` системная конфигурация рассматривается как единый include-
 граф, а не как один `/etc/sudoers`:
 
