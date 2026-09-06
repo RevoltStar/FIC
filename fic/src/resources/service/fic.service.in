@@ -2,8 +2,9 @@
 Description=FIC policy daemon
 
 [Service]
-Type=simple
+Type=notify
 ExecStart=@FIC_PRIVATE_BINDIR@/fic --interval 1800
+TimeoutStartSec=120s
 Restart=on-failure
 UMask=0027
 

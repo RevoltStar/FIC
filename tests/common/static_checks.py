@@ -101,6 +101,54 @@ for expected in (
     if expected not in admin_socket:
         errors.append(f"production admin socket metadata check is missing: {expected}")
 
+fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
+fic_main = (root / "fic/src/main.cpp").read_text(encoding="utf-8")
+fic_service = (root / "fic/src/resources/service/fic.service.in").read_text(
+    encoding="utf-8"
+)
+device_service = (
+    root / "fic/src/resources/service/fic-device.service.in"
+).read_text(encoding="utf-8")
+for expected in (
+    "pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)",
+    "PkgConfig::LIBSYSTEMD",
+):
+    if expected not in fic_cmake:
+        errors.append(f"fic does not link systemd notification support: {expected}")
+if "Type=notify" not in fic_service or "Type=simple" in fic_service:
+    errors.append("fic.service must use Type=notify")
+if "TimeoutStartSec=120s" not in fic_service or "TimeoutStartSec=infinity" in fic_service:
+    errors.append("fic.service must have a finite 120 second startup timeout")
+if "Type=simple" not in device_service or "Type=notify" in device_service:
+    errors.append("fic-device.service must remain Type=simple")
+for dependency in ("After=fic.service", "Requires=fic.service"):
+    if dependency not in device_service:
+        errors.append(f"fic-device.service lost its readiness dependency: {dependency}")
+if "fic-device.service" in fic_service:
+    errors.append("fic.service introduces a dependency cycle with fic-device.service")
+
+daemon_startup = fic_main[fic_main.index("int main(int argc, char* argv[])"):]
+startup_markers = (
+    'STATUS=Validating startup configuration',
+    'STATUS=Initializing policy registry',
+    'STATUS=Applying startup policies',
+    'run_daemon_apply_all_pass(',
+    'STATUS=Creating administrative socket',
+    'create_admin_server_socket(socketOptions)',
+    'READY=1\\nSTATUS=Running',
+)
+cursor = 0
+for marker in startup_markers:
+    position = daemon_startup.find(marker, cursor)
+    if position < 0:
+        errors.append(f"fic readiness lifecycle is missing or misordered: {marker}")
+        break
+    cursor = position + len(marker)
+if daemon_startup.count("READY=1") != 2:
+    errors.append("fic must notify readiness only through the two startup-result statuses")
+if "NOTIFY_SOCKET" in fic_main or "sd_notify(0" not in daemon_startup:
+    errors.append("fic must rely on non-fatal sd_notify semantics outside systemd")
+
 code_suffixes = {".cpp", ".h", ".hpp", ".cc"}
 for base in ("fic", "fic-cli", "fic-dick", "fic-gui", "fic-session-agent", "fic-common"):
     for path in (root / base).rglob("*"):

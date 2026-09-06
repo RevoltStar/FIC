@@ -3,46 +3,47 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `ae1c800`.
+- Родитель текущей правки: `7934e18`.
 
 ## Current task
 
-- Добавить exact trusted authentication bypass для штатного LightDM
-  passwordless-login пути в ALT p11.
+- Перевести основной `fic.service` с `Type=simple` на `Type=notify`.
 
 ## Accepted architecture / invariants
 
-- `PamControlFlowAnalyzer` остаётся fail-closed и принимает bypass только при
-  точном совпадении service/module/control/argv/source с platform metadata.
-- Несколько display manager могут объявлять отдельные exact bypass rules для
-  одной группы из `passwordlessLoginControl`; generic whitelist не вводится.
+- `READY=1` отправляется только после успешной registry initialization,
+  завершения startup policy apply и успешного `listen()` admin socket.
+- Ошибки отдельных startup policies остаются non-fatal и отражаются в
+  readiness `STATUS`; fatal startup errors завершают процесс до `READY=1`.
+- `sd_notify()` не влияет на direct run без `NOTIFY_SOCKET`.
+- `fic-device.service` остаётся `Type=simple` и зависит от готовности
+  `fic.service` через существующие `After`/`Requires` без обратной зависимости.
 
 ## Completed
 
-- ALT p11 profile содержит отдельные exact rules для `gdm-password` и
-  `lightdm` с `pam_succeed_if.so user ingroup nopasswdlogin`.
-- Platform validation разрешает несколько explicit passwordless rules, но
-  требует хотя бы одно и проверяет argv каждого против управляемой группы.
-- Добавлены profile и PAM control-flow regressions для LightDM и несовпадений
-  service/source/control/argv.
+- Основной `fic` напрямую связан с `libsystemd` через imported pkg-config
+  target и отправляет phase `STATUS` плюс итоговый `READY=1`.
+- `fic.service` использует `Type=notify` и `TimeoutStartSec=120s`.
+- Static contract фиксирует linkage, unit types, dependency graph и порядок
+  readiness lifecycle.
+- Packaging `wait-daemon` health checks не изменялись.
 
 ## Changed areas
 
-- ALT p11 platform profile и platform compatibility validation.
-- `PlatformProfileTests` и `PamConfigurationTests`.
+- `fic/CMakeLists.txt`, daemon startup в `fic/src/main.cpp`.
+- `fic.service.in` и `tests/common/static_checks.py`.
 
 ## Validation
 
-- ALT p11 `pam_configuration_tests` — passed после полной пересборки target
-  objects по существующим generated recipes.
-- ALT p11 `platform_profile_tests` — passed при прямой сборке из актуальных
-  profile sources.
-- Обычный top-level CMake configure недоступен в текущем окружении: отсутствуют
-  PAM и libsystemd development files.
-- `git diff --check` выполняется перед завершением.
+- `python3 tests/common/static_checks.py .` — passed.
+- `python3 tests/fic/platform/static_checks.py .` — passed.
+- Fresh Ubuntu 26.04 CMake configure и target `fic` build — passed;
+  `libsystemd 257` найден, бинарник связан с `libsystemd.so.0`.
+- Direct `fic --version` без `NOTIFY_SOCKET` — passed.
+- Generated `fic.service`/`fic-device.service`: `systemd-analyze verify` — exit
+  0; sandbox выдал только non-fatal socket-option warnings.
 
 ## Remaining
 
 - Implementation work не осталось.
-- Полная CMake/CTest validation не выполнялась из-за отсутствующих development
-  dependencies; runtime-проверка на ALT p11 host не выполнялась.
+- Полный CTest и реальный systemd startup не выполнялись.

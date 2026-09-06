@@ -25,6 +25,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <systemd/sd-daemon.h>
 
 #include "daemon/main_function.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
@@ -1103,6 +1104,9 @@ int main(int argc, char* argv[]) {
     }
 
     if (!packageTrustSync && !affectedPackageTrustSync) {
+        if (get_arg_value(argc, argv, 1) != "--maintenance") {
+            (void)::sd_notify(0, "STATUS=Validating startup configuration");
+        }
         std::string configError;
         if (!fic::core::ConfigSchemaManager::verifyConfigs(
                 fic::core::FicRuntimePaths::get().configDir, configError)) {
@@ -1143,6 +1147,7 @@ int main(int argc, char* argv[]) {
         std::setlocale(LC_ALL, "");
     }
 
+    (void)::sd_notify(0, "STATUS=Initializing policy registry");
     PolicyRegistry policyRegistry;
     std::string registryError;
     if (!initPolicyRegistry(
@@ -1158,6 +1163,7 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
 
+    (void)::sd_notify(0, "STATUS=Applying startup policies");
     bool startupRegistryReloadFailed = false;
     const bool startupApplyOk = run_daemon_apply_all_pass(
         policyRegistry, platform, executables, "startup",
@@ -1173,6 +1179,11 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     }
 
+    (void)::sd_notify(
+        0,
+        startupApplyOk
+            ? "STATUS=Creating administrative socket"
+            : "STATUS=Startup policy apply completed with errors; creating administrative socket");
     fic::ipc::AdminSocketOptions socketOptions;
     socketOptions.socketPath = socketPath;
     socketOptions.security = custom_socket_requested(argc, argv)
@@ -1192,6 +1203,12 @@ int main(int argc, char* argv[]) {
     }
     const int serverFd = socketResult.fileDescriptor;
     fic::ipc::AdminSocketTransport transport(serverFd);
+
+    (void)::sd_notify(
+        0,
+        startupApplyOk
+            ? "READY=1\nSTATUS=Running"
+            : "READY=1\nSTATUS=Running; startup policy apply completed with errors");
 
     std::cout << "fic daemon started, socket=" << socketPath
               << ", interval=" << intervalSeconds << "s"
