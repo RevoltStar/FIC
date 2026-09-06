@@ -25,6 +25,7 @@ add_library(fic-core STATIC
     src/fs/AtomicFileWriter.cpp
     src/fs/FileHandler.cpp
     src/fs/FileStats.cpp
+    src/fs/TrustedFileReader.cpp
     src/i18n/LocalizationManager.cpp
     src/integrity/CommandHashStore.cpp
     src/logging/Logger.cpp

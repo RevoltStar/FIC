@@ -2,13 +2,12 @@
 #include "modules/identity_access/nss/NssConfiguration.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
+#include <fic/core/fs/TrustedFileReader.h>
 
 #include <algorithm>
 #include <cctype>
-#include <fstream>
 #include <optional>
 #include <sstream>
-#include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
 
@@ -20,28 +19,16 @@ struct GroupState {
     std::vector<std::string> members;
 };
 
-bool readRegularFile(const std::filesystem::path& path,
-                     std::string& content,
-                     std::string& error) {
-    struct stat status {};
-    if (::lstat(path.c_str(), &status) != 0 || !S_ISREG(status.st_mode) ||
-        S_ISLNK(status.st_mode) || status.st_uid != ::geteuid() ||
-        (status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-        error = "unsafe or unavailable identity file: " + path.string();
-        return false;
-    }
-    std::ifstream input(path);
-    if (!input.is_open()) {
-        error = "could not read identity file: " + path.string();
-        return false;
-    }
-    content.assign(std::istreambuf_iterator<char>(input),
-                   std::istreambuf_iterator<char>());
-    if (input.bad()) {
-        error = "could not read complete identity file: " + path.string();
-        return false;
-    }
-    return true;
+bool readIdentityFile(
+    const std::filesystem::path& path,
+    const fic::core::TrustedFilePostValidationHook& validationHook,
+    std::string& content,
+    std::string& error) {
+    fic::core::TrustedFileReadOptions options;
+    options.expectedOwner = ::geteuid();
+    options.forbiddenMode = S_IWGRP | S_IWOTH;
+    return fic::core::readTrustedFile(
+        path, options, content, error, nullptr, validationHook);
 }
 
 std::vector<std::string> split(const std::string& value, char delimiter) {
@@ -131,12 +118,10 @@ bool verifySupportedNss(
         *initgroups, control.supportedNss.initgroups, "initgroups", error);
 }
 
-bool readGroupState(const std::filesystem::path& path,
-                    const std::string& group,
-                    GroupState& state,
-                    std::string& error) {
-    std::string content;
-    if (!readRegularFile(path, content, error)) return false;
+bool parseGroupState(const std::string& content,
+                     const std::string& group,
+                     GroupState& state,
+                     std::string& error) {
     state = {};
     std::istringstream input(content);
     std::string line;
@@ -170,12 +155,10 @@ bool readGroupState(const std::filesystem::path& path,
     return true;
 }
 
-bool hasPrimaryGroup(const std::filesystem::path& path,
-                     unsigned long gid,
-                     std::string& user,
-                     std::string& error) {
-    std::string content;
-    if (!readRegularFile(path, content, error)) return true;
+bool findPrimaryGroup(const std::string& content,
+                      unsigned long gid,
+                      std::string& user,
+                      std::string& error) {
     std::istringstream input(content);
     std::string line;
     while (std::getline(input, line)) {
@@ -201,10 +184,12 @@ PamDisableNopasswdloginPolicy::PamDisableNopasswdloginPolicy(
     fic::platform::PamPlatformConfig platform,
     const fic::platform::PlatformExecutableResolver& executables,
     Runner runner,
-    EffectiveMembershipResolver membershipResolver)
+    EffectiveMembershipResolver membershipResolver,
+    fic::core::TrustedFilePostValidationHook readValidationHook)
     : platform_(std::move(platform)), executables_(executables),
       runner_(std::move(runner)),
-      membershipResolver_(std::move(membershipResolver)) {
+      membershipResolver_(std::move(membershipResolver)),
+      readValidationHook_(std::move(readValidationHook)) {
     policyName = "disable_nopasswdlogin";
     policyTypeValue = std::make_unique<FixedPolicyTypeValue>("ENABLE");
     if (!runner_) {
@@ -233,7 +218,10 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
         return false;
     }
     GroupState group;
-    if (!readGroupState(control.groupPath, control.groupName, group, error)) {
+    std::string groupContent;
+    if (!readIdentityFile(control.groupPath, readValidationHook_,
+                          groupContent, error) ||
+        !parseGroupState(groupContent, control.groupName, group, error)) {
         log("Could not inspect passwordless group: " + error, logLevel::ERROR);
         return false;
     }
@@ -259,9 +247,11 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
         return false;
     }
     std::string primaryUser;
+    std::string passwdContent;
     error.clear();
-    if (hasPrimaryGroup(
-            control.passwdPath, group.gid, primaryUser, error)) {
+    if (!readIdentityFile(control.passwdPath, readValidationHook_,
+                          passwdContent, error) ||
+        findPrimaryGroup(passwdContent, group.gid, primaryUser, error)) {
         log(error.empty()
                 ? "Refusing to change primary group of user " + primaryUser
                 : "Could not inspect primary groups: " + error,
@@ -295,14 +285,20 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
     GroupState verified;
     fic::identity::pam::PamEffectiveGroupMembership verifiedEffective;
     primaryUser.clear();
+    groupContent.clear();
+    passwdContent.clear();
     error.clear();
     if (!verifySupportedNss(control, error) ||
-        !readGroupState(
-            control.groupPath, control.groupName, verified, error) ||
+        !readIdentityFile(control.groupPath, readValidationHook_,
+                          groupContent, error) ||
+        !parseGroupState(
+            groupContent, control.groupName, verified, error) ||
         !verified.exists || verified.gid != group.gid ||
         !verified.members.empty() ||
-        hasPrimaryGroup(
-            control.passwdPath, verified.gid, primaryUser, error) ||
+        !readIdentityFile(control.passwdPath, readValidationHook_,
+                          passwdContent, error) ||
+        findPrimaryGroup(
+            passwdContent, verified.gid, primaryUser, error) ||
         !membershipResolver_(
             control.groupName, verifiedEffective, error) ||
         !verifiedEffective.groupExists ||

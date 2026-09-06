@@ -5,10 +5,12 @@
 #include "platform/PlatformProfile.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/fs/TrustedFileReader.h>
 
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <sys/types.h>
 
@@ -29,6 +31,7 @@ struct AltPamPasswordHistoryTopologyOptions {
     std::function<bool(const std::string&, const std::string&,
                        const AtomicWriteOptions&, std::string*)> writer;
     std::function<bool(std::string&)> semanticVerifier;
+    fic::core::TrustedFilePostValidationHook readValidationHook;
 };
 
 class AltPamPasswordHistoryTopologyManager final : public PamTopologyManager {
@@ -65,6 +68,16 @@ private:
 
 std::string altPamPasswordHistoryTopologyStateName(
     AltPamPasswordHistoryTopologyState state);
+
+bool verifyAltPamPasswordHistoryStorageConfig(
+    const std::filesystem::path& configPath,
+    const std::filesystem::path& historyPath,
+    std::string& error,
+    const fic::core::TrustedFilePostValidationHook& validationHook = {});
+
+bool verifyAltPamPasswordHistoryTransactionModule(
+    const std::vector<std::filesystem::path>& directories,
+    std::string& error);
 
 } // namespace fic::identity::pam
 

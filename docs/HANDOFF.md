@@ -3,53 +3,50 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `54cfa7a`.
+- Родитель текущей правки: `54432c9`.
 
 ## Current task
 
-- Совместимость executable pathname с line-based форматом `commandhash.txt`.
+- Устранить PAM trusted-file check-then-reopen TOCTOU.
 
 ## Accepted architecture / invariants
 
-- Filesystem path validation, storage-key validation и opened-object validation
-  остаются отдельными этапами.
-- `commandhash.txt` сохраняет формат `<path>=<sha256>` без migration/escaping.
-- Target по-прежнему открывается один раз с
-  `O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK`; `fstat`, execute-bit validation и
-  SHA-256 выполняются по тому же fd.
-- Общий `ConfigFileHandler` сохраняет прежнюю нормализацию key whitespace по
-  умолчанию; exact whitespace включён только opt-in для `CommandHashStore`.
+- Security validation и чтение относятся к одному fd: authoritative
+  `open(O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK)`, затем `fstat` и `read`.
+- Индивидуальные owner/group/mode/nlink contracts задаются typed options;
+  hard-link restrictions не добавляются без существующего требования.
+- `disable_nopasswdlogin`, pwquality и pwhistory parsing semantics не меняются.
 
 ## Completed
 
-- Storage keys fail-closed отклоняют ASCII controls `0x00..0x1F`, `0x7F`, `=`
-  и `#` до open, store mutation/remove или verify lookup.
-- Ошибка на запрещённый byte использует безопасные hex/symbolic diagnostics и
-  не отражает raw pathname.
-- Accepted pathname с повторными/крайними spaces, UTF-8 и `foo..bar` сохраняет
-  exact key и проходит save/load/verify round-trip.
-- Добавлены validator, daemon response, batch atomicity, removal и round-trip
-  regressions.
+- В `fic-core` добавлен reusable `TrustedFileReader` с RAII fd, EINTR retry,
+  complete-read/close handling и deterministic post-validation test seam.
+- На него переведены identity passwd/group reads, pwhistory config/topology
+  reads, transaction-module inspection, `PamOptionFile` и pwquality file reads.
+- Добавлены deterministic pathname-replacement regressions для generic reader,
+  passwd/group policy и pwhistory config, а также trust/type/mode/module tests.
 
 ## Changed areas
 
-- `fic-common/fic-core`: opt-in key whitespace policy и `CommandHashStore`.
-- Tests: command hash security/batch/handler и static contract.
+- `fic-common/fic-core` trusted-file reader.
+- PAM passwordless, pwhistory topology, generic option и pwquality readers.
+- Соответствующие core/PAM tests и CMake registration.
 
 ## Validation
 
-- Fresh configure и full build passed в
-  `/tmp/fic-commandhash-key-build-20260906` с временной pkg-config metadata для
-  доступной runtime `libsystemd.so.0`.
-- Relevant command hash tests passed; root-only batch test отдельно passed через
-  `unshare -Ur`.
-- CTest вне sandbox без базово сломанного `module_ui_static_checks`: 69 passed,
-  1 root-only test skipped, 0 failed.
+- Fresh full build Ubuntu 24.04: passed.
+- Все 10 PAM/identity-related CTest: passed.
+- Fresh `fic` и targeted test builds для Debian 12/13, Ubuntu 24.04/26.04 и
+  ALT p11: passed; последовательные profile tests: 8/8 passed на каждом.
+- Full CTest: 65 passed, 4 skipped, 3 unrelated/environment failures
+  (`module_ui_static_checks`, sandboxed socket bind, `mode_and_owner_tests`).
 - `git diff --check`: passed.
 
 ## Remaining
 
-- `module_ui_static_checks` уже сломан в базовом HEAD: ожидает старую строку
-  `saveChanges(..., error)`, тогда как код использует `ApplyResult::error`.
-- Native configure без временной libsystemd pkg-config metadata требует
-  установки development package `libsystemd-dev`.
+- Standalone trusted inspection `pam_fic_pwtxn.so` не может связать inode с
+  последующей загрузкой внешним Linux-PAM loader; для этого потребовалось бы
+  менять loader/API.
+- Полный ALT package не собран: в host environment нет PAM development header;
+  ALT `fic` и relevant tests собраны с configure-only include override.
+- Baseline `module_ui_static_checks` ожидает старый GUI source pattern.

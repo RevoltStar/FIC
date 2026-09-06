@@ -6,12 +6,11 @@
 #include "modules/identity_access/pam/PamProviderInspector.h"
 
 #include <fic/core/process/ExclusivePidLock.h>
+#include <fic/core/fs/TrustedFileReader.h>
 
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
-#include <fstream>
-#include <iterator>
 #include <sstream>
 #include <optional>
 #include <utility>
@@ -85,55 +84,19 @@ std::string joinLines(const std::vector<PhysicalLine>& lines) {
 
 bool inspectSecureTarget(const std::filesystem::path& path,
                          TargetSnapshot& snapshot,
-                         std::string& error) {
-    struct stat linkInfo {};
-    if (::lstat(path.c_str(), &linkInfo) != 0) {
-        error = "could not inspect PAM topology target " + path.string() +
-            ": " + errnoText();
+                         std::string& error,
+                         const fic::core::TrustedFilePostValidationHook&
+                             validationHook = {}) {
+    fic::core::TrustedFileReadOptions options;
+    options.expectedOwner = ::geteuid();
+    options.forbiddenMode = S_IWGRP | S_IWOTH;
+    fic::core::TrustedFileMetadata metadata;
+    if (!fic::core::readTrustedFile(
+            path, options, snapshot.content, error, &metadata,
+            validationHook))
         return false;
-    }
-    if (!S_ISREG(linkInfo.st_mode) || S_ISLNK(linkInfo.st_mode) ||
-        linkInfo.st_uid != ::geteuid() ||
-        (linkInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-        error = "PAM topology target is not a trusted regular file: " +
-            path.string();
-        return false;
-    }
-    const int descriptor = ::open(
-        path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (descriptor < 0) {
-        error = "could not securely open PAM topology target " + path.string() +
-            ": " + errnoText();
-        return false;
-    }
-    struct stat openedInfo {};
-    if (::fstat(descriptor, &openedInfo) != 0 ||
-        openedInfo.st_dev != linkInfo.st_dev ||
-        openedInfo.st_ino != linkInfo.st_ino) {
-        ::close(descriptor);
-        error = "PAM topology target changed during secure open: " +
-            path.string();
-        return false;
-    }
-    snapshot.content.clear();
-    char buffer[4096];
-    for (;;) {
-        const ssize_t count = ::read(descriptor, buffer, sizeof(buffer));
-        if (count > 0) {
-            snapshot.content.append(buffer, static_cast<std::size_t>(count));
-        } else if (count == 0) {
-            break;
-        } else if (errno != EINTR) {
-            const std::string detail = errnoText();
-            ::close(descriptor);
-            error = "could not read PAM topology target: " + detail;
-            return false;
-        }
-    }
-    ::close(descriptor);
-    snapshot.device = openedInfo.st_dev;
-    snapshot.inode = openedInfo.st_ino;
-    error.clear();
+    snapshot.device = metadata.device;
+    snapshot.inode = metadata.inode;
     return true;
 }
 
@@ -312,31 +275,28 @@ bool createStorageFile(const std::filesystem::path& path, uid_t owner,
     return validateStorageObject(path, 0660, owner, group, false, error);
 }
 
-bool verifyTransactionModule(
+} // namespace
+
+bool verifyAltPamPasswordHistoryTransactionModule(
     const std::vector<std::filesystem::path>& directories,
     std::string& error) {
     for (const auto& directory : directories) {
         const auto path = directory / "pam_fic_pwtxn.so";
-        struct stat info {};
-        if (::lstat(path.c_str(), &info) != 0) {
-            if (errno == ENOENT)
-                continue;
-            error = "could not inspect PAM transaction module " +
-                path.string() + ": " + errnoText();
+        fic::core::TrustedFileReadOptions options;
+        options.expectedOwner = ::geteuid();
+        options.forbiddenMode = S_IWGRP | S_IWOTH;
+        int systemError = 0;
+        if (fic::core::inspectTrustedFile(
+                path, options, nullptr, error, &systemError))
+            return true;
+        if (systemError != ENOENT)
             return false;
-        }
-        if (!S_ISREG(info.st_mode) || S_ISLNK(info.st_mode) ||
-            info.st_uid != ::geteuid() ||
-            (info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-            error = "untrusted PAM transaction module: " + path.string();
-            return false;
-        }
-        error.clear();
-        return true;
     }
     error = "pam_fic_pwtxn.so is not installed in a configured PAM module directory";
     return false;
 }
+
+namespace {
 
 std::string trim(std::string value) {
     const auto first = value.find_first_not_of(" \t\r");
@@ -346,24 +306,21 @@ std::string trim(std::string value) {
     return value.substr(first, last - first + 1);
 }
 
-bool verifyHistoryStorageConfig(const std::filesystem::path& configPath,
-                                const std::filesystem::path& historyPath,
-                                std::string& error) {
-    struct stat info {};
-    if (::lstat(configPath.c_str(), &info) != 0 ||
-        !S_ISREG(info.st_mode) || S_ISLNK(info.st_mode) ||
-        info.st_uid != ::geteuid() ||
-        (info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-        error = "untrusted pam_pwhistory configuration: " +
-            configPath.string();
+} // namespace
+
+bool verifyAltPamPasswordHistoryStorageConfig(
+    const std::filesystem::path& configPath,
+    const std::filesystem::path& historyPath,
+    std::string& error,
+    const fic::core::TrustedFilePostValidationHook& validationHook) {
+    fic::core::TrustedFileReadOptions options;
+    options.expectedOwner = ::geteuid();
+    options.forbiddenMode = S_IWGRP | S_IWOTH;
+    std::string content;
+    if (!fic::core::readTrustedFile(
+            configPath, options, content, error, nullptr, validationHook))
         return false;
-    }
-    std::ifstream input(configPath);
-    if (!input.is_open()) {
-        error = "could not read pam_pwhistory configuration: " +
-            configPath.string();
-        return false;
-    }
+    std::istringstream input(content);
     std::size_t fileAssignments = 0;
     std::string line;
     while (std::getline(input, line)) {
@@ -379,10 +336,6 @@ bool verifyHistoryStorageConfig(const std::filesystem::path& configPath,
             return false;
         }
     }
-    if (!input.good() && !input.eof()) {
-        error = "could not completely read pam_pwhistory configuration";
-        return false;
-    }
     if (fileAssignments != 1) {
         error = "pam_pwhistory configuration must declare exactly one history file";
         return false;
@@ -390,8 +343,6 @@ bool verifyHistoryStorageConfig(const std::filesystem::path& configPath,
     error.clear();
     return true;
 }
-
-} // namespace
 
 AltPamPasswordHistoryTopologyManager::AltPamPasswordHistoryTopologyManager(
     fic::platform::PamPlatformConfig platformConfig,
@@ -442,9 +393,11 @@ bool AltPamPasswordHistoryTopologyManager::verifySemanticEffectiveness(
         error = "password-history capability is missing";
         return false;
     }
-    if (!verifyTransactionModule(platformConfig_.moduleDirectories, error) ||
-        !verifyHistoryStorageConfig(
-            capability->configPath, options_.historyFile, error))
+    if (!verifyAltPamPasswordHistoryTransactionModule(
+            platformConfig_.moduleDirectories, error) ||
+        !verifyAltPamPasswordHistoryStorageConfig(
+            capability->configPath, options_.historyFile, error,
+            options_.readValidationHook))
         return false;
     PamConfiguration configuration(platformConfig_);
     PamCapabilityVerification verification;
@@ -487,7 +440,8 @@ bool AltPamPasswordHistoryTopologyManager::status(
     std::vector<PhysicalLine> lines;
     std::vector<PamRule> rules;
     ManagedBlock block;
-    if (!inspectSecureTarget(capability->topologyTarget, snapshot, error) ||
+    if (!inspectSecureTarget(capability->topologyTarget, snapshot, error,
+                             options_.readValidationHook) ||
         !inspectTopology(capability->topologyTarget, snapshot.content, lines,
                          rules, block, error))
         return false;
@@ -539,7 +493,8 @@ bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
     std::vector<PhysicalLine> lines;
     std::vector<PamRule> rules;
     ManagedBlock block;
-    if (!inspectSecureTarget(capability->topologyTarget, original, error) ||
+    if (!inspectSecureTarget(capability->topologyTarget, original, error,
+                             options_.readValidationHook) ||
         !inspectTopology(capability->topologyTarget, original.content, lines,
                          rules, block, error))
         return false;
@@ -592,7 +547,8 @@ bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
         TargetSnapshot written;
         std::string rollbackError;
         if (!inspectSecureTarget(capability->topologyTarget, written,
-                                 rollbackError) ||
+                                 rollbackError,
+                                 options_.readValidationHook) ||
             !options_.writer(capability->topologyTarget.string(),
                 original.content,
                 writeOptionsFor(options_.writeOptions, written),
@@ -622,7 +578,8 @@ bool AltPamPasswordHistoryTopologyManager::disable(std::string& error) {
     std::vector<PhysicalLine> lines;
     std::vector<PamRule> rules;
     ManagedBlock block;
-    if (!inspectSecureTarget(capability->topologyTarget, original, error) ||
+    if (!inspectSecureTarget(capability->topologyTarget, original, error,
+                             options_.readValidationHook) ||
         !inspectTopology(capability->topologyTarget, original.content, lines,
                          rules, block, error))
         return false;

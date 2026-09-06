@@ -1,12 +1,13 @@
 #include "modules/identity_access/pam/PwqualityConfigFile.h"
 
+#include <fic/core/fs/TrustedFileReader.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <sstream>
 
 #include <sys/stat.h>
@@ -245,19 +246,21 @@ bool evaluateFile(const std::filesystem::path& path,
                   std::string& error,
                   const ManagedOverride* managedOverride = nullptr)
 {
-    bool exists = false;
-    if (!inspectTrustedPath(path, false, exists, error) || !exists) {
-        if (!exists && error.empty()) {
+    fic::core::TrustedFileReadOptions options;
+    options.expectedOwner = ::geteuid();
+    options.forbiddenMode = S_IWGRP | S_IWOTH;
+    options.requiredAnyMode = S_IRUSR | S_IRGRP | S_IROTH;
+    std::string content;
+    int systemError = 0;
+    if (!fic::core::readTrustedFile(
+            path, options, content, error, nullptr, {}, &systemError)) {
+        if (systemError == ENOENT) {
             error = "pwquality configuration file does not exist: " +
                 path.string();
         }
         return false;
     }
-    std::ifstream input(path, std::ios::binary);
-    if (!input.is_open()) {
-        error = "could not open pwquality configuration file " + path.string();
-        return false;
-    }
+    std::istringstream input(content);
     std::string line;
     std::size_t lineNumber = 0;
     while (std::getline(input, line)) {
@@ -273,10 +276,6 @@ bool evaluateFile(const std::filesystem::path& path,
                 ": " + lineError;
             return false;
         }
-    }
-    if (!input.eof()) {
-        error = "could not read pwquality configuration file " + path.string();
-        return false;
     }
     return true;
 }

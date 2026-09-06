@@ -14,6 +14,8 @@ namespace fs = std::filesystem;
 using fic::identity::pam::AltPamPasswordHistoryTopologyManager;
 using fic::identity::pam::AltPamPasswordHistoryTopologyOptions;
 using fic::identity::pam::AltPamPasswordHistoryTopologyState;
+using fic::identity::pam::verifyAltPamPasswordHistoryStorageConfig;
+using fic::identity::pam::verifyAltPamPasswordHistoryTransactionModule;
 
 namespace {
 
@@ -189,6 +191,86 @@ void testPostconditionFailureRollsBack() {
             "failed enable did not restore exact original content");
 }
 
+void testHistoryStorageConfigTrustedRead() {
+    TemporaryTree tree;
+    const fs::path config = tree.root / "fic-pwhistory.conf";
+    const fs::path history = tree.root / "state/opasswd";
+    std::string error;
+
+    TemporaryTree::write(config, "# managed\nfile = " + history.string() +
+        "\n");
+    require(verifyAltPamPasswordHistoryStorageConfig(
+                config, history, error),
+            "trusted history config was rejected: " + error);
+
+    TemporaryTree::write(config, "file = /unexpected/opasswd\n");
+    require(!verifyAltPamPasswordHistoryStorageConfig(
+                config, history, error),
+            "unexpected history path was accepted");
+
+    TemporaryTree::write(config, "file = " + history.string() + "\nfile = " +
+        history.string() + "\n");
+    require(!verifyAltPamPasswordHistoryStorageConfig(
+                config, history, error),
+            "duplicate history assignment was accepted");
+
+    TemporaryTree::write(config, "file = " + history.string() + "\n");
+    require(::chmod(config.c_str(), 0664) == 0,
+            "could not make history config unsafe");
+    require(!verifyAltPamPasswordHistoryStorageConfig(
+                config, history, error),
+            "group-writable history config was accepted");
+
+    TemporaryTree::write(config, "file = " + history.string() + "\n");
+    const fs::path realConfig = tree.root / "real-pwhistory.conf";
+    fs::rename(config, realConfig);
+    fs::create_symlink(realConfig, config);
+    require(!verifyAltPamPasswordHistoryStorageConfig(
+                config, history, error),
+            "history config symlink was accepted");
+    fs::remove(config);
+
+    TemporaryTree::write(config, "file = " + history.string() + "\n");
+    const fs::path openedConfig = tree.root / "opened-pwhistory.conf";
+    bool replaced = false;
+    require(verifyAltPamPasswordHistoryStorageConfig(
+                config, history, error,
+                [&](const fs::path& path) {
+                    require(path == config, "unexpected validated config");
+                    fs::rename(config, openedConfig);
+                    TemporaryTree::write(
+                        config, "file = /attacker-controlled/opasswd\n");
+                    replaced = true;
+                }) && replaced,
+            "pathname replacement changed parsed history config: " + error);
+}
+
+void testTransactionModuleTrustedInspection() {
+    TemporaryTree tree;
+    const fs::path module =
+        tree.root / "security-modules/pam_fic_pwtxn.so";
+    std::string error;
+    TemporaryTree::write(module, "module\n");
+    require(verifyAltPamPasswordHistoryTransactionModule(
+                {tree.root / "missing-modules",
+                 tree.root / "security-modules"}, error),
+            "trusted transaction module was rejected: " + error);
+
+    require(::chmod(module.c_str(), 0664) == 0,
+            "could not make transaction module unsafe");
+    require(!verifyAltPamPasswordHistoryTransactionModule(
+                {tree.root / "security-modules"}, error),
+            "group-writable transaction module was accepted");
+
+    fs::remove(module);
+    const fs::path realModule = tree.root / "real-pam_fic_pwtxn.so";
+    TemporaryTree::write(realModule, "module\n");
+    fs::create_symlink(realModule, module);
+    require(!verifyAltPamPasswordHistoryTransactionModule(
+                {tree.root / "security-modules"}, error),
+            "transaction module symlink was accepted");
+}
+
 } // namespace
 
 int main() {
@@ -198,6 +280,8 @@ int main() {
         testExternalIncludedProviderIsRejected();
         testBrokenMarkersFailClosed();
         testPostconditionFailureRollsBack();
+        testHistoryStorageConfigTrustedRead();
+        testTransactionModuleTrustedInspection();
     } catch (const std::exception& exception) {
         std::cerr << exception.what() << std::endl;
         return 1;

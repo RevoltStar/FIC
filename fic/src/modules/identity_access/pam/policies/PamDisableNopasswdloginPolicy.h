@@ -7,6 +7,7 @@
 #include "platform/PlatformProfile.h"
 
 #include <fic/core/process/ProcessExecutor.h>
+#include <fic/core/fs/TrustedFileReader.h>
 
 #include <functional>
 
@@ -23,7 +24,8 @@ public:
         fic::platform::PamPlatformConfig platform,
         const fic::platform::PlatformExecutableResolver& executables,
         Runner runner = {},
-        EffectiveMembershipResolver membershipResolver = {});
+        EffectiveMembershipResolver membershipResolver = {},
+        fic::core::TrustedFilePostValidationHook readValidationHook = {});
 
 protected:
     bool applyPam(const std::string& expectedValue) override;
@@ -33,6 +35,7 @@ private:
     const fic::platform::PlatformExecutableResolver& executables_;
     Runner runner_;
     EffectiveMembershipResolver membershipResolver_;
+    fic::core::TrustedFilePostValidationHook readValidationHook_;
 };
 
 #endif

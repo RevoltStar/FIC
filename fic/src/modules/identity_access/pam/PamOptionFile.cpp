@@ -1,16 +1,14 @@
 #include "modules/identity_access/pam/PamOptionFile.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/fs/TrustedFileReader.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
-#include <cstring>
-#include <fstream>
 #include <sstream>
 #include <vector>
 
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace fic::identity::pam {
@@ -125,38 +123,19 @@ bool readFile(const std::filesystem::path& path,
               bool& existed,
               std::string& content,
               std::string& error) {
-    struct stat info {};
-    if (::lstat(path.c_str(), &info) != 0) {
-        if (errno == ENOENT) {
+    fic::core::TrustedFileReadOptions options;
+    int systemError = 0;
+    if (!fic::core::readTrustedFile(
+            path, options, content, error, nullptr, {}, &systemError)) {
+        if (systemError == ENOENT) {
             existed = false;
             content.clear();
+            error.clear();
             return true;
         }
-        error = "could not inspect " + path.string() + ": " +
-            std::strerror(errno);
         return false;
     }
     existed = true;
-    if (S_ISLNK(info.st_mode)) {
-        error = "refusing to use symbolic link: " + path.string();
-        return false;
-    }
-    if (!S_ISREG(info.st_mode)) {
-        error = "refusing to use non-regular file: " + path.string();
-        return false;
-    }
-    std::ifstream input(path, std::ios::binary);
-    if (!input.is_open()) {
-        error = "could not open " + path.string();
-        return false;
-    }
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    if (!input.good() && !input.eof()) {
-        error = "could not read " + path.string();
-        return false;
-    }
-    content = buffer.str();
     return true;
 }
 

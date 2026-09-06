@@ -144,11 +144,12 @@ void runTests() {
         result.exitCode = 0;
         return result;
     };
-    auto makePolicy = [&](PamDisableNopasswdloginPolicy::Runner runner = {}) {
+    auto makePolicy = [&](PamDisableNopasswdloginPolicy::Runner runner = {},
+                          fic::core::TrustedFilePostValidationHook hook = {}) {
         if (!runner) runner = clearingRunner;
         return std::make_unique<PamDisableNopasswdloginPolicy>(
             tree.platform, tree.resolver, std::move(runner),
-            membershipResolver);
+            membershipResolver, std::move(hook));
     };
 
     tree.reset("users:x:1000:alice\n");
@@ -162,6 +163,45 @@ void runTests() {
     policy = makePolicy();
     require(policy->apply() && policy->apply() && calls == 0,
             "empty group must be idempotent");
+
+    tree.reset("users:x:1000:alice\n");
+    effective = {};
+    bool groupReplaced = false;
+    policy = makePolicy({}, [&](const fs::path& path) {
+        if (path != tree.group || groupReplaced) return;
+        fs::rename(tree.group, tree.group.string() + ".opened");
+        writeFile(tree.group, "nopasswdlogin:x:2000:alice\n");
+        groupReplaced = true;
+    });
+    require(policy->apply() && groupReplaced && calls == 0,
+            "group pathname replacement changed parsed trusted bytes");
+
+    tree.reset("nopasswdlogin:x:2000:\n");
+    effective = {true, 2000, {}};
+    bool passwdReplaced = false;
+    policy = makePolicy({}, [&](const fs::path& path) {
+        if (path != tree.passwd || passwdReplaced) return;
+        fs::rename(tree.passwd, tree.passwd.string() + ".opened");
+        writeFile(tree.passwd,
+                  "mallory:x:1001:2000::/home/mallory:/bin/sh\n");
+        passwdReplaced = true;
+    });
+    require(policy->apply() && passwdReplaced && calls == 0,
+            "passwd pathname replacement changed parsed trusted bytes");
+
+    tree.reset("nopasswdlogin:x:2000:\n");
+    require(::chmod(tree.group.c_str(), 0664) == 0,
+            "could not make group fixture unsafe");
+    effective = {true, 2000, {}};
+    policy = makePolicy();
+    require(!policy->apply(), "group-writable group file was accepted");
+
+    tree.reset("nopasswdlogin:x:2000:\n");
+    require(::chmod(tree.passwd.c_str(), 0646) == 0,
+            "could not make passwd fixture unsafe");
+    effective = {true, 2000, {}};
+    policy = makePolicy();
+    require(!policy->apply(), "world-writable passwd file was accepted");
 
     tree.reset("nopasswdlogin:x:2000:alice,bob\n");
     effective = {true, 2000, {"alice", "bob"}};

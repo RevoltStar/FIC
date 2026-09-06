@@ -424,6 +424,12 @@ target_include_directories(mode_and_owner_tests PRIVATE
 target_link_libraries(mode_and_owner_tests PRIVATE fic-core fic-policy)
 add_test(NAME mode_and_owner_tests COMMAND mode_and_owner_tests)
 
+add_executable(trusted_file_reader_tests
+    fic-common/fic-core/TrustedFileReaderTests.cpp
+)
+target_link_libraries(trusted_file_reader_tests PRIVATE fic-core)
+add_test(NAME trusted_file_reader_tests COMMAND trusted_file_reader_tests)
+
 add_executable(sysctl_configuration_tests
     fic/modules/sysctl/SysctlConfigurationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
