@@ -85,6 +85,33 @@ Version and schema contract:
 - The release gate and native package version mapping are documented in
   [`docs/release-process.md`](docs/release-process.md).
 
+Development checks:
+
+1. Configure the reusable local build directory for the required platform:
+
+   ```bash
+   cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04
+   ```
+
+2. Enable the repository-provided hooks from any directory in the checkout:
+
+   ```bash
+   scripts/setup-git-hooks.sh
+   ```
+
+`pre-commit` incrementally builds the project and runs tests labelled `unit`
+or `static`. `pre-push` incrementally builds the project and runs the complete
+non-root suite. Set `FIC_BUILD_DIR` to use a build directory other than
+`build-check`, or run the same checks manually:
+
+```bash
+scripts/run-development-checks.sh fast
+scripts/run-development-checks.sh full
+```
+
+Local hooks are convenience checks and can be bypassed by Git. The GitHub CI
+job `build-and-test` is the authoritative merge check.
+
 License:
 - FIC is source-available under the Sustainable Use License Version 1.0
   (`SUL-1.0`); see [`LICENSE`](LICENSE).

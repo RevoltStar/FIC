@@ -80,7 +80,7 @@ def main():
     require("saveChanges(moduleName, changes, error)" in editor and
             "saveAndApplyChanges(" in editor,
             "policy editor must expose separate save and save/apply actions")
-    require("if (!saveChanges(module, changes, error))" in policy_service,
+    require("if (!saveChanges(module, changes, result.error))" in policy_service,
             "save/apply must reuse the single policy save implementation")
     for direct_child in ["enabled", "name", "valueWidget", "descriptionWidget"]:
         require(re.search(

@@ -818,3 +818,94 @@ target_link_libraries(schema_contract_tests PRIVATE
     fic-device-db
 )
 add_test(NAME schema_contract_tests COMMAND schema_contract_tests)
+
+# Test labels are the authoritative selection contract for local hooks and CI.
+# Keep root-only and environment-facing tests out of the fast developer loop.
+set(FIC_STATIC_TESTS
+    device_control_static_checks
+    path_layout_static_checks
+    ssh_policy_static_checks
+    platform_profile_static_checks
+    pam_packaging_static_checks
+    gui_runtime_compliance_static_checks
+    corresponding_source_contract_tests
+    firewall_static_checks
+    module_ui_static_checks
+    session_agent_static_checks
+    desktop_environment_architecture_static_checks
+    packaging_build_resource_tests
+    version_contract_tests
+    release_contract_tests
+    pam_policy_defaults_tests
+)
+
+set(FIC_INTEGRATION_TESTS
+    cli_device_id_argument_tests
+    fic_gui_license_info
+    session_event_server_tests
+    session_agent_client_tests
+    ipc_transport_tests
+    admin_socket_tests
+    mode_and_owner_tests
+)
+
+set(FIC_ROOT_TESTS
+    command_hash_batch_tests
+)
+
+set(FIC_UNIT_TESTS
+    module_registry_tests
+    policy_execution_planner_tests
+    module_descriptor_tests
+    policy_descriptor_tests
+    policy_service_tests
+    cli_policy_set_tests
+    device_id_parser_tests
+    firewall_tests
+    gsettings_value_parser_tests
+    controlled_desktop_environments_tests
+    session_aware_policy_tests
+    session_setting_reconciler_tests
+    session_ready_retry_tests
+    session_ready_validation_tests
+    build_info_tests
+    runtime_paths_tests
+    exclusive_pid_lock_tests
+    session_identity_resolver_tests
+    session_selection_tests
+    device_tree_revision_tests
+    device_tree_snapshot_tests
+    device_policy_compiler_tests
+    device_lifecycle_tests
+    device_enforcer_tests
+    ipc_paths_tests
+    ipc_protocol_validation_tests
+    sudoers_configuration_tests
+    sudo_secure_path_policy_type_value_tests
+    file_handler_options_tests
+    trusted_file_reader_tests
+    sysctl_configuration_tests
+    grub_policy_tests
+    pam_configuration_tests
+    pam_disable_nopasswdlogin_policy_tests
+    passwdqc_config_file_tests
+    alt_pam_faillock_topology_tests
+    alt_pam_password_history_topology_tests
+    identity_configuration_transaction_tests
+    identity_policy_hierarchy_tests
+    identity_configuration_editors_tests
+    password_aging_tests
+    user_creation_tests
+    identity_concrete_policies_tests
+    ssh_runtime_tests
+    platform_profile_tests
+    command_hash_security_tests
+    calc_hash_command_tests
+    package_trust_selection_tests
+    schema_contract_tests
+)
+
+set_tests_properties(${FIC_STATIC_TESTS} PROPERTIES LABELS "static")
+set_tests_properties(${FIC_INTEGRATION_TESTS} PROPERTIES LABELS "integration")
+set_tests_properties(${FIC_ROOT_TESTS} PROPERTIES LABELS "root;integration")
+set_tests_properties(${FIC_UNIT_TESTS} PROPERTIES LABELS "unit")

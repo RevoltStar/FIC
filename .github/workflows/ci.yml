@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build-and-test
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            dpkg-dev \
+            file \
+            libgl1-mesa-dev \
+            libopengl-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libsystemd-dev \
+            libxkbcommon-dev \
+            nlohmann-json3-dev \
+            pkg-config \
+            python3 \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            qt6-qpa-plugins \
+            xauth \
+            xvfb
+
+      - name: Configure
+        run: cmake -S . -B build-ci -DFIC_TARGET_PLATFORM=ubuntu-24.04
+
+      - name: Build and test
+        env:
+          FIC_BUILD_DIR: build-ci
+        run: scripts/run-development-checks.sh full
+
+  compiler-warnings:
+    name: compiler-warnings
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libgl1-mesa-dev libopengl-dev \
+            libsqlite3-dev libssl-dev libsystemd-dev libxkbcommon-dev \
+            nlohmann-json3-dev pkg-config python3 qt6-base-dev \
+            qt6-base-dev-tools qt6-qpa-plugins
+
+      - name: Configure with compiler warnings
+        run: >-
+          cmake -S . -B build-warnings
+          -DFIC_TARGET_PLATFORM=ubuntu-24.04
+          -DCMAKE_CXX_FLAGS='-Wall -Wextra -Wpedantic'
+
+      - name: Build with compiler warnings
+        run: cmake --build build-warnings --parallel 2
+
+  sanitizers:
+    name: sanitizers
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libgl1-mesa-dev libopengl-dev \
+            libsqlite3-dev libssl-dev libsystemd-dev libxkbcommon-dev \
+            nlohmann-json3-dev pkg-config python3 qt6-base-dev \
+            qt6-base-dev-tools qt6-qpa-plugins
+
+      - name: Configure sanitizers
+        run: >-
+          cmake -S . -B build-sanitizers
+          -DFIC_TARGET_PLATFORM=ubuntu-24.04
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+          -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address,undefined'
+
+      - name: Build sanitizers
+        run: cmake --build build-sanitizers --parallel 2
+
+      - name: Run unit tests with sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build-sanitizers -L '^unit$' --output-on-failure
