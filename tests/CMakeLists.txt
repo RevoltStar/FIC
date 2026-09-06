@@ -74,6 +74,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/oss/desktop_environment/static_checks.py.in
                 ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME cli_device_id_argument_tests
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/fic-cli/device_id_cli_tests.py.in
+                $<TARGET_FILE:fic-cli>
+    )
 endif()
 
 add_test(
@@ -144,6 +150,15 @@ target_include_directories(cli_policy_set_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic-cli/src
 )
 add_test(NAME cli_policy_set_tests COMMAND cli_policy_set_tests)
+
+add_executable(device_id_parser_tests
+    fic-cli/DeviceIdParserTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-cli/src/DeviceIdParser.cpp
+)
+target_include_directories(device_id_parser_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-cli/src
+)
+add_test(NAME device_id_parser_tests COMMAND device_id_parser_tests)
 
 add_executable(firewall_tests
     fic/modules/firewall/FirewallTests.cpp

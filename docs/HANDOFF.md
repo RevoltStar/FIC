@@ -3,47 +3,39 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей правки: `f4a3adcff0dbb971068530b906a7f84a5a43f519`.
+- Родитель текущей правки: `6c12d4b`.
 
 ## Current task
 
-- Устранение connect-before-send race в `SessionEventServer` и явная фиксация
-  scope semantics ordinary DE-dependent policies.
+- Строгий безысключительный разбор пользовательского device ID в `fic-cli`.
 
 ## Accepted architecture / invariants
 
-- `controlled_desktop_environments=[]` означает `UNCONFIGURED`; scope не
-  выводится из platform profile, packages или desktop descriptors.
-- Обычные DE policies различают `NotApplicable` и `Unsupported`; compliance
-  policy проверяет полный inventory и fail-closed для неизвестного DE.
-- Все реализованные screen-lock/KDE media backends остаются `SessionOnly`.
-  `MandatoryGlobal` требует раздельных value/protection/verify фаз.
-- `session_ready` идёт через отдельный `/run/fic/fic-session-events.sock`, не
-  содержит PID/desktop/policy data и только планирует bounded/coalesced work.
-- `fic.service`: `Type=notify`, `NotifyAccess=main`, `TimeoutStartSec=600s`;
-  `READY=1` следует после listen admin и session-event sockets.
+- CLI принимает device ID только как полностью разобранный положительный
+  decimal `int`; leading zero допустим, whitespace и ведущий `+` запрещены.
+- Некорректный ID отклоняется до IPC. Device daemon schema и JSON fields не
+  изменяются.
 
 ## Completed
 
-- Accepted nonblocking session-event connection теперь bounded ожидает payload;
-  `EINTR`/`EAGAIN` повторяются, timeout/error/hangup/close обрабатываются безопасно.
-- Добавлен connect-before-send regression, silent-client timeout и recovery
-  следующим запросом.
-- Ordinary policies явно игнорируют uncontrolled/unknown sessions; dedicated
-  compliance policy остаётся fail-closed. Обновлены ru/en descriptions и docs.
+- Добавлен единый `DeviceIdParser` на `std::from_chars`: требуется полный
+  положительный decimal `int`, без trim, `+`, partial parsing и exceptions.
+- На parser переведены `device get`, `children`, `set`, `ignore-hierarchy`,
+  `children-control`, `reset`; invalid ID отклоняется до IPC request.
+- Добавлены unit tests диапазона/формата и CLI subprocess regressions, включая
+  mutation-команду и проверку отсутствия IPC attempt.
 
 ## Changed areas
 
-- `fic/src/session/SessionEventServer*`, DE semantic/event tests, ru/en
-  localization и архитектурная/session-agent документация.
+- `fic-cli/src/DeviceIdParser*`, `fic-cli/src/main.cpp`, CLI CMake/tests.
 
 ## Validation
 
-- Full incremental build: passed в `/tmp/fic-de-build` с временными development
-  headers/pkg-config metadata и реальной runtime `libsystemd.so.0`.
-- 6 релевантных DE/session tests: passed.
-- `session_event_server_tests` десять последовательных прогонов: passed.
-- CTest без уже сломанного в базовом HEAD `module_ui_static_checks`: 65 passed,
+- Fresh reconfigure и full incremental build: passed в `/tmp/fic-de-build` с
+  временными development headers/pkg-config metadata и реальной runtime
+  `libsystemd.so.0`.
+- 4 релевантных CLI/IPC tests: passed.
+- CTest без уже сломанного в базовом HEAD `module_ui_static_checks`: 67 passed,
   1 environment-dependent test skipped, 0 failed.
 - `git diff --check`: passed.
 
@@ -53,4 +45,3 @@
   базовый HEAD уже использует `ApplyResult::error`; это вне scope текущей задачи.
 - Повторить native configure/build без временных libsystemd headers после
   установки `libsystemd-dev`.
-- Реальный systemd/logind multi-session integration не выполнялся.

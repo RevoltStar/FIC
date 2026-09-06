@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+binary = Path(sys.argv[1])
+environment = os.environ.copy()
+environment["FIC_DEVICE_SOCKET_PATH"] = (
+    f"/tmp/fic-cli-device-id-no-daemon-{os.getpid()}.sock"
+)
+
+cases = [
+    ["device", "get", ""],
+    ["device", "get", "abc"],
+    ["device", "get", "123abc"],
+    ["device", "get", "+123"],
+    ["device", "get", "-1"],
+    ["device", "get", "0"],
+    ["device", "get", "999999999999999999999999"],
+    ["device", "get", " 123"],
+    ["device", "get", "123 "],
+    ["device", "set", "abc", "blocked"],
+]
+
+for arguments in cases:
+    result = subprocess.run(
+        [str(binary), *arguments],
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, (arguments, result.returncode, output)
+    assert "Invalid device ID:" in output, (arguments, output)
+    assert "connect(" not in output, (arguments, "unexpected IPC attempt", output)
+    assert "terminate called" not in output, (arguments, output)
+
+print("fic-cli device ID argument checks: OK")

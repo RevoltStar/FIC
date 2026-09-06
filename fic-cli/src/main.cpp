@@ -10,6 +10,7 @@
 #include <fic/version/ProductVersion.h>
 
 #include "PolicySetCommand.h"
+#include "DeviceIdParser.h"
 
 using json = nlohmann::json;
 
@@ -295,6 +296,16 @@ bool parse_bool_arg(const std::string& value, bool& result)
     }
     return false;
 }
+
+bool parse_device_id_arg(const std::string& text, int& deviceId)
+{
+    std::string error;
+    if (fic::cli::parseDeviceId(text, deviceId, error)) {
+        return true;
+    }
+    std::cerr << error << std::endl;
+    return false;
+}
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -407,69 +418,80 @@ int main(int argc, char* argv[]) {
         }
         if (action == "get") {
             const std::string id = arg(argc, argv, 3);
-            if (id.empty()) {
-                print_help();
+            int deviceId = 0;
+            if (!parse_device_id_arg(id, deviceId)) {
                 return 1;
             }
-            return print_device_response(devices.request({{"command", "device_get"}, {"device_id", std::stoi(id)}}));
+            return print_device_response(devices.request({{"command", "device_get"}, {"device_id", deviceId}}));
         }
         if (action == "children") {
             const std::string id = arg(argc, argv, 3);
-            if (id.empty()) {
-                print_help();
-                return 1;
-            }
             const std::string mode = arg(argc, argv, 4);
             const bool includeDisconnected = mode == "--all" || mode == "--history" || mode == "all" || mode == "history";
             if (!mode.empty() && !includeDisconnected) {
                 print_help();
                 return 1;
             }
+            int parentId = 0;
+            if (!parse_device_id_arg(id, parentId)) {
+                return 1;
+            }
             return print_device_response(devices.request({
                 {"command", "device_children"},
-                {"parent_id", std::stoi(id)},
+                {"parent_id", parentId},
                 {"include_disconnected", includeDisconnected}
             }));
         }
         if (action == "set") {
             const std::string id = arg(argc, argv, 3);
             const std::string level = arg(argc, argv, 4);
-            if (id.empty() || level.empty()) {
+            if (level.empty()) {
                 print_help();
                 return 1;
             }
-            return print_device_response(devices.request({{"command", "device_update_control_level"}, {"device_id", std::stoi(id)}, {"control_level", level}}));
+            int deviceId = 0;
+            if (!parse_device_id_arg(id, deviceId)) {
+                return 1;
+            }
+            return print_device_response(devices.request({{"command", "device_update_control_level"}, {"device_id", deviceId}, {"control_level", level}}));
         }
         if (action == "ignore-hierarchy") {
             const std::string id = arg(argc, argv, 3);
             bool ignoreHierarchy = false;
-            if (id.empty() || !parse_bool_arg(arg(argc, argv, 4), ignoreHierarchy)) {
+            if (!parse_bool_arg(arg(argc, argv, 4), ignoreHierarchy)) {
                 print_help();
                 return 1;
             }
-            return print_device_response(devices.request({{"command", "device_update_ignore_hierarchy"}, {"device_id", std::stoi(id)}, {"ignore_hierarchy", ignoreHierarchy}}));
+            int deviceId = 0;
+            if (!parse_device_id_arg(id, deviceId)) {
+                return 1;
+            }
+            return print_device_response(devices.request({{"command", "device_update_ignore_hierarchy"}, {"device_id", deviceId}, {"ignore_hierarchy", ignoreHierarchy}}));
         }
         if (action == "children-control") {
             const std::string id = arg(argc, argv, 3);
             const std::string level = arg(argc, argv, 4);
-            if (id.empty() ||
-                (level != "allow" && level != "deny" && level != "inherit")) {
+            if (level != "allow" && level != "deny" && level != "inherit") {
                 print_help();
+                return 1;
+            }
+            int deviceId = 0;
+            if (!parse_device_id_arg(id, deviceId)) {
                 return 1;
             }
             return print_device_response(devices.request({
                 {"command", "device_update_children_control"},
-                {"device_id", std::stoi(id)},
+                {"device_id", deviceId},
                 {"children_control", level}
             }));
         }
         if (action == "reset") {
             const std::string id = arg(argc, argv, 3);
-            if (id.empty()) {
-                print_help();
+            int deviceId = 0;
+            if (!parse_device_id_arg(id, deviceId)) {
                 return 1;
             }
-            return print_device_response(devices.request({{"command", "device_reset_control"}, {"device_id", std::stoi(id)}}));
+            return print_device_response(devices.request({{"command", "device_reset_control"}, {"device_id", deviceId}}));
         }
         if (action == "check-permanent") {
             return print_device_response(devices.request({{"command", "device_check_permanent"}}));
