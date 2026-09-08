@@ -29,6 +29,7 @@
 #include <systemd/sd-login.h>
 
 #include "daemon/main_function.h"
+#include "daemon/AuditLogValue.h"
 #include "daemon/CalcHashCommand.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
@@ -105,15 +106,6 @@ std::string to_lower_ascii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
-    return value;
-}
-
-std::string sanitize_log_value(std::string value) {
-    for (char& ch : value) {
-        if (ch == '\n' || ch == '\r' || ch == '\t') {
-            ch = ' ';
-        }
-    }
     return value;
 }
 

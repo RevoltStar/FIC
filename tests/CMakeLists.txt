@@ -834,6 +834,14 @@ target_link_options(verified_process_executor_tests PRIVATE
 add_test(NAME verified_process_executor_tests COMMAND verified_process_executor_tests)
 set_tests_properties(verified_process_executor_tests PROPERTIES TIMEOUT 10)
 
+add_executable(audit_log_value_tests
+    fic/daemon/AuditLogValueTests.cpp
+)
+target_include_directories(audit_log_value_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME audit_log_value_tests COMMAND audit_log_value_tests)
+
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp
@@ -943,6 +951,7 @@ set(FIC_UNIT_TESTS
     platform_profile_tests
     command_hash_security_tests
     verified_process_executor_tests
+    audit_log_value_tests
     calc_hash_command_tests
     package_trust_selection_tests
     schema_contract_tests
