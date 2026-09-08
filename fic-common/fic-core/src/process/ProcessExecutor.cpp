@@ -1,5 +1,7 @@
 #include <fic/core/process/ProcessExecutor.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -14,12 +16,30 @@
 #include <unistd.h>
 
 namespace {
-void read_pipe(int fd, std::string& output) {
+struct OutputCapture {
+    explicit OutputCapture(std::size_t limit) : remaining(limit) {}
+    std::atomic<std::size_t> remaining;
+    std::atomic<bool> exceeded{false};
+    std::atomic<unsigned> completedReaders{0};
+};
+
+void read_pipe(int fd, std::string& output, OutputCapture& capture) {
     char buffer[4096];
     while (true) {
         const ssize_t count = ::read(fd, buffer, sizeof(buffer));
         if (count > 0) {
-            output.append(buffer, static_cast<size_t>(count));
+            const auto bytes = static_cast<std::size_t>(count);
+            std::size_t available = capture.remaining.load();
+            std::size_t retained;
+            do {
+                retained = std::min(available, bytes);
+            } while (!capture.remaining.compare_exchange_weak(
+                available, available - retained));
+            output.append(buffer, retained);
+            if (retained < bytes) {
+                capture.exceeded.store(true);
+            }
+            // Keep draining after overflow so a full pipe cannot block exit.
             continue;
         }
         if (count < 0 && errno == EINTR) {
@@ -28,9 +48,10 @@ void read_pipe(int fd, std::string& output) {
         break;
     }
     ::close(fd);
+    capture.completedReaders.fetch_add(1);
 }
 
-void write_pipe(int fd, const std::string& input) {
+void write_pipe(int fd, const std::string& input, std::atomic<bool>& completed) {
     sigset_t blockedSignals;
     ::sigemptyset(&blockedSignals);
     ::sigaddset(&blockedSignals, SIGPIPE);
@@ -50,6 +71,7 @@ void write_pipe(int fd, const std::string& input) {
         break;
     }
     ::close(fd);
+    completed.store(true);
 }
 
 void write_child_error(const std::string& message) {
@@ -200,38 +222,63 @@ ProcessResult ProcessExecutor::executeImpl(
         ::close(stdinPipe[0]);
     }
 
-    std::thread stdoutReader(read_pipe, stdoutPipe[0], std::ref(result.standardOutput));
-    std::thread stderrReader(read_pipe, stderrPipe[0], std::ref(result.standardError));
+    OutputCapture capture(options.maxOutputBytes);
+    std::atomic<bool> stdinCompleted{stdinPipe[1] < 0};
+    std::thread stdoutReader(
+        read_pipe, stdoutPipe[0], std::ref(result.standardOutput), std::ref(capture));
+    std::thread stderrReader(
+        read_pipe, stderrPipe[0], std::ref(result.standardError), std::ref(capture));
     std::thread stdinWriter;
     if (stdinPipe[1] >= 0) {
         stdinWriter = std::thread(
-            write_pipe, stdinPipe[1], std::cref(*options.standardInput));
+            write_pipe, stdinPipe[1], std::cref(*options.standardInput), std::ref(stdinCompleted));
+    }
+
+    const auto killGroup = [pid] {
+        if (::kill(-pid, SIGKILL) != 0) {
+            ::kill(pid, SIGKILL);
+        }
+    };
+    bool childExited = false;
+    bool terminationSent = false;
+    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
+    while (true) {
+        if (!childExited) {
+            // Retain the leader's PID until draining is complete: descendants
+            // may still need a group kill after their original parent exits.
+            siginfo_t info {};
+            if (::waitid(P_PID, pid, &info, WEXITED | WNOHANG | WNOWAIT) < 0 && errno != EINTR) {
+                result.error = "waitid() failed: " + std::string(std::strerror(errno));
+                killGroup();
+                break;
+            }
+            childExited = info.si_pid == pid;
+        }
+        // Read completion before exceeded: completed readers have published
+        // their final overflow flag, even if the leader already exited cleanly.
+        const bool ioCompleted = capture.completedReaders.load() == 2 && stdinCompleted.load();
+        if (!terminationSent && capture.exceeded.load()) {
+            killGroup();
+            terminationSent = true;
+        }
+        if (childExited && ioCompleted) {
+            break;
+        }
+        if (!terminationSent && std::chrono::steady_clock::now() >= deadline) {
+            result.timedOut = true;
+            killGroup();
+            terminationSent = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
     int status = 0;
-    const auto deadline = std::chrono::steady_clock::now() + options.timeout;
-    while (true) {
-        const pid_t waitResult = ::waitpid(pid, &status, WNOHANG);
-        if (waitResult == pid) {
-            break;
-        }
-        if (waitResult < 0 && errno != EINTR) {
-            result.error = "waitpid() failed: " + std::string(std::strerror(errno));
-            if (::kill(-pid, SIGKILL) != 0) {
-                ::kill(pid, SIGKILL);
-            }
-            ::waitpid(pid, &status, 0);
-            break;
-        }
-        if (std::chrono::steady_clock::now() >= deadline) {
-            result.timedOut = true;
-            if (::kill(-pid, SIGKILL) != 0) {
-                ::kill(pid, SIGKILL);
-            }
-            ::waitpid(pid, &status, 0);
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    pid_t waited;
+    do {
+        waited = ::waitpid(pid, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited < 0 && result.error.empty()) {
+        result.error = "waitpid() failed: " + std::string(std::strerror(errno));
     }
 
     stdoutReader.join();
@@ -240,9 +287,17 @@ ProcessResult ProcessExecutor::executeImpl(
         stdinWriter.join();
     }
 
-    if (WIFEXITED(status)) {
+    // Overflow has priority, including bytes discovered during final draining.
+    if (capture.exceeded.load()) {
+        result.outputLimitExceeded = true;
+        result.timedOut = false;
+        result.error = "configured process output limit exceeded (" +
+            std::to_string(options.maxOutputBytes) + " bytes)";
+    }
+
+    if (waited == pid && WIFEXITED(status)) {
         result.exitCode = WEXITSTATUS(status);
-    } else if (WIFSIGNALED(status)) {
+    } else if (waited == pid && WIFSIGNALED(status)) {
         result.exitCode = 128 + WTERMSIG(status);
     }
     return result;

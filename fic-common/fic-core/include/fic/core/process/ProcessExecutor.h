@@ -2,6 +2,7 @@
 #define PROCESS_EXECUTOR_H
 
 #include <chrono>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <sys/types.h>
@@ -11,13 +12,14 @@
 struct ProcessResult {
     bool started = false;
     bool timedOut = false;
+    bool outputLimitExceeded = false;
     int exitCode = -1;
     std::string standardOutput;
     std::string standardError;
     std::string error;
 
     bool success() const {
-        return started && !timedOut && exitCode == 0;
+        return started && !timedOut && !outputLimitExceeded && exitCode == 0;
     }
 };
 
@@ -30,6 +32,8 @@ struct ProcessOptions {
     std::optional<gid_t> gid;
     std::string user;
     std::string workingDirectory;
+    // Shared stdout + stderr capture budget. Zero permits only empty output.
+    std::size_t maxOutputBytes = 4 * 1024 * 1024;
 };
 
 class ProcessExecutor {

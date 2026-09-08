@@ -521,6 +521,32 @@ SHA-256 и передаёт его во внутренний execution path `Pro
 сохраняет pathname-семантику. Pipes, timeout, process groups, credentials,
 working directory и environment обслуживаются общей реализацией.
 
+Оба execution path ограничивают сумму `standardOutput.size() +
+standardError.size()` через `ProcessOptions::maxOutputBytes`: default 4 MiB,
+0 допускает только пустой вывод; ровно budget разрешён. `standardInput` в
+budget не входит. Default рассчитан на отдельные свойства/настройки команд,
+DMI types 2/17 и метаданные одного пакета (dpkg md5sums / RPM file digests).
+Для полного `nft -j list ruleset` и `udevadm info --export-db` callers явно
+задают 32 MiB: эти ответы растут со всей конфигурацией firewall/device topology.
+Другие callers сохраняют default. Это конечные operational limits; превышение
+не разрешает использовать частичный ответ как успешный результат.
+
+Readers атомарно резервируют долю общего budget; последний chunk сохраняется
+частично, дальнейшие данные читаются и отбрасываются. При превышении parent
+завершает process group через `kill(-pid, SIGKILL)` с fallback на `kill(pid,
+SIGKILL)`, затем дожидается закрытия pipes и завершения threads. Мониторинг
+продолжается после выхода лидера, пока не завершён pipe I/O; лидер остаётся
+waitable до окончательного reap, чтобы его PID не переиспользовался перед
+возможным group kill. Сохраняется polling interval 20 ms. Timeout также
+контролирует ожидание pipe I/O потомков.
+
+Результат содержит `outputLimitExceeded=true`, `timedOut=false`,
+`success()==false` и diagnostic `configured process output limit exceeded
+(N bytes)`. Overflow имеет приоритет над timeout, в том числе если лишние
+байты обнаружены при финальном draining; `exitCode` сохраняет реальный статус
+лидера и может быть 0. Распределение budget между stdout/stderr зависит от
+порядка чтения, но внутри каждого потока сохраняется его префикс.
+
 Для shebang-скриптов `fexecve` с `FD_CLOEXEC` возвращает `ENOENT`: в этом случае
 только дочерний процесс снимает этот флаг и повторяет `fexecve` по тому же fd.
 Интерпретатор получает доступ к скрипту через fd-путь (включая script `$0`);

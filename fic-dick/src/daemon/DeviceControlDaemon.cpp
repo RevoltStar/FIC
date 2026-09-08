@@ -1817,6 +1817,8 @@ bool run_device_reconciliation(const std::string& reason) {
 
     ProcessOptions options;
     options.timeout = std::chrono::milliseconds(15000);
+    // Whole device database, including properties for large device topologies.
+    options.maxOutputBytes = 32 * 1024 * 1024;
     ProcessResult result = ProcessExecutor::execute(udevadm.value(), {"info", "--export-db"}, options);
     if (!result.success()) {
         log_device("device reconciliation failed: udevadm info --export-db failed: " +

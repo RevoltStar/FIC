@@ -53,6 +53,8 @@ bool FirewallBackend::readActual(const std::string& executable,
                                  std::string& error) const {
     ProcessOptions options;
     options.timeout = std::chrono::seconds(10);
+    // Full host ruleset includes foreign rules and potentially large sets.
+    options.maxOutputBytes = 32 * 1024 * 1024;
     const ProcessResult result = VerifiedProcessExecutor::execute(
         executable, {"-j", "list", "ruleset"}, options);
     if (!result.success()) {
