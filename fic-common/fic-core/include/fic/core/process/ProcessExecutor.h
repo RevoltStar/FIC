@@ -39,6 +39,17 @@ public:
         const std::vector<std::string>& arguments = {},
         const ProcessOptions& options = {}
     );
+
+private:
+    friend class VerifiedProcessExecutor;
+
+    // Borrows executableFd for the call; -1 selects ordinary pathname execution.
+    static ProcessResult executeImpl(
+        const std::string& executable,
+        const std::vector<std::string>& arguments,
+        const ProcessOptions& options,
+        int executableFd
+    );
 };
 
 #endif // PROCESS_EXECUTOR_H

@@ -20,37 +20,7 @@ const std::filesystem::path& command_hash_file_path() {
     return fic::core::FicRuntimePaths::get().commandHashFile;
 }
 
-class UniqueFd {
-public:
-    UniqueFd() = default;
-    explicit UniqueFd(int fd) : fd_(fd) {}
-    ~UniqueFd() { reset(); }
-
-    UniqueFd(const UniqueFd&) = delete;
-    UniqueFd& operator=(const UniqueFd&) = delete;
-
-    UniqueFd(UniqueFd&& other) noexcept : fd_(other.fd_) {
-        other.fd_ = -1;
-    }
-    UniqueFd& operator=(UniqueFd&& other) noexcept {
-        if (this != &other) {
-            reset();
-            fd_ = other.fd_;
-            other.fd_ = -1;
-        }
-        return *this;
-    }
-
-    int get() const { return fd_; }
-
-private:
-    void reset() {
-        if (fd_ >= 0) ::close(fd_);
-        fd_ = -1;
-    }
-
-    int fd_ = -1;
-};
+using command_hash_store_detail::UniqueFd;
 
 bool open_validated_executable(const std::string& executable,
                                UniqueFd& descriptor,
@@ -77,6 +47,16 @@ bool open_validated_executable(const std::string& executable,
     }
 
     UniqueFd opened(rawDescriptor);
+    // Keep the executable out of the stdio slots overwritten in the child.
+    if (opened.get() <= STDERR_FILENO) {
+        const int movedDescriptor = ::fcntl(opened.get(), F_DUPFD_CLOEXEC, 3);
+        if (movedDescriptor < 0) {
+            error = "failed to relocate executable descriptor: " + executable +
+                ": " + std::strerror(errno);
+            return false;
+        }
+        opened = UniqueFd(movedDescriptor);
+    }
     struct stat metadata {};
     if (::fstat(opened.get(), &metadata) != 0) {
         error = "failed to inspect opened executable: " + executable + ": " +
@@ -334,6 +314,14 @@ bool CommandHashStore::updateHashes(
 }
 
 bool CommandHashStore::verifyHash(const std::string& executable, std::string& error) {
+    UniqueFd descriptor;
+    return command_hash_store_detail::openVerifiedExecutable(
+        executable, descriptor, error);
+}
+
+bool command_hash_store_detail::openVerifiedExecutable(
+    const std::string& executable, UniqueFd& descriptor, std::string& error) {
+    descriptor = UniqueFd();
     if (!command_hash_store_detail::validateExecutablePathSyntax(
             executable, error) ||
         !command_hash_store_detail::validateCommandHashStoreKey(
@@ -355,9 +343,10 @@ bool CommandHashStore::verifyHash(const std::string& executable, std::string& er
         return false;
     }
 
+    UniqueFd opened;
     std::string actualHash;
-    if (!command_hash_store_detail::calculateValidatedExecutableSha256(
-            executable, actualHash, error)) {
+    if (!open_validated_executable(executable, opened, error) ||
+        !calculateSha256FromFd(opened.get(), actualHash, error)) {
         return false;
     }
 
@@ -366,5 +355,6 @@ bool CommandHashStore::verifyHash(const std::string& executable, std::string& er
         return false;
     }
 
+    descriptor = std::move(opened);
     return true;
 }

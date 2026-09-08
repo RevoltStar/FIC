@@ -2,55 +2,70 @@
 
 ## Current base
 
-- Ветка: `main`.
-- Закоммичено: `1d3937b` (target-specific DAC contracts для
-  provider-managed symlink targets).
-- Незакоммиченная правка поверх `1d3937b`: только
-  `tests/fic/modules/dac/ModeAndOwnerTests.cpp`.
+- Ветка: `main`, commit `532b617`.
+- До текущей задачи рабочее дерево было чистым.
 
 ## Current task
 
-- Test-only follow-up: ключевой regression для target-specific DAC contract
-  сделан безусловным (mode-based, без root и без `systemd-resolve`).
+- Устранение TOCTOU между hash verification и запуском в `VerifiedProcessExecutor`.
 
 ## Accepted architecture / invariants
 
-- Все инварианты предыдущей задачи (см. commit `1d3937b`) сохранены;
-  production-код в этой правке не менялся.
+- Validation, SHA-256 и execution привязаны к одному открытому файловому объекту.
+  После verification исходный pathname используется только для argv/diagnostics.
+- `CommandHashStore` отдаёт owning fd через internal helper; `ProcessExecutor`
+  переиспользует общую process logic через private `executeImpl`.
+  Публичный API и обычная pathname-семантика `ProcessExecutor::execute` сохранены.
+- Shebang: при `ENOENT` снимается `FD_CLOEXEC` только в child, затем повторяется
+  `fexecve` по тому же fd. Parent закрывает свой fd через RAII.
+- Подробный контракт и ограничения: `docs/architecture-diagrams.md`, раздел
+  command hashes. Защита от записи в тот же inode и проверка интерпретатора
+  не входят в этот контракт; script `$0` становится fd-путём.
 
 ## Completed
 
-- В `ModeAndOwnerTests.cpp` добавлен безусловный mode-based regression:
-  logical rule `0600` vs provider target contract `0644` при совпадающих
-  owner/group (`currentOwner()`/`currentGroup()`). Старая реализация
-  (rule-stats для provider target) отклоняет actual `0644`; новая принимает
-  без мутации.
-- Root-only блок с `systemd-resolve` (owner/group покрытия: другой
-  owner/group → SUCCESS, wrong group → FAIL без chgrp, stricter mode,
-  не-regular target) сохранён без изменений как дополнительное покрытие.
-- Проверено на симулированной старой реализации (временная подстановка
-  rule-permissions в provider path): regression падает с «expected maximum
-  mode 0600, actual 0644»; после отката временной правки — проходит.
-  Временных изменений в git не осталось.
+- Сохранены safe open flags, fstat/type/execute-bit checks и SHA-256 по fd.
+  Низкие fd перемещаются выше stdio slots до validation/hash.
+- Общая fork/pipes/timeout/process groups/credentials/environment logic сохранена;
+  verified branch использует только `fexecve`, без pathname fallback.
+- Добавлены детерминированные regressions через test-only linker wrapping fork:
+  замена binary A на B, удаление pathname, замена shebang A на B.
+- Проверяются shebang, argv, stdin/stdout/stderr, empty/inherited/overridden env,
+  workingDirectory, текущие uid/gid, timeout/process groups, закрытие parent fd
+  при success/hash mismatch/pipe/fork/chdir/exec errors и отсутствие fd у binary.
+- Обновлены непосредственно связанные static checks и архитектурное описание.
 
 ## Changed areas
 
-- `tests/fic/modules/dac/ModeAndOwnerTests.cpp`.
+- `fic-common/fic-core/{src/integrity,src/process,include/fic/core/process}`.
+- `tests/common/core/process/VerifiedProcessExecutorTests.cpp`, `tests/CMakeLists.txt`,
+  `tests/fic/platform/static_checks.py`.
+- `docs/architecture-diagrams.md`, `docs/HANDOFF.md`.
 
 ## Validation
 
-- `mode_and_owner_tests`: build ok, exit 0 при non-root запуске
-  (uid доменного пользователя, `systemd-resolve` на хосте отсутствует —
-  `getent` exit 2), новый regression выполняется и проходит.
-- Full build `/tmp/fic-dev-build`: success; full CTest: 73/73 passed.
-- `tests/fic/platform/static_checks.py`, `tests/common/static_checks.py`:
-  exit 0. `git diff --check`: clean.
-- Build по-прежнему использует stub libsystemd в `/tmp/fic-dev-tree/*`
-  (вне git, `PKG_CONFIG_PATH=/tmp/fic-dev-tree/pkgconfig`).
+- Configure: `PKG_CONFIG_PATH=/tmp/fic-dev-tree/pkgconfig cmake -S . -B
+  /tmp/fic-dev-build -DFIC_TARGET_PLATFORM=ubuntu-24.04`: success.
+- Targeted build: `verified_process_executor_tests`, `command_hash_security_tests`,
+  `calc_hash_command_tests`: success.
+- Targeted CTest (эти три теста + platform/path-layout static checks): 5/5 passed.
+- `python3 tests/fic/platform/static_checks.py .` и
+  `python3 tests/common/static_checks.py .`: success.
+- Negative controls отдельно собраны в `/tmp`: старая verified pathname-реализация
+  падает на atomic replacement regression, вариант без CLOEXEC retry — на shebang.
+  Production sources при этом не менялись.
+- `cmake --build /tmp/fic-dev-build -j2`: success.
+- `ctest --test-dir /tmp/fic-dev-build --output-on-failure`: вне sandbox
+  73 passed, 1 skipped (`command_hash_batch_tests`, требует root), 0 failed.
+  Первый запуск в sandbox: 3 failures (socket bind, NSS group lookup,
+  corresponding-source test); вне sandbox все три прошли.
+- Логи: `/tmp/fic-verified-full-build.log`,
+  `/tmp/fic-verified-full-ctest-unsandboxed.log`.
+- Финальный diff review выполнен; `git diff --check`: clean.
 
 ## Remaining
 
-- Не проверялось: запуск под root/на дистро с `systemd-resolve`
-  (root-only покрытия остались под `geteuid()==0` guards).
-- Коммит не создавать без отдельного явного запроса пользователя.
-
+- Сборка использует существующий stub libsystemd в `/tmp/fic-dev-tree/*`;
+  реальный systemd runtime, root-only hash batch test и смена на другие
+  uid/gid/user не проверялись.
+- Коммит не создавать без отдельного запроса пользователя.

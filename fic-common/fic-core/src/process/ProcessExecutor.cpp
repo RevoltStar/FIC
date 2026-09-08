@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <functional>
+#include <fcntl.h>
 #include <grp.h>
 #include <pthread.h>
 #include <sys/wait.h>
@@ -72,6 +73,16 @@ ProcessResult ProcessExecutor::execute(
         return result;
     }
 
+    return executeImpl(executable, arguments, options, -1);
+}
+
+ProcessResult ProcessExecutor::executeImpl(
+    const std::string& executable,
+    const std::vector<std::string>& arguments,
+    const ProcessOptions& options,
+    int executableFd
+) {
+    ProcessResult result;
     int stdoutPipe[2];
     int stderrPipe[2];
     int stdinPipe[2] = {-1, -1};
@@ -157,8 +168,27 @@ ProcessResult ProcessExecutor::execute(
         }
         argv.push_back(nullptr);
 
-        ::execv(executable.c_str(), argv.data());
-        write_child_error("execv() failed");
+        if (executableFd >= 0) {
+            char* emptyEnvironment[] = {nullptr};
+            char** childEnvironment = environ ? environ : emptyEnvironment;
+            ::fexecve(executableFd, argv.data(), childEnvironment);
+            if (errno == ENOENT) {
+                // Linux cannot start a shebang script with FD_CLOEXEC: the
+                // interpreter needs this fd. Clear it only in the forked child
+                // and retry the SAME object, never the original pathname.
+                const int flags = ::fcntl(executableFd, F_GETFD);
+                if (flags < 0 ||
+                    ::fcntl(executableFd, F_SETFD, flags & ~FD_CLOEXEC) < 0) {
+                    write_child_error("fcntl() failed for executable fd");
+                    _exit(127);
+                }
+                ::fexecve(executableFd, argv.data(), childEnvironment);
+            }
+            write_child_error("fexecve() failed: " + executable);
+        } else {
+            ::execv(executable.c_str(), argv.data());
+            write_child_error("execv() failed");
+        }
         _exit(127);
     }
 

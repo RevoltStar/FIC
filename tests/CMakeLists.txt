@@ -821,6 +821,19 @@ target_link_libraries(command_hash_security_tests PRIVATE fic-core)
 add_test(NAME command_hash_security_tests COMMAND command_hash_security_tests)
 set_tests_properties(command_hash_security_tests PROPERTIES TIMEOUT 5)
 
+add_executable(verified_process_executor_tests
+    common/core/process/VerifiedProcessExecutorTests.cpp
+)
+target_include_directories(verified_process_executor_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-core/src
+)
+target_link_libraries(verified_process_executor_tests PRIVATE fic-core)
+target_link_options(verified_process_executor_tests PRIVATE
+    "-Wl,--wrap=fork" "-Wl,--wrap=pipe"
+)
+add_test(NAME verified_process_executor_tests COMMAND verified_process_executor_tests)
+set_tests_properties(verified_process_executor_tests PROPERTIES TIMEOUT 10)
+
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp
@@ -929,6 +942,7 @@ set(FIC_UNIT_TESTS
     ssh_runtime_tests
     platform_profile_tests
     command_hash_security_tests
+    verified_process_executor_tests
     calc_hash_command_tests
     package_trust_selection_tests
     schema_contract_tests

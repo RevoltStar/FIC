@@ -1049,7 +1049,7 @@ def main():
         "command hash calculation must validate and hash one safely opened fd",
     )
     verify_hash_body = command_hash_store.split(
-        "bool CommandHashStore::verifyHash", 1
+        "bool command_hash_store_detail::openVerifiedExecutable", 1
     )[1]
     require(
         "validateCommandHashStoreKey" in command_hash_store
@@ -1061,6 +1061,31 @@ def main():
         and verify_hash_body.find("validateCommandHashStoreKey")
         < verify_hash_body.find("loadConfig"),
         "command hash store keys must be format-safe before persistence or lookup",
+    )
+    verified_executor = (
+        root / "fic-common/fic-core/src/process/VerifiedProcessExecutor.cpp"
+    ).read_text(encoding="utf-8")
+    process_executor = (
+        root / "fic-common/fic-core/src/process/ProcessExecutor.cpp"
+    ).read_text(encoding="utf-8")
+    execute_impl = process_executor.split("ProcessResult ProcessExecutor::executeImpl", 1)[1]
+    fd_execution = execute_impl.split("if (executableFd >= 0)", 1)[1].split(
+        "} else {", 1
+    )[0]
+    require(
+        "openVerifiedExecutable(" in verified_executor
+        and "ProcessExecutor::executeImpl(" in verified_executor
+        and "descriptor.get()" in verified_executor
+        and not re.search(r"\bProcessExecutor::execute\s*\(", verified_executor)
+        and "open_validated_executable(executable, opened, error)" in verify_hash_body
+        and "calculateSha256FromFd(opened.get()" in verify_hash_body
+        and "descriptor = std::move(opened)" in verify_hash_body
+        and "::fexecve(executableFd, argv.data(), childEnvironment)" in fd_execution
+        and "flags & ~FD_CLOEXEC" in fd_execution
+        and not re.search(r"::(?:access|stat|lstat|open|openat|execv|execve)\s*\(", fd_execution)
+        and not re.search(r"::(?:access|stat|lstat|open|openat)\s*\(", execute_impl)
+        and not re.search(r"::(?:access|stat|lstat|open|openat|execv|execve)\s*\(", verified_executor),
+        "verified execution must pass the hashed fd to fexecve without pathname lookup",
     )
     require(
         "S_IRGRP | S_IWGRP" not in exclusive_lock,

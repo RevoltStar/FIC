@@ -513,6 +513,22 @@ flowchart LR
 нет повторного открытия target. Intermediate symlink-компоненты сохраняются
 для совместимости с usr-merge и другими platform layouts.
 
+`VerifiedProcessExecutor` сохраняет этот открытый descriptor после совпадения
+SHA-256 и передаёт его во внутренний execution path `ProcessExecutor`.
+Запуск выполняется через `fexecve`: исходный pathname после проверки не
+используется для выбора executable, даже при его удалении или атомарной замене.
+Он сохраняется для `argv[0]` и diagnostics. Обычный `ProcessExecutor::execute`
+сохраняет pathname-семантику. Pipes, timeout, process groups, credentials,
+working directory и environment обслуживаются общей реализацией.
+
+Для shebang-скриптов `fexecve` с `FD_CLOEXEC` возвращает `ENOENT`: в этом случае
+только дочерний процесс снимает этот флаг и повторяет `fexecve` по тому же fd.
+Интерпретатор получает доступ к скрипту через fd-путь (включая script `$0`);
+повторного разрешения исходного pathname нет. Parent сохраняет `FD_CLOEXEC`
+и закрывает свой fd через RAII на всех путях возврата. Этот контракт связывает
+проверку и запуск с одним файловым объектом; он не предотвращает запись в
+содержимое того же inode и не проверяет shebang-интерпретатор.
+
 Для политик `Sudo` системная конфигурация рассматривается как единый include-
 граф, а не как один `/etc/sudoers`:
 
