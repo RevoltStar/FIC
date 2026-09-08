@@ -754,6 +754,19 @@ bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
                     "absolute normalized path: " + target.path.string();
                 return false;
             }
+            if (target.owner.empty() || target.group.empty()) {
+                error = label +
+                    " provider-managed target owner and group must not be "
+                    "empty: " + target.path.string();
+                return false;
+            }
+            if (target.permissions == 0 ||
+                    (target.permissions & ~07777U) != 0) {
+                error = label +
+                    " provider-managed target permissions are invalid: " +
+                    target.path.string();
+                return false;
+            }
             if (!uniqueSymlinkTargets.insert(target.path).second) {
                 error = label + " final symlink target is duplicated: " +
                     target.path.string();

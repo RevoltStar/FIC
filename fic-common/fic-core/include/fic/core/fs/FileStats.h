@@ -65,6 +65,13 @@ public:
     FileStatsOperationResult change_permissions(mode_t permissions);
     FileStatsOperationResult refresh();
 
+    // Object type of the opened file as reported by the last fstat on the
+    // pinned descriptor; meaningful only for opened (not expectation) objects.
+    mode_t file_type() const { return fileType_; }
+    bool is_regular_file() const {
+        return S_ISREG(fileType_);
+    }
+
     static FileStatsOperationResult resolve_owner_group(
         const std::string& owner,
         const std::string& group,
@@ -98,6 +105,7 @@ private:
     FileStatsState state_ = FileStatsState::Available;
     uid_t ownerId_ = 0;
     gid_t groupId_ = 0;
+    mode_t fileType_ = 0;
     std::error_code systemError_;
     std::string errorMessage_;
 

@@ -183,7 +183,8 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/group", "root", "root", 0644},
         {"/etc/resolv.conf", "root", "root", 0644, {}, {
             {"/run/NetworkManager/resolv.conf",
-             ManagedFileProvider::NetworkManager}
+             ManagedFileProvider::NetworkManager,
+             "root", "root", 0644}
         }},
         {"/etc/sysctl.conf", "root", "root", 0644, {
             "/etc/sysctl.d/99-sysctl.conf"

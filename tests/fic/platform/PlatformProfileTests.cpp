@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <stdexcept>
@@ -493,22 +494,35 @@ void testSelectedProfile() {
         profile.dac.protectedSystemFiles, "/etc/resolv.conf");
     using ManagedTarget = fic::platform::ProviderManagedFileTarget;
     using ManagedProvider = fic::platform::ManagedFileProvider;
+    const ManagedTarget systemdResolvedRuntime = {
+        "/run/systemd/resolve/stub-resolv.conf",
+        ManagedProvider::SystemdResolved,
+        "systemd-resolve", "systemd-resolve", 0644};
+    const ManagedTarget systemdResolvedUplink = {
+        "/run/systemd/resolve/resolv.conf",
+        ManagedProvider::SystemdResolved,
+        "systemd-resolve", "systemd-resolve", 0644};
+    const ManagedTarget systemdResolvedStatic = {
+        "/usr/lib/systemd/resolv.conf",
+        ManagedProvider::SystemdResolved,
+        "root", "root", 0644};
+    const ManagedTarget networkManagerRuntime = {
+        "/run/NetworkManager/resolv.conf",
+        ManagedProvider::NetworkManager,
+        "root", "root", 0644};
     std::vector<ManagedTarget> resolverTargets = {
-        {"/run/systemd/resolve/stub-resolv.conf",
-         ManagedProvider::SystemdResolved},
-        {"/run/systemd/resolve/resolv.conf",
-         ManagedProvider::SystemdResolved},
-        {"/usr/lib/systemd/resolv.conf",
-         ManagedProvider::SystemdResolved},
-        {"/run/NetworkManager/resolv.conf",
-         ManagedProvider::NetworkManager}
+        systemdResolvedRuntime,
+        systemdResolvedUplink,
+        systemdResolvedStatic,
+        networkManagerRuntime
     };
     if (profile.id == "alt-p11") {
         resolverTargets.erase(resolverTargets.begin(),
                               resolverTargets.begin() + 3);
     } else if (profile.id == "debian-12" || profile.id == "debian-13") {
         resolverTargets.push_back({
-            "/run/resolvconf/resolv.conf", ManagedProvider::Resolvconf});
+            "/run/resolvconf/resolv.conf", ManagedProvider::Resolvconf,
+            "root", "root", 0644});
     }
     require(resolvConfRule.allowedFinalSymlinkTargets.empty(),
             "provider-managed resolv.conf targets must not be remediate aliases");
@@ -520,9 +534,12 @@ void testSelectedProfile() {
                 resolverTargets.begin(),
                 [](const auto& actual, const auto& expected) {
                     return actual.path == expected.path &&
-                        actual.provider == expected.provider;
+                        actual.provider == expected.provider &&
+                        actual.owner == expected.owner &&
+                        actual.group == expected.group &&
+                        actual.permissions == expected.permissions;
                 }),
-            "resolv.conf provider targets are incorrect");
+            "resolv.conf provider target contracts are incorrect");
     require(std::none_of(
                 resolverTargets.begin(), resolverTargets.end(),
                 [](const auto& target) {
@@ -981,6 +998,46 @@ void testInvalidProfileIsRejected() {
         "unverified-service";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a trusted PAM bypass for an unverified service must be rejected");
+
+    const auto withResolvConfTargets =
+        [](std::function<void(fic::platform::FileAccessRule&)> mutate) {
+            fic::platform::PlatformProfile profile =
+                fic::platform::makeBuildPlatformProfile();
+            for (fic::platform::FileAccessRule& rule :
+                 profile.dac.protectedSystemFiles) {
+                if (rule.path == "/etc/resolv.conf") {
+                    mutate(rule);
+                }
+            }
+            std::string validationError;
+            require(!fic::platform::validatePlatformProfile(
+                        profile, validationError),
+                    "invalid provider target metadata must be rejected");
+        };
+
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().owner.clear();
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().group.clear();
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().permissions = 0;
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().permissions = 010000;
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.push_back(
+            rule.providerManagedFinalSymlinkTargets.front());
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().path = "run/relative";
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().path =
+            "/run//NetworkManager/resolv.conf";
+    });
 
     profile = fic::platform::makeBuildPlatformProfile();
     if (profile.pam.passwordlessLoginControl.has_value()) {

@@ -140,13 +140,17 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/group", "root", "root", 0644},
         {"/etc/resolv.conf", "root", "root", 0644, {}, {
             {"/run/systemd/resolve/stub-resolv.conf",
-             ManagedFileProvider::SystemdResolved},
+             ManagedFileProvider::SystemdResolved,
+             "systemd-resolve", "systemd-resolve", 0644},
             {"/run/systemd/resolve/resolv.conf",
-             ManagedFileProvider::SystemdResolved},
+             ManagedFileProvider::SystemdResolved,
+             "systemd-resolve", "systemd-resolve", 0644},
             {"/usr/lib/systemd/resolv.conf",
-             ManagedFileProvider::SystemdResolved},
+             ManagedFileProvider::SystemdResolved,
+             "root", "root", 0644},
             {"/run/NetworkManager/resolv.conf",
-             ManagedFileProvider::NetworkManager}
+             ManagedFileProvider::NetworkManager,
+             "root", "root", 0644}
         }},
         {"/etc/sysctl.conf", "root", "root", 0644},
         {"/etc/logrotate.conf", "root", "root", 0644},

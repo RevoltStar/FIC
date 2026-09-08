@@ -336,6 +336,11 @@ enum class ManagedFileProvider {
 struct ProviderManagedFileTarget {
     std::filesystem::path path;
     ManagedFileProvider provider;
+    // Provider target DAC contract in the same mode semantics as the owning
+    // FileAccessRule: exact owner/group and maximum-allowed permissions.
+    std::string owner;
+    std::string group;
+    unsigned int permissions = 0;
 };
 
 struct FileAccessRule {

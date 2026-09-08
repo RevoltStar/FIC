@@ -57,9 +57,13 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
         }
         for (const auto& target :
              rule.providerManagedFinalSymlinkTargets) {
-            result << " (provider-managed final symlink -> "
-                   << target.path.string() << ", "
-                   << providerName(target.provider) << ", validate only)";
+            result << "\n  provider-managed final symlink ->";
+            result << "\n    " << target.path.string() << " "
+                   << target.owner << ":" << target.group << " "
+                   << std::setfill('0') << std::setw(4) << std::oct
+                   << target.permissions << std::dec
+                   << " (provider=" << providerName(target.provider)
+                   << ", validate only)";
         }
     }
     if (tcbCredentialStorage_) {
@@ -146,7 +150,10 @@ void ModeAndOwner::applyOpenedRule(
     } else if (!ownerInitiallyCorrect && validateOnly) {
         diagnostics.push_back(
             "Provider-managed target has incorrect owner/group and is "
-            "validate-only: " + currentStats.opened_policy_path().string());
+            "validate-only: " + currentStats.opened_policy_path().string() +
+            " (expected " + expectedStats._owner + ":" + expectedStats._group +
+            ", actual " + originalOwner + ":" + originalGroup +
+            "); FIC did not modify the provider-owned target");
     } else if (!ownerInitiallyCorrect) {
         const FileStatsOperationResult changeResult =
             currentStats.change_owner_group(
@@ -188,7 +195,11 @@ void ModeAndOwner::applyOpenedRule(
         validateOnly) {
         diagnostics.push_back(
             "Provider-managed target has excessive permissions and is "
-            "validate-only: " + currentStats.opened_policy_path().string());
+            "validate-only: " + currentStats.opened_policy_path().string() +
+            " (expected maximum mode " +
+            formatPermissions(expectedStats._permissions) + ", actual " +
+            formatPermissions(originalPermissions) +
+            "); FIC did not modify the provider-owned target");
     } else if (currentStateReadable && !permissionRequirementSatisfied()) {
         const mode_t targetPermissions =
             modeEnforcement_ == ModeEnforcement::Exact
@@ -299,10 +310,37 @@ bool ModeAndOwner::apply() {
             [&](const auto& target) {
                 return target.path == currentStats.opened_policy_path();
             });
-        const bool providerManaged = providerTarget !=
-            expectation.providerManagedFinalSymlinkTargets.end();
+        if (providerTarget !=
+                expectation.providerManagedFinalSymlinkTargets.end()) {
+            // Provider-owned targets are validated against their own
+            // target-specific platform contract and never remediated. A
+            // matching target path alone is not compliance: owner/group and
+            // mode of the provider-managed file may legally differ from the
+            // static FileAccessRule expectation.
+            const FileStats providerExpectation(
+                providerTarget->owner,
+                providerTarget->group,
+                static_cast<mode_t>(providerTarget->permissions));
+            if (!currentStats.is_regular_file()) {
+                this->log(
+                    "Provider-managed target " +
+                        currentStats.opened_policy_path().string() +
+                        " has an unexpected object type; expected a regular "
+                        "file",
+                    logLevel::ERROR);
+                ++counters.failed;
+                continue;
+            }
+            applyOpenedRule(
+                filename, providerExpectation, std::move(currentStats),
+                true, counters);
+            continue;
+        }
+
+        // Static regular path: the original FileAccessRule expectation is
+        // authoritative and remediation is allowed.
         applyOpenedRule(filename, expectedStats, std::move(currentStats),
-                        providerManaged, counters);
+                        false, counters);
     }
 
     applyAdditionalRules(counters);

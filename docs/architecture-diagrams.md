@@ -1139,17 +1139,34 @@ provider-managed final symlink targets. Debian 12/13 разрешают три �
 `/run/resolvconf/resolv.conf`; Ubuntu 24.04/26.04 — те же цели
 `systemd-resolved` и NetworkManager без resolvconf; ALT p11 — только
 NetworkManager. Внутренний `/run/NetworkManager/no-stub-resolv.conf` и любые
-иные цели не входят в allowlist.
+иные цели не входят в allowlist. Каждая разрешённая provider-managed цель
+несёт собственный compile-time DAC contract `owner:group mode`, а не наследует
+метаданные логического правила: для runtime-файлов `systemd-resolved` это
+`systemd-resolve:systemd-resolve 0644` (service unit запускается от
+`User=systemd-resolve` и пишет файлы с `umask 0022`/`fchmod 0644`), для
+package-owned `/usr/lib/systemd/resolv.conf` и runtime-файлов
+NetworkManager/resolvconf — `root:root 0644`. Совпадение target path с
+allowlist само по себе не означает compliance: метаданные открытой цели
+проверяются всегда.
 
-Static `/etc/resolv.conf` остаётся remediate-capable. Для provider-managed
-target FIC проверяет symlink topology, owner/group и maximum mode через уже
-закреплённый descriptor, но при отклонении возвращает ошибку без `fchown` или
-`fchmod`: lifecycle generated-файла принадлежит provider, поэтому FIC не
-вступает с ним в цикл взаимных исправлений. ALT openresolv пишет непосредственно
-в `/etc/resolv.conf` и обрабатывается как static topology. Остальные ALT
-package-owned связи остаются обычными remediate aliases:
-`/etc/sysctl.conf` → `/etc/sysctl.d/99-sysctl.conf` и `/etc/grub.cfg` →
-`/boot/grub/grub.cfg`. GRUB-политики редактируют regular file
+Static `/etc/resolv.conf` остаётся remediate-capable: если policy path открылся
+как regular file, применяются эталонные owner/group/mode самого
+`FileAccessRule`, включая исправление. Если policy path разрешился в
+provider-managed final symlink target, ожидаемые owner/group/mode берутся из
+target-specific contract этой цели, а не из `FileAccessRule`; target обязан
+быть regular file. Provider-owned target остаётся validate-only: FIC проверяет
+topology, тип объекта, owner/group и maximum mode через уже закреплённый
+descriptor, но при отклонении возвращает ошибку без `fchown` или `fchmod`:
+lifecycle generated-файла принадлежит provider, поэтому FIC не вступает с ним
+в цикл взаимных исправлений. Diagnostics при провале указывают логический
+policy path, выбранную цель, expected/actual owner/group/mode и то, что цель
+validate-only. Metadata всех provider targets валидируется fail-closed при
+построении профиля: абсолютные нормализованные пути, непустые owner/group,
+корректный mode, отсутствие дубликатов и известных провайдеров. ALT openresolv
+пишет непосредственно в `/etc/resolv.conf` и обрабатывается как static
+topology. Остальные ALT package-owned связи остаются обычными remediate
+aliases: `/etc/sysctl.conf` → `/etc/sysctl.d/99-sysctl.conf` и `/etc/grub.cfg`
+→ `/boot/grub/grub.cfg`. GRUB-политики редактируют regular file
 `/etc/sysconfig/grub2`, а не symlink `/etc/default/grub`.
 
 Для защищаемых системных команд исключений также нет;

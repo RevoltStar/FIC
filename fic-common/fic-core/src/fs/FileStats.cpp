@@ -585,6 +585,7 @@ FileStatsOperationResult FileStats::update_from_descriptor() {
     }
     ownerId_ = fileStat.st_uid;
     groupId_ = fileStat.st_gid;
+    fileType_ = fileStat.st_mode & S_IFMT;
     _owner = ownerName(ownerId_);
     _group = groupName(groupId_);
     _permissions = fileStat.st_mode & PERMISSION_MASK;

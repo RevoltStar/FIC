@@ -534,11 +534,19 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
         const fs::path target = root / (name + "-target");
         const fs::path link = root / (name + "-link");
         writeFile(target, name, 0644);
+        if (::geteuid() == 0) {
+            require(::chown(target.c_str(), 0, 0) == 0,
+                    "could not set the provider target owner to root");
+        }
+        const std::string targetOwner =
+            ::geteuid() == 0 ? "root" : currentOwner();
+        const std::string targetGroup =
+            ::geteuid() == 0 ? "root" : currentGroup();
         fs::create_symlink(target, link);
         fic::platform::DacPlatformConfig config;
-        config.protectedSystemFiles = {{
-            link, owner, group, 0644, {}, {{target, provider}}
-        }};
+        config.protectedSystemFiles = {{link, "root", "root", 0644, {}, {
+            {target, provider, targetOwner, targetGroup, 0644}
+        }}};
         DAC_blocking_user_access_to_system_files policy(config);
         require(policy.apply(),
                 "valid provider-managed resolver target was rejected: " + name);
@@ -563,8 +571,8 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
     fs::create_symlink(invalidTarget, invalidLink);
     fic::platform::DacPlatformConfig invalidConfig;
     invalidConfig.protectedSystemFiles = {{
-        invalidLink, owner, group, 0644, {},
-        {{invalidTarget, Provider::NetworkManager}}
+        invalidLink, "root", "root", 0644, {},
+        {{invalidTarget, Provider::NetworkManager, "root", "root", 0644}}
     }};
     DAC_blocking_user_access_to_system_files invalidPolicy(invalidConfig);
     require(!invalidPolicy.apply(),
@@ -578,8 +586,8 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
     fs::create_symlink(arbitraryTarget, arbitraryLink);
     fic::platform::DacPlatformConfig arbitraryConfig;
     arbitraryConfig.protectedSystemFiles = {{
-        arbitraryLink, owner, group, 0644, {},
-        {{invalidTarget, Provider::NetworkManager}}
+        arbitraryLink, "root", "root", 0644, {},
+        {{invalidTarget, Provider::NetworkManager, "root", "root", 0644}}
     }};
     DAC_blocking_user_access_to_system_files arbitraryPolicy(arbitraryConfig);
     require(!arbitraryPolicy.apply(), "arbitrary resolver target was accepted");
@@ -601,7 +609,8 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
         fic::platform::DacPlatformConfig ownerConfig;
         ownerConfig.protectedSystemFiles = {{
             ownerLink, "root", "root", 0644, {},
-            {{ownerTarget, Provider::NetworkManager}}
+            {{ownerTarget, Provider::NetworkManager,
+              "root", "root", 0644}}
         }};
         DAC_blocking_user_access_to_system_files ownerPolicy(ownerConfig);
         require(!ownerPolicy.apply(),
@@ -630,6 +639,124 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
     require(fileMode(pinnedTarget) == 0600 &&
                 fileMode(replacementTarget) == 0644,
             "symlink replacement redirected a descriptor-based mutation");
+
+    // Regression: a provider target must be validated against its own
+    // target-specific contract, not against the logical rule expectation.
+    // The rule says one owner/group; the target contract legally requires a
+    // different one (mirrors /etc/resolv.conf -> systemd-resolve on
+    // systemd-resolved systems). The old implementation used the rule
+    // expectation for the opened target and failed here.
+    if (::geteuid() == 0) {
+        const struct passwd* resolveUser = ::getpwnam("systemd-resolve");
+        const struct group* resolveGroup = ::getgrnam("systemd-resolve");
+        if (resolveUser != nullptr && resolveGroup != nullptr) {
+            const fs::path contractTarget = root / "target-specific-owner";
+            const fs::path contractLink = root / "target-specific-link";
+            writeFile(contractTarget, "contract", 0644);
+            require(::chown(contractTarget.c_str(), resolveUser->pw_uid,
+                            resolveGroup->gr_gid) == 0,
+                    "could not set the target-specific contract owner");
+            fs::create_symlink(contractTarget, contractLink);
+            fic::platform::DacPlatformConfig contractConfig;
+            // Rule expectation (root:root) intentionally differs from the
+            // target contract (systemd-resolve:systemd-resolve).
+            contractConfig.protectedSystemFiles = {{
+                contractLink, "root", "root", 0644, {}, {
+                    {contractTarget, Provider::SystemdResolved,
+                     "systemd-resolve", "systemd-resolve", 0644}
+                }}};
+            DAC_blocking_user_access_to_system_files contractPolicy(
+                contractConfig);
+            require(contractPolicy.apply(),
+                    "a compliant provider target with its own owner/group "
+                    "contract was rejected");
+            require(fileMode(contractTarget) == 0644,
+                    "compliant target-specific provider target was modified");
+
+            // Wrong group must fail without touching the target.
+            const fs::path wrongGroupTarget = root / "provider-wrong-group";
+            const fs::path wrongGroupLink = root / "provider-wrong-group-link";
+            writeFile(wrongGroupTarget, "group", 0644);
+            require(::chown(wrongGroupTarget.c_str(), resolveUser->pw_uid,
+                            resolveGroup->gr_gid) == 0,
+                    "could not set the wrong-group fixture owner");
+            fs::create_symlink(wrongGroupTarget, wrongGroupLink);
+            fic::platform::DacPlatformConfig wrongGroupConfig;
+            wrongGroupConfig.protectedSystemFiles = {{
+                wrongGroupLink, "root", "root", 0644, {}, {
+                    {wrongGroupTarget, Provider::SystemdResolved,
+                     "systemd-resolve", "root", 0644}
+                }}};
+            DAC_blocking_user_access_to_system_files wrongGroupPolicy(
+                wrongGroupConfig);
+            require(!wrongGroupPolicy.apply(),
+                    "provider-managed target with wrong group was accepted");
+            struct stat wrongGroupInfo {};
+            require(::stat(wrongGroupTarget.c_str(), &wrongGroupInfo) == 0,
+                    "could not inspect the wrong-group provider target");
+            require(wrongGroupInfo.st_gid == resolveGroup->gr_gid,
+                    "validate-only provider target was chgrped");
+
+            // Stricter mode is allowed: contract is the maximum allowed mode.
+            const fs::path stricterTarget = root / "provider-stricter";
+            const fs::path stricterLink = root / "provider-stricter-link";
+            writeFile(stricterTarget, "stricter", 0600);
+            require(::chown(stricterTarget.c_str(), 0, 0) == 0,
+                    "could not set the stricter fixture owner");
+            fs::create_symlink(stricterTarget, stricterLink);
+            fic::platform::DacPlatformConfig stricterConfig;
+            stricterConfig.protectedSystemFiles = {{
+                stricterLink, "root", "root", 0644, {}, {
+                    {stricterTarget, Provider::SystemdResolved,
+                     "root", "root", 0644}
+                }}};
+            DAC_blocking_user_access_to_system_files stricterPolicy(
+                stricterConfig);
+            require(stricterPolicy.apply(),
+                    "a stricter provider target mode was rejected by the "
+                    "maximum-mode contract");
+            require(fileMode(stricterTarget) == 0600,
+                    "a compliant stricter provider target mode was modified");
+
+            // A provider target that is not a regular file must fail closed.
+            const fs::path directoryTarget = root / "provider-directory";
+            const fs::path directoryLink = root / "provider-directory-link";
+            fs::create_directories(directoryTarget);
+            require(::chown(directoryTarget.c_str(), 0, 0) == 0,
+                    "could not set the directory fixture owner");
+            fs::create_symlink(directoryTarget, directoryLink);
+            fic::platform::DacPlatformConfig directoryConfig;
+            directoryConfig.protectedSystemFiles = {{
+                directoryLink, "root", "root", 0644, {}, {
+                    {directoryTarget, Provider::SystemdResolved,
+                     "root", "root", 0644}
+                }}};
+            DAC_blocking_user_access_to_system_files directoryPolicy(
+                directoryConfig);
+            require(!directoryPolicy.apply(),
+                    "a provider-managed target that is not a regular file "
+                    "was accepted");
+        }
+    }
+
+    // A normal remediation symlink (plain allowlist alias) must keep
+    // remediation-capable semantics: the rule expectation is applied to the
+    // opened alias target and mismatches are fixed, not reported.
+    const fs::path aliasTarget = root / "alias-target";
+    const fs::path aliasLink = root / "alias-link";
+    if (::geteuid() == 0) {
+        writeFile(aliasTarget, "alias", 0644);
+        require(::chown(aliasTarget.c_str(), 0, 0) == 0,
+                "could not set the alias fixture owner");
+        fs::create_symlink(aliasTarget, aliasLink);
+        TestModeAndOwner aliasPolicy(MissingFilePolicy::Fail);
+        aliasPolicy.addRule(
+            aliasLink, "root", "root", 0600, {aliasTarget});
+        require(aliasPolicy.apply(),
+                "a regular allowlist alias was treated as provider-managed");
+        require(fileMode(aliasTarget) == 0600,
+                "a regular allowlist alias target was not remediated");
+    }
 }
 
 void testCustomSymlinkRemainsFailClosed(const fs::path& root) {
