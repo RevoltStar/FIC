@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(fic-core STATIC
     src/config/ConfigFileHandler.cpp
@@ -29,6 +30,7 @@ add_library(fic-core STATIC
     src/i18n/LocalizationManager.cpp
     src/integrity/CommandHashStore.cpp
     src/logging/Logger.cpp
+    src/logging/SecurityAudit.cpp
     src/notification/NotifyUser.cpp
     src/process/ExclusivePidLock.cpp
     src/process/ProcessPipeIo.cpp
@@ -52,7 +54,10 @@ target_include_directories(fic-core
         $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(fic-core PUBLIC fic-version PRIVATE OpenSSL::Crypto Threads::Threads)
+target_link_libraries(fic-core
+    PUBLIC fic-version nlohmann_json::nlohmann_json
+    PRIVATE OpenSSL::Crypto Threads::Threads
+)
 
 install(TARGETS fic-core ARCHIVE DESTINATION lib COMPONENT Development)
 install(DIRECTORY include/ DESTINATION include COMPONENT Development

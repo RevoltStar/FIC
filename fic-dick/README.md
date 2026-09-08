@@ -337,6 +337,10 @@ devices
 Туда записываются PID, `ACTION`, `DEVPATH` и `SUBSYSTEM` текущего события.
 Мутирующие device IPC-команды дополнительно пишутся в audit-log текущей
 загрузки вместе с peer uid/gid/pid, кратким описанием запроса и результатом.
+Audit-log использует JSON Lines: одна запись — один JSON-объект с typed
+`peer`, `command`, whitelist `request` и `result`. Строковые значения
+ограничены 240 байтами, итоговая запись — 16 КиБ; факт усечения отражается в
+`truncated_fields` или `record_truncated`.
 Команда `device_events` принимает только `limit` от 1 до 500, чтобы выборка и
 IPC-ответ оставались ограниченными.
 

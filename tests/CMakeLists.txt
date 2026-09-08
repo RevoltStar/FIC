@@ -854,13 +854,31 @@ target_link_libraries(process_cancellation_tests PRIVATE fic-core)
 add_test(NAME process_cancellation_tests COMMAND process_cancellation_tests)
 set_tests_properties(process_cancellation_tests PROPERTIES TIMEOUT 35)
 
-add_executable(audit_log_value_tests
-    fic/daemon/AuditLogValueTests.cpp
+add_executable(security_audit_tests
+    common/core/logging/SecurityAuditTests.cpp
 )
-target_include_directories(audit_log_value_tests PRIVATE
+target_link_libraries(security_audit_tests PRIVATE fic-core)
+add_test(NAME security_audit_tests COMMAND security_audit_tests)
+
+add_executable(admin_audit_tests
+    fic/daemon/AdminAuditTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/AdminAudit.cpp
+)
+target_include_directories(admin_audit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-add_test(NAME audit_log_value_tests COMMAND audit_log_value_tests)
+target_link_libraries(admin_audit_tests PRIVATE fic-core)
+add_test(NAME admin_audit_tests COMMAND admin_audit_tests)
+
+add_executable(device_audit_tests
+    fic-dick/daemon/DeviceAuditTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/DeviceAudit.cpp
+)
+target_include_directories(device_audit_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+target_link_libraries(device_audit_tests PRIVATE fic-core)
+add_test(NAME device_audit_tests COMMAND device_audit_tests)
 
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
@@ -973,7 +991,9 @@ set(FIC_UNIT_TESTS
     verified_process_executor_tests
     process_output_limit_tests
     process_cancellation_tests
-    audit_log_value_tests
+    security_audit_tests
+    admin_audit_tests
+    device_audit_tests
     calc_hash_command_tests
     package_trust_selection_tests
     schema_contract_tests

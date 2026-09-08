@@ -1,4 +1,5 @@
 #include "DeviceControlDaemon.h"
+#include "daemon/DeviceAudit.h"
 #include "device/DeviceLifecycle.h"
 #include "device/DevicePaths.h"
 #include "device/DeviceTreeSnapshot.h"
@@ -36,6 +37,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fic/core/logging/Logger.h>
+#include <fic/core/logging/SecurityAudit.h>
 #include <fic/core/process/ProcessExecutor.h>
 #include <fic/core/runtime/SystemBootInfo.h>
 #include <fic/device-db/DB.h>
@@ -69,13 +71,7 @@ struct ControlOverride {
     std::string childrenControl = "inherit";
 };
 
-struct PeerCredentials {
-    bool available = false;
-    uid_t uid = static_cast<uid_t>(-1);
-    gid_t gid = static_cast<gid_t>(-1);
-    pid_t pid = -1;
-    std::string error;
-};
+using PeerCredentials = fic::core::security_audit::PeerCredentials;
 
 struct PermanentViolation {
     int deviceId = -1;
@@ -142,9 +138,9 @@ PeerCredentials peer_credentials(int fd) {
     socklen_t credentialsLength = sizeof(credentials);
     if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &credentialsLength) == 0) {
         peer.available = true;
-        peer.uid = credentials.uid;
-        peer.gid = credentials.gid;
-        peer.pid = credentials.pid;
+        peer.uid = static_cast<std::int64_t>(credentials.uid);
+        peer.gid = static_cast<std::int64_t>(credentials.gid);
+        peer.pid = static_cast<std::int64_t>(credentials.pid);
     } else {
         peer.error = std::strerror(errno);
     }
@@ -154,68 +150,7 @@ PeerCredentials peer_credentials(int fd) {
     return peer;
 }
 
-std::string sanitize_audit_value(std::string value) {
-    for (char& ch : value) {
-        if (ch == '\n' || ch == '\r' || ch == '\t') {
-            ch = ' ';
-        }
-    }
-    if (value.size() > 240) {
-        value = value.substr(0, 240) + "...";
-    }
-    return value;
-}
-
-bool is_mutating_command(const std::string& command) {
-    return command == "udev_event" ||
-           command == "device_reconcile" ||
-           command == "device_update_control_level" ||
-           command == "device_update_ignore_hierarchy" ||
-           command == "device_update_children_control" ||
-           command == "device_regenerate_policy" ||
-           command == "device_reset_control" ||
-           command == "device_delete" ||
-           command == "device_check_permanent" ||
-           command == "shutdown";
-}
-
-std::string request_audit_summary(const json& request) {
-    if (!request.is_object()) {
-        return "command=<invalid-json>";
-    }
-
-    std::string summary = "command=" + sanitize_audit_value(request.value("command", ""));
-    const std::vector<std::string> stringFields = {
-        "action", "devpath", "subsystem", "control_level", "children_control"
-    };
-    for (const std::string& field : stringFields) {
-        if (request.contains(field) && request[field].is_string()) {
-            summary += " " + field + "=" + sanitize_audit_value(request[field].get<std::string>());
-        }
-    }
-
-    const std::vector<std::string> integerFields = {"device_id", "parent_id"};
-    for (const std::string& field : integerFields) {
-        if (request.contains(field) && request[field].is_number_integer()) {
-            summary += " " + field + "=" + std::to_string(request[field].get<int>());
-        }
-    }
-
-    if (request.contains("ignore_hierarchy") && request["ignore_hierarchy"].is_boolean()) {
-        summary += std::string(" ignore_hierarchy=") + (request["ignore_hierarchy"].get<bool>() ? "true" : "false");
-    }
-    for (const char* field : {
-             "block_usb_storage", "block_printers_scanners", "block_optical_drives"}) {
-        if (request.contains(field) && request[field].is_boolean()) {
-            summary += std::string(" ") + field + "=" +
-                (request[field].get<bool>() ? "true" : "false");
-        }
-    }
-
-    return summary;
-}
-
-void write_device_audit_log(const std::string& message) {
+void write_device_audit_log(const json& event) {
     try {
         const std::string bootId = current_boot_id();
         const std::filesystem::path auditDir = DeviceRuntimePaths::get().logDir /
@@ -224,35 +159,21 @@ void write_device_audit_log(const std::string& message) {
         std::filesystem::create_directories(auditDir);
 
         const std::filesystem::path auditFile = auditDir / ("device_audit_" + std::to_string(getpid()) + ".txt");
-        std::ofstream stream(auditFile, std::ios::app);
-        if (!stream.is_open()) {
-            std::cerr << "failed to open device audit log: " << auditFile << std::endl;
-            return;
+        std::string error;
+        if (!fic::core::security_audit::appendJsonLine(auditFile, event, error)) {
+            std::cerr << error << std::endl;
         }
-
-        stream << "[" << Logger::get_current_time() << "] " << message << '\n';
     } catch (const std::exception& e) {
         std::cerr << "device audit logging error: " << e.what() << std::endl;
     }
 }
 
 void audit_device_request(const PeerCredentials& peer, const json& request, const json& response) {
-    const std::string command = request.is_object() ? request.value("command", "") : "";
-    if (!is_mutating_command(command)) {
+    const std::string command = device_audit_command(request);
+    if (!is_mutating_device_command(command)) {
         return;
     }
-
-    std::ostringstream out;
-    out << "peer=";
-    if (peer.available) {
-        out << "uid:" << peer.uid << " gid:" << peer.gid << " pid:" << peer.pid;
-    } else {
-        out << "unavailable(" << sanitize_audit_value(peer.error) << ")";
-    }
-    out << " " << request_audit_summary(request)
-        << " result=" << (response.value("ok", false) ? "ok" : "error")
-        << " message=" << sanitize_audit_value(response.value("message", ""));
-    write_device_audit_log(out.str());
+    write_device_audit_log(make_device_ipc_audit_event(peer, request, response));
 }
 
 DeviceInfo with_override(DeviceInfo device, const std::optional<ControlOverride>& override) {

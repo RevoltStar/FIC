@@ -14,7 +14,6 @@
 #include <locale>
 #include <limits>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <grp.h>
@@ -29,7 +28,7 @@
 #include <systemd/sd-login.h>
 
 #include "daemon/main_function.h"
-#include "daemon/AuditLogValue.h"
+#include "daemon/AdminAudit.h"
 #include "daemon/CalcHashCommand.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
@@ -39,7 +38,7 @@
 #include <fic/ipc/FicIpcPathDefaults.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
-#include <fic/core/logging/Logger.h>
+#include <fic/core/logging/SecurityAudit.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/runtime/SystemBootInfo.h>
 #include <fic/core/config/ConfigSchemaManager.h>
@@ -60,13 +59,7 @@ using json = nlohmann::json;
 namespace {
 std::atomic_bool g_stop{false};
 
-struct PeerCredentials {
-    bool available = false;
-    pid_t pid = -1;
-    uid_t uid = static_cast<uid_t>(-1);
-    gid_t gid = static_cast<gid_t>(-1);
-    std::string error;
-};
+using PeerCredentials = fic::core::security_audit::PeerCredentials;
 
 void handle_signal(int) {
     g_stop = true;
@@ -109,16 +102,6 @@ std::string to_lower_ascii(std::string value) {
     return value;
 }
 
-std::string peer_credentials_to_string(const PeerCredentials& peer) {
-    if (!peer.available) {
-        return "peer=unknown error=\"" + sanitize_log_value(peer.error) + "\"";
-    }
-
-    return "peer_pid=" + std::to_string(peer.pid) +
-           " peer_uid=" + std::to_string(peer.uid) +
-           " peer_gid=" + std::to_string(peer.gid);
-}
-
 PeerCredentials get_peer_credentials(int fd) {
     PeerCredentials peer;
 #ifdef SO_PEERCRED
@@ -126,9 +109,9 @@ PeerCredentials get_peer_credentials(int fd) {
     socklen_t credentialsLength = sizeof(credentials);
     if (::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &credentialsLength) == 0) {
         peer.available = true;
-        peer.pid = credentials.pid;
-        peer.uid = credentials.uid;
-        peer.gid = credentials.gid;
+        peer.pid = static_cast<std::int64_t>(credentials.pid);
+        peer.uid = static_cast<std::int64_t>(credentials.uid);
+        peer.gid = static_cast<std::int64_t>(credentials.gid);
         return peer;
     }
     peer.error = std::strerror(errno);
@@ -138,31 +121,7 @@ PeerCredentials get_peer_credentials(int fd) {
     return peer;
 }
 
-std::string request_audit_summary(const json& request) {
-    if (!request.is_object()) {
-        return "command=<invalid-json>";
-    }
-
-    std::string summary = "command=" + sanitize_log_value(request.value("command", ""));
-
-    const std::vector<std::string> stringFields = {"module", "policy", "control_level"};
-    for (const std::string& field : stringFields) {
-        if (request.contains(field) && request[field].is_string()) {
-            summary += " " + field + "=" + sanitize_log_value(request[field].get<std::string>());
-        }
-    }
-
-    const std::vector<std::string> integerFields = {"device_id", "parent_id"};
-    for (const std::string& field : integerFields) {
-        if (request.contains(field) && request[field].is_number_integer()) {
-            summary += " " + field + "=" + std::to_string(request[field].get<int>());
-        }
-    }
-
-    return summary;
-}
-
-void write_audit_log(const std::string& message) {
+void write_audit_log(const json& event) {
     // Security audit is always-on and intentionally bypasses Logger and
     // AUDIT/log_level, including its NoLog value.
     try {
@@ -173,28 +132,17 @@ void write_audit_log(const std::string& message) {
         std::filesystem::create_directories(auditDir);
 
         const std::filesystem::path auditFile = auditDir / ("audit_" + std::to_string(getpid()) + ".txt");
-        std::ofstream stream(auditFile, std::ios::app);
-        if (!stream.is_open()) {
-            std::cerr << "failed to open audit log: " << auditFile << std::endl;
-            return;
+        std::string error;
+        if (!fic::core::security_audit::appendJsonLine(auditFile, event, error)) {
+            std::cerr << error << std::endl;
         }
-
-        stream << "[" << Logger::get_current_time() << "] " << message << '\n';
     } catch (const std::exception& e) {
         std::cerr << "audit logging error: " << e.what() << std::endl;
     }
 }
 
 void audit_ipc_request(const PeerCredentials& peer, const json& request, const json& response) {
-    const bool ok = response.value("ok", false);
-    const std::string responseMessage = response.value("message", "");
-
-    write_audit_log(
-        peer_credentials_to_string(peer) + " " +
-        request_audit_summary(request) +
-        " ok=" + std::string(ok ? "true" : "false") +
-        " message=\"" + sanitize_log_value(responseMessage) + "\""
-    );
+    write_audit_log(make_admin_ipc_audit_event(peer, request, response));
 }
 
 bool should_audit_ipc_request(const json& request) {
@@ -202,7 +150,7 @@ bool should_audit_ipc_request(const json& request) {
         return true;
     }
 
-    const std::string command = request.value("command", "");
+    const std::string command = admin_audit_command(request);
     return command != "boot_id" && command != "log_records";
 }
 
@@ -356,12 +304,14 @@ std::string policy_apply_message(const PolicyApplySummary& summary,
     return failureMessage;
 }
 
-std::string policy_apply_summary_text(const PolicyApplySummary& summary) {
-    return "total=" + std::to_string(summary.totalCount()) +
-           " applied=" + std::to_string(summary.appliedCount()) +
-           " failed=" + std::to_string(summary.failedCount()) +
-           " disabled=" + std::to_string(summary.disabledCount()) +
-           " not_found=" + std::to_string(summary.notFoundCount());
+json policy_apply_summary_json(const PolicyApplySummary& summary) {
+    return {
+        {"total", summary.totalCount()},
+        {"applied", summary.appliedCount()},
+        {"failed", summary.failedCount()},
+        {"disabled", summary.disabledCount()},
+        {"not_found", summary.notFoundCount()}
+    };
 }
 
 bool run_daemon_apply_all_pass(
@@ -380,12 +330,17 @@ bool run_daemon_apply_all_pass(
         if (registryReloadFailed != nullptr) {
             *registryReloadFailed = true;
         }
-        const std::string message =
-            "policy apply pass reason=" + sanitize_log_value(reason) +
-            " ok=false registry_reload=failed error=\"" +
-            sanitize_log_value(registryError) + "\"";
-        std::cerr << message << std::endl;
-        write_audit_log(message);
+        const json event = fic::core::security_audit::makeEvent("fic", {
+            {"event", "policy_apply_pass"},
+            {"reason", reason},
+            {"result", {
+                {"ok", false},
+                {"registry_reload", false},
+                {"message", registryError}
+            }}
+        });
+        std::cerr << fic::core::security_audit::serializeJsonLine(event) << std::endl;
+        write_audit_log(event);
         return false;
     }
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(
@@ -394,20 +349,27 @@ bool run_daemon_apply_all_pass(
     const bool firewallOk = fic::firewall::reconcileFirewall(
         executables, firewallError);
     const bool ok = isPolicyApplySuccessful(summary, "all", "") && firewallOk;
-    const std::string message = "policy apply pass reason=" + sanitize_log_value(reason) +
-        " ok=" + std::string(ok ? "true" : "false") +
-        " firewall_reconciliation=" + std::string(firewallOk ? "ok" : "failed") +
-        " " + policy_apply_summary_text(summary) +
-        (firewallError.empty()
-            ? ""
-            : " firewall_error=" + sanitize_log_value(firewallError));
+    json result = {
+        {"ok", ok},
+        {"registry_reload", true},
+        {"firewall_reconciliation", firewallOk}
+    };
+    if (!firewallError.empty()) {
+        result["firewall_error"] = firewallError;
+    }
+    const json event = fic::core::security_audit::makeEvent("fic", {
+        {"event", "policy_apply_pass"},
+        {"reason", reason},
+        {"summary", policy_apply_summary_json(summary)},
+        {"result", std::move(result)}
+    });
 
     if (ok) {
-        std::cout << message << std::endl;
+        std::cout << fic::core::security_audit::serializeJsonLine(event) << std::endl;
     } else {
-        std::cerr << message << std::endl;
+        std::cerr << fic::core::security_audit::serializeJsonLine(event) << std::endl;
     }
-    write_audit_log(message);
+    write_audit_log(event);
     return ok;
 }
 
@@ -941,17 +903,23 @@ void reconcile_session_ready(
 
     if (!SessionAgentClient::query(
             session.session, session.context, error)) {
-        write_audit_log(
-            "session_ready context query failed for session " +
-            session.session.id + ": " + error);
+        write_audit_log(fic::core::security_audit::makeEvent("fic", {
+            {"event", "session_ready"},
+            {"session_id", session.session.id},
+            {"phase", "context_query"},
+            {"result", {{"ok", false}, {"message", error}}}
+        }));
         return;
     }
     session.desktop = DesktopEnvironmentBackend::kindFromName(
         session.context.desktop);
     if (session.desktop == DesktopEnvironmentKind::Unknown) {
-        write_audit_log(
-            "session_ready desktop classification failed for session " +
-            session.session.id);
+        write_audit_log(fic::core::security_audit::makeEvent("fic", {
+            {"event", "session_ready"},
+            {"session_id", session.session.id},
+            {"phase", "desktop_classification"},
+            {"result", {{"ok", false}, {"message", "unknown desktop environment"}}}
+        }));
         return;
     }
     for (Policy* policy : registry.capabilityPolicies(PolicyCapability::SessionAware)) {
