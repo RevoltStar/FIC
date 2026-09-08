@@ -21,6 +21,8 @@
 #include <unistd.h>
 
 namespace {
+namespace fs = std::filesystem;
+
 void emit(int fd, std::size_t bytes, char value) {
     const std::string chunk(4096, value);
     while (bytes) {
@@ -40,7 +42,7 @@ void flood() {
     }
 }
 
-int fixture(const std::string& mode, std::size_t bytes) {
+int fixture(const std::string& mode, std::size_t bytes, const fs::path& pidFile) {
     ::alarm(4);
     if (mode == "stdout" || mode == "stderr") {
         emit(mode == "stdout" ? STDOUT_FILENO : STDERR_FILENO, bytes,
@@ -79,6 +81,9 @@ int fixture(const std::string& mode, std::size_t bytes) {
         if (child == 0) {
             ::alarm(4);
             ::close(ready[0]);
+            // Publish the PID before the ready token so the parent-side
+            // verification always observes exactly this descendant.
+            { std::ofstream(pidFile) << ::getpid(); }
             assert(::write(ready[1], "R", 1) == 1);
             ::close(ready[1]);
             if (mode == "descendant-output") {
@@ -103,31 +108,40 @@ int fixture(const std::string& mode, std::size_t bytes) {
     return 0;
 }
 
-void assertDescendantKilled() {
+// Verifies that the executor's group kill reached the fixture's descendant.
+// The descendant publishes its PID before signaling readiness, so the status
+// of exactly that process is awaited. With PR_SET_CHILD_SUBREAPER set in
+// main(), a descendant whose leader is reaped is re-parented to this test
+// process, making it directly waitable. The previously used global
+// `waitpid(-1) == -1 && errno == ECHILD` probe was racy: a group member can
+// remain a transient zombie between SIGKILL and its reaping, and unrelated
+// waitable children make the probe flaky.
+void assertDescendantKilled(const fs::path& pidFile) {
+    pid_t descendant = -1;
+    std::ifstream(pidFile) >> descendant;
+    assert(descendant > 0);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     int status = 0;
-    pid_t child;
+    pid_t waited;
     do {
-        child = ::waitpid(-1, &status, WNOHANG);
-        if (child < 0 && errno == EINTR) continue;
-        if (child != 0) break;
+        waited = ::waitpid(descendant, &status, WNOHANG);
+        if (waited < 0 && errno == EINTR) continue;
+        if (waited != 0) break;
         assert(std::chrono::steady_clock::now() < deadline);
         ::usleep(1000);
     } while (true);
-    assert(child > 0);
+    assert(waited == descendant);
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
-    assert(::waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD);
 }
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc == 4 && std::string(argv[1]) == "--fixture") {
-        return fixture(argv[2], std::stoull(argv[3]));
+    if (argc == 5 && std::string(argv[1]) == "--fixture") {
+        return fixture(argv[2], std::stoull(argv[3]), argv[4]);
     }
     // Adopt orphan fixtures so group termination is proven by wait status,
     // without depending on the host's PID 1 reaping behavior.
     assert(::prctl(PR_SET_CHILD_SUBREAPER, 1) == 0);
-    namespace fs = std::filesystem;
     char directory[] = "/tmp/fic-output-limit-XXXXXX";
     assert(::mkdtemp(directory));
     const fs::path root(directory);
@@ -145,9 +159,10 @@ int main(int argc, char** argv) {
     for (const bool verified : {false, true}) {
         ProcessOptions options;
         options.timeout = std::chrono::seconds(10);
+        const auto pidFile = root / "descendant.pid";
         const auto run = [&](const std::string& mode, std::size_t bytes) {
             const auto start = std::chrono::steady_clock::now();
-            const std::vector<std::string> args = {"--fixture", mode, std::to_string(bytes)};
+            const std::vector<std::string> args = {"--fixture", mode, std::to_string(bytes), pidFile.string()};
             const auto result = verified
                 ? VerifiedProcessExecutor::execute(executable.string(), args, options)
                 : ProcessExecutor::execute(executable.string(), args, options);
@@ -199,10 +214,10 @@ int main(int argc, char** argv) {
         options.maxOutputBytes = 257;
         overflow("infinite", 0);
         overflow("descendant-holds", 258);
-        assertDescendantKilled();
+        assertDescendantKilled(pidFile);
         const auto orphanOutput = overflow("descendant-output", 0);
         assert(orphanOutput.exitCode == 0); // leader exited successfully before overflow
-        assertDescendantKilled();
+        assertDescendantKilled(pidFile);
         options.standardInput = std::string(128 * 1024, 'i');
         options.maxOutputBytes = 1;
         const auto input = run("stdin", options.standardInput->size());
