@@ -50,13 +50,6 @@ bool PamCapabilityActivationPolicy::applyPam(
         return false;
     }
 
-    fic::identity::pam::PamCapabilityVerification verification;
-    if (verifyFresh(*capability, *services, verification)) {
-        log("PAM capability topology is already structurally active",
-            logLevel::INFO);
-        return true;
-    }
-
     if (!options_.managerFactory) {
         log("PAM topology activation manager factory is unavailable",
             logLevel::ERROR);
@@ -72,34 +65,80 @@ bool PamCapabilityActivationPolicy::applyPam(
 
     fic::identity::pam::PamTopologyStatus status;
     if (!manager->inspect(status, error)) {
-        log("PAM topology inspection failed: " + error, logLevel::ERROR);
-        return false;
-    }
-    if (status.state != fic::identity::pam::PamTopologyState::Disabled) {
-        log("PAM topology is not safely activatable: " + status.detail,
-            logLevel::ERROR);
-        return false;
-    }
-    if (!manager->canEnable(error)) {
-        log("PAM topology cannot be activated: " + error, logLevel::ERROR);
-        return false;
-    }
-    if (!manager->enable(error)) {
-        log("PAM topology activation failed: " + error, logLevel::ERROR);
+        if (status.state == fic::identity::pam::PamTopologyState::Broken) {
+            log("PAM topology is broken: " +
+                    (status.detail.empty() ? error : status.detail),
+                logLevel::ERROR);
+        } else if (status.state ==
+                   fic::identity::pam::PamTopologyState::Unavailable) {
+            log("PAM topology is unavailable: " +
+                    (status.detail.empty() ? error : status.detail),
+                logLevel::ERROR);
+        } else {
+            log("PAM topology inspection failed: " + error,
+                logLevel::ERROR);
+        }
         return false;
     }
 
-    verification = {};
+    bool activated = false;
+    switch (status.state) {
+    case fic::identity::pam::PamTopologyState::Enabled:
+        break;
+    case fic::identity::pam::PamTopologyState::Disabled:
+        if (!manager->canEnable(error)) {
+            log("PAM topology cannot be activated: " + error,
+                logLevel::ERROR);
+            return false;
+        }
+        if (!manager->enable(error)) {
+            log("PAM topology activation failed: " + error,
+                logLevel::ERROR);
+            return false;
+        }
+        activated = true;
+        status = {};
+        if (!manager->inspect(status, error)) {
+            log("PAM topology activation succeeded but ownership/state "
+                "verification failed: " +
+                    (status.detail.empty() ? error : status.detail),
+                logLevel::ERROR);
+            return false;
+        }
+        if (status.state != fic::identity::pam::PamTopologyState::Enabled) {
+            log("PAM topology activation succeeded but ownership/state "
+                "verification did not report enabled topology: " +
+                    status.detail,
+                logLevel::ERROR);
+            return false;
+        }
+        break;
+    case fic::identity::pam::PamTopologyState::Broken:
+        log("PAM topology is broken: " + status.detail,
+            logLevel::ERROR);
+        return false;
+    case fic::identity::pam::PamTopologyState::Unavailable:
+        log("PAM topology is unavailable: " + status.detail,
+            logLevel::ERROR);
+        return false;
+    }
+
+    fic::identity::pam::PamCapabilityVerification verification;
     if (!verifyFresh(*capability, *services, verification)) {
-        log("PAM topology activation command succeeded but resulting PAM "
-            "topology verification failed; manual/native recovery may be "
-            "required: " +
+        log(std::string(activated
+                ? "PAM topology activation succeeded but capability "
+                  "structural verification failed; manual/native recovery "
+                  "may be required: "
+                : "PAM topology is enabled but capability structural "
+                  "verification failed: ") +
                 fic::identity::pam::formatPamCapabilityVerification(
                     verification),
             logLevel::ERROR);
         return false;
     }
-    log("PAM capability topology was activated and structurally verified",
+    log(activated
+            ? "PAM capability topology was activated and structurally verified"
+            : "PAM capability topology is enabled and structurally verified",
         logLevel::INFO);
     return true;
 }

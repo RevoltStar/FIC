@@ -766,7 +766,10 @@ explicit config replacement.
 configuration. Typed strategy выбирает `PamAuthUpdate` для Debian/Ubuntu,
 `AltTcbManaged` для mutable ALT lockout/history и `StaticVerifyOnly` для native
 ALT passwdqc. Generic activation policy знает только capability, никогда не
-ветвится по distro и после native enable заново строит actual PAM graph.
+ветвится по distro и всегда сначала использует `manager.inspect()` как
+authoritative strategy/ownership decision. После `enable()` она повторно
+проверяет manager state, а затем независимо заново строит actual PAM graph и
+выполняет Structural verification; ни одна из этих проверок не заменяет другую.
 Password-history config и topology остаются разными состояниями: Debian 13 и
 Ubuntu изменяют `pwhistory.conf` только после доказательства active effective
 stack, Debian 12 изменяет argv существующего `pam_pwhistory.so`, а ALT использует
