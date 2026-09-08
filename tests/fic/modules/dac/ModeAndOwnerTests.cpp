@@ -642,10 +642,42 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
 
     // Regression: a provider target must be validated against its own
     // target-specific contract, not against the logical rule expectation.
-    // The rule says one owner/group; the target contract legally requires a
-    // different one (mirrors /etc/resolv.conf -> systemd-resolve on
-    // systemd-resolved systems). The old implementation used the rule
-    // expectation for the opened target and failed here.
+    // This mode-based variant is fully deterministic and runs
+    // unconditionally: no root, no systemd-resolve or any other service
+    // account is required. The rule and the target share the same
+    // owner/group, so only the mode contract differs:
+    //     rule:      owner/group of the test user, maximum mode 0600
+    //     contract:  owner/group of the test user, maximum mode 0644
+    //     actual:    owner/group of the test user, mode 0644
+    // Old implementation inherited the logical rule expectation (0600) and
+    // therefore rejected the actual 0644 target. New implementation must use
+    // the provider target contract (0644) and accept it without mutation.
+    {
+        const fs::path modeTarget = root / "target-specific-mode-target";
+        const fs::path modeLink = root / "target-specific-mode-link";
+        writeFile(modeTarget, "mode", 0644);
+        fs::create_symlink(modeTarget, modeLink);
+        fic::platform::DacPlatformConfig modeConfig;
+        modeConfig.protectedSystemFiles = {{
+            modeLink, currentOwner(), currentGroup(), 0600, {}, {
+                {modeTarget, Provider::SystemdResolved,
+                 currentOwner(), currentGroup(), 0644}
+            }
+        }};
+        DAC_blocking_user_access_to_system_files modePolicy(modeConfig);
+        require(modePolicy.apply(),
+                "a provider target compliant with its own target-specific "
+                "mode contract was rejected by the logical rule expectation");
+        require(fileMode(modeTarget) == 0644,
+                "a compliant validate-only provider target was modified");
+    }
+
+    // Root-only owner/group coverage for the same target-specific contract:
+    // the rule requires one owner/group while the target contract legally
+    // requires a different one (mirrors /etc/resolv.conf -> systemd-resolve
+    // on systemd-resolved systems). These checks need root plus the local
+    // systemd-resolve account; the unconditional mode-based regression above
+    // already proves the contract split without them.
     if (::geteuid() == 0) {
         const struct passwd* resolveUser = ::getpwnam("systemd-resolve");
         const struct group* resolveGroup = ::getgrnam("systemd-resolve");

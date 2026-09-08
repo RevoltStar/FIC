@@ -3,88 +3,54 @@
 ## Current base
 
 - Ветка: `main`.
-- Родитель текущей незакоммиченной правки: `d19fb2e`.
+- Закоммичено: `1d3937b` (target-specific DAC contracts для
+  provider-managed symlink targets).
+- Незакоммиченная правка поверх `1d3937b`: только
+  `tests/fic/modules/dac/ModeAndOwnerTests.cpp`.
 
 ## Current task
 
-- DAC-проверка provider-managed final symlink targets (`/etc/resolv.conf`):
-  для каждого разрешённого target валидируется отдельный target-specific
-  contract (owner/group/mode) вместо ожиданий исходного `FileAccessRule`;
-  provider targets — validate-only (без chmod/chown).
+- Test-only follow-up: ключевой regression для target-specific DAC contract
+  сделан безусловным (mode-based, без root и без `systemd-resolve`).
 
 ## Accepted architecture / invariants
 
-- `ProviderManagedFileTarget` в `PlatformProfile.h` несёт полный DAC contract:
-  `path` + `provider` + `owner` + `group` + `permissions` (maximum-mode
-  semantics, как у `FileAccessRule`).
-- Контракты по платформам: `/run/systemd/resolve/{stub-,}resolv.conf` →
-  `systemd-resolve:systemd-resolve 0644`; `/usr/lib/systemd/resolv.conf`,
-  `/run/NetworkManager/resolv.conf`, `/run/resolvconf/resolv.conf` →
-  `root:root 0644`. ALT p11 — только `/run/NetworkManager/resolv.conf`.
-- `PlatformCompatibility::validatePlatformProfile` fail-closed валидирует
-  metadata provider targets: absolute normalized path, непустые owner/group,
-  permissions (не 0, без битов вне 07777), duplicate targets, валидный
-  provider.
-- `ModeAndOwner`: static path (regular file по policy path) — rule stats +
-  remediation; provider target — target-specific `FileStats` expectation через
-  `applyOpenedRule(..., validateOnly=true)`, target обязан быть regular file
-  (проверка через `fstat` закреплённого дескриптора, `FileStats::file_type()` /
-  `is_regular_file()`), при mismatch — FAIL без мутации.
-- validate-only != trusted: полная валидация + report, но FIC не remediate
-  provider targets (lifecycle принадлежит provider).
-- Сохранены security invariants: descriptor/openat2 resolution, inode/topology
-  verification, symlink 0777 не нарушение, no realpath()+stat().
+- Все инварианты предыдущей задачи (см. commit `1d3937b`) сохранены;
+  production-код в этой правке не менялся.
 
 ## Completed
 
-- Контракты зафиксированы во всех 5 профилях (Debian 12/13, Ubuntu
-  24.04/26.04, ALT p11) на основе upstream-источников (systemd unit
-  `User=systemd-resolve`, umask 022/fchmod 0644; NetworkManager/resolvconf —
-  root:root 0644).
-- Fail-closed валидация metadata в `PlatformCompatibility.cpp`.
-- Target-specific validate-only логика в `ModeAndOwner.cpp` с
-  expected/actual diagnostics и пояснением «FIC did not modify».
-- `FileStats`: `file_type()` / `is_regular_file()` из `fstat` дескриптора.
-- Тесты: `ModeAndOwnerTests.cpp` — provider-тесты под новые контракты +
-  regression (иной owner/group → SUCCESS; wrong group → FAIL без мутации;
-  stricter mode → SUCCESS; не-regular target → FAIL; remediation alias
-  сохраняет remediation). `PlatformProfileTests.cpp` — полная проверка
-  контрактов по всем профилям + negative-тесты валидации (empty owner/group,
-  permissions 0 и вне 07777, duplicate, relative и non-normalized path).
-- Обновлён authoritative раздел `/etc/resolv.conf` в
-  `docs/architecture-diagrams.md`.
+- В `ModeAndOwnerTests.cpp` добавлен безусловный mode-based regression:
+  logical rule `0600` vs provider target contract `0644` при совпадающих
+  owner/group (`currentOwner()`/`currentGroup()`). Старая реализация
+  (rule-stats для provider target) отклоняет actual `0644`; новая принимает
+  без мутации.
+- Root-only блок с `systemd-resolve` (owner/group покрытия: другой
+  owner/group → SUCCESS, wrong group → FAIL без chgrp, stricter mode,
+  не-regular target) сохранён без изменений как дополнительное покрытие.
+- Проверено на симулированной старой реализации (временная подстановка
+  rule-permissions в provider path): regression падает с «expected maximum
+  mode 0600, actual 0644»; после отката временной правки — проходит.
+  Временных изменений в git не осталось.
 
 ## Changed areas
 
-- `fic/src/platform/PlatformProfile.h`, `PlatformCompatibility.cpp`,
-  `fic/src/platform/profiles/*`.
-- `fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp`.
-- `fic-common/fic-core/include/fic/core/fs/FileStats.h`,
-  `fic-common/fic-core/src/fs/FileStats.cpp`.
-- `tests/fic/modules/dac/ModeAndOwnerTests.cpp`,
-  `tests/fic/platform/PlatformProfileTests.cpp`.
-- `docs/architecture-diagrams.md`.
+- `tests/fic/modules/dac/ModeAndOwnerTests.cpp`.
 
 ## Validation
 
-- Full build (`/tmp/fic-dev-build`, real source dir): success — все targets,
-  включая `fic`, `fic-gui`, `fic-session-agent`, `fic-dick` и все тесты.
-- Full CTest: 73/73 passed.
-- `python3 tests/fic/platform/static_checks.py .` и
-  `python3 tests/common/static_checks.py .`: exit 0.
-- `git diff --check`: clean.
-- Build-обход: на хосте нет libsystemd-devel — pkg-config переопределён через
-  `PKG_CONFIG_PATH=/tmp/fic-dev-tree/pkgconfig` со stub `libsystemd.so`
-  (символы sd-login/sd-daemon/sd-journal возвращают -ENOSYS/-ENXIO) и stub
-  headers c `extern "C"`. Всё в `/tmp/fic-dev-tree/*` — вне git.
+- `mode_and_owner_tests`: build ok, exit 0 при non-root запуске
+  (uid доменного пользователя, `systemd-resolve` на хосте отсутствует —
+  `getent` exit 2), новый regression выполняется и проходит.
+- Full build `/tmp/fic-dev-build`: success; full CTest: 73/73 passed.
+- `tests/fic/platform/static_checks.py`, `tests/common/static_checks.py`:
+  exit 0. `git diff --check`: clean.
+- Build по-прежнему использует stub libsystemd в `/tmp/fic-dev-tree/*`
+  (вне git, `PKG_CONFIG_PATH=/tmp/fic-dev-tree/pkgconfig`).
 
 ## Remaining
 
-- Не проверялось: сборка с реальным libsystemd (нет в host-окружении; реальный
-  build выполняется в distro containers), запуск на реальных дистро-средах,
-  dpkg/rpm-lookup контрактов в runtime (сознательно не делается — контракты
-  compile-time).
-- Ключевой regression-тест проверен на старой реализации (временное отключение
-  новой логики): тест падает, подтверждая, что он ловит регрессию.
+- Не проверялось: запуск под root/на дистро с `systemd-resolve`
+  (root-only покрытия остались под `geteuid()==0` guards).
 - Коммит не создавать без отдельного явного запроса пользователя.
 
