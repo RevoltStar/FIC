@@ -11,7 +11,32 @@
 
 ## Нужно подумать, что делать с политиками, которые неприменимы для данной ОС. Вероятно, в класс политики придется добавить булевый параметр "политика_поддерживается_ОС?"
 
-## Будущие модули: настройка браузеров
+## Будущие модули: настройка браузеров, ЗПС, МКЦ, МРД
+
+## Расширение списка поддерживаемых дистрибутивов
+## Примерный минимальный уровень — Debian 10 и аналогичные
+## (не по DATE выхода, а по похожим версиям основных пакетов)
+## Debian 10
+## Ubuntu 18.04 LTS
+## Linux Mint 19.x
+## RHEL 8
+## AlmaLinux 8
+## Rocky Linux 8
+## Oracle Linux 8
+## openSUSE Leap 15.1
+## SUSE Linux Enterprise Server 15 SP1
+## Fedora 29
+## MX Linux 19            # optional, если desktop имеет смысл
+## Deepin 20.x            # имеет смысл, если интересен китайский desktop
+## Amazon Linux 2
+## Российские дистрибутивы:
+## Astra Linux 1.7
+## РЕД ОС 7.3
+## Альт 9 / platform p9
+## ОСнова 2.x OНyx
+## Platform V SberLinux OS Server 8.x
+## МСВСфера 8.x
+## ROSA R12               # новее baseline; точного аналога Debian 10 нет 
 
 ## Корректировки для политики SYSCTL_rp_filter_enable - нужно понять что с этим делать
 ## Политика ставит net.ipv4.conf.all.rp_filter и net.ipv4.conf.default.rp_filter, а NetworkManager может задать:
