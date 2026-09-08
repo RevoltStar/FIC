@@ -844,6 +844,16 @@ target_link_libraries(process_output_limit_tests PRIVATE fic-core Threads::Threa
 add_test(NAME process_output_limit_tests COMMAND process_output_limit_tests)
 set_tests_properties(process_output_limit_tests PROPERTIES TIMEOUT 20)
 
+add_executable(process_cancellation_tests
+    common/core/process/ProcessCancellationTests.cpp
+)
+target_include_directories(process_cancellation_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-core/src
+)
+target_link_libraries(process_cancellation_tests PRIVATE fic-core)
+add_test(NAME process_cancellation_tests COMMAND process_cancellation_tests)
+set_tests_properties(process_cancellation_tests PROPERTIES TIMEOUT 35)
+
 add_executable(audit_log_value_tests
     fic/daemon/AuditLogValueTests.cpp
 )
@@ -962,6 +972,7 @@ set(FIC_UNIT_TESTS
     command_hash_security_tests
     verified_process_executor_tests
     process_output_limit_tests
+    process_cancellation_tests
     audit_log_value_tests
     calc_hash_command_tests
     package_trust_selection_tests

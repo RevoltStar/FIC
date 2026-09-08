@@ -31,6 +31,7 @@ add_library(fic-core STATIC
     src/logging/Logger.cpp
     src/notification/NotifyUser.cpp
     src/process/ExclusivePidLock.cpp
+    src/process/ProcessPipeIo.cpp
     src/process/ProcessExecutor.cpp
     src/process/VerifiedProcessExecutor.cpp
     src/runtime/FicRuntimePaths.cpp

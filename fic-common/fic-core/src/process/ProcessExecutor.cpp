@@ -1,7 +1,7 @@
 #include <fic/core/process/ProcessExecutor.h>
 
-#include <algorithm>
-#include <atomic>
+#include "ProcessPipeIo.h"
+
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -10,69 +10,12 @@
 #include <functional>
 #include <fcntl.h>
 #include <grp.h>
-#include <pthread.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 
 namespace {
-struct OutputCapture {
-    explicit OutputCapture(std::size_t limit) : remaining(limit) {}
-    std::atomic<std::size_t> remaining;
-    std::atomic<bool> exceeded{false};
-    std::atomic<unsigned> completedReaders{0};
-};
-
-void read_pipe(int fd, std::string& output, OutputCapture& capture) {
-    char buffer[4096];
-    while (true) {
-        const ssize_t count = ::read(fd, buffer, sizeof(buffer));
-        if (count > 0) {
-            const auto bytes = static_cast<std::size_t>(count);
-            std::size_t available = capture.remaining.load();
-            std::size_t retained;
-            do {
-                retained = std::min(available, bytes);
-            } while (!capture.remaining.compare_exchange_weak(
-                available, available - retained));
-            output.append(buffer, retained);
-            if (retained < bytes) {
-                capture.exceeded.store(true);
-            }
-            // Keep draining after overflow so a full pipe cannot block exit.
-            continue;
-        }
-        if (count < 0 && errno == EINTR) {
-            continue;
-        }
-        break;
-    }
-    ::close(fd);
-    capture.completedReaders.fetch_add(1);
-}
-
-void write_pipe(int fd, const std::string& input, std::atomic<bool>& completed) {
-    sigset_t blockedSignals;
-    ::sigemptyset(&blockedSignals);
-    ::sigaddset(&blockedSignals, SIGPIPE);
-    ::pthread_sigmask(SIG_BLOCK, &blockedSignals, nullptr);
-
-    size_t offset = 0;
-    while (offset < input.size()) {
-        const ssize_t count = ::write(
-            fd, input.data() + offset, input.size() - offset);
-        if (count > 0) {
-            offset += static_cast<size_t>(count);
-            continue;
-        }
-        if (count < 0 && errno == EINTR) {
-            continue;
-        }
-        break;
-    }
-    ::close(fd);
-    completed.store(true);
-}
+using process_executor_detail::ProcessPipeIo;
 
 void write_child_error(const std::string& message) {
     const std::string line = message + ": " + std::strerror(errno) + "\n";
@@ -124,6 +67,23 @@ ProcessResult ProcessExecutor::executeImpl(
         ::close(stdoutPipe[1]);
         ::close(stderrPipe[0]);
         ::close(stderrPipe[1]);
+        return result;
+    }
+
+    // Only parent endpoints are nonblocking. The child's opposite pipe ends
+    // retain ordinary blocking stdin/stdout/stderr semantics.
+    if (!ProcessPipeIo::makeNonBlocking(stdoutPipe[0]) ||
+        !ProcessPipeIo::makeNonBlocking(stderrPipe[0]) ||
+        (stdinPipe[1] >= 0 && !ProcessPipeIo::makeNonBlocking(stdinPipe[1]))) {
+        result.error = "fcntl(O_NONBLOCK) failed: " + std::string(std::strerror(errno));
+        ::close(stdoutPipe[0]);
+        ::close(stdoutPipe[1]);
+        ::close(stderrPipe[0]);
+        ::close(stderrPipe[1]);
+        if (stdinPipe[0] >= 0) {
+            ::close(stdinPipe[0]);
+            ::close(stdinPipe[1]);
+        }
         return result;
     }
 
@@ -222,16 +182,15 @@ ProcessResult ProcessExecutor::executeImpl(
         ::close(stdinPipe[0]);
     }
 
-    OutputCapture capture(options.maxOutputBytes);
-    std::atomic<bool> stdinCompleted{stdinPipe[1] < 0};
+    ProcessPipeIo io(options.maxOutputBytes, stdinPipe[1] >= 0);
     std::thread stdoutReader(
-        read_pipe, stdoutPipe[0], std::ref(result.standardOutput), std::ref(capture));
+        &ProcessPipeIo::read, &io, stdoutPipe[0], std::ref(result.standardOutput));
     std::thread stderrReader(
-        read_pipe, stderrPipe[0], std::ref(result.standardError), std::ref(capture));
+        &ProcessPipeIo::read, &io, stderrPipe[0], std::ref(result.standardError));
     std::thread stdinWriter;
     if (stdinPipe[1] >= 0) {
         stdinWriter = std::thread(
-            write_pipe, stdinPipe[1], std::cref(*options.standardInput), std::ref(stdinCompleted));
+            &ProcessPipeIo::write, &io, stdinPipe[1], std::cref(*options.standardInput));
     }
 
     const auto killGroup = [pid] {
@@ -250,15 +209,17 @@ ProcessResult ProcessExecutor::executeImpl(
             if (::waitid(P_PID, pid, &info, WEXITED | WNOHANG | WNOWAIT) < 0 && errno != EINTR) {
                 result.error = "waitid() failed: " + std::string(std::strerror(errno));
                 killGroup();
+                io.cancel();
                 break;
             }
             childExited = info.si_pid == pid;
         }
         // Read completion before exceeded: completed readers have published
         // their final overflow flag, even if the leader already exited cleanly.
-        const bool ioCompleted = capture.completedReaders.load() == 2 && stdinCompleted.load();
-        if (!terminationSent && capture.exceeded.load()) {
+        const bool ioCompleted = io.completed();
+        if (!terminationSent && io.outputLimitExceeded()) {
             killGroup();
+            io.cancel();
             terminationSent = true;
         }
         if (childExited && ioCompleted) {
@@ -267,6 +228,7 @@ ProcessResult ProcessExecutor::executeImpl(
         if (!terminationSent && std::chrono::steady_clock::now() >= deadline) {
             result.timedOut = true;
             killGroup();
+            io.cancel();
             terminationSent = true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -287,8 +249,8 @@ ProcessResult ProcessExecutor::executeImpl(
         stdinWriter.join();
     }
 
-    // Overflow has priority, including bytes discovered during final draining.
-    if (capture.exceeded.load()) {
+    // An overflow observed before cancellation retains priority over timeout.
+    if (io.outputLimitExceeded()) {
         result.outputLimitExceeded = true;
         result.timedOut = false;
         result.error = "configured process output limit exceeded (" +

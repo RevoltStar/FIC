@@ -2,67 +2,64 @@
 
 ## Current base
 
-- Ветка `main`, commit `71dff9f` (audit value sanitization).
+- Ветка `main`, commit `e33d113` (maxOutputBytes).
 - До текущей задачи рабочее дерево было чистым.
 
 ## Current task
 
-- Ограничение совокупного stdout/stderr в обычном и verified ProcessExecutor.
+- Interruptible pipe I/O в ProcessExecutor: bounded return после timeout /
+  output-limit, даже если escaped descendant (setsid) держит унаследованные
+  stdin/stdout/stderr pipe descriptors открытыми.
 
 ## Accepted architecture / invariants
 
-- `ProcessOptions::maxOutputBytes`: общий capture budget, default 4 MiB.
-  Ровно budget разрешён, следующий байт — failure. Zero разрешает пустой вывод.
-  stdin не входит в budget. Runtime contract: `docs/architecture-diagrams.md`.
-- Оба readers атомарно резервируют общий остаток, сохраняют только помещающуюся
-  часть chunk и далее drain/discard. Parent использует существующий 20 ms polling
-  и group SIGKILL с fallback на PID. Мониторинг продолжается до окончания I/O;
-  waitid WNOWAIT удерживает PID лидера до завершения draining и final waitpid.
-- `outputLimitExceeded=true`, `timedOut=false`, `success()==false`, явная bounded
-  diagnostic с configured limit. Overflow имеет приоритет, включая final drain;
-  exitCode остаётся фактическим статусом лидера (может быть 0).
-- Только full nft ruleset и udev export-db имеют override 32 MiB: размер растёт
-  со всей конфигурацией хоста. Остальные callers (DMI 2/17, lscpu, loginctl,
-  systemctl, sshd, visudo, GRUB/PAM activation, chage/gpasswd, desktop settings,
-  метаданные одного пакета dpkg/RPM) сохраняют default 4 MiB.
+- Внутренняя abstraction `process_executor_detail::ProcessPipeIo`
+  (`fic-common/fic-core/src/process/ProcessPipeIo.{h,cpp}`): shared
+  capture/cancellation state; parent-side pipe ends nonblocking; каждый worker
+  делает `poll(fd, 20ms)` в цикле с проверкой atomic `cancelled_` — нет
+  busy-loop и нет бесконечного ожидания EOF/записи.
+- Каждый I/O thread эксклюзивно владеет своим fd и сам его закрывает
+  (`finish`); cancel не закрывает чужие descriptors → нет
+  use-after-close/double close.
+- `cancel()` замораживает `reason_` (Running→Cancelled CAS): overflow, уже
+  зафиксированный readers, сохраняет приоритет над timeout; после cancel
+  in-flight read не может превратить timeout в output-limit failure.
+- Parent monitoring loop: waitid WNOWAIT удерживает leader PID; при overflow
+  или timeout — group SIGKILL (fallback на PID, best-effort) + `io.cancel()`;
+  loop завершается по `childExited && io.completed()`, где completed теперь
+  наступает bounded по времени (≤ один 20 ms poll после cancel).
+- Reader после cancel не drain-ит до EOF; writer stdin прекращает запись даже
+  при живом, но не читающем потребителе. stdin не входит в output budget.
+- Публичный API ProcessExecutor/VerifiedProcessExecutor не менялся; fd-bound
+  fexecve и shebang retry path сохранены. Контракт maxOutputBytes прежний.
+- Никаких detached threads; pthread_cancel не используется.
 
 ## Completed / Changed areas
 
-- `fic-common/fic-core/include/fic/core/process/ProcessExecutor.h`,
-  `fic-common/fic-core/src/process/ProcessExecutor.cpp`: API, shared limiter,
-  group termination и ожидание I/O потомков; fd-bound exec path сохранён.
-- Overrides: `fic/src/modules/firewall/FirewallBackend.cpp`,
-  `fic-dick/src/daemon/DeviceControlDaemon.cpp`.
-- `tests/common/core/process/ProcessOutputLimitTests.cpp`, `tests/CMakeLists.txt`:
-  одинаковые suites для plain/verified, stdout/stderr, общий конкурентный budget,
-  ровно budget/+1, 0/1, finite default+1, paced infinite output, descendants
-  holding pipes / generating after leader exit, stdin budget exclusion и blocked
-  stdin writer, обычный timeout. SIGKILL потомка проверен через subreaper/waitpid.
-- Обновлено непосредственно относящееся архитектурное описание.
+- `fic-common/fic-core/src/process/ProcessPipeIo.{h,cpp}` (новые),
+  `ProcessExecutor.cpp` (read_pipe/write_pipe заменены на ProcessPipeIo,
+  parent pipe ends O_NONBLOCK), `fic-common/fic-core/CMakeLists.txt`.
+- `tests/common/core/process/ProcessCancellationTests.cpp`,
+  `tests/CMakeLists.txt` (target process_cancellation_tests, TIMEOUT 35):
+  plain+verified × {normal, stdout-exit, stderr-exit, stdout-timeout,
+  stderr-timeout, stdin-exit, overflow, flood-exit} × 2 повтора; fixture
+  использует явный setsid + ready-pipe (детерминированно), тест — subreaper,
+  собственный alarm(30) watchdog, cleanup escaped процессов, проверка
+  отсутствия fd/thread leaks через /proc/self/{fd,task}.
 
 ## Validation
 
-- Configure `/tmp/fic-dev-build`, ubuntu-24.04,
-  `PKG_CONFIG_PATH=/tmp/fic-dev-tree/pkgconfig`: success.
-- Targeted build `fic-core process_output_limit_tests verified_process_executor_tests`:
-  success; targeted CTest (оба tests + platform/path-layout static): 4/4 passed.
-- `python3 tests/fic/platform/static_checks.py .`,
-  `python3 tests/common/static_checks.py .`: passed.
-- Negative control в `/tmp`: прежний executor падает на строгом sum <= budget
-  assertion при конечном stdout default+1; production sources не подменялись.
-- `cmake --build /tmp/fic-dev-build -j2`: success.
-- `ctest --test-dir /tmp/fic-dev-build --output-on-failure` вне sandbox:
-  75 passed, 1 skipped (root-only command_hash_batch_tests), 0 failed.
-- Read-only host measurements: udev export 324905 bytes, lscpu 3386 bytes,
-  RPM filenames/digests для владельца /usr/bin/udevadm 9351 bytes; stderr пуст.
-  loginctl/dmidecode/nft вернули ошибки, успешный вывод не измерен.
-- Логи: `/tmp/fic-output-{configure,target-build,full-build,full-ctest}.log`.
-- Финальный diff review выполнен; `git diff --check`: clean.
+- Build `/tmp/fic-dev-build` (ubuntu-24.04, stub libsystemd в
+  `/tmp/fic-dev-tree`): targeted `fic-core process_cancellation_tests
+  process_output_limit_tests verified_process_executor_tests` — success.
+- Targeted CTest (3 tests) — passed; полный build — success; полный CTest —
+  77 passed, 1 skipped (root-only command_hash_batch_tests), 0 failed.
+- `tests/fic/platform/static_checks.py`, `tests/common/static_checks.py`,
+  `git diff --check` — clean.
+- Логи: `/tmp/fic-cancel-{target-build,targeted-ctest,full-build,full-ctest}.log`.
 
 ## Remaining
 
-- Незавершённых изменений по задаче нет. Podman, реальные большие nft/device
-  topologies и root-only test не запускались. Измерения одной машины не являются
-  верхней границей реальных ответов; oversized ответы отклоняются явно.
-- Сборка использует существующий stub libsystemd в `/tmp/fic-dev-tree/*`.
+- Незавершённых изменений по задаче нет. Podman-прогон не выполнялся
+  (опциональная дополнительная validation); root-only test не запускался.
 - Коммит не создавать без отдельного запроса пользователя.
