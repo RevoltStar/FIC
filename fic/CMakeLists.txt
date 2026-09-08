@@ -56,10 +56,6 @@ configure_file(
     "${FIC_GENERATED_INCLUDE_DIR}/platform/UserCreationPolicyDefaultsGenerated.h"
     @ONLY)
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/RequiredPamEnforcementDefaultsGenerated.h.in"
-    "${FIC_GENERATED_INCLUDE_DIR}/platform/RequiredPamEnforcementDefaultsGenerated.h"
-    @ONLY)
-configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/SudoSecurePathDefaultGenerated.h.in"
     "${FIC_GENERATED_INCLUDE_DIR}/platform/SudoSecurePathDefaultGenerated.h"
     @ONLY)

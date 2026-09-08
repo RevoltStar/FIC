@@ -457,7 +457,7 @@ void testProviderCatalogAndSupport() {
     platform.capabilities = {
         {PamCapability::PasswordQuality, PamProviderKind::PamPasswdqc,
          PamScope::LocalPasswordChange, "/etc/passwdqc.conf",
-         PamTopologyStrategyKind::StaticReadOnly, {}}
+         PamTopologyStrategyKind::StaticVerifyOnly, {}}
     };
     require(pamPolicySupport(platform, PamPolicyFeature::PasswdqcRetryCount) ==
                 PamPolicySupport::Supported,
@@ -473,7 +473,7 @@ void testProviderCatalogAndSupport() {
     platform.capabilities.push_back({
         PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
         PamScope::LocalPasswordChange, "/etc/security/pwhistory.conf",
-        PamTopologyStrategyKind::StaticReadOnly, {}});
+        PamTopologyStrategyKind::StaticVerifyOnly, {}});
     require(pamPolicySupport(
                 platform, PamPolicyFeature::PasswordHistoryDepth) ==
                 PamPolicySupport::Supported,
@@ -483,7 +483,7 @@ void testProviderCatalogAndSupport() {
     platform.capabilities[0] = {
         PamCapability::PasswordQuality, PamProviderKind::PamPwquality,
         PamScope::LocalPasswordChange, "/etc/security/pwquality.conf",
-        PamTopologyStrategyKind::ExternalOptIn, {}};
+        PamTopologyStrategyKind::PamAuthUpdate, {}};
     require(pamPolicySupport(platform, PamPolicyFeature::PasswordMinLength) ==
                 PamPolicySupport::RequiresTopologyActivation,
             "pwquality policy did not retain its topology-dependent state");

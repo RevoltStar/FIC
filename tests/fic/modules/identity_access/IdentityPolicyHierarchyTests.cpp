@@ -16,7 +16,6 @@
 #include "modules/identity_access/pam/policies/PamPasswdqcPolicies.h"
 #include "modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordQualityPolicies.h"
-#include "modules/identity_access/pam/policies/RequiredPamEnforcementPolicy.h"
 #include "modules/identity_access/sssd/SssdPolicy.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
@@ -70,15 +69,15 @@ private:
             {fic::platform::PamCapability::AuthenticationLockout,
              fic::platform::PamProviderKind::PamFaillock,
              fic::platform::PamScope::EffectiveAuthenticationStack, {},
-             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly, {}},
             {fic::platform::PamCapability::PasswordQuality,
              fic::platform::PamProviderKind::PamPwquality,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly, {}},
             {fic::platform::PamCapability::PasswordHistory,
              fic::platform::PamProviderKind::PamPwhistory,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
+             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly, {}}
         };
         return result;
     }
@@ -105,9 +104,7 @@ void writeFile(const std::filesystem::path& path,
 void writeIdentityConfig(const std::filesystem::path& root,
                          const std::string& rootHistoryValue,
                          const std::string& rootLockoutValue = "yes",
-                         const std::string& additionalConfig = "",
-                         const std::string& requiredPamValue =
-                             "pam_faillock,pam_pwhistory") {
+                         const std::string& additionalConfig = "") {
     writeFile(
         root / "config/IDENTITY_ACCESS.conf",
         "dummy.status=ENABLE\n"
@@ -116,9 +113,7 @@ void writeIdentityConfig(const std::filesystem::path& root,
         "password_history_enforce_for_root.value=" + rootHistoryValue + "\n"
         "failed_authentication_enforce_for_root.status=ENABLE\n"
         "failed_authentication_enforce_for_root.value=" + rootLockoutValue +
-            "\n"
-        "required_pam_enforcement.status=ENABLE\n"
-        "required_pam_enforcement.value=" + requiredPamValue + "\n" +
+            "\n" +
             additionalConfig);
 }
 
@@ -565,8 +560,7 @@ int main() {
         writeIdentityConfig(
             root, "yes", "yes",
             "password_min_length.status=ENABLE\n"
-            "password_min_length.value=20\n",
-            "pam_pwquality");
+            "password_min_length.value=20\n");
         writeFile(
             passwordQualityPlatform.passwordQualityConfigPath,
             "minlen = 20\n"
@@ -582,21 +576,13 @@ int main() {
             readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
                 nonEnforcingConfig,
             "failed non-enforcing pwquality policy changed managed config");
-        RequiredPamEnforcementPolicy nonEnforcingRequiredPam(
-            passwordQualityPlatform);
-        require(
-            !nonEnforcingRequiredPam.apply(),
-            "required PAM accepted pwquality enforcing=0");
-
         writeFile(
             passwordQualityPlatform.passwordQualityConfigPath,
             "minlen = 20\n"
             "enforcing = 1\n");
         PamPasswordMinLengthPolicy enforcingMinLength(passwordQualityPlatform);
-        RequiredPamEnforcementPolicy enforcingRequiredPam(
-            passwordQualityPlatform);
         require(
-            enforcingMinLength.apply() && enforcingRequiredPam.apply(),
+            enforcingMinLength.apply(),
             "enforcing pwquality was rejected by policy semantic verification");
 
         writeFile(
@@ -605,14 +591,9 @@ int main() {
             "enforcing = 1\n"
             "local_users_only\n");
         PamPasswordMinLengthPolicy localOnlyMinLength(passwordQualityPlatform);
-        RequiredPamEnforcementPolicy localOnlyRequiredPam(
-            passwordQualityPlatform);
         require(
             !localOnlyMinLength.apply(),
             "password_min_length accepted local-users-only enforcement");
-        require(
-            !localOnlyRequiredPam.apply(),
-            "required PAM accepted local-users-only pwquality enforcement");
         writeFile(
             passwordQualityPlatform.passwordQualityConfigPath,
             "minlen = 20\n"
@@ -626,8 +607,7 @@ int main() {
         writeIdentityConfig(
             root, "yes", "yes",
             "password_quality_enforce_for_root.status=ENABLE\n"
-            "password_quality_enforce_for_root.value=no\n",
-            "pam_pwquality");
+            "password_quality_enforce_for_root.value=no\n");
         PamPasswordQualityEnforceForRootPolicy hiddenRootEnforcement(
             passwordQualityPlatform);
         require(
@@ -827,8 +807,7 @@ int main() {
         writeIdentityConfig(
             root, "yes", "yes",
             "password_min_length.status=ENABLE\n"
-            "password_min_length.value=20\n",
-            "pam_pwquality");
+            "password_min_length.value=20\n");
         writeFile(
             passwordQualityPlatform.passwordQualityConfigPath,
             "MINLEN = 10\n");
@@ -907,8 +886,7 @@ int main() {
         writeIdentityConfig(
             root, "yes", "yes",
             "password_min_length.status=ENABLE\n"
-            "password_min_length.value=20\n",
-            "pam_pwquality");
+            "password_min_length.value=20\n");
         PamPasswordMinLengthPolicy lastWinningMinLength(
             passwordQualityPlatform);
         require(
@@ -1164,19 +1142,8 @@ int main() {
         std::filesystem::remove(legacyRoot / "pam.d/common-password");
         writeFile(legacyRoot / "pam.d/passwd", validLegacy);
 
-        writeIdentityConfig(root, "no", "yes", "", "pam_pwhistory");
-        writeFile(
-            legacyRoot / "pam.d/passwd",
-            "password requisite pam_pwhistory.so use_authtok remember=0\n");
-        RequiredPamEnforcementPolicy ineffectiveLegacyRequired(
-            legacyHistoryPlatform);
-        require(!ineffectiveLegacyRequired.apply(),
-                "required PAM trusted pwhistory.conf instead of legacy argv");
+        writeIdentityConfig(root, "no", "yes");
         writeFile(legacyRoot / "pam.d/passwd", validLegacy);
-        RequiredPamEnforcementPolicy effectiveLegacyRequired(
-            legacyHistoryPlatform);
-        require(effectiveLegacyRequired.apply(),
-                "required PAM rejected effective legacy pwhistory argv");
 
         FaultInjectedPamOptionPolicy legacyRollback(
             legacyHistoryPlatform, {},
@@ -1345,76 +1312,19 @@ int main() {
             passwordHistoryPlatform.passwordServices;
         requiredPlatform.passwordHistoryConfigPath =
             passwordHistoryPlatform.passwordHistoryConfigPath;
-        RequiredPamEnforcementPolicy requiredPam(requiredPlatform);
         const std::string generatedIdentityConfig =
             readFile(FIC_GENERATED_IDENTITY_CONFIG_PATH);
-        const std::string expectedRequiredPamDefault =
-            std::string(FIC_TARGET_PLATFORM_NAME) == "alt-p11"
-            ? "pam_faillock,pam_passwdqc,pam_pwhistory"
-            : "pam_faillock,pam_pwquality,pam_pwhistory";
         require(
-            requiredPam.getPolicyTypeValue().getEditorSpec().editor ==
-                    "textedit" &&
-                requiredPam.getPolicyTypeValue().getEditorSpec().textDelimiter ==
-                    "," &&
-                requiredPam.validate("pam_faillock, pam_pwhistory") &&
-                requiredPam.validate("pam_faillock, pam_pwquality") &&
-                requiredPam.validate("pam_passwdqc") &&
-                !requiredPam.validate("pam_vendor"),
-            "required-PAM policy value contract is incorrect");
-        require(
-            requiredPam.getDefaultValue() == configuredValue(
-                generatedIdentityConfig,
-                "required_pam_enforcement.value") &&
-                requiredPam.getDefaultValue() == expectedRequiredPamDefault,
-            "required-PAM policy and generated config defaults diverged");
-        require(
-            configuredValue(
-                generatedIdentityConfig,
-                "required_pam_enforcement.status") == "DISABLE",
-            "required-PAM generated status must remain disabled");
-        require(
-            requiredPam.getPolicyRestriction().find("pam_passwdqc") !=
-                std::string::npos,
-            "required-PAM editor metadata omits pam_passwdqc");
-        require(requiredPam.apply(),
-                "required-PAM policy rejected effective providers");
-
-        auto fallbackRequiredPlatform = requiredPlatform;
-        auto historyTopology = fic::identity::pam::pamProviderDescriptor(
-            fic::platform::PamProviderKind::PamPwhistory).
-                defaultConfigTopology;
-        historyTopology.primaryPath =
-            fallbackRequiredPlatform.passwordHistoryConfigPath;
-        const auto historyFallback = root / "vendor/pwhistory.conf";
-        historyTopology.fallbackPaths = {historyFallback};
-        fallbackRequiredPlatform.capabilities[2].configTopology =
-            historyTopology;
-        std::filesystem::remove(
-            fallbackRequiredPlatform.passwordHistoryConfigPath);
-        writeFile(historyFallback, "remember = 99\n");
-        writeFile(
-            root / "pam.d/passwd",
-            "password required pam_pwhistory.so\n");
-        writeIdentityConfig(
-            root, "no", "no", "", "pam_pwhistory");
-        RequiredPamEnforcementPolicy fallbackRequiredPam(
-            fallbackRequiredPlatform);
-        require(
-            !fallbackRequiredPam.apply(),
-            "required-PAM policy accepted unmanaged pwhistory fallback");
-        writeFile(
-            fallbackRequiredPlatform.passwordHistoryConfigPath,
-            "remember = 5\n");
-        writeFile(
-            root / "pam.d/passwd",
-            "password required pam_pwhistory.so conf=" +
-                fallbackRequiredPlatform.passwordHistoryConfigPath.string() +
-                "\n");
-        require(
-            fallbackRequiredPam.apply(),
-            "explicit pwhistory config did not replace native fallback for "
-            "required PAM");
+            configuredValue(generatedIdentityConfig,
+                            "enable_authentication_lockout.status") ==
+                    "DISABLE" &&
+                configuredValue(generatedIdentityConfig,
+                                "enable_password_history.status") ==
+                    "DISABLE" &&
+                configuredValue(generatedIdentityConfig,
+                                "enable_password_quality.status") ==
+                    "DISABLE",
+            "PAM capability activation defaults must remain disabled");
         writeIdentityConfig(root, "no", "no");
 
         writeFile(
@@ -1428,8 +1338,6 @@ int main() {
             "auth sufficient pam_faillock.so authsucc conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth required pam_deny.so\n");
-        require(!requiredPam.apply(),
-                "required-PAM policy accepted an authentication bypass");
         require(rootHistoryDisabled.apply(),
                 "broken faillock must not block an independent history policy");
         writeFile(
@@ -1443,9 +1351,7 @@ int main() {
                 authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth required pam_deny.so\n");
 
-        writeIdentityConfig(
-            root, "no", "no", "",
-            "pam_passwdqc");
+        writeIdentityConfig(root, "no", "no");
         auto passwdqcPlatform = requiredPlatform;
         passwdqcPlatform.capabilities[1].provider =
             fic::platform::PamProviderKind::PamPasswdqc;
@@ -1460,25 +1366,12 @@ int main() {
         writeFile(
             passwdqcPlatform.passwordQualityConfigPath,
             "enforce=everyone\n");
-        RequiredPamEnforcementPolicy requiredPasswdqc(passwdqcPlatform);
-        require(
-            requiredPasswdqc.apply(),
-            "required-PAM policy did not verify effective pam_passwdqc on "
-            "password services");
-        writeFile(
-            root / "pam.d/passwd",
-            "password required pam_unix.so\n");
-        require(
-            !requiredPasswdqc.apply(),
-            "required-PAM policy accepted missing pam_passwdqc");
-
         writeIdentityConfig(
             root, "no", "no",
             "passwdqc_strength_thresholds.status=ENABLE\n"
             "passwdqc_strength_thresholds.value=disabled,24,11,8,7\n"
             "password_quality_enforce_for_root.status=ENABLE\n"
-            "password_quality_enforce_for_root.value=yes\n",
-            "pam_passwdqc");
+            "password_quality_enforce_for_root.value=yes\n");
         writeFile(
             root / "pam.d/passwd",
             "password required pam_passwdqc.so config=" +
@@ -1545,11 +1438,26 @@ int main() {
         PamFailedAuthenticationEnforceForRootPolicy rootLockout(
             dependencyPlatform);
         PamFailedAuthenticationUnlockTimePolicy unlock(dependencyPlatform);
-        RequiredPamEnforcementPolicy required(dependencyPlatform);
         PamPasswordHistoryDepthPolicy history(dependencyPlatform);
         PamPasswdqcRetryCountPolicy quality(dependencyPlatform);
         const PolicyRef passwordlessRef{
             "IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
+        const PolicyRef lockoutActivationRef{
+            "IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"};
+        const PolicyRef historyActivationRef{
+            "IDENTITY_ACCESS", "PAM", "enable_password_history"};
+        const PolicyRef qualityActivationRef{
+            "IDENTITY_ACCESS", "PAM", "enable_password_quality"};
+        const auto recommendedCount = [&](const Policy& policy,
+                                          const PolicyRef& expected) {
+            return std::count_if(
+                policy.dependencies().begin(), policy.dependencies().end(),
+                [&](const PolicyDependency& dependency) {
+                    return dependency.policy == expected &&
+                        dependency.strength ==
+                            PolicyDependencyStrength::Recommended;
+                });
+        };
         const auto hasRecommendedPasswordless = [&](const Policy& policy) {
             return std::count_if(
                 policy.dependencies().begin(), policy.dependencies().end(),
@@ -1562,15 +1470,23 @@ int main() {
         require(hasRecommendedPasswordless(attempts) &&
                     hasRecommendedPasswordless(period) &&
                     hasRecommendedPasswordless(rootLockout) &&
-                    hasRecommendedPasswordless(unlock) &&
-                    hasRecommendedPasswordless(required),
+                    hasRecommendedPasswordless(unlock),
                 "authentication/lockout policies lack passwordless recommendation");
         require(!hasRecommendedPasswordless(history) &&
                     !hasRecommendedPasswordless(quality),
                 "password-only PAM policy gained passwordless dependency");
-        PamFailedAuthenticationAttemptsPolicy unsupportedDependency({});
-        require(unsupportedDependency.dependencies().empty(),
-                "unsupported platform gained passwordless dependency");
+        require(recommendedCount(attempts, lockoutActivationRef) == 1 &&
+                    recommendedCount(period, lockoutActivationRef) == 1 &&
+                    recommendedCount(rootLockout, lockoutActivationRef) == 1 &&
+                    recommendedCount(unlock, lockoutActivationRef) == 1 &&
+                    recommendedCount(history, historyActivationRef) == 1 &&
+                    recommendedCount(quality, qualityActivationRef) == 1,
+                "PAM option policies lack unique capability activation "
+                "recommendations");
+        require(attempts.dependencies().size() == 2 &&
+                    history.dependencies().size() == 1 &&
+                    quality.dependencies().size() == 1,
+                "PAM option dependency mapping contains duplicates");
         DummySssdPolicy sssd;
         DummyKerberosPolicy kerberos;
         DummyNssPolicy nss;

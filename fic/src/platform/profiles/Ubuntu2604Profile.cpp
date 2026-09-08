@@ -60,6 +60,10 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::Gpasswd,
             {"/usr/bin/gpasswd", "/usr/sbin/gpasswd"}
+        },
+        {
+            ExecutableId::PamAuthUpdate,
+            {"/usr/sbin/pam-auth-update", "/usr/bin/pam-auth-update"}
         }
     };
     profile.packageManager.kind = PackageManagerKind::Dpkg;
@@ -102,17 +106,21 @@ PlatformProfile makeBuildPlatformProfile() {
         {PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock,
          PamScope::EffectiveAuthenticationStack,
          "/etc/security/faillock.conf",
-         PamTopologyStrategyKind::ExternalOptIn, {}},
+         PamTopologyStrategyKind::PamAuthUpdate, {}},
         {PamCapability::PasswordQuality, PamProviderKind::PamPwquality,
          PamScope::EffectivePasswordStack,
          "/etc/security/pwquality.conf",
-         PamTopologyStrategyKind::ExternalOptIn, {}, std::nullopt,
+         PamTopologyStrategyKind::PamAuthUpdate, {}, std::nullopt,
          PamIdentitySubjectScope::AllPamSubjects},
         {PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
          PamScope::EffectivePasswordStack,
          "/etc/security/pwhistory.conf",
-         PamTopologyStrategyKind::ExternalOptIn, {}}
+         PamTopologyStrategyKind::PamAuthUpdate, {}}
     };
+    profile.pam.capabilities[0].activationIdentifiers = {
+        "fic-faillock-notify", "fic-faillock"};
+    profile.pam.capabilities[1].activationIdentifiers = {"pwquality"};
+    profile.pam.capabilities[2].activationIdentifiers = {"fic-pwhistory"};
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {

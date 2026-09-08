@@ -24,7 +24,8 @@ enum class ExecutableId {
     UpdateGrub,
     Nft,
     Chage,
-    Gpasswd
+    Gpasswd,
+    PamAuthUpdate
 };
 
 struct PlatformExecutableSpec {
@@ -131,8 +132,8 @@ enum class PamConfigGrammar {
 };
 
 enum class PamTopologyStrategyKind {
-    StaticReadOnly,
-    ExternalOptIn,
+    StaticVerifyOnly,
+    PamAuthUpdate,
     AltTcbManaged
 };
 
@@ -217,7 +218,8 @@ struct PamCapabilityConfig {
     PamProviderKind provider = PamProviderKind::PamFaillock;
     PamScope scope = PamScope::EffectiveAuthenticationStack;
     std::filesystem::path configPath;
-    PamTopologyStrategyKind topology = PamTopologyStrategyKind::StaticReadOnly;
+    PamTopologyStrategyKind topology =
+        PamTopologyStrategyKind::StaticVerifyOnly;
     std::filesystem::path topologyTarget;
     std::optional<PamProviderConfigTopology> configTopology;
     PamIdentitySubjectScope subjectScope =
@@ -225,6 +227,7 @@ struct PamCapabilityConfig {
     PamCapabilityConfigurationMode configurationMode =
         PamCapabilityConfigurationMode::ProviderConfigFile;
     std::vector<PamManagedTopologyTarget> managedTopologyTargets;
+    std::vector<std::string> activationIdentifiers;
 };
 
 struct PamPlatformConfig {

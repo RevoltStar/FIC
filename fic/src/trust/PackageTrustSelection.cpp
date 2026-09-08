@@ -6,6 +6,17 @@
 
 namespace fic::trust {
 
+std::vector<fic::platform::ExecutableId> declaredExecutableIds(
+    const fic::platform::PlatformExecutables& executables) {
+    std::vector<fic::platform::ExecutableId> declared;
+    declared.reserve(executables.entries.size());
+    for (const fic::platform::PlatformExecutableSpec& spec :
+         executables.entries) {
+        declared.push_back(spec.id);
+    }
+    return declared;
+}
+
 std::vector<fic::platform::ExecutableId> selectAffectedExecutableIds(
     const fic::platform::PlatformExecutables& executables,
     std::istream& affectedPaths) {

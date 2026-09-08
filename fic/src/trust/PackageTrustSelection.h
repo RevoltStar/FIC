@@ -8,6 +8,9 @@
 
 namespace fic::trust {
 
+std::vector<fic::platform::ExecutableId> declaredExecutableIds(
+    const fic::platform::PlatformExecutables& executables);
+
 std::vector<fic::platform::ExecutableId> selectAffectedExecutableIds(
     const fic::platform::PlatformExecutables& executables,
     std::istream& affectedPaths);

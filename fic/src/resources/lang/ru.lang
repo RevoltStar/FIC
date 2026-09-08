@@ -111,8 +111,12 @@
 [module:IDENTITY_ACCESS][policy:failed_authentication_enforce_for_root][description]=Управляет флагом even_deny_root в каноническом конфиге pam_faillock. Значение yes включает блокировку root, значение no удаляет флаг. Применение no отклоняется, если root_unlock_time или аргумент PAM всё ещё включает блокировку root.
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Продолжительность блокировки аутентификации
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Задаёт unlock_time в секундах в каноническом конфиге pam_faillock. Значение 0 отключает автоматическую разблокировку по времени.
-[module:IDENTITY_ACCESS][policy:required_pam_enforcement]=Обязательные механизмы PAM
-[module:IDENTITY_ACCESS][policy:required_pam_enforcement][description]=Проверяет, что перечисленные pam_faillock, pam_pwquality, pam_passwdqc и pam_pwhistory присутствуют, доверены и обязательны на каждом успешном пути соответствующего effective PAM stack. Политика не устанавливает модули и не изменяет PAM topology.
+[module:IDENTITY_ACCESS][policy:enable_authentication_lockout]=Включение блокировки при неудачных попытках аутентификации
+[module:IDENTITY_ACCESS][policy:enable_authentication_lockout][description]=Подключает механизм блокировки PAM через native-интеграцию платформы и повторно проверяет реальный effective PAM stack. Не задаёт параметры порога, периода подсчёта или времени блокировки.
+[module:IDENTITY_ACCESS][policy:enable_password_history]=Включение истории паролей
+[module:IDENTITY_ACCESS][policy:enable_password_history][description]=Подключает механизм истории паролей PAM через native-интеграцию платформы и повторно проверяет реальный effective PAM stack. Не задаёт глубину истории и применение к root.
+[module:IDENTITY_ACCESS][policy:enable_password_quality]=Включение проверки сложности пароля
+[module:IDENTITY_ACCESS][policy:enable_password_quality][description]=Подключает выбранный платформой механизм проверки сложности пароля и повторно проверяет реальный effective PAM stack. Не задаёт числовые и семантические параметры проверки.
 [module:IDENTITY_ACCESS][submodule:PASSWORD_AGING]=Срок действия паролей
 [module:IDENTITY_ACCESS][policy:password_min_age_days]=Минимальное количество дней между сменами пароля
 [module:IDENTITY_ACCESS][policy:password_min_age_days][description]=Управляет PASS_MIN_DAYS в /etc/login.defs для новых локальных учётных записей.

@@ -607,20 +607,31 @@ platform id. Поэтому synthetic `passwdqc+pwhistory` и `pwquality` без
 
 | Платформы | Capability | Provider | Config grammar | Topology |
 | --- | --- | --- | --- | --- |
-| Debian 12/13, Ubuntu 24.04/26.04 | PasswordQuality | pam_pwquality | key/value | external opt-in/static PAM stack |
-| Debian 12 | PasswordHistory | pam_pwhistory | module arguments | external opt-in через pam-auth-update |
-| Debian 13, Ubuntu 24.04/26.04 | PasswordHistory | pam_pwhistory | key/value | external opt-in через pam-auth-update |
-| Debian 12/13, Ubuntu 24.04/26.04 | AuthenticationLockout | pam_faillock | key/value | external opt-in через pam-auth-update |
-| ALT p11 | PasswordQuality | pam_passwdqc | strict `option=value` | native static topology |
-| ALT p11 | AuthenticationLockout | pam_faillock | key/value | FIC-owned ALT/tcb manager, explicit opt-in |
-| ALT p11 | PasswordHistory | pam_pwhistory | key/value в `/etc/security/fic-pwhistory.conf` | FIC-owned serialized TCB transaction, explicit opt-in |
+| Debian 12/13, Ubuntu 24.04/26.04 | PasswordQuality | pam_pwquality | key/value | `PamAuthUpdate`: `pwquality` |
+| Debian 12 | PasswordHistory | pam_pwhistory | module arguments | `PamAuthUpdate`: `fic-pwhistory` |
+| Debian 13, Ubuntu 24.04/26.04 | PasswordHistory | pam_pwhistory | key/value | `PamAuthUpdate`: `fic-pwhistory` |
+| Debian 12/13, Ubuntu 24.04/26.04 | AuthenticationLockout | pam_faillock | key/value | `PamAuthUpdate`: `fic-faillock-notify`, `fic-faillock` |
+| ALT p11 | PasswordQuality | pam_passwdqc | strict `option=value` | `StaticVerifyOnly` native topology |
+| ALT p11 | AuthenticationLockout | pam_faillock | key/value | `AltTcbManaged`: `AltPamFaillockTopologyManager` |
+| ALT p11 | PasswordHistory | pam_pwhistory | key/value в `/etc/security/fic-pwhistory.conf` | `AltTcbManaged`: serialized TCB transaction |
 
 ALT p11 хранит историю в `/var/lib/fic-pwhistory/opasswd` и сериализует общую
 history update вместе с последующей записью `pam_tcb` через
 `pam_fic_pwtxn.so`. Пакетная конфигурация содержит `remember=0`, поэтому одна
-установка пакета не включает enforcement; администратор сначала активирует
-topology через `control fic-pam-pwhistory enabled`, затем применяет history
-policy.
+установка пакета не включает enforcement. Политика
+`enable_password_history` подключает topology, а history option policies
+отдельно задают `remember` и `enforce_for_root`.
+
+Три политики `enable_authentication_lockout`, `enable_password_history` и
+`enable_password_quality` имеют фиксированное значение `ENABLE`. Они выбирают
+strategy только через typed capability metadata, при необходимости вызывают
+native integration и затем создают новую `PamConfiguration` и выполняют
+`PamCapabilityVerifier` в режиме `Structural`. Успешный exit code native tool
+без корректного resulting effective graph считается ошибкой. Выключенный
+status такой FIC policy означает только отсутствие обеспечения со стороны FIC
+и никогда не запускает деактивацию PAM mechanism. Все option policies имеют
+Recommended dependency на соответствующую activation policy, но сохраняют
+собственный fail-closed Structural preflight и exact postcondition.
 
 Debian 12 хранит history settings в arguments существующего
 `pam_pwhistory.so`: отсутствие `remember=` означает native default 10, а
@@ -663,9 +674,9 @@ graph/provider. Любая ошибка после записи восстана
 диагностикой о потенциально degraded PAM state.
 
 На ALT p11 package-level topology `pam_faillock` управляется отдельно от
-policy values через `control fic-pam-faillock enabled|disabled`. Facility
-вызывает offline manager основного `fic`; daemon policies сами facility не
-активируют. Manager изменяет только platform targets:
+policy values. Facility `control fic-pam-faillock enabled|disabled` вызывает
+offline manager основного `fic`, а activation policy вызывает тот же
+authoritative `AltPamFaillockTopologyManager` напрямую. Manager изменяет только platform targets:
 `/etc/pam.d/system-auth-local-only` с ролью authentication+account и отдельный
 authentication path `/etc/pam.d/system-auth-use_first_pass-local-only`.
 Роли и пути заданы typed platform metadata; имена файлов manager не выводит
@@ -675,8 +686,7 @@ authentication path `/etc/pam.d/system-auth-use_first_pass-local-only`.
 exact original bytes. Semantic postcondition через `PamCapabilityVerifier`
 проверяет основной local stack и configured services, чья auth-ветка реально
 проходит через дополнительный target (на штатном ALT p11 — `sshd`). Это не
-расширяет проверку на посторонние ветки штатного `sss` router; глобальная policy
-`required_pam_enforcement` не ослабляется. Перед записью effective
+расширяет проверку на посторонние ветки штатного `sss` router. Перед записью effective
 include/substack graph проверяется на внешний
 `pam_faillock`, а `pam_tcb` должен быть последним исполняемым auth rule.
 Operational error самого `pam_faillock preauth`, который завершает stack

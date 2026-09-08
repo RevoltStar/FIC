@@ -142,7 +142,7 @@ PlatformProfile makeBuildPlatformProfile() {
         {PamCapability::PasswordQuality, PamProviderKind::PamPasswdqc,
          PamScope::EffectivePasswordStack,
          "/etc/passwdqc.conf",
-         PamTopologyStrategyKind::StaticReadOnly, {}, std::nullopt,
+         PamTopologyStrategyKind::StaticVerifyOnly, {}, std::nullopt,
          PamIdentitySubjectScope::AllPamSubjects},
         {PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
          PamScope::LocalPasswordChange,

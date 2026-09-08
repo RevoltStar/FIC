@@ -6,7 +6,6 @@
 #include "modules/identity_access/pam/PamProviderInspector.h"
 #include "modules/identity_access/pam/PamPwhistoryArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
-#include "modules/identity_access/pam/PamRequiredProviders.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -80,15 +79,15 @@ private:
             {fic::platform::PamCapability::AuthenticationLockout,
              fic::platform::PamProviderKind::PamFaillock,
              fic::platform::PamScope::EffectiveAuthenticationStack, {},
-             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly, {}},
             {fic::platform::PamCapability::PasswordQuality,
              fic::platform::PamProviderKind::PamPwquality,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}},
+             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly, {}},
             {fic::platform::PamCapability::PasswordHistory,
              fic::platform::PamProviderKind::PamPwhistory,
              fic::platform::PamScope::EffectivePasswordStack, {},
-             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
+             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly, {}}
         };
         return result;
     }
@@ -1266,7 +1265,7 @@ void testGenericFallbackFailsClosed() {
     auto verification = verifyRequiredCapability();
     require(
         verification.state == fic::identity::pam::PamEnforcementState::Broken,
-        "generic required-PAM capability ignored an active fallback: " +
+        "generic structural capability ignored an active fallback: " +
             fic::identity::pam::formatPamCapabilityVerification(verification));
 
     writeFile(platform.passwordHistoryConfigPath, "# managed primary\n");
@@ -1283,7 +1282,7 @@ void testGenericFallbackFailsClosed() {
     verification = verifyRequiredCapability();
     require(
         verification.state == fic::identity::pam::PamEnforcementState::Broken,
-        "generic required-PAM capability ignored unmanaged drop-ins");
+        "generic structural capability ignored unmanaged drop-ins");
 
     writeFile(
         temp.path() / "pam.d/passwd",
@@ -2294,63 +2293,6 @@ void testCredentialFailureBeforeFaillockRemainsABypass() {
             fic::identity::pam::formatPamCapabilityVerification(verification));
 }
 
-void testRequiredProviderListParsing() {
-    std::vector<fic::identity::pam::PamProviderKind> providers;
-    std::string normalized;
-    std::string error;
-    require(
-        fic::identity::pam::parseRequiredPamProviders(
-            " pam_faillock, pam_pwquality,pam_faillock ",
-            providers,
-            normalized,
-            error),
-        error);
-    require(
-        providers.size() == 2 &&
-            normalized == "pam_faillock,pam_pwquality",
-        "required PAM list must trim and deduplicate providers");
-    require(
-        fic::identity::pam::parseRequiredPamProviders(
-            " pam_faillock , pam_passwdqc ",
-            providers,
-            normalized,
-            error),
-        error);
-    require(
-        providers == std::vector<fic::identity::pam::PamProviderKind>{
-                         fic::identity::pam::PamProviderKind::PamFaillock,
-                         fic::identity::pam::PamProviderKind::PamPasswdqc} &&
-            normalized == "pam_faillock,pam_passwdqc",
-        "pam_passwdqc must be normalized as a required PAM provider");
-    require(
-        fic::identity::pam::parseRequiredPamProviders(
-            "pam_pwquality,pam_pwhistory,pam_passwdqc",
-            providers,
-            normalized,
-            error),
-        "all supported non-default providers must remain valid: " + error);
-    require(
-        fic::identity::pam::requiredPamProviderNames() ==
-            std::vector<std::string>{
-                "pam_faillock", "pam_pwquality", "pam_passwdqc",
-                "pam_pwhistory"},
-        "required PAM provider metadata is incomplete");
-    require(
-        !fic::identity::pam::parseRequiredPamProviders(
-            "pam_faillock,,pam_pwquality",
-            providers,
-            normalized,
-            error) && error.find("empty item") != std::string::npos,
-        "empty required PAM list item must be rejected");
-    require(
-        !fic::identity::pam::parseRequiredPamProviders(
-            "pam_vendor",
-            providers,
-            normalized,
-            error) && error.find("unsupported") != std::string::npos,
-        "unknown required PAM provider must be rejected");
-}
-
 void testPamOptionValueCodec() {
     using fic::identity::pam::PamOptionValueCodec;
     using fic::identity::pam::PamOptionValueEncoding;
@@ -2962,7 +2904,6 @@ int main() {
         testUnknownAuthModuleCannotProveEnforcement();
         testFailureAccountingBypass();
         testCredentialFailureBeforeFaillockRemainsABypass();
-        testRequiredProviderListParsing();
         testPamOptionValueCodec();
         testTrustedPamServiceAliasSecurityContract();
         testLegacyPwhistoryNativeRememberSemantics();

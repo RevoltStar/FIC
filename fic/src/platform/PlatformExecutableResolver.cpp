@@ -34,6 +34,8 @@ const char* executableIdName(ExecutableId id) {
         return "chage";
     case ExecutableId::Gpasswd:
         return "gpasswd";
+    case ExecutableId::PamAuthUpdate:
+        return "pam-auth-update";
     }
     return "unknown";
 }
@@ -50,7 +52,8 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::UpdateGrub,
         ExecutableId::Nft,
         ExecutableId::Chage,
-        ExecutableId::Gpasswd
+        ExecutableId::Gpasswd,
+        ExecutableId::PamAuthUpdate
     };
 }
 

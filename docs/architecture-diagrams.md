@@ -647,8 +647,8 @@ module rule. Topology отдельно описывает
 primary path, fallback paths, drop-in directories, precedence и semantics
 explicit PAM config argument; platform composition может заменить эти данные.
 Для passwdqc required `config=` должен присутствовать ровно один раз и
-совпадать с platform path; тот же contract использует
-`required_pam_enforcement`. В modern target versions optional `conf=`
+совпадать с platform path; тот же contract использует capability verifier
+activation и option policies. В modern target versions optional `conf=`
 поддерживает `pam_pwhistory`; Debian 12 с Linux-PAM 1.5.2 выбирает argv-backed
 semantics без external config contract. В этом legacy backend отсутствие
 `remember=` означает native default `remember=10`, тогда как явный
@@ -670,8 +670,9 @@ state, включая integer clamps, signed credits, `enforcing` и SET-style
 поддерживаемых profiles явно имеет subject scope `AllPamSubjects`, поэтому
 валидный final `local_users_only` также даёт `Ineffective` в
 `SecurityEffective`: FIC не объявляет enforcement для всех PAM identities,
-когда provider ограничен локальными пользователями. Эта semantics одинакова
-для ordinary quality policies и `required_pam_enforcement`.
+когда provider ограничен локальными пользователями. Option policies используют
+эту security-effective semantics после изменения значения; activation policy
+отдельно доказывает только структурную подключённость provider.
 
 Preflight и postcondition проходят через один provider semantic backend.
 Для pwquality prospective state вычисляется тем же последовательным parser'ом,
@@ -741,9 +742,11 @@ alias повторно разрешается после чтения, а `PamRu
 authoritative regular target. ALT p11 описывает таким способом только штатные
 selectors `/etc/pam.d/system-auth` и `/etc/pam.d/system-policy` с их отдельными
 package-owned allowlists; Debian/Ubuntu alias permissions не объявляют.
-`required_pam_enforcement` независимо проверяет выбранные известные providers
-как системный invariant; он не объявляет dependencies другим policies, не
-устанавливает пакеты и не исправляет чужой PAM stack.
+Capability activation policies независимо обеспечивают выбранные providers как
+структурный системный invariant. Option policies имеют на них Recommended, а не
+Required dependency: externally managed корректная topology остаётся
+допустимой, но отсутствующая topology всё равно отклоняется их Structural
+preflight.
 
 Generated PAM policy defaults разрешаются из выбранных quality/history
 providers. Central CMake не ветвится по distro id, поэтому composition может
@@ -760,13 +763,14 @@ exhaustive switch'ами и согласуются с provider descriptor. Pwqua
 explicit config replacement.
 
 `PamTopologyManager` отделяет `inspect/canEnable/enable/disable` от provider
-configuration. Текущая mutable strategy — ALT/tcb manager для `pam_faillock`;
-Debian/Ubuntu описывают `pam-auth-update` как external opt-in, а native
-passwdqc topology ALT — как static/read-only. Config policies не активируют
-topology неявно. Password-history config и topology также являются разными
-состояниями: Debian 13 и Ubuntu изменяют `pwhistory.conf` только после
-доказательства active effective stack, Debian 12 изменяет argv существующего
-`pam_pwhistory.so`, а ALT эту capability не объявляет.
+configuration. Typed strategy выбирает `PamAuthUpdate` для Debian/Ubuntu,
+`AltTcbManaged` для mutable ALT lockout/history и `StaticVerifyOnly` для native
+ALT passwdqc. Generic activation policy знает только capability, никогда не
+ветвится по distro и после native enable заново строит actual PAM graph.
+Password-history config и topology остаются разными состояниями: Debian 13 и
+Ubuntu изменяют `pwhistory.conf` только после доказательства active effective
+stack, Debian 12 изменяет argv существующего `pam_pwhistory.so`, а ALT использует
+отдельный serialized TCB topology manager.
 
 Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют плоским
 `/etc/login.defs` через общий для identity configuration
@@ -853,8 +857,9 @@ Package integration не меняет эту границу. DEB-пакет `fic
 `pam-auth-update` profile declaration: `fic-faillock-notify` размещает
 `preauth` и account check, `fic-faillock` — `authfail`, а `fic-pwhistory` —
 password-history check. `postinst configure` вызывает только
-`pam-auth-update --package`; активацию администратор выполняет явно, после чего
-semantic verifier анализирует получившийся effective graph. Policy values
+`pam-auth-update --package`; activation policies используют recipes
+`fic-faillock-notify fic-faillock`, `fic-pwhistory` и distro-owned `pwquality`,
+после чего Structural verifier анализирует новый effective graph. Policy values
 остаются в `faillock.conf`; history values находятся в `pwhistory.conf` на
 modern profiles и в `pam_pwhistory.so` argv на Debian 12. ALT p11 не получает эти files и
 не вызывает Debian-specific mechanism. RPM устанавливает выключенную facility
@@ -866,8 +871,8 @@ modern profiles и в `pam_pwhistory.so` argv на Debian 12. ALT p11 не по�
 доказывает resulting AuthenticationLockout для основного local stack и
 configured services, использующих дополнительный auth target, через общий
 analyzer/verifier и откатывает exact bytes всех записанных targets при failed
-postcondition. Это сохраняет local-only contract в `sss` mode, не ослабляя
-глобальную semantics `required_pam_enforcement`. До записи manager обходит effective include/substack
+postcondition. Это сохраняет local-only contract в `sss` mode. До записи
+manager обходит effective include/substack
 graph целевых authentication services и отклоняет любой не принадлежащий FIC
 `pam_faillock`; простой global grep не используется. Замена `pam_tcb required`
 на `sufficient` разрешена только когда `pam_tcb` является последним
@@ -1017,7 +1022,9 @@ flowchart TB
     pam --> countingPeriod[failed_authentication_counting_period]
     pam --> failedRoot[failed_authentication_enforce_for_root]
     pam --> unlockTime[failed_authentication_unlock_time]
-    pam --> requiredPam[required_pam_enforcement]
+    pam --> enableLockout[enable_authentication_lockout]
+    pam --> enableHistory[enable_password_history]
+    pam --> enableQuality[enable_password_quality]
     sssd --> offlineExpiration[sssd_offline_credentials_expiration]
     kerberos --> ticketLifetimePolicy[kerberos_ticket_lifetime]
 

@@ -154,6 +154,9 @@ bool validateExecutables(const PlatformExecutables& executables,
         }
     }
     for (const ExecutableId id : supportedIds) {
+        if (id == ExecutableId::PamAuthUpdate) {
+            continue;
+        }
         const PlatformExecutableSpec* spec =
             findExecutableSpec(executables, id);
         if (spec == nullptr || !spec->required) {
@@ -609,6 +612,27 @@ bool validatePamComposition(const PamPlatformConfig& pam,
             error = "PAM capability has an unsupported configuration mode";
             return false;
         }
+        if (capability.topology == PamTopologyStrategyKind::PamAuthUpdate) {
+            if (capability.activationIdentifiers.empty()) {
+                error = "pam-auth-update activation recipe is empty";
+                return false;
+            }
+            std::set<std::string> identifiers;
+            for (const auto& identifier : capability.activationIdentifiers) {
+                if (identifier.empty() ||
+                    identifier.find_first_of(" \t\r\n/\\") !=
+                        std::string::npos ||
+                    !identifiers.insert(identifier).second) {
+                    error = "pam-auth-update activation recipe contains an "
+                        "invalid or duplicate profile identifier";
+                    return false;
+                }
+            }
+        } else if (!capability.activationIdentifiers.empty()) {
+            error = "PAM activation identifiers are set for a non-"
+                "pam-auth-update strategy";
+            return false;
+        }
         if (capability.topology == PamTopologyStrategyKind::AltTcbManaged) {
             if (capability.capability == PamCapability::AuthenticationLockout) {
                 if (!capability.topologyTarget.empty()) {
@@ -898,6 +922,20 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                                  "DAC protected system command", error) ||
         !validateTcbCredentialStorage(profile.dac.tcbCredentialStorage,
                                       error)) {
+        return false;
+    }
+    const bool usesPamAuthUpdate = std::any_of(
+        profile.pam.capabilities.begin(), profile.pam.capabilities.end(),
+        [](const PamCapabilityConfig& capability) {
+            return capability.topology ==
+                PamTopologyStrategyKind::PamAuthUpdate;
+        });
+    const PlatformExecutableSpec* pamAuthUpdate = findExecutableSpec(
+        profile.executables, ExecutableId::PamAuthUpdate);
+    if (usesPamAuthUpdate != (pamAuthUpdate != nullptr)) {
+        error = usesPamAuthUpdate
+            ? "pam-auth-update strategy requires a trusted executable"
+            : "platform declares pam-auth-update without an activation recipe";
         return false;
     }
     const PasswordAgingPolicyDefaults& aging =

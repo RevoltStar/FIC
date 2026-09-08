@@ -1,5 +1,6 @@
 #include "trust/PackageTrustSelection.h"
 
+#include <algorithm>
 #include <cassert>
 #include <sstream>
 #include <vector>
@@ -15,6 +16,14 @@ int main() {
               "/bin/udevadm", "/sbin/udevadm"}},
         }
     };
+
+    const std::vector<ExecutableId> declared =
+        fic::trust::declaredExecutableIds(executables);
+    assert(declared.size() == 2);
+    assert(declared[0] == ExecutableId::Systemctl);
+    assert(declared[1] == ExecutableId::Udevadm);
+    assert(std::find(declared.begin(), declared.end(),
+                     ExecutableId::PamAuthUpdate) == declared.end());
 
     std::istringstream unrelated(
         "/usr/bin/synaptic\n"

@@ -475,7 +475,6 @@ add_executable(pam_configuration_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamRequiredProviders.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
 )
@@ -505,6 +504,38 @@ add_test(
     NAME pam_disable_nopasswdlogin_policy_tests
     COMMAND pam_disable_nopasswdlogin_policy_tests
 )
+
+add_executable(pam_capability_activation_policy_tests
+    fic/modules/identity_access/pam/PamCapabilityActivationPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamFaillockTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamAuthUpdateTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManagerFactory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamCapabilityActivationPolicy.cpp
+)
+target_include_directories(pam_capability_activation_policy_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_capability_activation_policy_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(NAME pam_capability_activation_policy_tests
+         COMMAND pam_capability_activation_policy_tests)
 
 add_executable(passwdqc_config_file_tests
     fic/modules/identity_access/pam/PasswdqcConfigFileTests.cpp
@@ -608,7 +639,6 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamRequiredProviders.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationCountingPeriodPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationAttemptsPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.cpp
@@ -618,7 +648,6 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswdqcPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordQualityPolicies.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/RequiredPamEnforcementPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/nss/NssPolicy.cpp

@@ -880,7 +880,7 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/notify"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")"
-    package_depends="$(join_depends "$binary_depends" "fic-dick (= ${PACKAGE_VERSION})" "libnotify-bin" "nftables" "libpam-runtime" "libpam-modules")"
+    package_depends="$(join_depends "$binary_depends" "fic-dick (= ${PACKAGE_VERSION})" "libnotify-bin" "nftables" "libpam-runtime" "libpam-modules" "libpam-pwquality")"
 
     write_control_file \
         "$package_root" \

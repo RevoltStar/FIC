@@ -409,6 +409,24 @@ bool initPolicyRegistry(
             cafArr.push_back(std::move(policy));
         }
     };
+    PamCapabilityActivationPolicyOptions activationOptions;
+    activationOptions.managerFactory =
+        [&](const fic::platform::PamCapabilityConfig& capability,
+            const std::vector<std::string>& services,
+            std::string& managerError) {
+            return fic::identity::pam::createPamTopologyManager(
+                platform.pam, capability, services, executables,
+                managerError);
+        };
+    cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
+        platform.pam, fic::platform::PamCapability::AuthenticationLockout,
+        activationOptions));
+    cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
+        platform.pam, fic::platform::PamCapability::PasswordHistory,
+        activationOptions));
+    cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
+        platform.pam, fic::platform::PamCapability::PasswordQuality,
+        activationOptions));
     registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinLength,
         std::make_unique<PamPasswordMinLengthPolicy>(platform.pam));
     registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinClasses,
@@ -473,9 +491,6 @@ bool initPolicyRegistry(
         fic::platform::PamPolicyFeature::FailedAuthenticationUnlockTime,
         std::make_unique<PamFailedAuthenticationUnlockTimePolicy>(
             platform.pam));
-    cafArr.push_back(
-        std::make_unique<RequiredPamEnforcementPolicy>(platform.pam));
-
     // Identity and access: SSSD, Kerberos and NSS
     cafArr.push_back(
         std::make_unique<SssdOfflineCredentialsExpirationPolicy>(executables));

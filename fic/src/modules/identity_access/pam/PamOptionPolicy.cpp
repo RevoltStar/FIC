@@ -9,6 +9,7 @@
 #include "modules/identity_access/pam/PamProviderConfigFile.h"
 #include "modules/identity_access/pam/PamProviderModuleArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
+#include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
 
 #include <utility>
 
@@ -18,7 +19,12 @@ PamOptionPolicy::PamOptionPolicy(
     : PamPolicy(),
       platformConfig_(std::move(platformConfig)),
       feature_(feature) {
-    if (fic::identity::pam::pamPolicyCapability(feature_) ==
+    const auto capability =
+        fic::identity::pam::pamPolicyCapability(feature_);
+    addRecommendedDependency(
+        {"IDENTITY_ACCESS", "PAM",
+         pamCapabilityActivationPolicyName(capability)});
+    if (capability ==
             fic::platform::PamCapability::AuthenticationLockout &&
         platformConfig_.passwordlessLoginControl.has_value()) {
         addRecommendedDependency(

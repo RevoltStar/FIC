@@ -105,7 +105,7 @@ def main() -> int:
             "Debian fic package does not install PAM profiles")
     require(deb_builder.count('install_fic_pam_profiles "$package_root"') == 1,
             "PAM profiles must be staged only in the Debian fic package")
-    require('"libpam-runtime" "libpam-modules"' in fic_package,
+    require('"libpam-runtime" "libpam-modules" "libpam-pwquality"' in fic_package,
             "Debian fic package lacks direct PAM dependencies")
     require('package_depends="$(join_depends "$binary_depends" "udev")"' in fic_dick_package,
             "Debian fic-dick package does not compose the udev runtime dependency")

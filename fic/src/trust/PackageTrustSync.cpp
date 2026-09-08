@@ -1,4 +1,5 @@
 #include "trust/PackageTrustSync.h"
+#include "trust/PackageTrustSelection.h"
 
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/process/ProcessExecutor.h>
@@ -366,7 +367,8 @@ bool syncPackageManagedExecutables(
     PackageTrustSyncResult& result,
     std::string& error) {
     return syncPackageManagedExecutableIds(
-        platform, executables, fic::platform::allExecutableIds(), result, error);
+        platform, executables,
+        declaredExecutableIds(platform.executables), result, error);
 }
 
 bool syncSelectedPackageManagedExecutables(

@@ -39,6 +39,16 @@ sudo control fic-pam-pwhistory enabled
 sudo control fic-pam-pwhistory disabled
 ```
 
+The daemon exposes the corresponding logical activation policies
+`enable_authentication_lockout` and `enable_password_history`. They call the
+same `AltPamFaillockTopologyManager` and
+`AltPamPasswordHistoryTopologyManager` implementations used by the control
+facilities; there is no second topology implementation and no call to
+`pam-auth-update`. `enable_password_quality` is `StaticVerifyOnly`: it accepts
+the native `pam_passwdqc` topology after Structural verification and never
+writes an ALT PAM stack. Disabling any of these FIC policies does not invoke
+the facility's `disabled` operation.
+
 The facility is `disabled` after a clean install. It is a thin dispatcher to
 the offline FIC PAM manager and never generates or edits PAM content in shell.
 Enable acquires an inter-process lock, rejects symlink or untrusted targets,
@@ -66,8 +76,9 @@ same `PamCapabilityVerifier` used by daemon policies must prove the resulting
 AuthenticationLockout capability Effective for `system-auth-local-only` and
 for configured services whose authentication graph uses the additional typed
 target, including stock `sshd`. This explicit target scope does not reinterpret
-unrelated native ALT `sss` routing; the global `required_pam_enforcement`
-policy keeps its broader semantics.
+unrelated native ALT `sss` routing. The `enable_authentication_lockout`
+activation policy calls this same authoritative manager directly and verifies
+the fresh effective graph.
 An operational failure of `pam_faillock preauth` that itself terminates the
 stack fail-closed is not reported as an `authfail` accounting bypass. A
 credential failure terminating before `pam_faillock` is reached remains a

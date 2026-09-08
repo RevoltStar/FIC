@@ -69,9 +69,10 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 ## Dependency chain
 
 - `fic` depends on `fic-dick`
-- `fic` directly depends on `libpam-runtime` and `libpam-modules`: the first
-  provides `pam-auth-update`, while the second owns the PAM modules referenced
-  by the FIC profiles
+- `fic` directly depends on `libpam-runtime`, `libpam-modules` and
+  `libpam-pwquality`: the first provides `pam-auth-update`, the second owns the
+  PAM modules referenced by the FIC profiles, and the third owns the distro
+  `pwquality` profile selected by password-quality activation
 - `fic` recommends `fic-session-agent`
 - `fic-gui` depends on both `fic` and `fic-dick`
 
@@ -142,25 +143,25 @@ The removal path unregisters the profiles before their declarations disappear.
 Maintainer scripts never use `--enable` or `--force`, and upgrades do not reset
 the administrator's selection.
 
-The administrator explicitly activates the required topology:
+The capability activation policies use the following native recipes:
 
 ```bash
-sudo pam-auth-update --enable fic-faillock-notify fic-faillock
-sudo pam-auth-update --enable fic-pwhistory
+enable_authentication_lockout: pam-auth-update --enable fic-faillock-notify fic-faillock
+enable_password_history:       pam-auth-update --enable fic-pwhistory
+enable_password_quality:       pam-auth-update --enable pwquality
 ```
 
-The profiles contain only topology and fixed role arguments (`preauth`,
-`authfail`, `use_authtok`). Policy values remain in
+Faillock remains split across two physical profiles because `preauth`/account
+and `authfail` require different `pam-auth-update` priorities and placement in
+the generated stacks. The FIC profiles contain only topology and fixed role
+arguments (`preauth`, `authfail`, `use_authtok`). Policy values remain in
 `/etc/security/faillock.conf`; history values use
 `/etc/security/pwhistory.conf` on modern Linux-PAM and the already activated
-`pam_pwhistory.so` rule arguments on Debian 12/Linux-PAM 1.5.2. FIC policies
-do not install packages, invoke `pam-auth-update`, or activate modules. The
-legacy argv strategy changes only managed arguments on the existing parsed
-rule; it does not create a second provider call. After activation,
-`required_pam_enforcement` can be enabled to
-check the system invariant independently: `PamConfiguration`,
-`PamControlFlowAnalyzer` and `PamCapabilityVerifier` analyze the resulting
-effective PAM graph instead of trusting profile selection state.
+`pam_pwhistory.so` rule arguments on Debian 12/Linux-PAM 1.5.2. Activation
+policies invoke verified `pam-auth-update` without a shell and then rebuild
+`PamConfiguration` and require a Structural `PamCapabilityVerifier` result.
+The legacy argv strategy changes only managed arguments on the existing parsed
+rule; it does not create a second provider call.
 The platform composition keeps `pam_pwhistory` configuration separate from
 this external opt-in topology state; changing a history value never invokes
 `pam-auth-update` or claims that an inactive profile is operational.

@@ -111,7 +111,7 @@ public:
              fic::platform::PamProviderKind::PamPasswdqc,
              fic::platform::PamScope::LocalPasswordChange,
              root / "passwdqc.conf",
-             fic::platform::PamTopologyStrategyKind::StaticReadOnly, {}}
+             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly, {}}
         };
         result.capabilities.front().managedTopologyTargets = {
             {root / "pam.d/system-auth-local-only",

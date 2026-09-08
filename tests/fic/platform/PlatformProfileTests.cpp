@@ -1,7 +1,6 @@
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
-#include "platform/RequiredPamEnforcementDefaultsGenerated.h"
 
 #include <cstdlib>
 #include <algorithm>
@@ -172,9 +171,10 @@ void testSelectedProfile() {
                     visudoSpec.providerExecutables.empty(),
                 "fixed-provider platform unexpectedly has provider mappings");
     }
-    require(profile.executables.entries.size() ==
-                fic::platform::allExecutableIds().size(),
-            "the executable registry must contain every supported logical command");
+    const auto* pamAuthUpdate = fic::platform::findExecutableSpec(
+        profile.executables, fic::platform::ExecutableId::PamAuthUpdate);
+    require((profile.id == "alt-p11") == (pamAuthUpdate == nullptr),
+            "pam-auth-update support does not match the platform family");
     const auto supplementaryProvider =
         profile.userCreation.supplementaryGroupsProvider;
     if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {
@@ -252,12 +252,6 @@ void testSelectedProfile() {
         "distribution-specific user-creation defaults are incorrect");
     require(!profile.packageManager.queryCandidates.empty(),
             "package manager query candidates are missing");
-    require(
-        std::string(FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT) ==
-            (profile.id == "alt-p11"
-                 ? "pam_faillock,pam_passwdqc,pam_pwhistory"
-                 : "pam_faillock,pam_pwquality,pam_pwhistory"),
-        "required-PAM platform default is incorrect");
     require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",
             "SDDM configuration path is incorrect");
     require(profile.displayManager.lightDmConfigPath ==
@@ -443,6 +437,41 @@ void testSelectedProfile() {
             "ALT PAM managed topology target metadata is incorrect");
     require(history->topologyTarget == expectedLocalPamStack,
             "ALT password-history topology target metadata is incorrect");
+    if (profile.id == "alt-p11") {
+        require(
+            faillock->topology ==
+                    fic::platform::PamTopologyStrategyKind::AltTcbManaged &&
+                history->topology ==
+                    fic::platform::PamTopologyStrategyKind::AltTcbManaged &&
+                quality->topology ==
+                    fic::platform::PamTopologyStrategyKind::StaticVerifyOnly &&
+                faillock->activationIdentifiers.empty() &&
+                history->activationIdentifiers.empty() &&
+                quality->activationIdentifiers.empty(),
+            "ALT PAM capabilities must use native managed/static strategies");
+    } else {
+        require(
+            faillock->topology ==
+                    fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
+                history->topology ==
+                    fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
+                quality->topology ==
+                    fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
+                faillock->activationIdentifiers ==
+                    std::vector<std::string>{
+                        "fic-faillock-notify", "fic-faillock"} &&
+                history->activationIdentifiers ==
+                    std::vector<std::string>{"fic-pwhistory"} &&
+                quality->activationIdentifiers ==
+                    std::vector<std::string>{"pwquality"},
+            "Debian-family PAM activation recipes are incorrect");
+        require(pamAuthUpdate != nullptr &&
+                    pamAuthUpdate->candidates ==
+                        std::vector<std::filesystem::path>{
+                            "/usr/sbin/pam-auth-update",
+                            "/usr/bin/pam-auth-update"},
+                "Debian-family pam-auth-update executable contract is incorrect");
+    }
     const std::filesystem::path expectedGrubDefaults =
         profile.id == "alt-p11"
             ? "/etc/sysconfig/grub2"
@@ -711,7 +740,7 @@ void testPamCompositionIsMechanismDriven() {
             fic::platform::PamProviderKind::PamPwhistory,
             quality->scope,
             "/etc/security/pwhistory.conf",
-            fic::platform::PamTopologyStrategyKind::StaticReadOnly,
+            fic::platform::PamTopologyStrategyKind::StaticVerifyOnly,
             {}});
     }
 
@@ -794,6 +823,60 @@ void testInvalidProfileIsRejected() {
     std::string error;
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative SSH configuration path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    auto* activation = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    activation->topology =
+        fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+    activation->activationIdentifiers.clear();
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an empty pam-auth-update activation recipe must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    activation = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    activation->topology =
+        fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+    activation->activationIdentifiers = {"pwquality", "pwquality"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "duplicate pam-auth-update profile identifiers must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    activation = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    activation->topology =
+        fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+    activation->activationIdentifiers = {"../pwquality"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "unsafe pam-auth-update profile identifiers must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    activation = pamCapability(
+        profile.pam, fic::platform::PamCapability::PasswordQuality);
+    activation->topology =
+        fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
+    activation->activationIdentifiers = {"pwquality"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a static PAM strategy must reject activation identifiers");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    if (fic::platform::findExecutableSpec(
+            profile.executables,
+            fic::platform::ExecutableId::PamAuthUpdate) != nullptr) {
+        profile.executables.entries.erase(
+            std::remove_if(
+                profile.executables.entries.begin(),
+                profile.executables.entries.end(),
+                [](const auto& candidate) {
+                    return candidate.id ==
+                        fic::platform::ExecutableId::PamAuthUpdate;
+                }),
+            profile.executables.entries.end());
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "pam-auth-update strategy without a trusted executable must "
+                "be rejected");
+    }
 
     profile = fic::platform::makeBuildPlatformProfile();
     executableSpec(profile, fic::platform::ExecutableId::Sshd).candidates = {

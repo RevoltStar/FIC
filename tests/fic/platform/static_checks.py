@@ -263,6 +263,8 @@ def main():
     require(
         'PamProviderKind::PamPasswdqc' in profiles["alt-p11"]
         and '"/etc/passwdqc.conf"' in profiles["alt-p11"]
+        and "PamTopologyStrategyKind::StaticVerifyOnly" in profiles["alt-p11"]
+        and "ExecutableId::PamAuthUpdate" not in profiles["alt-p11"]
         and 'PamConfigGrammar::Passwdqc' not in profiles["alt-p11"],
         "ALT p11 profile does not select the native passwdqc backend",
     )
@@ -295,8 +297,13 @@ def main():
     for name in ("debian-12", "debian-13", "ubuntu-24.04", "ubuntu-26.04"):
         require(
             "PamCapability::PasswordHistory" in profiles[name]
-            and "PamProviderKind::PamPwhistory" in profiles[name],
-            f"{name} does not compose the password-history capability",
+            and "PamProviderKind::PamPwhistory" in profiles[name]
+            and "ExecutableId::PamAuthUpdate" in profiles[name]
+            and "PamTopologyStrategyKind::PamAuthUpdate" in profiles[name]
+            and '"fic-faillock-notify", "fic-faillock"' in profiles[name]
+            and '"fic-pwhistory"' in profiles[name]
+            and '"pwquality"' in profiles[name],
+            f"{name} does not compose the PAM activation recipes",
         )
 
     platform_cmake = (
@@ -313,9 +320,6 @@ def main():
     ).read_text(encoding="utf-8")
     user_creation_defaults = (
         root / "fic/src/platform/generated/UserCreationPolicyDefaultsGenerated.h.in"
-    ).read_text(encoding="utf-8")
-    required_pam_defaults = (
-        root / "fic/src/platform/generated/RequiredPamEnforcementDefaultsGenerated.h.in"
     ).read_text(encoding="utf-8")
     identity_template = (
         root / "fic/src/resources/config/IDENTITY_ACCESS.conf.in"
@@ -373,28 +377,13 @@ def main():
         'set(FIC_USER_CREATION_SHELL_DEFAULT "/bin/bash")' in platform_cmake,
         "ALT p11 useradd shell default is not represented",
     )
-    required_pam_name = "FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT"
     require(
-        f"@{required_pam_name}@" in required_pam_defaults and
-        f"@{required_pam_name}@" in identity_template,
-        "required-PAM C++ and generated config defaults do not share the "
-        "platform value",
-    )
-    require(
-        '"pam_faillock,pam_${FIC_PAM_PASSWORD_QUALITY_PROVIDER}"'
-            in platform_cmake and
-        '",pam_${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"' in platform_cmake and
         'set(FIC_PAM_PASSWORD_QUALITY_PROVIDER "passwdqc")'
             in platform_cmake and
         'set(FIC_PAM_PASSWORD_HISTORY_PROVIDER "pwhistory")'
             in platform_cmake and
         'set(FIC_PAM_PASSWORD_TRANSACTION_MODULE ON)' in platform_cmake,
-        "required-PAM platform defaults are incomplete",
-    )
-    require(
-        "required_pam_enforcement.value=" +
-        f"@{required_pam_name}@" in identity_template,
-        "IDENTITY_ACCESS template hardcodes required-PAM providers",
+        "ALT PAM provider selection is incomplete",
     )
     kde_media_policy = "disable_kde_lock_screen_media_controls"
     require(
@@ -515,6 +504,44 @@ def main():
         and "PamPolicySupport::Unsupported" in registry,
         "PAM registry exposure is not derived from platform capabilities",
     )
+    activation_policy = (
+        root / "fic/src/modules/identity_access/pam/policies/"
+        "PamCapabilityActivationPolicy.cpp"
+    ).read_text(encoding="utf-8")
+    topology_factory = (
+        root / "fic/src/modules/identity_access/pam/PamTopologyManagerFactory.cpp"
+    ).read_text(encoding="utf-8")
+    require(
+        registry.count("std::make_unique<PamCapabilityActivationPolicy>") == 3,
+        "PolicyRegistry must register exactly three PAM activation policies",
+    )
+    require(
+        "PamCapabilityVerificationMode::Structural" in activation_policy
+        and "manager->disable" not in activation_policy
+        and "PamCapabilityActivationPolicy" in registry,
+        "PAM activation policy does not enforce structural-only enable semantics",
+    )
+    for forbidden in ("debian", "ubuntu", "alt-p11", "pam-auth-update", "control"):
+        require(
+            forbidden not in activation_policy.lower(),
+            f"generic PAM activation policy branches on platform detail: {forbidden}",
+        )
+    require(
+        "PamTopologyStrategyKind::PamAuthUpdate" in topology_factory
+        and "PamTopologyStrategyKind::AltTcbManaged" in topology_factory
+        and "PamTopologyStrategyKind::StaticVerifyOnly" in topology_factory,
+        "PAM topology factory does not cover every typed activation strategy",
+    )
+    for obsolete in (
+        "RequiredPamEnforcementPolicy",
+        "PamRequiredProviders",
+        "FIC_REQUIRED_PAM_ENFORCEMENT_DEFAULT",
+        "required_pam_enforcement",
+    ):
+        require(
+            obsolete not in registry + identity_template + platform_cmake,
+            f"obsolete PAM enforcement contract remains: {obsolete}",
+        )
     for policy_class in (
         "PamPasswordMinLengthPolicy",
         "PamPasswordMinClassesPolicy",
@@ -537,7 +564,7 @@ def main():
         "PamFailedAuthenticationCountingPeriodPolicy",
         "PamFailedAuthenticationEnforceForRootPolicy",
         "PamFailedAuthenticationUnlockTimePolicy",
-        "RequiredPamEnforcementPolicy",
+        "PamCapabilityActivationPolicy",
         "SssdOfflineCredentialsExpirationPolicy",
         "KerberosTicketLifetimePolicy",
         "PasswordMinAgeDaysPolicy",
@@ -586,7 +613,9 @@ def main():
         "failed_authentication_counting_period",
         "failed_authentication_enforce_for_root",
         "failed_authentication_unlock_time",
-        "required_pam_enforcement",
+        "enable_authentication_lockout",
+        "enable_password_history",
+        "enable_password_quality",
         "sssd_offline_credentials_expiration",
         "kerberos_ticket_lifetime",
         "password_min_age_days",
