@@ -1460,10 +1460,15 @@ apply results.
 Future system backends plug into `DesktopGlobalConfigReconciler`. Physical
 identity is `(backend, setting)`; equal values merge transient policy-owner
 metadata, while conflicting values fail Stage A before any backend mutation.
+Contributions carry an explicit desktop association. Stage A also rejects a
+`MandatoryGlobal` policy/desktop without requirement coverage and rejects an
+authoritative contribution for a `SessionOnly` desktop.
 After validation, each backend with active requirements independently ensures
 their values and verifies effective protected system state. Backend failures are
-aggregated and keep the overall result failed without blocking independent
-enforcement. Owners are not persistent backend state. Missing requirements are
+aggregated into a structured report containing backend and policy/desktop
+results. Policy compliance depends only on its relevant backends, so unrelated
+failures do not block its runtime convergence. The overall full-pass result
+still fails if any backend failed. Owners are not persistent backend state. Missing requirements are
 not deletion commands: `DISABLE` stops checking/enforcement and leaves existing
 configuration unchanged. Rollback, provenance, and cleanup semantics are out of
 scope. See [the global desktop lifecycle contract](session-agent.md) for details.

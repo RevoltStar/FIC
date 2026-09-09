@@ -51,10 +51,14 @@ public:
     }
     EnforcementMode mode = EnforcementMode::SessionOnly;
     bool reconcileOk = true;
+    bool prepareOk = true;
     int reconciled = 0;
     std::vector<std::string> operations;
 protected:
-    bool prepare(std::string& error) override { error.clear(); return true; }
+    bool prepare(std::string& error) override {
+        error = prepareOk ? "" : "session preparation failure";
+        return prepareOk;
+    }
     bool relevantTo(DesktopEnvironmentKind) const override { return true; }
     EnforcementMode modeFor(DesktopEnvironmentKind) const override { return mode; }
     bool reconcileControlledSession(const ClassifiedGraphicalSession&,
@@ -70,6 +74,11 @@ ClassifiedGraphicalSession session(DesktopEnvironmentKind desktop) {
     value.session.uid = 1000;
     value.desktop = desktop;
     return value;
+}
+
+PolicyGlobalEnforcementResult globalResult(bool verified) {
+    return {true, verified, {"backend"},
+            verified ? "" : "backend failure"};
 }
 
 void initializeRuntime() {
@@ -115,7 +124,7 @@ int main() {
     require(ignoredUnknown.apply() && ignoredUnknown.reconciled == 0,
             "unclassifiable session failed an ordinary policy apply");
     const SessionReconcileResult unknownResult =
-        ignoredUnknown.reconcileSession(unclassified, true, {});
+        ignoredUnknown.reconcileSession(unclassified, globalResult(true));
     require(unknownResult.status == SessionReconcileStatus::NotApplicable &&
             ignoredUnknown.reconciled == 0,
             "unclassifiable session failed targeted ordinary reconciliation");
@@ -138,15 +147,56 @@ int main() {
     TestPolicy global(scope, inventory);
     global.mode = EnforcementMode::MandatoryGlobal;
     global.reconcileOk = false;
+    global.setGlobalEnforcementResults(
+        {{DesktopEnvironmentKind::Gnome, globalResult(true)}});
     require(global.apply(), "verified global enforcement was defeated by runtime warning");
     require(global.operations == std::vector<std::string>{"runtime"},
             "normal apply performed policy-level global enforcement");
+
+    TestPolicy normalPrepareWarning(scope, inventory);
+    normalPrepareWarning.mode = EnforcementMode::MandatoryGlobal;
+    normalPrepareWarning.prepareOk = false;
+    normalPrepareWarning.setGlobalEnforcementResults(
+        {{DesktopEnvironmentKind::Gnome, globalResult(true)}});
+    require(normalPrepareWarning.apply() && normalPrepareWarning.reconciled == 0,
+            "session preparation invalidated verified global state on normal apply");
+
+    TestPolicy normalGlobalFailure(scope, inventory);
+    normalGlobalFailure.mode = EnforcementMode::MandatoryGlobal;
+    normalGlobalFailure.setGlobalEnforcementResults(
+        {{DesktopEnvironmentKind::Gnome, globalResult(false)}});
+    require(!normalGlobalFailure.apply() && normalGlobalFailure.reconciled == 0,
+            "normal apply ignored relevant global failure");
+
+    TestPolicy normalMissingCoverage(scope, inventory);
+    normalMissingCoverage.mode = EnforcementMode::MandatoryGlobal;
+    require(!normalMissingCoverage.apply() && normalMissingCoverage.reconciled == 0,
+            "normal apply accepted missing global coverage");
+
+    TestPolicy normalSessionOnly(scope, inventory);
+    normalSessionOnly.setGlobalEnforcementResults(
+        {{DesktopEnvironmentKind::Gnome, globalResult(false)}});
+    require(normalSessionOnly.apply() && normalSessionOnly.reconciled == 1,
+            "SessionOnly normal apply depended on global failure");
+
+    scope.value = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Kde};
+    inventory->value = {session(DesktopEnvironmentKind::Gnome),
+                        session(DesktopEnvironmentKind::Kde)};
+    TestPolicy mixedGlobal(scope, inventory);
+    mixedGlobal.mode = EnforcementMode::MandatoryGlobal;
+    mixedGlobal.setGlobalEnforcementResults({
+        {DesktopEnvironmentKind::Gnome, globalResult(true)},
+        {DesktopEnvironmentKind::Kde, globalResult(false)}});
+    require(!mixedGlobal.apply() && mixedGlobal.reconciled == 1,
+            "mixed-DE global results were collapsed into one status");
+    scope.value = {DesktopEnvironmentKind::Gnome};
+    inventory->value = {session(DesktopEnvironmentKind::Gnome)};
 
     const auto graphical = session(DesktopEnvironmentKind::Gnome);
     TestPolicy targetedGlobal(scope, inventory);
     targetedGlobal.mode = EnforcementMode::MandatoryGlobal;
     const SessionReconcileResult targetedGlobalResult =
-        targetedGlobal.reconcileSession(graphical, true, {});
+        targetedGlobal.reconcileSession(graphical, globalResult(true));
     require(targetedGlobalResult.status ==
                 SessionReconcileStatus::MandatoryGlobalConverged,
             "targeted MandatoryGlobal reconciliation failed");
@@ -156,7 +206,7 @@ int main() {
     TestPolicy failedGlobal(scope, inventory);
     failedGlobal.mode = EnforcementMode::MandatoryGlobal;
     const SessionReconcileResult failedGlobalResult =
-        failedGlobal.reconcileSession(graphical, false, "backend failure");
+        failedGlobal.reconcileSession(graphical, globalResult(false));
     require(failedGlobalResult.status ==
                 SessionReconcileStatus::GlobalEnforcementFailed &&
                 failedGlobalResult.diagnostic == "backend failure" &&
@@ -166,25 +216,37 @@ int main() {
     TestPolicy targetedGlobalWarning(scope, inventory);
     targetedGlobalWarning.mode = EnforcementMode::MandatoryGlobal;
     targetedGlobalWarning.reconcileOk = false;
-    require(targetedGlobalWarning.reconcileSession(graphical, true, {}).status ==
+    require(targetedGlobalWarning.reconcileSession(
+                graphical, globalResult(true)).status ==
                 SessionReconcileStatus::MandatoryGlobalRuntimeWarning,
             "verified global state did not preserve authoritative success");
 
+    TestPolicy targetedPrepareWarning(scope, inventory);
+    targetedPrepareWarning.mode = EnforcementMode::MandatoryGlobal;
+    targetedPrepareWarning.prepareOk = false;
+    require(targetedPrepareWarning.reconcileSession(
+                graphical, globalResult(true)).status ==
+                SessionReconcileStatus::MandatoryGlobalRuntimeWarning,
+            "session preparation failure invalidated verified global state");
+
     TestPolicy targetedSessionFailure(scope, inventory);
     targetedSessionFailure.reconcileOk = false;
-    require(targetedSessionFailure.reconcileSession(graphical, false, "ignored").status ==
+    require(targetedSessionFailure.reconcileSession(
+                graphical, globalResult(false)).status ==
                 SessionReconcileStatus::SessionOnlyFailed,
             "targeted SessionOnly failure was accepted");
 
     TestPolicy targetedUnsupported(scope, inventory);
     targetedUnsupported.mode = EnforcementMode::Unsupported;
-    require(targetedUnsupported.reconcileSession(graphical, false, "ignored").status ==
+    require(targetedUnsupported.reconcileSession(
+                graphical, globalResult(false)).status ==
                 SessionReconcileStatus::Unsupported,
             "targeted unsupported desktop was accepted");
 
     scope.value = {DesktopEnvironmentKind::Kde};
     TestPolicy targetedNotApplicable(scope, inventory);
-    require(targetedNotApplicable.reconcileSession(graphical, false, "ignored").status ==
+    require(targetedNotApplicable.reconcileSession(
+                graphical, globalResult(false)).status ==
                 SessionReconcileStatus::NotApplicable &&
                 targetedNotApplicable.operations.empty(),
             "targeted NotApplicable policy changed state");

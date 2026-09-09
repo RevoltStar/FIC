@@ -315,6 +315,19 @@ json policy_apply_summary_json(const PolicyApplySummary& summary) {
     };
 }
 
+void install_desktop_global_report(
+    PolicyRegistry& registry,
+    const DesktopGlobalReconcileReport& report)
+{
+    for (Policy* policy : registry.capabilityPolicies(
+             PolicyCapability::SessionAware)) {
+        auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(policy);
+        if (sessionAware == nullptr) continue;
+        sessionAware->setGlobalEnforcementResults(report.resultsFor({
+            policy->moduleName, policy->submoduleName, policy->policyName}));
+    }
+}
+
 bool run_daemon_apply_all_pass(
     PolicyRegistry& policyRegistry,
     DesktopGlobalConfigReconciler& desktopGlobalConfig,
@@ -345,9 +358,12 @@ bool run_daemon_apply_all_pass(
         write_audit_log(event);
         return false;
     }
-    std::string desktopGlobalConfigError;
-    const bool desktopGlobalConfigOk = desktopGlobalConfig.reconcile(
-        policyRegistry, desktopGlobalConfigError);
+    const DesktopGlobalReconcileReport desktopGlobalReport =
+        desktopGlobalConfig.reconcile(policyRegistry);
+    install_desktop_global_report(policyRegistry, desktopGlobalReport);
+    const bool desktopGlobalConfigOk = desktopGlobalReport.successful();
+    const std::string desktopGlobalConfigError =
+        desktopGlobalReport.diagnostic();
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(
         policyRegistry, "FIREWALL");
     std::string firewallError;
@@ -543,7 +559,9 @@ json handle_request(json request,
             "DC configuration was saved, but generated device policy was not activated: " +
             response.value("message", "unknown device daemon error"));
     };
-    auto reloadRegistryAndGlobalConfig = [&]() -> std::optional<std::string> {
+    DesktopGlobalReconcileReport latestGlobalReport;
+    auto reloadRegistryAndGlobalConfig =
+        [&](bool requireAllBackends = true) -> std::optional<std::string> {
         std::string reloadError;
         if (!initPolicyRegistry(
                 platform, executables, policyRegistry, reloadError)) {
@@ -552,9 +570,12 @@ json handle_request(json request,
                     ? std::string("unknown initialization error")
                     : reloadError);
         }
-        if (!desktopGlobalConfig.reconcile(policyRegistry, reloadError)) {
+        latestGlobalReport = desktopGlobalConfig.reconcile(policyRegistry);
+        install_desktop_global_report(policyRegistry, latestGlobalReport);
+        if (!latestGlobalReport.requirementsValid ||
+            (requireAllBackends && !latestGlobalReport.successful())) {
             return "desktop global configuration reconciliation failed: " +
-                reloadError;
+                latestGlobalReport.diagnostic();
         }
         return std::nullopt;
     };
@@ -681,13 +702,14 @@ json handle_request(json request,
             return fic::ipc::make_ok_response("config reloaded");
         }
         if (command == "apply_all") {
-            if (auto reloadError = reloadRegistryAndGlobalConfig()) {
+            if (auto reloadError = reloadRegistryAndGlobalConfig(false)) {
                 return fic::ipc::make_error_response(
                     "policies were not applied because reconciliation failed: " +
                     reloadError.value());
             }
             PolicyApplySummary summary = applyAllPolicies(policyRegistry);
-            const bool ok = isPolicyApplySuccessful(summary, "all", "");
+            const bool ok = isPolicyApplySuccessful(summary, "all", "") &&
+                latestGlobalReport.successful();
             return policy_apply_summary_json(
                 summary,
                 ok,
@@ -698,13 +720,14 @@ json handle_request(json request,
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
-            if (auto reloadError = reloadRegistryAndGlobalConfig()) {
+            if (auto reloadError = reloadRegistryAndGlobalConfig(false)) {
                 return fic::ipc::make_error_response(
                     "module policies were not applied because reconciliation failed: " +
                     reloadError.value());
             }
             PolicyApplySummary summary = applyModulePolicies(policyRegistry, module);
-            const bool ok = isPolicyApplySuccessful(summary, module, "all");
+            const bool ok = isPolicyApplySuccessful(summary, module, "all") &&
+                latestGlobalReport.successfulForModule(module);
             return policy_apply_summary_json(
                 summary,
                 ok,
@@ -715,14 +738,20 @@ json handle_request(json request,
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            if (auto reloadError = reloadRegistryAndGlobalConfig()) {
+            if (auto reloadError = reloadRegistryAndGlobalConfig(false)) {
                 return fic::ipc::make_error_response(
                     "policy was not applied because reconciliation failed: " +
                     reloadError.value());
             }
             PolicyApplySummary summary =
                 applyPolicy(policyRegistry, module, policy);
-            const bool ok = isPolicyApplySuccessful(summary, module, policy);
+            Policy* requested = getPolicyClass(policyRegistry, module, policy);
+            const bool globalOk = requested == nullptr ||
+                latestGlobalReport.successfulForPolicy({
+                    requested->moduleName, requested->submoduleName,
+                    requested->policyName});
+            const bool ok = isPolicyApplySuccessful(summary, module, policy) &&
+                globalOk;
             return policy_apply_summary_json(
                 summary,
                 ok,
@@ -943,24 +972,26 @@ void reconcile_session_ready(
         }));
         return;
     }
-    std::string globalError;
-    const bool globalEnforcementVerified =
-        desktopGlobalConfig.reconcile(registry, globalError);
-    if (!globalEnforcementVerified) {
+    const DesktopGlobalReconcileReport globalReport =
+        desktopGlobalConfig.reconcile(registry);
+    if (!globalReport.successful()) {
         write_audit_log(fic::core::security_audit::makeEvent("fic", {
             {"event", "session_ready"},
             {"session_id", session.session.id},
             {"phase", "desktop_global_configuration"},
-            {"result", {{"ok", false}, {"message", globalError}}}
+            {"result", {
+                {"ok", false}, {"message", globalReport.diagnostic()}}}
         }));
     }
     for (Policy* policy : registry.capabilityPolicies(PolicyCapability::SessionAware)) {
         if (!policy->isEnabled()) continue;
         auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(policy);
         if (sessionAware == nullptr) continue;
+        const PolicyRef owner{
+            policy->moduleName, policy->submoduleName, policy->policyName};
         const SessionReconcileResult result =
             sessionAware->reconcileSession(
-                session, globalEnforcementVerified, globalError);
+                session, globalReport.resultFor(owner, session.desktop));
         if (result.status == SessionReconcileStatus::NotApplicable ||
             result.status == SessionReconcileStatus::MandatoryGlobalConverged ||
             result.status == SessionReconcileStatus::SessionOnlyConverged) {

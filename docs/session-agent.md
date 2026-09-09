@@ -125,7 +125,10 @@ them as system configuration.
 
 Stage A builds and validates the complete desired state for all registered
 backends: capability/contributor consistency, backend existence, contribution
-owner matching the producing policy, and nonempty physical keys. Different
+owner matching the producing policy, explicit desktop association, and nonempty
+physical keys. Every applicable `MandatoryGlobal` `(policy, desktop)` must have
+at least one contribution, while a contribution for `SessionOnly` is rejected.
+Different
 values for the same physical key are conflicts, including contributions from
 one policy. Any Stage A failure prevents all backend mutation; policy order
 never selects a winner. Identical setting names in different backends are
@@ -139,6 +142,13 @@ override it. Failures are accumulated with backend and operation diagnostics; a
 failed backend does not block another backend's enforcement, and any failure
 makes the overall result unsuccessful. There is no transaction spanning
 backends.
+
+Reconciliation returns a structured report with Stage A validity, independent
+per-backend attempted/verified results, and per-policy/per-desktop results
+derived only from the backends required by that policy. Shared same-value
+settings make every owner depend on the same backend result. A failure in an
+unrelated desktop backend therefore changes the overall report to failed but
+does not contaminate another policy's verified result.
 
 `ENABLE` means FIC checks and enforces the active requirement. `DISABLE` means
 FIC stops checking and enforcing it. A missing setting in the active requirement
@@ -168,10 +178,21 @@ registry. Config mutations do the same immediately after a successful rebuild.
 A later `session_ready` performs a full-inventory compliance check, runs the
 same registry-wide `DesktopGlobalConfigReconciler`, then invokes only targeted
 enabled `SessionAwarePolicy` session convergence; it does not re-run all OSS
-policies. A failed global backend pass prevents runtime convergence for future
-`MandatoryGlobal` policies, while `SessionOnly` policies remain independent.
+policies. Each policy receives `resultFor(policy, session.desktop)`. Only a
+missing or failed relevant result prevents runtime convergence for future
+`MandatoryGlobal` policies; `SessionOnly` policies remain independent. Once the
+relevant global result is verified, session preparation and runtime failures are
+warnings and cannot retroactively invalidate persistent global enforcement.
 Runtime reconciliation diagnostics do not rewrite the historical result of an
 earlier apply operation.
+
+For normal apply the daemon installs the same report as explicit per-pass
+context on every session-aware policy. Multi-DE policies evaluate each desktop
+separately: verified desktops may still receive best-effort runtime convergence,
+while missing coverage or a failed relevant backend makes the policy result
+fail. `apply_policy` and `apply_module` use policy/module-scoped report success,
+so an unrelated backend failure does not reject a successful targeted request;
+full apply and startup retain overall failure if any backend failed.
 
 The session-event listener is mandatory startup infrastructure. `fic.service`
 remains `Type=notify`, `NotifyAccess=main`, and `TimeoutStartSec=600s`;

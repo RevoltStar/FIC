@@ -5,6 +5,7 @@
 #include "session/UserSession.h"
 
 #include <set>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,16 @@ struct SessionReconcileResult {
     }
 };
 
+struct PolicyGlobalEnforcementResult {
+    bool hasRequirement = false;
+    bool verified = false;
+    std::set<std::string> backends;
+    std::string diagnostic;
+};
+
+using PolicyGlobalEnforcementResults =
+    std::map<DesktopEnvironmentKind, PolicyGlobalEnforcementResult>;
+
 class ControlledDesktopEnvironmentScope {
 public:
     virtual ~ControlledDesktopEnvironmentScope() = default;
@@ -79,10 +90,11 @@ public:
         std::string& error) = 0;
     virtual EnforcementMode enforcementMode(
         DesktopEnvironmentKind desktop) const = 0;
+    virtual void setGlobalEnforcementResults(
+        PolicyGlobalEnforcementResults results) = 0;
     virtual SessionReconcileResult reconcileSession(
         const ClassifiedGraphicalSession& session,
-        bool globalEnforcementVerified,
-        const std::string& globalDiagnostic) = 0;
+        const PolicyGlobalEnforcementResult& globalResult) = 0;
 };
 
 class SessionInventoryCompliancePolicy {

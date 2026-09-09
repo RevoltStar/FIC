@@ -1,6 +1,7 @@
 #ifndef FIC_DESKTOP_GLOBAL_CONFIG_RECONCILER_H
 #define FIC_DESKTOP_GLOBAL_CONFIG_RECONCILER_H
 
+#include "modules/oss/desktop_environment/DesktopEnvironmentControl.h"
 #include "policy/registry/PolicyRegistry.h"
 
 #include <map>
@@ -18,6 +19,7 @@ struct GlobalDesktopConfigKey {
 
 struct GlobalDesktopPolicyContribution {
     std::string backend;
+    DesktopEnvironmentKind desktop = DesktopEnvironmentKind::Unknown;
     PolicyRef owner;
     GlobalDesktopConfigKey key;
     std::string value;
@@ -62,12 +64,34 @@ public:
         std::string& error) = 0;
 };
 
+struct DesktopGlobalBackendResult {
+    bool attempted = false;
+    bool verified = false;
+    std::string diagnostic;
+};
+
+struct DesktopGlobalReconcileReport {
+    bool requirementsValid = true;
+    std::string stageADiagnostic;
+    std::map<std::string, DesktopGlobalBackendResult> backends;
+    std::map<PolicyRef, PolicyGlobalEnforcementResults> policies;
+
+    bool successful() const;
+    bool successfulForPolicy(const PolicyRef& policy) const;
+    bool successfulForModule(const std::string& module) const;
+    PolicyGlobalEnforcementResult resultFor(
+        const PolicyRef& policy,
+        DesktopEnvironmentKind desktop) const;
+    PolicyGlobalEnforcementResults resultsFor(const PolicyRef& policy) const;
+    std::string diagnostic() const;
+};
+
 class DesktopGlobalConfigReconciler {
 public:
     explicit DesktopGlobalConfigReconciler(
         std::vector<std::shared_ptr<DesktopSystemBackend>> backends = {});
 
-    bool reconcile(PolicyRegistry& registry, std::string& error);
+    DesktopGlobalReconcileReport reconcile(PolicyRegistry& registry);
 
 private:
     std::vector<std::shared_ptr<DesktopSystemBackend>> backends_;

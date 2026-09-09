@@ -57,7 +57,8 @@ public:
 };
 
 class ContributorPolicy final : public Policy,
-                                public GlobalDesktopPolicyContributor {
+                                public GlobalDesktopPolicyContributor,
+                                public SessionAwarePolicy {
 public:
     ContributorPolicy(const std::filesystem::path& directory,
                       std::string name,
@@ -72,6 +73,8 @@ public:
 
     std::string value;
     std::string backend = "fake";
+    DesktopEnvironmentKind desktop = DesktopEnvironmentKind::Gnome;
+    EnforcementMode mode = EnforcementMode::MandatoryGlobal;
     std::string setting = "setting";
     PolicyRef ownerOverride;
     std::vector<GlobalDesktopPolicyContribution> extra;
@@ -81,7 +84,26 @@ public:
     bool apply() override { return true; }
     std::vector<PolicyCapability> capabilities() const override {
         if (!advertiseCapability) return {};
-        return {PolicyCapability::GlobalDesktopConfiguration};
+        return {PolicyCapability::GlobalDesktopConfiguration,
+                PolicyCapability::SessionAware};
+    }
+    SessionApplicability sessionApplicability(
+        DesktopEnvironmentKind candidate, std::string& error) override {
+        error.clear();
+        return candidate == desktop
+            ? SessionApplicability::Applicable
+            : SessionApplicability::NotApplicable;
+    }
+    EnforcementMode enforcementMode(DesktopEnvironmentKind candidate) const override {
+        return candidate == desktop
+            ? mode
+            : EnforcementMode::Unsupported;
+    }
+    void setGlobalEnforcementResults(PolicyGlobalEnforcementResults) override {}
+    SessionReconcileResult reconcileSession(
+        const ClassifiedGraphicalSession&,
+        const PolicyGlobalEnforcementResult&) override {
+        return {};
     }
     bool globalDesktopPolicyContributions(
         std::vector<GlobalDesktopPolicyContribution>& contributions,
@@ -91,7 +113,7 @@ public:
             return false;
         }
         const PolicyRef self{moduleName, submoduleName, policyName};
-        contributions.push_back({backend,
+        contributions.push_back({backend, desktop,
             ownerOverride.policyName.empty() ? self : ownerOverride,
             {setting}, value});
         contributions.insert(contributions.end(), extra.begin(), extra.end());
@@ -113,6 +135,39 @@ public:
     std::vector<PolicyCapability> capabilities() const override {
         return {PolicyCapability::GlobalDesktopConfiguration};
     }
+};
+
+class SessionModePolicy final : public Policy, public SessionAwarePolicy {
+public:
+    SessionModePolicy(const std::filesystem::path& directory,
+                      EnforcementMode policyMode)
+        : mode(policyMode) {
+        moduleName = "OSS";
+        submoduleName = "DesktopEnvironment";
+        policyName = "first";
+        moduleConf = std::make_unique<ModuleConfigFileHandler>(directory, moduleName);
+        if (!moduleConf->loadConfig()) throw std::runtime_error("config load failed");
+    }
+    EnforcementMode mode;
+    bool apply() override { return true; }
+    std::vector<PolicyCapability> capabilities() const override {
+        return {PolicyCapability::SessionAware};
+    }
+    SessionApplicability sessionApplicability(
+        DesktopEnvironmentKind desktop, std::string& error) override {
+        error.clear();
+        return desktop == DesktopEnvironmentKind::Gnome
+            ? SessionApplicability::Applicable
+            : SessionApplicability::NotApplicable;
+    }
+    EnforcementMode enforcementMode(DesktopEnvironmentKind desktop) const override {
+        return desktop == DesktopEnvironmentKind::Gnome
+            ? mode : EnforcementMode::Unsupported;
+    }
+    void setGlobalEnforcementResults(PolicyGlobalEnforcementResults) override {}
+    SessionReconcileResult reconcileSession(
+        const ClassifiedGraphicalSession&,
+        const PolicyGlobalEnforcementResult&) override { return {}; }
 };
 
 void writeConfig(const std::filesystem::path& directory,
@@ -158,6 +213,7 @@ int main() {
         ("fic-global-desktop-config-test-" + std::to_string(::getpid()));
     fs::create_directories(root);
     const PolicyRef firstOwner{"OSS", "DesktopEnvironment", "first"};
+    const PolicyRef secondOwner{"OSS", "DesktopEnvironment", "second"};
     std::string error;
 
     writeConfig(root, "ENABLE", "DISABLE");
@@ -165,7 +221,8 @@ int main() {
     backend->effective[{"existing"}] = "old";
     DesktopGlobalConfigReconciler reconciler({backend});
     auto one = makeRegistry(root, "true", "ignored");
-    require(reconciler.reconcile(one, error), error.c_str());
+    auto report = reconciler.reconcile(one);
+    require(report.successful(), report.diagnostic().c_str());
     require(backend->ensures.size() == 1 && backend->ensures.back().size() == 1 &&
                 backend->ensures.back().at({"setting"}) == "true",
             "one active policy was not ensured");
@@ -175,17 +232,25 @@ int main() {
 
     writeConfig(root, "ENABLE", "ENABLE");
     auto shared = makeRegistry(root, "true", "true");
-    require(reconciler.reconcile(shared, error), error.c_str());
+    report = reconciler.reconcile(shared);
+    require(report.successful(), report.diagnostic().c_str());
     require(backend->ensures.back().size() == 1,
             "same-value owners did not merge");
+    require(report.resultFor(firstOwner, DesktopEnvironmentKind::Gnome).hasRequirement &&
+                report.resultFor(firstOwner, DesktopEnvironmentKind::Gnome).verified &&
+                report.resultFor(secondOwner, DesktopEnvironmentKind::Gnome).verified,
+            "shared owners did not receive verified policy results");
     policy(shared, "first").extra.push_back(
-        {"fake", firstOwner, {"setting"}, "true"});
-    require(reconciler.reconcile(shared, error), error.c_str());
+        {"fake", DesktopEnvironmentKind::Gnome,
+         firstOwner, {"setting"}, "true"});
+    report = reconciler.reconcile(shared);
+    require(report.successful(), report.diagnostic().c_str());
 
     writeConfig(root, "DISABLE", "ENABLE");
     auto secondOnly = makeRegistry(root, "ignored", "true");
     const auto beforeOneDisable = backend->ensures.size();
-    require(reconciler.reconcile(secondOnly, error), error.c_str());
+    report = reconciler.reconcile(secondOnly);
+    require(report.successful(), report.diagnostic().c_str());
     require(backend->ensures.size() == beforeOneDisable + 1 &&
                 backend->effective.at({"setting"}) == "true",
             "remaining requester was not enforced");
@@ -194,7 +259,8 @@ int main() {
     auto disabled = makeRegistry(root, "ignored", "ignored");
     const auto beforeLastDisable = backend->ensures.size();
     const int verifiesBeforeLastDisable = backend->verifies;
-    require(reconciler.reconcile(disabled, error), error.c_str());
+    report = reconciler.reconcile(disabled);
+    require(report.successful(), report.diagnostic().c_str());
     require(backend->ensures.size() == beforeLastDisable &&
                 backend->verifies == verifiesBeforeLastDisable &&
                 backend->effective.at({"setting"}) == "true",
@@ -202,13 +268,14 @@ int main() {
 
     writeConfig(root, "ENABLE", "DISABLE");
     auto changed = makeRegistry(root, "false", "ignored");
-    require(reconciler.reconcile(changed, error), error.c_str());
+    report = reconciler.reconcile(changed);
+    require(report.successful(), report.diagnostic().c_str());
     require(backend->effective.at({"setting"}) == "false",
             "enabled value change was not enforced");
 
     writeConfig(root, "ENABLE", "ENABLE");
     for (const std::string failure : {"conflict", "self", "unknown", "owner",
-                                      "empty", "generation"}) {
+                                      "desktop", "empty", "generation"}) {
         auto firstBackend = std::make_shared<FakeBackend>();
         auto other = std::make_shared<FakeBackend>(); other->name = "other";
         DesktopGlobalConfigReconciler subject({firstBackend, other});
@@ -216,12 +283,16 @@ int main() {
         auto& second = policy(invalid, "second");
         if (failure == "conflict") second.value = "false";
         if (failure == "self") second.extra.push_back(
-            {"fake", {"OSS", "DesktopEnvironment", "second"}, {"setting"}, "false"});
+            {"fake", DesktopEnvironmentKind::Gnome,
+             {"OSS", "DesktopEnvironment", "second"}, {"setting"}, "false"});
         if (failure == "unknown") second.backend = "missing";
         if (failure == "owner") second.ownerOverride = firstOwner;
+        if (failure == "desktop") second.desktop = DesktopEnvironmentKind::Unknown;
         if (failure == "empty") second.setting.clear();
         if (failure == "generation") second.failContribution = true;
-        if (subject.reconcile(invalid, error)) {
+        const auto invalidReport = subject.reconcile(invalid);
+        error = invalidReport.diagnostic();
+        if (invalidReport.requirementsValid) {
             throw std::runtime_error("invalid requirements accepted: " + failure);
         }
         if (failure == "conflict" || failure == "self")
@@ -240,8 +311,28 @@ int main() {
                 std::move(hiddenContributor), error), error.c_str());
     auto mismatchBackend = std::make_shared<FakeBackend>();
     DesktopGlobalConfigReconciler mismatchReconciler({mismatchBackend});
-    require(!mismatchReconciler.reconcile(capabilityMismatch, error),
+    report = mismatchReconciler.reconcile(capabilityMismatch);
+    require(!report.requirementsValid,
             "contributor without capability accepted");
+    requireUntouched({mismatchBackend});
+
+    for (const EnforcementMode mode : {
+             EnforcementMode::MandatoryGlobal, EnforcementMode::SessionOnly}) {
+        PolicyRegistry coverage;
+        require(coverage.addModule("OSS", ModuleView::Standard, 0, error), error.c_str());
+        require(coverage.addPolicy(
+                    std::make_unique<SessionModePolicy>(root, mode), error), error.c_str());
+        report = mismatchReconciler.reconcile(coverage);
+        require(report.requirementsValid == (mode == EnforcementMode::SessionOnly),
+                "MandatoryGlobal coverage invariant is incorrect");
+        requireUntouched({mismatchBackend});
+    }
+
+    auto sessionOnlyContribution = makeRegistry(root, "true", "true");
+    policy(sessionOnlyContribution, "first").mode = EnforcementMode::SessionOnly;
+    report = mismatchReconciler.reconcile(sessionOnlyContribution);
+    require(!report.requirementsValid,
+            "SessionOnly authoritative contribution was accepted");
     requireUntouched({mismatchBackend});
 
     PolicyRegistry missingContributor;
@@ -249,7 +340,8 @@ int main() {
                 "OSS", ModuleView::Standard, 0, error), error.c_str());
     require(missingContributor.addPolicy(
                 std::make_unique<CapabilityOnlyPolicy>(root), error), error.c_str());
-    require(!mismatchReconciler.reconcile(missingContributor, error),
+    report = mismatchReconciler.reconcile(missingContributor);
+    require(!report.requirementsValid,
             "capability without contributor accepted");
     requireUntouched({mismatchBackend});
 
@@ -257,21 +349,30 @@ int main() {
     policy(distinct, "second").setting = "otherSetting";
     auto distinctBackend = std::make_shared<FakeBackend>();
     DesktopGlobalConfigReconciler distinctReconciler({distinctBackend});
-    require(distinctReconciler.reconcile(distinct, error), error.c_str());
+    report = distinctReconciler.reconcile(distinct);
+    require(report.successful(), report.diagnostic().c_str());
     require(distinctBackend->ensures.back().size() == 2,
             "different physical settings were not both enforced");
 
     auto namespaced = makeRegistry(root, "true", "false");
     policy(namespaced, "second").backend = "other";
+    policy(namespaced, "second").desktop = DesktopEnvironmentKind::Kde;
     auto other = std::make_shared<FakeBackend>(); other->name = "other";
     DesktopGlobalConfigReconciler separate({backend, other});
-    require(separate.reconcile(namespaced, error), error.c_str());
+    report = separate.reconcile(namespaced);
+    require(report.successful(), report.diagnostic().c_str());
     require(backend->effective.at({"setting"}) == "true" &&
                 other->effective.at({"setting"}) == "false",
             "backend namespaces conflicted");
+    require(report.backends.at("fake").attempted &&
+                report.backends.at("fake").verified &&
+                report.backends.at("other").attempted &&
+                report.backends.at("other").verified,
+            "per-backend verified results are incomplete");
 
     auto failures = makeRegistry(root, "one", "two");
     policy(failures, "first").backend = "first";
+    policy(failures, "second").desktop = DesktopEnvironmentKind::Kde;
     for (const std::string failure : {"ensure", "verify", "multiple"}) {
         auto first = std::make_shared<FakeBackend>(); first->name = "first";
         auto second = std::make_shared<FakeBackend>(); second->name = "second";
@@ -281,7 +382,11 @@ int main() {
         policy(failures, "second").backend = failure == "multiple" ? "third" : "second";
         third->failVerify = failure == "multiple";
         DesktopGlobalConfigReconciler subject({first, second, third});
-        require(!subject.reconcile(failures, error), "backend failure accepted");
+        const auto failureReport = subject.reconcile(failures);
+        error = failureReport.diagnostic();
+        require(!failureReport.successful(), "backend failure accepted");
+        require(!failureReport.backends.at("first").verified,
+                "failed backend reported verified");
         require(error.find("first:") != std::string::npos,
                 "first backend diagnostic missing");
         if (failure == "multiple") {
@@ -291,6 +396,14 @@ int main() {
         } else {
             require(second->effective.at({"setting"}) == "two" && second->verifies == 1,
                     "failed backend blocked later enforcement");
+            require(!failureReport.resultFor(
+                        firstOwner, DesktopEnvironmentKind::Gnome).verified &&
+                    failureReport.resultFor(
+                        secondOwner, DesktopEnvironmentKind::Kde).verified,
+                    "backend failure contaminated an unrelated policy result");
+            require(!failureReport.successfulForPolicy(firstOwner) &&
+                        failureReport.successfulForPolicy(secondOwner),
+                    "policy-scoped success used the overall backend result");
         }
     }
 
@@ -299,7 +412,8 @@ int main() {
          std::vector<std::vector<std::shared_ptr<DesktopSystemBackend>>>{
              {untouched, nullptr}, {untouched, untouched}}) {
         DesktopGlobalConfigReconciler invalid(backends);
-        require(!invalid.reconcile(shared, error), "invalid backend accepted");
+        report = invalid.reconcile(shared);
+        require(!report.requirementsValid, "invalid backend accepted");
         requireUntouched({untouched});
     }
 

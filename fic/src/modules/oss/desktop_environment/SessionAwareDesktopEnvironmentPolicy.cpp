@@ -43,10 +43,15 @@ EnforcementMode SessionAwareDesktopEnvironmentPolicy::enforcementMode(
     return relevantTo(desktop) ? modeFor(desktop) : EnforcementMode::Unsupported;
 }
 
+void SessionAwareDesktopEnvironmentPolicy::setGlobalEnforcementResults(
+    PolicyGlobalEnforcementResults results)
+{
+    globalResults_ = std::move(results);
+}
+
 SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
     const ClassifiedGraphicalSession& session,
-    bool globalEnforcementVerified,
-    const std::string& globalDiagnostic)
+    const PolicyGlobalEnforcementResult& globalResult)
 {
     std::string error;
     const SessionApplicability applicability =
@@ -59,13 +64,15 @@ SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
     }
     const EnforcementMode mode = modeFor(session.desktop);
     if (mode == EnforcementMode::MandatoryGlobal &&
-        !globalEnforcementVerified) {
+        (!globalResult.hasRequirement || !globalResult.verified)) {
         return {SessionReconcileStatus::GlobalEnforcementFailed,
-                globalDiagnostic};
+                globalResult.diagnostic.empty()
+                    ? std::string("MandatoryGlobal policy has no verified global requirement")
+                    : globalResult.diagnostic};
     }
     if (!prepare(error)) {
         return {mode == EnforcementMode::MandatoryGlobal
-                    ? SessionReconcileStatus::GlobalEnforcementFailed
+                    ? SessionReconcileStatus::MandatoryGlobalRuntimeWarning
                     : SessionReconcileStatus::SessionOnlyFailed,
                 std::move(error)};
     }
@@ -94,10 +101,8 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
             logLevel::ERROR);
         return false;
     }
-    if (!prepare(error)) {
-        log(error, logLevel::ERROR);
-        return false;
-    }
+    const bool prepared = prepare(error);
+    const std::string preparationError = error;
 
     bool success = true;
     bool hasSessionOnly = false;
@@ -117,14 +122,36 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
                     ": mode=session-only",
                 logLevel::DEBUG);
             hasSessionOnly = true;
+            if (!prepared) {
+                log("Session preparation failed: " + preparationError,
+                    logLevel::ERROR);
+                success = false;
+            }
         } else {
             log(std::string("controlled desktop ") +
                     DesktopEnvironmentBackend::kindName(desktop) +
                     ": mode=mandatory-global",
                 logLevel::DEBUG);
-            // The daemon's DesktopGlobalConfigReconciler has already ensured
-            // and verified all active global requirements before policy apply.
-            globallyEnforced.insert(desktop);
+            const auto result = globalResults_.find(desktop);
+            if (result == globalResults_.end() ||
+                !result->second.hasRequirement || !result->second.verified) {
+                const std::string diagnostic = result == globalResults_.end() ||
+                        result->second.diagnostic.empty()
+                    ? "no verified global requirement"
+                    : result->second.diagnostic;
+                log(std::string("Mandatory global enforcement failed for ") +
+                        DesktopEnvironmentBackend::kindName(desktop) + ": " +
+                        diagnostic,
+                    logLevel::ERROR);
+                success = false;
+            } else {
+                globallyEnforced.insert(desktop);
+                if (!prepared) {
+                    log("Session preparation warning after verified global enforcement: " +
+                            preparationError,
+                        logLevel::WARN);
+                }
+            }
         }
     }
 
@@ -157,10 +184,20 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
         if (mode == EnforcementMode::SessionOnly) {
             seenSessionOnly.insert(session.desktop);
         }
+        const bool globalAuthoritative =
+            globallyEnforced.find(session.desktop) != globallyEnforced.end();
+        if (!prepared) {
+            log("Session " + session.session.id +
+                    " preparation failed: " + preparationError,
+                globalAuthoritative ? logLevel::WARN : logLevel::ERROR);
+            if (!globalAuthoritative) success = false;
+            continue;
+        }
+        if (mode == EnforcementMode::MandatoryGlobal && !globalAuthoritative) {
+            continue;
+        }
         std::string reconcileError;
         if (!reconcileControlledSession(session, reconcileError)) {
-            const bool globalAuthoritative =
-                globallyEnforced.find(session.desktop) != globallyEnforced.end();
             log("Session " + session.session.id + " reconciliation failed: " +
                     reconcileError,
                 globalAuthoritative ? logLevel::WARN : logLevel::ERROR);
