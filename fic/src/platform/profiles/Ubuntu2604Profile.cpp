@@ -64,6 +64,16 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::PamAuthUpdate,
             {"/usr/sbin/pam-auth-update", "/usr/bin/pam-auth-update"}
+        },
+        {
+            ExecutableId::Dconf,
+            {"/usr/bin/dconf"},
+            false
+        },
+        {
+            ExecutableId::Gsettings,
+            {"/usr/bin/gsettings"},
+            false
         }
     };
     profile.packageManager.kind = PackageManagerKind::Dpkg;

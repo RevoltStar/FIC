@@ -54,6 +54,7 @@
 #include "session/SystemGraphicalSessionInventory.h"
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
+#include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
 
 using json = nlohmann::json;
 
@@ -1282,7 +1283,9 @@ int main(int argc, char* argv[]) {
 
     (void)::sd_notify(0, "STATUS=Initializing policy registry");
     PolicyRegistry policyRegistry;
-    DesktopGlobalConfigReconciler desktopGlobalConfig;
+    auto gnomeSystemBackend =
+        std::make_shared<GnomeSystemBackend>(executables);
+    DesktopGlobalConfigReconciler desktopGlobalConfig({gnomeSystemBackend});
     std::string registryError;
     if (!initPolicyRegistry(
             platform, executables, policyRegistry, registryError)) {

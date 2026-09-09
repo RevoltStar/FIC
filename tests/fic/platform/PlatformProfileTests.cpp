@@ -176,6 +176,15 @@ void testSelectedProfile() {
         profile.executables, fic::platform::ExecutableId::PamAuthUpdate);
     require((profile.id == "alt-p11") == (pamAuthUpdate == nullptr),
             "pam-auth-update support does not match the platform family");
+    for (const auto id : {fic::platform::ExecutableId::Dconf,
+                          fic::platform::ExecutableId::Gsettings}) {
+        const auto& spec = executableSpec(profile, id);
+        require(!spec.required && spec.candidates.size() == 1 &&
+                    spec.candidates.front() ==
+                        (id == fic::platform::ExecutableId::Dconf
+                             ? "/usr/bin/dconf" : "/usr/bin/gsettings"),
+                "GNOME command must be an optional canonical executable");
+    }
     const auto supplementaryProvider =
         profile.userCreation.supplementaryGroupsProvider;
     if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {
@@ -925,7 +934,12 @@ void testInvalidProfileIsRejected() {
             "a duplicate executable identifier must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.executables.entries.pop_back();
+    profile.executables.entries.erase(
+        std::remove_if(profile.executables.entries.begin(),
+                       profile.executables.entries.end(), [](const auto& entry) {
+            return entry.id == fic::platform::ExecutableId::Sshd;
+        }),
+        profile.executables.entries.end());
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a missing required executable must be rejected");
 

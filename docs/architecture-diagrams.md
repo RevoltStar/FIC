@@ -1445,10 +1445,14 @@ packet only for a bounded interval. A client which connects before sending is
 therefore handled without a false `EAGAIN` rejection, while a silent or closed
 peer cannot block the daemon indefinitely.
 
-All currently implemented screen-lock and KDE media-control backends are
-`SessionOnly`. `MandatoryGlobal` is reserved for a backend which applies the
-machine-wide value, installs authoritative lock/immutability protection, and
-verifies persistent effective state. `DesktopSystemBackend` is the sole global
+Controlled GNOME `screenlock_timeout` is `MandatoryGlobal`; KDE, XFCE, and FLY
+screen-lock handling and KDE media-control remain `SessionOnly`.
+`GnomeSystemBackend` is registered as backend `"gnome"` with typed identity
+`Gnome`. It maintains FIC's dconf keyfile
+`/etc/dconf/db/fic.d/99-fic.conf`, locks in `fic.d/locks/99-fic`, and inserts
+`system-db:fic` as the highest-priority system database without replacing the
+administrator profile. Existing FIC settings and locks are merge-only and
+survive `DISABLE`. `DesktopSystemBackend` is the sole global
 enforcement path; policies only contribute requirements. Normal apply and
 targeted `session_ready` invoke the same reconciler before session convergence.
 Once authoritative
@@ -1476,5 +1480,9 @@ still fails if any backend failed. Owners are not persistent backend state. Miss
 not deletion commands: `DISABLE` stops checking/enforcement and leaves existing
 configuration unchanged. Rollback, provenance, and cleanup semantics are out of
 scope. See [the global desktop lifecycle contract](session-agent.md) for details.
-No DE-specific global system backend
-is implemented yet; production DE policies remain `SessionOnly`.
+GNOME verification runs `dconf update` when source or compiled state needs it,
+then requires exact `gsettings get` values and `gsettings writable=false` for
+all three screen-lock keys under an explicit FIC profile. Existing sessions may
+need relogin to load a newly changed profile, so their separate session-runtime
+convergence remains best effort. Rollback, provenance, and stale cleanup remain
+outside this contract.

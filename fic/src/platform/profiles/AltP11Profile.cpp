@@ -67,6 +67,16 @@ PlatformProfile makeBuildPlatformProfile() {
         {
             ExecutableId::Gpasswd,
             {"/usr/bin/gpasswd", "/usr/sbin/gpasswd"}
+        },
+        {
+            ExecutableId::Dconf,
+            {"/usr/bin/dconf"},
+            false
+        },
+        {
+            ExecutableId::Gsettings,
+            {"/usr/bin/gsettings"},
+            false
         }
     };
     profile.packageManager.kind = PackageManagerKind::Rpm;

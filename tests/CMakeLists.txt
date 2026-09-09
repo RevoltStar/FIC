@@ -241,6 +241,43 @@ target_link_libraries(desktop_global_config_reconciler_tests PRIVATE
 add_test(NAME desktop_global_config_reconciler_tests
          COMMAND desktop_global_config_reconciler_tests)
 
+add_executable(gnome_system_backend_tests
+    fic/modules/oss/desktop_environment/GnomeSystemBackendTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.cpp
+)
+target_include_directories(gnome_system_backend_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(gnome_system_backend_tests PRIVATE fic-core fic-policy fic-platform)
+add_test(NAME gnome_system_backend_tests COMMAND gnome_system_backend_tests)
+
+add_executable(screenlock_timeout_global_tests
+    fic/modules/oss/desktop_environment/ScreenlockTimeoutGlobalTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/KdeScreenLockTimeoutHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/FlyScreenLockTimeoutHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GnomeBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GSettingsValueParser.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/XfceBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/FlyBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+)
+target_include_directories(screenlock_timeout_global_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(screenlock_timeout_global_tests PRIVATE fic-core fic-policy)
+add_test(NAME screenlock_timeout_global_tests COMMAND screenlock_timeout_global_tests)
+
 add_executable(session_setting_reconciler_tests
     fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp
 )
@@ -968,6 +1005,9 @@ set(FIC_UNIT_TESTS
     gsettings_value_parser_tests
     controlled_desktop_environments_tests
     session_aware_policy_tests
+    desktop_global_config_reconciler_tests
+    gnome_system_backend_tests
+    screenlock_timeout_global_tests
     session_setting_reconciler_tests
     session_ready_retry_tests
     session_ready_validation_tests

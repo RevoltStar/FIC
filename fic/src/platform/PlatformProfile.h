@@ -25,7 +25,9 @@ enum class ExecutableId {
     Nft,
     Chage,
     Gpasswd,
-    PamAuthUpdate
+    PamAuthUpdate,
+    Dconf,
+    Gsettings
 };
 
 struct PlatformExecutableSpec {

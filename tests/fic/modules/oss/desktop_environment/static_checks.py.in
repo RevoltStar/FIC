@@ -11,6 +11,10 @@ config = (root / "fic/src/resources/config/OSS.conf").read_text()
 event_server = (root / "fic/src/session/SessionEventServer.cpp").read_text()
 session_policy = (root / "fic/src/modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.cpp").read_text()
 global_reconciler = (root / "fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp").read_text()
+gnome_system = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.cpp").read_text()
+gnome_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.h").read_text()
+screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
+screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
 ru_lang = (root / "fic/src/resources/lang/ru.lang").read_text()
 en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
 
@@ -52,6 +56,8 @@ assert "globalReport.resultFor(owner, session.desktop)" in targeted
 assert "globalEnforcementVerified" not in targeted
 assert '"phase", "desktop_global_configuration"' in targeted
 assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main
+assert "std::make_shared<GnomeSystemBackend>(executables)" in main
+assert "DesktopGlobalConfigReconciler desktopGlobalConfig({gnomeSystemBackend})" in main
 assert main.count("desktopGlobalConfig.reconcile") >= 3
 assert "install_desktop_global_report" in main
 assert "latestGlobalReport.successfulForPolicy" in main
@@ -74,6 +80,24 @@ assert "duplicate desktop system backend" in global_reconciler
 backend_header = (root / "fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h").read_text()
 assert "virtual DesktopEnvironmentKind desktop() const = 0;" in backend_header
 assert "virtual std::string backendName() const = 0;" in backend_header
+assert "class GnomeSystemBackend final : public DesktopSystemBackend" in gnome_system_header
+assert "return DesktopEnvironmentKind::Gnome" in gnome_system
+assert 'return "gnome"' in gnome_system
+assert "VerifiedProcessExecutor::execute" in gnome_system
+for forbidden in ("system(", "popen(", "/bin/sh", "~/.config/dconf",
+                  "replaceManagedState", "removeManaged"):
+    assert forbidden not in gnome_system
+assert 'std::string keyfileName = "99-fic.conf"' in gnome_system_header
+assert "PolicyCapability::GlobalDesktopConfiguration" in screenlock_header
+assert "PolicyCapability::SessionAware" in screenlock_header
+assert "desktop == DesktopEnvironmentKind::Gnome" in screenlock
+assert "return EnforcementMode::MandatoryGlobal" in screenlock
+assert "DesktopEnvironmentKind::Kde" in screenlock
+assert "DesktopEnvironmentKind::Xfce" in screenlock
+assert "DesktopEnvironmentKind::Fly" in screenlock
+for obsolete in ("ensureGlobalState", "applyGlobalValue",
+                 "applyGlobalProtection", "verifyGlobalState"):
+    assert obsolete not in screenlock
 normal_apply = session_policy[session_policy.index(
     "bool SessionAwareDesktopEnvironmentPolicy::apply()") :]
 insert = normal_apply.index("globallyEnforced.insert(desktop)")

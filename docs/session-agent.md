@@ -100,15 +100,14 @@ appears. A graphical desktop inside `Type=tty` is discovered only through its
 exact session-bound agent endpoint. A plain TTY without that endpoint is not a
 candidate.
 
-`OSS/screenlock_timeout` currently implements this flow for GNOME, Unity, and
+`OSS/screenlock_timeout` implements current-session convergence for GNOME, Unity, and
 Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,
 XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
 `~/.fly/theme/current.themerc`. Other desktop environments fail explicitly until
 a dedicated daemon-side backend is implemented. These existing backends are
-classified `SessionOnly`: none is claimed as `MandatoryGlobal`, because no
-implemented system lock/kiosk mechanism currently proves precedence over user
-configuration. A future `MandatoryGlobal` `DesktopSystemBackend` must ensure
-the value and protection/immutability, then verify persistent effective state.
+classified `SessionOnly` except controlled GNOME, which is `MandatoryGlobal`.
+`GnomeSystemBackend` is the first production system backend and proves the
+machine-wide value and protection before current-session convergence.
 The same backend-driven ensure -> verification sequence runs both during normal
 policy apply and targeted `session_ready` reconciliation, before the current
 session is converged. Successful authoritative global enforcement
@@ -162,10 +161,32 @@ preserves unrelated FIC/backend state and foreign administrator configuration.
 Rollback, provenance, baseline restoration, uninstall cleanup, and purge
 semantics are outside this contract.
 
-No GNOME, KDE, XFCE, or FLY system backend is registered yet, so the production
-policies below remain session-only. `DesktopSystemBackend` is the only global
-enforcement mechanism: policies describe requirements and have no parallel
-value, protection, or verification hooks.
+The daemon registers `GnomeSystemBackend` as backend `"gnome"`, typed as
+`DesktopEnvironmentKind::Gnome`. It owns a separate dconf database:
+`/etc/dconf/db/fic`, source keyfile `/etc/dconf/db/fic.d/99-fic.conf`, and lock
+file `/etc/dconf/db/fic.d/locks/99-fic`. The `.conf` basename is accepted by
+the supported dconf compiler. The backend adds
+`system-db:fic` as the first system database in `/etc/dconf/profile/user`, while
+preserving administrator comments, blank lines, foreign database entries, and
+their relative order. Malformed or ambiguous profiles fail closed.
+
+For controlled GNOME, `screenlock_timeout=N` contributes and locks exactly
+`/org/gnome/desktop/session/idle-delay=uint32 N*60`,
+`/org/gnome/desktop/screensaver/lock-enabled=true`, and
+`/org/gnome/desktop/screensaver/lock-delay=uint32 0`. Existing valid settings
+and locks in the FIC-owned fragments are merged and retained. After atomic
+source updates the backend runs verified `dconf update`, then uses a clean,
+explicit `DCONF_PROFILE=/etc/dconf/profile/user` context for `gsettings get`
+and `gsettings writable`; every value must match and every key must report
+non-writable. Correct source files with stale effective state trigger one
+recompilation attempt and another verification. `dconf` and `gsettings` are
+optional platform executables and are resolved only for active GNOME global
+requirements.
+
+KDE, XFCE, and FLY remain `SessionOnly`; LXQt remains unsupported.
+`DesktopSystemBackend` remains the only global enforcement mechanism: policies
+describe requirements and have no parallel value, protection, or verification
+hooks.
 
 `OSS/disable_kde_lock_screen_media_controls` is applicable only to controlled
 KDE sessions. A successfully identified non-KDE desktop is `NotApplicable`.
@@ -189,6 +210,13 @@ relevant global result is verified, session preparation and runtime failures are
 warnings and cannot retroactively invalidate persistent global enforcement.
 Runtime reconciliation diagnostics do not rewrite the historical result of an
 earlier apply operation.
+
+dconf profile selection happens at login. A newly installed `system-db:fic`
+is authoritative for fresh sessions, while an already running GNOME session
+may not observe the new profile or lock until relogin. FIC does not restart the
+shell or terminate the session; the existing GNOME session handler performs
+best-effort convergence for that current session. This limitation does not
+weaken verification of the persistent profile for new sessions.
 
 For normal apply the daemon installs the same report as explicit per-pass
 context on every session-aware policy. Multi-DE policies evaluate each desktop

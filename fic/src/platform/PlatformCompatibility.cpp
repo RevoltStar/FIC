@@ -154,7 +154,9 @@ bool validateExecutables(const PlatformExecutables& executables,
         }
     }
     for (const ExecutableId id : supportedIds) {
-        if (id == ExecutableId::PamAuthUpdate) {
+        if (id == ExecutableId::PamAuthUpdate ||
+            id == ExecutableId::Dconf ||
+            id == ExecutableId::Gsettings) {
             continue;
         }
         const PlatformExecutableSpec* spec =

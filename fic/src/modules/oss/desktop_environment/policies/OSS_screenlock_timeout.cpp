@@ -3,6 +3,7 @@
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.h"
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -17,6 +18,12 @@ OSS_screenlock_timeout::OSS_screenlock_timeout(
 
 bool OSS_screenlock_timeout::prepare(std::string& error)
 {
+    return configuredTimeoutMinutes(timeoutMinutes_, error);
+}
+
+bool OSS_screenlock_timeout::configuredTimeoutMinutes(
+    int& value, std::string& error)
+{
     const std::optional<std::string> configuredValue = this->getValue();
     if (!configuredValue.has_value()) {
         error = "screenlock_timeout has no configured value";
@@ -24,11 +31,39 @@ bool OSS_screenlock_timeout::prepare(std::string& error)
     }
 
     try {
-        timeoutMinutes_ = std::stoi(configuredValue.value());
+        std::size_t consumed = 0;
+        value = std::stoi(configuredValue.value(), &consumed);
+        if (consumed != configuredValue->size() || value < 1 || value > 20)
+            throw std::invalid_argument("out of range");
     } catch (...) {
         error = "Invalid screen lock timeout value";
         return false;
     }
+    error.clear();
+    return true;
+}
+
+bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
+    std::vector<GlobalDesktopPolicyContribution>& contributions,
+    std::string& error)
+{
+    contributions.clear();
+    if (sessionApplicability(DesktopEnvironmentKind::Gnome, error) !=
+        SessionApplicability::Applicable) {
+        if (!error.empty()) return false;
+        return true;
+    }
+    int timeoutMinutes = 0;
+    if (!configuredTimeoutMinutes(timeoutMinutes, error)) return false;
+    const PolicyRef owner{moduleName, submoduleName, policyName};
+    const auto add = [&](const char* setting, std::string value) {
+        contributions.push_back({"gnome", DesktopEnvironmentKind::Gnome,
+                                 owner, {setting}, std::move(value)});
+    };
+    add("/org/gnome/desktop/session/idle-delay",
+        "uint32 " + std::to_string(timeoutMinutes * 60));
+    add("/org/gnome/desktop/screensaver/lock-enabled", "true");
+    add("/org/gnome/desktop/screensaver/lock-delay", "uint32 0");
     error.clear();
     return true;
 }
@@ -41,10 +76,13 @@ bool OSS_screenlock_timeout::relevantTo(DesktopEnvironmentKind desktop) const
 EnforcementMode OSS_screenlock_timeout::modeFor(
     DesktopEnvironmentKind desktop) const
 {
-    return desktop == DesktopEnvironmentKind::Lxqt ||
-           desktop == DesktopEnvironmentKind::Unknown
-        ? EnforcementMode::Unsupported
-        : EnforcementMode::SessionOnly;
+    if (desktop == DesktopEnvironmentKind::Gnome)
+        return EnforcementMode::MandatoryGlobal;
+    if (desktop == DesktopEnvironmentKind::Kde ||
+        desktop == DesktopEnvironmentKind::Xfce ||
+        desktop == DesktopEnvironmentKind::Fly)
+        return EnforcementMode::SessionOnly;
+    return EnforcementMode::Unsupported;
 }
 
 bool OSS_screenlock_timeout::reconcileControlledSession(
