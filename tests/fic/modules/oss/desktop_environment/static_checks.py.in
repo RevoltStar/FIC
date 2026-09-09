@@ -52,7 +52,10 @@ assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main
 assert main.count("desktopGlobalConfig.reconcile") >= 2
 assert "PolicyCapability::GlobalDesktopConfiguration" in global_reconciler
 assert "if (!policy->isEnabled()) continue" in global_reconciler
-assert "verified != desired" in global_reconciler
+assert "ensureManagedSettings" in global_reconciler
+assert "verifyManagedSettings" in global_reconciler
+assert "if (desired.empty()) continue" in global_reconciler
+assert "replaceManagedState" not in global_reconciler
 payload = agent[agent.index("const std::string request = nlohmann::json{"):
                 agent.index(".dump();", agent.index("const std::string request = nlohmann::json{"))]
 assert '"event", "session_ready"' in payload

@@ -23,28 +23,17 @@ bool GlobalDesktopConfigValue::operator==(
 
 namespace {
 bool reconcileBackend(DesktopSystemBackend& backend,
-                      const DesktopGlobalConfigState& desired,
+                      const DesktopManagedSettings& required,
                       std::string& error)
 {
-    DesktopGlobalConfigState current;
     std::string detail;
-    if (!backend.readManagedState(current, detail)) {
-        error = "readManagedState failed: " + detail;
+    if (!backend.ensureManagedSettings(required, detail)) {
+        error = "ensureManagedSettings failed: " + detail;
         return false;
     }
     detail.clear();
-    if (current != desired && !backend.replaceManagedState(desired, detail)) {
-        error = "replaceManagedState failed: " + detail;
-        return false;
-    }
-    DesktopGlobalConfigState verified;
-    detail.clear();
-    if (!backend.readManagedState(verified, detail)) {
-        error = "verification readManagedState failed: " + detail;
-        return false;
-    }
-    if (verified != desired) {
-        error = "verification failed: managed state differs from desired";
+    if (!backend.verifyManagedSettings(required, detail)) {
+        error = "verifyManagedSettings failed: " + detail;
         return false;
     }
     return true;
@@ -62,7 +51,7 @@ bool DesktopGlobalConfigReconciler::reconcile(
     std::string& error)
 {
     error.clear();
-    std::map<std::string, DesktopGlobalConfigState> desiredByBackend;
+    std::map<std::string, DesktopGlobalConfigRequirements> desiredByBackend;
     std::set<std::string> registeredBackends;
     for (const auto& backend : backends_) {
         if (backend == nullptr || backend->backendName().empty() ||
@@ -124,12 +113,18 @@ bool DesktopGlobalConfigReconciler::reconcile(
         }
     }
 
-    // Stage B: independent backends must all get their cleanup/enforcement pass.
+    // Stage B: independently ensure every backend with active requirements.
     bool overallSuccess = true;
     for (const auto& backend : backends_) {
         const std::string name = backend->backendName();
+        const auto& desired = desiredByBackend.at(name);
+        if (desired.empty()) continue;
+        DesktopManagedSettings required;
+        for (const auto& [key, value] : desired) {
+            required.emplace(key, value.value);
+        }
         std::string backendError;
-        if (!reconcileBackend(*backend, desiredByBackend.at(name), backendError)) {
+        if (!reconcileBackend(*backend, required, backendError)) {
             if (!error.empty()) error += '\n';
             error += name + ": " + backendError;
             overallSuccess = false;

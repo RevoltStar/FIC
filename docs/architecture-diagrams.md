@@ -1456,17 +1456,14 @@ failure is an error. Runtime compliance diagnostics do not change historical
 apply results.
 
 Future system backends plug into `DesktopGlobalConfigReconciler`. Physical
-identity is `(backend, setting)`; value and the set of contributing policy owners
-are stored separately. Equal values merge owners, and a setting remains until
-its last enabled owner disappears. Stage A validates all contributions and
-rejects conflicting values (even from one policy) before any backend mutation.
-After validation, each backend independently reads, conditionally replaces and
-verifies its FIC-managed state, including ownership metadata. Backend failures
-are aggregated and keep the overall result failed, without blocking independent
-cleanup/enforcement. There is no cross-backend transaction; foreign administrator
-configuration stays outside the framework. See [the global desktop lifecycle
-contract](session-agent.md) for validation and failure semantics.
-Registry rebuilds on startup, periodic apply, explicit apply, and configuration
-mutation drive this lifecycle, so disabling or removing a policy also removes
-its stale FIC-owned state after a restart. No DE-specific global system backend
+identity is `(backend, setting)`; equal values merge transient policy-owner
+metadata, while conflicting values fail Stage A before any backend mutation.
+After validation, each backend with active requirements independently ensures
+their values and verifies effective protected system state. Backend failures are
+aggregated and keep the overall result failed without blocking independent
+enforcement. Owners are not persistent backend state. Missing requirements are
+not deletion commands: `DISABLE` stops checking/enforcement and leaves existing
+configuration unchanged. Rollback, provenance, and cleanup semantics are out of
+scope. See [the global desktop lifecycle contract](session-agent.md) for details.
+No DE-specific global system backend
 is implemented yet; production DE policies remain `SessionOnly`.

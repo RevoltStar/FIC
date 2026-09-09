@@ -23,8 +23,8 @@ struct GlobalDesktopPolicyContribution {
     std::string value;
 };
 
-// Ownership is metadata, never part of physical identity. Backend state must
-// preserve this metadata within the FIC-managed namespace for exact readback.
+// Ownership is transient reconciliation metadata, never part of physical
+// identity or persistent backend state.
 struct GlobalDesktopConfigValue {
     std::string value;
     std::set<PolicyRef> owners;
@@ -32,9 +32,12 @@ struct GlobalDesktopConfigValue {
     bool operator==(const GlobalDesktopConfigValue& other) const;
 };
 
-// One physical setting per backend namespace, with one value and all owners.
-using DesktopGlobalConfigState =
+// One active physical requirement per backend namespace, with all requesters.
+using DesktopGlobalConfigRequirements =
     std::map<GlobalDesktopConfigKey, GlobalDesktopConfigValue>;
+
+// The backend-facing state contains only physical settings and values.
+using DesktopManagedSettings = std::map<GlobalDesktopConfigKey, std::string>;
 
 class GlobalDesktopPolicyContributor {
 public:
@@ -44,17 +47,18 @@ public:
         std::string& error) = 0;
 };
 
-// A backend exposes only its FIC-owned namespace. replaceManagedState() must
-// preserve all foreign configuration outside that namespace.
+// A backend ensures only the supplied active requirements. Missing settings
+// are unmanaged and must not be removed, reset, or otherwise changed. Verify
+// must inspect effective protected system state, not merely a FIC fragment.
 class DesktopSystemBackend {
 public:
     virtual ~DesktopSystemBackend() = default;
     virtual std::string backendName() const = 0;
-    virtual bool readManagedState(
-        DesktopGlobalConfigState& state,
+    virtual bool ensureManagedSettings(
+        const DesktopManagedSettings& required,
         std::string& error) = 0;
-    virtual bool replaceManagedState(
-        const DesktopGlobalConfigState& desired,
+    virtual bool verifyManagedSettings(
+        const DesktopManagedSettings& required,
         std::string& error) = 0;
 };
 

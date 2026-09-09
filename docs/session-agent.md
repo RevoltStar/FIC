@@ -116,12 +116,12 @@ makes an optional current-session convergence failure a warning; a
 `SessionOnly` failure remains fatal for that operation. Unsupported controlled
 desktops and failures before global verification remain errors.
 
-FIC-owned global desktop configuration has a separate declarative lifecycle.
-Physical identity is `(backend, setting)`, not the owning policy. Each setting
-has one desired value and a separate set of policy owners. Enabled policies
-requesting the same value share that entry; disabling/removing one owner keeps
-it while another owner remains, and removing the last owner removes the managed
-entry on the next successful rebuild, including after daemon restart.
+FIC-owned global desktop configuration has a separate active-requirement
+lifecycle. Physical identity is `(backend, setting)`, not the owning policy.
+Each setting has one required value and a transient set of enabled policy
+owners. Policies requesting the same value share one requirement. Owners are
+used for merge, validation, and diagnostics; backends do not persist or verify
+them as system configuration.
 
 Stage A builds and validates the complete desired state for all registered
 backends: capability/contributor consistency, backend existence, contribution
@@ -131,14 +131,22 @@ one policy. Any Stage A failure prevents all backend mutation; policy order
 never selects a winner. Identical setting names in different backends are
 independent.
 
-After Stage A succeeds, each `DesktopSystemBackend` is reconciled independently:
-read managed state, replace it if different, read back, and verify exact desired
-state (value and ownership metadata). Failures are accumulated with backend and
-operation diagnostics; a failed backend does not block another backend's cleanup
-or enforcement, and any failure makes the overall result unsuccessful. There is
-no transaction spanning backends. Only the FIC-managed namespace is exposed and
-replaced; foreign administrator configuration is neither read nor restored by
-this framework. Matching state is not rewritten.
+After Stage A succeeds, each `DesktopSystemBackend` with active requirements is
+reconciled independently: ensure the supplied setting values and verify their
+effective protected system state. Checking only that a FIC-owned fragment has
+the requested text is insufficient when higher-precedence configuration can
+override it. Failures are accumulated with backend and operation diagnostics; a
+failed backend does not block another backend's enforcement, and any failure
+makes the overall result unsuccessful. There is no transaction spanning
+backends.
+
+`ENABLE` means FIC checks and enforces the active requirement. `DISABLE` means
+FIC stops checking and enforcing it. A missing setting in the active requirement
+set is not a deletion command: the backend is not called with an empty full-state
+replacement, and existing system configuration remains untouched. This also
+preserves unrelated FIC/backend state and foreign administrator configuration.
+Rollback, provenance, baseline restoration, uninstall cleanup, and purge
+semantics are outside this contract.
 
 No GNOME, KDE, XFCE, or FLY system backend is registered yet, so the production
 policies below remain session-only. This declarative lifecycle remains separate
