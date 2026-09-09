@@ -33,6 +33,28 @@ enum class EnforcementMode {
     Unsupported
 };
 
+enum class SessionReconcileStatus {
+    NotApplicable,
+    Unsupported,
+    GlobalEnforcementFailed,
+    MandatoryGlobalConverged,
+    MandatoryGlobalRuntimeWarning,
+    SessionOnlyConverged,
+    SessionOnlyFailed
+};
+
+struct SessionReconcileResult {
+    SessionReconcileStatus status = SessionReconcileStatus::NotApplicable;
+    std::string diagnostic;
+
+    bool successful() const {
+        return status == SessionReconcileStatus::NotApplicable ||
+            status == SessionReconcileStatus::MandatoryGlobalConverged ||
+            status == SessionReconcileStatus::MandatoryGlobalRuntimeWarning ||
+            status == SessionReconcileStatus::SessionOnlyConverged;
+    }
+};
+
 class ControlledDesktopEnvironmentScope {
 public:
     virtual ~ControlledDesktopEnvironmentScope() = default;
@@ -57,9 +79,8 @@ public:
         std::string& error) = 0;
     virtual EnforcementMode enforcementMode(
         DesktopEnvironmentKind desktop) const = 0;
-    virtual bool reconcileSession(
-        const ClassifiedGraphicalSession& session,
-        std::string& error) = 0;
+    virtual SessionReconcileResult reconcileSession(
+        const ClassifiedGraphicalSession& session) = 0;
 };
 
 class SessionInventoryCompliancePolicy {

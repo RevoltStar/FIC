@@ -9,6 +9,8 @@ unit = (root / "fic/src/resources/service/fic.service.in").read_text()
 device_unit = (root / "fic/src/resources/service/fic-device.service.in").read_text()
 config = (root / "fic/src/resources/config/OSS.conf").read_text()
 event_server = (root / "fic/src/session/SessionEventServer.cpp").read_text()
+session_policy = (root / "fic/src/modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.cpp").read_text()
+global_reconciler = (root / "fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp").read_text()
 ru_lang = (root / "fic/src/resources/lang/ru.lang").read_text()
 en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
 
@@ -32,6 +34,7 @@ worker = main[main.index("void reconcile_session_ready("):
               main.index("} // namespace", main.index("void reconcile_session_ready("))]
 assert worker.index("inventory.currentSessions") < worker.index("PolicyCapability::SessionAware")
 assert "run_daemon_apply_all_pass" not in worker
+assert "MandatoryGlobalRuntimeWarning" in worker and "logLevel::WARN" in worker
 unknown_dispatch = worker[worker.index("DesktopEnvironmentKind::Unknown"):
                           worker.index("PolicyCapability::SessionAware")]
 assert "return;" in unknown_dispatch
@@ -39,6 +42,17 @@ assert "readPacketWithTimeout" in event_server
 assert "POLLIN" in event_server and "POLLERR" in event_server and "POLLHUP" in event_server
 assert "EAGAIN" in event_server and "EWOULDBLOCK" in event_server and "EINTR" in event_server
 assert "ClientPayloadTimeoutMilliseconds" in event_server
+ensure = session_policy[session_policy.index("bool SessionAwareDesktopEnvironmentPolicy::ensureGlobalState"):
+                        session_policy.index("bool SessionAwareDesktopEnvironmentPolicy::applyGlobalValue")]
+assert ensure.index("applyGlobalValue") < ensure.index("applyGlobalProtection") < ensure.index("verifyGlobalState")
+targeted = session_policy[session_policy.index("SessionAwareDesktopEnvironmentPolicy::reconcileSession"):
+                          session_policy.index("bool SessionAwareDesktopEnvironmentPolicy::ensureGlobalState")]
+assert "ensureGlobalState" in targeted
+assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main
+assert main.count("desktopGlobalConfig.reconcile") >= 2
+assert "PolicyCapability::GlobalDesktopConfiguration" in global_reconciler
+assert "if (!policy->isEnabled()) continue" in global_reconciler
+assert "verified != desired" in global_reconciler
 payload = agent[agent.index("const std::string request = nlohmann::json{"):
                 agent.index(".dump();", agent.index("const std::string request = nlohmann::json{"))]
 assert '"event", "session_ready"' in payload

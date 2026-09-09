@@ -21,9 +21,8 @@ public:
         std::string& error) override;
     EnforcementMode enforcementMode(
         DesktopEnvironmentKind desktop) const override;
-    bool reconcileSession(
-        const ClassifiedGraphicalSession& session,
-        std::string& error) override;
+    SessionReconcileResult reconcileSession(
+        const ClassifiedGraphicalSession& session) override;
     std::vector<PolicyCapability> capabilities() const override {
         return {PolicyCapability::SessionAware};
     }
@@ -46,6 +45,9 @@ protected:
         std::string& error) = 0;
 
 private:
+    bool ensureGlobalState(
+        DesktopEnvironmentKind desktop,
+        std::string& error);
     ControlledDesktopEnvironmentScope& scope_;
     std::shared_ptr<GraphicalSessionInventory> inventory_;
 };

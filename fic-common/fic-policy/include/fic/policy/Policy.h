@@ -18,7 +18,8 @@ class PolicyRegistry;
 
 enum class PolicyCapability {
     SessionAware,
-    SessionInventoryCompliance
+    SessionInventoryCompliance,
+    GlobalDesktopConfiguration
 };
 
 class Policy

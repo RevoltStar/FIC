@@ -109,9 +109,22 @@ classified `SessionOnly`: none is claimed as `MandatoryGlobal`, because no
 implemented system lock/kiosk mechanism currently proves precedence over user
 configuration. A future `MandatoryGlobal` backend must separately apply the
 global value, apply protection/immutability, and verify persistent effective
-state. Successful authoritative global enforcement makes an optional current
-session convergence failure a warning; a `SessionOnly` failure remains fatal
-for that apply.
+state. The same value -> protection -> verification sequence runs both during
+normal policy apply and targeted `session_ready` reconciliation, before the
+current session is converged. Successful authoritative global enforcement
+makes an optional current-session convergence failure a warning; a
+`SessionOnly` failure remains fatal for that operation. Unsupported controlled
+desktops and failures before global verification remain errors.
+
+FIC-owned global desktop configuration has a separate declarative lifecycle.
+Enabled policies contribute desired entries grouped by a registered
+`DesktopSystemBackend`; the reconciler replaces and then verifies only the
+backend's FIC-managed namespace. A backend must preserve administrator-owned
+configuration outside that namespace. Disabled or removed policies therefore
+disappear from desired state and their stale FIC-owned entries are removed on
+the next successful config rebuild, including after daemon restart. Matching
+state is not rewritten. No GNOME, KDE, XFCE, or FLY system backend is
+registered yet, so the production policies below remain session-only.
 
 `OSS/disable_kde_lock_screen_media_controls` is applicable only to controlled
 KDE sessions. A successfully identified non-KDE desktop is `NotApplicable`.
@@ -122,11 +135,15 @@ After installing or upgrading the package, existing graphical sessions must
 be restarted or the agent must be launched manually before session-dependent
 policy apply commands can succeed.
 
-Startup/explicit/periodic apply continues to enumerate existing sessions. A
-later `session_ready` performs only targeted enabled `SessionAwarePolicy`
+Startup/explicit/periodic apply continues to enumerate existing sessions and
+reconciles declarative FIC-owned global desktop state after rebuilding the
+registry. Config mutations do the same immediately after a successful rebuild.
+A later `session_ready` performs only targeted enabled `SessionAwarePolicy`
 reconciliation plus a full-inventory compliance check; it does not re-run all
-OSS policies or repeat normal global apply. Runtime reconciliation diagnostics
-do not rewrite the historical result of an earlier apply operation.
+OSS policies. For a future `MandatoryGlobal` policy, that targeted operation
+does re-ensure and verify the policy's own global state before converging the
+new session. Runtime reconciliation diagnostics do not rewrite the historical
+result of an earlier apply operation.
 
 The session-event listener is mandatory startup infrastructure. `fic.service`
 remains `Type=notify`, `NotifyAccess=main`, and `TimeoutStartSec=600s`;

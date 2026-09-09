@@ -1448,5 +1448,18 @@ peer cannot block the daemon indefinitely.
 All currently implemented screen-lock and KDE media-control backends are
 `SessionOnly`. `MandatoryGlobal` is reserved for a backend which applies the
 machine-wide value, installs authoritative lock/immutability protection, and
-verifies persistent effective state. Runtime compliance diagnostics do not
-change historical apply results.
+verifies persistent effective state. Normal apply and targeted `session_ready`
+share that exact global sequence before session convergence. Once authoritative
+global state is verified, a runtime convergence failure is a warning;
+`SessionOnly` runtime failure, unsupported scope, or global verification
+failure is an error. Runtime compliance diagnostics do not change historical
+apply results.
+
+Future system backends plug into `DesktopGlobalConfigReconciler`. Enabled
+policies declaratively contribute the desired FIC-owned entries. Each backend
+exposes only its managed namespace, replaces it without touching foreign
+administrator state, and is read back before reconciliation is accepted.
+Registry rebuilds on startup, periodic apply, explicit apply, and configuration
+mutation drive this lifecycle, so disabling or removing a policy also removes
+its stale FIC-owned state after a restart. No DE-specific global system backend
+is implemented yet; production DE policies remain `SessionOnly`.

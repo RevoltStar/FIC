@@ -226,6 +226,18 @@ target_include_directories(session_aware_policy_tests PRIVATE
 target_link_libraries(session_aware_policy_tests PRIVATE fic-policy fic-core)
 add_test(NAME session_aware_policy_tests COMMAND session_aware_policy_tests)
 
+add_executable(desktop_global_config_reconciler_tests
+    fic/modules/oss/desktop_environment/DesktopGlobalConfigReconcilerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp
+)
+target_include_directories(desktop_global_config_reconciler_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(desktop_global_config_reconciler_tests PRIVATE
+    fic-policy fic-core)
+add_test(NAME desktop_global_config_reconciler_tests
+         COMMAND desktop_global_config_reconciler_tests)
+
 add_executable(session_setting_reconciler_tests
     fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp
 )

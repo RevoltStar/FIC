@@ -2,50 +2,50 @@
 
 ## Current base
 
-- Ветка `main`, родитель текущей правки `c3969dd`.
+- Ветка `main`, родитель текущей правки `1650634`.
 
 ## Current task
 
-- Устранить audit field injection в `fic` и `fic-dick`, переведя always-on
-  security audit trail на bounded JSON Lines.
+- Завершить общий lifecycle DE-политик: корректный targeted
+  `MandatoryGlobal` и declarative cleanup FIC-owned global configuration.
 
 ## Accepted architecture / invariants
 
-- Общий `fic-core` строит authoritative `timestamp`, `component`, typed
-  `peer`, ограничивает строки и запись, выполняет единственный `json::dump()`
-  escaping и записывает одну JSONL-строку.
-- Каждый daemon строит только собственный whitelist `request`; весь IPC request
-  не копируется.
-- Лимит строки — 240 байт, записи — 16 КиБ. Это сохраняет прежний device limit
-  и не превышает `log_records` line limit.
-- Audit остаётся always-on и не проходит через `Logger` filtering.
-- Расширение `.txt` сохранено: `log_records` читает строки как opaque text и
-  не парсит старый формат.
+- Normal apply и `session_ready` используют одну последовательность
+  `ensureGlobalState`: value, protection, verify, затем runtime convergence.
+- После доказанного MandatoryGlobal state runtime failure является WARN;
+  SessionOnly failure, Unsupported и global failure являются ERROR.
+- `DesktopGlobalConfigReconciler` собирает contributions только enabled
+  policies и заменяет/проверяет только FIC-owned namespace backend-а.
+- Reconcile запускается после успешного registry rebuild на startup/periodic,
+  explicit apply/reload и config mutations; поэтому stale state удаляется и
+  после disable, и после restart.
+- Реальные system-wide GNOME/KDE/XFCE/FLY backends пока не реализованы.
+  `screenlock_timeout` и `disable_kde_lock_screen_media_controls` остаются
+  `SessionOnly`.
 
 ## Completed / Changed areas
 
-- Добавлен `fic/core/logging/SecurityAudit` и явная CMake-зависимость
-  `nlohmann_json` для `fic-core`.
-- Добавлены component builders `AdminAudit` и `DeviceAudit`; старые
-  `request_audit_summary`, sanitizers и `AuditLogValue` удалены.
-- IPC, startup policy apply и session-ready audit entries переведены на JSON.
-- Добавлены shared/admin/device regression tests для injection, whitelist,
-  peer/result integrity, types, controls, UTF-8, JSONL и limits.
-- Обновлены `fic/README.md`, `fic-dick/README.md` и architecture docs.
+- `SessionAwarePolicy::reconcileSession` возвращает явный typed result.
+- Targeted MandatoryGlobal выполняет и проверяет global phases до session.
+- Добавлены contribution/backend/reconciler contracts и daemon lifecycle.
+- Добавлены regression tests и static contract checks; обновлены session и
+  architecture docs.
 
 ## Validation
 
-- Fresh Ubuntu 24.04 configure в отдельном каталоге: passed.
-- Полный build: passed.
-- Targeted audit tests: 3/3 passed.
-- Полный non-root CTest вне sandbox: 78/78 passed.
-- В sandbox ожидаемо блокировались bind/trusted-root integration tests; вне
-  sandbox те же tests passed.
-- Build использует временный pkg-config/header stub для установленной runtime
-  `libsystemd.so.0`; CI/package environments ставят настоящий dev package.
+- Fresh Ubuntu 24.04 configure: passed с временным `/tmp` libsystemd compile
+  shim, поскольку в окружении нет development package.
+- Targeted build `session_aware_policy_tests`,
+  `desktop_global_config_reconciler_tests`, `fic`: passed.
+- Полный build всех targets: passed.
+- Targeted final contract tests: 3/3 passed.
+- Полный non-root CTest вне sandbox: 79/79 passed, включая все требуемые
+  DE/session tests и `session_event_server_tests`.
 - `git diff --check`: passed.
 
 ## Remaining
 
-- Root-only `command_hash_batch_tests` не запускался.
-- Коммит не создавать без отдельного запроса пользователя.
+- Создать один итоговый commit.
+- Root-only `command_hash_batch_tests` не запускался: задача не затрагивает
+  command hash lifecycle.

@@ -43,16 +43,53 @@ EnforcementMode SessionAwareDesktopEnvironmentPolicy::enforcementMode(
     return relevantTo(desktop) ? modeFor(desktop) : EnforcementMode::Unsupported;
 }
 
-bool SessionAwareDesktopEnvironmentPolicy::reconcileSession(
-    const ClassifiedGraphicalSession& session,
-    std::string& error)
+SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
+    const ClassifiedGraphicalSession& session)
 {
+    std::string error;
     const SessionApplicability applicability =
         sessionApplicability(session.desktop, error);
-    if (applicability == SessionApplicability::NotApplicable) return true;
-    if (applicability == SessionApplicability::Unsupported) return false;
-    if (!prepare(error)) return false;
-    return reconcileControlledSession(session, error);
+    if (applicability == SessionApplicability::NotApplicable) {
+        return {SessionReconcileStatus::NotApplicable, {}};
+    }
+    if (applicability == SessionApplicability::Unsupported) {
+        return {SessionReconcileStatus::Unsupported, std::move(error)};
+    }
+    const EnforcementMode mode = modeFor(session.desktop);
+    if (!prepare(error)) {
+        return {mode == EnforcementMode::MandatoryGlobal
+                    ? SessionReconcileStatus::GlobalEnforcementFailed
+                    : SessionReconcileStatus::SessionOnlyFailed,
+                std::move(error)};
+    }
+    if (mode == EnforcementMode::MandatoryGlobal &&
+        !ensureGlobalState(session.desktop, error)) {
+        return {SessionReconcileStatus::GlobalEnforcementFailed,
+                std::move(error)};
+    }
+    if (!reconcileControlledSession(session, error)) {
+        return {mode == EnforcementMode::MandatoryGlobal
+                    ? SessionReconcileStatus::MandatoryGlobalRuntimeWarning
+                    : SessionReconcileStatus::SessionOnlyFailed,
+                std::move(error)};
+    }
+    return {mode == EnforcementMode::MandatoryGlobal
+                ? SessionReconcileStatus::MandatoryGlobalConverged
+                : SessionReconcileStatus::SessionOnlyConverged,
+            {}};
+}
+
+bool SessionAwareDesktopEnvironmentPolicy::ensureGlobalState(
+    DesktopEnvironmentKind desktop,
+    std::string& error)
+{
+    if (!applyGlobalValue(desktop, error)) return false;
+    log("global value: OK", logLevel::DEBUG);
+    if (!applyGlobalProtection(desktop, error)) return false;
+    log("global protection: OK", logLevel::DEBUG);
+    if (!verifyGlobalState(desktop, error)) return false;
+    log("global verify: OK", logLevel::DEBUG);
+    return true;
 }
 
 bool SessionAwareDesktopEnvironmentPolicy::applyGlobalValue(
@@ -121,14 +158,7 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
                     ": mode=mandatory-global",
                 logLevel::DEBUG);
             std::string globalError;
-            const bool valueApplied = applyGlobalValue(desktop, globalError);
-            if (valueApplied) log("global value: OK", logLevel::DEBUG);
-            const bool protectionApplied = valueApplied &&
-                applyGlobalProtection(desktop, globalError);
-            if (protectionApplied) log("global protection: OK", logLevel::DEBUG);
-            const bool verified = protectionApplied &&
-                verifyGlobalState(desktop, globalError);
-            if (verified) log("global verify: OK", logLevel::DEBUG);
+            const bool verified = ensureGlobalState(desktop, globalError);
             if (!verified) {
                 log(std::string("Mandatory global enforcement failed for ") +
                         DesktopEnvironmentBackend::kindName(desktop) + ": " +
