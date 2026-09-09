@@ -37,6 +37,9 @@ constexpr SettingDescription kSettings[] = {
     {"/org/gnome/desktop/screensaver/lock-delay",
      "org/gnome/desktop/screensaver", "org.gnome.desktop.screensaver",
      "lock-delay", SettingDescription::Type::Uint32},
+    {"/org/gnome/desktop/lockdown/disable-lock-screen",
+     "org/gnome/desktop/lockdown", "org.gnome.desktop.lockdown",
+     "disable-lock-screen", SettingDescription::Type::Boolean},
 };
 
 class UniqueFd {
@@ -354,41 +357,82 @@ std::string serializeLocks(const std::set<std::string>& locks) {
     return result;
 }
 
-struct Profile {
-    std::vector<std::string> lines;
+struct ProfileEntry {
+    // Исходная строка профиля без завершающего перевода строки. Чужие строки
+    // администратора сохраняются byte-for-byte при любой перезаписи.
+    std::string raw;
+    bool isSource = false;
+    bool writable = false;
+    bool fic = false;
 };
+
+struct Profile {
+    std::vector<ProfileEntry> entries;
+};
+
+std::string trimmed(std::string value);
+
+// Разбирает одну строку dconf profile. Поддерживаются документированные
+// конструкции dconf: user-db:, service-db:, system-db: и file-db:, ведущие и
+// замыкающие пробелы, а также inline '#'-комментарий. Полные строки-комментарии
+// и пустые строки источниками не являются. Всё остальное отвергается fail-closed.
+bool parseProfileEntry(const std::string& raw, ProfileEntry& entry,
+                       std::string& error) {
+    entry = ProfileEntry{raw, false, false, false};
+    std::string text = raw;
+    const auto comment = text.find('#');
+    if (comment != std::string::npos) text.resize(comment);
+    text = trimmed(text);
+    if (text.empty()) return true;
+    static const std::regex sourceEntry(
+        "(user-db|service-db|system-db|file-db):[ \t]*([^ \t]+)[ \t]*");
+    std::smatch match;
+    if (!std::regex_match(text, match, sourceEntry)) {
+        error = "malformed dconf profile entry: " + raw;
+        return false;
+    }
+    const std::string type = match[1].str();
+    const std::string value = match[2].str();
+    static const std::regex databaseName(
+        "[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)*");
+    static const std::regex filePath("(/[A-Za-z0-9_.-]+)+");
+    const bool validValue = type == "file-db"
+        ? std::regex_match(value, filePath)
+        : std::regex_match(value, databaseName);
+    if (!validValue) {
+        error = "malformed dconf profile entry: " + raw;
+        return false;
+    }
+    entry.isSource = true;
+    entry.writable = type == "user-db" || type == "service-db";
+    entry.fic = type == "system-db" && value == "fic";
+    return true;
+}
 
 bool parseProfile(const std::string& content, Profile& profile,
                   std::string& error) {
-    profile.lines.clear();
+    profile.entries.clear();
     std::istringstream input(content);
     std::string line;
-    const std::regex entry(
-        "(user-db|service-db|system-db):"
-        "([A-Za-z0-9_][A-Za-z0-9_.-]*"
-        "(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)*)");
-    bool sawEntry = false;
+    bool sawSource = false;
     size_t ficCount = 0;
     while (std::getline(input, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        profile.lines.push_back(line);
-        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
-        std::smatch match;
-        if (!std::regex_match(line, match, entry)) {
-            error = "malformed dconf profile entry: " + line;
-            return false;
+        ProfileEntry entry;
+        if (!parseProfileEntry(line, entry, error)) return false;
+        if (entry.isSource && !sawSource) {
+            sawSource = true;
+            if (!entry.writable) {
+                error =
+                    "dconf profile has no writable database before read-only "
+                    "databases";
+                return false;
+            }
         }
-        const std::string type = match[1].str();
-        if (!sawEntry && type == "system-db") {
-            error = "dconf profile has no writable database before system databases";
-            return false;
-        }
-        sawEntry = true;
-        if (type == "system-db") {
-            if (match[2].str() == "fic") ++ficCount;
-        }
+        if (entry.fic) ++ficCount;
+        profile.entries.push_back(std::move(entry));
     }
-    if (!sawEntry) {
+    if (!sawSource) {
         error = "dconf profile has no database entries";
         return false;
     }
@@ -399,29 +443,41 @@ bool parseProfile(const std::string& content, Profile& profile,
     return true;
 }
 
-std::string profileWithFicAfterWritable(const Profile& profile) {
-    std::vector<std::string> lines;
-    for (const auto& line : profile.lines)
-        if (line != "system-db:fic") lines.push_back(line);
-    auto writable = std::find_if(lines.begin(), lines.end(), [](const auto& line) {
-        return line.rfind("user-db:", 0) == 0 ||
-            line.rfind("service-db:", 0) == 0;
-    });
-    lines.insert(std::next(writable), "system-db:fic");
+std::string serializeProfile(const Profile& profile) {
     std::string result;
-    for (const auto& line : lines) result += line + "\n";
+    for (const auto& entry : profile.entries) result += entry.raw + "\n";
     return result;
+}
+
+// Размещает system-db:fic сразу после первого writable-источника, перед всеми
+// read-only базами. Перемещается/добавляется только строка FIC; порядок и
+// содержимое чужих строк не меняются.
+void ensureFicEntry(Profile& profile) {
+    std::vector<ProfileEntry> kept;
+    kept.reserve(profile.entries.size() + 1);
+    for (auto& entry : profile.entries)
+        if (!entry.fic) kept.push_back(entry);
+    const auto writable = std::find_if(
+        kept.begin(), kept.end(), [](const ProfileEntry& entry) {
+            return entry.isSource && entry.writable;
+        });
+    // parseProfile гарантирует наличие writable-источника первым источником.
+    ProfileEntry fic;
+    fic.raw = "system-db:fic";
+    fic.isSource = true;
+    kept.insert(std::next(writable), fic);
+    profile.entries = std::move(kept);
 }
 
 bool profileHasFicAfterWritable(const Profile& profile) {
     bool sawWritable = false;
-    for (const auto& line : profile.lines) {
-        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+    for (const auto& entry : profile.entries) {
+        if (!entry.isSource) continue;
         if (!sawWritable) {
             sawWritable = true;
             continue;
         }
-        return line == "system-db:fic";
+        return entry.fic;
     }
     return false;
 }
@@ -533,7 +589,11 @@ bool GnomeSystemBackend::ensureManagedSettings(
 
     Profile profile;
     if (!profileExists) {
-        profile.lines = {"user-db:user"};
+        ProfileEntry userDb;
+        userDb.raw = "user-db:user";
+        userDb.isSource = true;
+        userDb.writable = true;
+        profile.entries = {userDb};
     } else if (!parseProfile(profileText, profile, error)) {
         return false;
     }
@@ -542,7 +602,8 @@ bool GnomeSystemBackend::ensureManagedSettings(
         keyfile[setting.group][setting.key] = value;
         locks.insert(key.setting);
     }
-    const std::string finalProfile = profileWithFicAfterWritable(profile);
+    ensureFicEntry(profile);
+    const std::string finalProfile = serializeProfile(profile);
     const std::string finalKeyfile = serializeKeyfile(keyfile);
     const std::string finalLocks = serializeLocks(locks);
 

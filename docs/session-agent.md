@@ -168,17 +168,28 @@ file `/etc/dconf/db/fic.d/locks/99-fic`. The `.conf` basename is accepted by
 the supported dconf compiler. The backend adds
 `system-db:fic` as the first system database in `/etc/dconf/profile/user`, while
 preserving administrator comments, blank lines, foreign database entries, and
-their relative order. Malformed or ambiguous profiles fail closed.
+their relative order. The profile parser accepts the documented dconf source
+types `user-db:`, `service-db:`, `system-db:`, and `file-db:` (`file-db` is a
+read-only source), including leading/trailing whitespace and inline `#`
+comments; foreign lines are kept byte-for-byte. A profile whose first source is
+not writable, an unknown source type, and duplicate `system-db:fic` entries all
+fail closed before any mutation.
 
 For controlled GNOME, `screenlock_timeout=N` contributes and locks exactly
 `/org/gnome/desktop/session/idle-delay=uint32 N*60`,
-`/org/gnome/desktop/screensaver/lock-enabled=true`, and
-`/org/gnome/desktop/screensaver/lock-delay=uint32 0`. Existing valid settings
+`/org/gnome/desktop/screensaver/lock-enabled=true`,
+`/org/gnome/desktop/screensaver/lock-delay=uint32 0`, and
+`/org/gnome/desktop/lockdown/disable-lock-screen=false`. The lockdown key is
+mandatory for a provable screen lock: `disable-lock-screen=true` prevents GNOME
+Shell from locking the screen at all, so the other three keys alone cannot
+verify the policy. Existing valid settings
 and locks in the FIC-owned fragments are merged and retained. After atomic
 source updates the backend runs verified `dconf update`, then uses a clean,
 explicit `DCONF_PROFILE=/etc/dconf/profile/user` context for `gsettings get`
 and `gsettings writable`; every value must match and every key must report
-non-writable. Correct source files with stale effective state trigger one
+non-writable. This includes `gsettings get org.gnome.desktop.lockdown
+disable-lock-screen == false` and a non-writable lockdown key. Correct source
+files with stale effective state trigger one
 recompilation attempt and another verification. `dconf` and `gsettings` are
 optional platform executables and are resolved only for active GNOME global
 requirements.
@@ -215,7 +226,9 @@ dconf profile selection happens at login. A newly installed `system-db:fic`
 is authoritative for fresh sessions, while an already running GNOME session
 may not observe the new profile or lock until relogin. FIC does not restart the
 shell or terminate the session; the existing GNOME session handler performs
-best-effort convergence for that current session. This limitation does not
+best-effort convergence for that current session and now enforces all four
+screen-lock values, including
+`org.gnome.desktop.lockdown disable-lock-screen=false`. This limitation does not
 weaken verification of the persistent profile for new sessions.
 
 For normal apply the daemon installs the same report as explicit per-pass

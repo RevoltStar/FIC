@@ -1,5 +1,9 @@
 #include "modules/oss/desktop_environment/SessionSettingReconciler.h"
+#include "modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -7,6 +11,101 @@
 namespace {
 void require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
+}
+
+void require(bool value, const std::string& message) {
+    require(value, message.c_str());
+}
+
+// Fake бэкенд с интерфейсом GnomeBackend: эмулирует gsettings-состояние
+// текущей сессии без живой GNOME сессии.
+struct FakeGnomeSession {
+    mutable std::map<std::string, std::string> values;
+    mutable std::vector<std::string> sets;
+
+    bool getSetting(const std::string& schema, const std::string& key,
+                    std::string& value, std::string& error) const {
+        const auto found = values.find(schema + " " + key);
+        if (found == values.end()) {
+            error = "no value for " + schema + " " + key;
+            return false;
+        }
+        value = found->second;
+        error.clear();
+        return true;
+    }
+
+    bool getUInt32Setting(const std::string& schema, const std::string& key,
+                          std::uint32_t& value, std::string& error) const {
+        std::string encoded;
+        if (!getSetting(schema, key, encoded, error)) return false;
+        if (encoded.rfind("uint32 ", 0) != 0) {
+            error = "not uint32: " + encoded;
+            return false;
+        }
+        value = static_cast<std::uint32_t>(std::stoul(encoded.substr(7)));
+        error.clear();
+        return true;
+    }
+
+    bool setSetting(const std::string& schema, const std::string& key,
+                    const std::string& value, std::string& error) const {
+        sets.push_back(schema + " " + key + " " + value);
+        values[schema + " " + key] = value;
+        error.clear();
+        return true;
+    }
+};
+
+FakeGnomeSession correctSession() {
+    FakeGnomeSession session;
+    session.values["org.gnome.desktop.session idle-delay"] = "uint32 300";
+    session.values["org.gnome.desktop.screensaver lock-enabled"] = "true";
+    session.values["org.gnome.desktop.screensaver lock-delay"] = "uint32 0";
+    session.values["org.gnome.desktop.lockdown disable-lock-screen"] = "false";
+    return session;
+}
+
+void testGnomeSessionConvergence() {
+    {
+        // disable-lock-screen=true ломает state matching даже при корректных
+        // остальных трёх настройках: convergence обязан выполнить set false.
+        FakeGnomeSession session = correctSession();
+        session.values["org.gnome.desktop.lockdown disable-lock-screen"] =
+            "true";
+        std::string error;
+        require(gnome_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(std::find(session.sets.begin(), session.sets.end(),
+                          "org.gnome.desktop.lockdown disable-lock-screen "
+                          "false") != session.sets.end(),
+                "handler did not write disable-lock-screen=false");
+        require(session.values[
+                    "org.gnome.desktop.lockdown disable-lock-screen"] ==
+                    "false",
+                "readback did not observe disable-lock-screen=false");
+    }
+    {
+        // Полностью корректное состояние не требует ненужных записей
+        // (read-before-write semantics).
+        FakeGnomeSession session = correctSession();
+        std::string error;
+        require(gnome_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(session.sets.empty(),
+                "already-correct session state was rewritten");
+    }
+    {
+        // Неверный timeout тоже ломает matching и конвергируется.
+        FakeGnomeSession session = correctSession();
+        session.values["org.gnome.desktop.session idle-delay"] = "uint32 1";
+        std::string error;
+        require(gnome_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(session.values["org.gnome.desktop.session idle-delay"] ==
+                    "uint32 300",
+                "idle-delay was not converged");
+    }
 }
 }
 
@@ -57,5 +156,7 @@ int main() {
                 "readback mismatch", error),
             "readback mismatch succeeded");
     require(error == "readback mismatch", "mismatch diagnostic was lost");
+
+    testGnomeSessionConvergence();
     return 0;
 }

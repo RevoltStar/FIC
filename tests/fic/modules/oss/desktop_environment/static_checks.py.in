@@ -15,6 +15,7 @@ gnome_system = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSy
 gnome_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.h").read_text()
 screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
 screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
+gnome_handler_header = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
 ru_lang = (root / "fic/src/resources/lang/ru.lang").read_text()
 en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
 
@@ -88,6 +89,18 @@ for forbidden in ("system(", "popen(", "/bin/sh", "~/.config/dconf",
                   "replaceManagedState", "removeManaged"):
     assert forbidden not in gnome_system
 assert 'std::string keyfileName = "99-fic.conf"' in gnome_system_header
+# GNOME screenlock_timeout обязан охватывать четвёртый ключ: без
+# disable-lock-screen=false GNOME Shell может вообще не блокировать экран.
+assert "/org/gnome/desktop/lockdown/disable-lock-screen" in gnome_system
+assert "org.gnome.desktop.lockdown" in gnome_system
+assert '\n    add("/org/gnome/desktop/lockdown/disable-lock-screen", "false");' in screenlock
+assert "org.gnome.desktop.lockdown" in gnome_handler_header
+assert "disable-lock-screen" in gnome_handler_header
+# dconf profile parser поддерживает file-db/whitespace/inline comments и
+# сохраняет merge-only/DISABLE semantics.
+assert "file-db" in gnome_system
+assert "if (required.empty()) { error.clear(); return true; }" in gnome_system
+assert "duplicate system-db:fic" in gnome_system
 assert "PolicyCapability::GlobalDesktopConfiguration" in screenlock_header
 assert "PolicyCapability::SessionAware" in screenlock_header
 assert "desktop == DesktopEnvironmentKind::Gnome" in screenlock

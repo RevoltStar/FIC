@@ -1451,7 +1451,11 @@ screen-lock handling and KDE media-control remain `SessionOnly`.
 `Gnome`. It maintains FIC's dconf keyfile
 `/etc/dconf/db/fic.d/99-fic.conf`, locks in `fic.d/locks/99-fic`, and inserts
 `system-db:fic` as the highest-priority system database without replacing the
-administrator profile. Existing FIC settings and locks are merge-only and
+administrator profile. The profile parser supports the documented dconf source
+types (`user-db:`, `service-db:`, `system-db:`, `file-db:`) with whitespace and
+inline `#` comments while preserving foreign administrator lines byte-for-byte;
+non-writable-first, unknown-source, and duplicate-`system-db:fic` profiles fail
+closed. Existing FIC settings and locks are merge-only and
 survive `DISABLE`. `DesktopSystemBackend` is the sole global
 enforcement path; policies only contribute requirements. Normal apply and
 targeted `session_ready` invoke the same reconciler before session convergence.
@@ -1482,7 +1486,11 @@ configuration unchanged. Rollback, provenance, and cleanup semantics are out of
 scope. See [the global desktop lifecycle contract](session-agent.md) for details.
 GNOME verification runs `dconf update` when source or compiled state needs it,
 then requires exact `gsettings get` values and `gsettings writable=false` for
-all three screen-lock keys under an explicit FIC profile. Existing sessions may
+all four screen-lock keys — `idle-delay`, `lock-enabled`, `lock-delay`, and
+`lockdown/disable-lock-screen=false` — under an explicit FIC profile. Without
+`disable-lock-screen=false` GNOME Shell may refuse to lock the screen at all,
+so the fourth key is part of the effective screen-lock proof. Existing sessions may
 need relogin to load a newly changed profile, so their separate session-runtime
-convergence remains best effort. Rollback, provenance, and stale cleanup remain
+convergence (which also enforces `disable-lock-screen=false`) remains best
+effort. Rollback, provenance, and stale cleanup remain
 outside this contract.

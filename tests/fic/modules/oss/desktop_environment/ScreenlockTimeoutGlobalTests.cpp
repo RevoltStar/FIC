@@ -116,7 +116,7 @@ void testModesCapabilitiesAndContributions() {
     std::vector<GlobalDesktopPolicyContribution> contributions;
     std::string error;
     require(policy->globalDesktopPolicyContributions(contributions, error), error);
-    require(contributions.size() == 3, "GNOME did not publish exactly three keys");
+    require(contributions.size() == 4, "GNOME did not publish exactly four keys");
     std::map<std::string, std::string> values;
     for (const auto& contribution : contributions) {
         require(contribution.backend == "gnome" &&
@@ -128,7 +128,8 @@ void testModesCapabilitiesAndContributions() {
     }
     require(values["/org/gnome/desktop/session/idle-delay"] == "uint32 300" &&
             values["/org/gnome/desktop/screensaver/lock-enabled"] == "true" &&
-            values["/org/gnome/desktop/screensaver/lock-delay"] == "uint32 0",
+            values["/org/gnome/desktop/screensaver/lock-delay"] == "uint32 0" &&
+            values["/org/gnome/desktop/lockdown/disable-lock-screen"] == "false",
             "five-minute GNOME conversion is wrong");
 
     scope.desktops = {DesktopEnvironmentKind::Kde};
@@ -137,7 +138,7 @@ void testModesCapabilitiesAndContributions() {
             contributions.empty(), "KDE-only scope published GNOME state");
     scope.desktops = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Kde};
     require(policy->globalDesktopPolicyContributions(contributions, error) &&
-            contributions.size() == 3,
+            contributions.size() == 4,
             "mixed GNOME/KDE scope lost GNOME contribution");
 
     writeConfig("20");
@@ -170,8 +171,8 @@ void testInvalidValueAndReconcilerReport() {
     auto report = reconciler.reconcile(registry);
     const PolicyRef owner{"OSS", "DesktopEnvironment", "screenlock_timeout"};
     require(report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
-            backend->received.size() == 3,
-            "actual policy did not receive verified three-key coverage");
+            backend->received.size() == 4,
+            "actual policy did not receive verified four-key coverage");
     backend->ensureOk = false;
     report = reconciler.reconcile(registry);
     require(!report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified,

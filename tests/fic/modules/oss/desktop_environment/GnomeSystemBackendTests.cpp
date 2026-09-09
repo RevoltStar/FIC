@@ -40,6 +40,7 @@ DesktopManagedSettings requirements(unsigned seconds = 300) {
          "uint32 " + std::to_string(seconds)},
         {{"/org/gnome/desktop/screensaver/lock-enabled"}, "true"},
         {{"/org/gnome/desktop/screensaver/lock-delay"}, "uint32 0"},
+        {{"/org/gnome/desktop/lockdown/disable-lock-screen"}, "false"},
     };
 }
 
@@ -147,7 +148,9 @@ void testInitialCreationAndVerification() {
     const std::string keyfile = read(fixture.keyfile());
     require(keyfile.find("idle-delay=uint32 300") != std::string::npos &&
             keyfile.find("lock-enabled=true") != std::string::npos &&
-            keyfile.find("lock-delay=uint32 0") != std::string::npos,
+            keyfile.find("lock-delay=uint32 0") != std::string::npos &&
+            keyfile.find("disable-lock-screen=false") != std::string::npos &&
+            keyfile.find("[org/gnome/desktop/lockdown]") != std::string::npos,
             "initial keyfile lacks required values");
     const std::string locks = read(fixture.lockfile());
     for (const auto& [key, ignored] : requirements())
@@ -314,6 +317,38 @@ void testCommandAndEffectiveFailures() {
                 error.find("remains writable") != std::string::npos,
                 "missing effective lock was verified");
     }
+    {
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user\nsystem-db:fic\n");
+        fixture.commands.values[
+            "/org/gnome/desktop/lockdown/disable-lock-screen"] = "true";
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.verifyManagedSettings(requirements(), error) &&
+                error.find("effective value mismatch") != std::string::npos,
+                "disable-lock-screen=true was verified as effective lock state");
+    }
+    {
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user\nsystem-db:fic\n");
+        fixture.commands.writable[
+            "/org/gnome/desktop/lockdown/disable-lock-screen"] = true;
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.verifyManagedSettings(requirements(), error) &&
+                error.find("remains writable") != std::string::npos,
+                "writable disable-lock-screen was verified as locked");
+    }
+    {
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user\nsystem-db:fic\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(backend.verifyManagedSettings(requirements(), error), error);
+    }
 }
 
 void testUnknownKeyFailsBeforeMutation() {
@@ -337,6 +372,125 @@ void testEmptyRequirementsDoNothing() {
             "empty requirements performed cleanup or setup");
 }
 
+void testProfileCompatibility() {
+    {
+        // file-db распознаётся как read-only источник и сохраняется.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user\nfile-db:/etc/example.db\nsystem-db:local\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(backend.ensureManagedSettings(requirements(), error), error);
+        require(read(fixture.options.profilePath) ==
+                    "user-db:user\nsystem-db:fic\n"
+                    "file-db:/etc/example.db\nsystem-db:local\n",
+                "file-db profile was not accepted with FIC priority");
+    }
+    {
+        // Ведущие пробелы — валидный dconf profile syntax.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "   user-db:user\n   system-db:local\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(backend.ensureManagedSettings(requirements(), error), error);
+        require(read(fixture.options.profilePath) ==
+                    "   user-db:user\nsystem-db:fic\n   system-db:local\n",
+                "whitespace profile was rewritten beyond FIC insertion");
+    }
+    {
+        // Inline '#'-комментарии сохраняются в чужих строках.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user   # writable\nsystem-db:local   # admin defaults\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(backend.ensureManagedSettings(requirements(), error), error);
+        require(read(fixture.options.profilePath) ==
+                    "user-db:user   # writable\nsystem-db:fic\n"
+                    "system-db:local   # admin defaults\n",
+                "inline comments were not preserved");
+    }
+    {
+        // Реальный administrator-подобный профиль: комментарии, пустые строки,
+        // whitespace, inline comments и file-db сохраняются byte-for-byte.
+        Fixture fixture;
+        const std::string admin =
+            "# managed by administrator\n"
+            "\n"
+            " user-db:user    # writable\n"
+            "\n"
+            " system-db:local   # defaults\n"
+            " file-db:/etc/company.db\n";
+        write(fixture.options.profilePath, admin);
+        auto backend = fixture.backend();
+        std::string error;
+        require(backend.ensureManagedSettings(requirements(), error), error);
+        require(read(fixture.options.profilePath) ==
+                    "# managed by administrator\n"
+                    "\n"
+                    " user-db:user    # writable\n"
+                    "system-db:fic\n"
+                    "\n"
+                    " system-db:local   # defaults\n"
+                    " file-db:/etc/company.db\n",
+                "administrator profile was normalised instead of preserved");
+    }
+    {
+        // FIC line в неправильной позиции перемещается, чужие строки не
+        // переупорядочиваются.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user\nsystem-db:local\nsystem-db:fic\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(backend.ensureManagedSettings(requirements(), error), error);
+        require(read(fixture.options.profilePath) ==
+                    "user-db:user\nsystem-db:fic\nsystem-db:local\n",
+                "misplaced FIC line was not relocated without reordering");
+    }
+    {
+        // Дубликат system-db:fic распознаётся даже с whitespace/comments.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user\nsystem-db:fic\n system-db:fic # duplicate\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.ensureManagedSettings(requirements(), error),
+                "duplicated FIC entry with formatting was accepted");
+    }
+    {
+        // Первый источник file-db — профиль non-writable.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "file-db:/etc/foo\nuser-db:user\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.ensureManagedSettings(requirements(), error),
+                "file-db-first profile was accepted as writable");
+    }
+    {
+        // Первый источник system-db — профиль non-writable.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "system-db:local\nuser-db:user\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.ensureManagedSettings(requirements(), error),
+                "system-db-first profile was accepted as writable");
+    }
+    {
+        // Неизвестный тип источника остаётся fail-closed.
+        Fixture fixture;
+        write(fixture.options.profilePath,
+              "user-db:user\nsomething-db:test\n");
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.ensureManagedSettings(requirements(), error),
+                "unknown dconf profile source was accepted");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -348,6 +502,7 @@ int main() {
         testCommandAndEffectiveFailures();
         testUnknownKeyFailsBeforeMutation();
         testEmptyRequirementsDoNothing();
+        testProfileCompatibility();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

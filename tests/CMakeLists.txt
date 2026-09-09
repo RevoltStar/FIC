@@ -280,10 +280,13 @@ add_test(NAME screenlock_timeout_global_tests COMMAND screenlock_timeout_global_
 
 add_executable(session_setting_reconciler_tests
     fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
 )
 target_include_directories(session_setting_reconciler_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
+target_link_libraries(session_setting_reconciler_tests PRIVATE fic-core)
 add_test(NAME session_setting_reconciler_tests
          COMMAND session_setting_reconciler_tests)
 

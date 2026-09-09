@@ -64,6 +64,10 @@ bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
         "uint32 " + std::to_string(timeoutMinutes * 60));
     add("/org/gnome/desktop/screensaver/lock-enabled", "true");
     add("/org/gnome/desktop/screensaver/lock-delay", "uint32 0");
+    // org.gnome.desktop.lockdown disable-lock-screen=true запрещает GNOME Shell
+    // блокировать экран вообще, поэтому без false экранная блокировка не
+    // доказуема даже при корректных idle-delay/lock-enabled/lock-delay.
+    add("/org/gnome/desktop/lockdown/disable-lock-screen", "false");
     error.clear();
     return true;
 }
