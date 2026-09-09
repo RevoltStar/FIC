@@ -229,6 +229,9 @@ add_test(NAME session_aware_policy_tests COMMAND session_aware_policy_tests)
 add_executable(desktop_global_config_reconciler_tests
     fic/modules/oss/desktop_environment/DesktopGlobalConfigReconcilerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
 )
 target_include_directories(desktop_global_config_reconciler_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src

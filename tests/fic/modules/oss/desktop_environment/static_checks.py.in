@@ -67,6 +67,13 @@ assert "verifyManagedSettings" in global_reconciler
 assert "if (desired.empty()) continue" in global_reconciler
 assert "replaceManagedState" not in global_reconciler
 assert "bool DesktopGlobalConfigReconciler::reconcile" not in global_reconciler
+assert "backend->desktop() != contribution.desktop" in global_reconciler
+assert "global desktop contribution/backend desktop mismatch" in global_reconciler
+assert "backend->desktop() == DesktopEnvironmentKind::Unknown" in global_reconciler
+assert "duplicate desktop system backend" in global_reconciler
+backend_header = (root / "fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h").read_text()
+assert "virtual DesktopEnvironmentKind desktop() const = 0;" in backend_header
+assert "virtual std::string backendName() const = 0;" in backend_header
 normal_apply = session_policy[session_policy.index(
     "bool SessionAwareDesktopEnvironmentPolicy::apply()") :]
 insert = normal_apply.index("globallyEnforced.insert(desktop)")

@@ -124,9 +124,13 @@ used for merge, validation, and diagnostics; backends do not persist or verify
 them as system configuration.
 
 Stage A builds and validates the complete desired state for all registered
-backends: capability/contributor consistency, backend existence, contribution
+backends: capability/contributor consistency, backend existence, typed
+backend desktop identity, contribution
 owner matching the producing policy, explicit desktop association, and nonempty
-physical keys. Every applicable `MandatoryGlobal` `(policy, desktop)` must have
+physical keys. Every registered backend is bound to exactly one canonical
+`DesktopEnvironmentKind`; a backend without one, a duplicate backend for the
+same desktop, and a contribution whose desktop differs from the bound backend
+desktop are all rejected. Every applicable `MandatoryGlobal` `(policy, desktop)` must have
 at least one contribution, while a contribution for `SessionOnly` is rejected.
 Different
 values for the same physical key are conflicts, including contributions from

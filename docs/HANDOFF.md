@@ -16,6 +16,12 @@
 
 - `DesktopSystemBackend` остаётся единственным global enforcement path;
   policies только публикуют requirements через `GlobalDesktopPolicyContributor`.
+- Каждый `DesktopSystemBackend` типизированно привязан к одному canonical
+  `DesktopEnvironmentKind` через `desktop()`; `backendName()` — только
+  стабильный identifier для diagnostics/lookup/audit, не источник DE identity.
+- Stage A fail-closed отвергает: null/пустой backend, duplicate backend name,
+  `desktop() == Unknown`, duplicate backend для одного desktop, и
+  `contribution.desktop != backend.desktop()` — все до любых mutations.
 - Contribution несёт typed desktop association
   (`GlobalDesktopPolicyContribution::desktop`); desktop НЕ выводится из имени
   backend. Physical identity — по-прежнему `(backend, setting)`.
@@ -54,6 +60,8 @@
 ## Completed / Changed areas
 
 - `fic/src/modules/oss/desktop_environment/`:
+  typed `DesktopSystemBackend::desktop()` binding, Stage A
+  backend-registration и contribution/backend desktop validation,
   structured report API, Stage A coverage invariants,
   `SessionAwareDesktopEnvironmentPolicy` (per-desktop global results,
   warning semantics, normal apply consumption).
@@ -61,11 +69,12 @@
   (`install_desktop_global_report`); `reconcile_session_ready` передаёт
   policy-specific result; `apply_all`/`apply_module`/`apply_policy` —
   scoped report success.
-- Tests: `DesktopGlobalConfigReconcilerTests` (per-backend, shared owners,
-  failure isolation, coverage, SessionOnly cases),
-  `SessionAwarePolicyTests` (normal apply, targeted path, prepare warning,
-  mixed DE), `static_checks.py.in` (structured report, отсутствие
-  bool-contract, отсутствие unconditional `globallyEnforced.insert`).
+- Tests: `DesktopGlobalConfigReconcilerTests` (typed binding, mismatch,
+  unknown/duplicate desktop, per-backend, shared owners, failure isolation,
+  coverage, SessionOnly cases), `SessionAwarePolicyTests` (normal apply,
+  targeted path, prepare warning, mixed DE), `static_checks.py.in`
+  (typed desktop contract, structured report, отсутствие bool-contract,
+  отсутствие unconditional `globallyEnforced.insert`).
 - Docs: `session-agent.md`, `architecture-diagrams.md` — structured report
   contract.
 
@@ -73,8 +82,8 @@
 
 - Fresh configure `ubuntu-24.04` с `PKG_CONFIG_PATH=/tmp/fic-systemd-dev`
   (временные официальные headers systemd v257.9) — passed.
-- Полный build `build-check` — passed (75 targets, без ошибок).
-- 7 targeted DE/session tests — passed.
+- Полный build `build-check` — passed (без ошибок).
+- 8 targeted DE/session тестов (включая architecture static checks) — passed.
 - Полный ctest: 80 passed, 0 failed; root-only `command_hash_batch_tests`
   skipped (вне sandbox, contract не затронут).
 - `git diff --check` — passed.

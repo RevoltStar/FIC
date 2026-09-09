@@ -1460,7 +1460,11 @@ apply results.
 Future system backends plug into `DesktopGlobalConfigReconciler`. Physical
 identity is `(backend, setting)`; equal values merge transient policy-owner
 metadata, while conflicting values fail Stage A before any backend mutation.
-Contributions carry an explicit desktop association. Stage A also rejects a
+Contributions carry an explicit desktop association. Each
+`DesktopSystemBackend` is bound to one canonical `DesktopEnvironmentKind`
+through its typed `desktop()` identity, and a global contribution is valid
+only when its explicit desktop matches the registered backend's typed
+desktop identity. Stage A also rejects a
 `MandatoryGlobal` policy/desktop without requirement coverage and rejects an
 authoritative contribution for a `SessionOnly` desktop.
 After validation, each backend with active requirements independently ensures

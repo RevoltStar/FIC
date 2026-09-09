@@ -1,4 +1,5 @@
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
+#include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 
 #include <set>
 #include <utility>
@@ -129,11 +130,19 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         return report;
     };
     std::map<std::string, DesktopGlobalConfigRequirements> desiredByBackend;
-    std::set<std::string> registeredBackends;
+    std::map<std::string, DesktopSystemBackend*> backendByName;
+    std::map<DesktopEnvironmentKind, DesktopSystemBackend*> backendByDesktop;
     for (const auto& backend : backends_) {
         if (backend == nullptr || backend->backendName().empty() ||
-            !registeredBackends.insert(backend->backendName()).second) {
+            backend->desktop() == DesktopEnvironmentKind::Unknown ||
+            !backendByName.emplace(backend->backendName(), backend.get()).second) {
             return failStageA("invalid or duplicate desktop system backend");
+        }
+        if (!backendByDesktop.emplace(backend->desktop(), backend.get()).second) {
+            return failStageA(
+                "duplicate desktop system backend for " +
+                std::string(DesktopEnvironmentBackend::kindName(
+                    backend->desktop())));
         }
         const std::string name = backend->backendName();
         desiredByBackend[name] = {};
@@ -178,6 +187,15 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
                 contribution.desktop == DesktopEnvironmentKind::Unknown) {
                 return failStageA(
                     "invalid global desktop policy contribution owner, desktop, or key");
+            }
+            DesktopSystemBackend* backend =
+                backendByName.at(contribution.backend);
+            if (backend->desktop() != contribution.desktop) {
+                return failStageA(
+                    "global desktop contribution/backend desktop mismatch: " +
+                    contribution.backend + " does not serve " +
+                    std::string(DesktopEnvironmentBackend::kindName(
+                        contribution.desktop)));
             }
             auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(policy);
             std::string applicabilityError;

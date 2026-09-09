@@ -16,6 +16,7 @@ void require(bool condition, const char* message) {
 class FakeBackend final : public DesktopSystemBackend {
 public:
     std::string name = "fake";
+    DesktopEnvironmentKind kind = DesktopEnvironmentKind::Gnome;
     DesktopManagedSettings effective;
     std::map<std::string, std::string> foreign{{"administrator", "keep"}};
     std::vector<DesktopManagedSettings> ensures;
@@ -24,6 +25,7 @@ public:
     bool failVerify = false;
 
     std::string backendName() const override { return name; }
+    DesktopEnvironmentKind desktop() const override { return kind; }
 
     bool ensureManagedSettings(const DesktopManagedSettings& required,
                                std::string& error) override {
@@ -278,6 +280,7 @@ int main() {
                                       "desktop", "empty", "generation"}) {
         auto firstBackend = std::make_shared<FakeBackend>();
         auto other = std::make_shared<FakeBackend>(); other->name = "other";
+        other->kind = DesktopEnvironmentKind::Kde;
         DesktopGlobalConfigReconciler subject({firstBackend, other});
         auto invalid = makeRegistry(root, "true", "true");
         auto& second = policy(invalid, "second");
@@ -358,6 +361,7 @@ int main() {
     policy(namespaced, "second").backend = "other";
     policy(namespaced, "second").desktop = DesktopEnvironmentKind::Kde;
     auto other = std::make_shared<FakeBackend>(); other->name = "other";
+    other->kind = DesktopEnvironmentKind::Kde;
     DesktopGlobalConfigReconciler separate({backend, other});
     report = separate.reconcile(namespaced);
     require(report.successful(), report.diagnostic().c_str());
@@ -370,6 +374,82 @@ int main() {
                 report.backends.at("other").verified,
             "per-backend verified results are incomplete");
 
+    // Typed backend/desktop binding: each backend serves one canonical
+    // desktop, and valid bindings with different desktops are accepted.
+    auto typedGnome = std::make_shared<FakeBackend>(); typedGnome->name = "gnome";
+    auto typedKde = std::make_shared<FakeBackend>(); typedKde->name = "kde";
+    typedKde->kind = DesktopEnvironmentKind::Kde;
+    auto crossDesktop = makeRegistry(root, "true", "false");
+    policy(crossDesktop, "first").backend = "gnome";
+    policy(crossDesktop, "second").backend = "kde";
+    policy(crossDesktop, "second").desktop = DesktopEnvironmentKind::Kde;
+    DesktopGlobalConfigReconciler typedReconciler({typedGnome, typedKde});
+    report = typedReconciler.reconcile(crossDesktop);
+    require(report.successful(), report.diagnostic().c_str());
+    require(typedGnome->verifies == 1 && typedKde->verifies == 1,
+            "typed desktop binding skipped a valid backend");
+    require(report.resultFor(firstOwner, DesktopEnvironmentKind::Gnome).verified &&
+                report.resultFor(secondOwner, DesktopEnvironmentKind::Kde).verified,
+            "typed routing lost per-policy results");
+    // Same setting name in GNOME and KDE namespaces does not conflict.
+    require(typedGnome->effective.at({"setting"}) == "true" &&
+                typedKde->effective.at({"setting"}) == "false",
+            "cross-desktop same-name settings conflicted");
+
+    // Per-policy isolation survives typed routing: a failed KDE backend must
+    // not contaminate the verified GNOME result.
+    auto routedGnome = std::make_shared<FakeBackend>(); routedGnome->name = "gnome";
+    auto routedKde = std::make_shared<FakeBackend>(); routedKde->name = "kde";
+    routedKde->kind = DesktopEnvironmentKind::Kde;
+    routedKde->failVerify = true;
+    DesktopGlobalConfigReconciler routedReconciler({routedGnome, routedKde});
+    report = routedReconciler.reconcile(crossDesktop);
+    require(!report.successful(), "KDE backend failure was ignored");
+    require(report.resultFor(firstOwner, DesktopEnvironmentKind::Gnome).verified &&
+                !report.resultFor(secondOwner, DesktopEnvironmentKind::Kde).verified,
+            "typed routing broke per-policy isolation");
+
+    // A contribution for a desktop the backend does not serve is a Stage A
+    // failure even when the backend itself would ensure and verify
+    // successfully: no mutation may happen.
+    auto lyingGnome = std::make_shared<FakeBackend>(); lyingGnome->name = "gnome";
+    auto mismatch = makeRegistry(root, "true", "ignored");
+    policy(mismatch, "first").backend = "gnome";
+    policy(mismatch, "first").desktop = DesktopEnvironmentKind::Kde;
+    DesktopGlobalConfigReconciler mismatchBinding({lyingGnome});
+    report = mismatchBinding.reconcile(mismatch);
+    require(!report.requirementsValid,
+            "contribution/backend desktop mismatch accepted");
+    require(report.stageADiagnostic.find(
+                "global desktop contribution/backend desktop mismatch") !=
+                std::string::npos,
+            "mismatch diagnostic missing");
+    require(lyingGnome->ensures.empty() && lyingGnome->verifies == 0,
+            "desktop mismatch still reached backend mutation");
+    require(!report.resultFor(firstOwner, DesktopEnvironmentKind::Kde).verified,
+            "mismatch produced a verified policy result");
+    requireUntouched({lyingGnome});
+
+    // A backend without a canonical desktop identity cannot be registered.
+    auto anonymous = std::make_shared<FakeBackend>();
+    anonymous->kind = DesktopEnvironmentKind::Unknown;
+    DesktopGlobalConfigReconciler unknownDesktop({anonymous});
+    report = unknownDesktop.reconcile(shared);
+    require(!report.requirementsValid, "unknown backend desktop accepted");
+    requireUntouched({anonymous});
+
+    // One canonical desktop cannot be served by two system backends.
+    auto primary = std::make_shared<FakeBackend>(); primary->name = "gnome-primary";
+    auto secondary = std::make_shared<FakeBackend>();
+    secondary->name = "gnome-secondary";
+    DesktopGlobalConfigReconciler duplicateDesktop({primary, secondary});
+    report = duplicateDesktop.reconcile(shared);
+    require(!report.requirementsValid &&
+                report.stageADiagnostic.find(
+                    "duplicate desktop system backend") != std::string::npos,
+            "duplicate desktop backend accepted");
+    requireUntouched({primary, secondary});
+
     auto failures = makeRegistry(root, "one", "two");
     policy(failures, "first").backend = "first";
     policy(failures, "second").desktop = DesktopEnvironmentKind::Kde;
@@ -377,6 +457,13 @@ int main() {
         auto first = std::make_shared<FakeBackend>(); first->name = "first";
         auto second = std::make_shared<FakeBackend>(); second->name = "second";
         auto third = std::make_shared<FakeBackend>(); third->name = "third";
+        second->kind = DesktopEnvironmentKind::Kde;
+        third->kind = DesktopEnvironmentKind::Kde;
+        // Only one registered backend may claim a canonical desktop: the KDE
+        // policy uses "second" except in the "multiple" iteration, where it
+        // moves to "third", so the unused backend must serve another desktop.
+        if (failure == "multiple") second->kind = DesktopEnvironmentKind::Xfce;
+        else third->kind = DesktopEnvironmentKind::Xfce;
         first->failEnsure = failure == "ensure" || failure == "multiple";
         first->failVerify = failure == "verify";
         policy(failures, "second").backend = failure == "multiple" ? "third" : "second";
@@ -387,8 +474,11 @@ int main() {
         require(!failureReport.successful(), "backend failure accepted");
         require(!failureReport.backends.at("first").verified,
                 "failed backend reported verified");
-        require(error.find("first:") != std::string::npos,
+        require(!failureReport.requirementsValid ||
+                    error.find("first:") != std::string::npos,
                 "first backend diagnostic missing");
+        require(failureReport.requirementsValid,
+                "valid backend registration was rejected");
         if (failure == "multiple") {
             require(error.find("third: verifyManagedSettings failed") != std::string::npos &&
                         error.find('\n') != std::string::npos,

@@ -49,12 +49,18 @@ public:
         std::string& error) = 0;
 };
 
+// Each backend is bound to exactly one canonical DesktopEnvironmentKind;
+// desktop() is the typed source of truth, backendName() is only a stable
+// identifier for diagnostics, lookup, and audit.
+//
 // A backend ensures only the supplied active requirements. Missing settings
 // are unmanaged and must not be removed, reset, or otherwise changed. Verify
 // must inspect effective protected system state, not merely a FIC fragment.
 class DesktopSystemBackend {
 public:
     virtual ~DesktopSystemBackend() = default;
+
+    virtual DesktopEnvironmentKind desktop() const = 0;
     virtual std::string backendName() const = 0;
     virtual bool ensureManagedSettings(
         const DesktopManagedSettings& required,
