@@ -12,6 +12,7 @@
 #include <chrono>
 #include <csignal>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <string>
 #include <sys/prctl.h>
@@ -22,6 +23,17 @@
 
 namespace {
 namespace fs = std::filesystem;
+
+// Restores the process umask even when an assert fails.
+class ScopedUmask {
+public:
+    explicit ScopedUmask(mode_t value) : previous_(::umask(value)) {}
+    ~ScopedUmask() { ::umask(previous_); }
+    ScopedUmask(const ScopedUmask&) = delete;
+    ScopedUmask& operator=(const ScopedUmask&) = delete;
+private:
+    mode_t previous_;
+};
 
 void emit(int fd, std::size_t bytes, char value) {
     const std::string chunk(4096, value);
@@ -139,6 +151,16 @@ int main(int argc, char** argv) {
     if (argc == 5 && std::string(argv[1]) == "--fixture") {
         return fixture(argv[2], std::stoull(argv[3]), argv[4]);
     }
+    if (argc == 3 && std::string(argv[1]) == "--umask-fixture") {
+        // Fixture child: create a file with mode 0666 under the requested
+        // path; the resulting mode reveals whatever umask the executor gave
+        // this child (inherited or overridden via childUmask).
+        const int fd = ::open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        assert(fd >= 0);
+        assert(::write(fd, "x", 1) == 1);
+        assert(::close(fd) == 0);
+        return 0;
+    }
     // Adopt orphan fixtures so group termination is proven by wait status,
     // without depending on the host's PID 1 reaping behavior.
     assert(::prctl(PR_SET_CHILD_SUBREAPER, 1) == 0);
@@ -159,6 +181,42 @@ int main(int argc, char** argv) {
     for (const bool verified : {false, true}) {
         ProcessOptions options;
         options.timeout = std::chrono::seconds(10);
+
+        // childUmask applies to the child only; the parent umask is untouched.
+        {
+            ScopedUmask guard(0027);
+            const fs::path maskProbe = root / "umask-probe";
+            ProcessOptions maskedOptions = options;
+            maskedOptions.childUmask = 0022;
+            const std::vector<std::string> maskArgs = {
+                "--umask-fixture", (maskProbe.string() + std::to_string(verified))};
+            const auto maskedResult = verified
+                ? VerifiedProcessExecutor::execute(executable.string(), maskArgs, maskedOptions)
+                : ProcessExecutor::execute(executable.string(), maskArgs, maskedOptions);
+            assert(maskedResult.success());
+            struct stat info {};
+            assert(::stat((maskProbe.string() + std::to_string(verified)).c_str(),
+                          &info) == 0);
+            // child umask 0022: 0666 & ~0022 = 0644. A 0027 child umask would
+            // have produced 0640; the inherited daemon mask would too.
+            assert((info.st_mode & 0777) == 0644);
+            assert(::umask(0) == 0027);
+        }
+        // Without childUmask the child keeps the inherited umask.
+        {
+            ScopedUmask guard(0027);
+            const fs::path probe = root / "inherit-probe";
+            const std::vector<std::string> inheritArgs = {
+                "--umask-fixture", probe.string()};
+            const auto inherited = verified
+                ? VerifiedProcessExecutor::execute(executable.string(), inheritArgs, options)
+                : ProcessExecutor::execute(executable.string(), inheritArgs, options);
+            assert(inherited.success());
+            struct stat info {};
+            assert(::stat(probe.c_str(), &info) == 0);
+            assert((info.st_mode & 0777) == 0640); // 0666 & ~0027
+            assert(::umask(0) == 0027);
+        }
         const auto pidFile = root / "descendant.pid";
         const auto run = [&](const std::string& mode, std::size_t bytes) {
             const auto start = std::chrono::steady_clock::now();

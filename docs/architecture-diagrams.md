@@ -1489,7 +1489,16 @@ then requires exact `gsettings get` values and `gsettings writable=false` for
 all four screen-lock keys — `idle-delay`, `lock-enabled`, `lock-delay`, and
 `lockdown/disable-lock-screen=false` — under an explicit FIC profile. Without
 `disable-lock-screen=false` GNOME Shell may refuse to lock the screen at all,
-so the fourth key is part of the effective screen-lock proof. Existing sessions may
+so the fourth key is part of the effective screen-lock proof. The proof also
+covers filesystem accessibility: FIC-created dconf directories are explicitly
+forced to `0755` (fd-based `fchmod`) so the `fic.service UMask=0027` never
+produces `0750` public dconf directories; `dconf update` runs with an isolated
+child umask `0022` via `ProcessOptions::childUmask` (the parent umask is never
+touched); foreign parent directories are validated (trusted owner, no
+group/world write, other-execute) and never re-permissioned — an inaccessible
+foreign parent fails closed; and the profile plus compiled `/etc/dconf/db/fic`
+must stay world-readable regular root-owned files, so root-only `gsettings`
+success cannot mask state that ordinary desktop users cannot read. Existing sessions may
 need relogin to load a newly changed profile, so their separate session-runtime
 convergence (which also enforces `disable-lock-screen=false`) remains best
 effort. Rollback, provenance, and stale cleanup remain

@@ -112,8 +112,9 @@ bool relativeComponents(const std::filesystem::path& path,
 bool openDirectory(const std::filesystem::path& path, bool create,
                    const GnomeSystemBackendOptions& options,
                    UniqueFd& result, std::string& error,
-                   bool* missing = nullptr) {
+                   bool* missing = nullptr, bool* created = nullptr) {
     if (missing != nullptr) *missing = false;
+    if (created != nullptr) *created = false;
     std::vector<std::string> components;
     if (!relativeComponents(path, options, components, error)) return false;
     UniqueFd current(::open(options.trustedRoot.c_str(),
@@ -128,6 +129,7 @@ bool openDirectory(const std::filesystem::path& path, bool create,
     std::filesystem::path traversed = options.trustedRoot;
     for (const std::string& component : components) {
         traversed /= component;
+        bool createdHere = false;
         int next = ::openat(current.get(), component.c_str(),
                             O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         if (next < 0 && errno == ENOENT && create) {
@@ -137,6 +139,7 @@ bool openDirectory(const std::filesystem::path& path, bool create,
                     ": " + systemError();
                 return false;
             }
+            createdHere = true;
             next = ::openat(current.get(), component.c_str(),
                             O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         }
@@ -153,9 +156,67 @@ bool openDirectory(const std::filesystem::path& path, bool create,
         UniqueFd opened(next);
         if (!validateDirectoryFd(opened.get(), traversed, options, error))
             return false;
+        if (createdHere) {
+            // The daemon umask (fic.service UMask=0027) would otherwise leave
+            // FIC-created public dconf directories at 0750, hiding system dconf
+            // state from ordinary desktop users. Deterministic mode is forced
+            // through the already-validated directory fd; no path-based chmod.
+            if (::fchmod(opened.get(), 0755) != 0) {
+                error = "cannot set mode on created directory " +
+                    traversed.string() + ": " + systemError();
+                return false;
+            }
+        }
+        if (created != nullptr && createdHere) *created = true;
         current = std::move(opened);
     }
     result = std::move(current);
+    return true;
+}
+
+// Ordinary GNOME users must be able to traverse (and read within) the system
+// dconf directories FIC relies on. Existing foreign directories are only
+// validated, never re-permissioned: an unfixable parent fails closed.
+bool directoryAccessibleToOrdinaryUsers(
+    const std::filesystem::path& path,
+    const GnomeSystemBackendOptions& options, std::string& error) {
+    UniqueFd dir;
+    if (!openDirectory(path, false, options, dir, error)) return false;
+    struct stat info {};
+    if (::fstat(dir.get(), &info) != 0) {
+        error = "cannot inspect GNOME dconf directory " + path.string() + ": " +
+            systemError();
+        return false;
+    }
+    if ((info.st_mode & S_IXOTH) == 0) {
+        error = "GNOME dconf directory is not traversable by ordinary users: " +
+            path.string();
+        return false;
+    }
+    return true;
+}
+
+// Trusted, non-world/group-writable, ordinary-user-readable regular file.
+bool fileAccessibleToOrdinaryUsers(const std::filesystem::path& path,
+                                   const GnomeSystemBackendOptions& options,
+                                   std::string& error) {
+    UniqueFd parent;
+    if (!openDirectory(path.parent_path(), false, options, parent, error))
+        return false;
+    struct stat info {};
+    if (::fstatat(parent.get(), path.filename().c_str(), &info,
+                  AT_SYMLINK_NOFOLLOW) != 0) {
+        error = "cannot inspect GNOME dconf file " + path.string() + ": " +
+            systemError();
+        return false;
+    }
+    if (!S_ISREG(info.st_mode) || info.st_uid != options.trustedOwner ||
+        (info.st_mode & (S_IWGRP | S_IWOTH)) != 0 ||
+        (info.st_mode & S_IROTH) == 0) {
+        error = "GNOME dconf file is not readable by ordinary users: " +
+            path.string();
+        return false;
+    }
     return true;
 }
 
@@ -395,10 +456,17 @@ bool parseProfileEntry(const std::string& raw, ProfileEntry& entry,
     const std::string value = match[2].str();
     static const std::regex databaseName(
         "[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)*");
-    static const std::regex filePath("(/[A-Za-z0-9_.-]+)+");
-    const bool validValue = type == "file-db"
-        ? std::regex_match(value, filePath)
-        : std::regex_match(value, databaseName);
+    // dconf accepts a non-empty path after file-db:; FIC requires an absolute
+    // Unix path without control characters but does not restrict the charset
+    // to a narrow allowlist (paths with '+', '@', '=' etc. are valid).
+    bool validValue = false;
+    if (type == "file-db") {
+        validValue = value.size() > 1 && value.front() == '/' &&
+            std::none_of(value.begin(), value.end(),
+                         [](unsigned char ch) { return ch < 0x20 || ch == 0x7f; });
+    } else {
+        validValue = std::regex_match(value, databaseName);
+    }
     if (!validValue) {
         error = "malformed dconf profile entry: " + raw;
         return false;
@@ -620,11 +688,24 @@ bool GnomeSystemBackend::ensureManagedSettings(
     }
 
     UniqueFd ignored;
-    if (!openDirectory(options_.profilePath.parent_path(), true, options_,
-                       ignored, error) ||
+    const auto profileDir = options_.profilePath.parent_path();
+    const auto keyfileDir = keyfilePath.parent_path();
+    const auto lockfileDir = lockfilePath.parent_path();
+    if (!openDirectory(profileDir, true, options_, ignored, error) ||
         !openDirectory(options_.databaseRoot, true, options_, ignored, error) ||
-        !openDirectory(keyfilePath.parent_path(), true, options_, ignored, error) ||
-        !openDirectory(lockfilePath.parent_path(), true, options_, ignored, error))
+        !openDirectory(keyfileDir, true, options_, ignored, error) ||
+        !openDirectory(lockfileDir, true, options_, ignored, error))
+        return false;
+
+    // Persistent state is only usable if ordinary desktop users can actually
+    // reach it. Existing foreign parent directories are validated, never
+    // re-permissioned; an inaccessible one fails closed. FIC-created public
+    // directories were forced to 0755 above.
+    if (!directoryAccessibleToOrdinaryUsers(profileDir, options_, error) ||
+        !directoryAccessibleToOrdinaryUsers(options_.databaseRoot, options_,
+                                            error) ||
+        !directoryAccessibleToOrdinaryUsers(keyfileDir, options_, error) ||
+        !directoryAccessibleToOrdinaryUsers(lockfileDir, options_, error))
         return false;
 
     const bool profileChanged = !profileExists || profileText != finalProfile;
@@ -657,12 +738,25 @@ bool GnomeSystemBackend::ensureManagedSettings(
         }
     }
     if (updateNeeded) {
+        // dconf update must not inherit the daemon's restrictive umask
+        // (fic.service UMask=0027): the compiled database is world-readable
+        // system state. The mask applies to the child process only.
+        ProcessOptions updateOptions = commandOptions();
+        updateOptions.childUmask = 0022;
         const ProcessResult result = dependencies_.execute(
-            dconf, {"update"}, commandOptions());
+            dconf, {"update"}, updateOptions);
         if (!result.success()) {
             error = processFailure("dconf update", result);
             return false;
         }
+    }
+    // The compiled database is what user sessions actually read; root-only
+    // readability or a restrictive compiled mode hides the policy from
+    // ordinary users and must not count as verified.
+    if (!fileAccessibleToOrdinaryUsers(compiledPath, options_, error)) {
+        error = "compiled GNOME FIC dconf database is not readable by ordinary "
+            "users: " + error;
+        return false;
     }
     if (!verifyWithExecutable(required, gsettings, error)) {
         error = "GNOME state is not effective after dconf update: " + error;
@@ -682,6 +776,19 @@ bool GnomeSystemBackend::verifyManagedSettings(
             return false;
         }
     }
+    // Required persistent state includes usable permissions, not only content:
+    // the compiled database and the profile must stay readable by ordinary
+    // users, and the parent paths must stay traversable. A later permission
+    // regression therefore fails this independent verify pass too.
+    const auto compiledPath = options_.databaseRoot / options_.databaseName;
+    const auto profileDir = options_.profilePath.parent_path();
+    if (!directoryAccessibleToOrdinaryUsers(profileDir, options_, error) ||
+        !directoryAccessibleToOrdinaryUsers(options_.databaseRoot, options_,
+                                            error))
+        return false;
+    if (!fileAccessibleToOrdinaryUsers(options_.profilePath, options_, error) ||
+        !fileAccessibleToOrdinaryUsers(compiledPath, options_, error))
+        return false;
     std::filesystem::path gsettings;
     if (!dependencies_.resolveExecutable(fic::platform::ExecutableId::Gsettings,
                                          gsettings, error)) {

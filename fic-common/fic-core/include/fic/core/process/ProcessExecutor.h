@@ -34,6 +34,10 @@ struct ProcessOptions {
     std::string workingDirectory;
     // Shared stdout + stderr capture budget. Zero permits only empty output.
     std::size_t maxOutputBytes = 4 * 1024 * 1024;
+    // File mode creation mask applied in the child only, after fork() and
+    // before exec. The parent (daemon) umask is never modified. Unset keeps
+    // the inherited umask and the previous executor behavior.
+    std::optional<mode_t> childUmask;
 };
 
 class ProcessExecutor {

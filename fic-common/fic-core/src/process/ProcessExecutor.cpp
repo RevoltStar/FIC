@@ -10,6 +10,7 @@
 #include <functional>
 #include <fcntl.h>
 #include <grp.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -118,6 +119,10 @@ ProcessResult ProcessExecutor::executeImpl(
         if (!options.workingDirectory.empty() && ::chdir(options.workingDirectory.c_str()) != 0) {
             write_child_error("chdir() failed");
             _exit(126);
+        }
+
+        if (options.childUmask.has_value()) {
+            ::umask(options.childUmask.value());
         }
 
         if (options.gid.has_value()) {

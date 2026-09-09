@@ -53,6 +53,11 @@ struct FakeCommands {
     std::map<std::string, bool> writable;
     bool repairOnUpdate = false;
     std::vector<ProcessOptions> options;
+    // Test hook standing in for the real dconf compiler: a successful update
+    // materialises the compiled database with a controllable mode.
+    fs::path compiledPath;
+    mode_t compiledMode = 0644;
+    bool createCompiledOnUpdate = true;
 
     static std::string physical(const std::string& schema,
                                 const std::string& key) {
@@ -86,10 +91,17 @@ struct FakeCommands {
                     if (!updateOk) {
                         result.exitCode = 1;
                         result.standardError = "compile failed";
-                    } else if (repairOnUpdate) {
-                        for (const auto& [key, value] : requirements()) {
-                            values[key.setting] = value;
-                            writable[key.setting] = false;
+                    } else {
+                        if (createCompiledOnUpdate && !compiledPath.empty()) {
+                            std::ofstream(compiledPath, std::ios::binary)
+                                << "compiled";
+                            ::chmod(compiledPath.c_str(), compiledMode);
+                        }
+                        if (repairOnUpdate) {
+                            for (const auto& [key, value] : requirements()) {
+                                values[key.setting] = value;
+                                writable[key.setting] = false;
+                            }
                         }
                     }
                     return result;
@@ -116,12 +128,23 @@ struct Fixture {
             ("fic-gnome-system-test-" + std::to_string(::getpid()) + "-" +
              std::to_string(sequence++));
         fs::create_directories(root);
-        fs::permissions(root, fs::perms::owner_all);
+        // Plays the role of the production trusted root (/etc): traversable
+        // and readable by ordinary users, but never group/world writable
+        // (validateDirectoryFd rejects that). The mode is forced explicitly
+        // because fs::create_directories honours the process umask; under the
+        // umask=0027 regression scenario an inherited 0750 root would mask the
+        // bug this suite must detect.
+        fs::permissions(root,
+                        fs::perms{fs::perms::owner_all | fs::perms::group_read |
+                                  fs::perms::group_exec | fs::perms::others_read |
+                                  fs::perms::others_exec},
+                        fs::perm_options::replace);
         options.trustedRoot = root;
         options.profilePath = root / "dconf/profile/user";
         options.databaseRoot = root / "dconf/db";
         options.trustedOwner = ::geteuid();
         options.trustedGroup = ::getegid();
+        commands.compiledPath = options.databaseRoot / "fic";
         for (const auto& [key, value] : requirements()) {
             commands.values[key.setting] = value;
             commands.writable[key.setting] = false;
@@ -134,6 +157,23 @@ struct Fixture {
         return GnomeSystemBackend(commands.dependencies(), options);
     }
 };
+
+// Restores the process umask even when a require() throws.
+class ScopedUmask {
+public:
+    explicit ScopedUmask(mode_t value) : previous_(::umask(value)) {}
+    ~ScopedUmask() { ::umask(previous_); }
+    ScopedUmask(const ScopedUmask&) = delete;
+    ScopedUmask& operator=(const ScopedUmask&) = delete;
+private:
+    mode_t previous_;
+};
+
+mode_t fileMode(const fs::path& path) {
+    struct stat info {};
+    require(::stat(path.c_str(), &info) == 0, "stat failed for mode probe");
+    return info.st_mode & 0777;
+}
 
 void testInitialCreationAndVerification() {
     Fixture fixture;
@@ -297,6 +337,8 @@ void testCommandAndEffectiveFailures() {
         Fixture fixture;
         write(fixture.options.profilePath,
               "user-db:user\nsystem-db:fic\n");
+        write(fixture.commands.compiledPath, "compiled");
+        fixture.commands.createCompiledOnUpdate = false;
         fixture.commands.values["/org/gnome/desktop/session/idle-delay"] =
             "uint32 1";
         auto backend = fixture.backend();
@@ -309,6 +351,8 @@ void testCommandAndEffectiveFailures() {
         Fixture fixture;
         write(fixture.options.profilePath,
               "user-db:user\nsystem-db:fic\n");
+        write(fixture.commands.compiledPath, "compiled");
+        fixture.commands.createCompiledOnUpdate = false;
         fixture.commands.writable[
             "/org/gnome/desktop/screensaver/lock-enabled"] = true;
         auto backend = fixture.backend();
@@ -321,6 +365,8 @@ void testCommandAndEffectiveFailures() {
         Fixture fixture;
         write(fixture.options.profilePath,
               "user-db:user\nsystem-db:fic\n");
+        write(fixture.commands.compiledPath, "compiled");
+        fixture.commands.createCompiledOnUpdate = false;
         fixture.commands.values[
             "/org/gnome/desktop/lockdown/disable-lock-screen"] = "true";
         auto backend = fixture.backend();
@@ -333,6 +379,8 @@ void testCommandAndEffectiveFailures() {
         Fixture fixture;
         write(fixture.options.profilePath,
               "user-db:user\nsystem-db:fic\n");
+        write(fixture.commands.compiledPath, "compiled");
+        fixture.commands.createCompiledOnUpdate = false;
         fixture.commands.writable[
             "/org/gnome/desktop/lockdown/disable-lock-screen"] = true;
         auto backend = fixture.backend();
@@ -345,6 +393,8 @@ void testCommandAndEffectiveFailures() {
         Fixture fixture;
         write(fixture.options.profilePath,
               "user-db:user\nsystem-db:fic\n");
+        write(fixture.commands.compiledPath, "compiled");
+        fixture.commands.createCompiledOnUpdate = false;
         auto backend = fixture.backend();
         std::string error;
         require(backend.verifyManagedSettings(requirements(), error), error);
@@ -491,6 +541,145 @@ void testProfileCompatibility() {
     }
 }
 
+void testUmaskCreatesTraversableFicDirectories() {
+    // Production condition: fic.service runs with UMask=0027. FIC-created
+    // public dconf directories must still end up user-traversable (0755).
+    ScopedUmask guard(0027);
+    Fixture fixture;
+    auto backend = fixture.backend();
+    std::string error;
+    require(backend.ensureManagedSettings(requirements(), error), error);
+    require(::umask(0) == 0027, "test umask was not restored by the guard probe");
+    const fs::path dconf = fixture.root / "dconf";
+    require(fileMode(dconf) == 0755,
+            "FIC-created dconf directory lost ordinary-user bits to umask");
+    require(fileMode(dconf / "profile") == 0755,
+            "FIC-created profile directory lost ordinary-user bits to umask");
+    require(fileMode(fixture.options.databaseRoot) == 0755,
+            "FIC-created db directory lost ordinary-user bits to umask");
+    require(fileMode(fixture.options.databaseRoot / "fic.d") == 0755,
+            "FIC-created fic.d directory lost ordinary-user bits to umask");
+    require(fileMode(fixture.options.databaseRoot / "fic.d/locks") == 0755,
+            "FIC-created locks directory lost ordinary-user bits to umask");
+    require(fileMode(fixture.options.profilePath) == 0644,
+            "FIC-written profile file is not 0644 under restrictive umask");
+    require(fileMode(fixture.commands.compiledPath) == 0644,
+            "compiled database created without ordinary-user read bit");
+}
+
+void testForeignParentInaccessibleFailsClosed() {
+    // Existing foreign parent 0750: ordinary users cannot traverse to the
+    // compiled database. FIC must fail closed and must not chmod the
+    // foreign directory.
+    Fixture fixture;
+    fs::create_directories(fixture.options.databaseRoot);
+    fs::permissions(fixture.options.databaseRoot,
+                    fs::perms{fs::perms::owner_all | fs::perms::group_read |
+                              fs::perms::group_exec});
+    const fs::path keyfileDir = fixture.options.databaseRoot / "fic.d";
+    fs::create_directories(keyfileDir);
+    fs::permissions(keyfileDir,
+                    fs::perms{fs::perms::owner_all | fs::perms::group_read |
+                              fs::perms::group_exec | fs::perms::others_read |
+                              fs::perms::others_exec});
+    auto backend = fixture.backend();
+    std::string error;
+    require(!backend.ensureManagedSettings(requirements(), error) &&
+                error.find("not traversable by ordinary users") !=
+                    std::string::npos,
+            "inaccessible foreign dconf parent did not fail closed");
+    require(fileMode(fixture.options.databaseRoot) == 0750,
+            "FIC re-permissioned an existing foreign parent directory");
+    require(!fs::exists(fixture.keyfile()),
+            "FIC wrote managed state under an inaccessible foreign parent");
+}
+
+void testForeignParentTraversableAccepted() {
+    // 0751 is acceptable: other-execute is sufficient traversal.
+    Fixture fixture;
+    fs::create_directories(fixture.options.databaseRoot);
+    fs::permissions(fixture.options.databaseRoot,
+                    fs::perms{fs::perms::owner_all | fs::perms::group_read |
+                              fs::perms::group_exec | fs::perms::others_exec});
+    auto backend = fixture.backend();
+    std::string error;
+    require(backend.ensureManagedSettings(requirements(), error), error);
+    require(fileMode(fixture.options.databaseRoot) == 0751,
+            "FIC re-permissioned an existing traversable foreign parent");
+}
+
+void testCompiledDatabaseUnreadableFailsVerification() {
+    {
+        Fixture fixture;
+        write(fixture.options.profilePath, "user-db:user\nsystem-db:fic\n");
+        write(fixture.commands.compiledPath, "compiled");
+        ::chmod(fixture.commands.compiledPath.c_str(), 0640);
+        fixture.commands.createCompiledOnUpdate = false;
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.verifyManagedSettings(requirements(), error) &&
+                    error.find("not readable by ordinary users") !=
+                        std::string::npos,
+                "compiled database 0640 passed ordinary-user verification");
+    }
+    {
+        Fixture fixture;
+        write(fixture.options.profilePath, "user-db:user\nsystem-db:fic\n");
+        write(fixture.commands.compiledPath, "compiled");
+        ::chmod(fixture.commands.compiledPath.c_str(), 0600);
+        fixture.commands.createCompiledOnUpdate = false;
+        auto backend = fixture.backend();
+        std::string error;
+        require(!backend.verifyManagedSettings(requirements(), error),
+                "compiled database 0600 passed ordinary-user verification");
+    }
+}
+
+void testProfileUnreadableFailsVerification() {
+    Fixture fixture;
+    {
+        auto backend = fixture.backend();
+        std::string error;
+        require(backend.ensureManagedSettings(requirements(), error), error);
+    }
+    ::chmod(fixture.options.profilePath.c_str(), 0640);
+    auto backend = fixture.backend();
+    std::string error;
+    require(!backend.verifyManagedSettings(requirements(), error) &&
+                error.find("not readable by ordinary users") != std::string::npos,
+            "unreadable profile passed ordinary-user verification");
+    require(fileMode(fixture.options.profilePath) == 0640,
+            "verify re-permissioned the managed profile file");
+}
+
+void testDconfUpdateUsesChildUmask() {
+    Fixture fixture;
+    auto backend = fixture.backend();
+    std::string error;
+    require(backend.ensureManagedSettings(requirements(), error), error);
+    require(!fixture.commands.options.empty(), "no commands were recorded");
+    const ProcessOptions updateOptions = fixture.commands.options.front();
+    require(updateOptions.childUmask.has_value() &&
+                updateOptions.childUmask.value() == 0022,
+            "dconf update did not receive an isolated child umask 0022");
+    require(fixture.commands.options.back().childUmask.has_value() == false,
+            "gsettings verification must not set a child umask");
+}
+
+void testFileDbPathCharsetCompatibility() {
+    // Upstream dconf accepts arbitrary non-empty paths after file-db:.
+    Fixture fixture;
+    write(fixture.options.profilePath,
+          "user-db:user\nfile-db:/etc/site+db@company=v2/profile.db\n");
+    auto backend = fixture.backend();
+    std::string error;
+    require(backend.ensureManagedSettings(requirements(), error), error);
+    require(read(fixture.options.profilePath) ==
+                "user-db:user\nsystem-db:fic\n"
+                "file-db:/etc/site+db@company=v2/profile.db\n",
+            "valid file-db path with ordinary filename characters was rejected");
+}
+
 } // namespace
 
 int main() {
@@ -503,6 +692,13 @@ int main() {
         testUnknownKeyFailsBeforeMutation();
         testEmptyRequirementsDoNothing();
         testProfileCompatibility();
+        testUmaskCreatesTraversableFicDirectories();
+        testForeignParentInaccessibleFailsClosed();
+        testForeignParentTraversableAccepted();
+        testCompiledDatabaseUnreadableFailsVerification();
+        testProfileUnreadableFailsVerification();
+        testDconfUpdateUsesChildUmask();
+        testFileDbPathCharsetCompatibility();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
