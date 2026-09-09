@@ -44,7 +44,9 @@ EnforcementMode SessionAwareDesktopEnvironmentPolicy::enforcementMode(
 }
 
 SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
-    const ClassifiedGraphicalSession& session)
+    const ClassifiedGraphicalSession& session,
+    bool globalEnforcementVerified,
+    const std::string& globalDiagnostic)
 {
     std::string error;
     const SessionApplicability applicability =
@@ -56,15 +58,15 @@ SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
         return {SessionReconcileStatus::Unsupported, std::move(error)};
     }
     const EnforcementMode mode = modeFor(session.desktop);
+    if (mode == EnforcementMode::MandatoryGlobal &&
+        !globalEnforcementVerified) {
+        return {SessionReconcileStatus::GlobalEnforcementFailed,
+                globalDiagnostic};
+    }
     if (!prepare(error)) {
         return {mode == EnforcementMode::MandatoryGlobal
                     ? SessionReconcileStatus::GlobalEnforcementFailed
                     : SessionReconcileStatus::SessionOnlyFailed,
-                std::move(error)};
-    }
-    if (mode == EnforcementMode::MandatoryGlobal &&
-        !ensureGlobalState(session.desktop, error)) {
-        return {SessionReconcileStatus::GlobalEnforcementFailed,
                 std::move(error)};
     }
     if (!reconcileControlledSession(session, error)) {
@@ -77,43 +79,6 @@ SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
                 ? SessionReconcileStatus::MandatoryGlobalConverged
                 : SessionReconcileStatus::SessionOnlyConverged,
             {}};
-}
-
-bool SessionAwareDesktopEnvironmentPolicy::ensureGlobalState(
-    DesktopEnvironmentKind desktop,
-    std::string& error)
-{
-    if (!applyGlobalValue(desktop, error)) return false;
-    log("global value: OK", logLevel::DEBUG);
-    if (!applyGlobalProtection(desktop, error)) return false;
-    log("global protection: OK", logLevel::DEBUG);
-    if (!verifyGlobalState(desktop, error)) return false;
-    log("global verify: OK", logLevel::DEBUG);
-    return true;
-}
-
-bool SessionAwareDesktopEnvironmentPolicy::applyGlobalValue(
-    DesktopEnvironmentKind,
-    std::string& error)
-{
-    error = "mandatory global value enforcement is not implemented";
-    return false;
-}
-
-bool SessionAwareDesktopEnvironmentPolicy::applyGlobalProtection(
-    DesktopEnvironmentKind,
-    std::string& error)
-{
-    error = "mandatory global protection is not implemented";
-    return false;
-}
-
-bool SessionAwareDesktopEnvironmentPolicy::verifyGlobalState(
-    DesktopEnvironmentKind,
-    std::string& error)
-{
-    error = "mandatory global verification is not implemented";
-    return false;
 }
 
 bool SessionAwareDesktopEnvironmentPolicy::apply()
@@ -157,17 +122,9 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
                     DesktopEnvironmentBackend::kindName(desktop) +
                     ": mode=mandatory-global",
                 logLevel::DEBUG);
-            std::string globalError;
-            const bool verified = ensureGlobalState(desktop, globalError);
-            if (!verified) {
-                log(std::string("Mandatory global enforcement failed for ") +
-                        DesktopEnvironmentBackend::kindName(desktop) + ": " +
-                        globalError,
-                    logLevel::ERROR);
-                success = false;
-            } else {
-                globallyEnforced.insert(desktop);
-            }
+            // The daemon's DesktopGlobalConfigReconciler has already ensured
+            // and verified all active global requirements before policy apply.
+            globallyEnforced.insert(desktop);
         }
     }
 

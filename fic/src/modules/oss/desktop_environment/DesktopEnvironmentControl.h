@@ -80,7 +80,9 @@ public:
     virtual EnforcementMode enforcementMode(
         DesktopEnvironmentKind desktop) const = 0;
     virtual SessionReconcileResult reconcileSession(
-        const ClassifiedGraphicalSession& session) = 0;
+        const ClassifiedGraphicalSession& session,
+        bool globalEnforcementVerified,
+        const std::string& globalDiagnostic) = 0;
 };
 
 class SessionInventoryCompliancePolicy {

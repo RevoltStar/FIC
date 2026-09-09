@@ -22,7 +22,9 @@ public:
     EnforcementMode enforcementMode(
         DesktopEnvironmentKind desktop) const override;
     SessionReconcileResult reconcileSession(
-        const ClassifiedGraphicalSession& session) override;
+        const ClassifiedGraphicalSession& session,
+        bool globalEnforcementVerified,
+        const std::string& globalDiagnostic) override;
     std::vector<PolicyCapability> capabilities() const override {
         return {PolicyCapability::SessionAware};
     }
@@ -31,23 +33,11 @@ protected:
     virtual bool prepare(std::string& error) = 0;
     virtual bool relevantTo(DesktopEnvironmentKind desktop) const = 0;
     virtual EnforcementMode modeFor(DesktopEnvironmentKind desktop) const = 0;
-    virtual bool applyGlobalValue(
-        DesktopEnvironmentKind desktop,
-        std::string& error);
-    virtual bool applyGlobalProtection(
-        DesktopEnvironmentKind desktop,
-        std::string& error);
-    virtual bool verifyGlobalState(
-        DesktopEnvironmentKind desktop,
-        std::string& error);
     virtual bool reconcileControlledSession(
         const ClassifiedGraphicalSession& session,
         std::string& error) = 0;
 
 private:
-    bool ensureGlobalState(
-        DesktopEnvironmentKind desktop,
-        std::string& error);
     ControlledDesktopEnvironmentScope& scope_;
     std::shared_ptr<GraphicalSessionInventory> inventory_;
 };

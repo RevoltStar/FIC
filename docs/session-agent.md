@@ -107,11 +107,11 @@ XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
 a dedicated daemon-side backend is implemented. These existing backends are
 classified `SessionOnly`: none is claimed as `MandatoryGlobal`, because no
 implemented system lock/kiosk mechanism currently proves precedence over user
-configuration. A future `MandatoryGlobal` backend must separately apply the
-global value, apply protection/immutability, and verify persistent effective
-state. The same value -> protection -> verification sequence runs both during
-normal policy apply and targeted `session_ready` reconciliation, before the
-current session is converged. Successful authoritative global enforcement
+configuration. A future `MandatoryGlobal` `DesktopSystemBackend` must ensure
+the value and protection/immutability, then verify persistent effective state.
+The same backend-driven ensure -> verification sequence runs both during normal
+policy apply and targeted `session_ready` reconciliation, before the current
+session is converged. Successful authoritative global enforcement
 makes an optional current-session convergence failure a warning; a
 `SessionOnly` failure remains fatal for that operation. Unsupported controlled
 desktops and failures before global verification remain errors.
@@ -149,8 +149,9 @@ Rollback, provenance, baseline restoration, uninstall cleanup, and purge
 semantics are outside this contract.
 
 No GNOME, KDE, XFCE, or FLY system backend is registered yet, so the production
-policies below remain session-only. This declarative lifecycle remains separate
-from policy-level `ensureGlobalState()`.
+policies below remain session-only. `DesktopSystemBackend` is the only global
+enforcement mechanism: policies describe requirements and have no parallel
+value, protection, or verification hooks.
 
 `OSS/disable_kde_lock_screen_media_controls` is applicable only to controlled
 KDE sessions. A successfully identified non-KDE desktop is `NotApplicable`.
@@ -164,12 +165,13 @@ policy apply commands can succeed.
 Startup/explicit/periodic apply continues to enumerate existing sessions and
 reconciles declarative FIC-owned global desktop state after rebuilding the
 registry. Config mutations do the same immediately after a successful rebuild.
-A later `session_ready` performs only targeted enabled `SessionAwarePolicy`
-reconciliation plus a full-inventory compliance check; it does not re-run all
-OSS policies. For a future `MandatoryGlobal` policy, that targeted operation
-does re-ensure and verify the policy's own global state before converging the
-new session. Runtime reconciliation diagnostics do not rewrite the historical
-result of an earlier apply operation.
+A later `session_ready` performs a full-inventory compliance check, runs the
+same registry-wide `DesktopGlobalConfigReconciler`, then invokes only targeted
+enabled `SessionAwarePolicy` session convergence; it does not re-run all OSS
+policies. A failed global backend pass prevents runtime convergence for future
+`MandatoryGlobal` policies, while `SessionOnly` policies remain independent.
+Runtime reconciliation diagnostics do not rewrite the historical result of an
+earlier apply operation.
 
 The session-event listener is mandatory startup infrastructure. `fic.service`
 remains `Type=notify`, `NotifyAccess=main`, and `TimeoutStartSec=600s`;

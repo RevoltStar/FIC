@@ -1448,8 +1448,10 @@ peer cannot block the daemon indefinitely.
 All currently implemented screen-lock and KDE media-control backends are
 `SessionOnly`. `MandatoryGlobal` is reserved for a backend which applies the
 machine-wide value, installs authoritative lock/immutability protection, and
-verifies persistent effective state. Normal apply and targeted `session_ready`
-share that exact global sequence before session convergence. Once authoritative
+verifies persistent effective state. `DesktopSystemBackend` is the sole global
+enforcement path; policies only contribute requirements. Normal apply and
+targeted `session_ready` invoke the same reconciler before session convergence.
+Once authoritative
 global state is verified, a runtime convergence failure is a warning;
 `SessionOnly` runtime failure, unsupported scope, or global verification
 failure is an error. Runtime compliance diagnostics do not change historical

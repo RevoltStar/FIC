@@ -903,6 +903,7 @@ bool validate_session_ready(
 
 void reconcile_session_ready(
     PolicyRegistry& registry,
+    DesktopGlobalConfigReconciler& desktopGlobalConfig,
     GraphicalSessionInventory& inventory,
     const ClassifiedGraphicalSession& queuedSession)
 {
@@ -942,12 +943,24 @@ void reconcile_session_ready(
         }));
         return;
     }
+    std::string globalError;
+    const bool globalEnforcementVerified =
+        desktopGlobalConfig.reconcile(registry, globalError);
+    if (!globalEnforcementVerified) {
+        write_audit_log(fic::core::security_audit::makeEvent("fic", {
+            {"event", "session_ready"},
+            {"session_id", session.session.id},
+            {"phase", "desktop_global_configuration"},
+            {"result", {{"ok", false}, {"message", globalError}}}
+        }));
+    }
     for (Policy* policy : registry.capabilityPolicies(PolicyCapability::SessionAware)) {
         if (!policy->isEnabled()) continue;
         auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(policy);
         if (sessionAware == nullptr) continue;
         const SessionReconcileResult result =
-            sessionAware->reconcileSession(session);
+            sessionAware->reconcileSession(
+                session, globalEnforcementVerified, globalError);
         if (result.status == SessionReconcileStatus::NotApplicable ||
             result.status == SessionReconcileStatus::MandatoryGlobalConverged ||
             result.status == SessionReconcileStatus::SessionOnlyConverged) {
@@ -1329,7 +1342,8 @@ int main(int argc, char* argv[]) {
                 uid, sessionId, session, error);
         },
         [&](const ClassifiedGraphicalSession& session) {
-            reconcile_session_ready(policyRegistry, runtimeInventory, session);
+            reconcile_session_ready(
+                policyRegistry, desktopGlobalConfig, runtimeInventory, session);
         });
 
     (void)::sd_notify(
