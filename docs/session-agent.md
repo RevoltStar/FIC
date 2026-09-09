@@ -117,14 +117,32 @@ makes an optional current-session convergence failure a warning; a
 desktops and failures before global verification remain errors.
 
 FIC-owned global desktop configuration has a separate declarative lifecycle.
-Enabled policies contribute desired entries grouped by a registered
-`DesktopSystemBackend`; the reconciler replaces and then verifies only the
-backend's FIC-managed namespace. A backend must preserve administrator-owned
-configuration outside that namespace. Disabled or removed policies therefore
-disappear from desired state and their stale FIC-owned entries are removed on
-the next successful config rebuild, including after daemon restart. Matching
-state is not rewritten. No GNOME, KDE, XFCE, or FLY system backend is
-registered yet, so the production policies below remain session-only.
+Physical identity is `(backend, setting)`, not the owning policy. Each setting
+has one desired value and a separate set of policy owners. Enabled policies
+requesting the same value share that entry; disabling/removing one owner keeps
+it while another owner remains, and removing the last owner removes the managed
+entry on the next successful rebuild, including after daemon restart.
+
+Stage A builds and validates the complete desired state for all registered
+backends: capability/contributor consistency, backend existence, contribution
+owner matching the producing policy, and nonempty physical keys. Different
+values for the same physical key are conflicts, including contributions from
+one policy. Any Stage A failure prevents all backend mutation; policy order
+never selects a winner. Identical setting names in different backends are
+independent.
+
+After Stage A succeeds, each `DesktopSystemBackend` is reconciled independently:
+read managed state, replace it if different, read back, and verify exact desired
+state (value and ownership metadata). Failures are accumulated with backend and
+operation diagnostics; a failed backend does not block another backend's cleanup
+or enforcement, and any failure makes the overall result unsuccessful. There is
+no transaction spanning backends. Only the FIC-managed namespace is exposed and
+replaced; foreign administrator configuration is neither read nor restored by
+this framework. Matching state is not rewritten.
+
+No GNOME, KDE, XFCE, or FLY system backend is registered yet, so the production
+policies below remain session-only. This declarative lifecycle remains separate
+from policy-level `ensureGlobalState()`.
 
 `OSS/disable_kde_lock_screen_media_controls` is applicable only to controlled
 KDE sessions. A successfully identified non-KDE desktop is `NotApplicable`.

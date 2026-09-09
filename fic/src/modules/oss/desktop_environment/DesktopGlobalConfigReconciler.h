@@ -5,11 +5,11 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 struct GlobalDesktopConfigKey {
-    PolicyRef owner;
     std::string setting;
 
     bool operator<(const GlobalDesktopConfigKey& other) const;
@@ -18,12 +18,23 @@ struct GlobalDesktopConfigKey {
 
 struct GlobalDesktopPolicyContribution {
     std::string backend;
+    PolicyRef owner;
     GlobalDesktopConfigKey key;
     std::string value;
 };
 
+// Ownership is metadata, never part of physical identity. Backend state must
+// preserve this metadata within the FIC-managed namespace for exact readback.
+struct GlobalDesktopConfigValue {
+    std::string value;
+    std::set<PolicyRef> owners;
+
+    bool operator==(const GlobalDesktopConfigValue& other) const;
+};
+
+// One physical setting per backend namespace, with one value and all owners.
 using DesktopGlobalConfigState =
-    std::map<GlobalDesktopConfigKey, std::string>;
+    std::map<GlobalDesktopConfigKey, GlobalDesktopConfigValue>;
 
 class GlobalDesktopPolicyContributor {
 public:

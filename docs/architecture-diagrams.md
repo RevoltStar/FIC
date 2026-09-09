@@ -1455,10 +1455,17 @@ global state is verified, a runtime convergence failure is a warning;
 failure is an error. Runtime compliance diagnostics do not change historical
 apply results.
 
-Future system backends plug into `DesktopGlobalConfigReconciler`. Enabled
-policies declaratively contribute the desired FIC-owned entries. Each backend
-exposes only its managed namespace, replaces it without touching foreign
-administrator state, and is read back before reconciliation is accepted.
+Future system backends plug into `DesktopGlobalConfigReconciler`. Physical
+identity is `(backend, setting)`; value and the set of contributing policy owners
+are stored separately. Equal values merge owners, and a setting remains until
+its last enabled owner disappears. Stage A validates all contributions and
+rejects conflicting values (even from one policy) before any backend mutation.
+After validation, each backend independently reads, conditionally replaces and
+verifies its FIC-managed state, including ownership metadata. Backend failures
+are aggregated and keep the overall result failed, without blocking independent
+cleanup/enforcement. There is no cross-backend transaction; foreign administrator
+configuration stays outside the framework. See [the global desktop lifecycle
+contract](session-agent.md) for validation and failure semantics.
 Registry rebuilds on startup, periodic apply, explicit apply, and configuration
 mutation drive this lifecycle, so disabling or removing a policy also removes
 its stale FIC-owned state after a restart. No DE-specific global system backend
