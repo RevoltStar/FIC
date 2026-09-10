@@ -7,6 +7,7 @@
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/fs/TrustedFileReader.h>
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -27,6 +28,7 @@ struct AltPamPasswordHistoryTopologyOptions {
         "/var/lib/fic-pwhistory/.lock";
     uid_t storageOwner = 0;
     gid_t storageGroup = 0;
+    std::chrono::milliseconds transactionLockTimeout{15000};
     AtomicWriteOptions writeOptions;
     std::function<bool(const std::string&, const std::string&,
                        const AtomicWriteOptions&, std::string*)> writer;
@@ -63,6 +65,8 @@ private:
     fic::platform::PamPlatformConfig platformConfig_;
     AltPamPasswordHistoryTopologyOptions options_;
 
+    bool statusImpl(AltPamPasswordHistoryTopologyState& state,
+                    bool& unavailable, std::string& error);
     bool verifySemanticEffectiveness(std::string& error) const;
 };
 

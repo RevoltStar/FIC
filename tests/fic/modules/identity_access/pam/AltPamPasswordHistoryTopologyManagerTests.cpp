@@ -1,8 +1,10 @@
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <fcntl.h>
 #include <iostream>
 #include <iterator>
 #include <optional>
@@ -11,6 +13,7 @@
 #include <vector>
 
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -280,6 +283,77 @@ void testUnsafeHistoryBackupFailsClosed() {
         "unsafe backup history file was accepted");
 }
 
+void testTransactionContentionIsUnavailableUntilStorageStabilizes() {
+    TemporaryTree tree;
+    auto options = tree.options();
+    options.transactionLockTimeout = std::chrono::milliseconds(100);
+    AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(manager.enable(error), error);
+
+    int readyPipe[2] = {-1, -1};
+    int releasePipe[2] = {-1, -1};
+    require(::pipe(readyPipe) == 0 && ::pipe(releasePipe) == 0,
+            "could not create transaction test pipes");
+    const pid_t child = ::fork();
+    require(child >= 0, "could not fork transaction lock holder");
+    if (child == 0) {
+        ::close(readyPipe[0]);
+        ::close(releasePipe[1]);
+        const int descriptor = ::open(options.transactionLockFile.c_str(),
+            O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NOCTTY);
+        struct flock lock {};
+        lock.l_type = F_WRLCK;
+        lock.l_whence = SEEK_SET;
+#ifdef F_OFD_SETLK
+        const bool locked = descriptor >= 0 &&
+            ::fcntl(descriptor, F_OFD_SETLK, &lock) == 0;
+#else
+        const bool locked = descriptor >= 0 &&
+            ::fcntl(descriptor, F_SETLK, &lock) == 0;
+#endif
+        const fs::path transient = tree.root / "state/opasswd.old";
+        const bool linked = locked &&
+            ::link(options.historyFile.c_str(), transient.c_str()) == 0;
+        const char ready = linked ? 'R' : 'E';
+        (void)::write(readyPipe[1], &ready, 1);
+        char release = 0;
+        if (linked && ::read(releasePipe[0], &release, 1) == 1)
+            (void)::unlink(transient.c_str());
+        if (descriptor >= 0)
+            (void)::close(descriptor);
+        _exit(linked && release == 'X' ? 0 : 1);
+    }
+
+    ::close(readyPipe[1]);
+    ::close(releasePipe[0]);
+    char ready = 0;
+    require(::read(readyPipe[0], &ready, 1) == 1 && ready == 'R',
+            "child could not establish transient history transaction");
+    ::close(readyPipe[0]);
+
+    fic::identity::pam::PamTopologyStatus topologyStatus;
+    const bool unavailable = !manager.inspect(topologyStatus, error) &&
+        topologyStatus.state ==
+            fic::identity::pam::PamTopologyState::Unavailable;
+
+    const char release = 'X';
+    require(::write(releasePipe[1], &release, 1) == 1,
+            "could not release transaction lock holder");
+    ::close(releasePipe[1]);
+    int childStatus = 0;
+    require(::waitpid(child, &childStatus, 0) == child &&
+                WIFEXITED(childStatus) && WEXITSTATUS(childStatus) == 0,
+            "transaction lock holder failed");
+    require(unavailable,
+            "transaction contention was not reported as unavailable");
+
+    AltPamPasswordHistoryTopologyState state;
+    require(manager.status(state, error) &&
+                state == AltPamPasswordHistoryTopologyState::Enabled,
+            "stable unlocked topology was not enabled: " + error);
+}
+
 void testExternalProviderIsRejected() {
     TemporaryTree tree;
     TemporaryTree::write(tree.target(), kCanonical +
@@ -421,6 +495,7 @@ int main() {
         testProviderOwnedHistoryFilesRemainValid();
         testUnsafeHistoryStorageFailsClosed();
         testUnsafeHistoryBackupFailsClosed();
+        testTransactionContentionIsUnavailableUntilStorageStabilizes();
         testExternalProviderIsRejected();
         testExternalIncludedProviderIsRejected();
         testBrokenMarkersFailClosed();

@@ -9,10 +9,12 @@
 #include <fic/core/fs/TrustedFileReader.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
-#include <sstream>
 #include <optional>
+#include <sstream>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -286,6 +288,115 @@ bool createStorageFile(const std::filesystem::path& path, uid_t owner,
         path, 0660, expectedOwner, group, false, false, error);
 }
 
+enum class TransactionLockResult { Acquired, Busy, Failed };
+
+class TransactionFileLock {
+public:
+    TransactionFileLock() = default;
+    TransactionFileLock(const TransactionFileLock&) = delete;
+    TransactionFileLock& operator=(const TransactionFileLock&) = delete;
+    ~TransactionFileLock() {
+        if (descriptor_ >= 0)
+            ::close(descriptor_);
+    }
+
+    TransactionLockResult acquire(
+        const AltPamPasswordHistoryTopologyOptions& options,
+        std::string& error) {
+        descriptor_ = ::open(options.transactionLockFile.c_str(),
+            O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NOCTTY);
+        if (descriptor_ < 0) {
+            error = "could not open password transaction lock " +
+                options.transactionLockFile.string() + ": " + errnoText();
+            return TransactionLockResult::Failed;
+        }
+        struct stat info {};
+        if (::fstat(descriptor_, &info) != 0) {
+            error = "could not inspect password transaction lock: " +
+                errnoText();
+            return TransactionLockResult::Failed;
+        }
+        if (!S_ISREG(info.st_mode) || info.st_uid != options.storageOwner ||
+            info.st_gid != options.storageGroup ||
+            (info.st_mode & 07777) != 0660 || info.st_nlink != 1) {
+            error = "unsafe password transaction lock: " +
+                options.transactionLockFile.string();
+            return TransactionLockResult::Failed;
+        }
+
+        struct flock lock {};
+        lock.l_type = F_WRLCK;
+        lock.l_whence = SEEK_SET;
+        const auto deadline = std::chrono::steady_clock::now() +
+            options.transactionLockTimeout;
+        for (;;) {
+#ifdef F_OFD_SETLK
+            if (::fcntl(descriptor_, F_OFD_SETLK, &lock) == 0)
+#else
+            if (::fcntl(descriptor_, F_SETLK, &lock) == 0)
+#endif
+                return TransactionLockResult::Acquired;
+            if (errno != EACCES && errno != EAGAIN && errno != EINTR) {
+                error = "could not acquire password transaction lock: " +
+                    errnoText();
+                return TransactionLockResult::Failed;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                error = "password transaction lock is busy";
+                return TransactionLockResult::Busy;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
+private:
+    int descriptor_ = -1;
+};
+
+bool prepareStorageBeforeTransaction(
+    const AltPamPasswordHistoryTopologyOptions& options,
+    std::string& error) {
+    struct stat info {};
+    if (::lstat(options.stateDirectory.c_str(), &info) != 0) {
+        if (errno != ENOENT ||
+            ::mkdir(options.stateDirectory.c_str(), 02730) != 0) {
+            error = "could not create password-history directory " +
+                options.stateDirectory.string() + ": " + errnoText();
+            return false;
+        }
+        if (::chown(options.stateDirectory.c_str(), options.storageOwner,
+                    options.storageGroup) != 0 ||
+            ::chmod(options.stateDirectory.c_str(), 02730) != 0) {
+            error = "could not initialize password-history directory: " +
+                errnoText();
+            return false;
+        }
+    }
+    return validateStorageObject(options.stateDirectory, 02730,
+               options.storageOwner, options.storageGroup, true, false,
+               error) &&
+        createStorageFile(options.transactionLockFile, options.storageOwner,
+            options.storageGroup, true, error);
+}
+
+bool prepareHistoryFile(
+    const AltPamPasswordHistoryTopologyOptions& options,
+    std::string& error) {
+    return createStorageFile(options.historyFile, options.storageOwner,
+        options.storageGroup, false, error);
+}
+
+bool validateHistoryFiles(
+    const AltPamPasswordHistoryTopologyOptions& options,
+    std::string& error) {
+    auto historyBackupFile = options.historyFile;
+    historyBackupFile += ".old";
+    return validateStorageObject(options.historyFile, 0660, std::nullopt,
+               options.storageGroup, false, false, error) &&
+        validateStorageObject(historyBackupFile, 0660, std::nullopt,
+            options.storageGroup, false, true, error);
+}
+
 } // namespace
 
 bool verifyAltPamPasswordHistoryTransactionModule(
@@ -367,28 +478,20 @@ AltPamPasswordHistoryTopologyManager::AltPamPasswordHistoryTopologyManager(
 
 bool AltPamPasswordHistoryTopologyManager::prepareStorage(
     std::string& error) const {
-    struct stat info {};
-    if (::lstat(options_.stateDirectory.c_str(), &info) != 0) {
-        if (errno != ENOENT ||
-            ::mkdir(options_.stateDirectory.c_str(), 02730) != 0) {
-            error = "could not create password-history directory " +
-                options_.stateDirectory.string() + ": " + errnoText();
-            return false;
-        }
-        if (::chown(options_.stateDirectory.c_str(), options_.storageOwner,
-                    options_.storageGroup) != 0 ||
-            ::chmod(options_.stateDirectory.c_str(), 02730) != 0) {
-            error = "could not initialize password-history directory: " +
-                errnoText();
-            return false;
-        }
+    ExclusivePidLock topologyLock(options_.lockFilePath.string(),
+        options_.lockDebugLogPath.string(), false);
+    if (!topologyLock.acquire()) {
+        error = "could not acquire PAM topology lock";
+        return false;
     }
-    if (!validateStorageObject(options_.stateDirectory, 02730,
-            options_.storageOwner, options_.storageGroup, true, false, error) ||
-        !createStorageFile(options_.historyFile, options_.storageOwner,
-            options_.storageGroup, false, error) ||
-        !createStorageFile(options_.transactionLockFile, options_.storageOwner,
-            options_.storageGroup, true, error))
+    if (!prepareStorageBeforeTransaction(options_, error))
+        return false;
+    TransactionFileLock transactionLock;
+    if (transactionLock.acquire(options_, error) !=
+        TransactionLockResult::Acquired)
+        return false;
+    if (!prepareHistoryFile(options_, error) ||
+        !validateHistoryFiles(options_, error))
         return false;
     error.clear();
     return true;
@@ -437,6 +540,14 @@ bool AltPamPasswordHistoryTopologyManager::canEnable(std::string& error) const {
 
 bool AltPamPasswordHistoryTopologyManager::status(
     AltPamPasswordHistoryTopologyState& state, std::string& error) {
+    bool unavailable = false;
+    return statusImpl(state, unavailable, error);
+}
+
+bool AltPamPasswordHistoryTopologyManager::statusImpl(
+    AltPamPasswordHistoryTopologyState& state, bool& unavailable,
+    std::string& error) {
+    unavailable = false;
     if (!canEnable(error))
         return false;
     ExclusivePidLock lock(options_.lockFilePath.string(),
@@ -463,16 +574,17 @@ bool AltPamPasswordHistoryTopologyManager::status(
         state = AltPamPasswordHistoryTopologyState::Disabled;
         return true;
     }
-    auto historyBackupFile = options_.historyFile;
-    historyBackupFile += ".old";
     if (!validateStorageObject(options_.stateDirectory, 02730,
-            options_.storageOwner, options_.storageGroup, true, false, error) ||
-        !validateStorageObject(options_.historyFile, 0660,
-            std::nullopt, options_.storageGroup, false, false, error) ||
-        !validateStorageObject(historyBackupFile, 0660,
-            std::nullopt, options_.storageGroup, false, true, error) ||
-        !validateStorageObject(options_.transactionLockFile, 0660,
-            options_.storageOwner, options_.storageGroup, false, false, error) ||
+            options_.storageOwner, options_.storageGroup, true, false, error))
+        return false;
+    TransactionFileLock transactionLock;
+    const auto lockResult = transactionLock.acquire(options_, error);
+    if (lockResult == TransactionLockResult::Busy) {
+        unavailable = true;
+        return false;
+    }
+    if (lockResult == TransactionLockResult::Failed ||
+        !validateHistoryFiles(options_, error) ||
         !verifySemanticEffectiveness(error))
         return false;
     state = AltPamPasswordHistoryTopologyState::Enabled;
@@ -482,8 +594,11 @@ bool AltPamPasswordHistoryTopologyManager::status(
 bool AltPamPasswordHistoryTopologyManager::inspect(PamTopologyStatus& result,
                                                     std::string& error) {
     AltPamPasswordHistoryTopologyState current;
-    if (!status(current, error)) {
-        result = {PamTopologyState::Broken, true, error};
+    bool unavailable = false;
+    if (!statusImpl(current, unavailable, error)) {
+        result = {unavailable ? PamTopologyState::Unavailable
+                              : PamTopologyState::Broken,
+                  true, error};
         return false;
     }
     result = {current == AltPamPasswordHistoryTopologyState::Enabled
@@ -494,14 +609,22 @@ bool AltPamPasswordHistoryTopologyManager::inspect(PamTopologyStatus& result,
 }
 
 bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
-    if (!canEnable(error) || !prepareStorage(error))
+    if (!canEnable(error))
         return false;
-    ExclusivePidLock lock(options_.lockFilePath.string(),
+    ExclusivePidLock topologyLock(options_.lockFilePath.string(),
         options_.lockDebugLogPath.string(), false);
-    if (!lock.acquire()) {
+    if (!topologyLock.acquire()) {
         error = "could not acquire PAM topology lock";
         return false;
     }
+    if (!prepareStorageBeforeTransaction(options_, error))
+        return false;
+    TransactionFileLock transactionLock;
+    if (transactionLock.acquire(options_, error) !=
+            TransactionLockResult::Acquired ||
+        !prepareHistoryFile(options_, error) ||
+        !validateHistoryFiles(options_, error))
+        return false;
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::PasswordHistory);
     TargetSnapshot original;
@@ -605,6 +728,13 @@ bool AltPamPasswordHistoryTopologyManager::disable(std::string& error) {
         error.clear();
         return true;
     }
+    if (!validateStorageObject(options_.stateDirectory, 02730,
+            options_.storageOwner, options_.storageGroup, true, false, error))
+        return false;
+    TransactionFileLock transactionLock;
+    if (transactionLock.acquire(options_, error) !=
+        TransactionLockResult::Acquired)
+        return false;
     std::vector<PhysicalLine> candidateLines;
     for (std::size_t index = 0; index < lines.size(); ++index) {
         if (index == block.tcb)

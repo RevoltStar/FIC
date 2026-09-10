@@ -7,34 +7,47 @@
 
 ## Current task
 
-- Исправить ALT p11 RPM Docker build dependency для `fic-kconfig-verifier`.
+- Устранить race между ALT TCB password transaction и FIC inspection/mutation
+  password-history topology.
 
 ## Accepted architecture / invariants
 
-- RPM build intentionally passes `-DFIC_BUILD_KCONFIG_VERIFIER=ON` for `fic`.
-- ALT p11 `fic-kconfig-verifier` links against real KF6 ConfigCore; do not
-  replace it with a stub or silently disable it in packaging.
-- Current ALT KF6 Config CMake package depends on Qt6Qml, provided by
-  `qt6-declarative-devel`.
+- `pam_fic_pwtxn` остаётся единственным serialization mechanism для provider
+  history transaction.
+- Manager использует тот же advisory write-lock protocol на
+  `/var/lib/fic-pwhistory/.lock`: `F_OFD_SETLK`, fallback `F_SETLK`, timeout 15s.
+- Единый порядок manager locks: topology lock, затем transaction lock. PAM
+  path берёт только transaction lock, поэтому lock cycle отсутствует.
+- Busy transaction означает временно недоступную inspection, а не Broken.
+- В стабильном состоянии `opasswd`/`opasswd.old` сохраняют строгий `nlink == 1`.
 
 ## Completed
 
-- Added `qt6-declarative-devel` to the ALT p11 RPM builder image dependencies.
-- Extended desktop-environment static packaging checks to require that RPM
-  Docker dependency.
+- `status()`/`inspect()` сериализуют live history validation с password change;
+  `inspect()` отображает timeout как `PamTopologyState::Unavailable`.
+- `prepareStorage()` и `enable()` создают/валидируют history только под обоими
+  lock; `disable()` удерживает transaction lock при удалении managed PAM block.
+- Transaction lock открывается с `O_NOFOLLOW`, валидируется через `fstat` и
+  освобождается закрытием того же descriptor.
+- Добавлен fork-based regression: child держит `.lock` и transient hardlink
+  `opasswd.old`; до unlock manager сообщает Unavailable, после стабилизации —
+  Enabled.
+- RPM README уточняет locking и ownership/metadata contract storage topology.
 
 ## Changed areas
 
-- `packaging/rpm/Dockerfile`.
-- `tests/fic/modules/oss/desktop_environment/static_checks.py.in`.
+- `AltPamPasswordHistoryTopologyManager` и его tests.
+- `packaging/rpm/README.md`.
 
 ## Validation
 
-- `python3 -m py_compile tests/fic/modules/oss/desktop_environment/static_checks.py.in` — passed.
-- `python3 tests/fic/modules/oss/desktop_environment/static_checks.py.in .` — passed.
+- Ubuntu 24.04 targeted CTest: 4/4 passed, включая PAM activation/faillock,
+  password-history topology и RPM PAM static checks.
+- Fresh ALT p11 targeted build/test:
+  `alt_pam_password_history_topology_tests` passed 1/1.
 - `git diff --check` — passed.
 
 ## Remaining
 
-- Full `./packaging/rpm/build-fic-alt-p11-rpm-docker.sh 0.0.0-alpha` was not
-  rerun after the source change.
+- Live ALT TCB password-change smoke не выполнялся.
+- Full project build/CTest и полный RPM Docker build не запускались.

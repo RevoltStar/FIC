@@ -123,11 +123,20 @@ password required pam_fic_pwtxn.so end
 `pam_fic_pwtxn.so` serializes the complete history/backend update using
 `/var/lib/fic-pwhistory/.lock`; PAM cleanup releases the lock even when the
 requisite history check terminates dispatch before the explicit `end` call.
-The history database is `/var/lib/fic-pwhistory/opasswd`. The directory is
-`root:shadow 2730`, while both `opasswd` and `.lock` are one-link regular
-`root:shadow 0660` files. The module has a fixed lock path and rejects unsafe
-metadata. The manager likewise verifies trusted module/config files and
-requires exactly `file=/var/lib/fic-pwhistory/opasswd`.
+The topology manager takes the same transaction lock before inspecting history
+storage or changing the managed PAM block, so it never evaluates the provider's
+temporary rename/hard-link state. Lock contention is reported as temporarily
+unavailable rather than broken topology. The lock order is always the FIC PAM
+topology lock followed by the password transaction lock.
+
+The history database is `/var/lib/fic-pwhistory/opasswd`. Its directory is a
+regular non-symlink `root:shadow 2730` directory, and `.lock` is a one-link
+regular non-symlink `root:shadow 0660` file. `opasswd` and optional
+`opasswd.old` are one-link regular non-symlink `0660` files with `shadow` GID;
+their UID is provider-owned and may be root or the user whose password was
+changed. The module has a fixed lock path and rejects unsafe lock metadata. The
+manager likewise verifies trusted module/config files and requires exactly
+`file=/var/lib/fic-pwhistory/opasswd`.
 
 The RPM prepares this storage but ships `remember=0`, so installation and
 topology activation do not themselves enforce password history. Administrator
