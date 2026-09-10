@@ -608,6 +608,74 @@ void testForeignParentTraversableAccepted() {
             "FIC re-permissioned an existing traversable foreign parent");
 }
 
+void testHiddenIntermediateAncestorFailsVerification() {
+    Fixture fixture;
+    write(fixture.options.profilePath, "user-db:user\nsystem-db:fic\n");
+    write(fixture.commands.compiledPath, "compiled");
+    const fs::path dconf = fixture.root / "dconf";
+    ::chmod(dconf.c_str(), 0750);
+
+    auto backend = fixture.backend();
+    std::string error;
+    require(!backend.verifyManagedSettings(requirements(), error) &&
+                error.find(dconf.string()) != std::string::npos &&
+                error.find("not traversable by ordinary users") !=
+                    std::string::npos,
+            "hidden intermediate dconf ancestor passed verification: " + error);
+}
+
+void testHiddenIntermediateAncestorFailsEnsureWithoutChmod() {
+    Fixture fixture;
+    const fs::path dconf = fixture.root / "dconf";
+    fs::create_directories(dconf / "profile");
+    fs::create_directories(dconf / "db/fic.d/locks");
+    ::chmod(dconf.c_str(), 0750);
+
+    auto backend = fixture.backend();
+    std::string error;
+    require(!backend.ensureManagedSettings(requirements(), error) &&
+                error.find(dconf.string()) != std::string::npos &&
+                error.find("not traversable by ordinary users") !=
+                    std::string::npos,
+            "ensure accepted a hidden intermediate dconf ancestor: " + error);
+    require(fileMode(dconf) == 0750,
+            "FIC re-permissioned a hidden existing dconf ancestor");
+    require(!fs::exists(fixture.keyfile()),
+            "FIC wrote managed state below a hidden intermediate ancestor");
+}
+
+void testTraversableIntermediateAncestorsAccepted() {
+    Fixture fixture;
+    write(fixture.options.profilePath, "user-db:user\nsystem-db:fic\n");
+    write(fixture.commands.compiledPath, "compiled");
+    const fs::path dconf = fixture.root / "dconf";
+    ::chmod(dconf.c_str(), 0751);
+    ::chmod(fixture.options.databaseRoot.c_str(), 0751);
+
+    auto backend = fixture.backend();
+    std::string error;
+    require(backend.verifyManagedSettings(requirements(), error), error);
+    require(fileMode(dconf) == 0751 &&
+                fileMode(fixture.options.databaseRoot) == 0751,
+            "verification re-permissioned traversable foreign ancestors");
+}
+
+void testLateIntermediatePermissionRegressionFailsVerification() {
+    Fixture fixture;
+    auto backend = fixture.backend();
+    std::string error;
+    require(backend.ensureManagedSettings(requirements(), error), error);
+
+    const fs::path dconf = fixture.root / "dconf";
+    ::chmod(dconf.c_str(), 0750);
+    require(!backend.verifyManagedSettings(requirements(), error) &&
+                error.find(dconf.string()) != std::string::npos &&
+                error.find("not traversable by ordinary users") !=
+                    std::string::npos,
+            "late intermediate permission regression passed verification: " +
+                error);
+}
+
 void testCompiledDatabaseUnreadableFailsVerification() {
     {
         Fixture fixture;
@@ -695,6 +763,10 @@ int main() {
         testUmaskCreatesTraversableFicDirectories();
         testForeignParentInaccessibleFailsClosed();
         testForeignParentTraversableAccepted();
+        testHiddenIntermediateAncestorFailsVerification();
+        testHiddenIntermediateAncestorFailsEnsureWithoutChmod();
+        testTraversableIntermediateAncestorsAccepted();
+        testLateIntermediatePermissionRegressionFailsVerification();
         testCompiledDatabaseUnreadableFailsVerification();
         testProfileUnreadableFailsVerification();
         testDconfUpdateUsesChildUmask();

@@ -81,6 +81,24 @@ bool validateDirectoryFd(int fd, const std::filesystem::path& path,
     return true;
 }
 
+bool validateOrdinaryTraversalFd(int fd, const std::filesystem::path& path,
+                                 std::string& error) {
+    struct stat info {};
+    if (::fstat(fd, &info) != 0) {
+        error = "cannot inspect GNOME dconf directory " + path.string() + ": " +
+            systemError();
+        return false;
+    }
+    if ((info.st_mode & S_IXOTH) == 0) {
+        error = "GNOME dconf directory is not traversable by ordinary users: " +
+            path.string();
+        return false;
+    }
+    return true;
+}
+
+enum class DirectoryAccess { SecureOnly, OrdinaryTraversal };
+
 bool relativeComponents(const std::filesystem::path& path,
                         const GnomeSystemBackendOptions& options,
                         std::vector<std::string>& components,
@@ -112,6 +130,7 @@ bool relativeComponents(const std::filesystem::path& path,
 bool openDirectory(const std::filesystem::path& path, bool create,
                    const GnomeSystemBackendOptions& options,
                    UniqueFd& result, std::string& error,
+                   DirectoryAccess access = DirectoryAccess::SecureOnly,
                    bool* missing = nullptr, bool* created = nullptr) {
     if (missing != nullptr) *missing = false;
     if (created != nullptr) *created = false;
@@ -126,6 +145,9 @@ bool openDirectory(const std::filesystem::path& path, bool create,
                 options.trustedRoot.string() + ": " + systemError();
         return false;
     }
+    if (access == DirectoryAccess::OrdinaryTraversal &&
+        !validateOrdinaryTraversalFd(current.get(), options.trustedRoot, error))
+        return false;
     std::filesystem::path traversed = options.trustedRoot;
     for (const std::string& component : components) {
         traversed /= component;
@@ -133,13 +155,20 @@ bool openDirectory(const std::filesystem::path& path, bool create,
         int next = ::openat(current.get(), component.c_str(),
                             O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         if (next < 0 && errno == ENOENT && create) {
-            if (::mkdirat(current.get(), component.c_str(), 0755) != 0 &&
-                errno != EEXIST) {
-                error = "cannot create trusted directory " + traversed.string() +
-                    ": " + systemError();
-                return false;
+            if (::mkdirat(current.get(), component.c_str(), 0755) == 0) {
+                createdHere = true;
+            } else {
+                const int mkdirError = errno;
+                if (mkdirError != EEXIST) {
+                    errno = mkdirError;
+                    error = "cannot create trusted directory " +
+                        traversed.string() + ": " + systemError();
+                    return false;
+                }
+                // Another process created this component after our ENOENT.
+                // Treat it as foreign existing state: validate it below, but
+                // never claim ownership by changing its mode.
             }
-            createdHere = true;
             next = ::openat(current.get(), component.c_str(),
                             O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         }
@@ -155,6 +184,9 @@ bool openDirectory(const std::filesystem::path& path, bool create,
         }
         UniqueFd opened(next);
         if (!validateDirectoryFd(opened.get(), traversed, options, error))
+            return false;
+        if (access == DirectoryAccess::OrdinaryTraversal &&
+            !validateOrdinaryTraversalFd(opened.get(), traversed, error))
             return false;
         if (createdHere) {
             // The daemon umask (fic.service UMask=0027) would otherwise leave
@@ -177,23 +209,12 @@ bool openDirectory(const std::filesystem::path& path, bool create,
 // Ordinary GNOME users must be able to traverse (and read within) the system
 // dconf directories FIC relies on. Existing foreign directories are only
 // validated, never re-permissioned: an unfixable parent fails closed.
-bool directoryAccessibleToOrdinaryUsers(
+bool pathTraversableByOrdinaryUsers(
     const std::filesystem::path& path,
     const GnomeSystemBackendOptions& options, std::string& error) {
     UniqueFd dir;
-    if (!openDirectory(path, false, options, dir, error)) return false;
-    struct stat info {};
-    if (::fstat(dir.get(), &info) != 0) {
-        error = "cannot inspect GNOME dconf directory " + path.string() + ": " +
-            systemError();
-        return false;
-    }
-    if ((info.st_mode & S_IXOTH) == 0) {
-        error = "GNOME dconf directory is not traversable by ordinary users: " +
-            path.string();
-        return false;
-    }
-    return true;
+    return openDirectory(path, false, options, dir, error,
+                         DirectoryAccess::OrdinaryTraversal);
 }
 
 // Trusted, non-world/group-writable, ordinary-user-readable regular file.
@@ -201,7 +222,8 @@ bool fileAccessibleToOrdinaryUsers(const std::filesystem::path& path,
                                    const GnomeSystemBackendOptions& options,
                                    std::string& error) {
     UniqueFd parent;
-    if (!openDirectory(path.parent_path(), false, options, parent, error))
+    if (!openDirectory(path.parent_path(), false, options, parent, error,
+                       DirectoryAccess::OrdinaryTraversal))
         return false;
     struct stat info {};
     if (::fstatat(parent.get(), path.filename().c_str(), &info,
@@ -228,7 +250,7 @@ bool readOptionalFile(const std::filesystem::path& path,
     UniqueFd parent;
     bool parentMissing = false;
     if (!openDirectory(path.parent_path(), false, options, parent, error,
-                       &parentMissing)) {
+                       DirectoryAccess::SecureOnly, &parentMissing)) {
         if (parentMissing) return true;
         return false;
     }
@@ -701,11 +723,11 @@ bool GnomeSystemBackend::ensureManagedSettings(
     // reach it. Existing foreign parent directories are validated, never
     // re-permissioned; an inaccessible one fails closed. FIC-created public
     // directories were forced to 0755 above.
-    if (!directoryAccessibleToOrdinaryUsers(profileDir, options_, error) ||
-        !directoryAccessibleToOrdinaryUsers(options_.databaseRoot, options_,
-                                            error) ||
-        !directoryAccessibleToOrdinaryUsers(keyfileDir, options_, error) ||
-        !directoryAccessibleToOrdinaryUsers(lockfileDir, options_, error))
+    if (!pathTraversableByOrdinaryUsers(profileDir, options_, error) ||
+        !pathTraversableByOrdinaryUsers(options_.databaseRoot, options_,
+                                       error) ||
+        !pathTraversableByOrdinaryUsers(keyfileDir, options_, error) ||
+        !pathTraversableByOrdinaryUsers(lockfileDir, options_, error))
         return false;
 
     const bool profileChanged = !profileExists || profileText != finalProfile;
@@ -782,9 +804,8 @@ bool GnomeSystemBackend::verifyManagedSettings(
     // regression therefore fails this independent verify pass too.
     const auto compiledPath = options_.databaseRoot / options_.databaseName;
     const auto profileDir = options_.profilePath.parent_path();
-    if (!directoryAccessibleToOrdinaryUsers(profileDir, options_, error) ||
-        !directoryAccessibleToOrdinaryUsers(options_.databaseRoot, options_,
-                                            error))
+    if (!pathTraversableByOrdinaryUsers(profileDir, options_, error) ||
+        !pathTraversableByOrdinaryUsers(options_.databaseRoot, options_, error))
         return false;
     if (!fileAccessibleToOrdinaryUsers(options_.profilePath, options_, error) ||
         !fileAccessibleToOrdinaryUsers(compiledPath, options_, error))

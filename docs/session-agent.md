@@ -202,8 +202,9 @@ ordinary desktop users regardless of the daemon umask; managed files are
 written `0644`/root-owned. `dconf update` runs with an isolated child umask
 `0022` (a `ProcessOptions::childUmask` capability in the shared process
 executor; the parent process umask is never modified). Existing foreign
-directories are validated, never re-permissioned: each parent path must remain
-trusted-owned, free of group/world write bits, and other-executable
+directories are validated, never re-permissioned: every directory component
+from the trusted root through the profile and compiled-database parents must
+remain trusted-owned, free of group/world write bits, and other-executable
 (`0751` suffices; `0750` fails closed with
 `GNOME dconf directory is not traversable by ordinary users`). Verification —
 in both `ensureManagedSettings` and the independent `verifyManagedSettings`
@@ -213,6 +214,11 @@ world-readable (`0644` is the expected compiled mode; `0640`/`0600` fail with
 `compiled GNOME FIC dconf database is not readable by ordinary users`). Root
 `gsettings` success alone never counts as verified when the compiled state is
 unreadable to ordinary users.
+
+A directory is considered FIC-created only when its `mkdirat` call succeeds.
+If creation races with another process and returns `EEXIST`, the raced-in
+directory is opened with `openat(..., O_NOFOLLOW)`, validated as existing
+foreign state, and never passed to the FIC-created-directory `fchmod` path.
 
 KDE, XFCE, and FLY remain `SessionOnly`; LXQt remains unsupported.
 `DesktopSystemBackend` remains the only global enforcement mechanism: policies

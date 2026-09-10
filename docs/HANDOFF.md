@@ -2,70 +2,58 @@
 
 ## Current base
 
-- Ветка `main`, база: `bff13b1` (screenlock completeness + profile parsing)
-  плюс corrective commit поверх него (см. git log).
+- Ветка `main`; corrective commit поверх `0b500a5` (актуальный SHA см. в
+  `git log -1`).
 
 ## Current task
 
-- Corrective commit: GNOME dconf accessibility при daemon `UMask=0027` —
-  explicit modes для FIC-created dconf dirs, filesystem accessibility
-  verification (foreign parents, profile, compiled DB), isolated child umask
-  `0022` для `dconf update`, file-db path charset compatibility.
+- Исправлена неполная ordinary-user accessibility verification для GNOME
+  system dconf и race-семантика `mkdirat(...)=EEXIST`.
 
 ## Accepted architecture / invariants
 
-- `fic.service UMask=0027` не определяет permissions public GNOME dconf
-  artifacts: FIC-created directories (`dconf`, `dconf/profile`, `dconf/db`,
-  `fic.d`, `fic.d/locks`) получают fd-based `fchmod 0755` после secure
-  open+validate (openat/O_NOFOLLOW, trusted owner, no group/world write).
-- Existing foreign directories НЕ chmod'ятся: только валидация (trusted
-  owner, no group/world write, other-execute; `0751` достаточен, `0750`
-  → fail closed «not traversable by ordinary users»).
-- `verifyManagedSettings` (и ensure после `dconf update`) требуют, чтобы
-  profile и compiled `/etc/dconf/db/fic` были regular, root-owned, без
-  group/world write, world-readable; `0640`/`0600` → fail. Root `gsettings`
-  success не считается verified при unreadable compiled DB.
-- `ProcessOptions::childUmask` (fic-core, generic, optional): umask
-  применяется только в child после fork, до exec; umask daemon'а никогда не
-  меняется. Unset → прежнее поведение. `dconf update` передаёт `0022`;
-  `gsettings` — без childUmask.
-- Merge-only keyfile/locks, `DISABLE → no cleanup` (ensure с empty required
-  не создаёт/chmod'ит ничего) — без изменений. Четыре screenlock keys и
-  profile parser compatibility (`file-db`, whitespace, inline comments,
-  fail-closed scenarios) сохранены. file-db value теперь: непустой absolute
-  path без control-символов (charset не ограничен узким allowlist).
+- `GnomeSystemBackend` проверяет через fd всю directory chain от
+  `trustedRoot` до parent каждого public dconf artifact: trusted owner, no
+  group/world write, `S_IXOTH` на каждом компоненте, `openat/O_NOFOLLOW`.
+- Existing foreign ancestor с `0750` приводит к fail closed и не chmod'ится;
+  `0751` допустим. FIC-created directory получает `0755` только если
+  `mkdirat` реально завершился успешно.
+- `mkdirat(...)=EEXIST` означает raced-in existing foreign state: объект
+  secure-open/validate, но не `fchmod`.
+- Profile и compiled DB остаются regular, trusted-owned, safe и
+  world-readable. Четыре GNOME screenlock keys, merge-only semantics,
+  `DISABLE -> no cleanup`, current-session convergence и profile parser не
+  менялись.
+- `dconf update` по-прежнему получает child-only umask `0022`; parent umask и
+  `fic.service UMask=0027` не менялись.
 
 ## Completed / changed areas
 
-- `fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.cpp`:
-  fchmod 0755 для created dirs; `directoryAccessibleToOrdinaryUsers` /
-  `fileAccessibleToOrdinaryUsers`; accessibility в ensure+verify;
-  childUmask 0022 для dconf update; file-db charset.
-- `fic-common/fic-core`: `ProcessOptions::childUmask` + применение в child.
-- Tests: `GnomeSystemBackendTests` (umask-0027 regression, foreign parent
-  fail-closed/no-chmod, 0751 accepted, compiled DB 0640/0600, profile 0640,
-  childUmask 0022 на update, file-db charset), `ProcessOutputLimitTests`
-  (child umask применён + parent umask не тронут + inherit-case),
-  static checks.
-- Docs: `session-agent.md`, `architecture-diagrams.md`.
+- `GnomeSystemBackend.cpp`: reusable secure ordinary-traversal mode в
+  `openDirectory`, full-chain helper `pathTraversableByOrdinaryUsers`, safe
+  `EEXIST` handling.
+- `GnomeSystemBackendTests.cpp`: hidden intermediate ancestor для ensure и
+  verify, positive `0751`, late permission regression.
+- Релевантные описания обновлены в `session-agent.md` и
+  `architecture-diagrams.md`.
 
 ## Validation
 
-- Full build `build-fix-check` (ubuntu-24.04, systemd stub
-  `/tmp/fic-systemd-stubs`) — passed.
-- Relevant tests: gnome_system_backend_tests (15), screenlock_timeout_global,
-  session_setting_reconciler, desktop_global_config_reconciler,
-  session_aware_policy, process_output_limit (incl. child-umask cases),
-  verified_process_executor, process_cancellation, both static checks —
-  passed.
-- Negative controls: (A) fchmod 0755 disabled → umask-тест упал; (B)
-  compiled-DB readability check disabled (ensure+verify) → 0640-тест упал;
-  (C) childUmask ignored → process test упал. Код восстановлен.
-- Full CTest: см. финальный прогон.
+- Configure существующего `build-check` (`ubuntu-24.04`) — passed после
+  восстановления временного `/tmp/fic-systemd-dev/include` stub path.
+- Targeted build: `gnome_system_backend_tests`,
+  `screenlock_timeout_global_tests` — passed.
+- Targeted CTest: 8/8 passed (`gnome_system_backend`, screenlock global,
+  reconcilers, session-aware policy, process output limit, architecture and
+  platform static checks).
+- Negative control без `S_IXOTH`: `gnome_system_backend_tests` ожидаемо упал;
+  после восстановления fix снова passed. Positive `0751` и late-regression
+  cases passed в основном прогоне.
+- Полная сборка проекта НЕ запускалась по явному ограничению задачи.
+- Full CTest не запускался: существующий tree не был полностью собран.
 
 ## Remaining
 
-- Live GNOME session/runtime integration не проверялась (нет disposable
-  GNOME session).
-- Root-only `command_hash_batch_tests` skipped.
-- `dconf update` live-проверка lock semantics не выполнялась (нет dconf CLI).
+- Live GNOME session/runtime integration не выполнялась.
+- Deterministic syscall injection для узкого `ENOENT -> mkdirat EEXIST` race не
+  добавлялся; production branch исправлен и документирован без крупного seam.

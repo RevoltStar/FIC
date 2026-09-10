@@ -1494,9 +1494,12 @@ covers filesystem accessibility: FIC-created dconf directories are explicitly
 forced to `0755` (fd-based `fchmod`) so the `fic.service UMask=0027` never
 produces `0750` public dconf directories; `dconf update` runs with an isolated
 child umask `0022` via `ProcessOptions::childUmask` (the parent umask is never
-touched); foreign parent directories are validated (trusted owner, no
-group/world write, other-execute) and never re-permissioned — an inaccessible
-foreign parent fails closed; and the profile plus compiled `/etc/dconf/db/fic`
+touched); every component of the foreign ancestor chain from the trusted root
+through the profile and compiled-database parents is validated (trusted owner,
+no group/world write, other-execute) and never re-permissioned — an
+inaccessible foreign ancestor fails closed (`0751` is sufficient, `0750` is
+not); a raced `mkdirat(...)=EEXIST` is likewise treated only as existing
+foreign state; and the profile plus compiled `/etc/dconf/db/fic`
 must stay world-readable regular root-owned files, so root-only `gsettings`
 success cannot mask state that ordinary desktop users cannot read. Existing sessions may
 need relogin to load a newly changed profile, so their separate session-runtime
