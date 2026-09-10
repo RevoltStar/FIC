@@ -28,7 +28,7 @@ enum class ExecutableId {
     PamAuthUpdate,
     Dconf,
     Gsettings,
-    Kreadconfig
+    KconfigVerifier
 };
 
 struct PlatformExecutableSpec {
@@ -84,6 +84,12 @@ enum class SysctlLoaderKind {
 struct SysctlPlatformConfig {
     SysctlLoaderKind loader = SysctlLoaderKind::SystemdSysctl;
     std::filesystem::path managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
+};
+
+struct KdePlatformConfig {
+    // XDG_CONFIG_DIRS in decreasing priority order, before Plasma adds its
+    // per-user kdedefaults layer.
+    std::vector<std::filesystem::path> systemConfigDirs;
 };
 
 enum class PamTrustedAuthenticationBypassReason {
@@ -386,6 +392,7 @@ struct PlatformProfile {
     SshPlatformConfig ssh;
     SudoPlatformConfig sudo;
     SysctlPlatformConfig sysctl;
+    KdePlatformConfig kde;
     PamPlatformConfig pam;
     PasswordAgingPlatformConfig passwordAging;
     UserCreationPlatformConfig userCreation;

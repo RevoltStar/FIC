@@ -14,6 +14,8 @@
 struct KdeSystemBackendOptions {
     std::filesystem::path trustedRoot = "/etc";
     std::filesystem::path configPath = "/etc/xdg/kscreenlockerrc";
+    std::filesystem::path globalsPath = "/etc/xdg/kdeglobals";
+    std::vector<std::filesystem::path> systemConfigDirs = {"/etc/xdg"};
     std::filesystem::path temporaryRoot = "/tmp";
     uid_t trustedOwner = 0;
     gid_t trustedGroup = 0;
@@ -32,6 +34,7 @@ class KdeSystemBackend final : public DesktopSystemBackend {
 public:
     explicit KdeSystemBackend(
         const fic::platform::PlatformExecutableResolver& executables,
+        const fic::platform::KdePlatformConfig& platformConfig,
         KdeSystemBackendOptions options = {});
     KdeSystemBackend(KdeSystemBackendDependencies dependencies,
                      KdeSystemBackendOptions options);
@@ -50,7 +53,7 @@ private:
     bool validateRequirements(const DesktopManagedSettings& required,
                               std::string& error) const;
     bool verifyWithExecutable(const DesktopManagedSettings& required,
-                              const std::filesystem::path& kreadconfig,
+                              const std::filesystem::path& verifier,
                               std::string& error) const;
 };
 

@@ -409,6 +409,53 @@ const SettingDescription* managedAssignment(const std::string& line,
     return nullptr;
 }
 
+bool validateManagedSyntax(const std::string& content,
+                           const std::filesystem::path& path,
+                           std::string& error) {
+    bool inDaemon = false;
+    bool sawDaemon = false;
+    std::set<std::string> managedKeys;
+    for (const auto& line : splitLines(content)) {
+        std::string group;
+        if (groupHeader(line, group)) {
+            if (group.rfind("Daemon][", 0) == 0) {
+                error = "group-wide immutability is unsupported in " +
+                    path.string();
+                return false;
+            }
+            if (group == "Daemon") {
+                if (sawDaemon) {
+                    error = "ambiguous duplicate [Daemon] group in " +
+                        path.string();
+                    return false;
+                }
+                sawDaemon = true;
+                inDaemon = true;
+            } else {
+                inDaemon = false;
+            }
+            continue;
+        }
+        if (!inDaemon) continue;
+        std::string left;
+        std::string value;
+        const auto* setting = managedAssignment(line, left, value);
+        if (setting == nullptr) continue;
+        const std::string key = setting->key;
+        if (left != key && left != key + "[$i]") {
+            error = "unsupported modifier on managed KDE key " + key +
+                " in " + path.string();
+            return false;
+        }
+        if (!managedKeys.insert(key).second) {
+            error = "ambiguous duplicate managed KDE key " + key +
+                " in " + path.string();
+            return false;
+        }
+    }
+    return true;
+}
+
 std::map<std::string, std::string> valuesByKey(
     const DesktopManagedSettings& required) {
     std::map<std::string, std::string> values;
@@ -530,9 +577,21 @@ std::string conflictingUserConfig() {
            "RequirePassword=false\n";
 }
 
+std::string conflictingImmutableDefaults() {
+    return "[Daemon]\n"
+           "Autolock[$i]=false\n"
+           "Timeout[$i]=30\n"
+           "Lock[$i]=false\n"
+           "LockGrace[$i]=30\n"
+           "RequirePassword[$i]=false\n";
+}
+
 ProcessOptions verificationOptions(
     const std::filesystem::path& root,
-    const std::filesystem::path& systemConfigDirectory) {
+    const std::vector<std::filesystem::path>& systemConfigDirectories) {
+    std::string configDirs = (root / "user" / "kdedefaults").string();
+    for (const auto& directory : systemConfigDirectories)
+        configDirs += ":" + directory.string();
     ProcessOptions options;
     options.timeout = std::chrono::seconds(10);
     options.maxOutputBytes = 64 * 1024;
@@ -540,11 +599,81 @@ ProcessOptions verificationOptions(
     options.environment = {
         {"HOME", (root / "home").string()},
         {"XDG_CONFIG_HOME", (root / "user").string()},
-        {"XDG_CONFIG_DIRS", systemConfigDirectory.string()},
+        {"XDG_CONFIG_DIRS", configDirs},
         {"LC_ALL", "C"},
         {"LANG", "C"},
     };
     return options;
+}
+
+bool validateVerificationHierarchy(const KdeSystemBackendOptions& options,
+                                   std::string& error) {
+    if (options.systemConfigDirs.empty()) {
+        error = "KDE system configuration hierarchy is empty";
+        return false;
+    }
+    std::set<std::filesystem::path> unique;
+    for (const auto& directory : options.systemConfigDirs) {
+        if (!directory.is_absolute() || directory != directory.lexically_normal()) {
+            error = "KDE system configuration directory must be absolute and normalized";
+            return false;
+        }
+        if (!unique.insert(directory).second) {
+            error = "KDE system configuration hierarchy contains a duplicate";
+            return false;
+        }
+    }
+    const auto configParent = options.configPath.parent_path().lexically_normal();
+    const auto globalsParent = options.globalsPath.parent_path().lexically_normal();
+    if (configParent != globalsParent) {
+        error = "managed KDE configuration files must share one directory";
+        return false;
+    }
+    if (unique.count(configParent) == 0 || unique.count(globalsParent) == 0) {
+        error = "managed KDE configuration files are outside the verification hierarchy";
+        return false;
+    }
+    return true;
+}
+
+bool parseVerifierOutput(const std::string& output,
+                         const DesktopManagedSettings& required,
+                         std::string& error) {
+    const auto lines = splitLines(output);
+    if (lines.size() != kSettings.size() + 1 ||
+        lines.front() != "FIC-KCONFIG-V1") {
+        error = "KDE verifier returned an invalid protocol response";
+        return false;
+    }
+    const auto expected = valuesByKey(required);
+    std::set<std::string> seen;
+    for (std::size_t index = 1; index < lines.size(); ++index) {
+        const auto first = lines[index].find('\t');
+        const auto second = first == std::string::npos
+            ? std::string::npos : lines[index].find('\t', first + 1);
+        if (first == std::string::npos || second == std::string::npos ||
+            lines[index].find('\t', second + 1) != std::string::npos) {
+            error = "KDE verifier returned a malformed setting record";
+            return false;
+        }
+        const std::string key = lines[index].substr(0, first);
+        const std::string value = lines[index].substr(first + 1, second - first - 1);
+        const std::string immutable = lines[index].substr(second + 1);
+        const auto found = expected.find(key);
+        if (found == expected.end() || !seen.insert(key).second) {
+            error = "KDE verifier returned an unexpected or duplicate setting: " + key;
+            return false;
+        }
+        if (value != found->second || immutable != "1") {
+            error = "KDE effective setting is not immutable with the required value: " + key;
+            return false;
+        }
+    }
+    if (seen.size() != expected.size()) {
+        error = "KDE verifier omitted a required setting";
+        return false;
+    }
+    return true;
 }
 
 std::string processFailure(const ProcessResult& result) {
@@ -556,10 +685,18 @@ std::string processFailure(const ProcessResult& result) {
          ": " + trim(result.standardError));
 }
 
+KdeSystemBackendOptions withPlatformConfig(
+    KdeSystemBackendOptions options,
+    const fic::platform::KdePlatformConfig& platformConfig) {
+    options.systemConfigDirs = platformConfig.systemConfigDirs;
+    return options;
+}
+
 } // namespace
 
 KdeSystemBackend::KdeSystemBackend(
     const fic::platform::PlatformExecutableResolver& executables,
+    const fic::platform::KdePlatformConfig& platformConfig,
     KdeSystemBackendOptions options)
     : KdeSystemBackend(
           { [&executables](fic::platform::ExecutableId id,
@@ -572,7 +709,7 @@ KdeSystemBackend::KdeSystemBackend(
                 return VerifiedProcessExecutor::execute(
                     path.string(), arguments, options);
             } },
-          std::move(options)) {}
+          withPlatformConfig(std::move(options), platformConfig)) {}
 
 KdeSystemBackend::KdeSystemBackend(
     KdeSystemBackendDependencies dependencies,
@@ -611,33 +748,43 @@ bool KdeSystemBackend::ensureManagedSettings(
         return true;
     }
     if (!validateRequirements(required, error)) return false;
+    if (!validateVerificationHierarchy(options_, error)) return false;
 
-    std::filesystem::path kreadconfig;
+    std::filesystem::path verifier;
     if (!dependencies_.resolveExecutable(
-            fic::platform::ExecutableId::Kreadconfig, kreadconfig, error)) {
-        error = "cannot resolve kreadconfig5/6: " + error;
+            fic::platform::ExecutableId::KconfigVerifier, verifier, error)) {
+        error = "cannot resolve fic-kconfig-verifier: " + error;
         return false;
     }
 
-    bool exists = false;
-    std::string current;
-    if (!readOptionalFile(options_.configPath, options_, exists,
-                          current, error))
-        return false;
-    const std::string merged = mergeManagedSettings(current, required);
+    struct PlannedFile {
+        std::filesystem::path path;
+        bool exists = false;
+        std::string current;
+        std::string merged;
+    };
+    std::array<PlannedFile, 2> files{{
+        {options_.configPath}, {options_.globalsPath}}};
+    for (auto& file : files) {
+        if (!readOptionalFile(file.path, options_, file.exists,
+                              file.current, error) ||
+            !validateManagedSyntax(file.current, file.path, error))
+            return false;
+        file.merged = mergeManagedSettings(file.current, required);
+    }
 
     UniqueFd parent;
     if (!openDirectory(options_.configPath.parent_path(), true, false,
+                       options_, parent, error) ||
+        !openDirectory(options_.configPath.parent_path(), false, true,
                        options_, parent, error))
         return false;
-    if (!openDirectory(options_.configPath.parent_path(), false, true,
-                       options_, parent, error))
-        return false;
-    if (!exists || current != merged) {
-        if (!atomicWrite(options_.configPath, merged, options_, error))
+    for (const auto& file : files) {
+        if ((!file.exists || file.current != file.merged) &&
+            !atomicWrite(file.path, file.merged, options_, error))
             return false;
     }
-    return verifyWithExecutable(required, kreadconfig, error);
+    return verifyWithExecutable(required, verifier, error);
 }
 
 bool KdeSystemBackend::verifyManagedSettings(
@@ -647,29 +794,30 @@ bool KdeSystemBackend::verifyManagedSettings(
         return true;
     }
     if (!validateRequirements(required, error)) return false;
-    std::filesystem::path kreadconfig;
+    if (!validateVerificationHierarchy(options_, error)) return false;
+    std::filesystem::path verifier;
     if (!dependencies_.resolveExecutable(
-            fic::platform::ExecutableId::Kreadconfig, kreadconfig, error)) {
-        error = "cannot resolve kreadconfig5/6: " + error;
+            fic::platform::ExecutableId::KconfigVerifier, verifier, error)) {
+        error = "cannot resolve fic-kconfig-verifier: " + error;
         return false;
     }
-    return verifyWithExecutable(required, kreadconfig, error);
+    return verifyWithExecutable(required, verifier, error);
 }
 
 bool KdeSystemBackend::verifyWithExecutable(
     const DesktopManagedSettings& required,
-    const std::filesystem::path& kreadconfig, std::string& error) const {
-    if (!fileAccessibleToOrdinaryUsers(options_.configPath, options_, error))
-        return false;
-    bool exists = false;
-    std::string content;
-    if (!readOptionalFile(options_.configPath, options_, exists, content, error))
-        return false;
-    if (!exists) {
-        error = "KDE system screen-lock config is missing";
-        return false;
+    const std::filesystem::path& verifier, std::string& error) const {
+    for (const auto& path : {options_.configPath, options_.globalsPath}) {
+        if (!fileAccessibleToOrdinaryUsers(path, options_, error)) return false;
+        bool exists = false;
+        std::string content;
+        if (!readOptionalFile(path, options_, exists, content, error)) return false;
+        if (!exists) {
+            error = "KDE system configuration file is missing: " + path.string();
+            return false;
+        }
+        if (!verifyManagedContent(content, required, error)) return false;
     }
-    if (!verifyManagedContent(content, required, error)) return false;
 
     TemporaryTree temporary(options_.temporaryRoot, error);
     if (!temporary.valid()) return false;
@@ -680,6 +828,10 @@ bool KdeSystemBackend::verifyWithExecutable(
         std::filesystem::create_directories(
             temporary.root() / "user", filesystemError);
     }
+    if (!filesystemError) {
+        std::filesystem::create_directories(
+            temporary.root() / "user" / "kdedefaults", filesystemError);
+    }
     if (filesystemError) {
         error = "cannot create isolated KDE verification environment: " +
             filesystemError.message();
@@ -689,27 +841,20 @@ bool KdeSystemBackend::verifyWithExecutable(
                               options_.configPath.filename(),
                           conflictingUserConfig(), error))
         return false;
+    if (!writePrivateFile(temporary.root() / "user" / "kdedefaults" /
+                              options_.globalsPath.filename(),
+                          conflictingImmutableDefaults(), error))
+        return false;
 
     const ProcessOptions processOptions = verificationOptions(
-        temporary.root(), options_.configPath.parent_path());
-    for (const auto& [physical, expected] : required) {
-        const auto& setting = *settingFor(physical.setting);
-        const ProcessResult result = dependencies_.execute(
-            kreadconfig,
-            {"--file", options_.configPath.filename().string(),
-             "--group", "Daemon", "--key", setting.key},
-            processOptions);
-        if (!result.success()) {
-            error = "kreadconfig effective verification failed for " +
-                physical.setting + ": " + processFailure(result);
-            return false;
-        }
-        if (trim(result.standardOutput) != expected) {
-            error = "conflicting KDE user config overrides system setting " +
-                physical.setting;
-            return false;
-        }
+        temporary.root(), options_.systemConfigDirs);
+    const ProcessResult result = dependencies_.execute(
+        verifier, {}, processOptions);
+    if (!result.success()) {
+        error = "KDE FullConfig verification failed: " + processFailure(result);
+        return false;
     }
+    if (!parseVerifierOutput(result.standardOutput, required, error)) return false;
     error.clear();
     return true;
 }

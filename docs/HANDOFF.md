@@ -2,59 +2,67 @@
 
 ## Current base
 
-- Ветка `main`; production KDE system-backend commit поверх `852146b`
-  (актуальный SHA см. в `git log -1`).
+- Ветка `main`.
+- База до текущей незакоммиченной правки:
+  `ceee93d7f0c0e3bebf391c5b0904d9e1ecad8399`.
 
 ## Current task
 
-- `OSS/DesktopEnvironment/screenlock_timeout` переведён для KDE из
-  `SessionOnly` в `MandatoryGlobal` через production `KdeSystemBackend`.
+- Усилить KDE MandatoryGlobal screen-lock enforcement против FullConfig
+  override из `kdedefaults/kdeglobals` и platform `XDG_CONFIG_DIRS`.
 
 ## Accepted architecture / invariants
 
-- GNOME и KDE — `MandatoryGlobal`; XFCE/FLY — `SessionOnly`; LXQt —
-  `Unsupported`. KDE media-controls остаётся `SessionOnly`.
-- KDE system state — `/etc/xdg/kscreenlockerrc`, group `[Daemon]`, ровно пять
-  active requirements: `Autolock=true`, `Timeout=N`, `Lock=true`,
-  `LockGrace=0`, `RequirePassword=true`, каждый key с `[$i]`.
-- Backend merge-сохраняет comments, blank lines, unrelated groups/keys и
-  inactive stale state. `DISABLE -> no cleanup`; rollback/provenance вне scope.
-- Secure filesystem contract: fd-based `openat/O_NOFOLLOW`, trusted owner, no
-  group/world write, full ordinary-user ancestor traversal, atomic write и
-  `fsync`; foreign `0750` fail closed/no chmod, `0751` допустим, FIC-created
-  directories получают `0755`, config обязан быть world-readable regular file.
-- Effective proof запускает optional verified `kreadconfig6/5` в clean
-  temporary HOME/XDG_CONFIG_HOME с conflicting user file и controlled
-  XDG_CONFIG_DIRS; все пять system `[$i]` values должны победить.
-- Current-session KDE handler дополнительно читает, пишет и повторно читает
-  `Lock=true`, затем сохраняет прежний D-Bus configure call.
+- `KdeSystemBackend` merge-защищает одни и те же пять `[Daemon]` keys с
+  per-key `[$i]` одновременно в `/etc/xdg/kscreenlockerrc` и
+  `/etc/xdg/kdeglobals`.
+- Оба файла и managed-синтаксис проверяются до первой записи; unrelated state
+  сохраняется, `DISABLE` не выполняет cleanup.
+- Effective proof выполняет один optional verified
+  `/opt/fic/bin/fic-kconfig-verifier`, связанный с реальным KF5/KF6
+  ConfigCore и использующий `KConfig::FullConfig`.
+- Verifier запускается с hostile user и `kdedefaults/kdeglobals` state и
+  полным platform-owned `XDG_CONFIG_DIRS`.
+- Helper поставляется отдельным optional пакетом; headless `fic` не зависит
+  от KDE runtime.
 
-## Completed / changed areas
+## Completed
 
-- Добавлены `KdeSystemBackend.{h,cpp}` и `KdeSystemBackendTests.cpp`.
-- Обновлены screenlock contributor/mode, KDE session handler, daemon backend
-  registration и GNOME/KDE isolation tests.
-- Добавлен optional `ExecutableId::Kreadconfig` во все platform profiles с
-  secure real-binary и `/usr/bin` candidates; обновлены resolver tests/static.
-- Обновлены `session-agent.md` и `architecture-diagrams.md`.
+- Collision audit актуальных KScreenLocker/Plasma Workspace/PowerDevil/
+  plasma-desktop/KWin/System Settings не обнаружил unrelated consumers
+  совпадающих `[Daemon]` keys.
+- Backend переведён на dual-file prevalidation, merge и strict single-call
+  verifier protocol.
+- Добавлены helper source, conditional KF5/KF6 build, отдельные Deb/RPM
+  package components и platform hierarchy.
+- Обновлены unit/static tests и релевантная документация.
+- Negative controls доказали обнаружение отсутствующей второй защиты,
+  `NoGlobals` и неполного Ubuntu hierarchy.
+
+## Changed areas
+
+- `fic/src/modules/oss/desktop_environment/backends/KdeSystemBackend.*`
+- `fic/kconfig-verifier/`, `fic/CMakeLists.txt`, platform profiles/resolver
+- KDE/backend/platform tests
+- Deb/RPM packaging и KDE architecture/session docs
 
 ## Validation
 
-- Реальный KConfig experiment: `/bin/kreadconfig6` (real file
-  `/usr/lib/kf6/bin/kreadconfig6`) — `[$i]` system values победили conflicting
-  user values (`true/5`); без `[$i]` user values победили (`false/999`).
-- Targeted builds разрешённых targets — passed.
-- Targeted CTest: 9/9 passed, включая KDE/GNOME system backends, screenlock,
-  session/reconciler, platform resolver/profile и static contracts.
-- Negative controls: без `[$i]`, без session `Lock=true`, без KDE contribution
-  и с KDE=`SessionOnly` — соответствующие tests ожидаемо failed; после
-  восстановления targeted suite passed.
-- Full CTest без full build: 77 passed, 4 skipped, 2 sandbox-only failures;
-  оба (`session_event_server_tests`, `mode_and_owner_tests`) повторены вне
-  sandbox и passed 2/2.
-- Полная сборка проекта НЕ запускалась по явному ограничению задачи.
+- Targeted build: KDE/GNOME backends, desktop reconciler/session/screenlock и
+  platform profile targets — passed.
+- Targeted CTest: 9/9 passed.
+- Relevant Python static checks and packaging `bash -n` — passed.
+- `FIC_BUILD_KCONFIG_VERIFIER=ON` configure correctly failed closed because
+  this host lacks KF5 development files.
+- Fresh multi-platform configure and the `fic` target could not be completed
+  because this host also lacks libsystemd development metadata/headers.
+- Real helper binary test was not built on this host. Earlier real KF6 runtime
+  experiment confirmed that `FullConfig` can be overridden by hostile
+  `kdedefaults/kdeglobals` until the matching protected system
+  `kdeglobals` entry exists.
+- Full project build was intentionally not run per task constraint.
 
 ## Remaining
 
-- Live Plasma session не была доступна; current-session behavior проверен fake
-  backend test и существующими reconciliation contracts.
+- Run `kconfig_verifier_tests` and package builds in the target containers
+  where KF5/KF6 development packages are available.

@@ -9,6 +9,7 @@ RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
     cmake \
     gcc-c++ \
     glibc-devel \
+    kf6-kconfig-devel \
     libglvnd-devel \
     libpam0-devel \
     libsqlite3-devel \

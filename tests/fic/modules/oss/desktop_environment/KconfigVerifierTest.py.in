@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+KEYS = {
+    "Autolock": "true",
+    "Timeout": "5",
+    "Lock": "true",
+    "LockGrace": "0",
+    "RequirePassword": "true",
+}
+
+
+def config(values, immutable):
+    suffix = "[$i]" if immutable else ""
+    return "[Daemon]\n" + "".join(
+        f"{key}{suffix}={value}\n" for key, value in values.items()
+    )
+
+
+def run(verifier, root):
+    environment = {
+        "HOME": str(root / "home"),
+        "XDG_CONFIG_HOME": str(root / "user"),
+        "XDG_CONFIG_DIRS": f"{root / 'user/kdedefaults'}:{root / 'system'}",
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    result = subprocess.run(
+        [verifier], env=environment, text=True, capture_output=True, check=True
+    )
+    lines = result.stdout.splitlines()
+    if lines[:1] != ["FIC-KCONFIG-V1"] or len(lines) != 6:
+        raise AssertionError(f"invalid verifier protocol: {result.stdout!r}")
+    return {
+        fields[0]: (fields[1], fields[2])
+        for fields in (line.split("\t") for line in lines[1:])
+    }
+
+
+def main():
+    verifier = sys.argv[1]
+    hostile = {
+        "Autolock": "false",
+        "Timeout": "30",
+        "Lock": "false",
+        "LockGrace": "30",
+        "RequirePassword": "false",
+    }
+    with tempfile.TemporaryDirectory(prefix="fic-kconfig-verifier-") as temp:
+        root = Path(temp)
+        for directory in ("home", "user", "user/kdedefaults", "system"):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        (root / "user/kscreenlockerrc").write_text(config(hostile, False))
+        (root / "user/kdedefaults/kdeglobals").write_text(
+            config(hostile, True)
+        )
+        (root / "system/kscreenlockerrc").write_text(config(KEYS, True))
+
+        without_globals = run(verifier, root)
+        if without_globals["Timeout"] == ("5", "1"):
+            raise AssertionError(
+                "single-file enforcement unexpectedly survived FullConfig"
+            )
+
+        (root / "system/kdeglobals").write_text(config(KEYS, True))
+        protected = run(verifier, root)
+        expected = {key: (value, "1") for key, value in KEYS.items()}
+        if protected != expected:
+            raise AssertionError(f"dual-file FullConfig mismatch: {protected!r}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

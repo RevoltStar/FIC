@@ -185,15 +185,23 @@ void testSelectedProfile() {
                              ? "/usr/bin/dconf" : "/usr/bin/gsettings"),
                 "GNOME command must be an optional canonical executable");
     }
-    const auto& kreadconfig = executableSpec(
-        profile, fic::platform::ExecutableId::Kreadconfig);
-    require(!kreadconfig.required &&
-                kreadconfig.candidates ==
+    const auto& verifier = executableSpec(
+        profile, fic::platform::ExecutableId::KconfigVerifier);
+    require(!verifier.required &&
+                verifier.candidates ==
                     std::vector<std::filesystem::path>{
-                        "/usr/lib/kf6/bin/kreadconfig6",
-                        "/usr/lib/kf5/bin/kreadconfig5",
-                        "/usr/bin/kreadconfig6", "/usr/bin/kreadconfig5"},
-            "KDE reader must be optional with KDE 6/5 candidates");
+                        "/opt/fic/bin/fic-kconfig-verifier"},
+            "KDE FullConfig verifier must be an optional private executable");
+    const std::vector<std::filesystem::path> expectedKdeDirs =
+        profile.id == "debian-12" || profile.id == "debian-13"
+            ? std::vector<std::filesystem::path>{
+                  "/etc/xdg", "/usr/share/desktop-base/kf5-settings"}
+            : profile.id == "ubuntu-24.04" || profile.id == "ubuntu-26.04"
+                ? std::vector<std::filesystem::path>{
+                      "/etc/xdg/xdg-plasma", "/etc/xdg"}
+                : std::vector<std::filesystem::path>{"/etc/xdg"};
+    require(profile.kde.systemConfigDirs == expectedKdeDirs,
+            "platform KDE XDG_CONFIG_DIRS hierarchy is incorrect");
     const auto supplementaryProvider =
         profile.userCreation.supplementaryGroupsProvider;
     if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {
@@ -966,6 +974,22 @@ void testInvalidProfileIsRejected() {
     profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic";
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a sysctl managed path without .conf suffix must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.kde.systemConfigDirs.clear();
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "an empty KDE XDG_CONFIG_DIRS hierarchy must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.kde.systemConfigDirs.push_back(
+        profile.kde.systemConfigDirs.front());
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a duplicate KDE XDG_CONFIG_DIRS entry must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.kde.systemConfigDirs = {"/usr/share/desktop-base/kf5-settings"};
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "a KDE hierarchy without /etc/xdg must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.displayManager.gdmConfigCandidates.clear();

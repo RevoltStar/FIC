@@ -261,6 +261,14 @@ target_include_directories(kde_system_backend_tests PRIVATE
 target_link_libraries(kde_system_backend_tests PRIVATE
     fic-core fic-policy fic-platform)
 add_test(NAME kde_system_backend_tests COMMAND kde_system_backend_tests)
+if(TARGET fic-kconfig-verifier AND Python3_Interpreter_FOUND)
+    add_test(
+        NAME kconfig_verifier_tests
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/oss/desktop_environment/KconfigVerifierTest.py.in
+                $<TARGET_FILE:fic-kconfig-verifier>)
+    set_tests_properties(kconfig_verifier_tests PROPERTIES LABELS "unit")
+endif()
 
 add_executable(screenlock_timeout_global_tests
     fic/modules/oss/desktop_environment/ScreenlockTimeoutGlobalTests.cpp

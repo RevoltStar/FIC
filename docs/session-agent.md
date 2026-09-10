@@ -240,18 +240,23 @@ of these five keys while retaining comments, blank lines, unrelated groups,
 unrelated keys, and stale settings with no active requirement. It never uses
 whole-group or whole-file immutability.
 
-The KDE system file and its full ancestor chain use the same fd-based
+Both KDE system files, `/etc/xdg/kscreenlockerrc` and
+`/etc/xdg/kdeglobals`, and their full ancestor chain use the same fd-based
 `openat`/`O_NOFOLLOW`, trusted-owner, safe-write-bit, traversal, atomic-write,
 and `fsync` contract as the GNOME system state. Existing foreign ancestors are
 never chmod'ed (`0750` fails closed; `0751` is sufficient), FIC-created
-directories receive explicit `0755`, and the system file must be a
-world-readable regular trusted-owned file. Effective verification resolves the
-optional `kreadconfig6`/`kreadconfig5` executable only for active KDE
-requirements and uses a clean temporary `HOME` and `XDG_CONFIG_HOME`, a
-controlled `XDG_CONFIG_DIRS`, and `LC_ALL=C`/`LANG=C`. It installs conflicting
-user values for all five keys and requires every read to return the immutable
-system value. Textual `[$i]` presence without this effective proof is
-insufficient. `DISABLE` remains no-cleanup/no-rollback.
+directories receive explicit `0755`, and both files must be world-readable
+regular trusted-owned files. Both files are prevalidated before either is
+changed. Effective verification resolves the optional separately packaged
+`fic-kconfig-verifier` only for active KDE requirements. This helper is linked
+to the platform's real KF5/KF6 ConfigCore and runs once with
+`KConfig::FullConfig`, a clean temporary `HOME` and `XDG_CONFIG_HOME`, the
+complete platform `XDG_CONFIG_DIRS` hierarchy, and `LC_ALL=C`/`LANG=C`. It
+installs conflicting user and `kdedefaults/kdeglobals` values for all five
+keys and requires every effective value to remain immutable. Textual `[$i]`
+presence without this proof is insufficient. `DISABLE` remains
+no-cleanup/no-rollback. The headless `fic` package does not depend on KDE; the
+verifier is supplied by the optional `fic-kconfig-verifier` package.
 
 GNOME and KDE are `MandatoryGlobal`; XFCE and FLY remain `SessionOnly`; LXQt
 remains unsupported.

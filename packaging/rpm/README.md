@@ -5,10 +5,11 @@ Payload бинарников, service-файлов, конфигурации и 
 systemd и tmpfiles; скрипт упаковки отвечает за RPM metadata, lifecycle и Qt
 runtime bundle, а не за генерацию integration-файлов.
 
-This packaging flow builds five RPM packages for ALT Linux p11:
+This packaging flow builds six RPM packages for ALT Linux p11:
 
 - `fic-dick`
 - `fic`
+- `fic-kconfig-verifier`
 - `fic-session-agent`
 - `fic-cli`
 - `fic-gui`
@@ -193,6 +194,10 @@ permanent-device check.
 - `/bin/fic-cli` symlink to `/opt/fic/bin/fic-cli`
 - `/usr/share/bash-completion/completions/fic-cli`
 
+`fic-kconfig-verifier` optionally installs
+`/opt/fic/bin/fic-kconfig-verifier`. It links to KF6 ConfigCore and is needed
+only for KDE global screen-lock enforcement.
+
 `fic-gui` installs:
 
 - `/opt/fic/bin/fic-gui`
@@ -205,6 +210,8 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 ## Dependency chain
 
 - `fic` requires `fic-dick`
+- `fic-kconfig-verifier` requires the exact `fic` version; `fic` does not
+  require this optional KDE package
 - `fic-session-agent` is optional and must be installed separately when
   graphical-session policies are needed; ALT p11 RPM does not support the
   `Recommends` spec tag

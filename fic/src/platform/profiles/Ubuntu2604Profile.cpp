@@ -76,9 +76,8 @@ PlatformProfile makeBuildPlatformProfile() {
             false
         },
         {
-            ExecutableId::Kreadconfig,
-            {"/usr/lib/kf6/bin/kreadconfig6", "/usr/lib/kf5/bin/kreadconfig5",
-             "/usr/bin/kreadconfig6", "/usr/bin/kreadconfig5"},
+            ExecutableId::KconfigVerifier,
+            {"/opt/fic/bin/fic-kconfig-verifier"},
             false
         }
     };
@@ -91,6 +90,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
     profile.sysctl.loader = SysctlLoaderKind::SystemdSysctl;
     profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
+    profile.kde.systemConfigDirs = {
+        "/etc/xdg/xdg-plasma", "/etc/xdg"};
     profile.pam.configDirectories = {
         "/etc/pam.d",
         "/usr/lib/pam.d",

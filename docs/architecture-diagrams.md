@@ -1363,7 +1363,8 @@ tmpfiles, udev и XDG-шаблоны. Исполняемые компонент�
 остаются независимыми семантическими путями. Такой контракт позволяет менять
 профиль установки через CMake без строковых замен в C++ или service-файлах.
 Deb/RPM staging устанавливает именованные CMake-компоненты (`fic`, `fic-dick`,
-`fic-cli`, `fic-session-agent`, `fic-gui`) и не копирует эти файлы повторно из
+`fic-cli`, `fic-session-agent`, `fic-gui`, `fic-kconfig-verifier`) и не
+копирует эти файлы повторно из
 дерева исходников.
 
 Версии product, IPC, конфигураций и SQLite независимы; точные значения
@@ -1508,14 +1509,20 @@ effort. Rollback, provenance, and stale cleanup remain
 outside this contract.
 
 `KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`.
-It merge-updates `/etc/xdg/kscreenlockerrc` and protects only five `[Daemon]`
+It merge-updates both `/etc/xdg/kscreenlockerrc` and
+`/etc/xdg/kdeglobals`, and protects only five `[Daemon]`
 keys with per-key `[$i]`: `Autolock=true`, `Timeout=N`, `Lock=true`,
 `LockGrace=0`, and `RequirePassword=true`. Comments, blank lines, unrelated
 groups/keys, and inactive stale settings are retained; `DISABLE` performs no
-cleanup. The system file and every ancestor use fd-based secure traversal and
-ordinary-user accessibility checks. Effective verification runs optional
-`kreadconfig6`/`kreadconfig5` in a clean temporary user environment containing
-conflicting values and requires the immutable system values to win for all
-five keys. Current-session KDE convergence remains best effort after global
+cleanup. Both files are securely read and their managed syntax is validated
+before either is changed. The files and every ancestor use fd-based secure
+traversal and ordinary-user accessibility checks. Effective verification runs
+the separately packaged optional `fic-kconfig-verifier`, linked to the target
+platform's real KF5/KF6 ConfigCore, once with `KConfig::FullConfig`. Its clean
+temporary user environment contains conflicting user and
+`kdedefaults/kdeglobals` values and the complete platform
+`XDG_CONFIG_DIRS` hierarchy; all five effective values must remain immutable.
+The headless `fic` package has no KDE dependency. Current-session KDE
+convergence remains best effort after global
 verification and now also reads, writes, and reads back `Lock=true` before its
 existing D-Bus configure call.

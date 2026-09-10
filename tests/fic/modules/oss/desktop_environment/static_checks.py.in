@@ -20,6 +20,15 @@ screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OS
 gnome_handler_header = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
 ru_lang = (root / "fic/src/resources/lang/ru.lang").read_text()
 en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
+fic_cmake = (root / "fic/CMakeLists.txt").read_text()
+deb_packaging = (root / "packaging/deb/build-fic-debian12-deb.sh").read_text()
+rpm_packaging = (root / "packaging/rpm/build-fic-alt-p11-rpm.sh").read_text()
+deb_fic_package = deb_packaging[
+    deb_packaging.index("build_fic_package() {"):
+    deb_packaging.index("build_fic_kconfig_verifier_package() {")]
+rpm_fic_package = rpm_packaging[
+    rpm_packaging.index("build_fic_package() {"):
+    rpm_packaging.index("build_fic_kconfig_verifier_package() {")]
 
 assert "Type=notify" in unit
 assert "NotifyAccess=main" in unit
@@ -60,7 +69,7 @@ assert "globalEnforcementVerified" not in targeted
 assert '"phase", "desktop_global_configuration"' in targeted
 assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main
 assert "std::make_shared<GnomeSystemBackend>(executables)" in main
-assert "std::make_shared<KdeSystemBackend>(executables)" in main
+assert "std::make_shared<KdeSystemBackend>(executables, platform.kde)" in main
 assert "{gnomeSystemBackend, kdeSystemBackend}" in main
 assert main.count("desktopGlobalConfig.reconcile") >= 3
 assert "install_desktop_global_report" in main
@@ -93,6 +102,25 @@ assert "return DesktopEnvironmentKind::Kde" in kde_system
 assert 'return "kde"' in kde_system
 assert "VerifiedProcessExecutor::execute" in kde_system
 assert "/etc/xdg/kscreenlockerrc" in kde_system_header
+assert "/etc/xdg/kdeglobals" in kde_system_header
+assert "KconfigVerifier" in kde_system
+assert "FIC-KCONFIG-V1" in kde_system
+assert "conflictingImmutableDefaults" in kde_system
+assert "std::array<PlannedFile, 2>" in kde_system
+assert "KConfig::FullConfig" in (
+    root / "fic/kconfig-verifier/main.cpp").read_text()
+assert "COMPONENT fic-kconfig-verifier" in fic_cmake
+assert "FIC_BUILD_KCONFIG_VERIFIER=ON" in deb_packaging
+assert "FIC_BUILD_KCONFIG_VERIFIER=ON" in rpm_packaging
+assert "fic-kconfig-verifier" not in deb_fic_package
+assert "fic-kconfig-verifier" not in rpm_fic_package
+for dockerfile, dependency in (
+        ("packaging/deb/Dockerfile", "libkf5config-dev"),
+        ("packaging/deb/Dockerfile.debian13", "libkf6config-dev"),
+        ("packaging/deb/Dockerfile.ubuntu2404", "libkf5config-dev"),
+        ("packaging/deb/Dockerfile.ubuntu2604", "libkf6config-dev"),
+        ("packaging/rpm/Dockerfile", "kf6-kconfig-devel")):
+    assert dependency in (root / dockerfile).read_text()
 for required in ("Autolock", "Timeout", "Lock", "LockGrace",
                  "RequirePassword", "[$i]", "XDG_CONFIG_HOME",
                  "XDG_CONFIG_DIRS"):

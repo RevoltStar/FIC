@@ -1287,7 +1287,7 @@ int main(int argc, char* argv[]) {
     auto gnomeSystemBackend =
         std::make_shared<GnomeSystemBackend>(executables);
     auto kdeSystemBackend =
-        std::make_shared<KdeSystemBackend>(executables);
+        std::make_shared<KdeSystemBackend>(executables, platform.kde);
     DesktopGlobalConfigReconciler desktopGlobalConfig(
         {gnomeSystemBackend, kdeSystemBackend});
     std::string registryError;

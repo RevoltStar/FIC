@@ -19,6 +19,43 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(FIC_BUILD_KCONFIG_VERIFIER "AUTO" CACHE STRING
+    "Build fic-kconfig-verifier: AUTO, ON or OFF")
+set_property(CACHE FIC_BUILD_KCONFIG_VERIFIER PROPERTY STRINGS AUTO ON OFF)
+if(NOT FIC_BUILD_KCONFIG_VERIFIER MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "FIC_BUILD_KCONFIG_VERIFIER must be AUTO, ON or OFF")
+endif()
+
+set(FIC_KCONFIG_VERIFIER_AVAILABLE FALSE)
+if(NOT FIC_BUILD_KCONFIG_VERIFIER STREQUAL "OFF")
+    if(FIC_KCONFIG_FRAMEWORK_MAJOR EQUAL 6)
+        find_package(KF6Config QUIET)
+        if(KF6Config_FOUND)
+            set(FIC_KCONFIG_TARGET KF6::ConfigCore)
+            set(FIC_KCONFIG_VERIFIER_AVAILABLE TRUE)
+        endif()
+    else()
+        find_package(KF5Config QUIET)
+        if(KF5Config_FOUND)
+            set(FIC_KCONFIG_TARGET KF5::ConfigCore)
+            set(FIC_KCONFIG_VERIFIER_AVAILABLE TRUE)
+        endif()
+    endif()
+    if(FIC_BUILD_KCONFIG_VERIFIER STREQUAL "ON" AND
+       NOT FIC_KCONFIG_VERIFIER_AVAILABLE)
+        message(FATAL_ERROR
+            "fic-kconfig-verifier requires KF${FIC_KCONFIG_FRAMEWORK_MAJOR} Config development files")
+    endif()
+endif()
+
+if(FIC_KCONFIG_VERIFIER_AVAILABLE)
+    add_executable(fic-kconfig-verifier kconfig-verifier/main.cpp)
+    target_link_libraries(fic-kconfig-verifier PRIVATE ${FIC_KCONFIG_TARGET})
+    install(TARGETS fic-kconfig-verifier
+        RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}"
+        COMPONENT fic-kconfig-verifier)
+endif()
+
 # Автоматическое сканирование исходников
 file(GLOB_RECURSE SRC_FILES
     "src/*.cpp"
