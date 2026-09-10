@@ -137,7 +137,12 @@ assert 'std::string keyfileName = "99-fic.conf"' in gnome_system_header
 assert "/org/gnome/desktop/lockdown/disable-lock-screen" in gnome_system
 assert "org.gnome.desktop.lockdown" in gnome_system
 assert '"/org/gnome/desktop/lockdown/disable-lock-screen", "false")' in screenlock
-assert '"kscreenlockerrc/Daemon/Lock"' in screenlock
+contributions = screenlock[
+    screenlock.index("bool OSS_screenlock_timeout::globalDesktopPolicyContributions"):
+    screenlock.index("bool OSS_screenlock_timeout::relevantTo")
+]
+assert '"kde"' not in contributions
+assert '"kscreenlockerrc/Daemon/' not in contributions
 assert "desktop == DesktopEnvironmentKind::Kde" in screenlock
 assert "org.gnome.desktop.lockdown" in gnome_handler_header
 assert "disable-lock-screen" in gnome_handler_header
@@ -148,11 +153,20 @@ assert "if (required.empty()) { error.clear(); return true; }" in gnome_system
 assert "duplicate system-db:fic" in gnome_system
 assert "PolicyCapability::GlobalDesktopConfiguration" in screenlock_header
 assert "PolicyCapability::SessionAware" in screenlock_header
-assert "desktop == DesktopEnvironmentKind::Gnome" in screenlock
-assert "return EnforcementMode::MandatoryGlobal" in screenlock
-assert "DesktopEnvironmentKind::Kde" in screenlock
-assert "DesktopEnvironmentKind::Xfce" in screenlock
-assert "DesktopEnvironmentKind::Fly" in screenlock
+mode_for = screenlock[
+    screenlock.index("EnforcementMode OSS_screenlock_timeout::modeFor"):
+    screenlock.index("bool OSS_screenlock_timeout::reconcileControlledSession")
+]
+mandatory_branch = mode_for[:mode_for.index(
+    "return EnforcementMode::MandatoryGlobal")]
+assert "desktop == DesktopEnvironmentKind::Gnome" in mandatory_branch
+assert "DesktopEnvironmentKind::Kde" not in mandatory_branch
+session_branch = mode_for[mode_for.index(
+    "return EnforcementMode::MandatoryGlobal"):]
+assert "DesktopEnvironmentKind::Kde" in session_branch
+assert "DesktopEnvironmentKind::Xfce" in session_branch
+assert "DesktopEnvironmentKind::Fly" in session_branch
+assert "return EnforcementMode::SessionOnly" in session_branch
 for obsolete in ("ensureGlobalState", "applyGlobalValue",
                  "applyGlobalProtection", "verifyGlobalState"):
     assert obsolete not in screenlock

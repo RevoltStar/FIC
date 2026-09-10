@@ -85,7 +85,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.sysctl.loader = SysctlLoaderKind::SystemdSysctl;
     profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
     profile.kde.systemConfigDirs = {
-        "/etc/xdg/xdg-plasma", "/etc/xdg"};
+        "/etc/xdg/xdg-plasma", "/etc/xdg",
+        "/usr/share/kubuntu-default-settings/kf5-settings"};
     profile.pam.configDirectories = {
         "/etc/pam.d",
         "/usr/lib/pam.d",

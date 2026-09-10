@@ -118,11 +118,14 @@ struct FakeKdeSession {
         {"RequirePassword", "true"},
     };
     mutable std::vector<std::string> writes;
+    mutable std::vector<std::string> events;
     mutable int reloads = 0;
+    bool reloadOk = true;
 
     bool readConfig(const std::string&, const std::string&,
                     const std::string& key, std::string& value,
                     std::string& error) const {
+        events.push_back("read:" + key);
         value = values.at(key);
         error.clear();
         return true;
@@ -130,6 +133,7 @@ struct FakeKdeSession {
     bool writeConfig(const std::string&, const std::string&,
                      const std::string& key, const std::string& value,
                      std::string& error) const {
+        events.push_back("write:" + key);
         writes.push_back(key + "=" + value);
         values[key] = value;
         error.clear();
@@ -143,23 +147,61 @@ struct FakeKdeSession {
                     interface == "org.kde.screensaver" &&
                     method == "configure",
                 "KDE handler used the wrong D-Bus configure call");
+        events.push_back("configure");
         ++reloads;
-        error.clear();
-        return true;
+        error = reloadOk ? "" : "D-Bus unavailable";
+        return reloadOk;
     }
 };
 
 void testKdeLockConvergence() {
-    FakeKdeSession session;
-    std::string error;
-    require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
-    require(std::find(session.writes.begin(), session.writes.end(),
-                      "Lock=true") != session.writes.end(),
-            "KDE handler did not repair Lock=false");
-    require(session.values["Lock"] == "true",
-            "KDE final readback did not observe Lock=true");
-    require(session.reloads == 1,
-            "KDE handler did not issue one D-Bus configure call");
+    const std::vector<std::string> reads = {
+        "read:Autolock", "read:Timeout", "read:Lock",
+        "read:LockGrace", "read:RequirePassword"};
+    {
+        FakeKdeSession session;
+        std::string error;
+        require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+        require(std::find(session.writes.begin(), session.writes.end(),
+                          "Lock=true") != session.writes.end(),
+                "KDE handler did not repair Lock=false");
+        require(session.values["Lock"] == "true",
+                "KDE final readback did not observe Lock=true");
+        std::vector<std::string> expected = reads;
+        expected.insert(expected.end(), {
+            "write:Autolock", "write:Timeout", "write:Lock",
+            "write:LockGrace", "write:RequirePassword", "configure"});
+        expected.insert(expected.end(), reads.begin(), reads.end());
+        require(session.events == expected,
+                "KDE write/configure/readback ordering is wrong");
+    }
+    {
+        FakeKdeSession session;
+        session.values["Lock"] = "true";
+        std::string error;
+        require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+        require(session.writes.empty(),
+                "already-correct KDE session state was rewritten");
+        std::vector<std::string> expected = reads;
+        expected.push_back("configure");
+        expected.insert(expected.end(), reads.begin(), reads.end());
+        require(session.events == expected && session.reloads == 1,
+                "already-correct KDE state skipped configure or final readback");
+    }
+    {
+        FakeKdeSession session;
+        session.values["Lock"] = "true";
+        session.reloadOk = false;
+        std::string error;
+        require(!kde_screen_lock_timeout::applyTimeout(session, 5, error),
+                "KDE configure failure was ignored");
+        std::vector<std::string> expected = reads;
+        expected.push_back("configure");
+        require(session.events == expected &&
+                    error == "failed to reload KDE screen lock settings: "
+                             "D-Bus unavailable",
+                "KDE configure failure ordering or diagnostic is wrong");
+    }
 }
 }
 

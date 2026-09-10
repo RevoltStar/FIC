@@ -198,7 +198,8 @@ void testSelectedProfile() {
                   "/etc/xdg", "/usr/share/desktop-base/kf5-settings"}
             : profile.id == "ubuntu-24.04" || profile.id == "ubuntu-26.04"
                 ? std::vector<std::filesystem::path>{
-                      "/etc/xdg/xdg-plasma", "/etc/xdg"}
+                      "/etc/xdg/xdg-plasma", "/etc/xdg",
+                      "/usr/share/kubuntu-default-settings/kf5-settings"}
                 : std::vector<std::filesystem::path>{"/etc/xdg"};
     require(profile.kde.systemConfigDirs == expectedKdeDirs,
             "platform KDE XDG_CONFIG_DIRS hierarchy is incorrect");

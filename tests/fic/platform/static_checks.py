@@ -201,6 +201,32 @@ def main():
             "alt-p11": "AltP11Profile.cpp",
         }.items()
     }
+    expected_kde_config_dirs = {
+        "debian-12": ["/etc/xdg", "/usr/share/desktop-base/kf5-settings"],
+        "debian-13": ["/etc/xdg", "/usr/share/desktop-base/kf5-settings"],
+        "ubuntu-24.04": [
+            "/etc/xdg/xdg-plasma",
+            "/etc/xdg",
+            "/usr/share/kubuntu-default-settings/kf5-settings",
+        ],
+        "ubuntu-26.04": [
+            "/etc/xdg/xdg-plasma",
+            "/etc/xdg",
+            "/usr/share/kubuntu-default-settings/kf5-settings",
+        ],
+        "alt-p11": ["/etc/xdg"],
+    }
+    for name, source in profiles.items():
+        assignment = re.search(
+            r"profile\.kde\.systemConfigDirs\s*=\s*\{([^}]*)\};",
+            source,
+            re.DOTALL,
+        )
+        actual = re.findall(r'"([^"]+)"', assignment.group(1)) if assignment else []
+        require(
+            actual == expected_kde_config_dirs[name],
+            f"{name} KDE standard XDG_CONFIG_DIRS hierarchy is incorrect: {actual}",
+        )
     required_profile_sections = (
         "profile.executables.entries",
         "ExecutableId::Sshd",

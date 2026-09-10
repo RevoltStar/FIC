@@ -105,9 +105,11 @@ Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,
 XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
 `~/.fly/theme/current.themerc`. Other desktop environments fail explicitly until
 a dedicated daemon-side backend is implemented. These existing backends are
-classified `SessionOnly` for XFCE and FLY. Controlled GNOME and KDE are
-`MandatoryGlobal`: their system backends prove the machine-wide value and
-protection before current-session convergence.
+classified `SessionOnly` for KDE, XFCE, and FLY. Controlled GNOME is
+`MandatoryGlobal`: its system backend proves the machine-wide value and
+protection before current-session convergence. KDE does not publish global
+requirements while its KConfig source graph remains controlled by the session
+user.
 The same backend-driven ensure -> verification sequence runs both during normal
 policy apply and targeted `session_ready` reconciliation, before the current
 session is converged. Successful authoritative global enforcement
@@ -221,9 +223,9 @@ directory is opened with `openat(..., O_NOFOLLOW)`, validated as existing
 foreign state, and never passed to the FIC-created-directory `fchmod` path.
 
 The daemon also registers `KdeSystemBackend` as backend `"kde"`, typed as
-`DesktopEnvironmentKind::Kde`. For controlled KDE,
-`screenlock_timeout=N` manages `/etc/xdg/kscreenlockerrc` with per-key Kiosk
-immutability:
+`DesktopEnvironmentKind::Kde`. The backend remains groundwork for a future
+authoritative KDE design and can manage `/etc/xdg/kscreenlockerrc` with per-key
+Kiosk immutability:
 
 ```ini
 [Daemon]
@@ -258,8 +260,40 @@ presence without this proof is insufficient. `DISABLE` remains
 no-cleanup/no-rollback. The headless `fic` package does not depend on KDE; the
 verifier is supplied by the optional `fic-kconfig-verifier` package.
 
-GNOME and KDE are `MandatoryGlobal`; XFCE and FLY remain `SessionOnly`; LXQt
-remains unsupported.
+This verifier models the standard distribution environment; it cannot prove
+the environment used by the running screen locker. In Plasma 5, `ksmserver`
+owns `KSldApp` on X11 and `kwin_wayland` owns it on Wayland. In Plasma 6,
+`kwin` owns it. Plasma 5 and Plasma 6 source
+`$XDG_CONFIG_HOME/plasma-workspace/env/*.sh` before completing session startup,
+with user scripts taking precedence, and propagate the resulting environment
+to session processes and user-systemd/DBus activation. KConfig in both KF5 and
+KF6 uses `XDG_CONFIG_HOME` and `XDG_CONFIG_DIRS` through `QStandardPaths`; it
+also honors `KDE_SKIP_KDERC`, which can suppress `/etc/kde5rc`. User systemd
+environment and unit overrides provide additional user-controlled startup
+paths. No standard root-owned mechanism was found that fixes these inputs for
+the actual locker process across both supported Plasma generations while
+preventing ordinary-user overrides. Therefore the production
+`screenlock_timeout` policy publishes no KDE global contribution and does not
+invoke `KdeSystemBackend` for a KDE-only scope.
+
+The platform KDE hierarchy records the standard distribution environment:
+Debian 12/13 use `/etc/xdg` followed by
+`/usr/share/desktop-base/kf5-settings`; Ubuntu/Kubuntu 24.04 and 26.04 use
+`/etc/xdg/xdg-plasma`, `/etc/xdg`, and
+`/usr/share/kubuntu-default-settings/kf5-settings`; ALT p11 uses `/etc/xdg`.
+This metadata improves verifier correctness for the normal distro startup but
+is not a security boundary against a user-modified session environment.
+
+KDE current-session convergence reads the five values, writes them only when
+needed, always calls `org.kde.screensaver.configure`, and only then performs
+the final file readback. A configure failure fails the `SessionOnly`
+reconciliation. KScreenLocker exposes no runtime-effective timeout read API,
+so successful reload plus file readback is the best available convergence
+contract; the readback alone does not prove the value cached by the running
+locker.
+
+GNOME is `MandatoryGlobal`; KDE, XFCE, and FLY are `SessionOnly`; LXQt remains
+unsupported.
 `DesktopSystemBackend` remains the only global enforcement mechanism: policies
 describe requirements and have no parallel value, protection, or verification
 hooks.

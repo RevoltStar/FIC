@@ -1446,8 +1446,8 @@ packet only for a bounded interval. A client which connects before sending is
 therefore handled without a false `EAGAIN` rejection, while a silent or closed
 peer cannot block the daemon indefinitely.
 
-Controlled GNOME and KDE `screenlock_timeout` are `MandatoryGlobal`; XFCE/FLY
-screen-lock handling and KDE media-control remain `SessionOnly`.
+Controlled GNOME `screenlock_timeout` is `MandatoryGlobal`; KDE, XFCE, and FLY
+screen-lock handling and KDE media-control are `SessionOnly`.
 `GnomeSystemBackend` is registered as backend `"gnome"` with typed identity
 `Gnome`. It maintains FIC's dconf keyfile
 `/etc/dconf/db/fic.d/99-fic.conf`, locks in `fic.d/locks/99-fic`, and inserts
@@ -1508,7 +1508,9 @@ convergence (which also enforces `disable-lock-screen=false`) remains best
 effort. Rollback, provenance, and stale cleanup remain
 outside this contract.
 
-`KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`.
+`KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`
+and retained as groundwork, but production `screenlock_timeout` currently
+publishes no KDE global requirements.
 It merge-updates both `/etc/xdg/kscreenlockerrc` and
 `/etc/xdg/kdeglobals`, and protects only five `[Daemon]`
 keys with per-key `[$i]`: `Autolock=true`, `Timeout=N`, `Lock=true`,
@@ -1522,7 +1524,20 @@ platform's real KF5/KF6 ConfigCore, once with `KConfig::FullConfig`. Its clean
 temporary user environment contains conflicting user and
 `kdedefaults/kdeglobals` values and the complete platform
 `XDG_CONFIG_DIRS` hierarchy; all five effective values must remain immutable.
+The standard hierarchy is Debian 12/13
+`/etc/xdg:/usr/share/desktop-base/kf5-settings`, Ubuntu/Kubuntu 24.04 and 26.04
+`/etc/xdg/xdg-plasma:/etc/xdg:/usr/share/kubuntu-default-settings/kf5-settings`,
+and ALT p11 `/etc/xdg`. It is correctness metadata, not an authority boundary.
+Plasma 5 loads `KSldApp` in `ksmserver` on X11 and `kwin_wayland` on Wayland;
+Plasma 6 loads it in `kwin`. Both generations run user
+`plasma-workspace/env/*.sh` before those session processes and propagate the
+resulting environment. Because an ordinary user can alter the KConfig graph
+through `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, `KDE_SKIP_KDERC`, and user-systemd
+startup controls, no cross-generation root-authoritative standard environment
+mechanism was found and KDE cannot be reported as `MandatoryGlobal`.
 The headless `fic` package has no KDE dependency. Current-session KDE
-convergence remains best effort after global
-verification and now also reads, writes, and reads back `Lock=true` before its
-existing D-Bus configure call.
+convergence reads the five values, writes only if needed, always calls
+`org.kde.screensaver.configure`, then performs final file readback. The reload
+failure is fatal for this `SessionOnly` reconciliation. File readback does not
+prove the timeout cached by KScreenLocker because it exposes no corresponding
+runtime-state read API.

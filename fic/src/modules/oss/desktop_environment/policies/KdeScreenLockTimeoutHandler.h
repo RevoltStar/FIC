@@ -3,7 +3,6 @@
 
 #include "modules/oss/desktop_environment/backends/KdeBackend.h"
 #include "modules/oss/desktop_environment/backends/BackendCommand.h"
-#include "modules/oss/desktop_environment/SessionSettingReconciler.h"
 #include "modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.h"
 
 namespace kde_screen_lock_timeout {
@@ -13,7 +12,7 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
                   std::string& error) {
     constexpr const char* file = "kscreenlockerrc";
     constexpr const char* group = "Daemon";
-    const auto readState = [&](bool& matches, std::string&) {
+    const auto readState = [&](bool& matches) {
         std::string autolock;
         std::string timeout;
         std::string lock;
@@ -40,7 +39,7 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
             actualTimeout == timeoutMinutes && grace == 0;
         return true;
     };
-    const auto writeState = [&](std::string&) {
+    const auto writeState = [&]() {
         if (!backend.writeConfig(file, group, "Autolock", "true", error) ||
             !backend.writeConfig(file, group, "Timeout",
                                  std::to_string(timeoutMinutes), error) ||
@@ -49,17 +48,28 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
             !backend.writeConfig(
                 file, group, "RequirePassword", "true", error))
             return false;
-        if (!backend.callDbusMethod(
-                "org.kde.screensaver", "/ScreenSaver",
-                "org.kde.screensaver", "configure", error)) {
-            error = "failed to reload KDE screen lock settings: " + error;
-            return false;
-        }
         return true;
     };
-    return desktop_policy::reconcileEffectiveSetting(
-        readState, writeState,
-        "KDE screen lock settings did not reach the requested state", error);
+
+    bool matches = false;
+    if (!readState(matches)) return false;
+    if (!matches && !writeState()) return false;
+
+    if (!backend.callDbusMethod(
+            "org.kde.screensaver", "/ScreenSaver",
+            "org.kde.screensaver", "configure", error)) {
+        error = "failed to reload KDE screen lock settings: " + error;
+        return false;
+    }
+
+    matches = false;
+    if (!readState(matches)) return false;
+    if (!matches) {
+        error = "KDE screen lock settings did not reach the requested state";
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 } // namespace kde_screen_lock_timeout

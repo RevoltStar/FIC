@@ -52,11 +52,7 @@ bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
         sessionApplicability(DesktopEnvironmentKind::Gnome, error) ==
         SessionApplicability::Applicable;
     if (!error.empty()) return false;
-    const bool kdeApplicable =
-        sessionApplicability(DesktopEnvironmentKind::Kde, error) ==
-        SessionApplicability::Applicable;
-    if (!error.empty()) return false;
-    if (!gnomeApplicable && !kdeApplicable) return true;
+    if (!gnomeApplicable) return true;
 
     int timeoutMinutes = 0;
     if (!configuredTimeoutMinutes(timeoutMinutes, error)) return false;
@@ -78,19 +74,6 @@ bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
         add("gnome", DesktopEnvironmentKind::Gnome,
             "/org/gnome/desktop/lockdown/disable-lock-screen", "false");
     }
-    if (kdeApplicable) {
-        add("kde", DesktopEnvironmentKind::Kde,
-            "kscreenlockerrc/Daemon/Autolock", "true");
-        add("kde", DesktopEnvironmentKind::Kde,
-            "kscreenlockerrc/Daemon/Timeout",
-            std::to_string(timeoutMinutes));
-        add("kde", DesktopEnvironmentKind::Kde,
-            "kscreenlockerrc/Daemon/Lock", "true");
-        add("kde", DesktopEnvironmentKind::Kde,
-            "kscreenlockerrc/Daemon/LockGrace", "0");
-        add("kde", DesktopEnvironmentKind::Kde,
-            "kscreenlockerrc/Daemon/RequirePassword", "true");
-    }
     error.clear();
     return true;
 }
@@ -103,10 +86,10 @@ bool OSS_screenlock_timeout::relevantTo(DesktopEnvironmentKind desktop) const
 EnforcementMode OSS_screenlock_timeout::modeFor(
     DesktopEnvironmentKind desktop) const
 {
-    if (desktop == DesktopEnvironmentKind::Gnome ||
-        desktop == DesktopEnvironmentKind::Kde)
+    if (desktop == DesktopEnvironmentKind::Gnome)
         return EnforcementMode::MandatoryGlobal;
-    if (desktop == DesktopEnvironmentKind::Xfce ||
+    if (desktop == DesktopEnvironmentKind::Kde ||
+        desktop == DesktopEnvironmentKind::Xfce ||
         desktop == DesktopEnvironmentKind::Fly)
         return EnforcementMode::SessionOnly;
     return EnforcementMode::Unsupported;
