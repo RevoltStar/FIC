@@ -231,17 +231,23 @@ bool verifyNoExternalHistory(
 }
 
 bool validateStorageObject(const std::filesystem::path& path, mode_t mode,
-                           uid_t owner, gid_t group, bool directory,
+                           std::optional<uid_t> owner, gid_t group,
+                           bool directory, bool allowMissing,
                            std::string& error) {
     struct stat info {};
     if (::lstat(path.c_str(), &info) != 0) {
+        if (allowMissing && errno == ENOENT) {
+            error.clear();
+            return true;
+        }
         error = "could not inspect password-history storage " + path.string() +
             ": " + errnoText();
         return false;
     }
     const bool correctType = directory ? S_ISDIR(info.st_mode) :
         S_ISREG(info.st_mode);
-    if (!correctType || S_ISLNK(info.st_mode) || info.st_uid != owner ||
+    if (!correctType || S_ISLNK(info.st_mode) ||
+        (owner.has_value() && info.st_uid != *owner) ||
         info.st_gid != group || (info.st_mode & 07777) != mode ||
         (!directory && info.st_nlink != 1)) {
         error = "unsafe password-history storage object: " + path.string();
@@ -251,12 +257,16 @@ bool validateStorageObject(const std::filesystem::path& path, mode_t mode,
 }
 
 bool createStorageFile(const std::filesystem::path& path, uid_t owner,
-                       gid_t group, std::string& error) {
+                       gid_t group, bool ownerInvariant,
+                       std::string& error) {
+    const std::optional<uid_t> expectedOwner =
+        ownerInvariant ? std::optional<uid_t>(owner) : std::nullopt;
     int descriptor = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL |
         O_CLOEXEC | O_NOFOLLOW, 0660);
     if (descriptor < 0) {
         if (errno == EEXIST)
-            return validateStorageObject(path, 0660, owner, group, false, error);
+            return validateStorageObject(
+                path, 0660, expectedOwner, group, false, false, error);
         error = "could not create password-history storage " + path.string() +
             ": " + errnoText();
         return false;
@@ -272,7 +282,8 @@ bool createStorageFile(const std::filesystem::path& path, uid_t owner,
             path.string() + ": " + detail;
         return false;
     }
-    return validateStorageObject(path, 0660, owner, group, false, error);
+    return validateStorageObject(
+        path, 0660, expectedOwner, group, false, false, error);
 }
 
 } // namespace
@@ -373,11 +384,11 @@ bool AltPamPasswordHistoryTopologyManager::prepareStorage(
         }
     }
     if (!validateStorageObject(options_.stateDirectory, 02730,
-            options_.storageOwner, options_.storageGroup, true, error) ||
+            options_.storageOwner, options_.storageGroup, true, false, error) ||
         !createStorageFile(options_.historyFile, options_.storageOwner,
-            options_.storageGroup, error) ||
+            options_.storageGroup, false, error) ||
         !createStorageFile(options_.transactionLockFile, options_.storageOwner,
-            options_.storageGroup, error))
+            options_.storageGroup, true, error))
         return false;
     error.clear();
     return true;
@@ -452,12 +463,16 @@ bool AltPamPasswordHistoryTopologyManager::status(
         state = AltPamPasswordHistoryTopologyState::Disabled;
         return true;
     }
+    auto historyBackupFile = options_.historyFile;
+    historyBackupFile += ".old";
     if (!validateStorageObject(options_.stateDirectory, 02730,
-            options_.storageOwner, options_.storageGroup, true, error) ||
+            options_.storageOwner, options_.storageGroup, true, false, error) ||
         !validateStorageObject(options_.historyFile, 0660,
-            options_.storageOwner, options_.storageGroup, false, error) ||
+            std::nullopt, options_.storageGroup, false, false, error) ||
+        !validateStorageObject(historyBackupFile, 0660,
+            std::nullopt, options_.storageGroup, false, true, error) ||
         !validateStorageObject(options_.transactionLockFile, 0660,
-            options_.storageOwner, options_.storageGroup, false, error) ||
+            options_.storageOwner, options_.storageGroup, false, false, error) ||
         !verifySemanticEffectiveness(error))
         return false;
     state = AltPamPasswordHistoryTopologyState::Enabled;

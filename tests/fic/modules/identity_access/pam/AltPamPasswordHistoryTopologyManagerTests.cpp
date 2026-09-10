@@ -2,10 +2,13 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -130,12 +133,151 @@ void testRoundTripAndStorage() {
                 (info.st_mode & 07777) == 02730,
             "storage directory mode is incorrect");
     require(::lstat((tree.root / "state/opasswd").c_str(), &info) == 0 &&
+                info.st_uid == tree.options().storageOwner &&
+                info.st_gid == tree.options().storageGroup &&
                 (info.st_mode & 0777) == 0660 && info.st_nlink == 1,
             "history file metadata is incorrect");
     require(manager.disable(error), error);
     require(TemporaryTree::read(tree.target()) == kCanonical,
             "disable did not restore exact PAM content");
     require(manager.disable(error), "disable must be idempotent: " + error);
+}
+
+void createHistoryBackup(const TemporaryTree& tree) {
+    TemporaryTree::write(tree.root / "state/opasswd.old", "history\n");
+    require(::chmod((tree.root / "state/opasswd.old").c_str(), 0660) == 0,
+            "could not set backup history mode");
+}
+
+void testProviderOwnedHistoryFilesRemainValid() {
+    TemporaryTree tree;
+    const auto options = tree.options();
+    AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(manager.enable(error), error);
+
+    createHistoryBackup(tree);
+    const uid_t userA = ::geteuid() == 0 ? 10001 : ::geteuid();
+    const uid_t userB = ::geteuid() == 0 ? 10002 : ::geteuid();
+    require(::chown(options.historyFile.c_str(), userA,
+                    options.storageGroup) == 0,
+            "could not model provider-owned opasswd");
+    auto historyBackupFile = options.historyFile;
+    historyBackupFile += ".old";
+    require(::chown(historyBackupFile.c_str(), userB,
+                    options.storageGroup) == 0,
+            "could not model provider-owned opasswd.old");
+
+    AltPamPasswordHistoryTopologyState state;
+    require(manager.status(state, error) &&
+                state == AltPamPasswordHistoryTopologyState::Enabled,
+            "provider-owned history files were rejected: " + error);
+}
+
+void requireBrokenStorage(
+    const std::function<void(const TemporaryTree&,
+                             const AltPamPasswordHistoryTopologyOptions&)>&
+        mutate,
+    const std::string& message) {
+    TemporaryTree tree;
+    const auto options = tree.options();
+    AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(manager.enable(error), error);
+    mutate(tree, options);
+    fic::identity::pam::PamTopologyStatus status;
+    require(!manager.inspect(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Broken,
+            message);
+}
+
+std::optional<gid_t> alternateWritableGroup() {
+    if (::geteuid() == 0)
+        return ::getegid() == 1 ? 2 : 1;
+    const int count = ::getgroups(0, nullptr);
+    if (count <= 0)
+        return std::nullopt;
+    std::vector<gid_t> groups(static_cast<std::size_t>(count));
+    if (::getgroups(count, groups.data()) != count)
+        return std::nullopt;
+    for (const gid_t group : groups) {
+        if (group != ::getegid())
+            return group;
+    }
+    return std::nullopt;
+}
+
+void testUnsafeHistoryStorageFailsClosed() {
+    const auto wrongGroup = alternateWritableGroup();
+    if (wrongGroup.has_value()) {
+        TemporaryTree tree;
+        const auto options = tree.options();
+        AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+        std::string error;
+        require(manager.enable(error), error);
+        if (::chown(options.historyFile.c_str(), static_cast<uid_t>(-1),
+                    *wrongGroup) == 0) {
+            fic::identity::pam::PamTopologyStatus status;
+            require(!manager.inspect(status, error) &&
+                        status.state ==
+                            fic::identity::pam::PamTopologyState::Broken,
+                    "wrong history gid was accepted");
+        } else {
+            std::cerr << "SKIP wrong-gid mutation: filesystem rejected chown"
+                      << std::endl;
+        }
+    } else {
+        std::cerr << "SKIP wrong-gid mutation: no alternate writable group"
+                  << std::endl;
+    }
+    requireBrokenStorage(
+        [](const TemporaryTree&,
+           const AltPamPasswordHistoryTopologyOptions& options) {
+            require(::chmod(options.historyFile.c_str(), 0640) == 0,
+                    "could not set wrong history mode");
+        },
+        "wrong history mode was accepted");
+    requireBrokenStorage(
+        [](const TemporaryTree& tree,
+           const AltPamPasswordHistoryTopologyOptions& options) {
+            fs::create_hard_link(options.historyFile,
+                                 tree.root / "state/opasswd.link");
+        },
+        "multiply-linked history file was accepted");
+    requireBrokenStorage(
+        [](const TemporaryTree&,
+           const AltPamPasswordHistoryTopologyOptions& options) {
+            fs::remove(options.historyFile);
+            fs::create_directory(options.historyFile);
+        },
+        "history directory was accepted as a regular file");
+    requireBrokenStorage(
+        [](const TemporaryTree& tree,
+           const AltPamPasswordHistoryTopologyOptions& options) {
+            fs::remove(options.historyFile);
+            fs::create_symlink(tree.root / "attacker-history",
+                               options.historyFile);
+        },
+        "history symlink was accepted");
+    requireBrokenStorage(
+        [](const TemporaryTree&,
+           const AltPamPasswordHistoryTopologyOptions& options) {
+            require(::chmod(options.stateDirectory.c_str(), 0770) == 0,
+                    "could not weaken history parent");
+        },
+        "unsafe history parent was accepted");
+}
+
+void testUnsafeHistoryBackupFailsClosed() {
+    requireBrokenStorage(
+        [](const TemporaryTree& tree,
+           const AltPamPasswordHistoryTopologyOptions&) {
+            createHistoryBackup(tree);
+            require(::chmod((tree.root / "state/opasswd.old").c_str(), 0640) ==
+                        0,
+                    "could not set wrong backup history mode");
+        },
+        "unsafe backup history file was accepted");
 }
 
 void testExternalProviderIsRejected() {
@@ -276,6 +418,9 @@ void testTransactionModuleTrustedInspection() {
 int main() {
     try {
         testRoundTripAndStorage();
+        testProviderOwnedHistoryFilesRemainValid();
+        testUnsafeHistoryStorageFailsClosed();
+        testUnsafeHistoryBackupFailsClosed();
         testExternalProviderIsRejected();
         testExternalIncludedProviderIsRejected();
         testBrokenMarkersFailClosed();

@@ -3,64 +3,50 @@
 ## Current base
 
 - Ветка `main`.
-- База до corrective commit:
-  `92eaf02aa24b0a2883ef1f972416f0773d39f5a6`.
+- База до текущей правки: `ff7cd9a` (`Fail safe KDE screen lock enforcement`).
 
 ## Current task
 
-- Устранить false `MandatoryGlobal` для KDE `screenlock_timeout`, исправить
-  current-session reload ordering и standard Ubuntu/Kubuntu XDG metadata.
+- Исправить ALT password-history topology для штатного ownership drift,
+  создаваемого upstream `pam_pwhistory`.
 
 ## Accepted architecture / invariants
 
-- `GNOME` остаётся `MandatoryGlobal`; `KDE`, `XFCE` и `FLY` — `SessionOnly`;
-  `LXQt` — `Unsupported`.
-- Plasma 5/6 позволяет пользователю изменить KConfig graph реального
-  KScreenLocker через session environment; штатный cross-generation
-  root-authoritative механизм не найден.
-- KDE session reconciliation всегда выполняет
-  `org.kde.screensaver.configure` перед final file readback, даже если initial
-  read уже совпал. Readback не доказывает runtime-cached timeout.
-- `KdeSystemBackend`, dual-file protection и optional `fic-kconfig-verifier`
-  сохранены как groundwork, но production `screenlock_timeout` не публикует
-  KDE global requirements.
+- UID `opasswd` и optional `opasswd.old` не является security invariant:
+  upstream provider может пересоздать их от UID меняющего пароль пользователя.
+- Для обоих history files остаются обязательными regular/non-symlink type,
+  `shadow` GID, mode `0660` и `nlink == 1`.
+- Parent остаётся строго `root:shadow`, mode `2730`, directory/non-symlink;
+  transaction lock сохраняет строгий owner/GID/mode/type/nlink contract.
+- FIC не создаёт и не исправляет `opasswd.old`; если provider создал файл,
+  manager валидирует его fail-closed.
 
 ## Completed
 
-- Проверен upstream lifecycle: Plasma 5 X11 — `ksmserver`, Plasma 5 Wayland —
-  `kwin_wayland`, Plasma 6 — `kwin`; все зависят от user-controlled session
-  environment.
-- KDE переведён в `SessionOnly`; KDE-only scope публикует 0 global
-  contributions, mixed GNOME+KDE — только четыре GNOME contributions.
-- Исправлен KDE ordering: read, optional five writes, configure, final read.
-- В Ubuntu 24.04/26.04 metadata добавлен реальный Kubuntu defaults directory;
-  Debian 12/13 и ALT p11 перепроверены без изменений.
-- Три требуемых negative control дали ожидаемые test failures, затем исходники
-  восстановлены.
+- Existing-file и status validation для `opasswd` больше не сравнивает UID.
+- `opasswd.old`, вычисляемый как `<historyFile>.old`, добавлен в status
+  verification как optional provider artifact без UID invariant.
+- Добавлены regression cases для baseline metadata, provider-owned `opasswd`
+  и `opasswd.old`, а также wrong GID/mode/nlink/type/symlink/bad parent.
 
 ## Changed areas
 
-- `OSS_screenlock_timeout` и `KdeScreenLockTimeoutHandler`.
-- Screen-lock/session/static contract tests.
-- Ubuntu platform profiles и profile tests.
-- KDE/session architecture documentation.
+- `AltPamPasswordHistoryTopologyManager`.
+- `AltPamPasswordHistoryTopologyManagerTests`.
 
 ## Validation
 
-- Targeted build шести affected unit targets — passed.
-- Targeted CTest: 8/8 passed, включая оба relevant static checks.
-- Platform static contract проверил точные hierarchy всех пяти profiles.
-- Negative controls: KDE `MandatoryGlobal`, KDE global contributions и skipped
-  already-correct reload — каждый был пойман соответствующим regression.
+- Ubuntu 24.04 build profile: affected targets rebuilt; targeted CTest 3/3
+  passed (`pam_capability_activation_policy_tests`,
+  `alt_pam_faillock_topology_tests`,
+  `alt_pam_password_history_topology_tests`).
+- Fresh ALT p11 configure/build: `alt_pam_password_history_topology_tests`
+  passed 1/1.
 - `git diff --check` — passed.
-- Отдельные Ubuntu 26.04/Debian 12/13 build directories не регенерируются на
-  хосте без `libsystemd`; ALT p11 `platform_profile_tests` собрался, но упал на
-  существующем unrelated provider-metadata кейсе.
-- `clang-format` на хосте отсутствует.
-- Live Plasma session отсутствовала; runtime D-Bus experiment не выполнялся.
-- Полная сборка проекта НЕ запускалась по явному ограничению задачи.
 
 ## Remaining
 
-- Повторить live D-Bus convergence smoke при наличии тестовой Plasma 5/6
-  сессии; это не меняет fail-safe `SessionOnly` decision.
+- На текущем WSL/tmpfs смена GID отвергается filesystem, поэтому wrong-GID
+  mutation self-skips; case выполняется полностью на обычном root/container
+  filesystem. Остальные negative cases выполнены локально.
+- Live ALT TCB password-change smoke после этой source правки не выполнялся.
