@@ -68,6 +68,12 @@ PlatformProfile makeBuildPlatformProfile() {
             ExecutableId::Gsettings,
             {"/usr/bin/gsettings"},
             false
+        },
+        {
+            ExecutableId::Kreadconfig,
+            {"/usr/lib/kf6/bin/kreadconfig6", "/usr/lib/kf5/bin/kreadconfig5",
+             "/usr/bin/kreadconfig6", "/usr/bin/kreadconfig5"},
+            false
         }
     };
     profile.packageManager.kind = PackageManagerKind::Dpkg;

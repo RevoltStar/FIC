@@ -27,7 +27,8 @@ enum class ExecutableId {
     Gpasswd,
     PamAuthUpdate,
     Dconf,
-    Gsettings
+    Gsettings,
+    Kreadconfig
 };
 
 struct PlatformExecutableSpec {

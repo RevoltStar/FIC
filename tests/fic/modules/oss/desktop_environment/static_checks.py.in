@@ -13,6 +13,8 @@ session_policy = (root / "fic/src/modules/oss/desktop_environment/SessionAwareDe
 global_reconciler = (root / "fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp").read_text()
 gnome_system = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.cpp").read_text()
 gnome_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.h").read_text()
+kde_system = (root / "fic/src/modules/oss/desktop_environment/backends/KdeSystemBackend.cpp").read_text()
+kde_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/KdeSystemBackend.h").read_text()
 screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
 screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
 gnome_handler_header = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
@@ -58,7 +60,8 @@ assert "globalEnforcementVerified" not in targeted
 assert '"phase", "desktop_global_configuration"' in targeted
 assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main
 assert "std::make_shared<GnomeSystemBackend>(executables)" in main
-assert "DesktopGlobalConfigReconciler desktopGlobalConfig({gnomeSystemBackend})" in main
+assert "std::make_shared<KdeSystemBackend>(executables)" in main
+assert "{gnomeSystemBackend, kdeSystemBackend}" in main
 assert main.count("desktopGlobalConfig.reconcile") >= 3
 assert "install_desktop_global_report" in main
 assert "latestGlobalReport.successfulForPolicy" in main
@@ -82,18 +85,32 @@ backend_header = (root / "fic/src/modules/oss/desktop_environment/DesktopGlobalC
 assert "virtual DesktopEnvironmentKind desktop() const = 0;" in backend_header
 assert "virtual std::string backendName() const = 0;" in backend_header
 assert "class GnomeSystemBackend final : public DesktopSystemBackend" in gnome_system_header
+assert "class KdeSystemBackend final : public DesktopSystemBackend" in kde_system_header
 assert "return DesktopEnvironmentKind::Gnome" in gnome_system
 assert 'return "gnome"' in gnome_system
 assert "VerifiedProcessExecutor::execute" in gnome_system
+assert "return DesktopEnvironmentKind::Kde" in kde_system
+assert 'return "kde"' in kde_system
+assert "VerifiedProcessExecutor::execute" in kde_system
+assert "/etc/xdg/kscreenlockerrc" in kde_system_header
+for required in ("Autolock", "Timeout", "Lock", "LockGrace",
+                 "RequirePassword", "[$i]", "XDG_CONFIG_HOME",
+                 "XDG_CONFIG_DIRS"):
+    assert required in kde_system
 for forbidden in ("system(", "popen(", "/bin/sh", "~/.config/dconf",
                   "replaceManagedState", "removeManaged"):
     assert forbidden not in gnome_system
+for forbidden in ("system(", "popen(", "/bin/sh", "kscreenlockerrc.d",
+                  "[Daemon][$i]", "replaceManagedState", "removeManaged"):
+    assert forbidden not in kde_system
 assert 'std::string keyfileName = "99-fic.conf"' in gnome_system_header
 # GNOME screenlock_timeout обязан охватывать четвёртый ключ: без
 # disable-lock-screen=false GNOME Shell может вообще не блокировать экран.
 assert "/org/gnome/desktop/lockdown/disable-lock-screen" in gnome_system
 assert "org.gnome.desktop.lockdown" in gnome_system
-assert '\n    add("/org/gnome/desktop/lockdown/disable-lock-screen", "false");' in screenlock
+assert '"/org/gnome/desktop/lockdown/disable-lock-screen", "false")' in screenlock
+assert '"kscreenlockerrc/Daemon/Lock"' in screenlock
+assert "desktop == DesktopEnvironmentKind::Kde" in screenlock
 assert "org.gnome.desktop.lockdown" in gnome_handler_header
 assert "disable-lock-screen" in gnome_handler_header
 # dconf profile parser поддерживает file-db/whitespace/inline comments и

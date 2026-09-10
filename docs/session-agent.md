@@ -105,9 +105,9 @@ Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,
 XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
 `~/.fly/theme/current.themerc`. Other desktop environments fail explicitly until
 a dedicated daemon-side backend is implemented. These existing backends are
-classified `SessionOnly` except controlled GNOME, which is `MandatoryGlobal`.
-`GnomeSystemBackend` is the first production system backend and proves the
-machine-wide value and protection before current-session convergence.
+classified `SessionOnly` for XFCE and FLY. Controlled GNOME and KDE are
+`MandatoryGlobal`: their system backends prove the machine-wide value and
+protection before current-session convergence.
 The same backend-driven ensure -> verification sequence runs both during normal
 policy apply and targeted `session_ready` reconciliation, before the current
 session is converged. Successful authoritative global enforcement
@@ -220,7 +220,41 @@ If creation races with another process and returns `EEXIST`, the raced-in
 directory is opened with `openat(..., O_NOFOLLOW)`, validated as existing
 foreign state, and never passed to the FIC-created-directory `fchmod` path.
 
-KDE, XFCE, and FLY remain `SessionOnly`; LXQt remains unsupported.
+The daemon also registers `KdeSystemBackend` as backend `"kde"`, typed as
+`DesktopEnvironmentKind::Kde`. For controlled KDE,
+`screenlock_timeout=N` manages `/etc/xdg/kscreenlockerrc` with per-key Kiosk
+immutability:
+
+```ini
+[Daemon]
+Autolock[$i]=true
+Timeout[$i]=N
+Lock[$i]=true
+LockGrace[$i]=0
+RequirePassword[$i]=true
+```
+
+`Lock=true` is required because timeout and password settings alone do not
+prove that locking is enabled. The backend replaces conflicting active forms
+of these five keys while retaining comments, blank lines, unrelated groups,
+unrelated keys, and stale settings with no active requirement. It never uses
+whole-group or whole-file immutability.
+
+The KDE system file and its full ancestor chain use the same fd-based
+`openat`/`O_NOFOLLOW`, trusted-owner, safe-write-bit, traversal, atomic-write,
+and `fsync` contract as the GNOME system state. Existing foreign ancestors are
+never chmod'ed (`0750` fails closed; `0751` is sufficient), FIC-created
+directories receive explicit `0755`, and the system file must be a
+world-readable regular trusted-owned file. Effective verification resolves the
+optional `kreadconfig6`/`kreadconfig5` executable only for active KDE
+requirements and uses a clean temporary `HOME` and `XDG_CONFIG_HOME`, a
+controlled `XDG_CONFIG_DIRS`, and `LC_ALL=C`/`LANG=C`. It installs conflicting
+user values for all five keys and requires every read to return the immutable
+system value. Textual `[$i]` presence without this effective proof is
+insufficient. `DISABLE` remains no-cleanup/no-rollback.
+
+GNOME and KDE are `MandatoryGlobal`; XFCE and FLY remain `SessionOnly`; LXQt
+remains unsupported.
 `DesktopSystemBackend` remains the only global enforcement mechanism: policies
 describe requirements and have no parallel value, protection, or verification
 hooks.

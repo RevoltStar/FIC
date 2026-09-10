@@ -156,7 +156,8 @@ bool validateExecutables(const PlatformExecutables& executables,
     for (const ExecutableId id : supportedIds) {
         if (id == ExecutableId::PamAuthUpdate ||
             id == ExecutableId::Dconf ||
-            id == ExecutableId::Gsettings) {
+            id == ExecutableId::Gsettings ||
+            id == ExecutableId::Kreadconfig) {
             continue;
         }
         const PlatformExecutableSpec* spec =

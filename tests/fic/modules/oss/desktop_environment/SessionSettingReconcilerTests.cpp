@@ -1,5 +1,6 @@
 #include "modules/oss/desktop_environment/SessionSettingReconciler.h"
 #include "modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h"
+#include "modules/oss/desktop_environment/policies/KdeScreenLockTimeoutHandler.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -107,6 +108,59 @@ void testGnomeSessionConvergence() {
                 "idle-delay was not converged");
     }
 }
+
+struct FakeKdeSession {
+    mutable std::map<std::string, std::string> values = {
+        {"Autolock", "true"},
+        {"Timeout", "5"},
+        {"Lock", "false"},
+        {"LockGrace", "0"},
+        {"RequirePassword", "true"},
+    };
+    mutable std::vector<std::string> writes;
+    mutable int reloads = 0;
+
+    bool readConfig(const std::string&, const std::string&,
+                    const std::string& key, std::string& value,
+                    std::string& error) const {
+        value = values.at(key);
+        error.clear();
+        return true;
+    }
+    bool writeConfig(const std::string&, const std::string&,
+                     const std::string& key, const std::string& value,
+                     std::string& error) const {
+        writes.push_back(key + "=" + value);
+        values[key] = value;
+        error.clear();
+        return true;
+    }
+    bool callDbusMethod(const std::string& service, const std::string& path,
+                        const std::string& interface,
+                        const std::string& method,
+                        std::string& error) const {
+        require(service == "org.kde.screensaver" && path == "/ScreenSaver" &&
+                    interface == "org.kde.screensaver" &&
+                    method == "configure",
+                "KDE handler used the wrong D-Bus configure call");
+        ++reloads;
+        error.clear();
+        return true;
+    }
+};
+
+void testKdeLockConvergence() {
+    FakeKdeSession session;
+    std::string error;
+    require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+    require(std::find(session.writes.begin(), session.writes.end(),
+                      "Lock=true") != session.writes.end(),
+            "KDE handler did not repair Lock=false");
+    require(session.values["Lock"] == "true",
+            "KDE final readback did not observe Lock=true");
+    require(session.reloads == 1,
+            "KDE handler did not issue one D-Bus configure call");
+}
 }
 
 int main() {
@@ -158,5 +212,6 @@ int main() {
     require(error == "readback mismatch", "mismatch diagnostic was lost");
 
     testGnomeSessionConvergence();
+    testKdeLockConvergence();
     return 0;
 }

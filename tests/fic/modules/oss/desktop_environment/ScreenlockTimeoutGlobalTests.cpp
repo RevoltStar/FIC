@@ -38,11 +38,11 @@ struct EmptyInventory : GraphicalSessionInventory {
 
 struct Backend : DesktopSystemBackend {
     bool ensureOk = true;
+    DesktopEnvironmentKind kind = DesktopEnvironmentKind::Gnome;
+    std::string name = "gnome";
     DesktopManagedSettings received;
-    DesktopEnvironmentKind desktop() const override {
-        return DesktopEnvironmentKind::Gnome;
-    }
-    std::string backendName() const override { return "gnome"; }
+    DesktopEnvironmentKind desktop() const override { return kind; }
+    std::string backendName() const override { return name; }
     bool ensureManagedSettings(const DesktopManagedSettings& required,
                                std::string& error) override {
         received = required;
@@ -99,11 +99,13 @@ void testModesCapabilitiesAndContributions() {
     require(policy->enforcementMode(DesktopEnvironmentKind::Gnome) ==
                 EnforcementMode::MandatoryGlobal,
             "GNOME is not MandatoryGlobal");
-    for (const auto desktop : {DesktopEnvironmentKind::Kde,
-                               DesktopEnvironmentKind::Xfce,
+    require(policy->enforcementMode(DesktopEnvironmentKind::Kde) ==
+                EnforcementMode::MandatoryGlobal,
+            "KDE is not MandatoryGlobal");
+    for (const auto desktop : {DesktopEnvironmentKind::Xfce,
                                DesktopEnvironmentKind::Fly})
         require(policy->enforcementMode(desktop) == EnforcementMode::SessionOnly,
-                "non-GNOME supported desktop became MandatoryGlobal");
+                "XFCE/FLY mode changed from SessionOnly");
     require(policy->enforcementMode(DesktopEnvironmentKind::Lxqt) ==
                 EnforcementMode::Unsupported,
             "LXQt unexpectedly became supported");
@@ -135,13 +137,43 @@ void testModesCapabilitiesAndContributions() {
     scope.desktops = {DesktopEnvironmentKind::Kde};
     contributions.clear();
     require(policy->globalDesktopPolicyContributions(contributions, error) &&
-            contributions.empty(), "KDE-only scope published GNOME state");
+            contributions.size() == 5,
+            "KDE did not publish exactly five keys");
+    values.clear();
+    for (const auto& contribution : contributions) {
+        require(contribution.backend == "kde" &&
+                    contribution.desktop == DesktopEnvironmentKind::Kde &&
+                    contribution.owner ==
+                        PolicyRef{"OSS", "DesktopEnvironment",
+                                  "screenlock_timeout"},
+                "KDE contribution identity is not canonical");
+        values[contribution.key.setting] = contribution.value;
+    }
+    require(values["kscreenlockerrc/Daemon/Autolock"] == "true" &&
+                values["kscreenlockerrc/Daemon/Timeout"] == "5" &&
+                values["kscreenlockerrc/Daemon/Lock"] == "true" &&
+                values["kscreenlockerrc/Daemon/LockGrace"] == "0" &&
+                values["kscreenlockerrc/Daemon/RequirePassword"] == "true",
+            "five-minute KDE conversion is wrong");
+
     scope.desktops = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Kde};
+    contributions.clear();
     require(policy->globalDesktopPolicyContributions(contributions, error) &&
-            contributions.size() == 4,
-            "mixed GNOME/KDE scope lost GNOME contribution");
+            contributions.size() == 9,
+            "mixed GNOME/KDE scope did not publish nine keys");
+
+    for (const auto desktop : {DesktopEnvironmentKind::Xfce,
+                               DesktopEnvironmentKind::Fly}) {
+        scope.desktops = {desktop};
+        contributions.clear();
+        require(policy->globalDesktopPolicyContributions(contributions, error) &&
+                    contributions.empty(),
+                "XFCE/FLY published global screen-lock state");
+    }
 
     writeConfig("20");
+    scope.desktops = {DesktopEnvironmentKind::Gnome,
+                      DesktopEnvironmentKind::Kde};
     policy = makePolicy(scope, inventory);
     contributions.clear();
     require(policy->globalDesktopPolicyContributions(contributions, error), error);
@@ -149,11 +181,15 @@ void testModesCapabilitiesAndContributions() {
         if (contribution.key.setting.find("idle-delay") != std::string::npos)
             require(contribution.value == "uint32 1200",
                     "twenty-minute conversion is wrong");
+        else if (contribution.key.setting == "kscreenlockerrc/Daemon/Timeout")
+            require(contribution.value == "20",
+                    "twenty-minute KDE conversion is wrong");
 }
 
 void testInvalidValueAndReconcilerReport() {
     Scope scope;
-    scope.desktops = {DesktopEnvironmentKind::Gnome};
+    scope.desktops = {DesktopEnvironmentKind::Gnome,
+                      DesktopEnvironmentKind::Kde};
     auto inventory = std::make_shared<EmptyInventory>();
     writeConfig("invalid");
     auto invalid = makePolicy(scope, inventory);
@@ -166,17 +202,30 @@ void testInvalidValueAndReconcilerReport() {
     PolicyRegistry registry;
     require(registry.addModule("OSS", ModuleView::Standard, 0, error), error);
     require(registry.addPolicy(makePolicy(scope, inventory), error), error);
-    auto backend = std::make_shared<Backend>();
-    DesktopGlobalConfigReconciler reconciler({backend});
+    auto gnome = std::make_shared<Backend>();
+    auto kde = std::make_shared<Backend>();
+    kde->kind = DesktopEnvironmentKind::Kde;
+    kde->name = "kde";
+    DesktopGlobalConfigReconciler reconciler({gnome, kde});
     auto report = reconciler.reconcile(registry);
     const PolicyRef owner{"OSS", "DesktopEnvironment", "screenlock_timeout"};
     require(report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
-            backend->received.size() == 4,
-            "actual policy did not receive verified four-key coverage");
-    backend->ensureOk = false;
+                report.resultFor(owner, DesktopEnvironmentKind::Kde).verified &&
+                gnome->received.size() == 4 && kde->received.size() == 5,
+            "actual policy did not receive complete GNOME/KDE coverage");
+
+    kde->ensureOk = false;
     report = reconciler.reconcile(registry);
-    require(!report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified,
-            "backend failure did not reach policy-specific report");
+    require(report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
+                !report.resultFor(owner, DesktopEnvironmentKind::Kde).verified,
+            "KDE failure contaminated GNOME result");
+
+    kde->ensureOk = true;
+    gnome->ensureOk = false;
+    report = reconciler.reconcile(registry);
+    require(!report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
+                report.resultFor(owner, DesktopEnvironmentKind::Kde).verified,
+            "GNOME failure contaminated KDE result");
 }
 
 } // namespace

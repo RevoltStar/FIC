@@ -1445,7 +1445,7 @@ packet only for a bounded interval. A client which connects before sending is
 therefore handled without a false `EAGAIN` rejection, while a silent or closed
 peer cannot block the daemon indefinitely.
 
-Controlled GNOME `screenlock_timeout` is `MandatoryGlobal`; KDE, XFCE, and FLY
+Controlled GNOME and KDE `screenlock_timeout` are `MandatoryGlobal`; XFCE/FLY
 screen-lock handling and KDE media-control remain `SessionOnly`.
 `GnomeSystemBackend` is registered as backend `"gnome"` with typed identity
 `Gnome`. It maintains FIC's dconf keyfile
@@ -1506,3 +1506,16 @@ need relogin to load a newly changed profile, so their separate session-runtime
 convergence (which also enforces `disable-lock-screen=false`) remains best
 effort. Rollback, provenance, and stale cleanup remain
 outside this contract.
+
+`KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`.
+It merge-updates `/etc/xdg/kscreenlockerrc` and protects only five `[Daemon]`
+keys with per-key `[$i]`: `Autolock=true`, `Timeout=N`, `Lock=true`,
+`LockGrace=0`, and `RequirePassword=true`. Comments, blank lines, unrelated
+groups/keys, and inactive stale settings are retained; `DISABLE` performs no
+cleanup. The system file and every ancestor use fd-based secure traversal and
+ordinary-user accessibility checks. Effective verification runs optional
+`kreadconfig6`/`kreadconfig5` in a clean temporary user environment containing
+conflicting values and requires the immutable system values to win for all
+five keys. Current-session KDE convergence remains best effort after global
+verification and now also reads, writes, and reads back `Lock=true` before its
+existing D-Bus configure call.

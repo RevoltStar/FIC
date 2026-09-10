@@ -243,6 +243,12 @@ def main():
             f"{name} profile does not map the trusted chage executable",
         )
         require(
+            "ExecutableId::Kreadconfig" in source
+            and '"/usr/lib/kf6/bin/kreadconfig6"' in source
+            and '"/usr/lib/kf5/bin/kreadconfig5"' in source,
+            f"{name} profile does not map optional KDE config readers",
+        )
+        require(
             "passwordAging.policyDefaults" not in source,
             f"{name} profile duplicates generated password-aging policy defaults",
         )
@@ -730,6 +736,7 @@ def main():
         "Udevadm",
         "Nft",
         "Chage",
+        "Kreadconfig",
     ):
         require(
             f"ExecutableId::{executable_id}" in resolver,

@@ -48,26 +48,49 @@ bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
     std::string& error)
 {
     contributions.clear();
-    if (sessionApplicability(DesktopEnvironmentKind::Gnome, error) !=
-        SessionApplicability::Applicable) {
-        if (!error.empty()) return false;
-        return true;
-    }
+    const bool gnomeApplicable =
+        sessionApplicability(DesktopEnvironmentKind::Gnome, error) ==
+        SessionApplicability::Applicable;
+    if (!error.empty()) return false;
+    const bool kdeApplicable =
+        sessionApplicability(DesktopEnvironmentKind::Kde, error) ==
+        SessionApplicability::Applicable;
+    if (!error.empty()) return false;
+    if (!gnomeApplicable && !kdeApplicable) return true;
+
     int timeoutMinutes = 0;
     if (!configuredTimeoutMinutes(timeoutMinutes, error)) return false;
     const PolicyRef owner{moduleName, submoduleName, policyName};
-    const auto add = [&](const char* setting, std::string value) {
-        contributions.push_back({"gnome", DesktopEnvironmentKind::Gnome,
+    const auto add = [&](const char* backend, DesktopEnvironmentKind desktop,
+                         const char* setting, std::string value) {
+        contributions.push_back({backend, desktop,
                                  owner, {setting}, std::move(value)});
     };
-    add("/org/gnome/desktop/session/idle-delay",
-        "uint32 " + std::to_string(timeoutMinutes * 60));
-    add("/org/gnome/desktop/screensaver/lock-enabled", "true");
-    add("/org/gnome/desktop/screensaver/lock-delay", "uint32 0");
-    // org.gnome.desktop.lockdown disable-lock-screen=true запрещает GNOME Shell
-    // блокировать экран вообще, поэтому без false экранная блокировка не
-    // доказуема даже при корректных idle-delay/lock-enabled/lock-delay.
-    add("/org/gnome/desktop/lockdown/disable-lock-screen", "false");
+    if (gnomeApplicable) {
+        add("gnome", DesktopEnvironmentKind::Gnome,
+            "/org/gnome/desktop/session/idle-delay",
+            "uint32 " + std::to_string(timeoutMinutes * 60));
+        add("gnome", DesktopEnvironmentKind::Gnome,
+            "/org/gnome/desktop/screensaver/lock-enabled", "true");
+        add("gnome", DesktopEnvironmentKind::Gnome,
+            "/org/gnome/desktop/screensaver/lock-delay", "uint32 0");
+        // disable-lock-screen=true prevents GNOME Shell from locking at all.
+        add("gnome", DesktopEnvironmentKind::Gnome,
+            "/org/gnome/desktop/lockdown/disable-lock-screen", "false");
+    }
+    if (kdeApplicable) {
+        add("kde", DesktopEnvironmentKind::Kde,
+            "kscreenlockerrc/Daemon/Autolock", "true");
+        add("kde", DesktopEnvironmentKind::Kde,
+            "kscreenlockerrc/Daemon/Timeout",
+            std::to_string(timeoutMinutes));
+        add("kde", DesktopEnvironmentKind::Kde,
+            "kscreenlockerrc/Daemon/Lock", "true");
+        add("kde", DesktopEnvironmentKind::Kde,
+            "kscreenlockerrc/Daemon/LockGrace", "0");
+        add("kde", DesktopEnvironmentKind::Kde,
+            "kscreenlockerrc/Daemon/RequirePassword", "true");
+    }
     error.clear();
     return true;
 }
@@ -80,10 +103,10 @@ bool OSS_screenlock_timeout::relevantTo(DesktopEnvironmentKind desktop) const
 EnforcementMode OSS_screenlock_timeout::modeFor(
     DesktopEnvironmentKind desktop) const
 {
-    if (desktop == DesktopEnvironmentKind::Gnome)
+    if (desktop == DesktopEnvironmentKind::Gnome ||
+        desktop == DesktopEnvironmentKind::Kde)
         return EnforcementMode::MandatoryGlobal;
-    if (desktop == DesktopEnvironmentKind::Kde ||
-        desktop == DesktopEnvironmentKind::Xfce ||
+    if (desktop == DesktopEnvironmentKind::Xfce ||
         desktop == DesktopEnvironmentKind::Fly)
         return EnforcementMode::SessionOnly;
     return EnforcementMode::Unsupported;

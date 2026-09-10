@@ -185,6 +185,15 @@ void testSelectedProfile() {
                              ? "/usr/bin/dconf" : "/usr/bin/gsettings"),
                 "GNOME command must be an optional canonical executable");
     }
+    const auto& kreadconfig = executableSpec(
+        profile, fic::platform::ExecutableId::Kreadconfig);
+    require(!kreadconfig.required &&
+                kreadconfig.candidates ==
+                    std::vector<std::filesystem::path>{
+                        "/usr/lib/kf6/bin/kreadconfig6",
+                        "/usr/lib/kf5/bin/kreadconfig5",
+                        "/usr/bin/kreadconfig6", "/usr/bin/kreadconfig5"},
+            "KDE reader must be optional with KDE 6/5 candidates");
     const auto supplementaryProvider =
         profile.userCreation.supplementaryGroupsProvider;
     if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {

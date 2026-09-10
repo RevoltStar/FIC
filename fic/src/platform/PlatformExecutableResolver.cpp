@@ -40,6 +40,8 @@ const char* executableIdName(ExecutableId id) {
         return "dconf";
     case ExecutableId::Gsettings:
         return "gsettings";
+    case ExecutableId::Kreadconfig:
+        return "kreadconfig";
     }
     return "unknown";
 }
@@ -59,7 +61,8 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Gpasswd,
         ExecutableId::PamAuthUpdate,
         ExecutableId::Dconf,
-        ExecutableId::Gsettings
+        ExecutableId::Gsettings,
+        ExecutableId::Kreadconfig
     };
 }
 
