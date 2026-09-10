@@ -119,7 +119,8 @@ for dockerfile, dependency in (
         ("packaging/deb/Dockerfile.debian13", "libkf6config-dev"),
         ("packaging/deb/Dockerfile.ubuntu2404", "libkf5config-dev"),
         ("packaging/deb/Dockerfile.ubuntu2604", "libkf6config-dev"),
-        ("packaging/rpm/Dockerfile", "kf6-kconfig-devel")):
+        ("packaging/rpm/Dockerfile", "kf6-kconfig-devel"),
+        ("packaging/rpm/Dockerfile", "qt6-declarative-devel")):
     assert dependency in (root / dockerfile).read_text()
 for required in ("Autolock", "Timeout", "Lock", "LockGrace",
                  "RequirePassword", "[$i]", "XDG_CONFIG_HOME",

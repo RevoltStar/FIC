@@ -20,6 +20,7 @@ RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
     pkg-config \
     python3 \
     qt6-base-devel \
+    qt6-declarative-devel \
     rpm-build \
     xauth \
     xvfb-run \
