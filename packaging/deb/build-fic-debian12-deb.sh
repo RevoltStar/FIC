@@ -813,6 +813,7 @@ build_fic_cli_package() {
     output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     install_cmake_component "$FIC_CLI_BUILD_DIR" fic-cli "$package_root"
+    chmod 0750 "$package_root/opt/fic/bin/fic-cli"
     sed -i 's/\r$//' "$package_root/usr/share/bash-completion/completions/fic-cli"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-cli")"
@@ -844,8 +845,11 @@ build_fic_session_agent_package() {
     output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     install_cmake_component "$FIC_SESSION_AGENT_BUILD_DIR" fic-session-agent "$package_root"
+    chmod 0755 "$package_root/usr/libexec/fic"
+    chmod 0755 "$package_root/usr/libexec/fic/fic-session-agent"
 
-    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-session-agent")"
+    binary_depends="$(detect_binary_depends \
+        "$package_root/usr/libexec/fic/fic-session-agent")"
 
     write_control_file \
         "$package_root" \

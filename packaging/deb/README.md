@@ -48,7 +48,7 @@ permanent-device check.
 
 `fic-session-agent` installs:
 
-- `/opt/fic/bin/fic-session-agent`
+- `/usr/libexec/fic/fic-session-agent` (`root:root`, mode `0755`)
 - `/etc/xdg/autostart/fic-session-agent.desktop`
 
 `fic-cli` installs:

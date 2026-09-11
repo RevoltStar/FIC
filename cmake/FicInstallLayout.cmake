@@ -7,6 +7,8 @@ set(FIC_INSTALL_LAYOUT_INCLUDED TRUE)
 # location independent: a future FHS profile must be able to move config,
 # logs and static data without inventing a second "root" abstraction.
 set(FIC_PRIVATE_BINDIR "/opt/fic/bin" CACHE PATH "Private FIC executable directory")
+set(FIC_SESSION_AGENT_BINDIR "/usr/libexec/fic" CACHE PATH
+    "Public graphical session agent executable directory")
 set(FIC_CONFIG_DIR "/opt/fic/config" CACHE PATH "FIC policy configuration directory")
 set(FIC_LANGUAGE_DIR "/opt/fic/lang" CACHE PATH "FIC localization directory")
 set(FIC_LOG_DIR "/opt/fic/log" CACHE PATH "FIC log directory")

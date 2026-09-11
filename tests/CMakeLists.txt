@@ -69,6 +69,12 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_SOURCE_DIR}
     )
     add_test(
+        NAME session_agent_install_layout_tests
+        COMMAND bash
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/session-agent-layout-test.sh
+                ${CMAKE_BINARY_DIR}
+    )
+    add_test(
         NAME desktop_environment_architecture_static_checks
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/oss/desktop_environment/static_checks.py.in
@@ -1012,6 +1018,7 @@ set(FIC_INTEGRATION_TESTS
     ipc_transport_tests
     admin_socket_tests
     mode_and_owner_tests
+    session_agent_install_layout_tests
 )
 
 set(FIC_ROOT_TESTS

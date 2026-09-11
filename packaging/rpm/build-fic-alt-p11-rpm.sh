@@ -785,6 +785,7 @@ build_fic_cli_package() {
 
     package_root="$(init_package_root "$package_name")"
     install_cmake_component "$FIC_CLI_BUILD_DIR" fic-cli "$package_root"
+    chmod 0750 "$package_root/opt/fic/bin/fic-cli"
     sed -i 's/\r$//' "$package_root/usr/share/bash-completion/completions/fic-cli"
 
     output_rpm="$(build_rpm_package \
@@ -807,6 +808,8 @@ build_fic_session_agent_package() {
 
     package_root="$(init_package_root "$package_name")"
     install_cmake_component "$FIC_SESSION_AGENT_BUILD_DIR" fic-session-agent "$package_root"
+    chmod 0755 "$package_root/usr/libexec/fic"
+    chmod 0755 "$package_root/usr/libexec/fic/fic-session-agent"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \

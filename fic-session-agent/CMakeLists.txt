@@ -26,7 +26,10 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/fic-session-agent.desktop.in"
     "${CMAKE_CURRENT_BINARY_DIR}/fic-session-agent.desktop"
     @ONLY)
-install(TARGETS fic-session-agent RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}"
+install(TARGETS fic-session-agent
+        RUNTIME DESTINATION "${FIC_SESSION_AGENT_BINDIR}"
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                    GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
         COMPONENT fic-session-agent)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/fic-session-agent.desktop"
         DESTINATION "${FIC_XDG_AUTOSTART_DIR}" COMPONENT fic-session-agent)

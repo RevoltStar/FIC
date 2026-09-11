@@ -4,6 +4,7 @@ import sys
 
 
 root = Path(sys.argv[1])
+install_layout = (root / "cmake/FicInstallLayout.cmake").read_text()
 agent_cmake = (root / "fic-session-agent/CMakeLists.txt").read_text()
 provider = (
     root / "fic-session-agent/src/SystemdLogindSessionProvider.cpp"
@@ -11,6 +12,8 @@ provider = (
 resolver = (root / "fic-session-agent/src/SessionIdentityResolver.cpp").read_text()
 main_source = (root / "fic-session-agent/src/main.cpp").read_text()
 desktop = (root / "fic-session-agent/fic-session-agent.desktop.in").read_text()
+deb_builder = (root / "packaging/deb/build-fic-debian12-deb.sh").read_text()
+rpm_builder = (root / "packaging/rpm/build-fic-alt-p11-rpm.sh").read_text()
 
 
 def require(condition: bool, message: str) -> None:
@@ -37,8 +40,47 @@ for forbidden in (
     require(forbidden not in provider and forbidden not in resolver,
             f"session identity resolver contains forbidden UID heuristic: {forbidden}")
 
-require("Exec=@FIC_PRIVATE_BINDIR@/fic-session-agent" in desktop,
-        "session agent is no longer launched directly by per-session XDG Autostart")
+require('set(FIC_SESSION_AGENT_BINDIR "/usr/libexec/fic" CACHE PATH' in install_layout,
+        "session agent public executable directory is not canonicalized in the install layout")
+require('RUNTIME DESTINATION "${FIC_SESSION_AGENT_BINDIR}"' in agent_cmake,
+        "session agent is not installed in its public executable directory")
+require('RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}"' not in agent_cmake,
+        "session agent must not be installed in the private executable directory")
+require("WORLD_READ WORLD_EXECUTE" in agent_cmake,
+        "session agent CMake install mode is not executable by ordinary users")
+require("Exec=@FIC_SESSION_AGENT_BINDIR@/fic-session-agent" in desktop,
+        "session agent XDG Autostart does not use the canonical public path")
+require("/opt/fic/bin/fic-session-agent" not in desktop,
+        "session agent XDG Autostart points into the private tree")
+
+for builder_name, builder in (
+    ("DEB", deb_builder),
+    ("RPM", rpm_builder),
+):
+    require("/opt/fic/bin/fic-session-agent" not in builder,
+            f"{builder_name} packaging leaves the session agent in the private tree")
+    require('chmod 0755 "$package_root/usr/libexec/fic"' in builder and
+            'chmod 0755 "$package_root/usr/libexec/fic/fic-session-agent"' in builder,
+            f"{builder_name} packaging does not enforce public session-agent modes")
+    require('chmod 0750 "$package_root/opt/fic/bin/fic-cli"' in builder,
+            f"{builder_name} packaging does not preserve the private fic-cli mode")
+    require('chmod 0755 "$package_root/opt/fic/bin/fic-cli"' not in builder,
+            f"{builder_name} packaging makes fic-cli executable by ordinary users")
+    require("find /opt/fic -type d -exec chmod 2750" in builder,
+            f"{builder_name} packaging no longer keeps /opt/fic private")
+    for forbidden_private_mode in (
+        "chmod 0755 /opt/fic",
+        "chmod 0755 \"$package_root/opt/fic\"",
+        "find /opt/fic -type d -exec chmod 0755",
+        "find \"$package_root/opt/fic\" -type d -exec chmod 0755",
+    ):
+        require(forbidden_private_mode not in builder,
+                f"{builder_name} packaging makes /opt/fic world-traversable")
+
+require("--root-owner-group" in deb_builder,
+        "DEB packaging does not normalize package ownership to root:root")
+require("%defattr(-,root,root,-)" in rpm_builder,
+        "RPM packaging does not normalize package ownership to root:root")
 require('"session-" + sessionId + ".sock"' in main_source,
         "session agent socket is no longer keyed by the resolved session id")
 require("info.remote ||" not in resolver,

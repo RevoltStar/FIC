@@ -3,55 +3,54 @@
 ## Current base
 
 - Ветка `main`.
-- База: `7c2be45`.
+- Исходная база corrective commit: `6789c36`.
 
 ## Current task
 
-- Полностью удалить неиспользуемую KDE global KConfig architecture, сохранив
-  KDE `screenlock_timeout` в режиме `SessionOnly`.
+- Исправить install-layout `fic-session-agent`, чтобы XDG Autostart был
+  доступен обычному пользователю без ослабления private tree `/opt/fic`.
 
 ## Accepted architecture / invariants
 
-- GNOME и FLY — `MandatoryGlobal`; KDE и XFCE — `SessionOnly`; LXQt —
-  `Unsupported`.
-- KDE `screenlock_timeout` применяется к обнаруженным Plasma-сессиям через
-  `KdeScreenLockTimeoutHandler`, `KdeBackend`, `kreadconfig5/6`,
-  `kwriteconfig5/6` и `org.kde.screensaver.configure`.
-- KDE не создаёт global requirements и не заявляет machine-wide immutable
-  KConfig authority.
+- Canonical path `fic-session-agent` —
+  `/usr/libexec/fic/fic-session-agent`, `root:root 0755`.
+- `/opt/fic` остаётся `root:fic 2750`; private executables, включая
+  `/opt/fic/bin/fic-cli`, остаются `0750`.
+- XDG Autostart использует exact `Exec=/usr/libexec/fic/fic-session-agent`.
 
 ## Completed
 
-- Удалены verifier target/source, KDE system backend, их tests и platform
-  metadata.
-- Удалены KF ConfigCore discovery/dependencies, stale CMake options и generated
-  executable path.
-- DEB/RPM packaging выпускает пять пакетов и не содержит verifier package или
-  KF ConfigCore build dependency.
-- Static/contract tests и документация приведены к текущей архитектуре.
+- Добавлен общий CMake layout constant `FIC_SESSION_AGENT_BINDIR`.
+- CMake component, DEB и RPM staging переведены на `/usr/libexec/fic`.
+- DEB/RPM staging явно фиксирует `0755` для public agent и `0750` для
+  `fic-cli`; package ownership нормализуется в `root:root` существующими
+  DEB/RPM mechanisms.
+- Добавлены static и component-install staging regressions для public agent,
+  autostart path, отсутствия private copy и сохранения private boundary.
+- Packaging README обновлены новым layout.
 
 ## Changed areas
 
-- Desktop global backend registration и KDE documentation.
-- Platform executable/profile metadata и CMake.
-- DEB/RPM build scripts, container dependencies и packaging README.
-- Удалённые backend/verifier tests и связанные static contracts.
+- `cmake/FicInstallLayout.cmake` и `fic-session-agent/CMakeLists.txt`.
+- XDG Autostart template.
+- DEB/RPM build scripts и packaging README.
+- Session-agent static/package-layout tests.
 
 ## Validation
 
-- Clean configure: `build-kconfig-removal`, Ubuntu 24.04 profile — passed с
-  локальным `/tmp` shim для отсутствующего `libsystemd-devel`; KF ConfigCore не
-  искался.
-- Full build: `cmake --build build-kconfig-removal -j2` — passed.
-- Full CTest вне sandbox: 83 passed, 1 root-only test skipped, 0 failed.
-- Первый sandbox CTest дал два permission-specific failure; оба targeted tests
-  прошли вне sandbox до финального полного прогона.
-- `bash -n` для DEB/RPM build scripts — passed.
-- Repository-wide searches по удалённым identifiers и KF ConfigCore
-  dependencies — no matches.
-- `ldd`/`readelf -d` для собранного `fic` — KDE framework dependencies нет.
+- Targeted configure: Ubuntu 24.04 profile с локальным `/tmp` libsystemd
+  pkg-config shim — passed.
+- `cmake --build build-session-layout --target fic-session-agent -j2` — passed.
+- Targeted CTest: 7/7 passed (`session_agent_static_checks`,
+  `session_agent_install_layout_tests`, `path_layout_static_checks`,
+  `platform_profile_static_checks`, `packaging_build_resource_tests`,
+  `version_contract_tests`, `release_contract_tests`).
+- `bash -n` для DEB/RPM builders и нового staging test — passed.
+- Negative controls: old desktop path, private CMake destination, public agent
+  mode `0750` и `fic-cli` mode `0755` — каждый вызвал ожидаемое падение.
 - `git diff --check` — passed.
+- Полная сборка проекта не запускалась согласно ограничению задачи.
 
 ## Remaining
 
-- Изменения не закоммичены.
+- Нет.
