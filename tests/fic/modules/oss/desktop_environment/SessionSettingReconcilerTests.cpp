@@ -1,6 +1,7 @@
 #include "modules/oss/desktop_environment/SessionSettingReconciler.h"
 #include "modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h"
 #include "modules/oss/desktop_environment/policies/KdeScreenLockTimeoutHandler.h"
+#include "modules/oss/desktop_environment/policies/FlyScreenLockTimeoutHandler.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -203,6 +204,45 @@ void testKdeLockConvergence() {
                 "KDE configure failure ordering or diagnostic is wrong");
     }
 }
+
+struct FakeFlySession {
+    mutable std::vector<std::string> calls;
+    int failAt = 0;
+
+    bool setValue(const std::string& key, const std::string& value,
+                  std::string& error) const {
+        calls.push_back(key + "=" + value);
+        if (failAt != 0 && static_cast<int>(calls.size()) == failAt) {
+            error = "runtime update failed";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+};
+
+void testFlyRuntimeOnlyConvergence() {
+    {
+        FakeFlySession session;
+        std::string error;
+        require(fly_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(session.calls == std::vector<std::string>{
+                    "ScreenSaver=internal", "ScreenSaverDBUS=true",
+                    "ScreenSaverDelay=300"},
+                "FLY runtime calls or minutes-to-seconds conversion are wrong");
+    }
+    {
+        FakeFlySession session;
+        session.failAt = 2;
+        std::string error;
+        require(!fly_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    error == "runtime update failed" &&
+                    session.calls == std::vector<std::string>{
+                        "ScreenSaver=internal", "ScreenSaverDBUS=true"},
+                "FLY runtime failure was hidden or execution continued");
+    }
+}
 }
 
 int main() {
@@ -255,5 +295,6 @@ int main() {
 
     testGnomeSessionConvergence();
     testKdeLockConvergence();
+    testFlyRuntimeOnlyConvergence();
     return 0;
 }

@@ -52,7 +52,11 @@ bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
         sessionApplicability(DesktopEnvironmentKind::Gnome, error) ==
         SessionApplicability::Applicable;
     if (!error.empty()) return false;
-    if (!gnomeApplicable) return true;
+    const bool flyApplicable =
+        sessionApplicability(DesktopEnvironmentKind::Fly, error) ==
+        SessionApplicability::Applicable;
+    if (!error.empty()) return false;
+    if (!gnomeApplicable && !flyApplicable) return true;
 
     int timeoutMinutes = 0;
     if (!configuredTimeoutMinutes(timeoutMinutes, error)) return false;
@@ -74,6 +78,15 @@ bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
         add("gnome", DesktopEnvironmentKind::Gnome,
             "/org/gnome/desktop/lockdown/disable-lock-screen", "false");
     }
+    if (flyApplicable) {
+        add("fly", DesktopEnvironmentKind::Fly,
+            "themerc/Variables/ScreenSaver", "internal");
+        add("fly", DesktopEnvironmentKind::Fly,
+            "themerc/Variables/ScreenSaverDBUS", "true");
+        add("fly", DesktopEnvironmentKind::Fly,
+            "themerc/Variables/ScreenSaverDelay",
+            std::to_string(timeoutMinutes * 60));
+    }
     error.clear();
     return true;
 }
@@ -86,11 +99,11 @@ bool OSS_screenlock_timeout::relevantTo(DesktopEnvironmentKind desktop) const
 EnforcementMode OSS_screenlock_timeout::modeFor(
     DesktopEnvironmentKind desktop) const
 {
-    if (desktop == DesktopEnvironmentKind::Gnome)
+    if (desktop == DesktopEnvironmentKind::Gnome ||
+        desktop == DesktopEnvironmentKind::Fly)
         return EnforcementMode::MandatoryGlobal;
     if (desktop == DesktopEnvironmentKind::Kde ||
-        desktop == DesktopEnvironmentKind::Xfce ||
-        desktop == DesktopEnvironmentKind::Fly)
+        desktop == DesktopEnvironmentKind::Xfce)
         return EnforcementMode::SessionOnly;
     return EnforcementMode::Unsupported;
 }

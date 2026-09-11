@@ -15,6 +15,9 @@ gnome_system = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSy
 gnome_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.h").read_text()
 kde_system = (root / "fic/src/modules/oss/desktop_environment/backends/KdeSystemBackend.cpp").read_text()
 kde_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/KdeSystemBackend.h").read_text()
+fly_system = (root / "fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.cpp").read_text()
+fly_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.h").read_text()
+fly_session = (root / "fic/src/modules/oss/desktop_environment/backends/FlyBackend.cpp").read_text()
 screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
 screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
 gnome_handler_header = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
@@ -70,7 +73,8 @@ assert '"phase", "desktop_global_configuration"' in targeted
 assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main
 assert "std::make_shared<GnomeSystemBackend>(executables)" in main
 assert "std::make_shared<KdeSystemBackend>(executables, platform.kde)" in main
-assert "{gnomeSystemBackend, kdeSystemBackend}" in main
+assert "std::make_shared<FlySystemBackend>()" in main
+assert "{gnomeSystemBackend, kdeSystemBackend, flySystemBackend}" in main
 assert main.count("desktopGlobalConfig.reconcile") >= 3
 assert "install_desktop_global_report" in main
 assert "latestGlobalReport.successfulForPolicy" in main
@@ -95,12 +99,26 @@ assert "virtual DesktopEnvironmentKind desktop() const = 0;" in backend_header
 assert "virtual std::string backendName() const = 0;" in backend_header
 assert "class GnomeSystemBackend final : public DesktopSystemBackend" in gnome_system_header
 assert "class KdeSystemBackend final : public DesktopSystemBackend" in kde_system_header
+assert "class FlySystemBackend final : public DesktopSystemBackend" in fly_system_header
 assert "return DesktopEnvironmentKind::Gnome" in gnome_system
 assert 'return "gnome"' in gnome_system
 assert "VerifiedProcessExecutor::execute" in gnome_system
 assert "return DesktopEnvironmentKind::Kde" in kde_system
 assert 'return "kde"' in kde_system
 assert "VerifiedProcessExecutor::execute" in kde_system
+assert "return DesktopEnvironmentKind::Fly" in fly_system
+assert 'return "fly"' in fly_system
+assert "/usr/share/fly-wm/theme.master/themerc" in fly_system_header
+for required in ("openat", "O_NOFOLLOW", "fstat", "fstatat", "renameat",
+                 "fsync", "S_IWGRP", "S_IWOTH", "S_IROTH"):
+    assert required in fly_system
+for forbidden in ("std::ifstream", "std::ofstream", "current.themerc",
+                  "getpwuid", "system(", "popen(", "/bin/sh"):
+    assert forbidden not in fly_system
+for forbidden in ("current.themerc", "std::ifstream", "std::ofstream",
+                  "getpwuid"):
+    assert forbidden not in fly_session
+assert "FLYWM_UPDATE_VAL" in fly_session
 assert "/etc/xdg/kscreenlockerrc" in kde_system_header
 assert "/etc/xdg/kdeglobals" in kde_system_header
 assert "KconfigVerifier" in kde_system
@@ -144,6 +162,8 @@ contributions = screenlock[
 ]
 assert '"kde"' not in contributions
 assert '"kscreenlockerrc/Daemon/' not in contributions
+assert '"fly"' in contributions
+assert '"themerc/Variables/ScreenSaverDelay"' in contributions
 assert "desktop == DesktopEnvironmentKind::Kde" in screenlock
 assert "org.gnome.desktop.lockdown" in gnome_handler_header
 assert "disable-lock-screen" in gnome_handler_header
@@ -161,12 +181,13 @@ mode_for = screenlock[
 mandatory_branch = mode_for[:mode_for.index(
     "return EnforcementMode::MandatoryGlobal")]
 assert "desktop == DesktopEnvironmentKind::Gnome" in mandatory_branch
+assert "desktop == DesktopEnvironmentKind::Fly" in mandatory_branch
 assert "DesktopEnvironmentKind::Kde" not in mandatory_branch
 session_branch = mode_for[mode_for.index(
     "return EnforcementMode::MandatoryGlobal"):]
 assert "DesktopEnvironmentKind::Kde" in session_branch
 assert "DesktopEnvironmentKind::Xfce" in session_branch
-assert "DesktopEnvironmentKind::Fly" in session_branch
+assert "DesktopEnvironmentKind::Fly" not in session_branch
 assert "return EnforcementMode::SessionOnly" in session_branch
 for obsolete in ("ensureGlobalState", "applyGlobalValue",
                  "applyGlobalProtection", "verifyGlobalState"):

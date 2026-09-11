@@ -1446,8 +1446,8 @@ packet only for a bounded interval. A client which connects before sending is
 therefore handled without a false `EAGAIN` rejection, while a silent or closed
 peer cannot block the daemon indefinitely.
 
-Controlled GNOME `screenlock_timeout` is `MandatoryGlobal`; KDE, XFCE, and FLY
-screen-lock handling and KDE media-control are `SessionOnly`.
+Controlled GNOME and FLY `screenlock_timeout` are `MandatoryGlobal`; KDE and
+XFCE screen-lock handling and KDE media-control are `SessionOnly`.
 `GnomeSystemBackend` is registered as backend `"gnome"` with typed identity
 `Gnome`. It maintains FIC's dconf keyfile
 `/etc/dconf/db/fic.d/99-fic.conf`, locks in `fic.d/locks/99-fic`, and inserts
@@ -1507,6 +1507,17 @@ need relogin to load a newly changed profile, so their separate session-runtime
 convergence (which also enforces `disable-lock-screen=false`) remains best
 effort. Rollback, provenance, and stale cleanup remain
 outside this contract.
+
+`FlySystemBackend` is registered as backend `"fly"` with typed identity `Fly`.
+It securely merge-updates and verifies the authoritative
+`/usr/share/fly-wm/theme.master/themerc` `[Variables]` values
+`ScreenSaver=internal`, `ScreenSaverDBUS=true`, and
+`ScreenSaverDelay=N*60`. The full trusted ancestor chain and file are checked
+without following symlinks; writes use an fd-relative atomic replace and
+directory fsync. Missing `theme.master` fails closed and is never created by
+FIC. The session `FlyBackend` only invokes `fly-wmfunc` under the session
+identity for immediate convergence; it neither reads nor writes the user's
+`~/.fly/theme/current.themerc`, and user state is not part of global proof.
 
 `KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`
 and retained as groundwork, but production `screenlock_timeout` currently

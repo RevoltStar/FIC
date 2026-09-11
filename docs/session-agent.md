@@ -102,12 +102,11 @@ candidate.
 
 `OSS/screenlock_timeout` implements current-session convergence for GNOME, Unity, and
 Budgie through `gsettings`, KDE Plasma through `kreadconfig`/`kwriteconfig`,
-XFCE through `xfconf-query`, and FLY through `fly-wmfunc` plus the user's
-`~/.fly/theme/current.themerc`. Other desktop environments fail explicitly until
-a dedicated daemon-side backend is implemented. These existing backends are
-classified `SessionOnly` for KDE, XFCE, and FLY. Controlled GNOME is
-`MandatoryGlobal`: its system backend proves the machine-wide value and
-protection before current-session convergence. KDE does not publish global
+XFCE through `xfconf-query`, and FLY through `fly-wmfunc`. KDE and XFCE are
+`SessionOnly`. Controlled GNOME and FLY are `MandatoryGlobal`: their system
+backends prove the machine-wide state before current-session convergence. FLY
+authority is `/usr/share/fly-wm/theme.master/themerc`; the session backend does
+not read or write `~/.fly/theme/current.themerc`. KDE does not publish global
 requirements while its KConfig source graph remains controlled by the session
 user.
 The same backend-driven ensure -> verification sequence runs both during normal
@@ -260,6 +259,18 @@ presence without this proof is insufficient. `DISABLE` remains
 no-cleanup/no-rollback. The headless `fic` package does not depend on KDE; the
 verifier is supplied by the optional `fic-kconfig-verifier` package.
 
+For controlled FLY, `screenlock_timeout=N` contributes exactly three
+`FlySystemBackend` requirements in `[Variables]`:
+`ScreenSaver=internal`, `ScreenSaverDBUS=true`, and
+`ScreenSaverDelay=N*60`. The backend securely traverses every component below
+the trusted root with `openat`/`O_NOFOLLOW`, rejects unsafe ownership or
+group/world-writable state, preserves unrelated master content, and atomically
+replaces the ordinary-user-readable `themerc`. It may create a missing file
+inside an existing trusted `theme.master` directory, but never creates that
+directory. Verification reads only the master file. Three session-scoped
+`fly-wmfunc FLYWM_UPDATE_VAL` calls are an immediate convergence helper and do
+not provide persistent authority.
+
 This verifier models the standard distribution environment; it cannot prove
 the environment used by the running screen locker. In Plasma 5, `ksmserver`
 owns `KSldApp` on X11 and `kwin_wayland` owns it on Wayland. In Plasma 6,
@@ -292,8 +303,8 @@ so successful reload plus file readback is the best available convergence
 contract; the readback alone does not prove the value cached by the running
 locker.
 
-GNOME is `MandatoryGlobal`; KDE, XFCE, and FLY are `SessionOnly`; LXQt remains
-unsupported.
+GNOME and FLY are `MandatoryGlobal`; KDE and XFCE are `SessionOnly`; LXQt
+remains unsupported.
 `DesktopSystemBackend` remains the only global enforcement mechanism: policies
 describe requirements and have no parallel value, protection, or verification
 hooks.

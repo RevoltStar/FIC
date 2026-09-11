@@ -15,14 +15,6 @@ public:
         std::string& error
     ) const;
 
-    bool getValue(
-        const std::string& key,
-        std::string& value,
-        std::string& error
-    ) const;
-
-private:
-    UserSession session;
 };
 
 #endif // FLY_BACKEND_H

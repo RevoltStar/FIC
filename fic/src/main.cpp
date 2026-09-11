@@ -56,6 +56,7 @@
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
 #include "modules/oss/desktop_environment/backends/KdeSystemBackend.h"
+#include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 
 using json = nlohmann::json;
 
@@ -1288,8 +1289,9 @@ int main(int argc, char* argv[]) {
         std::make_shared<GnomeSystemBackend>(executables);
     auto kdeSystemBackend =
         std::make_shared<KdeSystemBackend>(executables, platform.kde);
+    auto flySystemBackend = std::make_shared<FlySystemBackend>();
     DesktopGlobalConfigReconciler desktopGlobalConfig(
-        {gnomeSystemBackend, kdeSystemBackend});
+        {gnomeSystemBackend, kdeSystemBackend, flySystemBackend});
     std::string registryError;
     if (!initPolicyRegistry(
             platform, executables, policyRegistry, registryError)) {
