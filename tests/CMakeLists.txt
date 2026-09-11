@@ -319,6 +319,19 @@ target_link_libraries(session_setting_reconciler_tests PRIVATE fic-core)
 add_test(NAME session_setting_reconciler_tests
          COMMAND session_setting_reconciler_tests)
 
+add_executable(xfce_backend_tests
+    fic/modules/oss/desktop_environment/XfceBackendTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/XfceBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+)
+target_include_directories(xfce_backend_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(xfce_backend_tests PRIVATE fic-core)
+add_test(NAME xfce_backend_tests COMMAND xfce_backend_tests)
+
 add_executable(session_ready_retry_tests
     fic-session-agent/SessionReadyRetryTests.cpp
 )
@@ -1043,6 +1056,7 @@ set(FIC_UNIT_TESTS
     fly_system_backend_tests
     screenlock_timeout_global_tests
     session_setting_reconciler_tests
+    xfce_backend_tests
     session_ready_retry_tests
     session_ready_validation_tests
     build_info_tests

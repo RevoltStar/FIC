@@ -3,43 +3,52 @@
 ## Current base
 
 - Ветка `main`.
-- Текущий commit: `6e27b494abb7cac5ab85daeece76f5e6ee018b25`.
+- База до текущего commit: `7fe411d`.
 
 ## Current task
 
-- Убрать hardcoded KConfig verifier path из platform profiles и генерировать
-  его из canonical CMake install layout.
+- Устранить false success XFCE `screenlock_timeout`, сохранив XFCE в
+  `SessionOnly`.
 
 ## Accepted architecture / invariants
 
-- `FIC_PRIVATE_BINDIR` из `cmake/FicInstallLayout.cmake` — единственный источник
-  private executable path для build/install metadata.
-- Platform profiles используют generated compile-time metadata и не зависят от
-  mutable `FicRuntimePaths` state.
+- GNOME и FLY — `MandatoryGlobal`; KDE и XFCE — `SessionOnly`; LXQt —
+  `Unsupported`.
+- Xfconf Kiosk Mode не является security-authoritative boundary: session user
+  может поставить writable system-config directory перед `/etc/xdg` через
+  `XDG_CONFIG_DIRS`.
+- XFCE reconciliation использует реальный session `xfconfd`; FIC не создаёт
+  `XfceSystemBackend`, global contributions или locked system XML.
 
 ## Completed
 
-- Добавлен `PlatformExecutablePathsGenerated.h.in`; CMake подставляет
-  `@FIC_PRIVATE_BINDIR@/fic-kconfig-verifier`.
-- Все пять platform profiles используют
-  `generated::KCONFIG_VERIFIER_PATH`; optional resolver semantics не менялись.
-- Platform/static contracts обновлены для generated source-of-truth.
+- `XfceBackend` проверяет существующий locker командой
+  `xfce4-screensaver-command --query` через session-scoped execution и не
+  запускает daemon.
+- Handler проверяет locker до state access и после convergence, управляет семью
+  Xfconf properties, включая `/saver/fullscreen-inhibit=false`, и подтверждает
+  изменения final readback.
+- Сохранён `--set` -> `--create --type ... --set` fallback для отсутствующих
+  properties.
+- Добавлены handler/backend/global/static regressions и выполнены четыре
+  обязательных negative controls с восстановлением production кода.
 
 ## Changed areas
 
-- `fic/CMakeLists.txt` и platform generated metadata.
-- Ubuntu 24.04/26.04, Debian 12/13 и ALT p11 profiles.
-- Platform profile/static tests.
+- `XfceBackend` и `XfceScreenLockTimeoutHandler`.
+- XFCE backend/session/global/static tests и CMake test registration.
+- Desktop architecture и session-agent documentation.
 
 ## Validation
 
-- `platform_profile_tests` targeted build — passed.
-- Targeted CTest: `path_layout_static_checks`,
-  `platform_profile_static_checks`, `platform_profile_tests` — 3/3 passed.
-- Full CTest: 78 passed, 4 skipped, 2 sandbox-related failures; оба failing
-  integration tests повторно запущены вне sandbox и прошли 2/2.
+- Targeted build: `xfce_backend_tests`, `session_setting_reconciler_tests`,
+  `screenlock_timeout_global_tests`, `session_aware_policy_tests` — passed.
+- Targeted CTest: 5/5 passed, включая desktop-environment static check.
+- Negative controls поймали отсутствие initial/final live checks,
+  `/saver/fullscreen-inhibit` и ошибочный XFCE `MandatoryGlobal`.
 - `git diff --check` — passed.
+- Полная сборка проекта НЕ запускалась.
 
 ## Remaining
 
-- Нет известных архитектурных рисков; commit не создавался.
+- Нет.

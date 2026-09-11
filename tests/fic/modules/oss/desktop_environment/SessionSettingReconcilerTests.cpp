@@ -2,6 +2,7 @@
 #include "modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h"
 #include "modules/oss/desktop_environment/policies/KdeScreenLockTimeoutHandler.h"
 #include "modules/oss/desktop_environment/policies/FlyScreenLockTimeoutHandler.h"
+#include "modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -242,6 +243,149 @@ void testFlyRuntimeOnlyConvergence() {
                 "FLY runtime failure was hidden or execution continued");
     }
 }
+
+struct FakeXfceSession {
+    mutable std::map<std::string, std::string> values = {
+        {"/saver/enabled", "true"},
+        {"/saver/idle-activation/enabled", "true"},
+        {"/saver/idle-activation/delay", "5"},
+        {"/saver/fullscreen-inhibit", "false"},
+        {"/lock/enabled", "true"},
+        {"/lock/saver-activation/enabled", "true"},
+        {"/lock/saver-activation/delay", "0"},
+    };
+    mutable std::vector<std::string> events;
+    mutable std::size_t liveChecks = 0;
+    std::vector<bool> live = {true, true};
+    std::string failRead;
+    std::string failWrite;
+    bool ignoreWrites = false;
+
+    bool screenSaverAvailable(std::string& error) const {
+        events.push_back("live");
+        const bool available = liveChecks < live.size() && live[liveChecks++];
+        error = available ? "" : "xfce4-screensaver is not running";
+        return available;
+    }
+    bool getProperty(const std::string& channel, const std::string& property,
+                     std::string& value, std::string& error) const {
+        require(channel == "xfce4-screensaver", "wrong XFCE channel");
+        events.push_back("read:" + property);
+        if (property == failRead || values.count(property) == 0) {
+            error = "read failed";
+            return false;
+        }
+        value = values.at(property);
+        error.clear();
+        return true;
+    }
+    bool setProperty(const std::string& channel, const std::string& property,
+                     const std::string& type, const std::string& value,
+                     std::string& error) const {
+        require(channel == "xfce4-screensaver", "wrong XFCE channel");
+        events.push_back("write:" + property + ":" + type + "=" + value);
+        if (property == failWrite) {
+            error = "write failed";
+            return false;
+        }
+        if (!ignoreWrites) values[property] = value;
+        error.clear();
+        return true;
+    }
+};
+
+std::vector<std::string> xfceReads() {
+    std::vector<std::string> result;
+    for (const auto& property :
+         xfce_screen_lock_timeout::requiredProperties(5))
+        result.push_back("read:" + std::string(property.path));
+    return result;
+}
+
+void testXfceScreenLockConvergence() {
+    {
+        FakeXfceSession session;
+        session.live = {false};
+        std::string error;
+        require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    session.events == std::vector<std::string>{"live"},
+                "missing XFCE locker allowed state access or success");
+    }
+    {
+        FakeXfceSession session;
+        session.live = {true, false};
+        session.values["/saver/fullscreen-inhibit"] = "true";
+        std::string error;
+        require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    session.events.back() == "live" &&
+                    session.liveChecks == 2 &&
+                    std::find(session.events.begin(), session.events.end(),
+                        "write:/saver/fullscreen-inhibit:bool=false") !=
+                        session.events.end(),
+                "disappeared XFCE locker was not detected");
+    }
+    {
+        FakeXfceSession session;
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        auto expected = std::vector<std::string>{"live"};
+        const auto reads = xfceReads();
+        expected.insert(expected.end(), reads.begin(), reads.end());
+        expected.push_back("live");
+        require(session.events == expected,
+                "correct XFCE state did not use live/read/live flow");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/fullscreen-inhibit"] = "true";
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(session.values["/saver/fullscreen-inhibit"] == "false" &&
+                    std::find(session.events.begin(), session.events.end(),
+                        "write:/saver/fullscreen-inhibit:bool=false") !=
+                        session.events.end(),
+                "XFCE fullscreen inhibit was not disabled");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/idle-activation/delay"] = "1";
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    session.values["/saver/idle-activation/delay"] == "5",
+                "XFCE timeout did not converge");
+    }
+    {
+        FakeXfceSession session;
+        session.failRead = "/saver/fullscreen-inhibit";
+        std::string error;
+        require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    std::none_of(session.events.begin(), session.events.end(),
+                        [](const std::string& event) {
+                            return event.rfind("write:", 0) == 0;
+                        }),
+                "XFCE read failure attempted a blind write");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/fullscreen-inhibit"] = "true";
+        session.failWrite = "/saver/fullscreen-inhibit";
+        std::string error;
+        require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    error == "write failed",
+                "XFCE property write failure was hidden");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/fullscreen-inhibit"] = "true";
+        session.ignoreWrites = true;
+        std::string error;
+        require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    error == "XFCE screen lock settings did not reach the requested state",
+                "XFCE final readback mismatch was accepted");
+    }
+}
 }
 
 int main() {
@@ -295,5 +439,6 @@ int main() {
     testGnomeSessionConvergence();
     testKdeLockConvergence();
     testFlyRuntimeOnlyConvergence();
+    testXfceScreenLockConvergence();
     return 0;
 }

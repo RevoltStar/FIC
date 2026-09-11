@@ -1520,6 +1520,15 @@ FIC. The session `FlyBackend` only invokes `fly-wmfunc` under the session
 identity to update only `ScreenSaverDelay`; it neither reads nor writes the user's
 `~/.fly/theme/current.themerc`, and user state is not part of global proof.
 
+XFCE remains `SessionOnly`. Xfconf Kiosk Mode is not a security-authoritative
+boundary for FIC because an ordinary user can prepend a writable system-config
+directory through the session's `XDG_CONFIG_DIRS`. Reconciliation therefore
+uses the real session `xfconfd`, verifies the seven `xfce4-screensaver`
+properties including `/saver/fullscreen-inhibit=false`, and requires a live
+`xfce4-screensaver` before and after convergence. Liveness is queried through
+`xfce4-screensaver-command --query`; FIC neither scans processes nor starts the
+locker.
+
 `KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`
 and retained as groundwork, but production `screenlock_timeout` currently
 publishes no KDE global requirements.

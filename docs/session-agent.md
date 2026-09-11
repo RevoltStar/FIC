@@ -109,6 +109,19 @@ authority is `/usr/share/fly-wm/theme.master/themerc`; the session backend does
 not read or write `~/.fly/theme/current.themerc`. KDE does not publish global
 requirements while its KConfig source graph remains controlled by the session
 user.
+XFCE deliberately has no system backend or global contributions. Xfconf system
+locks constrain normal Xfconf state, but an untrusted session environment can
+place a writable system-config directory before `/etc/xdg` through
+`XDG_CONFIG_DIRS`; Xfconf Kiosk Mode is therefore not a `MandatoryGlobal`
+boundary for FIC. Session reconciliation talks to the real session `xfconfd`
+and requires these exact `xfce4-screensaver` values:
+`/saver/enabled=true`, `/saver/idle-activation/enabled=true`,
+`/saver/idle-activation/delay=N`, `/saver/fullscreen-inhibit=false`,
+`/lock/enabled=true`, `/lock/saver-activation/enabled=true`, and
+`/lock/saver-activation/delay=0`. It queries the existing locker with
+`xfce4-screensaver-command --query` before reading state and again after exact
+final readback. The query does not start the locker; an absent or disappeared
+locker fails this `SessionOnly` reconciliation.
 The same backend-driven ensure -> verification sequence runs both during normal
 policy apply and targeted `session_ready` reconciliation, before the current
 session is converged. Successful authoritative global enforcement

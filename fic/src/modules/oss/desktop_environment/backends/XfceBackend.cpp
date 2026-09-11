@@ -1,14 +1,39 @@
 #include "modules/oss/desktop_environment/backends/XfceBackend.h"
 
-namespace {
-std::string find_xfconf_query()
+#include <utility>
+
+XfceBackend::XfceBackend(const UserSession& session,
+                         const SessionContext& context)
+    : DesktopEnvironmentBackend(session, context)
 {
-    return DesktopEnvironmentBackend::findExecutable({
-        "/usr/bin/xfconf-query",
-        "/bin/xfconf-query"
-    });
 }
-} // namespace
+
+XfceBackend::XfceBackend(const UserSession& session,
+                         const SessionContext& context,
+                         XfceBackendDependencies dependencies)
+    : DesktopEnvironmentBackend(session, context),
+      dependencies_(std::move(dependencies))
+{
+}
+
+std::string XfceBackend::findCommand(
+    const std::vector<std::string>& paths) const
+{
+    return dependencies_.findExecutable
+        ? dependencies_.findExecutable(paths)
+        : findExecutable(paths);
+}
+
+bool XfceBackend::runCommand(
+    const std::string& executable,
+    const std::vector<std::string>& arguments,
+    std::string& output,
+    std::string& error) const
+{
+    return dependencies_.execute
+        ? dependencies_.execute(executable, arguments, output, error)
+        : execute(executable, arguments, output, error);
+}
 
 bool XfceBackend::setProperty(
     const std::string& channel,
@@ -18,21 +43,22 @@ bool XfceBackend::setProperty(
     std::string& error
 ) const
 {
-    const std::string xfconfQuery = find_xfconf_query();
+    const std::string xfconfQuery = findCommand({
+        "/usr/bin/xfconf-query", "/bin/xfconf-query"});
     if (xfconfQuery.empty()) {
         error = "xfconf-query was not found";
         return false;
     }
 
     std::string output;
-    if (execute(
+    if (runCommand(
             xfconfQuery,
             {"--channel", channel, "--property", property, "--set", value},
             output,
             error)) {
         return true;
     }
-    return execute(
+    return runCommand(
         xfconfQuery,
         {"--channel", channel, "--property", property, "--create", "--type", type, "--set", value},
         output,
@@ -47,15 +73,36 @@ bool XfceBackend::getProperty(
     std::string& error
 ) const
 {
-    const std::string xfconfQuery = find_xfconf_query();
+    const std::string xfconfQuery = findCommand({
+        "/usr/bin/xfconf-query", "/bin/xfconf-query"});
     if (xfconfQuery.empty()) {
         error = "xfconf-query was not found";
         return false;
     }
-    return execute(
+    return runCommand(
         xfconfQuery,
         {"--channel", channel, "--property", property},
         value,
         error
     );
+}
+
+bool XfceBackend::screenSaverAvailable(std::string& error) const
+{
+    const std::string command = findCommand({
+        "/usr/bin/xfce4-screensaver-command",
+        "/bin/xfce4-screensaver-command"
+    });
+    if (command.empty()) {
+        error = "xfce4-screensaver-command was not found";
+        return false;
+    }
+
+    std::string output;
+    if (!runCommand(command, {"--query"}, output, error)) {
+        if (error.empty()) error = "xfce4-screensaver is not running";
+        return false;
+    }
+    error.clear();
+    return true;
 }

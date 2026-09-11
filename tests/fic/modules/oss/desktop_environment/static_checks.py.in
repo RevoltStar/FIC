@@ -18,6 +18,8 @@ kde_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/Kd
 fly_system = (root / "fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.cpp").read_text()
 fly_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.h").read_text()
 fly_session = (root / "fic/src/modules/oss/desktop_environment/backends/FlyBackend.cpp").read_text()
+xfce_session = (root / "fic/src/modules/oss/desktop_environment/backends/XfceBackend.cpp").read_text()
+xfce_handler = (root / "fic/src/modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.h").read_text()
 screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
 screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
 gnome_handler_header = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
@@ -161,6 +163,7 @@ contributions = screenlock[
     screenlock.index("bool OSS_screenlock_timeout::relevantTo")
 ]
 assert '"kde"' not in contributions
+assert '"xfce"' not in contributions
 assert '"kscreenlockerrc/Daemon/' not in contributions
 assert '"fly"' in contributions
 assert '"themerc/Variables/ScreenSaverDelay"' in contributions
@@ -191,6 +194,12 @@ assert "DesktopEnvironmentKind::Kde" in session_branch
 assert "DesktopEnvironmentKind::Xfce" in session_branch
 assert "DesktopEnvironmentKind::Fly" not in session_branch
 assert "return EnforcementMode::SessionOnly" in session_branch
+assert "XfceSystemBackend" not in main
+assert "xfce4-screensaver-command" in xfce_session
+assert '{"--query"}' in xfce_session
+for forbidden in ("pgrep", "pidof", "/proc/", "XfceSystemBackend"):
+    assert forbidden not in xfce_session
+assert '"/saver/fullscreen-inhibit", "bool", "false"' in xfce_handler
 for obsolete in ("ensureGlobalState", "applyGlobalValue",
                  "applyGlobalProtection", "verifyGlobalState"):
     assert obsolete not in screenlock
