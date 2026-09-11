@@ -242,7 +242,6 @@ build_project() {
     if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
         cmake_args+=(
             "-DFIC_TARGET_PLATFORM=alt-p11"
-            "-DFIC_BUILD_KCONFIG_VERIFIER=ON"
         )
     fi
 
@@ -856,24 +855,6 @@ build_fic_package() {
     printf '%s\n' "$output_rpm"
 }
 
-build_fic_kconfig_verifier_package() {
-    local package_name="fic-kconfig-verifier"
-    local package_root
-    local output_rpm
-
-    package_root="$(init_package_root "$package_name")"
-    install_cmake_component \
-        "$FIC_BUILD_DIR" fic-kconfig-verifier "$package_root"
-    output_rpm="$(build_rpm_package \
-        "$package_root" \
-        "$package_name" \
-        "Optional KDE FullConfig verifier for Free Integrity Control" \
-        "Verifies effective immutable KDE screen-lock settings." \
-        "fic = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
-        "$(common_pre_script)" "" "")" || return 1
-    printf '%s\n' "$output_rpm"
-}
-
 build_fic_gui_package() {
     local package_name="fic-gui"
     local package_root
@@ -942,21 +923,18 @@ main() {
 
     local dick_rpm
     local fic_rpm
-    local kconfig_verifier_rpm
     local session_agent_rpm
     local cli_rpm
     local gui_rpm
 
     dick_rpm="$(build_fic_dick_package)"
     fic_rpm="$(build_fic_package)"
-    kconfig_verifier_rpm="$(build_fic_kconfig_verifier_package)"
     session_agent_rpm="$(build_fic_session_agent_package)"
     cli_rpm="$(build_fic_cli_package)"
     gui_rpm="$(build_fic_gui_package)"
 
     verify_rpm_metadata "$dick_rpm" fic-dick
     verify_rpm_metadata "$fic_rpm" fic
-    verify_rpm_metadata "$kconfig_verifier_rpm" fic-kconfig-verifier
     verify_rpm_metadata "$session_agent_rpm" fic-session-agent
     verify_rpm_metadata "$cli_rpm" fic-cli
     verify_rpm_metadata "$gui_rpm" fic-gui
@@ -966,7 +944,6 @@ main() {
     echo "Packages created:"
     echo "  $dick_rpm"
     echo "  $fic_rpm"
-    echo "  $kconfig_verifier_rpm"
     echo "  $session_agent_rpm"
     echo "  $cli_rpm"
     echo "  $gui_rpm"

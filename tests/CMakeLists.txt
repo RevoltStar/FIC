@@ -251,17 +251,6 @@ target_include_directories(gnome_system_backend_tests PRIVATE
 target_link_libraries(gnome_system_backend_tests PRIVATE fic-core fic-policy fic-platform)
 add_test(NAME gnome_system_backend_tests COMMAND gnome_system_backend_tests)
 
-add_executable(kde_system_backend_tests
-    fic/modules/oss/desktop_environment/KdeSystemBackendTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeSystemBackend.cpp
-)
-target_include_directories(kde_system_backend_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/fic/src
-)
-target_link_libraries(kde_system_backend_tests PRIVATE
-    fic-core fic-policy fic-platform)
-add_test(NAME kde_system_backend_tests COMMAND kde_system_backend_tests)
-
 add_executable(fly_system_backend_tests
     fic/modules/oss/desktop_environment/FlySystemBackendTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.cpp
@@ -271,15 +260,6 @@ target_include_directories(fly_system_backend_tests PRIVATE
 )
 target_link_libraries(fly_system_backend_tests PRIVATE fic-policy)
 add_test(NAME fly_system_backend_tests COMMAND fly_system_backend_tests)
-if(TARGET fic-kconfig-verifier AND Python3_Interpreter_FOUND)
-    add_test(
-        NAME kconfig_verifier_tests
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/oss/desktop_environment/KconfigVerifierTest.py.in
-                $<TARGET_FILE:fic-kconfig-verifier>)
-    set_tests_properties(kconfig_verifier_tests PROPERTIES LABELS "unit")
-endif()
-
 add_executable(screenlock_timeout_global_tests
     fic/modules/oss/desktop_environment/ScreenlockTimeoutGlobalTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
@@ -1052,7 +1032,6 @@ set(FIC_UNIT_TESTS
     session_aware_policy_tests
     desktop_global_config_reconciler_tests
     gnome_system_backend_tests
-    kde_system_backend_tests
     fly_system_backend_tests
     screenlock_timeout_global_tests
     session_setting_reconciler_tests

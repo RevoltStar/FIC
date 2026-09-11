@@ -201,32 +201,6 @@ def main():
             "alt-p11": "AltP11Profile.cpp",
         }.items()
     }
-    expected_kde_config_dirs = {
-        "debian-12": ["/etc/xdg", "/usr/share/desktop-base/kf5-settings"],
-        "debian-13": ["/etc/xdg", "/usr/share/desktop-base/kf5-settings"],
-        "ubuntu-24.04": [
-            "/etc/xdg/xdg-plasma",
-            "/etc/xdg",
-            "/usr/share/kubuntu-default-settings/kf5-settings",
-        ],
-        "ubuntu-26.04": [
-            "/etc/xdg/xdg-plasma",
-            "/etc/xdg",
-            "/usr/share/kubuntu-default-settings/kf5-settings",
-        ],
-        "alt-p11": ["/etc/xdg"],
-    }
-    for name, source in profiles.items():
-        assignment = re.search(
-            r"profile\.kde\.systemConfigDirs\s*=\s*\{([^}]*)\};",
-            source,
-            re.DOTALL,
-        )
-        actual = re.findall(r'"([^"]+)"', assignment.group(1)) if assignment else []
-        require(
-            actual == expected_kde_config_dirs[name],
-            f"{name} KDE standard XDG_CONFIG_DIRS hierarchy is incorrect: {actual}",
-        )
     required_profile_sections = (
         "profile.executables.entries",
         "ExecutableId::Sshd",
@@ -267,12 +241,6 @@ def main():
             "ExecutableId::Chage" in source
             and '"/usr/bin/chage"' in source,
             f"{name} profile does not map the trusted chage executable",
-        )
-        require(
-            "ExecutableId::KconfigVerifier" in source
-            and "generated::KCONFIG_VERIFIER_PATH" in source
-            and "profile.kde.systemConfigDirs" in source,
-            f"{name} profile does not define KDE FullConfig verification",
         )
         require(
             "passwordAging.policyDefaults" not in source,
@@ -353,15 +321,6 @@ def main():
     user_creation_defaults = (
         root / "fic/src/platform/generated/UserCreationPolicyDefaultsGenerated.h.in"
     ).read_text(encoding="utf-8")
-    executable_paths = (
-        root / "fic/src/platform/generated/PlatformExecutablePathsGenerated.h.in"
-    ).read_text(encoding="utf-8")
-    require(
-        'KCONFIG_VERIFIER_PATH =\n    "@FIC_PRIVATE_BINDIR@/fic-kconfig-verifier"'
-        in executable_paths
-        and "PlatformExecutablePathsGenerated.h.in" in fic_cmake,
-        "KConfig verifier path is not generated from FIC_PRIVATE_BINDIR",
-    )
     identity_template = (
         root / "fic/src/resources/config/IDENTITY_ACCESS.conf.in"
     ).read_text(encoding="utf-8")
@@ -771,7 +730,6 @@ def main():
         "Udevadm",
         "Nft",
         "Chage",
-        "KconfigVerifier",
     ):
         require(
             f"ExecutableId::{executable_id}" in resolver,

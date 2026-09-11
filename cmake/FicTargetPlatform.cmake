@@ -30,27 +30,22 @@ set(FIC_SUDO_SECURE_PATH_DEFAULT
     "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 
 if(FIC_TARGET_PLATFORM STREQUAL "debian-12")
-    set(FIC_KCONFIG_FRAMEWORK_MAJOR 5)
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/Debian12Profile.cpp")
 elseif(FIC_TARGET_PLATFORM STREQUAL "debian-13")
-    set(FIC_KCONFIG_FRAMEWORK_MAJOR 6)
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/Debian13Profile.cpp")
 elseif(FIC_TARGET_PLATFORM STREQUAL "ubuntu-24.04")
-    set(FIC_KCONFIG_FRAMEWORK_MAJOR 5)
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/Ubuntu2404Profile.cpp")
     set(FIC_SUDO_SECURE_PATH_DEFAULT
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin")
 elseif(FIC_TARGET_PLATFORM STREQUAL "ubuntu-26.04")
-    set(FIC_KCONFIG_FRAMEWORK_MAJOR 6)
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/Ubuntu2604Profile.cpp")
     set(FIC_SUDO_SECURE_PATH_DEFAULT
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin")
 elseif(FIC_TARGET_PLATFORM STREQUAL "alt-p11")
-    set(FIC_KCONFIG_FRAMEWORK_MAJOR 6)
     set(FIC_TARGET_PLATFORM_PROFILE_SOURCE
         "${CMAKE_CURRENT_LIST_DIR}/../fic/src/platform/profiles/AltP11Profile.cpp")
     set(FIC_PASSWORD_AGING_POLICY_UID_MIN_DEFAULT 500)

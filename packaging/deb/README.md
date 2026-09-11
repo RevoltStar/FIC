@@ -5,11 +5,10 @@ Payload бинарников, service-файлов, конфигурации и 
 maintainer scripts и Qt runtime bundle, но не поддерживают отдельную копию
 production-путей в исходных systemd/tmpfiles/udev-файлах.
 
-This packaging flow builds six distribution-specific Debian-format packages:
+This packaging flow builds five distribution-specific Debian-format packages:
 
 - `fic-dick`
 - `fic`
-- `fic-kconfig-verifier`
 - `fic-session-agent`
 - `fic-cli`
 - `fic-gui`
@@ -39,10 +38,6 @@ This packaging flow builds six distribution-specific Debian-format packages:
   `/usr/share/pam-configs/fic-faillock` and
   `/usr/share/pam-configs/fic-pwhistory`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
-
-`fic-kconfig-verifier` optionally installs
-`/opt/fic/bin/fic-kconfig-verifier`. It links to the target distribution's
-KF5/KF6 ConfigCore and is needed only for KDE global screen-lock enforcement.
 
 During installation, `fic.service`, `fic-device.service` and `fic-notify.service`
 are enabled and started automatically. `fic-device.service` performs initial
@@ -79,8 +74,6 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
   PAM modules referenced by the FIC profiles, and the third owns the distro
   `pwquality` profile selected by password-quality activation
 - `fic` recommends `fic-session-agent`
-- `fic-kconfig-verifier` depends on the exact `fic` version; `fic` has no
-  dependency on this optional KDE package
 - `fic-gui` depends on both `fic` and `fic-dick`
 
 As a result:

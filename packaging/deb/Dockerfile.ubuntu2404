@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dpkg-dev \
     file \
     libgl1-mesa-dev \
-    libkf5config-dev \
     libopengl-dev \
     libsqlite3-dev \
     libssl-dev \

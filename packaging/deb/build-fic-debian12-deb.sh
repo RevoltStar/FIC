@@ -743,7 +743,6 @@ build_project() {
     if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
         cmake_args+=(
             "-DFIC_TARGET_PLATFORM=$FIC_PACKAGING_TARGET_PLATFORM"
-            "-DFIC_BUILD_KCONFIG_VERIFIER=ON"
         )
     fi
 
@@ -904,29 +903,6 @@ build_fic_package() {
     printf '%s\n' "$output_deb"
 }
 
-build_fic_kconfig_verifier_package() {
-    local package_name="fic-kconfig-verifier"
-    local package_root
-    local binary_depends
-    local package_depends
-    local output_deb
-
-    package_root="$(init_package_root "$package_name")"
-    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
-    install_cmake_component "$FIC_BUILD_DIR" fic-kconfig-verifier "$package_root"
-    binary_depends="$(detect_binary_depends \
-        "$package_root/opt/fic/bin/fic-kconfig-verifier")"
-    package_depends="$(join_depends \
-        "$binary_depends" "fic (= ${PACKAGE_VERSION})")"
-    write_control_file \
-        "$package_root" "$package_name" "$package_depends" \
-        "Optional KDE FullConfig verifier for Free Integrity Control"
-    write_common_preinst "$package_root"
-    rm -f "$output_deb"
-    build_deb_package "$package_root" "$output_deb"
-    printf '%s\n' "$output_deb"
-}
-
 build_fic_gui_package() {
     local package_name="fic-gui"
     local package_root
@@ -999,21 +975,18 @@ main() {
 
     local dick_deb
     local fic_deb
-    local kconfig_verifier_deb
     local session_agent_deb
     local cli_deb
     local gui_deb
 
     dick_deb="$(build_fic_dick_package)"
     fic_deb="$(build_fic_package)"
-    kconfig_verifier_deb="$(build_fic_kconfig_verifier_package)"
     session_agent_deb="$(build_fic_session_agent_package)"
     cli_deb="$(build_fic_cli_package)"
     gui_deb="$(build_fic_gui_package)" || exit 1
 
     verify_deb_metadata "$dick_deb" fic-dick
     verify_deb_metadata "$fic_deb" fic
-    verify_deb_metadata "$kconfig_verifier_deb" fic-kconfig-verifier
     verify_deb_metadata "$session_agent_deb" fic-session-agent
     verify_deb_metadata "$cli_deb" fic-cli
     verify_deb_metadata "$gui_deb" fic-gui
@@ -1022,7 +995,6 @@ main() {
     echo "Packages created:"
     echo "  $dick_deb"
     echo "  $fic_deb"
-    echo "  $kconfig_verifier_deb"
     echo "  $session_agent_deb"
     echo "  $cli_deb"
     echo "  $gui_deb"

@@ -77,11 +77,6 @@ PlatformProfile makeBuildPlatformProfile() {
             ExecutableId::Gsettings,
             {"/usr/bin/gsettings"},
             false
-        },
-        {
-            ExecutableId::KconfigVerifier,
-            {generated::KCONFIG_VERIFIER_PATH},
-            false
         }
     };
     profile.packageManager.kind = PackageManagerKind::Rpm;
@@ -93,7 +88,6 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
     profile.sysctl.loader = SysctlLoaderKind::SystemdSysctl;
     profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
-    profile.kde.systemConfigDirs = {"/etc/xdg"};
     profile.pam.configDirectories = {
         "/etc/pam.d",
         "/usr/lib/pam.d",

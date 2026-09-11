@@ -1363,8 +1363,7 @@ tmpfiles, udev и XDG-шаблоны. Исполняемые компонент�
 остаются независимыми семантическими путями. Такой контракт позволяет менять
 профиль установки через CMake без строковых замен в C++ или service-файлах.
 Deb/RPM staging устанавливает именованные CMake-компоненты (`fic`, `fic-dick`,
-`fic-cli`, `fic-session-agent`, `fic-gui`, `fic-kconfig-verifier`) и не
-копирует эти файлы повторно из
+`fic-cli`, `fic-session-agent`, `fic-gui`) и не копирует эти файлы повторно из
 дерева исходников.
 
 Версии product, IPC, конфигураций и SQLite независимы; точные значения
@@ -1529,36 +1528,13 @@ properties including `/saver/fullscreen-inhibit=false`, and requires a live
 `xfce4-screensaver-command --query`; FIC neither scans processes nor starts the
 locker.
 
-`KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`
-and retained as groundwork, but production `screenlock_timeout` currently
-publishes no KDE global requirements.
-It merge-updates both `/etc/xdg/kscreenlockerrc` and
-`/etc/xdg/kdeglobals`, and protects only five `[Daemon]`
-keys with per-key `[$i]`: `Autolock=true`, `Timeout=N`, `Lock=true`,
-`LockGrace=0`, and `RequirePassword=true`. Comments, blank lines, unrelated
-groups/keys, and inactive stale settings are retained; `DISABLE` performs no
-cleanup. Both files are securely read and their managed syntax is validated
-before either is changed. The files and every ancestor use fd-based secure
-traversal and ordinary-user accessibility checks. Effective verification runs
-the separately packaged optional `fic-kconfig-verifier`, linked to the target
-platform's real KF5/KF6 ConfigCore, once with `KConfig::FullConfig`. Its clean
-temporary user environment contains conflicting user and
-`kdedefaults/kdeglobals` values and the complete platform
-`XDG_CONFIG_DIRS` hierarchy; all five effective values must remain immutable.
-The standard hierarchy is Debian 12/13
-`/etc/xdg:/usr/share/desktop-base/kf5-settings`, Ubuntu/Kubuntu 24.04 and 26.04
-`/etc/xdg/xdg-plasma:/etc/xdg:/usr/share/kubuntu-default-settings/kf5-settings`,
-and ALT p11 `/etc/xdg`. It is correctness metadata, not an authority boundary.
-Plasma 5 loads `KSldApp` in `ksmserver` on X11 and `kwin_wayland` on Wayland;
-Plasma 6 loads it in `kwin`. Both generations run user
-`plasma-workspace/env/*.sh` before those session processes and propagate the
-resulting environment. Because an ordinary user can alter the KConfig graph
-through `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, `KDE_SKIP_KDERC`, and user-systemd
-startup controls, no cross-generation root-authoritative standard environment
-mechanism was found and KDE cannot be reported as `MandatoryGlobal`.
-The headless `fic` package has no KDE dependency. Current-session KDE
-convergence reads the five values, writes only if needed, always calls
+KDE remains `SessionOnly` and publishes no global requirements. FIC applies
+`screenlock_timeout` directly to each discovered Plasma session through
+`KdeScreenLockTimeoutHandler` and `KdeBackend`, using the installed
+`kreadconfig5/6` and `kwriteconfig5/6` tools. Convergence reads the five values,
+writes only if needed, always calls
 `org.kde.screensaver.configure`, then performs final file readback. The reload
 failure is fatal for this `SessionOnly` reconciliation. File readback does not
 prove the timeout cached by KScreenLocker because it exposes no corresponding
-runtime-state read API.
+runtime-state read API. FIC does not claim machine-wide immutable KConfig
+authority, and the headless daemon has no link-time KDE framework dependency.

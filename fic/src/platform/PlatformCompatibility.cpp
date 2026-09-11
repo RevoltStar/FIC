@@ -156,8 +156,7 @@ bool validateExecutables(const PlatformExecutables& executables,
     for (const ExecutableId id : supportedIds) {
         if (id == ExecutableId::PamAuthUpdate ||
             id == ExecutableId::Dconf ||
-            id == ExecutableId::Gsettings ||
-            id == ExecutableId::KconfigVerifier) {
+            id == ExecutableId::Gsettings) {
             continue;
         }
         const PlatformExecutableSpec* spec =
@@ -192,25 +191,6 @@ bool validatePaths(const std::vector<std::filesystem::path>& paths,
         if (!validatePath(path, label, error)) {
             return false;
         }
-    }
-    return true;
-}
-
-bool validateKdeConfig(const KdePlatformConfig& config, std::string& error) {
-    if (!validatePaths(config.systemConfigDirs,
-                       "KDE system configuration directory", error))
-        return false;
-    std::set<std::filesystem::path> unique;
-    for (const auto& path : config.systemConfigDirs) {
-        if (!unique.insert(path).second) {
-            error = "KDE system configuration directory is duplicated: " +
-                path.string();
-            return false;
-        }
-    }
-    if (unique.count("/etc/xdg") == 0) {
-        error = "KDE system configuration hierarchy must include /etc/xdg";
-        return false;
     }
     return true;
 }
@@ -916,7 +896,6 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
         !validatePath(profile.sudo.managedConfigPath, "sudoers managed path", error) ||
         !validateSecurePathDefault(profile.sudo.securePathDefault, error) ||
         !validatePath(profile.sysctl.managedConfigPath, "sysctl managed path", error) ||
-        !validateKdeConfig(profile.kde, error) ||
         !validatePaths(profile.pam.configDirectories,
                        "PAM configuration directory", error) ||
         !validatePaths(profile.pam.moduleDirectories,

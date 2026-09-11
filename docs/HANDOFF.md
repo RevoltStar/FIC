@@ -3,47 +3,55 @@
 ## Current base
 
 - Ветка `main`.
-- База до текущего corrective commit: `50bef33`.
+- База: `7c2be45`.
 
 ## Current task
 
-- Исправить false success XFCE `screenlock_timeout` при signed или malformed
-  integer readback.
+- Полностью удалить неиспользуемую KDE global KConfig architecture, сохранив
+  KDE `screenlock_timeout` в режиме `SessionOnly`.
 
 ## Accepted architecture / invariants
 
 - GNOME и FLY — `MandatoryGlobal`; KDE и XFCE — `SessionOnly`; LXQt —
   `Unsupported`.
-- XFCE handler управляет прежними семью Xfconf properties и сохраняет live
-  `xfce4-screensaver-command --query` checks.
-- Integer readback обеих XFCE delay properties разбирается строго: после trim
-  учитывается знак и требуется полное потребление непустой строки.
+- KDE `screenlock_timeout` применяется к обнаруженным Plasma-сессиям через
+  `KdeScreenLockTimeoutHandler`, `KdeBackend`, `kreadconfig5/6`,
+  `kwriteconfig5/6` и `org.kde.screensaver.configure`.
+- KDE не создаёт global requirements и не заявляет machine-wide immutable
+  KConfig authority.
 
 ## Completed
 
-- Добавлен локальный XFCE strict integer parser; общий
-  `desktop_backend::parseInteger()` не изменён.
-- `/saver/idle-activation/delay` и `/lock/saver-activation/delay` сравниваются
-  через strict parser.
-- Добавлены regressions для `-5`, malformed suffix/prefix, whitespace и обеих
-  delay properties.
+- Удалены verifier target/source, KDE system backend, их tests и platform
+  metadata.
+- Удалены KF ConfigCore discovery/dependencies, stale CMake options и generated
+  executable path.
+- DEB/RPM packaging выпускает пять пакетов и не содержит verifier package или
+  KF ConfigCore build dependency.
+- Static/contract tests и документация приведены к текущей архитектуре.
 
 ## Changed areas
 
-- `XfceScreenLockTimeoutHandler`.
-- `SessionSettingReconcilerTests`.
+- Desktop global backend registration и KDE documentation.
+- Platform executable/profile metadata и CMake.
+- DEB/RPM build scripts, container dependencies и packaging README.
+- Удалённые backend/verifier tests и связанные static contracts.
 
 ## Validation
 
-- Targeted build: `session_setting_reconciler_tests`,
-  `screenlock_timeout_global_tests`, `xfce_backend_tests` — passed.
-- Targeted CTest: 4/4 passed, включая
-  `desktop_environment_architecture_static_checks`.
-- Negative control со старым loose parsing упал на regression `-5` с
-  `negative XFCE idle delay was accepted as matching`; strict-код восстановлен.
+- Clean configure: `build-kconfig-removal`, Ubuntu 24.04 profile — passed с
+  локальным `/tmp` shim для отсутствующего `libsystemd-devel`; KF ConfigCore не
+  искался.
+- Full build: `cmake --build build-kconfig-removal -j2` — passed.
+- Full CTest вне sandbox: 83 passed, 1 root-only test skipped, 0 failed.
+- Первый sandbox CTest дал два permission-specific failure; оба targeted tests
+  прошли вне sandbox до финального полного прогона.
+- `bash -n` для DEB/RPM build scripts — passed.
+- Repository-wide searches по удалённым identifiers и KF ConfigCore
+  dependencies — no matches.
+- `ldd`/`readelf -d` для собранного `fic` — KDE framework dependencies нет.
 - `git diff --check` — passed.
-- Полная сборка проекта НЕ запускалась.
 
 ## Remaining
 
-- Нет.
+- Изменения не закоммичены.

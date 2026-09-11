@@ -2,7 +2,6 @@
 #define FIC_PLATFORM_PROFILE_H
 
 #include "platform/PasswordAgingPolicyDefaultsGenerated.h"
-#include "platform/PlatformExecutablePathsGenerated.h"
 #include "platform/SudoSecurePathDefaultGenerated.h"
 #include "platform/UserCreationPolicyDefaultsGenerated.h"
 
@@ -28,8 +27,7 @@ enum class ExecutableId {
     Gpasswd,
     PamAuthUpdate,
     Dconf,
-    Gsettings,
-    KconfigVerifier
+    Gsettings
 };
 
 struct PlatformExecutableSpec {
@@ -85,12 +83,6 @@ enum class SysctlLoaderKind {
 struct SysctlPlatformConfig {
     SysctlLoaderKind loader = SysctlLoaderKind::SystemdSysctl;
     std::filesystem::path managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
-};
-
-struct KdePlatformConfig {
-    // XDG_CONFIG_DIRS in decreasing priority order, before Plasma adds its
-    // per-user kdedefaults layer.
-    std::vector<std::filesystem::path> systemConfigDirs;
 };
 
 enum class PamTrustedAuthenticationBypassReason {
@@ -393,7 +385,6 @@ struct PlatformProfile {
     SshPlatformConfig ssh;
     SudoPlatformConfig sudo;
     SysctlPlatformConfig sysctl;
-    KdePlatformConfig kde;
     PamPlatformConfig pam;
     PasswordAgingPlatformConfig passwordAging;
     UserCreationPlatformConfig userCreation;
