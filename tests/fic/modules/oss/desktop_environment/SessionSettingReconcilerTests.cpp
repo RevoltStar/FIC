@@ -303,6 +303,15 @@ std::vector<std::string> xfceReads() {
 }
 
 void testXfceScreenLockConvergence() {
+    require(xfce_screen_lock_timeout::parseStrictInteger(" -5 ") == -5,
+            "XFCE integer parser lost the sign or rejected whitespace");
+    require(xfce_screen_lock_timeout::parseStrictInteger("5") == 5,
+            "XFCE integer parser rejected a valid value");
+    require(!xfce_screen_lock_timeout::parseStrictInteger("5foo") &&
+                !xfce_screen_lock_timeout::parseStrictInteger("foo5") &&
+                !xfce_screen_lock_timeout::parseStrictInteger(""),
+            "XFCE integer parser accepted a malformed value");
+
     {
         FakeXfceSession session;
         session.live = {false};
@@ -355,6 +364,33 @@ void testXfceScreenLockConvergence() {
         require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
                     session.values["/saver/idle-activation/delay"] == "5",
                 "XFCE timeout did not converge");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/idle-activation/delay"] = "-5";
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    session.values["/saver/idle-activation/delay"] == "5" &&
+                    std::find(session.events.begin(), session.events.end(),
+                        "write:/saver/idle-activation/delay:int=5") !=
+                        session.events.end(),
+                "negative XFCE idle delay was accepted as matching");
+    }
+    for (const std::string malformed : {"5foo", "foo5"}) {
+        FakeXfceSession session;
+        session.values["/saver/idle-activation/delay"] = malformed;
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    session.values["/saver/idle-activation/delay"] == "5",
+                "malformed XFCE idle delay was accepted as matching");
+    }
+    for (const std::string malformed : {"0foo", "foo0"}) {
+        FakeXfceSession session;
+        session.values["/lock/saver-activation/delay"] = malformed;
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    session.values["/lock/saver-activation/delay"] == "0",
+                "malformed XFCE lock delay was accepted as matching");
     }
     {
         FakeXfceSession session;
