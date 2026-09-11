@@ -3,6 +3,7 @@
 #include "session/SessionCommandExecutor.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <unistd.h>
 
@@ -53,14 +54,28 @@ std::string trim(std::string value) {
     return value;
 }
 
-std::optional<int> parseInteger(const std::string& value) {
-    const size_t firstDigit = value.find_first_of("0123456789");
-    if (firstDigit == std::string::npos) {
+std::optional<int> parseStrictInteger(const std::string& value) {
+    const std::string trimmed = trim(value);
+    if (trimmed.empty()) return std::nullopt;
+    try {
+        std::size_t consumed = 0;
+        const int parsed = std::stoi(trimmed, &consumed, 10);
+        if (consumed != trimmed.size()) return std::nullopt;
+        return parsed;
+    } catch (...) {
         return std::nullopt;
     }
-    const size_t afterDigits = value.find_first_not_of("0123456789", firstDigit);
+}
+
+std::optional<double> parseStrictDouble(const std::string& value) {
+    const std::string trimmed = trim(value);
+    if (trimmed.empty()) return std::nullopt;
     try {
-        return std::stoi(value.substr(firstDigit, afterDigits - firstDigit));
+        std::size_t consumed = 0;
+        const double parsed = std::stod(trimmed, &consumed);
+        if (consumed != trimmed.size()) return std::nullopt;
+        if (!std::isfinite(parsed)) return std::nullopt;
+        return parsed;
     } catch (...) {
         return std::nullopt;
     }

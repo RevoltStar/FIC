@@ -163,6 +163,50 @@ struct FakeKdeSession {
     }
 };
 
+void testDesktopBackendStrictParsers() {
+    using desktop_backend::parseStrictDouble;
+    using desktop_backend::parseStrictInteger;
+
+    require(parseStrictInteger("5") == 5, "integer parser rejected 5");
+    require(parseStrictInteger(" 5 ") == 5,
+            "integer parser did not trim whitespace");
+    require(parseStrictInteger("-5") == -5,
+            "integer parser lost the sign");
+    require(parseStrictInteger("+7") == 7,
+            "integer parser rejected an explicit plus sign");
+    require(parseStrictInteger("0") == 0, "integer parser rejected 0");
+    require(parseStrictInteger("-0") == 0,
+            "integer parser did not normalize -0 to 0");
+    require(!parseStrictInteger("5foo") &&
+                !parseStrictInteger("foo5") &&
+                !parseStrictInteger("5.0") &&
+                !parseStrictInteger("") &&
+                !parseStrictInteger("   ") &&
+                !parseStrictInteger("2147483648") &&
+                !parseStrictInteger("-2147483649"),
+            "integer parser accepted a malformed or overflowing value");
+
+    require(parseStrictDouble("5") == 5.0, "double parser rejected 5");
+    require(parseStrictDouble("5.0") == 5.0, "double parser rejected 5.0");
+    require(parseStrictDouble("5.00") == 5.0, "double parser rejected 5.00");
+    require(parseStrictDouble(" 5.0 ") == 5.0,
+            "double parser did not trim whitespace");
+    require(parseStrictDouble("-5") == -5.0, "double parser lost the sign");
+    require(parseStrictDouble("5.5") == 5.5, "double parser rejected 5.5");
+    require(!parseStrictDouble("5foo") &&
+                !parseStrictDouble("foo5") &&
+                !parseStrictDouble("NaN") &&
+                !parseStrictDouble("nan") &&
+                !parseStrictDouble("Inf") &&
+                !parseStrictDouble("-Inf") &&
+                !parseStrictDouble("infinity") &&
+                !parseStrictDouble("") &&
+                !parseStrictDouble("   "),
+            "double parser accepted a malformed or non-finite value");
+    require(!parseStrictDouble("1e999") && !parseStrictDouble("-1e999"),
+            "double parser accepted an overflowing literal");
+}
+
 void testKdeLockConvergence() {
     const std::vector<std::string> reads = {
         "read:Autolock", "read:Timeout", "read:Lock",
@@ -222,6 +266,69 @@ void testKdeLockConvergence() {
                     error == "KDE screen locker changed during reconciliation: "
                              "owner changed",
                 "KDE final owner change was accepted");
+    }
+
+    // Regression: отрицательный Timeout=-5 при policy 5 больше не считается
+    // совпадающим состоянием — состояние обязано быть сконвергировано.
+    {
+        FakeKdeSession session;
+        session.values["Timeout"] = "-5";
+        session.values["Lock"] = "true";
+        std::string error;
+        require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+        require(std::find(session.writes.begin(), session.writes.end(),
+                          "Timeout=5") != session.writes.end(),
+                "KDE Timeout=-5 was accepted for policy 5 without repair");
+        require(session.values["Timeout"] == "5",
+                "KDE Timeout=-5 was not converged to the policy value");
+    }
+
+    // Эквивалентные написания Timeout считаются совпадением без записей.
+    for (const char* encoded : {"5", "5.0", "5.00", " 5.0 "}) {
+        FakeKdeSession session;
+        session.values["Timeout"] = encoded;
+        session.values["Lock"] = "true";
+        std::string error;
+        require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+        require(session.writes.empty(),
+                "KDE equivalent Timeout spelling triggered a rewrite");
+    }
+
+    // Malformed / не равные policy значения Timeout дают mismatch и чинятся.
+    for (const char* encoded :
+         {"-5", "5.5", "5foo", "foo5", "NaN", "Inf", "-Inf", ""}) {
+        FakeKdeSession session;
+        session.values["Timeout"] = encoded;
+        session.values["Lock"] = "true";
+        std::string error;
+        require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+        require(std::find(session.writes.begin(), session.writes.end(),
+                          "Timeout=5") != session.writes.end(),
+                "KDE malformed Timeout was accepted without repair");
+        require(session.values["Timeout"] == "5",
+                "KDE malformed Timeout was not converged");
+    }
+
+    // LockGrace: "-0" эквивалентен 0, malformed значения чинятся.
+    {
+        FakeKdeSession session;
+        session.values["Lock"] = "true";
+        session.values["LockGrace"] = "-0";
+        std::string error;
+        require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+        require(session.writes.empty(),
+                "KDE LockGrace=-0 was not accepted as 0");
+    }
+    for (const char* encoded : {"0foo", "foo0", "0.0"}) {
+        FakeKdeSession session;
+        session.values["LockGrace"] = encoded;
+        std::string error;
+        require(kde_screen_lock_timeout::applyTimeout(session, 5, error), error);
+        require(std::find(session.writes.begin(), session.writes.end(),
+                          "LockGrace=0") != session.writes.end(),
+                "KDE malformed LockGrace was accepted without repair");
+        require(session.values["LockGrace"] == "0",
+                "KDE malformed LockGrace was not converged");
     }
 }
 
@@ -322,13 +429,13 @@ std::vector<std::string> xfceReads() {
 }
 
 void testXfceScreenLockConvergence() {
-    require(xfce_screen_lock_timeout::parseStrictInteger(" -5 ") == -5,
+    require(desktop_backend::parseStrictInteger(" -5 ") == -5,
             "XFCE integer parser lost the sign or rejected whitespace");
-    require(xfce_screen_lock_timeout::parseStrictInteger("5") == 5,
+    require(desktop_backend::parseStrictInteger("5") == 5,
             "XFCE integer parser rejected a valid value");
-    require(!xfce_screen_lock_timeout::parseStrictInteger("5foo") &&
-                !xfce_screen_lock_timeout::parseStrictInteger("foo5") &&
-                !xfce_screen_lock_timeout::parseStrictInteger(""),
+    require(!desktop_backend::parseStrictInteger("5foo") &&
+                !desktop_backend::parseStrictInteger("foo5") &&
+                !desktop_backend::parseStrictInteger(""),
             "XFCE integer parser accepted a malformed value");
 
     {
@@ -491,6 +598,7 @@ int main() {
             "readback mismatch succeeded");
     require(error == "readback mismatch", "mismatch diagnostic was lost");
 
+    testDesktopBackendStrictParsers();
     testGnomeSessionConvergence();
     testKdeLockConvergence();
     testFlyRuntimeOnlyConvergence();

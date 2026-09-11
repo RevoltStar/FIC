@@ -22,7 +22,8 @@ bool execute(
 );
 
 std::string trim(std::string value);
-std::optional<int> parseInteger(const std::string& value);
+std::optional<int> parseStrictInteger(const std::string& value);
+std::optional<double> parseStrictDouble(const std::string& value);
 bool parseBoolean(const std::string& value, bool& result);
 
 } // namespace desktop_backend

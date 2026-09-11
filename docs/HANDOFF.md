@@ -2,49 +2,60 @@
 
 ## Current base
 
-- Ветка `main`.
-- База перед текущей задачей: `04391d0e6a4bceb2980d9c0ec39290c1bddeb8fe`.
+- Ветка `main`, база: `c64e511` (fix(kde): ignore procfs environ inode owner).
 
 ## Current task
 
-- Corrective fix KDE runtime context: не использовать ownership procfs inode
-  `/proc/<pid>/environ` как доказательство UID процесса.
+- Strict parsing значений DE-политик: KDE `screenlock_timeout` (`Timeout` —
+  strict double, `LockGrace` — strict integer); удаление loose
+  `desktop_backend::parseInteger`.
 
 ## Accepted architecture / invariants
 
-- KDE и XFCE остаются `SessionOnly`; GNOME и FLY — `MandatoryGlobal`.
-- Authoritative KDE context принадлежит текущему owner
-  `org.kde.screensaver`, а не `fic-session-agent`.
-- Bus address, executable paths, UID/GID, safe base environment и cwd задаёт
-  daemon; из locker разрешены только `HOME`, `XDG_CONFIG_HOME`,
-  `XDG_CONFIG_DIRS`, `KDE_SKIP_KDERC` с exact absent/empty/value semantics.
-- Несколько controlled KDE sessions одного UID неоднозначны и fail closed.
-- Process UID доказывается D-Bus identity chain; `st_uid` файла procfs не
-  является security invariant.
-- KConfig readback не доказывает cached runtime state KScreenLocker.
+- `desktop_backend::parseStrictInteger` / `parseStrictDouble`
+  (`BackendCommand.h/.cpp`) — единственные числовые парсеры DE-бэкендов:
+  trim, полное потребление строки (`consumed == size`), знак — часть числа,
+  overflow/underflow → `std::nullopt`; double дополнительно `std::isfinite`
+  (NaN/Inf/infinity отклоняются). Без regex.
+- Парсер отвечает только за корректность представления; допустимый диапазон
+  policy проверяется политикой (KDE: `*timeout == (double)timeoutMinutes`,
+  `grace == 0`; диапазон `screenlock_timeout` 1..20 не менялся).
+- Локальный `xfce_screen_lock_timeout::parseStrictInteger` удалён, XFCE
+  использует общий `desktop_backend::parseStrictInteger`.
+- KDE reconciliation protocol (`configure`, readback, owner validation) не
+  менялся; topology/session ambiguity — отдельная задача.
 
 ## Completed
 
-- Удалена ошибочная проверка `fstat.st_uid == D-Bus owner UID`.
-- Production reader по-прежнему открывает с `O_NOFOLLOW`, проверяет `S_ISREG`,
-  читает один fd с лимитом 1 MiB и закрывает тот же fd.
-- Добавлен syscall-level regression: D-Bus UID `1000`, procfs metadata UID
-  `root`, читаемое environment — resolver успешно получает snapshot.
+- Замена loose `parseInteger` (первая цифровая подстрока) на строгие
+  парсеры; `Timeout=-5/5.5/5foo/foo5/NaN/Inf` дают mismatch + reconciliation.
+- Тесты: обязательные кейсы обоих парсеров + KDE regression (policy 5:
+  match `5/5.0/5.00/" 5.0 "`; mismatch+convergence `-5/5.5/5foo/foo5/NaN/
+  Inf/-Inf/""`; LockGrace `-0` match, `0foo/foo0/0.0` mismatch) в
+  `SessionSettingReconcilerTests.cpp` (testDesktopBackendStrictParsers,
+  testKdeLockConvergence).
 
 ## Changed areas
 
-- KDE runtime-context resolver production read path и focused tests.
+- `fic/src/modules/oss/desktop_environment/backends/BackendCommand.*`,
+  `policies/KdeScreenLockTimeoutHandler.h`,
+  `policies/XfceScreenLockTimeoutHandler.h`,
+  `tests/fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp`.
 
 ## Validation
 
-- `kde_runtime_context_tests` — built successfully.
-- `kde_runtime_context_tests`, `screenlock_timeout_global_tests`,
-  `session_setting_reconciler_tests` и architecture static checks — 4/4 passed.
-- Negative control с восстановленной проверкой `st_uid == expectedUid` упал
-  на root-owned procfs metadata regression.
-- `git diff --check` — passed.
-- Полная сборка проекта не запускалась по ограничению задачи.
+- Build затронутых targets: EXIT=0.
+- ctest: session_setting_reconciler_tests, screenlock_timeout_global_tests,
+  desktop_global_config_reconciler_tests, session_aware_policy_tests,
+  desktop_environment_architecture_static_checks — все passed.
+- Negative controls: парсер отключён → тест упал («double parser rejected
+  5»); loose-семантика временно восстановлена → упал («double parser lost
+  the sign»). Код восстановлен, тесты снова зелёные.
+- `git diff --check` — чисто; `desktop_backend::parseInteger` в репозитории
+  не встречается.
 
 ## Remaining
 
-- Реальная Plasma runtime validation этого corrective commit не выполнялась.
+- Изменения не закоммичены (коммит не запрошен).
+- `PwqualityConfigFile.cpp` содержит свой локальный `parseInteger` с другой
+  сигнатурой (`(string, int&)`) — не связан с данной задачей, не тронут.

@@ -7,24 +7,9 @@
 #include "modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.h"
 
 #include <array>
-#include <optional>
 #include <string>
 
 namespace xfce_screen_lock_timeout {
-inline std::optional<int> parseStrictInteger(const std::string& encoded)
-{
-    const std::string value = desktop_backend::trim(encoded);
-    if (value.empty()) return std::nullopt;
-
-    try {
-        std::size_t consumed = 0;
-        const int parsed = std::stoi(value, &consumed, 10);
-        if (consumed != value.size()) return std::nullopt;
-        return parsed;
-    } catch (...) {
-        return std::nullopt;
-    }
-}
 
 struct RequiredProperty {
     const char* path;
@@ -64,8 +49,10 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
                 if (!desktop_backend::parseBoolean(actual, parsed) ||
                     parsed != expected) matches = false;
             } else {
-                const auto parsed = parseStrictInteger(actual);
-                const auto expected = parseStrictInteger(property.value);
+                const auto parsed =
+                    desktop_backend::parseStrictInteger(actual);
+                const auto expected =
+                    desktop_backend::parseStrictInteger(property.value);
                 if (!parsed || !expected || *parsed != *expected)
                     matches = false;
             }

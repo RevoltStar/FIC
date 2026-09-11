@@ -29,14 +29,20 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
         bool autoEnabled = false;
         bool lockEnabled = false;
         bool password = false;
-        const auto actualTimeout = desktop_backend::parseInteger(timeout);
-        const auto grace = desktop_backend::parseInteger(lockGrace);
+        // Timeout трактуется как число с плавающей точкой ("5.0" и "5.00"
+        // эквивалентны "5"); сам парсер не проверяет допустимый диапазон —
+        // только корректность представления. Политику соответствия
+        // определяет сравнение ниже.
+        const auto actualTimeout = desktop_backend::parseStrictDouble(timeout);
+        const auto grace = desktop_backend::parseStrictInteger(lockGrace);
         matches =
             desktop_backend::parseBoolean(autolock, autoEnabled) &&
             desktop_backend::parseBoolean(lock, lockEnabled) &&
             desktop_backend::parseBoolean(requirePassword, password) &&
             autoEnabled && lockEnabled && password &&
-            actualTimeout == timeoutMinutes && grace == 0;
+            actualTimeout &&
+            *actualTimeout == static_cast<double>(timeoutMinutes) &&
+            grace == 0;
         return true;
     };
     const auto writeState = [&]() {
