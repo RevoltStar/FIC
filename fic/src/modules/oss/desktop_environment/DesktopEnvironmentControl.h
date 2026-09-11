@@ -15,6 +15,7 @@ struct ClassifiedGraphicalSession {
     UserSession session;
     SessionContext context;
     DesktopEnvironmentKind desktop = DesktopEnvironmentKind::Unknown;
+    std::size_t sameUidKdeSessionCount = 0;
     std::string classificationError;
 
     bool classified() const {

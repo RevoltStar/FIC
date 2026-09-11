@@ -974,6 +974,15 @@ void reconcile_session_ready(
         }));
         return;
     }
+    if (session.desktop == DesktopEnvironmentKind::Kde) {
+        session.sameUidKdeSessionCount = inventoryLoaded
+            ? static_cast<std::size_t>(std::count_if(
+                  current.begin(), current.end(), [&](const auto& candidate) {
+                      return candidate.desktop == DesktopEnvironmentKind::Kde &&
+                          candidate.session.uid == session.session.uid;
+                  }))
+            : 0;
+    }
     const DesktopGlobalReconcileReport globalReport =
         desktopGlobalConfig.reconcile(registry);
     if (!globalReport.successful()) {

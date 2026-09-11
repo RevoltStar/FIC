@@ -18,8 +18,12 @@ fly_system_header = (root / "fic/src/modules/oss/desktop_environment/backends/Fl
 fly_session = (root / "fic/src/modules/oss/desktop_environment/backends/FlyBackend.cpp").read_text()
 xfce_session = (root / "fic/src/modules/oss/desktop_environment/backends/XfceBackend.cpp").read_text()
 xfce_handler = (root / "fic/src/modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.h").read_text()
+kde_backend = (root / "fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp").read_text()
+kde_resolver = (root / "fic/src/modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.cpp").read_text()
+session_executor = (root / "fic/src/session/SessionCommandExecutor.cpp").read_text()
 screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
 screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
+media_policy = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_disable_kde_lock_screen_media_controls.cpp").read_text()
 gnome_handler_header = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
 ru_lang = (root / "fic/src/resources/lang/ru.lang").read_text()
 en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
@@ -128,6 +132,29 @@ assert '"themerc/Variables/ScreenSaverDelay"' in contributions
 assert '"themerc/Variables/ScreenSaver",' not in contributions
 assert '"themerc/Variables/ScreenSaverDBUS",' not in contributions
 assert "desktop == DesktopEnvironmentKind::Kde" in screenlock
+assert "GetNameOwner" in kde_resolver
+assert "GetConnectionUnixProcessID" in kde_resolver
+assert "GetConnectionUnixUser" in kde_resolver
+assert '"HOME", "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "KDE_SKIP_KDERC"' in kde_resolver
+assert "LD_PRELOAD" not in kde_resolver and '"PATH"' not in kde_resolver
+assert "--address=unix:path=/run/user/" in kde_resolver
+assert "sameUidKdeSessionCount != 1" in kde_resolver
+assert "runtimeContext_->uniqueBusOwner" in kde_backend
+assert "runtimeContext_->kconfigEnvironment" in kde_backend
+assert "executeWithKdeConfigEnvironment" in kde_backend
+assert '"PATH", "/usr/local/bin:/usr/bin:/bin"' in session_executor
+assert "showMediaControls" in media_policy
+assert "EnforcementMode::SessionOnly" in media_policy
+assert "session.sameUidKdeSessionCount" in media_policy
+assert "backend.validateRuntimeContext" in media_policy
+fic_source = "\n".join(
+    path.read_text(errors="ignore")
+    for path in (root / "fic").rglob("*") if path.is_file()
+)
+for obsolete in ("KdeSystemBackend", "fic-kconfig-verifier",
+                 "FIC_BUILD_KCONFIG_VERIFIER", "KF5::ConfigCore",
+                 "KF6::ConfigCore"):
+    assert obsolete not in fic_source
 assert "org.gnome.desktop.lockdown" in gnome_handler_header
 assert "disable-lock-screen" in gnome_handler_header
 # dconf profile parser поддерживает file-db/whitespace/inline comments и

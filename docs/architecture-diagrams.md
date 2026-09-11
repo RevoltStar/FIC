@@ -1533,7 +1533,11 @@ KDE remains `SessionOnly` and publishes no global requirements. FIC applies
 `KdeScreenLockTimeoutHandler` and `KdeBackend`, using the installed
 `kreadconfig5/6` and `kwriteconfig5/6` tools. Convergence reads the five values,
 writes only if needed, always calls
-`org.kde.screensaver.configure`, then performs final file readback. The reload
+`org.kde.screensaver.configure` on the captured unique D-Bus owner, then
+performs final file readback. KConfig commands inherit only the captured
+locker's `HOME`, `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, and `KDE_SKIP_KDERC`
+presence/value state; D-Bus address, executable paths and credentials remain
+daemon-controlled. The reload
 failure is fatal for this `SessionOnly` reconciliation. File readback does not
 prove the timeout cached by KScreenLocker because it exposes no corresponding
 runtime-state read API. FIC does not claim machine-wide immutable KConfig

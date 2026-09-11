@@ -2,6 +2,7 @@
 #define SESSION_COMMAND_EXECUTOR_INTERNAL_H
 
 #include <fic/core/process/ProcessExecutor.h>
+#include "session/SessionCommandExecutor.h"
 #include "session/UserSession.h"
 
 #include <string>
@@ -12,7 +13,10 @@ namespace session_command_executor_detail {
 ProcessOptions buildOptions(const UserSession& session,
                             const SessionContext& context,
                             const std::string& homeDirectory,
-                            gid_t primaryGroup);
+                            gid_t primaryGroup,
+                            const std::vector<SessionEnvironmentOverride>&
+                                environmentOverrides,
+                            std::string& error);
 
 } // namespace session_command_executor_detail
 

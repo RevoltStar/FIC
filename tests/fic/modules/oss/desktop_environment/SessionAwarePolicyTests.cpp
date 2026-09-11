@@ -54,6 +54,7 @@ public:
     bool prepareOk = true;
     int reconciled = 0;
     std::vector<std::string> operations;
+    std::vector<std::size_t> kdeSessionCounts;
 protected:
     bool prepare(std::string& error) override {
         error = prepareOk ? "" : "session preparation failure";
@@ -61,9 +62,10 @@ protected:
     }
     bool relevantTo(DesktopEnvironmentKind) const override { return true; }
     EnforcementMode modeFor(DesktopEnvironmentKind) const override { return mode; }
-    bool reconcileControlledSession(const ClassifiedGraphicalSession&,
+    bool reconcileControlledSession(const ClassifiedGraphicalSession& session,
                                     std::string& error) override {
         ++reconciled; operations.push_back("runtime");
+        kdeSessionCounts.push_back(session.sameUidKdeSessionCount);
         if (!reconcileOk) error = "session failure"; return reconcileOk;
     }
 };
@@ -178,6 +180,16 @@ int main() {
         {{DesktopEnvironmentKind::Gnome, globalResult(false)}});
     require(normalSessionOnly.apply() && normalSessionOnly.reconciled == 1,
             "SessionOnly normal apply depended on global failure");
+
+    scope.value = {DesktopEnvironmentKind::Kde};
+    inventory->value = {session(DesktopEnvironmentKind::Kde),
+                        session(DesktopEnvironmentKind::Kde)};
+    inventory->value[1].session.id = "8";
+    TestPolicy ambiguousKde(scope, inventory);
+    require(ambiguousKde.apply() &&
+                ambiguousKde.kdeSessionCounts ==
+                    std::vector<std::size_t>{2, 2},
+            "same-UID KDE session ambiguity was not propagated");
 
     scope.value = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Kde};
     inventory->value = {session(DesktopEnvironmentKind::Gnome),

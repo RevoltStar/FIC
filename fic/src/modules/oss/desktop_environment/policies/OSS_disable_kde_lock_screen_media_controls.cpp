@@ -2,7 +2,6 @@
 
 #include "modules/oss/desktop_environment/backends/BackendCommand.h"
 #include "modules/oss/desktop_environment/backends/KdeBackend.h"
-#include "modules/oss/desktop_environment/SessionSettingReconciler.h"
 #include <string>
 #include <utility>
 #include <vector>
@@ -54,7 +53,8 @@ bool OSS_disable_kde_lock_screen_media_controls::reconcileControlledSession(
     const ClassifiedGraphicalSession& session,
     std::string& error)
 {
-    KdeBackend backend(session.session, session.context);
+    KdeBackend backend(session.session, session.context,
+                       session.sameUidKdeSessionCount);
     const auto readState = [&](bool& matches, std::string&) {
         std::string actualValue;
         if (!backend.readConfig(
@@ -80,8 +80,19 @@ bool OSS_disable_kde_lock_screen_media_controls::reconcileControlledSession(
             "configure",
             error);
     };
-    return desktop_policy::reconcileEffectiveSetting(
-        readState, writeState,
-        "KDE lock-screen media controls did not reach the requested state",
-        error);
+    bool matches = false;
+    if (!readState(matches, error)) return false;
+    if (!matches) {
+        if (!writeState(error) || !readState(matches, error)) return false;
+        if (!matches) {
+            error = "KDE lock-screen media controls did not reach the requested state";
+            return false;
+        }
+    }
+    if (!backend.validateRuntimeContext(error)) {
+        error = "KDE screen locker changed during reconciliation: " + error;
+        return false;
+    }
+    error.clear();
+    return true;
 }

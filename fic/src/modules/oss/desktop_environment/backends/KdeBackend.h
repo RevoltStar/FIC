@@ -2,10 +2,28 @@
 #define KDE_BACKEND_H
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
+#include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.h"
+
+#include <functional>
+#include <memory>
+#include <optional>
+
+struct KdeBackendDependencies {
+    std::shared_ptr<KdeScreenLockerRuntimeContextResolver> resolver;
+    std::function<std::string(const std::vector<std::string>&)> findExecutable;
+    std::function<ProcessResult(
+        const UserSession&, const SessionContext&, const std::string&,
+        const std::vector<std::string>&,
+        const std::vector<SessionEnvironmentOverride>&)> execute;
+};
 
 class KdeBackend final : public DesktopEnvironmentBackend {
 public:
-    using DesktopEnvironmentBackend::DesktopEnvironmentBackend;
+    KdeBackend(const UserSession& session, const SessionContext& context,
+               std::size_t sameUidKdeSessionCount);
+    KdeBackend(const UserSession& session, const SessionContext& context,
+               std::size_t sameUidKdeSessionCount,
+               KdeBackendDependencies dependencies);
 
     const char* name() const override { return "KDE Plasma"; }
 
@@ -48,6 +66,22 @@ public:
         const std::string& method,
         std::string& error
     ) const;
+
+    bool validateRuntimeContext(std::string& error) const;
+
+private:
+    bool ensureRuntimeContext(std::string& error) const;
+    bool executeWithKConfigEnvironment(
+        const std::string& executable,
+        const std::vector<std::string>& arguments,
+        std::string& output,
+        std::string& error) const;
+
+    UserSession session_;
+    SessionContext context_;
+    std::size_t sameUidKdeSessionCount_ = 0;
+    KdeBackendDependencies dependencies_;
+    mutable std::optional<KdeScreenLockerRuntimeContext> runtimeContext_;
 };
 
 #endif // KDE_BACKEND_H

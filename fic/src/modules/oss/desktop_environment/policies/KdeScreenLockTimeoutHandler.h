@@ -68,6 +68,10 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
         error = "KDE screen lock settings did not reach the requested state";
         return false;
     }
+    if (!backend.validateRuntimeContext(error)) {
+        error = "KDE screen locker changed during reconciliation: " + error;
+        return false;
+    }
     error.clear();
     return true;
 }
@@ -76,7 +80,9 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
 
 class KdeScreenLockTimeoutHandler final : public ScreenLockTimeoutHandler {
 public:
-    KdeScreenLockTimeoutHandler(const UserSession& session, const SessionContext& context);
+    KdeScreenLockTimeoutHandler(const UserSession& session,
+                                const SessionContext& context,
+                                std::size_t sameUidKdeSessionCount);
 
     const char* desktopName() const override { return backend.name(); }
     bool apply(int timeoutMinutes, std::string& error) const override;

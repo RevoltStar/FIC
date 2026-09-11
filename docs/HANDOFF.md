@@ -3,58 +3,58 @@
 ## Current base
 
 - Ветка `main`.
-- База: `3420d1f`.
+- База перед текущей задачей: `e4ed26e5d2aa8cb9fcce53dd6d9b7f0492ad6e34`.
 
 ## Current task
 
-- Исправить install-layout `fic-session-agent`, чтобы XDG Autostart был
-  доступен обычному пользователю без ослабления private tree `/opt/fic`, и
-  нормализовать staged modes обоих `fic-gui` executables в `0750`.
+- KDE SessionOnly runtime context: исключить false success, когда daemon-side
+  KConfig tools используют другой HOME/XDG graph, чем `org.kde.screensaver`.
 
 ## Accepted architecture / invariants
 
-- Canonical path `fic-session-agent` —
-  `/usr/libexec/fic/fic-session-agent`, `root:root 0755`.
-- `/opt/fic` остаётся `root:fic 2750`; private executables, включая
-  `/opt/fic/bin/fic-cli`, остаются `0750`.
-- XDG Autostart использует exact `Exec=/usr/libexec/fic/fic-session-agent`.
+- KDE и XFCE остаются `SessionOnly`; GNOME и FLY — `MandatoryGlobal`.
+- Authoritative KDE context принадлежит текущему owner
+  `org.kde.screensaver`, а не `fic-session-agent`.
+- Bus address, executable paths, UID/GID, safe base environment и cwd задаёт
+  daemon; из locker разрешены только `HOME`, `XDG_CONFIG_HOME`,
+  `XDG_CONFIG_DIRS`, `KDE_SKIP_KDERC` с exact absent/empty/value semantics.
+- Несколько controlled KDE sessions одного UID неоднозначны и fail closed.
+- KConfig readback не доказывает cached runtime state KScreenLocker.
 
 ## Completed
 
-- Добавлен общий CMake layout constant `FIC_SESSION_AGENT_BINDIR`.
-- CMake component, DEB и RPM staging переведены на `/usr/libexec/fic`.
-- DEB/RPM staging явно фиксирует `0755` для public agent и `0750` для
-  `fic-cli`, `fic-gui` launcher и `fic-gui.real`; package ownership
-  нормализуется в `root:root` существующими DEB/RPM mechanisms.
-- Добавлены static и component-install staging regressions для public agent,
-  autostart path, отсутствия private copy и сохранения private boundary.
-- Packaging README обновлены новым layout.
+- Добавлен testable `KdeScreenLockerRuntimeContextResolver`: unique D-Bus
+  owner, PID/UID, trusted `/proc/<pid>/environ` read и повторная identity check.
+- `KdeBackend` использует captured environment для всех KConfig reads/writes,
+  вызывает `configure` на unique owner и проверяет owner после reconcile.
+- `SessionCommandExecutor` получил отдельный KDE-only allowlisted set/unset API;
+  обычный execution contract не расширен environment overrides.
+- Inventory ambiguity передаётся в обе production reconciliation paths.
+- Добавлены resolver, wrong-root, environment-shape, execution-security,
+  owner-race, ambiguity, timeout-flow и architecture regressions.
+- Обновлена manual Plasma validation procedure.
 
 ## Changed areas
 
-- `cmake/FicInstallLayout.cmake` и `fic-session-agent/CMakeLists.txt`.
-- XDG Autostart template.
-- DEB/RPM build scripts и packaging README.
-- Session-agent static/package-layout tests.
+- KDE desktop backend/runtime resolver и обе KDE SessionOnly policies.
+- Session inventory metadata и daemon `session_ready` reconciliation.
+- KDE-specific command environment overrides.
+- Desktop/KDE unit и static tests; session-agent/architecture documentation.
 
 ## Validation
 
-- Targeted configure: Ubuntu 24.04 profile с локальным `/tmp` libsystemd
-  pkg-config shim — passed.
-- `cmake --build build-session-layout --target fic-session-agent -j2` — passed.
-- Targeted CTest: 7/7 passed (`session_agent_static_checks`,
-  `session_agent_install_layout_tests`, `path_layout_static_checks`,
-  `platform_profile_static_checks`, `packaging_build_resource_tests`,
-  `version_contract_tests`, `release_contract_tests`).
-- `bash -n` для DEB/RPM builders и нового staging test — passed.
-- Follow-up checks после добавления `fic-gui` modes: session-agent,
-  platform-profile и path-layout static checks, GUI runtime compliance test и
-  `bash -n` DEB/RPM builders — passed.
-- Negative controls: old desktop path, private CMake destination, public agent
-  mode `0750` и `fic-cli` mode `0755` — каждый вызвал ожидаемое падение.
+- Ubuntu 24.04 targeted configure — passed.
+- Affected targets `fic`, `kde_runtime_context_tests`,
+  `session_setting_reconciler_tests`, `screenlock_timeout_global_tests`,
+  `session_aware_policy_tests` — built successfully.
+- Targeted CTest subset — 5/5 passed.
+- Шесть required negative controls дали ожидаемые падения: missing
+  `XDG_CONFIG_HOME`, synthetic graph, allowed `LD_PRELOAD`, removed repeat
+  owner check, accepted same-UID ambiguity, KDE `MandatoryGlobal`.
 - `git diff --check` — passed.
-- Полная сборка проекта не запускалась согласно ограничению задачи.
+- Полная сборка проекта не запускалась по ограничению задачи.
 
 ## Remaining
 
-- Follow-up с explicit `0750` для `fic-gui` и `fic-gui.real` не закоммичен.
+- Automated tests не заменяют manual validation внутри реальной Plasma
+  session с custom `plasma-workspace/env/*.sh`.

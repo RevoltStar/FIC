@@ -18,7 +18,8 @@ class ScreenLockTimeoutHandlerFactory {
 public:
     static std::unique_ptr<ScreenLockTimeoutHandler> create(
         const UserSession& session,
-        const SessionContext& context
+        const SessionContext& context,
+        std::size_t sameUidKdeSessionCount
     );
 };
 

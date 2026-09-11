@@ -122,7 +122,9 @@ struct FakeKdeSession {
     mutable std::vector<std::string> writes;
     mutable std::vector<std::string> events;
     mutable int reloads = 0;
+    mutable int validations = 0;
     bool reloadOk = true;
+    bool validationOk = true;
 
     bool readConfig(const std::string&, const std::string&,
                     const std::string& key, std::string& value,
@@ -154,6 +156,11 @@ struct FakeKdeSession {
         error = reloadOk ? "" : "D-Bus unavailable";
         return reloadOk;
     }
+    bool validateRuntimeContext(std::string& error) const {
+        ++validations;
+        error = validationOk ? "" : "owner changed";
+        return validationOk;
+    }
 };
 
 void testKdeLockConvergence() {
@@ -174,7 +181,7 @@ void testKdeLockConvergence() {
             "write:Autolock", "write:Timeout", "write:Lock",
             "write:LockGrace", "write:RequirePassword", "configure"});
         expected.insert(expected.end(), reads.begin(), reads.end());
-        require(session.events == expected,
+        require(session.events == expected && session.validations == 1,
                 "KDE write/configure/readback ordering is wrong");
     }
     {
@@ -187,7 +194,8 @@ void testKdeLockConvergence() {
         std::vector<std::string> expected = reads;
         expected.push_back("configure");
         expected.insert(expected.end(), reads.begin(), reads.end());
-        require(session.events == expected && session.reloads == 1,
+        require(session.events == expected && session.reloads == 1 &&
+                    session.validations == 1,
                 "already-correct KDE state skipped configure or final readback");
     }
     {
@@ -199,10 +207,21 @@ void testKdeLockConvergence() {
                 "KDE configure failure was ignored");
         std::vector<std::string> expected = reads;
         expected.push_back("configure");
-        require(session.events == expected &&
+        require(session.events == expected && session.validations == 0 &&
                     error == "failed to reload KDE screen lock settings: "
                              "D-Bus unavailable",
                 "KDE configure failure ordering or diagnostic is wrong");
+    }
+    {
+        FakeKdeSession session;
+        session.values["Lock"] = "true";
+        session.validationOk = false;
+        std::string error;
+        require(!kde_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    session.validations == 1 &&
+                    error == "KDE screen locker changed during reconciliation: "
+                             "owner changed",
+                "KDE final owner change was accepted");
     }
 }
 

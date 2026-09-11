@@ -2,9 +2,10 @@
 
 KdeScreenLockTimeoutHandler::KdeScreenLockTimeoutHandler(
     const UserSession& session,
-    const SessionContext& context
+    const SessionContext& context,
+    std::size_t sameUidKdeSessionCount
 )
-    : backend(session, context)
+    : backend(session, context, sameUidKdeSessionCount)
 {
 }
 

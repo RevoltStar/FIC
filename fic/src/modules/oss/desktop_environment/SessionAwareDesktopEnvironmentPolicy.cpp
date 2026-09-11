@@ -2,6 +2,7 @@
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 
+#include <algorithm>
 #include <set>
 #include <utility>
 
@@ -160,6 +161,14 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
         log("Failed to enumerate graphical sessions: " + error,
             hasSessionOnly ? logLevel::ERROR : logLevel::WARN);
         return hasSessionOnly ? false : success;
+    }
+    for (auto& session : sessions) {
+        if (session.desktop != DesktopEnvironmentKind::Kde) continue;
+        session.sameUidKdeSessionCount = static_cast<std::size_t>(std::count_if(
+            sessions.begin(), sessions.end(), [&](const auto& candidate) {
+                return candidate.desktop == DesktopEnvironmentKind::Kde &&
+                    candidate.session.uid == session.session.uid;
+            }));
     }
 
     std::set<DesktopEnvironmentKind> seenSessionOnly;

@@ -283,6 +283,7 @@ add_executable(screenlock_timeout_global_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GnomeBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GSettingsValueParser.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/XfceBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/FlyBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
@@ -292,6 +293,20 @@ target_include_directories(screenlock_timeout_global_tests PRIVATE
 )
 target_link_libraries(screenlock_timeout_global_tests PRIVATE fic-core fic-policy)
 add_test(NAME screenlock_timeout_global_tests COMMAND screenlock_timeout_global_tests)
+
+add_executable(kde_runtime_context_tests
+    fic/modules/oss/desktop_environment/KdeRuntimeContextTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+)
+target_include_directories(kde_runtime_context_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(kde_runtime_context_tests PRIVATE fic-core)
+add_test(NAME kde_runtime_context_tests COMMAND kde_runtime_context_tests)
 
 add_executable(session_setting_reconciler_tests
     fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp

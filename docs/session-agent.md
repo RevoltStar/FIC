@@ -239,7 +239,14 @@ and FIC does not claim machine-wide immutable KConfig authority. The daemon
 applies the policy directly to every discovered Plasma session through
 `KdeScreenLockTimeoutHandler` and `KdeBackend`, using the installed
 `kreadconfig5/6` and `kwriteconfig5/6` tools. The headless daemon has no
-link-time KDE framework dependency.
+link-time KDE framework dependency. Before KConfig access, FIC resolves the
+current `org.kde.screensaver` owner on the daemon-selected
+`unix:path=/run/user/<uid>/bus`, obtains its PID and UID from
+`org.freedesktop.DBus`, and reads only `HOME`, `XDG_CONFIG_HOME`,
+`XDG_CONFIG_DIRS`, and `KDE_SKIP_KDERC` from `/proc/<pid>/environ`. The owner,
+PID and UID must remain stable across capture and after reconciliation. The
+session-agent environment is not an authority for this context. More than one
+active KDE graphical session for the same UID is ambiguous and fails closed.
 
 For controlled FLY, `screenlock_timeout=N` contributes exactly one
 `FlySystemBackend` requirement in `[Variables]`: `ScreenSaverDelay=N*60`.
@@ -260,6 +267,14 @@ reconciliation. KScreenLocker exposes no runtime-effective timeout read API,
 so successful reload plus file readback is the best available convergence
 contract; the readback alone does not prove the value cached by the running
 locker.
+
+Manual Plasma validation: set test `XDG_CONFIG_HOME`, `XDG_CONFIG_DIRS`, and
+`KDE_SKIP_KDERC` values through `plasma-workspace/env/*.sh`, log out and back
+in, resolve the PID owning `org.kde.screensaver`, and compare the four
+allowlisted values with `/proc/<pid>/environ` as root. Applying a KDE policy
+must update `kscreenlockerrc` below the selected `XDG_CONFIG_HOME`, not the
+default `~/.config`, while `PATH`, `LD_*`, executable selection and process
+credentials remain daemon-controlled.
 
 GNOME and FLY are `MandatoryGlobal`; KDE and XFCE are `SessionOnly`; LXQt
 remains unsupported.
