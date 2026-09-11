@@ -3,12 +3,12 @@
 ## Current base
 
 - Ветка `main`.
-- База перед текущей задачей: `e4ed26e5d2aa8cb9fcce53dd6d9b7f0492ad6e34`.
+- База перед текущей задачей: `04391d0e6a4bceb2980d9c0ec39290c1bddeb8fe`.
 
 ## Current task
 
-- KDE SessionOnly runtime context: исключить false success, когда daemon-side
-  KConfig tools используют другой HOME/XDG graph, чем `org.kde.screensaver`.
+- Corrective fix KDE runtime context: не использовать ownership procfs inode
+  `/proc/<pid>/environ` как доказательство UID процесса.
 
 ## Accepted architecture / invariants
 
@@ -19,42 +19,32 @@
   daemon; из locker разрешены только `HOME`, `XDG_CONFIG_HOME`,
   `XDG_CONFIG_DIRS`, `KDE_SKIP_KDERC` с exact absent/empty/value semantics.
 - Несколько controlled KDE sessions одного UID неоднозначны и fail closed.
+- Process UID доказывается D-Bus identity chain; `st_uid` файла procfs не
+  является security invariant.
 - KConfig readback не доказывает cached runtime state KScreenLocker.
 
 ## Completed
 
-- Добавлен testable `KdeScreenLockerRuntimeContextResolver`: unique D-Bus
-  owner, PID/UID, trusted `/proc/<pid>/environ` read и повторная identity check.
-- `KdeBackend` использует captured environment для всех KConfig reads/writes,
-  вызывает `configure` на unique owner и проверяет owner после reconcile.
-- `SessionCommandExecutor` получил отдельный KDE-only allowlisted set/unset API;
-  обычный execution contract не расширен environment overrides.
-- Inventory ambiguity передаётся в обе production reconciliation paths.
-- Добавлены resolver, wrong-root, environment-shape, execution-security,
-  owner-race, ambiguity, timeout-flow и architecture regressions.
-- Обновлена manual Plasma validation procedure.
+- Удалена ошибочная проверка `fstat.st_uid == D-Bus owner UID`.
+- Production reader по-прежнему открывает с `O_NOFOLLOW`, проверяет `S_ISREG`,
+  читает один fd с лимитом 1 MiB и закрывает тот же fd.
+- Добавлен syscall-level regression: D-Bus UID `1000`, procfs metadata UID
+  `root`, читаемое environment — resolver успешно получает snapshot.
 
 ## Changed areas
 
-- KDE desktop backend/runtime resolver и обе KDE SessionOnly policies.
-- Session inventory metadata и daemon `session_ready` reconciliation.
-- KDE-specific command environment overrides.
-- Desktop/KDE unit и static tests; session-agent/architecture documentation.
+- KDE runtime-context resolver production read path и focused tests.
 
 ## Validation
 
-- Ubuntu 24.04 targeted configure — passed.
-- Affected targets `fic`, `kde_runtime_context_tests`,
-  `session_setting_reconciler_tests`, `screenlock_timeout_global_tests`,
-  `session_aware_policy_tests` — built successfully.
-- Targeted CTest subset — 5/5 passed.
-- Шесть required negative controls дали ожидаемые падения: missing
-  `XDG_CONFIG_HOME`, synthetic graph, allowed `LD_PRELOAD`, removed repeat
-  owner check, accepted same-UID ambiguity, KDE `MandatoryGlobal`.
+- `kde_runtime_context_tests` — built successfully.
+- `kde_runtime_context_tests`, `screenlock_timeout_global_tests`,
+  `session_setting_reconciler_tests` и architecture static checks — 4/4 passed.
+- Negative control с восстановленной проверкой `st_uid == expectedUid` упал
+  на root-owned procfs metadata regression.
 - `git diff --check` — passed.
 - Полная сборка проекта не запускалась по ограничению задачи.
 
 ## Remaining
 
-- Automated tests не заменяют manual validation внутри реальной Plasma
-  session с custom `plasma-workspace/env/*.sh`.
+- Реальная Plasma runtime validation этого corrective commit не выполнялась.

@@ -20,7 +20,7 @@ struct KdeScreenLockerRuntimeContextResolverDependencies {
     std::function<ProcessResult(
         const UserSession&, const SessionContext&, const std::string&,
         const std::vector<std::string>&)> execute;
-    std::function<bool(pid_t, uid_t, std::string&, std::string&)> readEnviron;
+    std::function<bool(pid_t, std::string&, std::string&)> readEnviron;
 };
 
 class KdeScreenLockerRuntimeContextResolver {

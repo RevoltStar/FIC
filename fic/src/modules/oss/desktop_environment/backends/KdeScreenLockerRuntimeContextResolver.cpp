@@ -1,6 +1,7 @@
 #include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.h"
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
+#include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolverInternal.h"
 
 #include <algorithm>
 #include <array>
@@ -23,52 +24,23 @@ constexpr const char* ScreenLockerService = "org.kde.screensaver";
 const std::array<const char*, 4> KConfigEnvironmentNames{
     "HOME", "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "KDE_SKIP_KDERC"};
 
-bool readProcessEnvironment(pid_t pid, uid_t expectedUid, std::string& content,
+const kde_screen_locker_runtime_context_detail::
+ProcessEnvironmentFileOperations ProcessEnvironmentOperations{
+    [](const std::string& path, int flags) {
+        return ::open(path.c_str(), flags);
+    },
+    [](int descriptor, struct stat& info) {
+        return ::fstat(descriptor, &info);
+    },
+    [](int descriptor, char* buffer, std::size_t size) {
+        return ::read(descriptor, buffer, size);
+    },
+    [](int descriptor) { return ::close(descriptor); }};
+
+bool readProcessEnvironment(pid_t pid, std::string& content,
                             std::string& error) {
-    const std::string path = "/proc/" + std::to_string(pid) + "/environ";
-    const int descriptor = ::open(
-        path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-    if (descriptor < 0) {
-        error = "could not open KScreenLocker environment: " +
-            std::string(std::strerror(errno));
-        return false;
-    }
-    struct stat info {};
-    if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode) ||
-        info.st_uid != expectedUid) {
-        error = "unsafe KScreenLocker environment source";
-        ::close(descriptor);
-        return false;
-    }
-    content.clear();
-    std::array<char, 4096> buffer{};
-    for (;;) {
-        const ssize_t count = ::read(descriptor, buffer.data(), buffer.size());
-        if (count > 0) {
-            if (content.size() + static_cast<std::size_t>(count) >
-                MaxEnvironmentBytes) {
-                error = "KScreenLocker environment exceeds size limit";
-                ::close(descriptor);
-                return false;
-            }
-            content.append(buffer.data(), static_cast<std::size_t>(count));
-            continue;
-        }
-        if (count == 0)
-            break;
-        if (errno == EINTR)
-            continue;
-        error = "could not read KScreenLocker environment: " +
-            std::string(std::strerror(errno));
-        ::close(descriptor);
-        return false;
-    }
-    if (::close(descriptor) != 0) {
-        error = "could not close KScreenLocker environment";
-        return false;
-    }
-    error.clear();
-    return true;
+    return kde_screen_locker_runtime_context_detail::readProcessEnvironment(
+        pid, content, error, ProcessEnvironmentOperations);
 }
 
 bool validEnvironmentName(const std::string& name) {
@@ -91,6 +63,59 @@ bool isKConfigEnvironmentName(const std::string& name) {
             return name == allowed;
         }) != KConfigEnvironmentNames.end();
 }
+
+} // namespace
+
+bool kde_screen_locker_runtime_context_detail::readProcessEnvironment(
+    pid_t pid, std::string& content, std::string& error,
+    const ProcessEnvironmentFileOperations& operations) {
+    const std::string path = "/proc/" + std::to_string(pid) + "/environ";
+    const int descriptor = operations.open(
+        path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (descriptor < 0) {
+        error = "could not open KScreenLocker environment: " +
+            std::string(std::strerror(errno));
+        return false;
+    }
+    struct stat info {};
+    if (operations.fstat(descriptor, info) != 0 || !S_ISREG(info.st_mode)) {
+        error = "unsafe KScreenLocker environment source";
+        operations.close(descriptor);
+        return false;
+    }
+    content.clear();
+    std::array<char, 4096> buffer{};
+    for (;;) {
+        const ssize_t count = operations.read(
+            descriptor, buffer.data(), buffer.size());
+        if (count > 0) {
+            if (content.size() + static_cast<std::size_t>(count) >
+                MaxEnvironmentBytes) {
+                error = "KScreenLocker environment exceeds size limit";
+                operations.close(descriptor);
+                return false;
+            }
+            content.append(buffer.data(), static_cast<std::size_t>(count));
+            continue;
+        }
+        if (count == 0)
+            break;
+        if (errno == EINTR)
+            continue;
+        error = "could not read KScreenLocker environment: " +
+            std::string(std::strerror(errno));
+        operations.close(descriptor);
+        return false;
+    }
+    if (operations.close(descriptor) != 0) {
+        error = "could not close KScreenLocker environment";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+namespace {
 
 bool parseEnvironment(
     const std::string& content,
@@ -264,7 +289,7 @@ bool KdeScreenLockerRuntimeContextResolver::resolve(
         return false;
     }
     std::string environ;
-    if (!dependencies_.readEnviron(before.pid, before.uid, environ, error) ||
+    if (!dependencies_.readEnviron(before.pid, environ, error) ||
         !parseEnvironment(environ, result.kconfigEnvironment, error))
         return false;
     BusIdentity after;

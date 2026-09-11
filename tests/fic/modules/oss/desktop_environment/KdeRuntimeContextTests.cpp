@@ -1,12 +1,17 @@
 #include "modules/oss/desktop_environment/backends/KdeBackend.h"
 #include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.h"
+#include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolverInternal.h"
 #include "session/SessionCommandExecutorInternal.h"
 
 #include <algorithm>
+#include <cstring>
+#include <fcntl.h>
 #include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <sys/stat.h>
 
 namespace {
 
@@ -74,11 +79,11 @@ KdeScreenLockerRuntimeContextResolver resolver(
                const auto& arguments) {
             return bus.execute(target, context, executable, arguments);
         },
-        [environ = std::move(environ), readable](pid_t pid, uid_t uid,
+        [environ = std::move(environ), readable](pid_t pid,
                                                  std::string& output,
                                                  std::string& error) {
-            require(pid == 4242 && uid == 1000,
-                    "resolver read environment for wrong identity");
+            require(pid == 4242,
+                    "resolver read environment for wrong process");
             if (!readable) {
                 error = "unreadable";
                 return false;
@@ -87,6 +92,77 @@ KdeScreenLockerRuntimeContextResolver resolver(
             error.clear();
             return true;
         }});
+}
+
+void testProductionReaderAcceptsRootOwnedProcMetadata() {
+    FakeBus bus;
+    const std::string source = environment({
+        {"HOME", "/home/user"},
+        {"XDG_CONFIG_HOME", "/home/user/root-owned-proc-metadata"}});
+    std::size_t offset = 0;
+    int openCalls = 0;
+    int fstatCalls = 0;
+    int closeCalls = 0;
+    constexpr int Descriptor = 73;
+    kde_screen_locker_runtime_context_detail::
+        ProcessEnvironmentFileOperations operations{
+            [&](const std::string& path, int flags) {
+                ++openCalls;
+                require(path == "/proc/4242/environ",
+                        "production reader selected wrong proc path");
+                require((flags & O_ACCMODE) == O_RDONLY &&
+                            (flags & O_NOFOLLOW) != 0 &&
+                            (flags & O_CLOEXEC) != 0 &&
+                            (flags & O_NONBLOCK) != 0,
+                        "production reader lost safe open flags");
+                return Descriptor;
+            },
+            [&](int descriptor, struct stat& info) {
+                ++fstatCalls;
+                require(descriptor == Descriptor,
+                        "production reader fstat used wrong fd");
+                std::memset(&info, 0, sizeof(info));
+                info.st_mode = S_IFREG | 0400;
+                info.st_uid = 0;
+                return 0;
+            },
+            [&](int descriptor, char* buffer, std::size_t capacity) {
+                require(descriptor == Descriptor,
+                        "production reader read from wrong fd");
+                const std::size_t count = std::min(capacity,
+                    source.size() - offset);
+                if (count == 0) return static_cast<ssize_t>(0);
+                std::memcpy(buffer, source.data() + offset, count);
+                offset += count;
+                return static_cast<ssize_t>(count);
+            },
+            [&](int descriptor) {
+                ++closeCalls;
+                require(descriptor == Descriptor,
+                        "production reader closed wrong fd");
+                return 0;
+            }};
+    KdeScreenLockerRuntimeContextResolver target({
+        [](const auto&) { return std::string("/usr/bin/busctl"); },
+        [&bus](const auto& userSession, const auto& context,
+               const auto& executable, const auto& arguments) {
+            return bus.execute(
+                userSession, context, executable, arguments);
+        },
+        [&](pid_t pid, std::string& output, std::string& error) {
+            return kde_screen_locker_runtime_context_detail::
+                readProcessEnvironment(
+                    pid, output, error, operations);
+        }});
+    KdeScreenLockerRuntimeContext captured;
+    std::string error;
+    require(target.resolve(
+                session(), sessionContext(), 1, captured, error), error);
+    require(openCalls == 1 && fstatCalls == 1 && closeCalls == 1 &&
+                captured.uid == 1000 &&
+                captured.kconfigEnvironment[1].value ==
+                    "/home/user/root-owned-proc-metadata",
+            "root-owned procfs metadata changed resolver identity or content");
 }
 
 void testResolverSuccessPresenceAndAllowlist() {
@@ -316,6 +392,7 @@ void testKdeBackendRejectsOwnerReplacementAfterConfigure() {
 } // namespace
 
 int main() {
+    testProductionReaderAcceptsRootOwnedProcMetadata();
     testKdeBackendUsesLockerSelectedGraph();
     testKdeBackendRejectsOwnerReplacementAfterConfigure();
     testResolverSuccessPresenceAndAllowlist();

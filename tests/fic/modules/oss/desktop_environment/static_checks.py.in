@@ -135,6 +135,7 @@ assert "desktop == DesktopEnvironmentKind::Kde" in screenlock
 assert "GetNameOwner" in kde_resolver
 assert "GetConnectionUnixProcessID" in kde_resolver
 assert "GetConnectionUnixUser" in kde_resolver
+assert ".st_uid" not in kde_resolver
 assert '"HOME", "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "KDE_SKIP_KDERC"' in kde_resolver
 assert "LD_PRELOAD" not in kde_resolver and '"PATH"' not in kde_resolver
 assert "--address=unix:path=/run/user/" in kde_resolver
