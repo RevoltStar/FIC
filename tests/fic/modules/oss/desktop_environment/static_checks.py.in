@@ -139,14 +139,18 @@ assert ".st_uid" not in kde_resolver
 assert '"HOME", "XDG_CONFIG_HOME", "XDG_CONFIG_DIRS", "KDE_SKIP_KDERC"' in kde_resolver
 assert "LD_PRELOAD" not in kde_resolver and '"PATH"' not in kde_resolver
 assert "--address=unix:path=/run/user/" in kde_resolver
-assert "sameUidKdeSessionCount != 1" in kde_resolver
+assert "sameUidKdeSessionCount" not in kde_resolver
+assert "KdeSessionTopology::Ambiguous" in kde_resolver
+assert "KdeSessionTopology::Unique" in kde_resolver
+assert "multiple KDE graphical sessions exist for UID" in kde_resolver
+assert "KDE session topology is unknown for UID" in kde_resolver
 assert "runtimeContext_->uniqueBusOwner" in kde_backend
 assert "runtimeContext_->kconfigEnvironment" in kde_backend
 assert "executeWithKdeConfigEnvironment" in kde_backend
 assert '"PATH", "/usr/local/bin:/usr/bin:/bin"' in session_executor
 assert "showMediaControls" in media_policy
 assert "EnforcementMode::SessionOnly" in media_policy
-assert "session.sameUidKdeSessionCount" in media_policy
+assert "session.sameUidKdeTopology" in media_policy
 assert "backend.validateRuntimeContext" in media_policy
 fic_source = "\n".join(
     path.read_text(errors="ignore")
@@ -154,8 +158,10 @@ fic_source = "\n".join(
 )
 for obsolete in ("KdeSystemBackend", "fic-kconfig-verifier",
                  "FIC_BUILD_KCONFIG_VERIFIER", "KF5::ConfigCore",
-                 "KF6::ConfigCore"):
+                 "KF6::ConfigCore", "sameUidKdeSessionCount"):
     assert obsolete not in fic_source
+assert "determineKdeSessionTopology" in session_policy
+assert "std::count_if" not in session_policy
 assert "org.gnome.desktop.lockdown" in gnome_handler_header
 assert "disable-lock-screen" in gnome_handler_header
 # dconf profile parser поддерживает file-db/whitespace/inline comments и

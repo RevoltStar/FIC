@@ -2,60 +2,62 @@
 
 ## Current base
 
-- Ветка `main`, база: `c64e511` (fix(kde): ignore procfs environ inode owner).
+- Ветка `main`, база: `ae6bc23` (парсер KDE/XFCE), рабочее дерево — 
+  незакоммиченная topology-fix (коммит не запрошен).
 
 ## Current task
 
-- Strict parsing значений DE-политик: KDE `screenlock_timeout` (`Timeout` —
-  strict double, `LockGrace` — strict integer); удаление loose
-  `desktop_backend::parseInteger`.
+- KDE SessionOnly topology: `sameUidKdeSessionCount` (int) заменён на 
+  typed `KdeSessionTopology {Unique, Ambiguous, Unknown}`.
 
 ## Accepted architecture / invariants
 
-- `desktop_backend::parseStrictInteger` / `parseStrictDouble`
-  (`BackendCommand.h/.cpp`) — единственные числовые парсеры DE-бэкендов:
-  trim, полное потребление строки (`consumed == size`), знак — часть числа,
-  overflow/underflow → `std::nullopt`; double дополнительно `std::isfinite`
-  (NaN/Inf/infinity отклоняются). Без regex.
-- Парсер отвечает только за корректность представления; допустимый диапазон
-  policy проверяется политикой (KDE: `*timeout == (double)timeoutMinutes`,
-  `grace == 0`; диапазон `screenlock_timeout` 1..20 не менялся).
-- Локальный `xfce_screen_lock_timeout::parseStrictInteger` удалён, XFCE
-  использует общий `desktop_backend::parseStrictInteger`.
-- KDE reconciliation protocol (`configure`, readback, owner validation) не
-  менялся; topology/session ambiguity — отдельная задача.
+- Unique доказан только если: ровно одна same-UID сессия классифицирована
+  KDE И ни одной same-UID сессии с Unknown/failed классификацией.
+- Достоверно non-KDE same-UID сессия (GNOME/XFCE/FLY) НЕ делает topology
+  Ambiguous; KDE+KDE+non-KDE — Ambiguous; KDE+Unknown same UID — Unknown;
+  чужой UID (в т.ч. Unknown) не влияет; неполная inventory или KDE target
+  вне inventory — Unknown. Unknown fail closed как Ambiguous.
+- Общий алгоритм — `determineKdeSessionTopology(target, sessions, 
+  inventoryComplete)` в `desktop_environment/KdeSessionTopology.h/.cpp`;
+  обе production paths (SessionAwareDesktopEnvironmentPolicy::apply и 
+  reconcile_session_ready в main.cpp) используют только его.
+- `ClassifiedGraphicalSession.sameUidKdeTopology` — `KdeSessionTopologyInfo`
+  (state + counts + unknownSessionId/classificationError для диагностики).
+  Промежуточный минимальный refactor по договорённости; полный factory 
+  refactor `create(const ClassifiedGraphicalSession&)` — отдельно.
+- Resolver принимает `KdeSessionTopologyInfo`, разные диагностики для 
+  Ambiguous ("multiple KDE graphical sessions exist for UID ...") и Unknown
+  ("KDE session topology is unknown for UID ..." + проблемная сессия). 
+  Остальные проверки (D-Bus owner/PID/UID, environ, revalidation) не менялись.
+- Static checks фиксируют отсутствие `sameUidKdeSessionCount` в fic и 
+  наличие обоих вариантов диагностики в resolver.
 
 ## Completed
 
-- Замена loose `parseInteger` (первая цифровая подстрока) на строгие
-  парсеры; `Timeout=-5/5.5/5foo/foo5/NaN/Inf` дают mismatch + reconciliation.
-- Тесты: обязательные кейсы обоих парсеров + KDE regression (policy 5:
-  match `5/5.0/5.00/" 5.0 "`; mismatch+convergence `-5/5.5/5foo/foo5/NaN/
-  Inf/-Inf/""`; LockGrace `-0` match, `0foo/foo0/0.0` mismatch) в
-  `SessionSettingReconcilerTests.cpp` (testDesktopBackendStrictParsers,
-  testKdeLockConvergence).
-
-## Changed areas
-
-- `fic/src/modules/oss/desktop_environment/backends/BackendCommand.*`,
-  `policies/KdeScreenLockTimeoutHandler.h`,
-  `policies/XfceScreenLockTimeoutHandler.h`,
-  `tests/fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp`.
+- Новый `KdeSessionTopology.h/.cpp`; замена count на typed topology по всей 
+  цепочке (DesktopEnvironmentControl.h, KdeBackend, resolver, KDE handler,
+  ScreenLockTimeoutHandlerFactory, OSS_screenlock_timeout, 
+  OSS_disable_kde_lock_screen_media_controls); session_ready fallback 0 
+  удалён.
+- Тесты: 7+ обязательных topology-кейсов в KdeRuntimeContextTests (helper + 
+  resolver diagnostics + KdeBackend fail-closed Unknown) и apply-path 
+  topology propagation в SessionAwarePolicyTests.
 
 ## Validation
 
-- Build затронутых targets: EXIT=0.
-- ctest: session_setting_reconciler_tests, screenlock_timeout_global_tests,
-  desktop_global_config_reconciler_tests, session_aware_policy_tests,
+- Build: kde_runtime_context_tests, session_aware_policy_tests, 
+  screenlock_timeout_global_tests, fic — EXIT=0.
+- CTest: kde_runtime_context_tests, session_aware_policy_tests, 
+  screenlock_timeout_global_tests, desktop_global_config_reconciler_tests,
+  session_ready_retry/validation_tests, 
   desktop_environment_architecture_static_checks — все passed.
-- Negative controls: парсер отключён → тест упал («double parser rejected
-  5»); loose-семантика временно восстановлена → упал («double parser lost
-  the sign»). Код восстановлен, тесты снова зелёные.
-- `git diff --check` — чисто; `desktop_backend::parseInteger` в репозитории
-  не встречается.
+- Negative control: возврат count-only семантики в helper → оба 
+  KDE+Unknown regression упали; код восстановлен, тесты зелёные.
+- `git diff --check` — чисто; `sameUidKdeSessionCount` в проде не остался.
 
 ## Remaining
 
-- Изменения не закоммичены (коммит не запрошен).
-- `PwqualityConfigFile.cpp` содержит свой локальный `parseInteger` с другой
-  сигнатурой (`(string, int&)`) — не связан с данной задачей, не тронут.
+- Коммит не сделан (не запрошен).
+- KScreenLocker PID -> logind session ID — возможное дальнейшее 
+  улучшение, отдельная задача.

@@ -54,6 +54,7 @@
 #include "session/SystemGraphicalSessionInventory.h"
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 
@@ -975,13 +976,8 @@ void reconcile_session_ready(
         return;
     }
     if (session.desktop == DesktopEnvironmentKind::Kde) {
-        session.sameUidKdeSessionCount = inventoryLoaded
-            ? static_cast<std::size_t>(std::count_if(
-                  current.begin(), current.end(), [&](const auto& candidate) {
-                      return candidate.desktop == DesktopEnvironmentKind::Kde &&
-                          candidate.session.uid == session.session.uid;
-                  }))
-            : 0;
+        session.sameUidKdeTopology =
+            determineKdeSessionTopology(session, current, inventoryLoaded);
     }
     const DesktopGlobalReconcileReport globalReport =
         desktopGlobalConfig.reconcile(registry);

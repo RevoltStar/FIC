@@ -2,6 +2,7 @@
 #define SCREEN_LOCK_TIMEOUT_HANDLER_H
 
 #include "session/UserSession.h"
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 
 #include <memory>
 #include <string>
@@ -19,7 +20,7 @@ public:
     static std::unique_ptr<ScreenLockTimeoutHandler> create(
         const UserSession& session,
         const SessionContext& context,
-        std::size_t sameUidKdeSessionCount
+        const KdeSessionTopologyInfo& sameUidKdeTopology
     );
 };
 

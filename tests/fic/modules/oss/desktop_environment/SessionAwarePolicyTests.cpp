@@ -54,7 +54,7 @@ public:
     bool prepareOk = true;
     int reconciled = 0;
     std::vector<std::string> operations;
-    std::vector<std::size_t> kdeSessionCounts;
+    std::vector<KdeSessionTopology> kdeTopologies;
 protected:
     bool prepare(std::string& error) override {
         error = prepareOk ? "" : "session preparation failure";
@@ -65,7 +65,7 @@ protected:
     bool reconcileControlledSession(const ClassifiedGraphicalSession& session,
                                     std::string& error) override {
         ++reconciled; operations.push_back("runtime");
-        kdeSessionCounts.push_back(session.sameUidKdeSessionCount);
+        kdeTopologies.push_back(session.sameUidKdeTopology.state);
         if (!reconcileOk) error = "session failure"; return reconcileOk;
     }
 };
@@ -187,9 +187,67 @@ int main() {
     inventory->value[1].session.id = "8";
     TestPolicy ambiguousKde(scope, inventory);
     require(ambiguousKde.apply() &&
-                ambiguousKde.kdeSessionCounts ==
-                    std::vector<std::size_t>{2, 2},
+                ambiguousKde.kdeTopologies ==
+                    std::vector<KdeSessionTopology>{
+                        KdeSessionTopology::Ambiguous,
+                        KdeSessionTopology::Ambiguous},
             "same-UID KDE session ambiguity was not propagated");
+
+    // Regression: KDE + unclassified same-UID сессия — topology Unknown,
+    // а не доказанная unique topology.
+    {
+        auto unclassifiedNeighbour = session(DesktopEnvironmentKind::Unknown);
+        unclassifiedNeighbour.classificationError = "agent query failed";
+        unclassifiedNeighbour.session.id = "8";
+        inventory->value = {session(DesktopEnvironmentKind::Kde),
+                            unclassifiedNeighbour};
+        TestPolicy unknownTopology(scope, inventory);
+        require(unknownTopology.apply() &&
+                    unknownTopology.kdeTopologies ==
+                        std::vector<KdeSessionTopology>{
+                            KdeSessionTopology::Unknown},
+                "KDE + unclassified same-UID session did not yield "
+                "Unknown topology");
+    }
+    // Чужая unknown сессия другого UID не влияет на topology target UID.
+    {
+        auto foreign = session(DesktopEnvironmentKind::Unknown);
+        foreign.classificationError = "agent query failed";
+        foreign.session.uid = 1001;
+        foreign.session.id = "8";
+        inventory->value = {session(DesktopEnvironmentKind::Kde), foreign};
+        TestPolicy foreignUnknown(scope, inventory);
+        require(foreignUnknown.apply() &&
+                    foreignUnknown.kdeTopologies ==
+                        std::vector<KdeSessionTopology>{
+                            KdeSessionTopology::Unique},
+                "foreign-UID unknown session changed KDE topology");
+    }
+    // Достоверно известный non-KDE same-UID сосед — не ambiguity.
+    {
+        inventory->value = {session(DesktopEnvironmentKind::Kde),
+                            session(DesktopEnvironmentKind::Gnome)};
+        TestPolicy gnomeNeighbour(scope, inventory);
+        require(gnomeNeighbour.apply() &&
+                    gnomeNeighbour.kdeTopologies ==
+                        std::vector<KdeSessionTopology>{
+                            KdeSessionTopology::Unique},
+                "known non-KDE same-UID session was treated as ambiguity");
+    }
+    // KDE + KDE + GNOME одного UID — Ambiguous; non-KDE сосед не маскирует.
+    {
+        auto secondKde = session(DesktopEnvironmentKind::Kde);
+        secondKde.session.id = "8";
+        inventory->value = {session(DesktopEnvironmentKind::Kde), secondKde,
+                            session(DesktopEnvironmentKind::Gnome)};
+        TestPolicy kdeKdeGnome(scope, inventory);
+        require(kdeKdeGnome.apply() &&
+                    kdeKdeGnome.kdeTopologies ==
+                        std::vector<KdeSessionTopology>{
+                            KdeSessionTopology::Ambiguous,
+                            KdeSessionTopology::Ambiguous},
+                "known non-KDE session masked multiple KDE sessions");
+    }
 
     scope.value = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Kde};
     inventory->value = {session(DesktopEnvironmentKind::Gnome),

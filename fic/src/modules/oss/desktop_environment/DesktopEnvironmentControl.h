@@ -2,6 +2,7 @@
 #define FIC_DESKTOP_ENVIRONMENT_CONTROL_H
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 #include "session/UserSession.h"
 
 #include <set>
@@ -15,7 +16,7 @@ struct ClassifiedGraphicalSession {
     UserSession session;
     SessionContext context;
     DesktopEnvironmentKind desktop = DesktopEnvironmentKind::Unknown;
-    std::size_t sameUidKdeSessionCount = 0;
+    KdeSessionTopologyInfo sameUidKdeTopology;
     std::string classificationError;
 
     bool classified() const {

@@ -2,6 +2,7 @@
 #define KDE_BACKEND_H
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 #include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.h"
 
 #include <functional>
@@ -20,9 +21,9 @@ struct KdeBackendDependencies {
 class KdeBackend final : public DesktopEnvironmentBackend {
 public:
     KdeBackend(const UserSession& session, const SessionContext& context,
-               std::size_t sameUidKdeSessionCount);
+               const KdeSessionTopologyInfo& sameUidKdeTopology);
     KdeBackend(const UserSession& session, const SessionContext& context,
-               std::size_t sameUidKdeSessionCount,
+               const KdeSessionTopologyInfo& sameUidKdeTopology,
                KdeBackendDependencies dependencies);
 
     const char* name() const override { return "KDE Plasma"; }
@@ -79,7 +80,7 @@ private:
 
     UserSession session_;
     SessionContext context_;
-    std::size_t sameUidKdeSessionCount_ = 0;
+    KdeSessionTopologyInfo sameUidKdeTopology_;
     KdeBackendDependencies dependencies_;
     mutable std::optional<KdeScreenLockerRuntimeContext> runtimeContext_;
 };

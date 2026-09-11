@@ -13,8 +13,8 @@ struct KConfigTools {
 
 KdeBackend::KdeBackend(const UserSession& session,
                        const SessionContext& context,
-                       std::size_t sameUidKdeSessionCount)
-    : KdeBackend(session, context, sameUidKdeSessionCount,
+                       const KdeSessionTopologyInfo& sameUidKdeTopology)
+    : KdeBackend(session, context, sameUidKdeTopology,
           {std::make_shared<KdeScreenLockerRuntimeContextResolver>(),
            [](const std::vector<std::string>& paths) {
                return DesktopEnvironmentBackend::findExecutable(paths);
@@ -31,10 +31,10 @@ KdeBackend::KdeBackend(const UserSession& session,
 
 KdeBackend::KdeBackend(const UserSession& session,
                        const SessionContext& context,
-                       std::size_t sameUidKdeSessionCount,
+                       const KdeSessionTopologyInfo& sameUidKdeTopology,
                        KdeBackendDependencies dependencies)
     : DesktopEnvironmentBackend(session, context), session_(session),
-      context_(context), sameUidKdeSessionCount_(sameUidKdeSessionCount),
+      context_(context), sameUidKdeTopology_(sameUidKdeTopology),
       dependencies_(std::move(dependencies))
 {
 }
@@ -48,7 +48,7 @@ bool KdeBackend::ensureRuntimeContext(std::string& error) const
     KdeScreenLockerRuntimeContext captured;
     if (!dependencies_.resolver ||
         !dependencies_.resolver->resolve(session_, context_,
-            sameUidKdeSessionCount_, captured, error))
+            sameUidKdeTopology_, captured, error))
         return false;
     runtimeContext_ = std::move(captured);
     error.clear();

@@ -1,6 +1,7 @@
 #include "modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.h"
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 
 #include <algorithm>
 #include <set>
@@ -164,11 +165,8 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
     }
     for (auto& session : sessions) {
         if (session.desktop != DesktopEnvironmentKind::Kde) continue;
-        session.sameUidKdeSessionCount = static_cast<std::size_t>(std::count_if(
-            sessions.begin(), sessions.end(), [&](const auto& candidate) {
-                return candidate.desktop == DesktopEnvironmentKind::Kde &&
-                    candidate.session.uid == session.session.uid;
-            }));
+        session.sameUidKdeTopology =
+            determineKdeSessionTopology(session, sessions, true);
     }
 
     std::set<DesktopEnvironmentKind> seenSessionOnly;

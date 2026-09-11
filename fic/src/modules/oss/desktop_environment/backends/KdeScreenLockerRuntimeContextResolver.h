@@ -3,6 +3,7 @@
 
 #include "session/SessionCommandExecutor.h"
 #include "session/UserSession.h"
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 
 #include <functional>
 #include <string>
@@ -30,7 +31,7 @@ public:
         KdeScreenLockerRuntimeContextResolverDependencies dependencies);
 
     bool resolve(const UserSession& session, const SessionContext& context,
-                 std::size_t sameUidKdeSessionCount,
+                 const KdeSessionTopologyInfo& sameUidKdeTopology,
                  KdeScreenLockerRuntimeContext& result,
                  std::string& error) const;
     bool validate(const UserSession& session, const SessionContext& context,

@@ -1,6 +1,7 @@
 #include "modules/oss/desktop_environment/backends/KdeBackend.h"
 #include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.h"
 #include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolverInternal.h"
+#include "modules/oss/desktop_environment/DesktopEnvironmentControl.h"
 #include "session/SessionCommandExecutorInternal.h"
 
 #include <algorithm>
@@ -23,6 +24,23 @@ UserSession session() { return {"7", 1000, "user", "wayland"}; }
 
 SessionContext sessionContext() {
     return {"7", "KDE", "wayland", "", "wayland-0"};
+}
+
+KdeSessionTopologyInfo topo(KdeSessionTopology state) {
+    KdeSessionTopologyInfo info;
+    info.state = state;
+    return info;
+}
+
+ClassifiedGraphicalSession topologySession(uid_t uid, const std::string& id,
+                                           DesktopEnvironmentKind desktop,
+                                           std::string error = {}) {
+    ClassifiedGraphicalSession value;
+    value.session.id = id;
+    value.session.uid = uid;
+    value.desktop = desktop;
+    value.classificationError = std::move(error);
+    return value;
 }
 
 std::string environment(
@@ -157,7 +175,7 @@ void testProductionReaderAcceptsRootOwnedProcMetadata() {
     KdeScreenLockerRuntimeContext captured;
     std::string error;
     require(target.resolve(
-                session(), sessionContext(), 1, captured, error), error);
+                session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error), error);
     require(openCalls == 1 && fstatCalls == 1 && closeCalls == 1 &&
                 captured.uid == 1000 &&
                 captured.kconfigEnvironment[1].value ==
@@ -178,7 +196,7 @@ void testResolverSuccessPresenceAndAllowlist() {
         {"XDG_RUNTIME_DIR", "/tmp/evil-runtime"}}));
     KdeScreenLockerRuntimeContext captured;
     std::string error;
-    require(target.resolve(session(), sessionContext(), 1, captured, error), error);
+    require(target.resolve(session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error), error);
     require(captured.uniqueBusOwner == ":1.42" && captured.pid == 4242 &&
                 captured.uid == 1000,
             "wrong captured locker identity");
@@ -205,48 +223,192 @@ void testResolverFailures() {
     absent.available = false;
     auto absentResolver = resolver(absent, {});
     require(!absentResolver.resolve(
-                session(), sessionContext(), 1, captured, error),
+                session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error),
             "missing screen locker was accepted");
 
     FakeBus wrongUid;
     wrongUid.uids[0] = 1001;
     auto wrongUidResolver = resolver(wrongUid, {});
     require(!wrongUidResolver.resolve(
-                session(), sessionContext(), 1, captured, error),
+                session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error),
             "wrong owner UID was accepted");
 
     FakeBus unreadable;
     auto unreadableResolver = resolver(unreadable, {}, false);
     require(!unreadableResolver.resolve(
-                session(), sessionContext(), 1, captured, error),
+                session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error),
             "unreadable environ was accepted");
 
     FakeBus ownerChanged;
     ownerChanged.owners[1] = ":1.99";
     auto ownerChangedResolver = resolver(ownerChanged, {});
     require(!ownerChangedResolver.resolve(
-                session(), sessionContext(), 1, captured, error),
+                session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error),
             "owner change was accepted");
 
     FakeBus pidChanged;
     pidChanged.pids[1] = 9999;
     auto pidChangedResolver = resolver(pidChanged, {});
     require(!pidChangedResolver.resolve(
-                session(), sessionContext(), 1, captured, error),
+                session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error),
             "PID change was accepted");
 
     FakeBus malformed;
     auto malformedResolver = resolver(malformed, "HOME=/home/user");
     require(!malformedResolver.resolve(
-                session(), sessionContext(), 1, captured, error),
+                session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error),
             "malformed environ was accepted");
 
     FakeBus ambiguous;
     auto ambiguousResolver = resolver(ambiguous, {});
     require(!ambiguousResolver.resolve(
-                session(), sessionContext(), 2, captured, error) &&
-                ambiguous.calls == 0,
+                session(), sessionContext(),
+                topo(KdeSessionTopology::Ambiguous), captured, error) &&
+                ambiguous.calls == 0 &&
+                error.find("multiple KDE graphical sessions") !=
+                    std::string::npos,
             "multiple KDE sessions were accepted");
+
+    // Unknown topology обязан fail closed с диагностикой, отличимой от
+    // доказанной multiple-KDE ambiguity, и с деталями проблемной сессии.
+    FakeBus unknownBus;
+    auto unknownResolver = resolver(unknownBus, {});
+    KdeSessionTopologyInfo unknownTopology;
+    unknownTopology.state = KdeSessionTopology::Unknown;
+    unknownTopology.unknownSessionId = "9";
+    unknownTopology.unknownClassificationError = "agent query failed";
+    require(!unknownResolver.resolve(
+                session(), sessionContext(), unknownTopology,
+                captured, error) &&
+                unknownBus.calls == 0 &&
+                error.find("KDE session topology is unknown") !=
+                    std::string::npos &&
+                error.find("session 9") != std::string::npos &&
+                error.find("agent query failed") != std::string::npos,
+            "unprovable KDE topology did not fail closed with a "
+            "distinct diagnostic");
+}
+
+void testKdeSessionTopologyComputation() {
+    // 1. Одна KDE сессия — Unique.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto info = determineKdeSessionTopology(target, {target}, true);
+        require(info.state == KdeSessionTopology::Unique &&
+                    info.kdeSessionCount == 1 && info.unknownSessionCount == 0,
+                "single KDE session was not Unique");
+    }
+    // 2. Две KDE сессии одного UID — Ambiguous.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto second =
+            topologySession(1000, "2", DesktopEnvironmentKind::Kde);
+        const auto info =
+            determineKdeSessionTopology(target, {target, second}, true);
+        require(info.state == KdeSessionTopology::Ambiguous &&
+                    info.kdeSessionCount == 2,
+                "two same-UID KDE sessions were not Ambiguous");
+    }
+    // 3. KDE + Unknown того же UID — Unknown (ключевой regression).
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto unknown = topologySession(
+            1000, "2", DesktopEnvironmentKind::Unknown, "agent query failed");
+        const auto info =
+            determineKdeSessionTopology(target, {target, unknown}, true);
+        require(info.state == KdeSessionTopology::Unknown &&
+                    info.unknownSessionCount == 1 &&
+                    info.unknownSessionId == "2" &&
+                    info.unknownClassificationError == "agent query failed",
+                "KDE + unclassified same-UID session was not Unknown");
+    }
+    // 4. KDE + Unknown другого UID — Unique.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto unknown = topologySession(
+            1001, "2", DesktopEnvironmentKind::Unknown, "agent query failed");
+        const auto info =
+            determineKdeSessionTopology(target, {target, unknown}, true);
+        require(info.state == KdeSessionTopology::Unique,
+                "foreign-UID unknown session polluted KDE topology");
+    }
+    // 5. KDE + известный GNOME того же UID — Unique.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto gnome =
+            topologySession(1000, "2", DesktopEnvironmentKind::Gnome);
+        const auto info =
+            determineKdeSessionTopology(target, {target, gnome}, true);
+        require(info.state == KdeSessionTopology::Unique &&
+                    info.kdeSessionCount == 1,
+                "known non-KDE same-UID session was treated as ambiguity");
+    }
+}
+
+void testKdeSessionTopologyComputationPart2() {
+    // 6. KDE + KDE + GNOME одного UID — Ambiguous.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto second =
+            topologySession(1000, "2", DesktopEnvironmentKind::Kde);
+        const auto gnome =
+            topologySession(1000, "3", DesktopEnvironmentKind::Gnome);
+        const auto info = determineKdeSessionTopology(
+            target, {target, second, gnome}, true);
+        require(info.state == KdeSessionTopology::Ambiguous &&
+                    info.kdeSessionCount == 2,
+                "known non-KDE session masked multiple KDE sessions");
+    }
+    // 7. Inventory incomplete / KDE target отсутствует — Unknown.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto incomplete =
+            determineKdeSessionTopology(target, {target}, false);
+        require(incomplete.state == KdeSessionTopology::Unknown,
+                "incomplete inventory masqueraded as Unique topology");
+        const auto missingTarget =
+            determineKdeSessionTopology(target, {}, true);
+        require(missingTarget.state == KdeSessionTopology::Unknown,
+                "KDE target missing from inventory was treated as Unique");
+    }
+}
+
+void testKdeBackendFailsClosedOnUnknownTopology() {
+    FakeBus bus;
+    auto runtimeResolver =
+        std::make_shared<KdeScreenLockerRuntimeContextResolver>(
+            resolver(bus, environment({{"HOME", "/home/user"}})));
+    KdeSessionTopologyInfo unknown;
+    unknown.state = KdeSessionTopology::Unknown;
+    unknown.unknownSessionId = "9";
+    unknown.unknownClassificationError = "agent query failed";
+    KdeBackend backend(session(), sessionContext(), unknown,
+        {runtimeResolver,
+         [](const std::vector<std::string>& paths) { return paths.front(); },
+         [](const UserSession&, const SessionContext&, const std::string&,
+            const std::vector<std::string>&,
+            const std::vector<SessionEnvironmentOverride>&) {
+             ProcessResult result;
+             (void)result;
+             throw std::runtime_error(
+                 "KDE command executed without proven unique topology");
+             return result;
+         }});
+    std::string error;
+    require(!backend.writeConfig(
+                 "kscreenlockerrc", "Daemon", "Lock", "true", error) &&
+                bus.calls == 0 &&
+                error.find("KDE session topology is unknown") !=
+                    std::string::npos &&
+                error.find("session 9") != std::string::npos,
+            "KDE backend reconciled without proven unique topology");
 }
 
 void testEveryAllowlistedVariablePreservesPresence() {
@@ -263,7 +425,7 @@ void testEveryAllowlistedVariablePreservesPresence() {
         KdeScreenLockerRuntimeContext captured;
         std::string error;
         require(target.resolve(
-                    session(), sessionContext(), 1, captured, error), error);
+                    session(), sessionContext(), topo(KdeSessionTopology::Unique), captured, error), error);
         for (std::size_t index = 0; index < names.size(); ++index) {
             require(captured.kconfigEnvironment[index].name == names[index],
                     "allowlist order changed");
@@ -317,7 +479,7 @@ void testKdeBackendUsesLockerSelectedGraph() {
             {"XDG_CONFIG_DIRS", ""}, {"KDE_SKIP_KDERC", "1"}})));
     std::map<std::string, std::string> defaultGraph{{"Lock", "false"}};
     std::map<std::string, std::string> lockerGraph{{"Lock", "false"}};
-    KdeBackend backend(session(), sessionContext(), 1,
+    KdeBackend backend(session(), sessionContext(), topo(KdeSessionTopology::Unique),
         {runtimeResolver,
          [](const std::vector<std::string>& paths) {
              require(!paths.empty() &&
@@ -372,7 +534,7 @@ void testKdeBackendRejectsOwnerReplacementAfterConfigure() {
     bus.owners[2] = ":1.99";
     auto runtimeResolver = std::make_shared<KdeScreenLockerRuntimeContextResolver>(
         resolver(bus, environment({{"HOME", "/home/user"}})));
-    KdeBackend backend(session(), sessionContext(), 1,
+    KdeBackend backend(session(), sessionContext(), topo(KdeSessionTopology::Unique),
         {runtimeResolver,
          [](const std::vector<std::string>& paths) { return paths.front(); },
          [](const UserSession&, const SessionContext&, const std::string&,
@@ -397,6 +559,9 @@ int main() {
     testKdeBackendRejectsOwnerReplacementAfterConfigure();
     testResolverSuccessPresenceAndAllowlist();
     testResolverFailures();
+    testKdeSessionTopologyComputation();
+    testKdeSessionTopologyComputationPart2();
+    testKdeBackendFailsClosedOnUnknownTopology();
     testEveryAllowlistedVariablePreservesPresence();
     testSessionExecutorOverridesAreConstrained();
     return 0;

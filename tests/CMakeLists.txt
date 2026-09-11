@@ -221,6 +221,7 @@ add_executable(session_aware_policy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/KdeSessionTopology.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_absence_of_uncontrolled_desktop_environments.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
@@ -272,6 +273,7 @@ add_executable(screenlock_timeout_global_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopEnvironment.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/KdeSessionTopology.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.cpp
@@ -296,6 +298,7 @@ add_test(NAME screenlock_timeout_global_tests COMMAND screenlock_timeout_global_
 
 add_executable(kde_runtime_context_tests
     fic/modules/oss/desktop_environment/KdeRuntimeContextTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/KdeSessionTopology.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp

@@ -88,7 +88,7 @@ class KdeScreenLockTimeoutHandler final : public ScreenLockTimeoutHandler {
 public:
     KdeScreenLockTimeoutHandler(const UserSession& session,
                                 const SessionContext& context,
-                                std::size_t sameUidKdeSessionCount);
+                                const KdeSessionTopologyInfo& sameUidKdeTopology);
 
     const char* desktopName() const override { return backend.name(); }
     bool apply(int timeoutMinutes, std::string& error) const override;

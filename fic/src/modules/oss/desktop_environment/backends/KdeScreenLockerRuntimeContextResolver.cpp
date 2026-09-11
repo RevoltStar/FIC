@@ -274,11 +274,27 @@ KdeScreenLockerRuntimeContextResolver(
 
 bool KdeScreenLockerRuntimeContextResolver::resolve(
     const UserSession& session, const SessionContext& context,
-    std::size_t sameUidKdeSessionCount,
+    const KdeSessionTopologyInfo& sameUidKdeTopology,
     KdeScreenLockerRuntimeContext& result, std::string& error) const {
-    if (sameUidKdeSessionCount != 1) {
-        error = "KScreenLocker owner is ambiguous across multiple KDE sessions for UID " +
-            std::to_string(session.uid);
+    if (sameUidKdeTopology.state == KdeSessionTopology::Ambiguous) {
+        error = "multiple KDE graphical sessions exist for UID " +
+            std::to_string(session.uid) + ": " +
+            std::to_string(sameUidKdeTopology.kdeSessionCount) +
+            " KDE sessions cannot share one KScreenLocker owner";
+        return false;
+    }
+    if (sameUidKdeTopology.state != KdeSessionTopology::Unique) {
+        error = "KDE session topology is unknown for UID " +
+            std::to_string(session.uid) +
+            "; uniqueness of the KScreenLocker owner cannot be proven";
+        if (!sameUidKdeTopology.unknownSessionId.empty()) {
+            error += " (session " + sameUidKdeTopology.unknownSessionId +
+                " could not be classified";
+            if (!sameUidKdeTopology.unknownClassificationError.empty()) {
+                error += ": " + sameUidKdeTopology.unknownClassificationError;
+            }
+            error += ")";
+        }
         return false;
     }
     BusIdentity before;

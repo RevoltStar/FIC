@@ -9,7 +9,7 @@
 std::unique_ptr<ScreenLockTimeoutHandler> ScreenLockTimeoutHandlerFactory::create(
     const UserSession& session,
     const SessionContext& context,
-    std::size_t sameUidKdeSessionCount
+    const KdeSessionTopologyInfo& sameUidKdeTopology
 )
 {
     switch (DesktopEnvironmentBackend::kindFromName(context.desktop)) {
@@ -19,7 +19,7 @@ std::unique_ptr<ScreenLockTimeoutHandler> ScreenLockTimeoutHandlerFactory::creat
         return std::make_unique<GnomeScreenLockTimeoutHandler>(session, context);
     case DesktopEnvironmentKind::Kde:
         return std::make_unique<KdeScreenLockTimeoutHandler>(
-            session, context, sameUidKdeSessionCount);
+            session, context, sameUidKdeTopology);
     case DesktopEnvironmentKind::Xfce:
         return std::make_unique<XfceScreenLockTimeoutHandler>(session, context);
     case DesktopEnvironmentKind::Lxqt:

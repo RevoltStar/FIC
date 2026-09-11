@@ -54,7 +54,7 @@ bool OSS_disable_kde_lock_screen_media_controls::reconcileControlledSession(
     std::string& error)
 {
     KdeBackend backend(session.session, session.context,
-                       session.sameUidKdeSessionCount);
+                       session.sameUidKdeTopology);
     const auto readState = [&](bool& matches, std::string&) {
         std::string actualValue;
         if (!backend.readConfig(
