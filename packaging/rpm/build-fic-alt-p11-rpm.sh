@@ -873,6 +873,8 @@ build_fic_gui_package() {
         exit 1
     }
     fic_gui_create_launcher "$package_root" || return 1
+    chmod 0750 "$package_root/opt/fic/bin/fic-gui"
+    chmod 0750 "$package_root/opt/fic/bin/fic-gui.real"
     fic_gui_create_qt_conf "$package_root" || return 1
     fic_gui_bundle_qt_runtime "$package_root" rpm "$qt_plugin_dir" || return 1
     fic_gui_verify_runtime_compliance "$package_root" || return 1

@@ -64,8 +64,14 @@ for builder_name, builder in (
             f"{builder_name} packaging does not enforce public session-agent modes")
     require('chmod 0750 "$package_root/opt/fic/bin/fic-cli"' in builder,
             f"{builder_name} packaging does not preserve the private fic-cli mode")
+    require('chmod 0750 "$package_root/opt/fic/bin/fic-gui"' in builder and
+            'chmod 0750 "$package_root/opt/fic/bin/fic-gui.real"' in builder,
+            f"{builder_name} packaging does not preserve private fic-gui modes")
     require('chmod 0755 "$package_root/opt/fic/bin/fic-cli"' not in builder,
             f"{builder_name} packaging makes fic-cli executable by ordinary users")
+    require('chmod 0755 "$package_root/opt/fic/bin/fic-gui"' not in builder and
+            'chmod 0755 "$package_root/opt/fic/bin/fic-gui.real"' not in builder,
+            f"{builder_name} packaging makes fic-gui executable by ordinary users")
     require("find /opt/fic -type d -exec chmod 2750" in builder,
             f"{builder_name} packaging no longer keeps /opt/fic private")
     for forbidden_private_mode in (
