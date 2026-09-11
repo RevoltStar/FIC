@@ -270,7 +270,7 @@ def main():
         )
         require(
             "ExecutableId::KconfigVerifier" in source
-            and '"/opt/fic/bin/fic-kconfig-verifier"' in source
+            and "generated::KCONFIG_VERIFIER_PATH" in source
             and "profile.kde.systemConfigDirs" in source,
             f"{name} profile does not define KDE FullConfig verification",
         )
@@ -353,6 +353,15 @@ def main():
     user_creation_defaults = (
         root / "fic/src/platform/generated/UserCreationPolicyDefaultsGenerated.h.in"
     ).read_text(encoding="utf-8")
+    executable_paths = (
+        root / "fic/src/platform/generated/PlatformExecutablePathsGenerated.h.in"
+    ).read_text(encoding="utf-8")
+    require(
+        'KCONFIG_VERIFIER_PATH =\n    "@FIC_PRIVATE_BINDIR@/fic-kconfig-verifier"'
+        in executable_paths
+        and "PlatformExecutablePathsGenerated.h.in" in fic_cmake,
+        "KConfig verifier path is not generated from FIC_PRIVATE_BINDIR",
+    )
     identity_template = (
         root / "fic/src/resources/config/IDENTITY_ACCESS.conf.in"
     ).read_text(encoding="utf-8")

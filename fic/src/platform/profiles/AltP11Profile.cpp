@@ -80,7 +80,7 @@ PlatformProfile makeBuildPlatformProfile() {
         },
         {
             ExecutableId::KconfigVerifier,
-            {"/opt/fic/bin/fic-kconfig-verifier"},
+            {generated::KCONFIG_VERIFIER_PATH},
             false
         }
     };

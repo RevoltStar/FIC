@@ -2,6 +2,7 @@
 #define FIC_PLATFORM_PROFILE_H
 
 #include "platform/PasswordAgingPolicyDefaultsGenerated.h"
+#include "platform/PlatformExecutablePathsGenerated.h"
 #include "platform/SudoSecurePathDefaultGenerated.h"
 #include "platform/UserCreationPolicyDefaultsGenerated.h"
 

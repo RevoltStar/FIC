@@ -3,50 +3,43 @@
 ## Current base
 
 - Ветка `main`.
-- База до текущего commit: `2433ae9`.
+- Текущий commit: `6e27b494abb7cac5ab85daeece76f5e6ee018b25`.
 
 ## Current task
 
-- Corrective к `836e016`: ограничить FLY `screenlock_timeout` одним
-  `ScreenSaverDelay`, не меняя выбранную администратором locker implementation.
+- Убрать hardcoded KConfig verifier path из platform profiles и генерировать
+  его из canonical CMake install layout.
 
 ## Accepted architecture / invariants
 
-- GNOME и FLY — `MandatoryGlobal`; KDE и XFCE — `SessionOnly`; LXQt —
-  `Unsupported`.
-- FLY persistent authority —
-  `/usr/share/fly-wm/theme.master/themerc`, секция `[Variables]`.
-- `screenlock_timeout` управляет только `ScreenSaverDelay=N*60`; выбор locker
-  в `ScreenSaver` и `ScreenSaverDBUS` остаётся администраторским состоянием.
-- `FlySystemBackend` — единственный persistent FLY enforcement/proof path;
-  `FlyBackend` выполняет только session-scoped `fly-wmfunc` runtime calls.
-- `DISABLE` не удаляет и не откатывает сохранённые settings.
+- `FIC_PRIVATE_BINDIR` из `cmake/FicInstallLayout.cmake` — единственный источник
+  private executable path для build/install metadata.
+- Platform profiles используют generated compile-time metadata и не зависят от
+  mutable `FicRuntimePaths` state.
 
 ## Completed
 
-- FLY policy и `FlySystemBackend` управляют и проверяют только
-  `themerc/Variables/ScreenSaverDelay=N*60`.
-- `ScreenSaver` и `ScreenSaverDBUS` сохраняются как foreign/admin state.
-- Session handler выполняет один session-scoped runtime update только для
-  `ScreenSaverDelay`; security regression против `current.themerc` сохранён.
+- Добавлен `PlatformExecutablePathsGenerated.h.in`; CMake подставляет
+  `@FIC_PRIVATE_BINDIR@/fic-kconfig-verifier`.
+- Все пять platform profiles используют
+  `generated::KCONFIG_VERIFIER_PATH`; optional resolver semantics не менялись.
+- Platform/static contracts обновлены для generated source-of-truth.
 
 ## Changed areas
 
-- FLY system/session backends и `OSS_screenlock_timeout`.
-- Production desktop backend composition.
-- Desktop backend/policy/session/static tests.
-- Desktop architecture и session-agent documentation.
+- `fic/CMakeLists.txt` и platform generated metadata.
+- Ubuntu 24.04/26.04, Debian 12/13 и ALT p11 profiles.
+- Platform profile/static tests.
 
 ## Validation
 
-- Targeted build: `fly_system_backend_tests`,
-  `screenlock_timeout_global_tests`, `session_setting_reconciler_tests` —
-  passed.
-- Targeted CTest: 4/4 passed, включая desktop-environment static security
-  check.
+- `platform_profile_tests` targeted build — passed.
+- Targeted CTest: `path_layout_static_checks`,
+  `platform_profile_static_checks`, `platform_profile_tests` — 3/3 passed.
+- Full CTest: 78 passed, 4 skipped, 2 sandbox-related failures; оба failing
+  integration tests повторно запущены вне sandbox и прошли 2/2.
 - `git diff --check` — passed.
-- Полная сборка проекта НЕ запускалась по явному ограничению задачи.
 
 ## Remaining
 
-- Нет.
+- Нет известных архитектурных рисков; commit не создавался.

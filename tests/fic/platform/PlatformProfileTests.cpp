@@ -190,7 +190,7 @@ void testSelectedProfile() {
     require(!verifier.required &&
                 verifier.candidates ==
                     std::vector<std::filesystem::path>{
-                        "/opt/fic/bin/fic-kconfig-verifier"},
+                        fic::platform::generated::KCONFIG_VERIFIER_PATH},
             "KDE FullConfig verifier must be an optional private executable");
     const std::vector<std::filesystem::path> expectedKdeDirs =
         profile.id == "debian-12" || profile.id == "debian-13"

@@ -96,6 +96,10 @@ configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/SudoSecurePathDefaultGenerated.h.in"
     "${FIC_GENERATED_INCLUDE_DIR}/platform/SudoSecurePathDefaultGenerated.h"
     @ONLY)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/PlatformExecutablePathsGenerated.h.in"
+    "${FIC_GENERATED_INCLUDE_DIR}/platform/PlatformExecutablePathsGenerated.h"
+    @ONLY)
 
 add_library(fic-platform STATIC
     src/platform/PlatformCompatibility.cpp
