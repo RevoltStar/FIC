@@ -36,8 +36,6 @@ std::string read(const fs::path& path) {
 
 DesktopManagedSettings requirements(int seconds = 300) {
     return {
-        {{"themerc/Variables/ScreenSaver"}, "internal"},
-        {{"themerc/Variables/ScreenSaverDBUS"}, "true"},
         {{"themerc/Variables/ScreenSaverDelay"}, std::to_string(seconds)},
     };
 }
@@ -83,8 +81,8 @@ void testInitialCreationAndVerification() {
             backend.backendName() == "fly", "typed backend identity is wrong");
     require(backend.ensureManagedSettings(requirements(), error), error);
     require(read(fixture.options.configPath) ==
-        "[Variables]\nScreenSaver=internal\nScreenSaverDBUS=true\n"
-        "ScreenSaverDelay=300\n", "initial FLY master state is wrong");
+        "[Variables]\nScreenSaverDelay=300\n",
+        "initial FLY master state is wrong");
     write(fixture.root / "home/user/.fly/theme/current.themerc",
           "[Variables]\nScreenSaver=evil\nScreenSaverDBUS=false\n"
           "ScreenSaverDelay=99999\n");
@@ -95,7 +93,8 @@ void testMergeCrLfAndIdempotence() {
     Fixture fixture;
     write(fixture.options.configPath,
           "# admin\r\n[Variables]\r\nForeignSetting=keep\r\n"
-          "ScreenSaver=wrong\r\nScreenSaverDelay=999\r\n\r\n"
+          "ScreenSaver=internal fly-modern-locker\r\n"
+          "ScreenSaverDBUS=false\r\nScreenSaverDelay=999\r\n\r\n"
           "[Other]\r\nFoo=Bar\r\n");
     auto backend = fixture.backend();
     std::string error;
@@ -103,8 +102,9 @@ void testMergeCrLfAndIdempotence() {
     const std::string merged = read(fixture.options.configPath);
     require(merged.find("# admin\n") != std::string::npos &&
             merged.find("ForeignSetting=keep\n") != std::string::npos &&
-            merged.find("ScreenSaver=internal\n") != std::string::npos &&
-            merged.find("ScreenSaverDBUS=true\n") != std::string::npos &&
+            merged.find("ScreenSaver=internal fly-modern-locker\n") !=
+                std::string::npos &&
+            merged.find("ScreenSaverDBUS=false\n") != std::string::npos &&
             merged.find("ScreenSaverDelay=300\n") != std::string::npos &&
             merged.find("[Other]\nFoo=Bar\n") != std::string::npos,
             "FLY merge lost or failed to canonicalize state");
@@ -117,7 +117,7 @@ void testMalformedAndUnknownFailBeforeMutation() {
     {
         Fixture fixture;
         write(fixture.options.configPath,
-              "[Variables]\nScreenSaver=one\nScreenSaver=two\n");
+              "[Variables]\nScreenSaverDelay=60\nScreenSaverDelay=120\n");
         const std::string before = read(fixture.options.configPath);
         auto backend = fixture.backend();
         std::string error;
@@ -128,7 +128,8 @@ void testMalformedAndUnknownFailBeforeMutation() {
     {
         Fixture fixture;
         write(fixture.options.configPath, "[Variables]\nForeign=keep\n");
-        DesktopManagedSettings unknown{{{"themerc/Variables/Unknown"}, "x"}};
+        DesktopManagedSettings unknown{
+            {{"themerc/Variables/ScreenSaver"}, "internal"}};
         const std::string before = read(fixture.options.configPath);
         auto backend = fixture.backend();
         std::string error;
@@ -148,7 +149,7 @@ void testMalformedAndUnknownFailBeforeMutation() {
     {
         Fixture fixture;
         write(fixture.options.configPath,
-              "[Variables]\nScreenSaver malformed\nForeign=keep\n");
+              "[Variables]\nScreenSaverDelay malformed\nForeign=keep\n");
         const std::string before = read(fixture.options.configPath);
         auto backend = fixture.backend();
         std::string error;
@@ -199,14 +200,15 @@ void testMissingDirectoryAndVerificationFailures() {
     {
         Fixture fixture;
         write(fixture.options.configPath,
-              "[Variables]\nScreenSaver=internal\nScreenSaverDBUS=true\n"
-              "ScreenSaverDelay=5\n");
+              "[Variables]\nScreenSaver=internal fly-modern-locker\n"
+              "ScreenSaverDBUS=false\nScreenSaverDelay=5\n");
         auto backend = fixture.backend();
         std::string error;
         require(!backend.verifyManagedSettings(requirements(), error),
                 "wrong FLY master value was verified");
         write(fixture.options.configPath,
-              "[Variables]\nScreenSaver=internal\nScreenSaverDBUS=true\n");
+              "[Variables]\nScreenSaver=internal fly-modern-locker\n"
+              "ScreenSaverDBUS=false\n");
         require(!backend.verifyManagedSettings(requirements(), error),
                 "missing FLY master value was verified");
     }

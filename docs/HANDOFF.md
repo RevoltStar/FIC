@@ -7,8 +7,8 @@
 
 ## Current task
 
-- Перевести FLY `screenlock_timeout` в `MandatoryGlobal` через системный
-  `theme.master` и исключить root-доступ к пользовательскому `current.themerc`.
+- Corrective к `836e016`: ограничить FLY `screenlock_timeout` одним
+  `ScreenSaverDelay`, не меняя выбранную администратором locker implementation.
 
 ## Accepted architecture / invariants
 
@@ -16,20 +16,19 @@
   `Unsupported`.
 - FLY persistent authority —
   `/usr/share/fly-wm/theme.master/themerc`, секция `[Variables]`.
+- `screenlock_timeout` управляет только `ScreenSaverDelay=N*60`; выбор locker
+  в `ScreenSaver` и `ScreenSaverDBUS` остаётся администраторским состоянием.
 - `FlySystemBackend` — единственный persistent FLY enforcement/proof path;
   `FlyBackend` выполняет только session-scoped `fly-wmfunc` runtime calls.
 - `DISABLE` не удаляет и не откатывает сохранённые settings.
 
 ## Completed
 
-- Добавлен secure merge/verify `FlySystemBackend` с полной fd-relative
-  ancestor/file validation, atomic replace и fail-closed semantics.
-- `screenlock_timeout` публикует три independent FLY requirements и считает
-  FLY `MandatoryGlobal`; production reconciler регистрирует backend `fly`.
-- Из `FlyBackend` удалены чтение и запись `~/.fly/theme/current.themerc` и
-  неиспользуемый `getValue`; handler выполняет три runtime updates без readback.
-- Добавлены backend, policy/reconciler, session и static security regressions;
-  выполнены пять требуемых negative controls с последующим восстановлением.
+- FLY policy и `FlySystemBackend` управляют и проверяют только
+  `themerc/Variables/ScreenSaverDelay=N*60`.
+- `ScreenSaver` и `ScreenSaverDBUS` сохраняются как foreign/admin state.
+- Session handler выполняет один session-scoped runtime update только для
+  `ScreenSaverDelay`; security regression против `current.themerc` сохранён.
 
 ## Changed areas
 
@@ -41,20 +40,13 @@
 ## Validation
 
 - Targeted build: `fly_system_backend_tests`,
-  `screenlock_timeout_global_tests`, `session_setting_reconciler_tests`,
-  `desktop_global_config_reconciler_tests`, `session_aware_policy_tests`,
-  `gnome_system_backend_tests` — passed.
-- Targeted CTest: 8/8 passed, включая platform и desktop-environment static
-  checks, GNOME regression и все новые FLY tests.
-- Negative controls поймали: FLY `SessionOnly`, потерю FLY contribution,
-  возврат `current.themerc`, снятие symlink rejection и неверную seconds
-  conversion.
-- `FlySystemBackend.cpp` отдельно компилируется в targeted test target.
-- Production target `fic` не собран: в host build environment отсутствует
-  `systemd/sd-daemon.h`.
+  `screenlock_timeout_global_tests`, `session_setting_reconciler_tests` —
+  passed.
+- Targeted CTest: 4/4 passed, включая desktop-environment static security
+  check.
 - `git diff --check` — passed.
 - Полная сборка проекта НЕ запускалась по явному ограничению задачи.
 
 ## Remaining
 
-- При наличии build environment с libsystemd повторить targeted сборку `fic`.
+- Нет.

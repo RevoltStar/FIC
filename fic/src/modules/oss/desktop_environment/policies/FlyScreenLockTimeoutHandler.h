@@ -12,9 +12,7 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
                   std::string& error)
 {
     const std::string timeoutSeconds = std::to_string(timeoutMinutes * 60);
-    return backend.setValue("ScreenSaver", "internal", error) &&
-        backend.setValue("ScreenSaverDBUS", "true", error) &&
-        backend.setValue("ScreenSaverDelay", timeoutSeconds, error);
+    return backend.setValue("ScreenSaverDelay", timeoutSeconds, error);
 }
 }
 

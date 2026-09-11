@@ -228,18 +228,17 @@ void testFlyRuntimeOnlyConvergence() {
         require(fly_screen_lock_timeout::applyTimeout(session, 5, error),
                 error);
         require(session.calls == std::vector<std::string>{
-                    "ScreenSaver=internal", "ScreenSaverDBUS=true",
                     "ScreenSaverDelay=300"},
                 "FLY runtime calls or minutes-to-seconds conversion are wrong");
     }
     {
         FakeFlySession session;
-        session.failAt = 2;
+        session.failAt = 1;
         std::string error;
         require(!fly_screen_lock_timeout::applyTimeout(session, 5, error) &&
                     error == "runtime update failed" &&
                     session.calls == std::vector<std::string>{
-                        "ScreenSaver=internal", "ScreenSaverDBUS=true"},
+                        "ScreenSaverDelay=300"},
                 "FLY runtime failure was hidden or execution continued");
     }
 }

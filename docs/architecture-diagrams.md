@@ -1510,13 +1510,14 @@ outside this contract.
 
 `FlySystemBackend` is registered as backend `"fly"` with typed identity `Fly`.
 It securely merge-updates and verifies the authoritative
-`/usr/share/fly-wm/theme.master/themerc` `[Variables]` values
-`ScreenSaver=internal`, `ScreenSaverDBUS=true`, and
-`ScreenSaverDelay=N*60`. The full trusted ancestor chain and file are checked
+`/usr/share/fly-wm/theme.master/themerc` `[Variables]` value
+`ScreenSaverDelay=N*60`. `ScreenSaver` and `ScreenSaverDBUS` select/configure
+the administrator's locker implementation and remain unmanaged. The full
+trusted ancestor chain and file are checked
 without following symlinks; writes use an fd-relative atomic replace and
 directory fsync. Missing `theme.master` fails closed and is never created by
 FIC. The session `FlyBackend` only invokes `fly-wmfunc` under the session
-identity for immediate convergence; it neither reads nor writes the user's
+identity to update only `ScreenSaverDelay`; it neither reads nor writes the user's
 `~/.fly/theme/current.themerc`, and user state is not part of global proof.
 
 `KdeSystemBackend` is registered as backend `"kde"` with typed identity `Kde`

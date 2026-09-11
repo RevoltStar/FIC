@@ -259,16 +259,16 @@ presence without this proof is insufficient. `DISABLE` remains
 no-cleanup/no-rollback. The headless `fic` package does not depend on KDE; the
 verifier is supplied by the optional `fic-kconfig-verifier` package.
 
-For controlled FLY, `screenlock_timeout=N` contributes exactly three
-`FlySystemBackend` requirements in `[Variables]`:
-`ScreenSaver=internal`, `ScreenSaverDBUS=true`, and
-`ScreenSaverDelay=N*60`. The backend securely traverses every component below
+For controlled FLY, `screenlock_timeout=N` contributes exactly one
+`FlySystemBackend` requirement in `[Variables]`: `ScreenSaverDelay=N*60`.
+`ScreenSaver` and `ScreenSaverDBUS` are administrator-owned locker selection
+state and are preserved without verification. The backend securely traverses every component below
 the trusted root with `openat`/`O_NOFOLLOW`, rejects unsafe ownership or
 group/world-writable state, preserves unrelated master content, and atomically
 replaces the ordinary-user-readable `themerc`. It may create a missing file
 inside an existing trusted `theme.master` directory, but never creates that
-directory. Verification reads only the master file. Three session-scoped
-`fly-wmfunc FLYWM_UPDATE_VAL` calls are an immediate convergence helper and do
+directory. Verification reads only the master file. One session-scoped
+`fly-wmfunc FLYWM_UPDATE_VAL ScreenSaverDelay N*60` call is an immediate convergence helper and does
 not provide persistent authority.
 
 This verifier models the standard distribution environment; it cannot prove

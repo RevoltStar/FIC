@@ -166,8 +166,8 @@ void testModesCapabilitiesAndContributions() {
     scope.desktops = {DesktopEnvironmentKind::Fly};
     contributions.clear();
     require(policy->globalDesktopPolicyContributions(contributions, error) &&
-                contributions.size() == 3,
-            "FLY did not publish exactly three global requirements");
+                contributions.size() == 1,
+            "FLY did not publish exactly one global requirement");
     values.clear();
     for (const auto& contribution : contributions) {
         require(contribution.backend == "fly" &&
@@ -175,8 +175,7 @@ void testModesCapabilitiesAndContributions() {
                 "FLY contribution identity is not canonical");
         values[contribution.key.setting] = contribution.value;
     }
-    require(values["themerc/Variables/ScreenSaver"] == "internal" &&
-            values["themerc/Variables/ScreenSaverDBUS"] == "true" &&
+    require(values.size() == 1 &&
             values["themerc/Variables/ScreenSaverDelay"] == "300",
             "five-minute FLY conversion is wrong");
 
@@ -184,8 +183,8 @@ void testModesCapabilitiesAndContributions() {
                       DesktopEnvironmentKind::Fly};
     contributions.clear();
     require(policy->globalDesktopPolicyContributions(contributions, error) &&
-                contributions.size() == 7,
-            "GNOME/FLY scope did not publish seven requirements");
+                contributions.size() == 5,
+            "GNOME/FLY scope did not publish five requirements");
 
     writeConfig("20");
     scope.desktops = {DesktopEnvironmentKind::Gnome,
@@ -232,7 +231,7 @@ void testInvalidValueAndReconcilerReport() {
     require(report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
                 report.resultFor(owner, DesktopEnvironmentKind::Fly).verified &&
                 gnome->received.size() == 4 && gnome->ensures == 1 &&
-                gnome->verifies == 1 && fly->received.size() == 3 &&
+                gnome->verifies == 1 && fly->received.size() == 1 &&
                 fly->ensures == 1 && fly->verifies == 1 &&
                 kde->ensures == 0 && kde->verifies == 0,
             "actual policy did not route GNOME and FLY global enforcement");

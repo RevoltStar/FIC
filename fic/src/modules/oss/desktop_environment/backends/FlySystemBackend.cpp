@@ -22,9 +22,7 @@ struct SettingDescription {
     const char* key;
 };
 
-constexpr std::array<SettingDescription, 3> kSettings{{
-    {"themerc/Variables/ScreenSaver", "ScreenSaver"},
-    {"themerc/Variables/ScreenSaverDBUS", "ScreenSaverDBUS"},
+constexpr std::array<SettingDescription, 1> kSettings{{
     {"themerc/Variables/ScreenSaverDelay", "ScreenSaverDelay"},
 }};
 
@@ -68,11 +66,7 @@ const SettingDescription* settingFor(const std::string& setting) {
     return nullptr;
 }
 
-bool validRequiredValue(const SettingDescription& setting,
-                        const std::string& value) {
-    const std::string key = setting.key;
-    if (key == "ScreenSaver") return value == "internal";
-    if (key == "ScreenSaverDBUS") return value == "true";
+bool validRequiredValue(const std::string& value) {
     if (value.empty() ||
         !std::all_of(value.begin(), value.end(), [](unsigned char ch) {
             return std::isdigit(ch) != 0;
@@ -93,7 +87,7 @@ bool validateRequirements(const DesktopManagedSettings& required,
             error = "unknown FLY system setting: " + physical.setting;
             return false;
         }
-        if (!validRequiredValue(*setting, value)) {
+        if (!validRequiredValue(value)) {
             error = "invalid value for FLY system setting " +
                 physical.setting;
             return false;

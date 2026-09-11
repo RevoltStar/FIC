@@ -80,10 +80,6 @@ bool OSS_screenlock_timeout::globalDesktopPolicyContributions(
     }
     if (flyApplicable) {
         add("fly", DesktopEnvironmentKind::Fly,
-            "themerc/Variables/ScreenSaver", "internal");
-        add("fly", DesktopEnvironmentKind::Fly,
-            "themerc/Variables/ScreenSaverDBUS", "true");
-        add("fly", DesktopEnvironmentKind::Fly,
             "themerc/Variables/ScreenSaverDelay",
             std::to_string(timeoutMinutes * 60));
     }

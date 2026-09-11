@@ -164,6 +164,8 @@ assert '"kde"' not in contributions
 assert '"kscreenlockerrc/Daemon/' not in contributions
 assert '"fly"' in contributions
 assert '"themerc/Variables/ScreenSaverDelay"' in contributions
+assert '"themerc/Variables/ScreenSaver",' not in contributions
+assert '"themerc/Variables/ScreenSaverDBUS",' not in contributions
 assert "desktop == DesktopEnvironmentKind::Kde" in screenlock
 assert "org.gnome.desktop.lockdown" in gnome_handler_header
 assert "disable-lock-screen" in gnome_handler_header
