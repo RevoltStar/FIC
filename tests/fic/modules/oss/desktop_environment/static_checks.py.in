@@ -20,6 +20,7 @@ xfce_session = (root / "fic/src/modules/oss/desktop_environment/backends/XfceBac
 xfce_handler = (root / "fic/src/modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.h").read_text()
 kde_backend = (root / "fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp").read_text()
 kde_resolver = (root / "fic/src/modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolver.cpp").read_text()
+factory = (root / "fic/src/modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.cpp").read_text()
 session_executor = (root / "fic/src/session/SessionCommandExecutor.cpp").read_text()
 screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
 screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
@@ -144,6 +145,10 @@ assert "KdeSessionTopology::Ambiguous" in kde_resolver
 assert "KdeSessionTopology::Unique" in kde_resolver
 assert "multiple KDE graphical sessions exist for UID" in kde_resolver
 assert "KDE session topology is unknown for UID" in kde_resolver
+# Factory доверяет canonical ClassifiedGraphicalSession.desktop и не
+# выполняет повторную классификацию context.desktop.
+assert "kindFromName" not in factory
+assert "switch (session.desktop)" in factory
 assert "runtimeContext_->uniqueBusOwner" in kde_backend
 assert "runtimeContext_->kconfigEnvironment" in kde_backend
 assert "executeWithKdeConfigEnvironment" in kde_backend

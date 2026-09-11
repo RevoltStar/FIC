@@ -1,5 +1,10 @@
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h"
+#include "modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.h"
+#include "modules/oss/desktop_environment/policies/FlyScreenLockTimeoutHandler.h"
+#include "modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h"
+#include "modules/oss/desktop_environment/policies/KdeScreenLockTimeoutHandler.h"
+#include "modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 
@@ -260,6 +265,64 @@ void testInvalidValueAndReconcilerReport() {
             "FLY failure or unused KDE backend handling is wrong");
 }
 
+ClassifiedGraphicalSession contradictorySession(
+    DesktopEnvironmentKind desktop, const std::string& contextDesktopName) {
+    ClassifiedGraphicalSession value;
+    value.session.id = "7";
+    value.session.uid = 1000;
+    value.desktop = desktop;
+    value.context.desktop = contextDesktopName;
+    return value;
+}
+
+void testFactoryUsesCanonicalDesktopIdentity() {
+    // Ключевой regression: canonical identity — session.desktop,
+    // а не строка session.context.desktop.
+    auto kde = ScreenLockTimeoutHandlerFactory::create(
+        contradictorySession(DesktopEnvironmentKind::Kde, "GNOME"));
+    require(kde != nullptr &&
+                dynamic_cast<KdeScreenLockTimeoutHandler*>(kde.get()) !=
+                    nullptr,
+            "factory ignored canonical session.desktop classification");
+    auto gnome = ScreenLockTimeoutHandlerFactory::create(
+        contradictorySession(DesktopEnvironmentKind::Gnome, "KDE"));
+    require(gnome != nullptr &&
+                dynamic_cast<GnomeScreenLockTimeoutHandler*>(gnome.get()) !=
+                    nullptr,
+            "factory did not honor canonical GNOME classification");
+
+    // Полная матрица DE: выбор зависит только от session.desktop.
+    auto fly = ScreenLockTimeoutHandlerFactory::create(
+        contradictorySession(DesktopEnvironmentKind::Fly, "KDE"));
+    require(fly != nullptr &&
+                dynamic_cast<FlyScreenLockTimeoutHandler*>(fly.get()) !=
+                    nullptr,
+            "FLY handler was not selected by session.desktop");
+    auto xfce = ScreenLockTimeoutHandlerFactory::create(
+        contradictorySession(DesktopEnvironmentKind::Xfce, "GNOME"));
+    require(xfce != nullptr &&
+                dynamic_cast<XfceScreenLockTimeoutHandler*>(xfce.get()) !=
+                    nullptr,
+            "XFCE handler was not selected by session.desktop");
+    for (const auto desktop : {DesktopEnvironmentKind::Lxqt,
+                               DesktopEnvironmentKind::Unknown}) {
+        auto none = ScreenLockTimeoutHandlerFactory::create(
+            contradictorySession(desktop, "GNOME"));
+        require(none == nullptr,
+                "unsupported desktop unexpectedly produced a handler");
+    }
+
+    // KDE topology не влияет на выбор handler и переносится как есть.
+    ClassifiedGraphicalSession kdeTopology =
+        contradictorySession(DesktopEnvironmentKind::Kde, "GNOME");
+    kdeTopology.sameUidKdeTopology.state = KdeSessionTopology::Ambiguous;
+    auto kdeAmbiguous = ScreenLockTimeoutHandlerFactory::create(kdeTopology);
+    require(kdeAmbiguous != nullptr &&
+                dynamic_cast<KdeScreenLockTimeoutHandler*>(
+                    kdeAmbiguous.get()) != nullptr,
+            "factory changed handler selection based on KDE topology");
+}
+
 } // namespace
 
 int main() {
@@ -267,6 +330,7 @@ int main() {
         initializeRuntime();
         testModesCapabilitiesAndContributions();
         testInvalidValueAndReconcilerReport();
+        testFactoryUsesCanonicalDesktopIdentity();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

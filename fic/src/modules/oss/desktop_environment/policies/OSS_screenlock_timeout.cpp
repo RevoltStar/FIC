@@ -109,9 +109,7 @@ bool OSS_screenlock_timeout::reconcileControlledSession(
     std::string& error)
 {
     std::unique_ptr<ScreenLockTimeoutHandler> handler =
-        ScreenLockTimeoutHandlerFactory::create(
-            session.session, session.context,
-            session.sameUidKdeTopology);
+        ScreenLockTimeoutHandlerFactory::create(session);
     if (!handler) {
         error = std::string("screenlock_timeout is not supported for desktop ") +
             DesktopEnvironmentBackend::kindName(session.desktop);

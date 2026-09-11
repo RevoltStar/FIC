@@ -32,6 +32,12 @@
   Остальные проверки (D-Bus owner/PID/UID, environ, revalidation) не менялись.
 - Static checks фиксируют отсутствие `sameUidKdeSessionCount` в fic и 
   наличие обоих вариантов диагностики в resolver.
+- ScreenLockTimeoutHandlerFactory принимает `create(const 
+  ClassifiedGraphicalSession&)` и выбирает handler только по canonical
+  `session.desktop`; повторная классификация `context.desktop` внутри
+  factory запрещена static check. `sameUidKdeTopology` остаётся в
+  ClassifiedGraphicalSession (вынос — отдельная задача).
+- База для этого: незакоммиченный factory refactor поверх topology-fix.
 
 ## Completed
 
@@ -43,6 +49,10 @@
 - Тесты: 7+ обязательных topology-кейсов в KdeRuntimeContextTests (helper + 
   resolver diagnostics + KdeBackend fail-closed Unknown) и apply-path 
   topology propagation в SessionAwarePolicyTests.
+- Factory refactor: regression `testFactoryUsesCanonicalDesktopIdentity` в
+  ScreenlockTimeoutGlobalTests (противоречивые desktop/context объекты,
+  полная DE-матрица через dynamic_cast); static check kindFromName-off в
+  factory. Negative control выполнен для обоих задач.
 
 ## Validation
 

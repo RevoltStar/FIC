@@ -1,11 +1,10 @@
 #ifndef SCREEN_LOCK_TIMEOUT_HANDLER_H
 #define SCREEN_LOCK_TIMEOUT_HANDLER_H
 
-#include "session/UserSession.h"
-#include "modules/oss/desktop_environment/KdeSessionTopology.h"
-
 #include <memory>
 #include <string>
+
+struct ClassifiedGraphicalSession;
 
 class ScreenLockTimeoutHandler {
 public:
@@ -15,12 +14,12 @@ public:
     virtual bool apply(int timeoutMinutes, std::string& error) const = 0;
 };
 
+// canonical desktop identity — только ClassifiedGraphicalSession.desktop;
+// factory не выполняет повторную классификацию context.desktop.
 class ScreenLockTimeoutHandlerFactory {
 public:
     static std::unique_ptr<ScreenLockTimeoutHandler> create(
-        const UserSession& session,
-        const SessionContext& context,
-        const KdeSessionTopologyInfo& sameUidKdeTopology
+        const ClassifiedGraphicalSession& session
     );
 };
 
