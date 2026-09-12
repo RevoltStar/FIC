@@ -986,6 +986,16 @@ target_include_directories(admin_audit_tests PRIVATE
 target_link_libraries(admin_audit_tests PRIVATE fic-core)
 add_test(NAME admin_audit_tests COMMAND admin_audit_tests)
 
+add_executable(log_records_reader_tests
+    fic/daemon/LogRecordsReaderTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/LogRecordsReader.cpp
+)
+target_include_directories(log_records_reader_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(log_records_reader_tests PRIVATE fic-ipc)
+add_test(NAME log_records_reader_tests COMMAND log_records_reader_tests)
+
 add_executable(device_audit_tests
     fic-dick/daemon/DeviceAuditTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/DeviceAudit.cpp

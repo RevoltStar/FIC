@@ -2,48 +2,53 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `34276da`.
-- Рабочее дерево: изменены `tests/fic/platform/static_checks.py` и этот
-  `docs/HANDOFF.md`.
+- Ветка `main`, базовый commit `0c79859`.
 
 ## Current task
 
-- Исправить падение GitHub Actions job `103588075313`: падал
-  `platform_profile_static_checks` после изменения архитектуры
-  `VerifiedProcessExecutor`.
+- Заменить нестабильный глобальный integer offset команды `log_records` на
+  opaque per-file cursor без дублирования и потери записей.
 
 ## Accepted architecture / invariants
 
-- `VerifiedProcessExecutor` сохраняет trusted executable/hash модель:
-  executable открывается один раз через validated fd, SHA-256 считается по этому
-  fd, затем тот же fd передаётся в `ProcessExecutor::executeImpl()`.
-- Hashing должен быть offset-neutral (`pread()`), чтобы проверенный fd не
-  оставался на EOF после вычисления SHA-256.
-- Verified execution использует systemd-style стратегию: сначала fd-exec через
-  `execveat(fd, "", argv, envp, AT_EMPTY_PATH)` при сохранённом `CLOEXEC`;
-  только при `ENOENT` выполняется checked pathname fallback через
-  `execve(original_path, ...)`.
-- Перед pathname fallback путь должен всё ещё указывать на тот же `st_dev/st_ino`,
-  что и verified fd; replacement race fail-closed.
-- Старый путь `ENOENT -> clear FD_CLOEXEC -> retry fexecve()` не является
-  допустимым контрактом.
+- Cursor версии 1 является base64url-кодированным opaque JSON envelope,
+  привязанным к `boot_id`.
+- Для каждого файла cursor хранит relative path, `st_dev`, `st_ino` и byte
+  offset. Append или изменение порядка другого файла не сдвигает позицию.
+- Новый файл читается с начала. Missing/replaced/truncated known file выдаёт
+  `reload_required`, после чего GUI выполняет full reload без дедупликации.
+- Файлы открываются с `O_NOFOLLOW`, а identity и чтение относятся к одному fd.
+- Сохранены limit 1..500, `has_more`, 768 KiB page limit и 16 KiB line limit.
 
 ## Completed
 
-- `platform_profile_static_checks` обновлён под новый контракт:
-  `pread()` вместо `read()` для hash path и `execveat -> ENOENT -> checked
-  execve(path)` вместо старого `fexecve`/clear-`FD_CLOEXEC` ожидания.
+- Добавлен testable `LogRecordsReader`; daemon IPC использует `cursor` /
+  `next_cursor` вместо `offset` / `next_offset`.
+- `LogService` хранит cursor как непрозрачный `QString` и обрабатывает stale
+  cursor через bounded full reload.
+- Добавлены regression tests для cross-file append, новых и нескольких файлов,
+  pagination, inode replacement, truncation и size limits.
+- Обновлены IPC и architecture docs.
 
 ## Changed areas
 
-- `tests/fic/platform/static_checks.py`
-- `docs/HANDOFF.md`
+- `fic/src/daemon/LogRecordsReader.*`, `fic/src/main.cpp`
+- `fic-gui/src/features/logs/services/LogService.*`
+- `tests/fic/daemon/LogRecordsReaderTests.cpp`, `tests/CMakeLists.txt`
+- `fic/README.md`, `docs/architecture-diagrams.md`
 
 ## Validation
 
-- `python3 tests/fic/platform/static_checks.py .` passed.
-- `ctest --test-dir build-fix -R '^platform_profile_static_checks$' --output-on-failure` passed: 1/1 test.
+- Fresh Ubuntu 24.04 configure: passed с временным GIO pkg-config shim в
+  `/tmp`; исходный dependency contract не менялся.
+- Полная сборка всех targets: passed.
+- Targeted `log_records_reader_tests`, `ipc_protocol_validation_tests` и
+  `module_ui_static_checks`: 3/3 passed.
+- Полный non-root CTest вне sandbox: 88/88 passed.
+- `git diff --check`: passed.
 
 ## Remaining
 
-- Full build/full CTest не запускались.
+- Коммит не создавать без отдельного запроса пользователя.
+- Root-only `command_hash_batch_tests` не запускался: задача не затрагивает
+  command-hash lifecycle.

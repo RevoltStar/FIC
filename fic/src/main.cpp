@@ -30,6 +30,7 @@
 #include "daemon/main_function.h"
 #include "daemon/AdminAudit.h"
 #include "daemon/CalcHashCommand.h"
+#include "daemon/LogRecordsReader.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "policy/registry/PolicyRegistryJson.h"
@@ -402,17 +403,17 @@ bool run_daemon_apply_all_pass(
     return ok;
 }
 
-constexpr int MAX_LOG_RECORDS_PER_PAGE = 500;
-constexpr std::size_t MAX_LOG_LINE_BYTES = 16U * 1024U;
-constexpr std::size_t MAX_LOG_PAGE_BYTES = 768U * 1024U;
-
 bool valid_boot_id(const std::string& bootId) {
     return !bootId.empty() && std::all_of(bootId.begin(), bootId.end(), [](unsigned char ch) {
         return std::isalnum(ch) || ch == '-' || ch == '_';
     });
 }
 
-json log_records_json(const std::string& requestedBootId, int offset, int limit) {
+json log_records_json(
+    const std::string& requestedBootId,
+    const std::string& cursor,
+    int limit)
+{
     const std::string bootId = requestedBootId.empty()
         ? SystemBootInfo::get_boot_id()
         : requestedBootId;
@@ -421,98 +422,19 @@ json log_records_json(const std::string& requestedBootId, int offset, int limit)
     json records = json::array();
     if (bootId.empty()) {
         return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId},
-                    {"categories", categories}, {"records", records}, {"has_more", false}};
+                    {"categories", categories}, {"records", records},
+                    {"has_more", false}, {"reload_required", false},
+                    {"next_cursor", ""}};
     }
     if (!valid_boot_id(bootId)) {
         return fic::ipc::make_error_response("invalid boot_id");
     }
 
-    const std::filesystem::path bootDir = fic::core::FicRuntimePaths::get().logDir / bootId;
-    if (!std::filesystem::exists(bootDir) || !std::filesystem::is_directory(bootDir)) {
-        return json{{"ok", true}, {"message", "logs loaded"}, {"boot_id", bootId},
-                    {"categories", categories}, {"records", records}, {"has_more", false}};
-    }
-
-    std::vector<std::filesystem::path> categoryDirs;
-    for (const auto& entry : std::filesystem::directory_iterator(bootDir)) {
-        if (entry.is_directory()) {
-            categoryDirs.push_back(entry.path());
-        }
-    }
-    std::sort(categoryDirs.begin(), categoryDirs.end());
-
-    std::size_t recordIndex = 0;
-    std::size_t responseBytes = 0;
-    bool hasMore = false;
-    for (const auto& categoryDir : categoryDirs) {
-        const std::string category = categoryDir.filename().string();
-        categories.push_back(category);
-
-        std::vector<std::filesystem::path> logFiles;
-        for (const auto& entry : std::filesystem::directory_iterator(categoryDir)) {
-            if (entry.is_regular_file() && entry.path().extension() == ".txt") {
-                logFiles.push_back(entry.path());
-            }
-        }
-        std::sort(logFiles.begin(), logFiles.end());
-
-        for (const auto& logFile : logFiles) {
-            std::ifstream stream(logFile);
-            if (!stream.is_open()) {
-                continue;
-            }
-
-            std::string line;
-            while (std::getline(stream, line)) {
-                if (line.empty()) {
-                    continue;
-                }
-                if (recordIndex++ < static_cast<std::size_t>(offset)) {
-                    continue;
-                }
-                const std::size_t originalBytes = line.size();
-                const bool lineTruncated = line.size() > MAX_LOG_LINE_BYTES;
-                if (lineTruncated) {
-                    line.resize(MAX_LOG_LINE_BYTES);
-                }
-                json item = {
-                    {"category", category},
-                    {"source_file", logFile.string()},
-                    {"line", line},
-                    {"byte_size", originalBytes},
-                    {"line_truncated", lineTruncated}
-                };
-                const std::size_t itemBytes = item.dump().size();
-                if (records.size() >= static_cast<std::size_t>(limit) ||
-                    responseBytes + itemBytes > MAX_LOG_PAGE_BYTES) {
-                    hasMore = true;
-                    break;
-                }
-                responseBytes += itemBytes;
-                records.push_back(std::move(item));
-            }
-            if (hasMore) {
-                break;
-            }
-        }
-        if (hasMore) {
-            break;
-        }
-    }
-
-    const int nextOffset = hasMore
-    ? offset + static_cast<int>(records.size())
-    : static_cast<int>(recordIndex);
-
-    return json{
-        {"ok", true},
-        {"message", "logs loaded"},
-        {"boot_id", bootId},
-        {"categories", categories},
-        {"records", records},
-        {"has_more", hasMore},
-        {"next_offset", nextOffset}
-    };
+    return fic::daemon::readLogRecords(
+        fic::core::FicRuntimePaths::get().logDir,
+        bootId,
+        cursor,
+        limit);
 }
 
 json lock_status_json() {
@@ -769,8 +691,8 @@ json handle_request(json request,
         if (command == "log_records") {
             return log_records_json(
                 request.value("boot_id", ""),
-                request.value("offset", 0),
-                request.value("limit", MAX_LOG_RECORDS_PER_PAGE));
+                request.value("cursor", ""),
+                request.value("limit", fic::daemon::MAX_LOG_RECORDS_PER_PAGE));
         }
         if (command == "calc_hash") {
             return calcHashCommandResponse(value);
@@ -796,13 +718,14 @@ json handle_request(json request,
 }
 
 bool validate_policy_request_schema(const json& request, std::string& error) {
-    for (const char* field : {"module", "policy", "value", "boot_id"}) {
+    for (const char* field : {
+             "module", "policy", "value", "boot_id", "cursor"}) {
         if (request.contains(field) && !request[field].is_string()) {
             error = std::string("request.") + field + " must be a string";
             return false;
         }
     }
-    for (const char* field : {"offset", "limit"}) {
+    for (const char* field : {"limit"}) {
         if (!request.contains(field)) {
             continue;
         }
@@ -818,7 +741,7 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
     }
     if (request.contains("limit")) {
         const int limit = request["limit"].get<int>();
-        if (limit < 1 || limit > MAX_LOG_RECORDS_PER_PAGE) {
+        if (limit < 1 || limit > fic::daemon::MAX_LOG_RECORDS_PER_PAGE) {
             error = "request.limit must be between 1 and 500";
             return false;
         }
@@ -848,7 +771,7 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
     }
     if (command == "log_records") {
         return fic::ipc::request_has_only_fields(
-            request, {"command", "boot_id", "offset", "limit"}, error);
+            request, {"command", "boot_id", "cursor", "limit"}, error);
     }
     return true;
 }

@@ -38,17 +38,35 @@ void LogService::reloadAll()
     }
 
     sequenceCounter_ = 0;
-    logCursor_ = 0;
+    logCursor_.clear();
 
     QStringList categories;
-    int newCursor = 0;
+    QString newCursor;
+    bool reloadRequired = false;
 
     QVector<LogRecord> records =
         loadRecordsFromDaemon(
             &categories,
-            0,
+            {},
             true,
-            &newCursor);
+            &newCursor,
+            &reloadRequired);
+
+    if (reloadRequired) {
+        sequenceCounter_ = 0;
+        categories.clear();
+        newCursor.clear();
+        reloadRequired = false;
+        records = loadRecordsFromDaemon(
+            &categories,
+            {},
+            true,
+            &newCursor,
+            &reloadRequired);
+        if (reloadRequired) {
+            return;
+        }
+    }
 
     logCursor_ = newCursor;
 
@@ -82,14 +100,21 @@ void LogService::refreshIncremental()
     }
 
     QStringList categories;
-    int newCursor = logCursor_;
+    QString newCursor = logCursor_;
+    bool reloadRequired = false;
 
     QVector<LogRecord> records =
         loadRecordsFromDaemon(
             &categories,
             logCursor_,
             false,
-            &newCursor);
+            &newCursor,
+            &reloadRequired);
+
+    if (reloadRequired) {
+        reloadAll();
+        return;
+    }
 
     logCursor_ = newCursor;
 
@@ -140,9 +165,10 @@ QString LogService::currentBootId() const
 
 QVector<LogRecord> LogService::loadRecordsFromDaemon(
     QStringList* categories,
-    int offset,
+    const QString& cursor,
     bool loadAllPages,
-    int* resultingOffset)
+    QString* resultingCursor,
+    bool* reloadRequired)
 {
     QVector<LogRecord> records;
 
@@ -153,7 +179,10 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(
     constexpr int pageSize = 500;
     constexpr int maximumPages = 200;
 
-    int currentOffset = offset;
+    QString currentCursor = cursor;
+    if (reloadRequired != nullptr) {
+        *reloadRequired = false;
+    }
 
     for (int page = 0;
          page < maximumPages;
@@ -163,11 +192,18 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(
             fic::ipc::Client().request({
                 {"command", "log_records"},
                 {"boot_id", bootId_.toStdString()},
-                {"offset", currentOffset},
+                {"cursor", currentCursor.toStdString()},
                 {"limit", pageSize}
             });
 
         if (!response.value("ok", false)) {
+            break;
+        }
+
+        if (response.value("reload_required", false)) {
+            if (reloadRequired != nullptr) {
+                *reloadRequired = true;
+            }
             break;
         }
 
@@ -240,17 +276,15 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(
             }
         }
 
-        const int nextOffset =
-            response.value(
-                "next_offset",
-                currentOffset);
+        const QString nextCursor = QString::fromStdString(
+            response.value("next_cursor", currentCursor.toStdString()));
 
-        if (nextOffset <= currentOffset &&
+        if (nextCursor == currentCursor &&
             response.value("has_more", false)) {
             break;
         }
 
-        currentOffset = nextOffset;
+        currentCursor = nextCursor;
 
         if (!response.value("has_more", false) ||
             !loadAllPages) {
@@ -258,8 +292,8 @@ QVector<LogRecord> LogService::loadRecordsFromDaemon(
         }
     }
 
-    if (resultingOffset != nullptr) {
-        *resultingOffset = currentOffset;
+    if (resultingCursor != nullptr) {
+        *resultingCursor = currentCursor;
     }
 
     if (categories != nullptr) {

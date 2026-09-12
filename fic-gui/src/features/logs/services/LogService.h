@@ -38,14 +38,15 @@ private:
     QStringList categories_;
     QTimer refreshTimer_;
     quint64 sequenceCounter_ = 0;
-    int logCursor_ = 0;
+    QString logCursor_;
 
     QString currentBootId() const;
     QVector<LogRecord> loadRecordsFromDaemon(
         QStringList* categories,
-        int offset,
+        const QString& cursor,
         bool loadAllPages,
-        int* resultingOffset);
+        QString* resultingCursor,
+        bool* reloadRequired);
     bool parseLogLine(const QString &line,
                       const QString &category,
                       const QString &sourceFile,
