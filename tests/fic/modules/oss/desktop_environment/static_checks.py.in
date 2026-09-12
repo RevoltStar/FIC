@@ -220,6 +220,17 @@ assert "xfce4-screensaver-command" in xfce_session
 assert '{"--query"}' in xfce_session
 for forbidden in ("pgrep", "pidof", "/proc/", "XfceSystemBackend"):
     assert forbidden not in xfce_session
+assert '"--create", "--type"' in xfce_session
+assert '"--property", property, "--set"' not in xfce_session
+assert "getPropertyState" in xfce_session and "getPropertyState" in xfce_handler
+assert "::getProperty(" not in xfce_session
+assert "FIC_XFCONF_INSPECT_PATH" in xfce_session
+assert "fic-xfconf-inspect" in xfce_session
+# In-process libxfconf в root daemon запрещён: typed read идёт только через
+# session-scoped helper.
+for forbidden in ("libxfconf", "xfconf_channel_get", "xfconf_init"):
+    assert forbidden not in xfce_session
+assert "xfcePropertyTypeName(actual.type)" in xfce_handler
 assert '"/saver/fullscreen-inhibit", "bool", "false"' in xfce_handler
 for obsolete in ("ensureGlobalState", "applyGlobalValue",
                  "applyGlobalProtection", "verifyGlobalState"):

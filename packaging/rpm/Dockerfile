@@ -13,6 +13,7 @@ RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
     libpam0-devel \
     libsqlite3-devel \
     libsystemd-devel \
+    libxfconf-devel \
     make \
     nlohmann-json-devel \
     openssl-devel \

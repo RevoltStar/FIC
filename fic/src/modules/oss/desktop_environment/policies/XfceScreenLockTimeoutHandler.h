@@ -40,17 +40,25 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
     const auto readState = [&](bool& matches, std::string&) {
         matches = true;
         for (const auto& property : required) {
-            std::string actual;
-            if (!backend.getProperty(
+            XfcePropertyState actual;
+            if (!backend.getPropertyState(
                     channel, property.path, actual, error)) return false;
+            // Compliance requires the exact storage type first: a textually
+            // equal value with a wrong GType makes xfce4-screensaver use its
+            // application default instead of the stored value.
+            if (xfcePropertyTypeName(actual.type) !=
+                std::string(property.type)) {
+                matches = false;
+                continue;
+            }
             if (property.type == std::string("bool")) {
                 bool parsed = false;
                 bool expected = property.value == "true";
-                if (!desktop_backend::parseBoolean(actual, parsed) ||
+                if (!desktop_backend::parseBoolean(actual.value, parsed) ||
                     parsed != expected) matches = false;
             } else {
                 const auto parsed =
-                    desktop_backend::parseStrictInteger(actual);
+                    desktop_backend::parseStrictInteger(actual.value);
                 const auto expected =
                     desktop_backend::parseStrictInteger(property.value);
                 if (!parsed || !expected || *parsed != *expected)

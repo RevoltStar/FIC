@@ -22,11 +22,33 @@ add_executable(fic-session-agent
 
 target_link_libraries(fic-session-agent PRIVATE fic-ipc PkgConfig::SESSION_AGENT_LIBSYSTEMD Threads::Threads)
 
+# Typed Xfconf property inspection helper. Runs inside the target graphical
+# session (the daemon executes it through the session-scoped path) and reports
+# the actual storage GType of an Xfconf property, which the plain
+# `xfconf-query` text output cannot provide. The libxfconf development package
+# is a mandatory build dependency in every supported build profile; the runtime
+# libxfconf dependency is detected per-package by the packaging scripts.
+pkg_check_modules(SESSION_AGENT_LIBXFCONF REQUIRED IMPORTED_TARGET libxfconf-0)
+
+add_executable(fic-xfconf-inspect
+    src/xfconf-inspect/main.cpp
+)
+
+target_link_libraries(fic-xfconf-inspect PRIVATE PkgConfig::SESSION_AGENT_LIBXFCONF)
+
+add_test(NAME fic_xfconf_inspect_self_test
+         COMMAND fic-xfconf-inspect --self-test)
+
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/fic-session-agent.desktop.in"
     "${CMAKE_CURRENT_BINARY_DIR}/fic-session-agent.desktop"
     @ONLY)
 install(TARGETS fic-session-agent
+        RUNTIME DESTINATION "${FIC_SESSION_AGENT_BINDIR}"
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                    GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+        COMPONENT fic-session-agent)
+install(TARGETS fic-xfconf-inspect
         RUNTIME DESTINATION "${FIC_SESSION_AGENT_BINDIR}"
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
                     GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE

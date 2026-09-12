@@ -847,9 +847,13 @@ build_fic_session_agent_package() {
     install_cmake_component "$FIC_SESSION_AGENT_BUILD_DIR" fic-session-agent "$package_root"
     chmod 0755 "$package_root/usr/libexec/fic"
     chmod 0755 "$package_root/usr/libexec/fic/fic-session-agent"
+    chmod 0755 "$package_root/usr/libexec/fic/fic-xfconf-inspect"
 
     binary_depends="$(detect_binary_depends \
         "$package_root/usr/libexec/fic/fic-session-agent")"
+    helper_depends="$(detect_binary_depends \
+        "$package_root/usr/libexec/fic/fic-xfconf-inspect")"
+    binary_depends="$(join_depends "$binary_depends" "$helper_depends")"
 
     write_control_file \
         "$package_root" \

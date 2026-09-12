@@ -810,6 +810,7 @@ build_fic_session_agent_package() {
     install_cmake_component "$FIC_SESSION_AGENT_BUILD_DIR" fic-session-agent "$package_root"
     chmod 0755 "$package_root/usr/libexec/fic"
     chmod 0755 "$package_root/usr/libexec/fic/fic-session-agent"
+    chmod 0755 "$package_root/usr/libexec/fic/fic-xfconf-inspect"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \

@@ -293,6 +293,8 @@ add_executable(screenlock_timeout_global_tests
 target_include_directories(screenlock_timeout_global_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
+target_compile_definitions(screenlock_timeout_global_tests PRIVATE
+    FIC_XFCONF_INSPECT_PATH="${FIC_SESSION_AGENT_BINDIR}/fic-xfconf-inspect")
 target_link_libraries(screenlock_timeout_global_tests PRIVATE fic-core fic-policy)
 add_test(NAME screenlock_timeout_global_tests COMMAND screenlock_timeout_global_tests)
 
@@ -344,6 +346,8 @@ add_executable(xfce_backend_tests
 target_include_directories(xfce_backend_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
+target_compile_definitions(xfce_backend_tests PRIVATE
+    FIC_XFCONF_INSPECT_PATH="${FIC_SESSION_AGENT_BINDIR}/fic-xfconf-inspect")
 target_link_libraries(xfce_backend_tests PRIVATE fic-core)
 add_test(NAME xfce_backend_tests COMMAND xfce_backend_tests)
 

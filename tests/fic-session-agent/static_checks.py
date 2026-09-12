@@ -25,6 +25,16 @@ require("pkg_check_modules(SESSION_AGENT_LIBSYSTEMD REQUIRED IMPORTED_TARGET lib
         "fic-session-agent does not resolve libsystemd through pkg-config")
 require("PkgConfig::SESSION_AGENT_LIBSYSTEMD" in agent_cmake,
         "fic-session-agent is not linked to the imported libsystemd target")
+require("pkg_check_modules(SESSION_AGENT_LIBXFCONF REQUIRED IMPORTED_TARGET libxfconf-0)" in agent_cmake,
+        "fic-xfconf-inspect does not resolve libxfconf through pkg-config")
+require("PkgConfig::SESSION_AGENT_LIBXFCONF" in agent_cmake,
+        "fic-xfconf-inspect is not linked to the imported libxfconf target")
+require("add_executable(fic-xfconf-inspect" in agent_cmake,
+        "typed Xfconf inspection helper is missing from the session agent build")
+require('install(TARGETS fic-xfconf-inspect' in agent_cmake,
+        "typed Xfconf inspection helper is not installed with the session agent component")
+require("fic-xfconf-inspect --self-test" in agent_cmake,
+        "typed Xfconf inspection helper has no GValue protocol self-test")
 require("sd_pid_get_session(0" in provider,
         "agent fallback does not resolve the current process session")
 require("result == -ENODATA" in provider,
@@ -62,6 +72,13 @@ for builder_name, builder in (
     require('chmod 0755 "$package_root/usr/libexec/fic"' in builder and
             'chmod 0755 "$package_root/usr/libexec/fic/fic-session-agent"' in builder,
             f"{builder_name} packaging does not enforce public session-agent modes")
+    require('chmod 0755 "$package_root/usr/libexec/fic/fic-xfconf-inspect"' in builder,
+            f"{builder_name} packaging does not enforce the xfconf inspect helper mode")
+    if builder_name == "DEB":
+        # RPM relies on automatic ELF requires generation for the helper's
+        # libxfconf runtime dependency (the same mechanism as libsystemd).
+        require('fic-xfconf-inspect")' in builder,
+                "DEB packaging does not resolve the xfconf inspect helper dependencies")
     require('chmod 0750 "$package_root/opt/fic/bin/fic-cli"' in builder,
             f"{builder_name} packaging does not preserve the private fic-cli mode")
     require('chmod 0750 "$package_root/opt/fic/bin/fic-gui"' in builder and
@@ -116,6 +133,11 @@ for dockerfile, dependency in (
     ("packaging/deb/Dockerfile.ubuntu2404", "libsystemd-dev"),
     ("packaging/deb/Dockerfile.ubuntu2604", "libsystemd-dev"),
     ("packaging/rpm/Dockerfile", "libsystemd-devel"),
+    ("packaging/deb/Dockerfile", "libxfconf-0-dev"),
+    ("packaging/deb/Dockerfile.debian13", "libxfconf-0-dev"),
+    ("packaging/deb/Dockerfile.ubuntu2404", "libxfconf-0-dev"),
+    ("packaging/deb/Dockerfile.ubuntu2604", "libxfconf-0-dev"),
+    ("packaging/rpm/Dockerfile", "libxfconf-devel"),
 ):
     require(dependency in (root / dockerfile).read_text(),
             f"{dockerfile} does not install {dependency}")

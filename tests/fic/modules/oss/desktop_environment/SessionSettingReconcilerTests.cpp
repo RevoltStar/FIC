@@ -371,14 +371,16 @@ void testFlyRuntimeOnlyConvergence() {
 }
 
 struct FakeXfceSession {
-    mutable std::map<std::string, std::string> values = {
-        {"/saver/enabled", "true"},
-        {"/saver/idle-activation/enabled", "true"},
-        {"/saver/idle-activation/delay", "5"},
-        {"/saver/fullscreen-inhibit", "false"},
-        {"/lock/enabled", "true"},
-        {"/lock/saver-activation/enabled", "true"},
-        {"/lock/saver-activation/delay", "0"},
+    // The fake models storage type + value, not just the textual value:
+    // type identity is part of XFCE compliance.
+    mutable std::map<std::string, XfcePropertyState> values = {
+        {"/saver/enabled", {XfcePropertyType::Bool, "true"}},
+        {"/saver/idle-activation/enabled", {XfcePropertyType::Bool, "true"}},
+        {"/saver/idle-activation/delay", {XfcePropertyType::Int, "5"}},
+        {"/saver/fullscreen-inhibit", {XfcePropertyType::Bool, "false"}},
+        {"/lock/enabled", {XfcePropertyType::Bool, "true"}},
+        {"/lock/saver-activation/enabled", {XfcePropertyType::Bool, "true"}},
+        {"/lock/saver-activation/delay", {XfcePropertyType::Int, "0"}},
     };
     mutable std::vector<std::string> events;
     mutable std::size_t liveChecks = 0;
@@ -393,15 +395,17 @@ struct FakeXfceSession {
         error = available ? "" : "xfce4-screensaver is not running";
         return available;
     }
-    bool getProperty(const std::string& channel, const std::string& property,
-                     std::string& value, std::string& error) const {
+    bool getPropertyState(const std::string& channel,
+                          const std::string& property,
+                          XfcePropertyState& state, std::string& error) const {
         require(channel == "xfce4-screensaver", "wrong XFCE channel");
         events.push_back("read:" + property);
-        if (property == failRead || values.count(property) == 0) {
+        const auto found = values.find(property);
+        if (property == failRead || found == values.end()) {
             error = "read failed";
             return false;
         }
-        value = values.at(property);
+        state = found->second;
         error.clear();
         return true;
     }
@@ -414,9 +418,22 @@ struct FakeXfceSession {
             error = "write failed";
             return false;
         }
-        if (!ignoreWrites) values[property] = value;
+        if (!ignoreWrites) {
+            // The production writer is a typed mutation (`--create --type`):
+            // the stored type always converges to the requested type.
+            values[property] = {xfcePropertyTypeFromToken(type), value};
+        }
         error.clear();
         return true;
+    }
+
+    static XfcePropertyType xfcePropertyTypeFromToken(const std::string& type) {
+        if (type == "bool") return XfcePropertyType::Bool;
+        if (type == "int") return XfcePropertyType::Int;
+        if (type == "uint") return XfcePropertyType::UInt;
+        if (type == "double") return XfcePropertyType::Double;
+        if (type == "string") return XfcePropertyType::String;
+        return XfcePropertyType::Other;
     }
 };
 
@@ -449,7 +466,8 @@ void testXfceScreenLockConvergence() {
     {
         FakeXfceSession session;
         session.live = {true, false};
-        session.values["/saver/fullscreen-inhibit"] = "true";
+        session.values["/saver/fullscreen-inhibit"] =
+            {XfcePropertyType::Bool, "true"};
         std::string error;
         require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
                     session.events.back() == "live" &&
@@ -473,11 +491,14 @@ void testXfceScreenLockConvergence() {
     }
     {
         FakeXfceSession session;
-        session.values["/saver/fullscreen-inhibit"] = "true";
+        session.values["/saver/fullscreen-inhibit"] =
+            {XfcePropertyType::Bool, "true"};
         std::string error;
         require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
                 error);
-        require(session.values["/saver/fullscreen-inhibit"] == "false" &&
+        require(session.values["/saver/fullscreen-inhibit"].value == "false" &&
+                    session.values["/saver/fullscreen-inhibit"].type ==
+                        XfcePropertyType::Bool &&
                     std::find(session.events.begin(), session.events.end(),
                         "write:/saver/fullscreen-inhibit:bool=false") !=
                         session.events.end(),
@@ -485,18 +506,22 @@ void testXfceScreenLockConvergence() {
     }
     {
         FakeXfceSession session;
-        session.values["/saver/idle-activation/delay"] = "1";
+        session.values["/saver/idle-activation/delay"] =
+            {XfcePropertyType::Int, "1"};
         std::string error;
         require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
-                    session.values["/saver/idle-activation/delay"] == "5",
+                    session.values["/saver/idle-activation/delay"].value ==
+                        "5",
                 "XFCE timeout did not converge");
     }
     {
         FakeXfceSession session;
-        session.values["/saver/idle-activation/delay"] = "-5";
+        session.values["/saver/idle-activation/delay"] =
+            {XfcePropertyType::Int, "-5"};
         std::string error;
         require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
-                    session.values["/saver/idle-activation/delay"] == "5" &&
+                    session.values["/saver/idle-activation/delay"].value ==
+                        "5" &&
                     std::find(session.events.begin(), session.events.end(),
                         "write:/saver/idle-activation/delay:int=5") !=
                         session.events.end(),
@@ -504,19 +529,108 @@ void testXfceScreenLockConvergence() {
     }
     for (const std::string malformed : {"5foo", "foo5"}) {
         FakeXfceSession session;
-        session.values["/saver/idle-activation/delay"] = malformed;
+        session.values["/saver/idle-activation/delay"] =
+            {XfcePropertyType::Int, malformed};
         std::string error;
         require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
-                    session.values["/saver/idle-activation/delay"] == "5",
+                    session.values["/saver/idle-activation/delay"].value ==
+                        "5",
                 "malformed XFCE idle delay was accepted as matching");
     }
     for (const std::string malformed : {"0foo", "foo0"}) {
         FakeXfceSession session;
-        session.values["/lock/saver-activation/delay"] = malformed;
+        session.values["/lock/saver-activation/delay"] =
+            {XfcePropertyType::Int, malformed};
         std::string error;
         require(xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
-                    session.values["/lock/saver-activation/delay"] == "0",
+                    session.values["/lock/saver-activation/delay"].value ==
+                        "0",
                 "malformed XFCE lock delay was accepted as matching");
+    }
+    // Главный regression подтверждённого bug: textually equal, но wrong
+    // storage type (string "5" vs int 5) обязан вызвать typed repair.
+    {
+        FakeXfceSession session;
+        session.values["/saver/idle-activation/delay"] =
+            {XfcePropertyType::String, "5"};
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(std::find(session.events.begin(), session.events.end(),
+                          "write:/saver/idle-activation/delay:int=5") !=
+                    session.events.end(),
+                "wrong-type XFCE delay was not repaired with a typed write");
+        require(session.values["/saver/idle-activation/delay"].type ==
+                        XfcePropertyType::Int &&
+                    session.values["/saver/idle-activation/delay"].value ==
+                        "5",
+                "wrong-type XFCE delay did not converge to int 5");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/enabled"] = {XfcePropertyType::String, "true"};
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(std::find(session.events.begin(), session.events.end(),
+                          "write:/saver/enabled:bool=true") !=
+                    session.events.end(),
+                "wrong-type XFCE boolean was not repaired with a typed write");
+        require(session.values["/saver/enabled"].type ==
+                    XfcePropertyType::Bool,
+                "wrong-type XFCE boolean did not converge to bool");
+    }
+    {
+        // fullscreen-inhibit: string("false") vs bool false. Особенно важен
+        // из-за default drift в XFCE 4.20 (default=true при required=false).
+        FakeXfceSession session;
+        session.values["/saver/fullscreen-inhibit"] =
+            {XfcePropertyType::String, "false"};
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(std::find(session.events.begin(), session.events.end(),
+                          "write:/saver/fullscreen-inhibit:bool=false") !=
+                    session.events.end(),
+                "wrong-type XFCE fullscreen inhibit was not repaired");
+        require(session.values["/saver/fullscreen-inhibit"].type ==
+                    XfcePropertyType::Bool,
+                "wrong-type XFCE fullscreen inhibit did not converge");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/idle-activation/delay"] =
+            {XfcePropertyType::UInt, "5"};
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(session.values["/saver/idle-activation/delay"].type ==
+                    XfcePropertyType::Int,
+                "uint XFCE delay was accepted as int 5");
+    }
+    {
+        FakeXfceSession session;
+        session.values["/saver/idle-activation/delay"] =
+            {XfcePropertyType::Double, "5.000000"};
+        std::string error;
+        require(xfce_screen_lock_timeout::applyTimeout(session, 5, error),
+                error);
+        require(session.values["/saver/idle-activation/delay"].type ==
+                    XfcePropertyType::Int,
+                "double XFCE delay was accepted as int 5");
+    }
+    {
+        // Typed write заявляет успех, но final typed readback всё ещё видит
+        // wrong type: reconciliation обязана fail closed.
+        FakeXfceSession session;
+        session.values["/saver/idle-activation/delay"] =
+            {XfcePropertyType::String, "5"};
+        session.ignoreWrites = true;
+        std::string error;
+        require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                    error == "XFCE screen lock settings did not reach the "
+                             "requested state",
+                "wrong-type XFCE delay was accepted after failed repair");
     }
     {
         FakeXfceSession session;
@@ -531,7 +645,8 @@ void testXfceScreenLockConvergence() {
     }
     {
         FakeXfceSession session;
-        session.values["/saver/fullscreen-inhibit"] = "true";
+        session.values["/saver/fullscreen-inhibit"] =
+            {XfcePropertyType::Bool, "true"};
         session.failWrite = "/saver/fullscreen-inhibit";
         std::string error;
         require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&
@@ -540,7 +655,8 @@ void testXfceScreenLockConvergence() {
     }
     {
         FakeXfceSession session;
-        session.values["/saver/fullscreen-inhibit"] = "true";
+        session.values["/saver/fullscreen-inhibit"] =
+            {XfcePropertyType::Bool, "true"};
         session.ignoreWrites = true;
         std::string error;
         require(!xfce_screen_lock_timeout::applyTimeout(session, 5, error) &&

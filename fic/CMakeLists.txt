@@ -105,6 +105,10 @@ target_link_libraries(fic PRIVATE fic-core)
 target_link_libraries(fic PRIVATE fic-policy)
 target_link_libraries(fic PRIVATE fic-platform)
 target_link_libraries(fic PRIVATE PkgConfig::FIC_LIBSYSTEMD)
+# Canonical trusted location of the fic-xfconf-inspect session helper used by
+# the XFCE typed property backend. Compiled in, never resolved from PATH.
+target_compile_definitions(fic PRIVATE
+    FIC_XFCONF_INSPECT_PATH="${FIC_SESSION_AGENT_BINDIR}/fic-xfconf-inspect")
 set(FIC_GENERATED_SCRIPTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/scripts")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}")
 file(MAKE_DIRECTORY "${FIC_GENERATED_SCRIPTS_DIR}/config")

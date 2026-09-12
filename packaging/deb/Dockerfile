@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-dev \
     libssl-dev \
     libsystemd-dev \
+    libxfconf-0-dev \
     libxkbcommon-dev \
     nlohmann-json3-dev \
     pkg-config \

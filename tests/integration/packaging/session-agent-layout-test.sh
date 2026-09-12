@@ -15,6 +15,7 @@ DESTDIR="$STAGE_DIR" cmake --install "$BUILD_DIR" \
 
 agent_dir="$STAGE_DIR/usr/libexec/fic"
 agent="$agent_dir/fic-session-agent"
+helper="$agent_dir/fic-xfconf-inspect"
 desktop="$STAGE_DIR/etc/xdg/autostart/fic-session-agent.desktop"
 old_agent="$STAGE_DIR/opt/fic/bin/fic-session-agent"
 
@@ -25,6 +26,11 @@ old_agent="$STAGE_DIR/opt/fic/bin/fic-session-agent"
 [ "$(stat -c '%a' "$agent")" = "755" ] ||
     fail "public executable mode is not 0755"
 [ -x "$agent" ] || fail "public executable is not executable by the test user"
+[ -f "$helper" ] || fail "xfconf inspect helper is missing"
+[ "$(stat -c '%a' "$helper")" = "755" ] ||
+    fail "xfconf inspect helper mode is not 0755"
+[ -x "$helper" ] || fail "xfconf inspect helper is not executable by the test user"
+"$helper" --self-test || fail "xfconf inspect helper protocol self-test failed"
 [ ! -e "$old_agent" ] || fail "private-tree executable copy is present"
 [ -f "$desktop" ] || fail "XDG Autostart desktop file is missing"
 grep -Fxq 'Exec=/usr/libexec/fic/fic-session-agent' "$desktop" ||
