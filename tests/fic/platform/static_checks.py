@@ -1042,11 +1042,14 @@ def main():
         and "S_ISREG(" in command_hash_store
         and "S_IXUSR | S_IXGRP | S_IXOTH" in command_hash_store
         and "calculateSha256FromFd(descriptor.get()" in command_hash_store
-        and "::read(descriptor" in command_hash_store
+        and "::pread(descriptor" in command_hash_store
+        and "off_t offset = 0" in command_hash_store
+        and "offset += count" in command_hash_store
+        and "::read(descriptor" not in command_hash_store
         and "std::ifstream" not in command_hash_store
         and "::lstat(" not in command_hash_store
         and 'find("..")' not in command_hash_store,
-        "command hash calculation must validate and hash one safely opened fd",
+        "command hash calculation must validate and offset-neutrally hash one safely opened fd",
     )
     verify_hash_body = command_hash_store.split(
         "bool command_hash_store_detail::openVerifiedExecutable", 1
@@ -1080,12 +1083,22 @@ def main():
         and "open_validated_executable(executable, opened, error)" in verify_hash_body
         and "calculateSha256FromFd(opened.get()" in verify_hash_body
         and "descriptor = std::move(opened)" in verify_hash_body
-        and "::fexecve(executableFd, argv.data(), childEnvironment)" in fd_execution
-        and "flags & ~FD_CLOEXEC" in fd_execution
-        and not re.search(r"::(?:access|stat|lstat|open|openat|execv|execve)\s*\(", fd_execution)
+        and "SYS_execveat" in process_executor
+        and "AT_EMPTY_PATH" in process_executor
+        and "exec_verified_fd(executableFd, argv.data(), childEnvironment)" in fd_execution
+        and "if (errno == ENOENT)" in fd_execution
+        and "pathname_matches_verified_fd(executable, executableFd)" in fd_execution
+        and "::execve(executable.c_str(), argv.data(), childEnvironment)" in fd_execution
+        and "::fstat(executableFd" in process_executor
+        and "::stat(executable.c_str()" in process_executor
+        and "verified.st_dev == current.st_dev" in process_executor
+        and "verified.st_ino == current.st_ino" in process_executor
+        and "flags & ~FD_CLOEXEC" not in fd_execution
+        and "::fexecve" not in fd_execution
+        and not re.search(r"::(?:access|lstat|open|openat)\s*\(", fd_execution)
         and not re.search(r"::(?:access|stat|lstat|open|openat)\s*\(", execute_impl)
         and not re.search(r"::(?:access|stat|lstat|open|openat|execv|execve)\s*\(", verified_executor),
-        "verified execution must pass the hashed fd to fexecve without pathname lookup",
+        "verified execution must fd-exec first, then use checked pathname fallback only for ENOENT",
     )
     require(
         "S_IRGRP | S_IWGRP" not in exclusive_lock,
