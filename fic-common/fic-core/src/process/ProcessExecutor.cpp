@@ -10,6 +10,7 @@
 #include <functional>
 #include <fcntl.h>
 #include <grp.h>
+#include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
@@ -21,6 +22,21 @@ using process_executor_detail::ProcessPipeIo;
 void write_child_error(const std::string& message) {
     const std::string line = message + ": " + std::strerror(errno) + "\n";
     auto res = ::write(STDERR_FILENO, line.data(), line.size());
+}
+
+int exec_verified_fd(int executableFd, char* const argv[], char* const envp[]) {
+    return static_cast<int>(::syscall(
+        SYS_execveat, executableFd, "", argv, envp, AT_EMPTY_PATH));
+}
+
+bool pathname_matches_verified_fd(const std::string& executable,
+                                  int executableFd) {
+    struct stat verified {};
+    struct stat current {};
+    return ::fstat(executableFd, &verified) == 0 &&
+        ::stat(executable.c_str(), &current) == 0 &&
+        verified.st_dev == current.st_dev &&
+        verified.st_ino == current.st_ino;
 }
 } // namespace
 
@@ -158,20 +174,22 @@ ProcessResult ProcessExecutor::executeImpl(
         if (executableFd >= 0) {
             char* emptyEnvironment[] = {nullptr};
             char** childEnvironment = environ ? environ : emptyEnvironment;
-            ::fexecve(executableFd, argv.data(), childEnvironment);
+            exec_verified_fd(executableFd, argv.data(), childEnvironment);
             if (errno == ENOENT) {
-                // Linux cannot start a shebang script with FD_CLOEXEC: the
-                // interpreter needs this fd. Clear it only in the forked child
-                // and retry the SAME object, never the original pathname.
-                const int flags = ::fcntl(executableFd, F_GETFD);
-                if (flags < 0 ||
-                    ::fcntl(executableFd, F_SETFD, flags & ~FD_CLOEXEC) < 0) {
-                    write_child_error("fcntl() failed for executable fd");
+                // Linux reports ENOENT for shebang scripts executed from a
+                // close-on-exec fd: the interpreter cannot reopen the fd after
+                // exec. Keep CLOEXEC intact and fall back to pathname semantics
+                // only if the path still names the verified inode.
+                if (!pathname_matches_verified_fd(executable, executableFd)) {
+                    errno = ESTALE;
+                    write_child_error(
+                        "verified executable path changed before execve fallback: " +
+                        executable);
                     _exit(127);
                 }
-                ::fexecve(executableFd, argv.data(), childEnvironment);
+                ::execve(executable.c_str(), argv.data(), childEnvironment);
             }
-            write_child_error("fexecve() failed: " + executable);
+            write_child_error("execveat() failed: " + executable);
         } else {
             ::execv(executable.c_str(), argv.data());
             write_child_error("execv() failed");

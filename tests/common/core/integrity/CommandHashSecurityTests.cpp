@@ -127,8 +127,10 @@ int main()
     assert(::chmod(racePath.c_str(), 0755) == 0);
 
     std::string openedHash;
+    assert(::lseek(openedDescriptor, 5, SEEK_SET) == 5);
     assert(command_hash_store_detail::calculateSha256FromFd(
         openedDescriptor, openedHash, error));
+    assert(::lseek(openedDescriptor, 0, SEEK_CUR) == 5);
     assert(::close(openedDescriptor) == 0);
     std::string originalHash;
     assert(command_hash_store_detail::calculateValidatedExecutableSha256(

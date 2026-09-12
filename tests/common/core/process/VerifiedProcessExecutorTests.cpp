@@ -31,6 +31,11 @@ void writeScript(const fs::path& path, const std::string& body) {
     assert(::chmod(path.c_str(), 0700) == 0);
 }
 
+void writePerlScript(const fs::path& path, const std::string& body) {
+    std::ofstream(path) << "#!/usr/bin/perl -w\n" << body;
+    assert(::chmod(path.c_str(), 0700) == 0);
+}
+
 void trust(const fs::path& path) {
     std::string hash, error;
     assert(command_hash_store_detail::calculateValidatedExecutableSha256(
@@ -136,7 +141,8 @@ int main(int argc, char** argv) {
     result = execute(target);
     assert(result.success() && result.standardOutput == binaryOutput);
 
-    // Shebang scripts need the verified fd to survive exec of the interpreter.
+    // Shebang scripts use fd-exec first, then fall back to the original
+    // pathname when the close-on-exec fd cannot be reopened by the interpreter.
     writeScript(target, "echo script-A\n");
     trust(target);
     result = execute(target);
@@ -144,7 +150,37 @@ int main(int argc, char** argv) {
     writeScript(replacement, "echo script-B\n");
     beforeFork = [&] { fs::rename(replacement, target); };
     result = execute(target);
-    assert(result.success() && result.standardOutput == "script-A\n");
+    assert(!beforeFork);
+    assert(result.started && result.exitCode == 127);
+    assert(result.standardError.find("verified executable path changed") != std::string::npos);
+
+    writePerlScript(target, "print \"perl-script-A\\n\";\n");
+    trust(target);
+    result = execute(target);
+    assert(result.success() && result.standardOutput == "perl-script-A\n");
+
+    writePerlScript(target,
+        "if (!$ENV{FIC_SELF_REEXECED}) {\n"
+        "    $ENV{FIC_SELF_REEXECED} = 1;\n"
+        "    exec $0, @ARGV;\n"
+        "    die \"self reexec failed: $!\\n\";\n"
+        "}\n"
+        "print \"self-reexec:$0:$ARGV[0]\\n\";\n");
+    trust(target);
+    result = execute(target);
+    assert(result.success());
+    assert(result.standardOutput == "self-reexec:" + target.string() + ":--payload\n");
+
+    writePerlScript(target,
+        "if (@ARGV && $ARGV[0] eq '--helper') {\n"
+        "    print \"helper:$0\\n\";\n"
+        "    exit 0;\n"
+        "}\n"
+        "system($0, '--helper') == 0 or die \"helper exec failed: $? $!\\n\";\n");
+    trust(target);
+    result = execute(target);
+    assert(result.success());
+    assert(result.standardOutput == "helper:" + target.string() + "\n");
 
     writeScript(target,
         "IFS= read -r line\n"
@@ -204,7 +240,7 @@ int main(int argc, char** argv) {
     trust(target);
     result = execute(target);
     assert(result.started && result.exitCode == 127);
-    assert(result.standardError.find("fexecve() failed") != std::string::npos);
+    assert(result.standardError.find("execveat() failed") != std::string::npos);
     std::ofstream(target) << "#!/nonexistent-fic-interpreter\n";
     trust(target);
     result = execute(target);

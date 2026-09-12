@@ -91,8 +91,9 @@ bool calculate_sha256_from_fd_impl(int descriptor, std::string& hash,
     }
 
     char buffer[16 * 1024];
+    off_t offset = 0;
     while (true) {
-        const ssize_t count = ::read(descriptor, buffer, sizeof(buffer));
+        const ssize_t count = ::pread(descriptor, buffer, sizeof(buffer), offset);
         if (count < 0) {
             if (errno == EINTR) continue;
             error = "failed to read executable for hashing: " +
@@ -100,6 +101,7 @@ bool calculate_sha256_from_fd_impl(int descriptor, std::string& hash,
             return false;
         }
         if (count == 0) break;
+        offset += count;
         if (EVP_DigestUpdate(
                 context.get(), buffer, static_cast<std::size_t>(count)) != 1) {
             error = "OpenSSL: failed to update SHA-256 digest";
