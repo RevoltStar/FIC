@@ -114,7 +114,7 @@
 [module:IDENTITY_ACCESS][policy:enable_authentication_lockout]=Enable authentication lockout
 [module:IDENTITY_ACCESS][policy:enable_authentication_lockout][description]=Activates the PAM lockout mechanism through native platform integration and rechecks the actual effective PAM stack. It does not set thresholds, counting periods, or unlock times.
 [module:IDENTITY_ACCESS][policy:enable_password_history]=Enable password history
-[module:IDENTITY_ACCESS][policy:enable_password_history][description]=Activates the PAM password-history mechanism through native platform integration and rechecks the actual effective PAM stack. It does not set history depth or root enforcement.
+[module:IDENTITY_ACCESS][policy:enable_password_history][description]=Activates the PAM password-history mechanism through native platform integration and rechecks the actual effective PAM stack. It does not set history depth or root enforcement. A characteristic of `pam_pwhistory` is that, when a password change is attempted, the current password is added to the history before the new password is checked. Therefore, even a rejected attempt to use a previously used password can shift the history and remove the oldest stored password from it. As a result, that password may become available for reuse earlier than the configured history depth would imply.
 [module:IDENTITY_ACCESS][policy:enable_password_quality]=Enable password quality checking
 [module:IDENTITY_ACCESS][policy:enable_password_quality][description]=Activates the platform-selected password-quality mechanism and rechecks the actual effective PAM stack. It does not set numeric or semantic quality options.
 [module:IDENTITY_ACCESS][submodule:PASSWORD_AGING]=Password aging

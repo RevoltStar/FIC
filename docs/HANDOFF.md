@@ -2,47 +2,37 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `0832104`.
+- Ветка `main`, базовый commit `6c1b0b4`.
 
 ## Current task
 
-- Устранить рост wire cursor, удержание всех log FD и продвижение offset за
-  незавершённую строку в `log_records` после `c47f4c3`.
+- Уточнить пользовательское RU/EN description политики
+  `IDENTITY_ACCESS/enable_password_history` с описанием поведения
+  `pam_pwhistory` при отклонённой смене пароля.
 
 ## Accepted architecture / invariants
 
-- GUI продолжает передавать cursor как непрозрачную строку.
-- Wire cursor v2 — фиксированный 34-byte token; daemon хранит ограниченно до 64
-  LRU snapshots с `version`, `boot_id` и per-file path/dev/inode/offset.
-- Неизвестный корректный token, смена inode, исчезновение файла и truncation
-  требуют безопасного full reload через `reload_required`.
-- Одновременно открыт максимум один log-файл; `open`/`fstat` errors являются
-  service errors, а не причиной пропуска файла.
-- Byte offset продвигается только после полностью завершённой `\n` записи.
+- Меняется только локализованное описание политики.
+- Policy identifier/name/value/dependencies, `password_history_depth`, PAM
+  configuration и runtime implementation не меняются.
 
 ## Completed
 
-- `LogRecordsReader` стал stateful daemon-owned service с bounded cursor store.
-- Чтение разделено на последовательный metadata snapshot и последовательное
-  чтение с повторной identity validation.
-- Добавлены regression cases для 1100 файлов при `RLIMIT_NOFILE=32`, IPC cursor
-  size, partial-line completion и явной ошибки открытия.
-- Сохранены проверки cross-file append, pagination, inode replacement,
-  truncation и line/page limits; обновлена IPC/architecture documentation.
+- Обновлены парные description keys в `ru.lang` и `en.lang`.
+- Исходное описание активации механизма сохранено в начале; примечание о
+  поведении `pam_pwhistory` добавлено в конец.
+- Проверено отсутствие прежних формулировок и неизменность description
+  `password_history_depth`.
 
 ## Changed areas
 
-- `fic/src/daemon/LogRecordsReader.*`, `fic/src/main.cpp`
-- `tests/fic/daemon/LogRecordsReaderTests.cpp`
-- `fic/README.md`, `docs/architecture-diagrams.md`
+- `fic/src/resources/lang/ru.lang`
+- `fic/src/resources/lang/en.lang`
 
 ## Validation
 
-- Полная сборка `/tmp/fic-log-cursor-build`: passed.
-- Targeted `log_records_reader_tests`, `ipc_protocol_validation_tests`,
-  `module_ui_static_checks`: 3/3 passed.
-- Полный CTest вне sandbox от UID 1000: 88/88 выполненных passed;
-  root-only `command_hash_batch_tests` штатно skipped.
+- `path_layout_static_checks`, `module_ui_static_checks`,
+  `identity_policy_hierarchy_tests`: 3/3 passed.
 - `git diff --check`: passed.
 
 ## Remaining

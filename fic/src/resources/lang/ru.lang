@@ -114,7 +114,7 @@
 [module:IDENTITY_ACCESS][policy:enable_authentication_lockout]=Включение блокировки при неудачных попытках аутентификации
 [module:IDENTITY_ACCESS][policy:enable_authentication_lockout][description]=Подключает механизм блокировки PAM через native-интеграцию платформы и повторно проверяет реальный effective PAM stack. Не задаёт параметры порога, периода подсчёта или времени блокировки.
 [module:IDENTITY_ACCESS][policy:enable_password_history]=Включение истории паролей
-[module:IDENTITY_ACCESS][policy:enable_password_history][description]=Подключает механизм истории паролей PAM через native-интеграцию платформы и повторно проверяет реальный effective PAM stack. Не задаёт глубину истории и применение к root.
+[module:IDENTITY_ACCESS][policy:enable_password_history][description]=Подключает механизм истории паролей PAM через native-интеграцию платформы и повторно проверяет реальный effective PAM stack. Не задаёт глубину истории и применение к root. Особенность `pam_pwhistory`: при попытке смены пароля текущий пароль добавляется в историю до проверки нового пароля. Поэтому даже отклонённая попытка использования ранее применявшегося пароля может сдвинуть историю и удалить из неё самый старый сохранённый пароль. В результате такой пароль может стать доступен для повторного использования раньше, чем следует из настроенной глубины истории.
 [module:IDENTITY_ACCESS][policy:enable_password_quality]=Включение проверки сложности пароля
 [module:IDENTITY_ACCESS][policy:enable_password_quality][description]=Подключает выбранный платформой механизм проверки сложности пароля и повторно проверяет реальный effective PAM stack. Не задаёт числовые и семантические параметры проверки.
 [module:IDENTITY_ACCESS][submodule:PASSWORD_AGING]=Срок действия паролей
