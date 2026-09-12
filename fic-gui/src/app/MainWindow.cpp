@@ -4,6 +4,10 @@
 
 #include <algorithm>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QStatusBar>
+#include <QVBoxLayout>
+#include <QWidget>
 
 #include "features/policies/pages/ModulePageFactory.h"
 #include "features/policies/services/PolicyService.h"
@@ -14,6 +18,7 @@ MainWindow::MainWindow(QWidget* parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    ui->statusbar->hide();
     addModules();
 }
 
@@ -24,17 +29,13 @@ MainWindow::~MainWindow()
 
 void MainWindow::addModules()
 {
-    while (ui->tab_modules->count() > 0) {
-        QWidget* page = ui->tab_modules->widget(0);
-        ui->tab_modules->removeTab(0);
-        delete page;
-    }
+    clearModules();
 
     PolicyService service;
     std::vector<ModuleDescriptor> modules;
     QString error;
     if (!service.loadModules(modules, error)) {
-        QMessageBox::warning(this, "FIC daemon", error);
+        showRefreshFallback(error);
         return;
     }
 
@@ -52,10 +53,7 @@ void MainWindow::addModules()
     for (const ModuleDescriptor& module : modules) {
         std::vector<PolicyDescriptor> policies;
         if (!service.loadPolicies(module.name, policies, error)) {
-            QMessageBox::warning(
-                this,
-                "FIC daemon",
-                QString::fromStdString(module.name) + ": " + error);
+            showRefreshFallback(QString::fromStdString(module.name) + ": " + error);
             return;
         }
         QWidget* page = factory.create(module, policies, ui->tab_modules);
@@ -68,4 +66,50 @@ void MainWindow::addModules()
             QLocalizationManager::getLang(
                 QString::fromStdString("[module:" + module.name + "]")));
     }
+
+    showModules();
+}
+
+void MainWindow::clearModules()
+{
+    while (ui->tab_modules->count() > 0) {
+        QWidget* page = ui->tab_modules->widget(0);
+        ui->tab_modules->removeTab(0);
+        delete page;
+    }
+}
+
+void MainWindow::showModules()
+{
+    if (refreshFallback_ != nullptr) {
+        refreshFallback_->hide();
+    }
+    if (refreshButton_ != nullptr) {
+        refreshButton_->setToolTip({});
+    }
+    ui->tab_modules->show();
+    ui->statusbar->hide();
+}
+
+void MainWindow::showRefreshFallback(const QString& error)
+{
+    if (refreshFallback_ == nullptr) {
+        refreshFallback_ = new QWidget(ui->centralwidget);
+        auto* layout = new QVBoxLayout(refreshFallback_);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->addStretch();
+
+        refreshButton_ = new QPushButton("Обновить", refreshFallback_);
+        connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::addModules);
+        layout->addWidget(refreshButton_, 0, Qt::AlignCenter);
+        layout->addStretch();
+
+        ui->verticalLayout->addWidget(refreshFallback_);
+    }
+
+    ui->tab_modules->hide();
+    refreshFallback_->show();
+    refreshButton_->setToolTip(error);
+    refreshButton_->setFocus(Qt::OtherFocusReason);
+    ui->statusbar->hide();
 }

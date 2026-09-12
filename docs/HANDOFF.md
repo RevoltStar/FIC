@@ -2,42 +2,43 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `58ba63d`.
-- Рабочее дерево: изменены `.github/workflows/ci.yml` и этот `docs/HANDOFF.md`.
+- Ветка `main`, HEAD `2797d64`.
+- Рабочее дерево: изменены `fic-gui/src/app/MainWindow.cpp`,
+  `fic-gui/src/app/MainWindow.h` и этот `docs/HANDOFF.md`.
 
 ## Current task
 
-- Диагностика GitHub Actions run `34692641976` и исправление падения CI.
+- Вместо пустого окна `fic-gui` при недоступном policy daemon показывать
+  центрированную кнопку `Обновить`, которая повторяет загрузку модулей.
 
 ## Accepted architecture / invariants
 
-- `fic-session-agent` legitimately requires `libxfconf-0` development headers for
-  `fic-xfconf-inspect`; CI must install the matching Ubuntu build dependency
-  rather than weakening CMake/package requirements.
+- GUI не запускает daemon сам и не меняет IPC contract.
+- `PolicyService` остаётся тонким клиентом daemon API; fallback state живёт
+  локально в `MainWindow`.
 
 ## Completed
 
-- Причина падения: jobs `build-and-test`, `compiler-warnings`, `sanitizers`
-  failed during CMake configure because `pkg_check_modules(... libxfconf-0)`
-  could not find `libxfconf-0`.
-- Added `libxfconf-0-dev` to all three Ubuntu 24.04 CI dependency install lists
-  in `.github/workflows/ci.yml`.
+- `MainWindow::addModules()` теперь очищает текущие tabs, а при ошибке
+  `module_list` или `policy_list` показывает fallback-widget вместо пустого
+  `QTabWidget`.
+- Кнопка `Обновить` вызывает тот же `MainWindow::addModules()` retry path.
+- `statusbar` скрыт, чтобы не оставлять пустую полосу снизу; текст последней
+  ошибки доступен как tooltip кнопки `Обновить`.
 
 ## Changed areas
 
-- `.github/workflows/ci.yml`
+- `fic-gui/src/app/MainWindow.cpp`
+- `fic-gui/src/app/MainWindow.h`
 - `docs/HANDOFF.md`
 
 ## Validation
 
-- `gh run view 34692641976 --repo RevoltStar/FIC --log-failed` confirmed the
-  configure failure on missing `libxfconf-0`.
-- `apt-cache policy libxfconf-0-dev` confirmed the package name is known to the
-  local apt metadata.
+- `cmake --build build-xi-check --target fic-gui -j2` passed after the final
+  `statusbar` hiding change.
 - `git diff --check` passed.
-- YAML parse via Ruby was not available locally (`ruby: command not found`).
 
 ## Remaining
 
-- GitHub Actions was not re-run from this workspace.
-- No local full configure/build/CTest was run for this CI-only dependency fix.
+- GUI runtime manually with daemon stopped was not launched in this workspace.
+- No automated GUI interaction test was added.
