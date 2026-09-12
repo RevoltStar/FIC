@@ -82,10 +82,9 @@
 
 ## Environment
 
-- Build окружению нужны systemd stubs: /tmp/fic-systemd-stubs 
-  (systemd/sd-daemon.h, systemd/sd-login.h, libsystemd.pc) и 
-  PKG_CONFIG_PATH=/tmp/fic-systemd-stubs при configure; /tmp очищается 
-  между сессиями — пересоздать при необходимости.
+- `libsystemd-dev` установлен; configure использует системные pkg-config
+  пути libsystemd. Никаких stub/fake `libsystemd.pc` не требуется —
+  `/tmp/fic-systemd-stubs` удалён и не должен пересоздаваться.
 
 ## Remaining
 
