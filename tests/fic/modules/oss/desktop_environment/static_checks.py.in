@@ -278,15 +278,36 @@ for forbidden in ('"pid"', '"desktop"', '"policy"', '"value"'):
 assert "std::thread readinessNotifier" in agent
 assert "controlled_desktop_environments.value=[]" in config
 assert "absence_of_uncontrolled_desktop_environments.status=DISABLE" in config
+screenlock_descriptions = {
+    ru_lang: (
+        "Задаёт целевой таймаут автоматической блокировки экрана N минут и приводит "
+        "необходимые настройки блокировки поддерживаемого графического окружения в "
+        "согласованное состояние. Политика устанавливает точное значение N; фактическая "
+        "блокировка может быть отложена штатными механизмами inhibition графического окружения."
+    ),
+    en_lang: (
+        "Sets the target automatic screen-lock timeout to N minutes and reconciles the "
+        "required lock settings of supported desktop environments. The policy enforces "
+        "the exact configured value N; actual locking may be delayed by normal "
+        "desktop-environment inhibition mechanisms."
+    ),
+}
+for localization, expected in screenlock_descriptions.items():
+    description = next(
+        line for line in localization.splitlines()
+        if line.startswith("[module:OSS][policy:screenlock_timeout][description]=")
+    )
+    assert description.endswith("=" + expected)
 for localization in (ru_lang, en_lang):
-    for policy in ("screenlock_timeout", "disable_kde_lock_screen_media_controls"):
-        description = next(
-            line for line in localization.splitlines()
-            if line.startswith(f"[module:OSS][policy:{policy}][description]=")
+    description = next(
+        line for line in localization.splitlines()
+        if line.startswith(
+            "[module:OSS][policy:disable_kde_lock_screen_media_controls][description]="
         )
-        assert "controlled" in description.lower() or "контролируем" in description.lower()
-        assert "cannot be identified" in description.lower() or "не удалось определить" in description.lower()
-        assert "absence_of_uncontrolled" not in description
+    )
+    assert "controlled" in description.lower() or "контролируем" in description.lower()
+    assert "cannot be identified" in description.lower() or "не удалось определить" in description.lower()
+    assert "absence_of_uncontrolled" not in description
 for profile in (root / "fic/src/platform/profiles").glob("*.cpp"):
     assert "controlled_desktop_environments" not in profile.read_text()
 print("desktop environment architecture static checks: OK")
