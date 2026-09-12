@@ -287,7 +287,10 @@ bool KdeScreenLockerRuntimeContextResolver::resolve(
         error = "KDE session topology is unknown for UID " +
             std::to_string(session.uid) +
             "; uniqueness of the KScreenLocker owner cannot be proven";
-        if (!sameUidKdeTopology.unknownSessionId.empty()) {
+        if (!sameUidKdeTopology.targetPresent) {
+            error += " (target session " + session.id +
+                " is absent from the current inventory)";
+        } else if (!sameUidKdeTopology.unknownSessionId.empty()) {
             error += " (session " + sameUidKdeTopology.unknownSessionId +
                 " could not be classified";
             if (!sameUidKdeTopology.unknownClassificationError.empty()) {

@@ -53,6 +53,20 @@
   ScreenlockTimeoutGlobalTests (противоречивые desktop/context объекты,
   полная DE-матрица через dynamic_cast); static check kindFromName-off в
   factory. Negative control выполнен для обоих задач.
+- Exact-target fix в determineKdeSessionTopology: Unique только при
+  присутствии exact target (uid + session.id), классифицированного KDE;
+  precedence: !inventoryComplete -> Unknown; target absent -> Unknown;
+  target не KDE -> Unknown; kdeSessionCount>1 -> Ambiguous; 
+  unknownSessionCount>0 -> Unknown; иначе Unique. Target missing + 
+  несколько других KDE same UID = Unknown (не Ambiguous).
+- KdeSessionTopologyInfo: diagnostics-only поля targetPresent и
+  targetClassifiedKde; resolver Unknown-диагностика различает absent 
+  target и unclassified соседа. sameUidKdeTopology по-прежнему в 
+  ClassifiedGraphicalSession (перенос — отдельная задача).
+- Regression: testKdeSessionTopologyTargetPresence (A-E) + 
+  testResolverDiagnosticForMissingTarget; negative control подтверждён 
+  (count-only семантика -> "replacement same-UID KDE session masqueraded
+  as the target").
 
 ## Validation
 
@@ -65,6 +79,13 @@
 - Negative control: возврат count-only семантики в helper → оба 
   KDE+Unknown regression упали; код восстановлен, тесты зелёные.
 - `git diff --check` — чисто; `sameUidKdeSessionCount` в проде не остался.
+
+## Environment
+
+- Build окружению нужны systemd stubs: /tmp/fic-systemd-stubs 
+  (systemd/sd-daemon.h, systemd/sd-login.h, libsystemd.pc) и 
+  PKG_CONFIG_PATH=/tmp/fic-systemd-stubs при configure; /tmp очищается 
+  между сессиями — пересоздать при необходимости.
 
 ## Remaining
 

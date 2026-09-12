@@ -271,10 +271,12 @@ void testResolverFailures() {
 
     // Unknown topology обязан fail closed с диагностикой, отличимой от
     // доказанной multiple-KDE ambiguity, и с деталями проблемной сессии.
+    // Target присутствует; Unknown — same-UID сосед.
     FakeBus unknownBus;
     auto unknownResolver = resolver(unknownBus, {});
     KdeSessionTopologyInfo unknownTopology;
     unknownTopology.state = KdeSessionTopology::Unknown;
+    unknownTopology.targetPresent = true;
     unknownTopology.unknownSessionId = "9";
     unknownTopology.unknownClassificationError = "agent query failed";
     require(!unknownResolver.resolve(
@@ -380,6 +382,87 @@ void testKdeSessionTopologyComputationPart2() {
     }
 }
 
+void testKdeSessionTopologyTargetPresence() {
+    // A. Ключевой regression: target заменён другой KDE session того же UID.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto other =
+            topologySession(1000, "2", DesktopEnvironmentKind::Kde);
+        const auto info =
+            determineKdeSessionTopology(target, {other}, true);
+        require(info.state == KdeSessionTopology::Unknown &&
+                    !info.targetPresent,
+                "replacement same-UID KDE session masqueraded as the target");
+    }
+    // B. Exact target присутствует — happy path сохранён.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto info = determineKdeSessionTopology(target, {target}, true);
+        require(info.state == KdeSessionTopology::Unique &&
+                    info.targetPresent && info.targetClassifiedKde,
+                "exact target presence broke the Unique happy path");
+    }
+    // C. Exact target + вторая KDE того же UID — Ambiguous.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto second =
+            topologySession(1000, "2", DesktopEnvironmentKind::Kde);
+        const auto info =
+            determineKdeSessionTopology(target, {target, second}, true);
+        require(info.state == KdeSessionTopology::Ambiguous,
+                "target plus second KDE was not Ambiguous");
+    }
+    // D. Target отсутствует, две другие KDE того же UID — Unknown,
+    // а не Ambiguous: reconciliation target больше не доказан.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto other1 =
+            topologySession(1000, "2", DesktopEnvironmentKind::Kde);
+        const auto other2 =
+            topologySession(1000, "3", DesktopEnvironmentKind::Kde);
+        const auto info =
+            determineKdeSessionTopology(target, {other1, other2}, true);
+        require(info.state == KdeSessionTopology::Unknown,
+                "missing target with multiple other KDE sessions was "
+                "treated as Ambiguous");
+    }
+    // E. Exact target присутствует, но больше не классифицирован как KDE.
+    {
+        const auto target =
+            topologySession(1000, "1", DesktopEnvironmentKind::Kde);
+        const auto degenerated = topologySession(
+            1000, "1", DesktopEnvironmentKind::Unknown, "agent query failed");
+        const auto kdeNeighbour =
+            topologySession(1000, "2", DesktopEnvironmentKind::Kde);
+        const auto info = determineKdeSessionTopology(
+            target, {degenerated, kdeNeighbour}, true);
+        require(info.state == KdeSessionTopology::Unknown &&
+                    info.targetPresent && !info.targetClassifiedKde,
+                "declassified target plus another KDE session was accepted");
+    }
+}
+
+void testResolverDiagnosticForMissingTarget() {
+    FakeBus bus;
+    auto target = resolver(bus, {});
+    KdeSessionTopologyInfo missing;
+    missing.state = KdeSessionTopology::Unknown;
+    missing.kdeSessionCount = 1;
+    missing.targetPresent = false;
+    KdeScreenLockerRuntimeContext captured;
+    std::string error;
+    require(!target.resolve(session(), sessionContext(), missing,
+                captured, error) &&
+                bus.calls == 0 &&
+                error.find("target session 7 is absent from the current "
+                           "inventory") != std::string::npos,
+            "missing-target topology did not produce a distinct diagnostic");
+}
+
 void testKdeBackendFailsClosedOnUnknownTopology() {
     FakeBus bus;
     auto runtimeResolver =
@@ -387,6 +470,7 @@ void testKdeBackendFailsClosedOnUnknownTopology() {
             resolver(bus, environment({{"HOME", "/home/user"}})));
     KdeSessionTopologyInfo unknown;
     unknown.state = KdeSessionTopology::Unknown;
+    unknown.targetPresent = true;
     unknown.unknownSessionId = "9";
     unknown.unknownClassificationError = "agent query failed";
     KdeBackend backend(session(), sessionContext(), unknown,
@@ -561,6 +645,8 @@ int main() {
     testResolverFailures();
     testKdeSessionTopologyComputation();
     testKdeSessionTopologyComputationPart2();
+    testKdeSessionTopologyTargetPresence();
+    testResolverDiagnosticForMissingTarget();
     testKdeBackendFailsClosedOnUnknownTopology();
     testEveryAllowlistedVariablePreservesPresence();
     testSessionExecutorOverridesAreConstrained();

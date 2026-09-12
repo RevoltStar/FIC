@@ -12,6 +12,13 @@ KdeSessionTopologyInfo determineKdeSessionTopology(
     const auto uid = target.session.uid;
     for (const ClassifiedGraphicalSession& candidate : sessions) {
         if (candidate.session.uid != uid) continue;
+        // Exact target identity: uid + session.id. Совпадение только по
+        // UID недостаточно: replacement session того же UID — не target.
+        if (candidate.session.id == target.session.id) {
+            info.targetPresent = true;
+            if (candidate.desktop == DesktopEnvironmentKind::Kde)
+                info.targetClassifiedKde = true;
+        }
         if (candidate.desktop == DesktopEnvironmentKind::Kde) {
             ++info.kdeSessionCount;
         } else if (!candidate.classified()) {
@@ -25,9 +32,15 @@ KdeSessionTopologyInfo determineKdeSessionTopology(
         // влияет на доказанность unique KDE topology.
     }
 
-    if (info.kdeSessionCount > 1) {
+    // Precedence: сначала доказывается сама target (present + KDE),
+    // только потом same-UID topology. Несколько других KDE сессий при
+    // отсутствии target — Unknown, а не Ambiguous: reconciliation target
+    // как таковой больше не доказан.
+    if (!info.targetClassifiedKde) {
+        info.state = KdeSessionTopology::Unknown;
+    } else if (info.kdeSessionCount > 1) {
         info.state = KdeSessionTopology::Ambiguous;
-    } else if (info.unknownSessionCount > 0 || info.kdeSessionCount == 0) {
+    } else if (info.unknownSessionCount > 0) {
         info.state = KdeSessionTopology::Unknown;
     } else {
         info.state = KdeSessionTopology::Unique;
