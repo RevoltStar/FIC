@@ -311,6 +311,17 @@ target_include_directories(kde_runtime_context_tests PRIVATE
 target_link_libraries(kde_runtime_context_tests PRIVATE fic-core)
 add_test(NAME kde_runtime_context_tests COMMAND kde_runtime_context_tests)
 
+add_executable(kde_media_controls_tests
+    fic/modules/oss/desktop_environment/KdeMediaControlsReconcilerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+)
+target_include_directories(kde_media_controls_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(kde_media_controls_tests PRIVATE fic-policy fic-core)
+add_test(NAME kde_media_controls_tests COMMAND kde_media_controls_tests)
+
 add_executable(session_setting_reconciler_tests
     fic/modules/oss/desktop_environment/SessionSettingReconcilerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp

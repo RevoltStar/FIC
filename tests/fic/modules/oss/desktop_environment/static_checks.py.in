@@ -26,6 +26,7 @@ session_executor = (root / "fic/src/session/SessionCommandExecutor.cpp").read_te
 screenlock = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.cpp").read_text()
 screenlock_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h").read_text()
 media_policy = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_disable_kde_lock_screen_media_controls.cpp").read_text()
+media_policy_header = (root / "fic/src/modules/oss/desktop_environment/policies/OSS_disable_kde_lock_screen_media_controls.h").read_text()
 gnome_handler_header = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
 ru_lang = (root / "fic/src/resources/lang/ru.lang").read_text()
 en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
@@ -156,11 +157,19 @@ assert "runtimeContext_->uniqueBusOwner" in kde_backend
 assert "runtimeContext_->kconfigEnvironment" in kde_backend
 assert "executeWithKdeConfigEnvironment" in kde_backend
 assert '"PATH", "/usr/local/bin:/usr/bin:/bin"' in session_executor
-assert "showMediaControls" in media_policy
+assert "showMediaControls" in media_policy_header
 assert "EnforcementMode::SessionOnly" in media_policy
 assert "SessionReconcileContext& context" in media_policy
 assert "determineKdeSessionTopology" in media_policy
-assert "backend.validateRuntimeContext" in media_policy
+# Media-controls reconciliation protocol: policy делегирует в общий
+# KDE-specific helper; write conditional, configure unconditional.
+assert "kde_media_controls::reconcileMediaControls" in media_policy
+assert "backend.validateRuntimeContext" in media_policy_header
+configure_position = media_policy_header.index("backend.callDbusMethod")
+assert media_policy_header.index("if (!matches &&") < configure_position
+assert "if (!matches) {" not in media_policy_header[:configure_position]
+assert '"configure"' in media_policy_header
+assert "failed to reload KDE lock-screen media-control settings" in media_policy_header
 fic_source = "\n".join(
     path.read_text(errors="ignore")
     for path in (root / "fic").rglob("*") if path.is_file()
