@@ -1,4 +1,5 @@
 #include "modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.h"
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 #include "modules/oss/desktop_environment/policies/OSS_absence_of_uncontrolled_desktop_environments.h"
 #include "policy/registry/PolicyRegistry.h"
 
@@ -55,6 +56,9 @@ public:
     int reconciled = 0;
     std::vector<std::string> operations;
     std::vector<KdeSessionTopology> kdeTopologies;
+    std::vector<std::string> targetIds;
+    std::vector<std::size_t> snapshotSizes;
+    std::vector<bool> inventoryCompleteFlags;
 protected:
     bool prepare(std::string& error) override {
         error = prepareOk ? "" : "session preparation failure";
@@ -62,10 +66,15 @@ protected:
     }
     bool relevantTo(DesktopEnvironmentKind) const override { return true; }
     EnforcementMode modeFor(DesktopEnvironmentKind) const override { return mode; }
-    bool reconcileControlledSession(const ClassifiedGraphicalSession& session,
+    bool reconcileControlledSession(const SessionReconcileContext& context,
                                     std::string& error) override {
         ++reconciled; operations.push_back("runtime");
-        kdeTopologies.push_back(session.sameUidKdeTopology.state);
+        kdeTopologies.push_back(determineKdeSessionTopology(
+            context.target, context.sessions,
+            context.inventoryComplete).state);
+        targetIds.push_back(context.target.session.id);
+        snapshotSizes.push_back(context.sessions.size());
+        inventoryCompleteFlags.push_back(context.inventoryComplete);
         if (!reconcileOk) error = "session failure"; return reconcileOk;
     }
 };
@@ -81,6 +90,13 @@ ClassifiedGraphicalSession session(DesktopEnvironmentKind desktop) {
 PolicyGlobalEnforcementResult globalResult(bool verified) {
     return {true, verified, {"backend"},
             verified ? "" : "backend failure"};
+}
+
+SessionReconcileContext contextFor(
+    const ClassifiedGraphicalSession& target,
+    const std::vector<ClassifiedGraphicalSession>& snapshot,
+    bool inventoryComplete) {
+    return {target, snapshot, inventoryComplete};
 }
 
 void initializeRuntime() {
@@ -126,7 +142,9 @@ int main() {
     require(ignoredUnknown.apply() && ignoredUnknown.reconciled == 0,
             "unclassifiable session failed an ordinary policy apply");
     const SessionReconcileResult unknownResult =
-        ignoredUnknown.reconcileSession(unclassified, globalResult(true));
+        ignoredUnknown.reconcileSession(
+            contextFor(unclassified, inventory->value, true),
+            globalResult(true));
     require(unknownResult.status == SessionReconcileStatus::NotApplicable &&
             ignoredUnknown.reconciled == 0,
             "unclassifiable session failed targeted ordinary reconciliation");
@@ -249,6 +267,54 @@ int main() {
                 "known non-KDE session masked multiple KDE sessions");
     }
 
+    // Targeted session_ready path: тот же reconciliation контракт —
+    // context.target + snapshot + inventoryComplete, без mutation target.
+    {
+        scope.value = {DesktopEnvironmentKind::Kde};
+        auto queued = session(DesktopEnvironmentKind::Kde);
+        std::vector<ClassifiedGraphicalSession> current = {queued};
+
+        TestPolicy targetedUnique(scope, inventory);
+        require(targetedUnique.reconcileSession(
+                        contextFor(queued, current, true),
+                        globalResult(true)).status ==
+                    SessionReconcileStatus::SessionOnlyConverged &&
+                targetedUnique.kdeTopologies ==
+                    std::vector<KdeSessionTopology>{
+                        KdeSessionTopology::Unique} &&
+                targetedUnique.targetIds == std::vector<std::string>{"7"} &&
+                targetedUnique.snapshotSizes == std::vector<std::size_t>{1} &&
+                targetedUnique.inventoryCompleteFlags ==
+                    std::vector<bool>{true},
+            "targeted reconciliation did not receive the real snapshot");
+
+        // inventoryComplete=false доходит как есть и fail closed в Unknown,
+        // а не в default/fake topology.
+        TestPolicy targetedIncomplete(scope, inventory);
+        require(targetedIncomplete.reconcileSession(
+                        contextFor(queued, current, false),
+                        globalResult(true)).status ==
+                    SessionReconcileStatus::SessionOnlyConverged &&
+                targetedIncomplete.kdeTopologies ==
+                    std::vector<KdeSessionTopology>{
+                        KdeSessionTopology::Unknown},
+            "inventoryComplete=false did not fail closed on targeted path");
+
+        // Replacement same-UID KDE session не маскирует exact target.
+        auto replacement = session(DesktopEnvironmentKind::Kde);
+        replacement.session.id = "8";
+        std::vector<ClassifiedGraphicalSession> replaced{replacement};
+        TestPolicy targetedReplacement(scope, inventory);
+        require(targetedReplacement.reconcileSession(
+                        contextFor(queued, replaced, true),
+                        globalResult(true)).status ==
+                    SessionReconcileStatus::SessionOnlyConverged &&
+                targetedReplacement.kdeTopologies ==
+                    std::vector<KdeSessionTopology>{
+                        KdeSessionTopology::Unknown},
+            "replacement same-UID KDE session masqueraded as the target");
+    }
+
     scope.value = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Kde};
     inventory->value = {session(DesktopEnvironmentKind::Gnome),
                         session(DesktopEnvironmentKind::Kde)};
@@ -266,7 +332,9 @@ int main() {
     TestPolicy targetedGlobal(scope, inventory);
     targetedGlobal.mode = EnforcementMode::MandatoryGlobal;
     const SessionReconcileResult targetedGlobalResult =
-        targetedGlobal.reconcileSession(graphical, globalResult(true));
+        targetedGlobal.reconcileSession(
+            contextFor(graphical, inventory->value, true),
+            globalResult(true));
     require(targetedGlobalResult.status ==
                 SessionReconcileStatus::MandatoryGlobalConverged,
             "targeted MandatoryGlobal reconciliation failed");
@@ -276,7 +344,9 @@ int main() {
     TestPolicy failedGlobal(scope, inventory);
     failedGlobal.mode = EnforcementMode::MandatoryGlobal;
     const SessionReconcileResult failedGlobalResult =
-        failedGlobal.reconcileSession(graphical, globalResult(false));
+        failedGlobal.reconcileSession(
+            contextFor(graphical, inventory->value, true),
+            globalResult(false));
     require(failedGlobalResult.status ==
                 SessionReconcileStatus::GlobalEnforcementFailed &&
                 failedGlobalResult.diagnostic == "backend failure" &&
@@ -287,7 +357,8 @@ int main() {
     targetedGlobalWarning.mode = EnforcementMode::MandatoryGlobal;
     targetedGlobalWarning.reconcileOk = false;
     require(targetedGlobalWarning.reconcileSession(
-                graphical, globalResult(true)).status ==
+                contextFor(graphical, inventory->value, true),
+                globalResult(true)).status ==
                 SessionReconcileStatus::MandatoryGlobalRuntimeWarning,
             "verified global state did not preserve authoritative success");
 
@@ -295,28 +366,32 @@ int main() {
     targetedPrepareWarning.mode = EnforcementMode::MandatoryGlobal;
     targetedPrepareWarning.prepareOk = false;
     require(targetedPrepareWarning.reconcileSession(
-                graphical, globalResult(true)).status ==
+                contextFor(graphical, inventory->value, true),
+                globalResult(true)).status ==
                 SessionReconcileStatus::MandatoryGlobalRuntimeWarning,
             "session preparation failure invalidated verified global state");
 
     TestPolicy targetedSessionFailure(scope, inventory);
     targetedSessionFailure.reconcileOk = false;
     require(targetedSessionFailure.reconcileSession(
-                graphical, globalResult(false)).status ==
+                contextFor(graphical, inventory->value, true),
+                globalResult(false)).status ==
                 SessionReconcileStatus::SessionOnlyFailed,
             "targeted SessionOnly failure was accepted");
 
     TestPolicy targetedUnsupported(scope, inventory);
     targetedUnsupported.mode = EnforcementMode::Unsupported;
     require(targetedUnsupported.reconcileSession(
-                graphical, globalResult(false)).status ==
+                contextFor(graphical, inventory->value, true),
+                globalResult(false)).status ==
                 SessionReconcileStatus::Unsupported,
             "targeted unsupported desktop was accepted");
 
     scope.value = {DesktopEnvironmentKind::Kde};
     TestPolicy targetedNotApplicable(scope, inventory);
     require(targetedNotApplicable.reconcileSession(
-                graphical, globalResult(false)).status ==
+                contextFor(graphical, inventory->value, true),
+                globalResult(false)).status ==
                 SessionReconcileStatus::NotApplicable &&
                 targetedNotApplicable.operations.empty(),
             "targeted NotApplicable policy changed state");

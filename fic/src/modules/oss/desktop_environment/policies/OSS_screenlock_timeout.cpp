@@ -105,14 +105,14 @@ EnforcementMode OSS_screenlock_timeout::modeFor(
 }
 
 bool OSS_screenlock_timeout::reconcileControlledSession(
-    const ClassifiedGraphicalSession& session,
+    const SessionReconcileContext& context,
     std::string& error)
 {
     std::unique_ptr<ScreenLockTimeoutHandler> handler =
-        ScreenLockTimeoutHandlerFactory::create(session);
+        ScreenLockTimeoutHandlerFactory::create(context);
     if (!handler) {
         error = std::string("screenlock_timeout is not supported for desktop ") +
-            DesktopEnvironmentBackend::kindName(session.desktop);
+            DesktopEnvironmentBackend::kindName(context.target.desktop);
         return false;
     }
     return handler->apply(timeoutMinutes_, error);

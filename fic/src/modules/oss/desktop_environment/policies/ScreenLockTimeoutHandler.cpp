@@ -8,22 +8,25 @@
 #include "modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.h"
 
 std::unique_ptr<ScreenLockTimeoutHandler> ScreenLockTimeoutHandlerFactory::create(
-    const ClassifiedGraphicalSession& session
+    const SessionReconcileContext& context
 )
 {
-    switch (session.desktop) {
+    switch (context.target.desktop) {
     case DesktopEnvironmentKind::Fly:
         return std::make_unique<FlyScreenLockTimeoutHandler>(
-            session.session, session.context);
+            context.target.session, context.target.context);
     case DesktopEnvironmentKind::Gnome:
         return std::make_unique<GnomeScreenLockTimeoutHandler>(
-            session.session, session.context);
-    case DesktopEnvironmentKind::Kde:
+            context.target.session, context.target.context);
+    case DesktopEnvironmentKind::Kde: {
+        const KdeSessionTopologyInfo topology = determineKdeSessionTopology(
+            context.target, context.sessions, context.inventoryComplete);
         return std::make_unique<KdeScreenLockTimeoutHandler>(
-            session.session, session.context, session.sameUidKdeTopology);
+            context.target.session, context.target.context, topology);
+    }
     case DesktopEnvironmentKind::Xfce:
         return std::make_unique<XfceScreenLockTimeoutHandler>(
-            session.session, session.context);
+            context.target.session, context.target.context);
     case DesktopEnvironmentKind::Lxqt:
     case DesktopEnvironmentKind::Unknown:
         return nullptr;

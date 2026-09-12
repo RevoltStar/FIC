@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-struct ClassifiedGraphicalSession;
+struct SessionReconcileContext;
 
 class ScreenLockTimeoutHandler {
 public:
@@ -14,12 +14,14 @@ public:
     virtual bool apply(int timeoutMinutes, std::string& error) const = 0;
 };
 
-// canonical desktop identity — только ClassifiedGraphicalSession.desktop;
-// factory не выполняет повторную классификацию context.desktop.
+// canonical desktop identity — только SessionReconcileContext.target.desktop
+// (т.е. ClassifiedGraphicalSession.desktop); factory не выполняет повторную
+// классификацию context.desktop и не вычисляет topology для non-KDE
+// handlers.
 class ScreenLockTimeoutHandlerFactory {
 public:
     static std::unique_ptr<ScreenLockTimeoutHandler> create(
-        const ClassifiedGraphicalSession& session
+        const SessionReconcileContext& context
     );
 };
 

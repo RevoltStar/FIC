@@ -24,7 +24,7 @@ public:
     void setGlobalEnforcementResults(
         PolicyGlobalEnforcementResults results) override;
     SessionReconcileResult reconcileSession(
-        const ClassifiedGraphicalSession& session,
+        const SessionReconcileContext& context,
         const PolicyGlobalEnforcementResult& globalResult) override;
     std::vector<PolicyCapability> capabilities() const override {
         return {PolicyCapability::SessionAware};
@@ -35,7 +35,7 @@ protected:
     virtual bool relevantTo(DesktopEnvironmentKind desktop) const = 0;
     virtual EnforcementMode modeFor(DesktopEnvironmentKind desktop) const = 0;
     virtual bool reconcileControlledSession(
-        const ClassifiedGraphicalSession& session,
+        const SessionReconcileContext& context,
         std::string& error) = 0;
 
 private:

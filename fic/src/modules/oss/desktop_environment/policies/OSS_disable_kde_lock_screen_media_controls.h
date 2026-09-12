@@ -17,7 +17,7 @@ protected:
     bool relevantTo(DesktopEnvironmentKind desktop) const override;
     EnforcementMode modeFor(DesktopEnvironmentKind desktop) const override;
     bool reconcileControlledSession(
-        const ClassifiedGraphicalSession& session,
+        const SessionReconcileContext& context,
         std::string& error) override;
 };
 

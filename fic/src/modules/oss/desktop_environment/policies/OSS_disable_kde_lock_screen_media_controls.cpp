@@ -1,5 +1,6 @@
 #include "modules/oss/desktop_environment/policies/OSS_disable_kde_lock_screen_media_controls.h"
 
+#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 #include "modules/oss/desktop_environment/backends/BackendCommand.h"
 #include "modules/oss/desktop_environment/backends/KdeBackend.h"
 #include <string>
@@ -50,11 +51,13 @@ EnforcementMode OSS_disable_kde_lock_screen_media_controls::modeFor(
 }
 
 bool OSS_disable_kde_lock_screen_media_controls::reconcileControlledSession(
-    const ClassifiedGraphicalSession& session,
+    const SessionReconcileContext& context,
     std::string& error)
 {
-    KdeBackend backend(session.session, session.context,
-                       session.sameUidKdeTopology);
+    const KdeSessionTopologyInfo topology = determineKdeSessionTopology(
+        context.target, context.sessions, context.inventoryComplete);
+    KdeBackend backend(context.target.session, context.target.context,
+                       topology);
     const auto readState = [&](bool& matches, std::string&) {
         std::string actualValue;
         if (!backend.readConfig(

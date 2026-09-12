@@ -2,7 +2,6 @@
 #define FIC_DESKTOP_ENVIRONMENT_CONTROL_H
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
-#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 #include "session/UserSession.h"
 
 #include <set>
@@ -12,16 +11,32 @@
 
 using DesktopEnvironmentSet = std::set<DesktopEnvironmentKind>;
 
+// Generic classified session содержит только факты о самой сессии.
+// DE-specific derived metadata (например topology того же UID)
+// сознательно отсутствует: она вычисляется DE-specific consumer-ом из
+// SessionReconcileContext в момент reconciliation.
 struct ClassifiedGraphicalSession {
     UserSession session;
     SessionContext context;
     DesktopEnvironmentKind desktop = DesktopEnvironmentKind::Unknown;
-    KdeSessionTopologyInfo sameUidKdeTopology;
     std::string classificationError;
 
     bool classified() const {
         return desktop != DesktopEnvironmentKind::Unknown;
     }
+};
+
+// DE-neutral reconciliation facts: target session + snapshot графической
+// сессии inventory + достоверность snapshot. Не содержит DE-specific
+// derived metadata (topology proof objects и т.п.) — DE-specific consumer
+// вычисляет их из этих фактов в момент reconciliation.
+// Содержит references: использовать синхронно внутри одного
+// reconciliation call; не хранить в long-lived объектах, не передавать
+// асинхронно и не переживать underlying objects.
+struct SessionReconcileContext {
+    const ClassifiedGraphicalSession& target;
+    const std::vector<ClassifiedGraphicalSession>& sessions;
+    bool inventoryComplete = false;
 };
 
 enum class SessionApplicability {
@@ -95,7 +110,7 @@ public:
     virtual void setGlobalEnforcementResults(
         PolicyGlobalEnforcementResults results) = 0;
     virtual SessionReconcileResult reconcileSession(
-        const ClassifiedGraphicalSession& session,
+        const SessionReconcileContext& context,
         const PolicyGlobalEnforcementResult& globalResult) = 0;
 };
 

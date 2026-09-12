@@ -1,7 +1,6 @@
 #include "modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.h"
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
-#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 
 #include <algorithm>
 #include <set>
@@ -52,19 +51,19 @@ void SessionAwareDesktopEnvironmentPolicy::setGlobalEnforcementResults(
 }
 
 SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
-    const ClassifiedGraphicalSession& session,
+    const SessionReconcileContext& context,
     const PolicyGlobalEnforcementResult& globalResult)
 {
     std::string error;
     const SessionApplicability applicability =
-        sessionApplicability(session.desktop, error);
+        sessionApplicability(context.target.desktop, error);
     if (applicability == SessionApplicability::NotApplicable) {
         return {SessionReconcileStatus::NotApplicable, {}};
     }
     if (applicability == SessionApplicability::Unsupported) {
         return {SessionReconcileStatus::Unsupported, std::move(error)};
     }
-    const EnforcementMode mode = modeFor(session.desktop);
+    const EnforcementMode mode = modeFor(context.target.desktop);
     if (mode == EnforcementMode::MandatoryGlobal &&
         (!globalResult.hasRequirement || !globalResult.verified)) {
         return {SessionReconcileStatus::GlobalEnforcementFailed,
@@ -78,7 +77,7 @@ SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
                     : SessionReconcileStatus::SessionOnlyFailed,
                 std::move(error)};
     }
-    if (!reconcileControlledSession(session, error)) {
+    if (!reconcileControlledSession(context, error)) {
         return {mode == EnforcementMode::MandatoryGlobal
                     ? SessionReconcileStatus::MandatoryGlobalRuntimeWarning
                     : SessionReconcileStatus::SessionOnlyFailed,
@@ -158,15 +157,11 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
     }
 
     std::vector<ClassifiedGraphicalSession> sessions;
-    if (!inventory_->currentSessions(sessions, error)) {
+    const bool inventoryComplete = inventory_->currentSessions(sessions, error);
+    if (!inventoryComplete) {
         log("Failed to enumerate graphical sessions: " + error,
             hasSessionOnly ? logLevel::ERROR : logLevel::WARN);
         return hasSessionOnly ? false : success;
-    }
-    for (auto& session : sessions) {
-        if (session.desktop != DesktopEnvironmentKind::Kde) continue;
-        session.sameUidKdeTopology =
-            determineKdeSessionTopology(session, sessions, true);
     }
 
     std::set<DesktopEnvironmentKind> seenSessionOnly;
@@ -203,8 +198,9 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
         if (mode == EnforcementMode::MandatoryGlobal && !globalAuthoritative) {
             continue;
         }
+        const SessionReconcileContext context{session, sessions, true};
         std::string reconcileError;
-        if (!reconcileControlledSession(session, reconcileError)) {
+        if (!reconcileControlledSession(context, reconcileError)) {
             log("Session " + session.session.id + " reconciliation failed: " +
                     reconcileError,
                 globalAuthoritative ? logLevel::WARN : logLevel::ERROR);

@@ -54,7 +54,6 @@
 #include "session/SystemGraphicalSessionInventory.h"
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
-#include "modules/oss/desktop_environment/KdeSessionTopology.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 
@@ -975,10 +974,8 @@ void reconcile_session_ready(
         }));
         return;
     }
-    if (session.desktop == DesktopEnvironmentKind::Kde) {
-        session.sameUidKdeTopology =
-            determineKdeSessionTopology(session, current, inventoryLoaded);
-    }
+    const SessionReconcileContext reconcileContext{
+        session, current, inventoryLoaded};
     const DesktopGlobalReconcileReport globalReport =
         desktopGlobalConfig.reconcile(registry);
     if (!globalReport.successful()) {
@@ -998,7 +995,8 @@ void reconcile_session_ready(
             policy->moduleName, policy->submoduleName, policy->policyName};
         const SessionReconcileResult result =
             sessionAware->reconcileSession(
-                session, globalReport.resultFor(owner, session.desktop));
+                reconcileContext,
+                globalReport.resultFor(owner, session.desktop));
         if (result.status == SessionReconcileStatus::NotApplicable ||
             result.status == SessionReconcileStatus::MandatoryGlobalConverged ||
             result.status == SessionReconcileStatus::SessionOnlyConverged) {
