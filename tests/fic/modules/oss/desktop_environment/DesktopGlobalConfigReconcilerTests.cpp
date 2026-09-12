@@ -103,7 +103,7 @@ public:
     }
     void setGlobalEnforcementResults(PolicyGlobalEnforcementResults) override {}
     SessionReconcileResult reconcileSession(
-        const ClassifiedGraphicalSession&,
+        const SessionReconcileContext&,
         const PolicyGlobalEnforcementResult&) override {
         return {};
     }
@@ -168,7 +168,7 @@ public:
     }
     void setGlobalEnforcementResults(PolicyGlobalEnforcementResults) override {}
     SessionReconcileResult reconcileSession(
-        const ClassifiedGraphicalSession&,
+        const SessionReconcileContext&,
         const PolicyGlobalEnforcementResult&) override { return {}; }
 };
 

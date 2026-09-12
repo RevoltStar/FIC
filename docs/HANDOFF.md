@@ -106,11 +106,6 @@
 ## Remaining
 
 - Коммит не сделан (не запрошен).
-- PRE-EXISTING (не из этой задачи, не исправлялся):
-  `desktop_global_config_reconciler_tests` не компилируется на HEAD
-  (`reconcileSession(...) marked override, but does not override`, tests/
-  .../DesktopGlobalConfigReconcilerTests.cpp:105/170; include-цепочка не
-  затронута XFCE-изменениями) — требует отдельного исправления.
 - Helper line-protocol не поддерживает multi-line string values
   (malformed → fail closed) — для скалярных policy properties некритично.
 - `fic` package имеет только Recommends на fic-session-agent; если XFCE
