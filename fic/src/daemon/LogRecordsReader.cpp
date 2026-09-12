@@ -1,12 +1,18 @@
 #include "daemon/LogRecordsReader.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
 #include <cstdint>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
+#include <list>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <iterator>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
@@ -18,8 +24,8 @@ namespace fic::daemon {
 namespace {
 
 using json = nlohmann::json;
-constexpr int CURSOR_VERSION = 1;
-constexpr std::size_t MAX_CURSOR_BYTES = 64U * 1024U;
+constexpr int CURSOR_VERSION = 2;
+constexpr std::size_t MAX_STORED_CURSORS = 64U;
 
 struct CursorPosition {
     std::uint64_t device = 0;
@@ -27,38 +33,39 @@ struct CursorPosition {
     std::uint64_t offset = 0;
 };
 
-struct OpenLogFile {
+struct CursorState {
+    int version = CURSOR_VERSION;
+    std::string bootId;
+    std::map<std::string, CursorPosition> positions;
+};
+
+struct LogFile {
     std::string relativePath;
     std::string category;
     std::filesystem::path absolutePath;
-    CursorPosition identity;
-    int descriptor = -1;
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint64_t size = 0;
+};
 
-    OpenLogFile() = default;
-    OpenLogFile(const OpenLogFile&) = delete;
-    OpenLogFile& operator=(const OpenLogFile&) = delete;
-    OpenLogFile(OpenLogFile&& other) noexcept
-        : relativePath(std::move(other.relativePath)),
-          category(std::move(other.category)),
-          absolutePath(std::move(other.absolutePath)),
-          identity(other.identity), descriptor(other.descriptor) {
-        other.descriptor = -1;
+class ScopedFd {
+public:
+    explicit ScopedFd(int descriptor = -1) : descriptor_(descriptor) {}
+    ~ScopedFd() {
+        if (descriptor_ >= 0) ::close(descriptor_);
     }
-    OpenLogFile& operator=(OpenLogFile&& other) noexcept {
-        if (this != &other) {
-            if (descriptor >= 0) ::close(descriptor);
-            relativePath = std::move(other.relativePath);
-            category = std::move(other.category);
-            absolutePath = std::move(other.absolutePath);
-            identity = other.identity;
-            descriptor = other.descriptor;
-            other.descriptor = -1;
-        }
-        return *this;
+    ScopedFd(const ScopedFd&) = delete;
+    ScopedFd& operator=(const ScopedFd&) = delete;
+
+    int get() const { return descriptor_; }
+    int release() {
+        const int descriptor = descriptor_;
+        descriptor_ = -1;
+        return descriptor;
     }
-    ~OpenLogFile() {
-        if (descriptor >= 0) ::close(descriptor);
-    }
+
+private:
+    int descriptor_;
 };
 
 struct FileCloser {
@@ -67,140 +74,42 @@ struct FileCloser {
     }
 };
 
-std::string base64UrlEncode(const std::string& input) {
-    static constexpr char alphabet[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    std::string output;
-    output.reserve((input.size() * 4U + 2U) / 3U);
-    std::uint32_t accumulator = 0;
-    int bits = 0;
-    for (const unsigned char byte : input) {
-        accumulator = (accumulator << 8U) | byte;
-        bits += 8;
-        while (bits >= 6) {
-            bits -= 6;
-            output.push_back(alphabet[(accumulator >> bits) & 0x3fU]);
-        }
-    }
-    if (bits > 0) {
-        output.push_back(alphabet[(accumulator << (6 - bits)) & 0x3fU]);
-    }
-    return output;
+std::uint64_t mix64(std::uint64_t value) {
+    value ^= value >> 30U;
+    value *= UINT64_C(0xbf58476d1ce4e5b9);
+    value ^= value >> 27U;
+    value *= UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31U);
 }
 
-bool base64UrlDecode(const std::string& input, std::string& output) {
-    if (input.size() > MAX_CURSOR_BYTES || input.size() % 4U == 1U) {
+std::uint64_t cursorNonce(const void* instance) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    return mix64(static_cast<std::uint64_t>(now) ^
+                 (static_cast<std::uint64_t>(::getpid()) << 32U) ^
+                 static_cast<std::uint64_t>(
+                     reinterpret_cast<std::uintptr_t>(instance)));
+}
+
+void appendHex(std::string& output, std::uint64_t value) {
+    static constexpr char digits[] = "0123456789abcdef";
+    for (int shift = 60; shift >= 0; shift -= 4) {
+        output.push_back(digits[(value >> shift) & 0x0fU]);
+    }
+}
+
+bool validCursorToken(const std::string& cursor) {
+    if (cursor.size() != MAX_LOG_CURSOR_BYTES ||
+        cursor[0] != '2' || cursor[1] != '.') {
         return false;
     }
-    auto value = [](unsigned char ch) -> int {
-        if (ch >= 'A' && ch <= 'Z') return ch - 'A';
-        if (ch >= 'a' && ch <= 'z') return ch - 'a' + 26;
-        if (ch >= '0' && ch <= '9') return ch - '0' + 52;
-        if (ch == '-') return 62;
-        if (ch == '_') return 63;
-        return -1;
-    };
-    output.clear();
-    output.reserve(input.size() * 3U / 4U);
-    std::uint32_t accumulator = 0;
-    int bits = 0;
-    for (const unsigned char ch : input) {
-        const int decoded = value(ch);
-        if (decoded < 0) return false;
-        accumulator = (accumulator << 6U) | static_cast<unsigned>(decoded);
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            output.push_back(static_cast<char>((accumulator >> bits) & 0xffU));
-        }
-    }
-    return true;
+    return std::all_of(cursor.begin() + 2, cursor.end(), [](unsigned char ch) {
+        return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+    });
 }
 
-bool safeRelativeLogPath(const std::string& text) {
-    const std::filesystem::path path(text);
-    if (text.empty() || path.is_absolute() || path.extension() != ".txt" ||
-        path.lexically_normal().generic_string() != text) {
-        return false;
-    }
-    for (const auto& component : path) {
-        if (component == ".." || component == ".") return false;
-    }
-    return std::distance(path.begin(), path.end()) == 2;
-}
-
-bool decodeCursor(
-    const std::string& encoded,
-    const std::string& bootId,
-    std::map<std::string, CursorPosition>& positions,
-    std::string& error)
-{
-    positions.clear();
-    if (encoded.empty()) return true;
-    std::string decoded;
-    if (!base64UrlDecode(encoded, decoded)) {
-        error = "invalid log cursor encoding";
-        return false;
-    }
-    try {
-        const json value = json::parse(decoded);
-        if (!value.is_object() || value.value("version", 0) != CURSOR_VERSION ||
-            value.value("boot_id", "") != bootId ||
-            !value.contains("files") || !value["files"].is_array()) {
-            error = "invalid or mismatched log cursor";
-            return false;
-        }
-        for (const auto& file : value["files"]) {
-            if (!file.is_object() || !file.contains("path") ||
-                !file["path"].is_string() || !file.contains("st_dev") ||
-                !file["st_dev"].is_number_unsigned() ||
-                !file.contains("st_ino") ||
-                !file["st_ino"].is_number_unsigned() ||
-                !file.contains("offset") ||
-                !file["offset"].is_number_unsigned()) {
-                error = "invalid log cursor file position";
-                return false;
-            }
-            const std::string path = file["path"].get<std::string>();
-            if (!safeRelativeLogPath(path) ||
-                !positions.emplace(path, CursorPosition{
-                    file["st_dev"].get<std::uint64_t>(),
-                    file["st_ino"].get<std::uint64_t>(),
-                    file["offset"].get<std::uint64_t>()}).second) {
-                error = "invalid log cursor file path";
-                return false;
-            }
-        }
-    } catch (const std::exception&) {
-        error = "invalid log cursor payload";
-        return false;
-    }
-    return true;
-}
-
-std::string encodeCursor(
-    const std::string& bootId,
-    const std::map<std::string, CursorPosition>& positions)
-{
-    json files = json::array();
-    for (const auto& [path, position] : positions) {
-        files.push_back({
-            {"path", path},
-            {"st_dev", position.device},
-            {"st_ino", position.inode},
-            {"offset", position.offset}
-        });
-    }
-    return base64UrlEncode(json{
-        {"version", CURSOR_VERSION},
-        {"boot_id", bootId},
-        {"files", std::move(files)}
-    }.dump());
-}
-
-bool openLogFiles(
+bool enumerateLogFiles(
     const std::filesystem::path& bootDirectory,
-    std::vector<OpenLogFile>& files,
+    std::vector<LogFile>& files,
     json& categories,
     std::string& error)
 {
@@ -212,8 +121,7 @@ bool openLogFiles(
         }
         std::sort(categoryDirectories.begin(), categoryDirectories.end());
         for (const auto& categoryDirectory : categoryDirectories) {
-            const std::string category =
-                categoryDirectory.filename().string();
+            const std::string category = categoryDirectory.filename().string();
             categories.push_back(category);
             std::vector<std::filesystem::path> paths;
             for (const auto& entry : std::filesystem::directory_iterator(
@@ -224,26 +132,14 @@ bool openLogFiles(
             }
             std::sort(paths.begin(), paths.end());
             for (const auto& path : paths) {
-                const int descriptor = ::open(
-                    path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-                if (descriptor < 0) continue;
-                struct stat status {};
-                if (::fstat(descriptor, &status) != 0 ||
-                    !S_ISREG(status.st_mode)) {
-                    ::close(descriptor);
-                    continue;
-                }
-                OpenLogFile file;
-                file.relativePath = std::filesystem::relative(
-                    path, bootDirectory).generic_string();
-                file.category = category;
-                file.absolutePath = path;
-                file.identity = {
-                    static_cast<std::uint64_t>(status.st_dev),
-                    static_cast<std::uint64_t>(status.st_ino),
-                    static_cast<std::uint64_t>(status.st_size)};
-                file.descriptor = descriptor;
-                files.push_back(std::move(file));
+                files.push_back({
+                    std::filesystem::relative(path, bootDirectory).generic_string(),
+                    category,
+                    path,
+                    0,
+                    0,
+                    0
+                });
             }
         }
     } catch (const std::filesystem::filesystem_error& exception) {
@@ -253,10 +149,32 @@ bool openLogFiles(
     return true;
 }
 
-json reloadRequiredResponse(
-    const std::string& bootId,
-    const json& categories)
-{
+bool snapshotLogFile(LogFile& file, std::string& error) {
+    ScopedFd descriptor(::open(
+        file.absolutePath.c_str(),
+        O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+    if (descriptor.get() < 0) {
+        error = "failed to open log file " + file.relativePath + ": " +
+            std::strerror(errno);
+        return false;
+    }
+    struct stat status {};
+    if (::fstat(descriptor.get(), &status) != 0) {
+        error = "failed to stat log file " + file.relativePath + ": " +
+            std::strerror(errno);
+        return false;
+    }
+    if (!S_ISREG(status.st_mode)) {
+        error = "log path is not a regular file: " + file.relativePath;
+        return false;
+    }
+    file.device = static_cast<std::uint64_t>(status.st_dev);
+    file.inode = static_cast<std::uint64_t>(status.st_ino);
+    file.size = static_cast<std::uint64_t>(status.st_size);
+    return true;
+}
+
+json reloadRequiredResponse(const std::string& bootId, const json& categories) {
     return {
         {"ok", true},
         {"message", "log cursor is stale; full reload required"},
@@ -270,7 +188,52 @@ json reloadRequiredResponse(
 
 } // namespace
 
-json readLogRecords(
+struct LogRecordsReader::Impl {
+    struct StoredCursor {
+        CursorState state;
+        std::list<std::string>::iterator age;
+    };
+
+    Impl() : nonce(cursorNonce(this)) {}
+
+    bool load(const std::string& token, CursorState& state) {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto found = cursors.find(token);
+        if (found == cursors.end()) return false;
+        age.splice(age.end(), age, found->second.age);
+        state = found->second.state;
+        return true;
+    }
+
+    std::string store(CursorState state) {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::string token;
+        do {
+            token = "2.";
+            appendHex(token, nonce);
+            appendHex(token, ++counter);
+        } while (cursors.find(token) != cursors.end());
+
+        age.push_back(token);
+        cursors.emplace(token, StoredCursor{std::move(state), std::prev(age.end())});
+        while (cursors.size() > MAX_STORED_CURSORS) {
+            cursors.erase(age.front());
+            age.pop_front();
+        }
+        return token;
+    }
+
+    std::mutex mutex;
+    std::uint64_t nonce;
+    std::uint64_t counter = 0;
+    std::list<std::string> age;
+    std::map<std::string, StoredCursor> cursors;
+};
+
+LogRecordsReader::LogRecordsReader() : impl_(std::make_unique<Impl>()) {}
+LogRecordsReader::~LogRecordsReader() = default;
+
+json LogRecordsReader::read(
     const std::filesystem::path& logDirectory,
     const std::string& bootId,
     const std::string& cursor,
@@ -278,85 +241,137 @@ json readLogRecords(
 {
     json categories = json::array();
     json records = json::array();
-    std::map<std::string, CursorPosition> previous;
-    std::string error;
-    if (!decodeCursor(cursor, bootId, previous, error)) {
-        return fic::ipc::make_error_response(error);
+    CursorState previousState;
+    bool cursorExpired = false;
+    if (!cursor.empty()) {
+        if (!validCursorToken(cursor)) {
+            return fic::ipc::make_error_response("invalid log cursor");
+        }
+        if (!impl_->load(cursor, previousState)) {
+            cursorExpired = true;
+        } else if (previousState.version != CURSOR_VERSION ||
+                   previousState.bootId != bootId) {
+            return fic::ipc::make_error_response(
+                "invalid or mismatched log cursor");
+        }
+    } else {
+        previousState.bootId = bootId;
     }
+
     const std::filesystem::path bootDirectory = logDirectory / bootId;
     if (!std::filesystem::exists(bootDirectory) ||
         !std::filesystem::is_directory(bootDirectory)) {
-        if (!previous.empty()) {
+        if (cursorExpired || !previousState.positions.empty()) {
             return reloadRequiredResponse(bootId, categories);
         }
-        return {{"ok", true}, {"message", "logs loaded"},
-                {"boot_id", bootId}, {"categories", categories},
-                {"records", records}, {"has_more", false},
-                {"reload_required", false},
-                {"next_cursor", encodeCursor(bootId, {})}};
+        return {
+            {"ok", true},
+            {"message", "logs loaded"},
+            {"boot_id", bootId},
+            {"categories", categories},
+            {"records", records},
+            {"has_more", false},
+            {"reload_required", false},
+            {"next_cursor", impl_->store(CursorState{
+                CURSOR_VERSION, bootId, {}})}
+        };
     }
 
-    std::vector<OpenLogFile> files;
-    if (!openLogFiles(bootDirectory, files, categories, error)) {
+    std::vector<LogFile> files;
+    std::string error;
+    if (!enumerateLogFiles(bootDirectory, files, categories, error)) {
         return fic::ipc::make_error_response(error);
     }
-    std::map<std::string, OpenLogFile*> currentFiles;
-    for (auto& file : files) currentFiles[file.relativePath] = &file;
+    if (cursorExpired) {
+        return reloadRequiredResponse(bootId, categories);
+    }
 
-    for (const auto& [path, position] : previous) {
+    std::map<std::string, LogFile*> currentFiles;
+    for (auto& file : files) {
+        if (!snapshotLogFile(file, error)) {
+            return fic::ipc::make_error_response(error);
+        }
+        currentFiles.emplace(file.relativePath, &file);
+    }
+
+    for (const auto& [path, position] : previousState.positions) {
         const auto current = currentFiles.find(path);
         if (current == currentFiles.end() ||
-            current->second->identity.device != position.device ||
-            current->second->identity.inode != position.inode ||
-            current->second->identity.offset < position.offset) {
+            current->second->device != position.device ||
+            current->second->inode != position.inode ||
+            current->second->size < position.offset) {
             return reloadRequiredResponse(bootId, categories);
         }
     }
 
-    std::map<std::string, CursorPosition> next;
+    CursorState nextState;
+    nextState.bootId = bootId;
     for (const auto& file : files) {
-        const auto previousPosition = previous.find(file.relativePath);
-        next[file.relativePath] = {
-            file.identity.device,
-            file.identity.inode,
-            previousPosition == previous.end() ? 0U
-                                               : previousPosition->second.offset};
+        const auto previous = previousState.positions.find(file.relativePath);
+        nextState.positions[file.relativePath] = {
+            file.device,
+            file.inode,
+            previous == previousState.positions.end()
+                ? 0U
+                : previous->second.offset
+        };
     }
 
     std::size_t responseBytes = 0;
     bool hasMore = false;
     for (auto& file : files) {
-        CursorPosition& position = next.at(file.relativePath);
-        if (::lseek(file.descriptor, static_cast<off_t>(position.offset),
+        CursorPosition& position = nextState.positions.at(file.relativePath);
+        ScopedFd descriptor(::open(
+            file.absolutePath.c_str(),
+            O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+        if (descriptor.get() < 0) {
+            return fic::ipc::make_error_response(
+                "failed to open log file " + file.relativePath + ": " +
+                std::strerror(errno));
+        }
+        struct stat status {};
+        if (::fstat(descriptor.get(), &status) != 0) {
+            return fic::ipc::make_error_response(
+                "failed to stat log file " + file.relativePath + ": " +
+                std::strerror(errno));
+        }
+        if (!S_ISREG(status.st_mode)) {
+            return fic::ipc::make_error_response(
+                "log path is not a regular file: " + file.relativePath);
+        }
+        const std::uint64_t device = static_cast<std::uint64_t>(status.st_dev);
+        const std::uint64_t inode = static_cast<std::uint64_t>(status.st_ino);
+        const std::uint64_t size = static_cast<std::uint64_t>(status.st_size);
+        if (device != file.device || inode != file.inode ||
+            size < position.offset) {
+            return reloadRequiredResponse(bootId, categories);
+        }
+        if (::lseek(descriptor.get(), static_cast<off_t>(position.offset),
                     SEEK_SET) < 0) {
             return fic::ipc::make_error_response(
                 "failed to seek log file: " + file.relativePath);
         }
-        const int duplicate = ::dup(file.descriptor);
-        if (duplicate < 0) {
-            return fic::ipc::make_error_response(
-                "failed to read log file: " + file.relativePath);
-        }
-        FILE* raw = ::fdopen(duplicate, "r");
+        const int streamDescriptor = descriptor.release();
+        FILE* raw = ::fdopen(streamDescriptor, "r");
         if (raw == nullptr) {
-            ::close(duplicate);
+            ::close(streamDescriptor);
             return fic::ipc::make_error_response(
                 "failed to read log file: " + file.relativePath);
         }
         std::unique_ptr<FILE, FileCloser> stream(raw);
         char* buffer = nullptr;
         std::size_t capacity = 0;
+        std::uint64_t streamOffset = position.offset;
         while (true) {
             const ssize_t bytes = ::getline(&buffer, &capacity, stream.get());
             if (bytes < 0) break;
-            std::string line(buffer, static_cast<std::size_t>(bytes));
-            if (!line.empty() && line.back() == '\n') line.pop_back();
-            const off_t lineEnd = ::ftello(stream.get());
-            const std::uint64_t nextOffset = lineEnd >= 0
-                ? static_cast<std::uint64_t>(lineEnd)
-                : position.offset + static_cast<std::uint64_t>(bytes);
+            streamOffset += static_cast<std::uint64_t>(bytes);
+            if (bytes == 0 || buffer[bytes - 1] != '\n') {
+                break;
+            }
+            std::string line(buffer, static_cast<std::size_t>(bytes - 1));
             if (line.empty()) {
-                position.offset = nextOffset;
+                position.offset = streamOffset;
                 continue;
             }
             const std::size_t originalBytes = line.size();
@@ -377,9 +392,14 @@ json readLogRecords(
             }
             responseBytes += itemBytes;
             records.push_back(std::move(item));
-            position.offset = nextOffset;
+            position.offset = streamOffset;
         }
+        const bool readFailed = ::ferror(stream.get()) != 0;
         std::free(buffer);
+        if (readFailed) {
+            return fic::ipc::make_error_response(
+                "failed to read log file: " + file.relativePath);
+        }
         if (hasMore) break;
     }
 
@@ -391,7 +411,7 @@ json readLogRecords(
         {"records", std::move(records)},
         {"has_more", hasMore},
         {"reload_required", false},
-        {"next_cursor", encodeCursor(bootId, next)}
+        {"next_cursor", impl_->store(std::move(nextState))}
     };
 }
 

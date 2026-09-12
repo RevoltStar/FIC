@@ -410,6 +410,7 @@ bool valid_boot_id(const std::string& bootId) {
 }
 
 json log_records_json(
+    fic::daemon::LogRecordsReader& reader,
     const std::string& requestedBootId,
     const std::string& cursor,
     int limit)
@@ -430,7 +431,7 @@ json log_records_json(
         return fic::ipc::make_error_response("invalid boot_id");
     }
 
-    return fic::daemon::readLogRecords(
+    return reader.read(
         fic::core::FicRuntimePaths::get().logDir,
         bootId,
         cursor,
@@ -455,7 +456,8 @@ json handle_request(json request,
                     PolicyRegistry& policyRegistry,
                     DesktopGlobalConfigReconciler& desktopGlobalConfig,
                     const fic::platform::PlatformProfile& platform,
-                    const fic::platform::PlatformExecutableResolver& executables) {
+                    const fic::platform::PlatformExecutableResolver& executables,
+                    fic::daemon::LogRecordsReader& logRecordsReader) {
     const std::string command = request.value("command", "");
     const std::string requestedModule = request.value("module", "");
     const std::string module = canonical_module_name(policyRegistry, requestedModule);
@@ -690,6 +692,7 @@ json handle_request(json request,
         }
         if (command == "log_records") {
             return log_records_json(
+                logRecordsReader,
                 request.value("boot_id", ""),
                 request.value("cursor", ""),
                 request.value("limit", fic::daemon::MAX_LOG_RECORDS_PER_PAGE));
@@ -782,7 +785,8 @@ std::string handle_client_packet(
                       PolicyRegistry& policyRegistry,
                       DesktopGlobalConfigReconciler& desktopGlobalConfig,
                       const fic::platform::PlatformProfile& platform,
-                      const fic::platform::PlatformExecutableResolver& executables) {
+                      const fic::platform::PlatformExecutableResolver& executables,
+                      fic::daemon::LogRecordsReader& logRecordsReader) {
     const PeerCredentials peer = get_peer_credentials(clientFd);
     std::string error;
     json request;
@@ -791,7 +795,7 @@ std::string handle_client_packet(
         validate_policy_request_schema(request, error)) {
         response = handle_request(
             request, policyRegistry, desktopGlobalConfig, platform,
-            executables);
+            executables, logRecordsReader);
     } else {
         response = fic::ipc::make_error_response("invalid request: " + error);
     }
@@ -1269,6 +1273,7 @@ int main(int argc, char* argv[]) {
     }
     const int serverFd = socketResult.fileDescriptor;
     fic::ipc::AdminSocketTransport transport(serverFd);
+    fic::daemon::LogRecordsReader logRecordsReader;
 
     (void)::sd_notify(
         0,
@@ -1327,7 +1332,7 @@ int main(int argc, char* argv[]) {
                 [&](int clientFd, const std::string& requestText) {
                     return handle_client_packet(clientFd, requestText,
                         policyRegistry, desktopGlobalConfig, platform,
-                        executables);
+                        executables, logRecordsReader);
                 },
                 transportError)) {
             std::cerr << transportError << std::endl;
