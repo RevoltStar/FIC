@@ -37,6 +37,18 @@
   Error → failure, zero writes. Final typed readback обязателен: success только
   при Present + exact type + exact value.
 - `reconcileEffectiveSetting()`, typed writer, семь XFCE paths, KDE/GNOME/FLY —
+- Helper не имеет libxfconf зависимости (ни build-time, ни runtime): линкуется
+  только через `gio-2.0` (`PkgConfig::SESSION_AGENT_GIO`), NEEDED: libgio/libglib/
+  libgobject-2.0. `libglib2.0-dev` / `glib2-devel` — обязательный build dep в CI
+  и packaging Dockerfiles; runtime GLib-зависимости resolving'ятся из ELF
+  (dpkg-shlibdeps / rpm find-requires).
+
+- Dependency cleanup: `libxfconf-0` убран из CMake (→ `gio-2.0`), CI
+  (`libxfconf-0-dev` → `libglib2.0-dev`), packaging Dockerfiles (deb ×4 →
+  `libglib2.0-dev`, rpm → `glib2-devel`); session agent static checks обновлены.
+  Runtime packaging deps не менялись (ELF-driven). Поведение helper не менялось.
+
+
   не менялись. XFCE остаётся `SessionOnly`.
 
 ## Completed
@@ -56,6 +68,9 @@
 
 ## Changed areas
 
+- `.github/workflows/ci.yml`, `packaging/deb/Dockerfile*`, `packaging/rpm/Dockerfile`
+- `tests/fic-session-agent/static_checks.py`
+
 - `fic-session-agent/src/xfconf-inspect/main.cpp`, `fic-session-agent/CMakeLists.txt` (комментарий)
 - `fic/src/modules/oss/desktop_environment/backends/XfceBackend.{h,cpp}`
 - `fic/src/modules/oss/desktop_environment/policies/XfceScreenLockTimeoutHandler.h`
@@ -73,10 +88,13 @@
   `session_aware_policy_tests`, `desktop_environment_architecture_static_checks`,
   `session_agent_static_checks`, `session_agent_install_layout_tests` — все
   Passed (см. финальный отчёт за full build/CTest).
+- После dependency cleanup: targeted build (`fic-xfconf-inspect`,
+  `fic-session-agent`, `fic`), full build 100% 0 errors, full CTest 88/88
+  passed (1 skipped by design), `readelf -d` helper: NEEDED без libxfconf
+  (только gio/glib/gobject + libc++ runtime), `git diff --check` clean.
 - Live XFCE screensaver session недоступна в этом окружении; live-проверка на
   реальной XFCE сессии остаётся открытой.
 
 ## Remaining
 
-- Прогнать full CTest после завершения full build (см. финальный отчёт).
 - Живая XFCE-валидация на реальной сессии.

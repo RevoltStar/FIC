@@ -25,10 +25,10 @@ require("pkg_check_modules(SESSION_AGENT_LIBSYSTEMD REQUIRED IMPORTED_TARGET lib
         "fic-session-agent does not resolve libsystemd through pkg-config")
 require("PkgConfig::SESSION_AGENT_LIBSYSTEMD" in agent_cmake,
         "fic-session-agent is not linked to the imported libsystemd target")
-require("pkg_check_modules(SESSION_AGENT_LIBXFCONF REQUIRED IMPORTED_TARGET libxfconf-0)" in agent_cmake,
-        "fic-xfconf-inspect does not resolve libxfconf through pkg-config")
-require("PkgConfig::SESSION_AGENT_LIBXFCONF" in agent_cmake,
-        "fic-xfconf-inspect is not linked to the imported libxfconf target")
+require("pkg_check_modules(SESSION_AGENT_GIO REQUIRED IMPORTED_TARGET gio-2.0)" in agent_cmake,
+        "fic-xfconf-inspect does not resolve gio-2.0 through pkg-config")
+require("PkgConfig::SESSION_AGENT_GIO" in agent_cmake,
+        "fic-xfconf-inspect is not linked to the imported gio-2.0 target")
 require("add_executable(fic-xfconf-inspect" in agent_cmake,
         "typed Xfconf inspection helper is missing from the session agent build")
 require('install(TARGETS fic-xfconf-inspect' in agent_cmake,
@@ -76,7 +76,7 @@ for builder_name, builder in (
             f"{builder_name} packaging does not enforce the xfconf inspect helper mode")
     if builder_name == "DEB":
         # RPM relies on automatic ELF requires generation for the helper's
-        # libxfconf runtime dependency (the same mechanism as libsystemd).
+        # GLib/GIO runtime dependency (the same mechanism as libsystemd).
         require('fic-xfconf-inspect")' in builder,
                 "DEB packaging does not resolve the xfconf inspect helper dependencies")
     require('chmod 0750 "$package_root/opt/fic/bin/fic-cli"' in builder,
@@ -133,11 +133,11 @@ for dockerfile, dependency in (
     ("packaging/deb/Dockerfile.ubuntu2404", "libsystemd-dev"),
     ("packaging/deb/Dockerfile.ubuntu2604", "libsystemd-dev"),
     ("packaging/rpm/Dockerfile", "libsystemd-devel"),
-    ("packaging/deb/Dockerfile", "libxfconf-0-dev"),
-    ("packaging/deb/Dockerfile.debian13", "libxfconf-0-dev"),
-    ("packaging/deb/Dockerfile.ubuntu2404", "libxfconf-0-dev"),
-    ("packaging/deb/Dockerfile.ubuntu2604", "libxfconf-0-dev"),
-    ("packaging/rpm/Dockerfile", "libxfconf-devel"),
+    ("packaging/deb/Dockerfile", "libglib2.0-dev"),
+    ("packaging/deb/Dockerfile.debian13", "libglib2.0-dev"),
+    ("packaging/deb/Dockerfile.ubuntu2404", "libglib2.0-dev"),
+    ("packaging/deb/Dockerfile.ubuntu2604", "libglib2.0-dev"),
+    ("packaging/rpm/Dockerfile", "glib2-devel"),
 ):
     require(dependency in (root / dockerfile).read_text(),
             f"{dockerfile} does not install {dependency}")

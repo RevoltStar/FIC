@@ -8,11 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dpkg-dev \
     file \
     libgl1-mesa-dev \
+    libglib2.0-dev \
     libopengl-dev \
     libsqlite3-dev \
     libssl-dev \
     libsystemd-dev \
-    libxfconf-0-dev \
     libxkbcommon-dev \
     nlohmann-json3-dev \
     pkg-config \

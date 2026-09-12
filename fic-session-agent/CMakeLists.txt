@@ -26,18 +26,19 @@ target_link_libraries(fic-session-agent PRIVATE fic-ipc PkgConfig::SESSION_AGENT
 # session (the daemon executes it through the session-scoped path) and reports
 # the actual storage type and explicit presence of an Xfconf property, which
 # the plain `xfconf-query` text output cannot provide. The property is read
-# through the org.xfce.Xfconf D-Bus API directly (GDBus), so an absent
-# property is distinguishable from a real read/runtime failure. The libxfconf
-# development package is a mandatory build dependency in every supported build
-# profile; the runtime libxfconf dependency is detected per-package by the
-# packaging scripts.
-pkg_check_modules(SESSION_AGENT_LIBXFCONF REQUIRED IMPORTED_TARGET libxfconf-0)
+# through the org.xfce.Xfconf D-Bus API directly via GDBus (gio-2.0): an
+# absent property is distinguishable from a real read/runtime failure, and the
+# helper carries no libxfconf build or runtime dependency. gio-2.0 is a
+# mandatory build dependency in every supported build profile; the GLib/GIO
+# runtime dependency is detected per-package from the ELF by the packaging
+# scripts.
+pkg_check_modules(SESSION_AGENT_GIO REQUIRED IMPORTED_TARGET gio-2.0)
 
 add_executable(fic-xfconf-inspect
     src/xfconf-inspect/main.cpp
 )
 
-target_link_libraries(fic-xfconf-inspect PRIVATE PkgConfig::SESSION_AGENT_LIBXFCONF)
+target_link_libraries(fic-xfconf-inspect PRIVATE PkgConfig::SESSION_AGENT_GIO)
 
 add_test(NAME fic_xfconf_inspect_self_test
          COMMAND fic-xfconf-inspect --self-test)

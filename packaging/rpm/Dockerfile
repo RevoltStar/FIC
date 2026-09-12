@@ -8,12 +8,12 @@ RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
     && apt-get update && apt-get install -y \
     cmake \
     gcc-c++ \
+    glib2-devel \
     glibc-devel \
     libglvnd-devel \
     libpam0-devel \
     libsqlite3-devel \
     libsystemd-devel \
-    libxfconf-devel \
     make \
     nlohmann-json-devel \
     openssl-devel \
