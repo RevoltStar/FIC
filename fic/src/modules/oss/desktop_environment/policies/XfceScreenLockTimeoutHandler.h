@@ -43,6 +43,15 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
             XfcePropertyState actual;
             if (!backend.getPropertyState(
                     channel, property.path, actual, error)) return false;
+            // An absent property is a legitimate, authoritative Xfconf state
+            // on a fresh profile (exact PropertyNotFound from a live daemon),
+            // not a read failure: it is a mismatch that the typed writer
+            // (`--create --type`) materializes below. Real read/runtime
+            // failures already returned false above and never reach a write.
+            if (actual.kind == XfcePropertyStateKind::Absent) {
+                matches = false;
+                continue;
+            }
             // Compliance requires the exact storage type first: a textually
             // equal value with a wrong GType makes xfce4-screensaver use its
             // application default instead of the stored value.

@@ -109,30 +109,32 @@ void testAvailabilityOnlyQueriesExistingLocker() {
 void testGetPropertyStateUsesTrustedHelperAndParsesTypes() {
     struct ProtocolCase {
         std::string output;
+        XfcePropertyStateKind expectedKind;
         XfcePropertyType expectedType;
         std::string expectedValue;
     };
     const ProtocolCase cases[] = {
-        {"fic-xfconf-inspect-protocol=1\ntype=bool\nvalue=true\n",
-         XfcePropertyType::Bool, "true"},
-        {"fic-xfconf-inspect-protocol=1\ntype=bool\nvalue=false\n",
-         XfcePropertyType::Bool, "false"},
-        {"fic-xfconf-inspect-protocol=1\ntype=int\nvalue=5\n",
-         XfcePropertyType::Int, "5"},
-        {"fic-xfconf-inspect-protocol=1\ntype=int\nvalue=0\n",
-         XfcePropertyType::Int, "0"},
-        {"fic-xfconf-inspect-protocol=1\ntype=uint\nvalue=5\n",
-         XfcePropertyType::UInt, "5"},
-        {"fic-xfconf-inspect-protocol=1\ntype=double\nvalue=5.000000\n",
-         XfcePropertyType::Double, "5.000000"},
-        {"fic-xfconf-inspect-protocol=1\ntype=string\nvalue=5\n",
-         XfcePropertyType::String, "5"},
-        {"fic-xfconf-inspect-protocol=1\ntype=string\nvalue=true\n",
-         XfcePropertyType::String, "true"},
-        // Unknown storage types keep their GType name and no value: the
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=bool\nvalue=true\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::Bool, "true"},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=bool\nvalue=false\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::Bool, "false"},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=int\nvalue=5\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::Int, "5"},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=int\nvalue=0\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::Int, "0"},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=uint\nvalue=5\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::UInt, "5"},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=double\nvalue=5.000000\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::Double,
+         "5.000000"},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=string\nvalue=5\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::String, "5"},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=string\nvalue=true\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::String, "true"},
+        // Unknown storage types keep their type name and no value: the
         // backend must see the mismatch, never a guessed value.
-        {"fic-xfconf-inspect-protocol=1\ntype=gint64\n",
-         XfcePropertyType::Other, ""},
+        {"fic-xfconf-inspect-protocol=2\nstate=present\ntype=gint64\n",
+         XfcePropertyStateKind::Present, XfcePropertyType::Other, ""},
     };
 
     for (const ProtocolCase& protocolCase : cases) {
@@ -145,7 +147,8 @@ void testGetPropertyStateUsesTrustedHelperAndParsesTypes() {
                     "xfce4-screensaver", "/saver/idle-activation/delay",
                     state, error),
                 "valid helper output was rejected: " + error);
-        require(state.type == protocolCase.expectedType &&
+        require(state.kind == protocolCase.expectedKind &&
+                    state.type == protocolCase.expectedType &&
                     state.value == protocolCase.expectedValue,
                 "helper protocol was parsed into the wrong property state");
 
@@ -159,15 +162,47 @@ void testGetPropertyStateUsesTrustedHelperAndParsesTypes() {
     }
 }
 
+void testGetPropertyStateReportsAuthoritativeAbsence() {
+    // Absence is a valid protocol result, not a failure: the backend must
+    // report it as kind=Absent without any fake type or value.
+    FakeCommands commands;
+    commands.helperOutput = "fic-xfconf-inspect-protocol=2\nstate=absent\n";
+    XfceBackend backend({}, {}, commands.dependencies());
+    XfcePropertyState state;
+    std::string error;
+    require(backend.getPropertyState(
+                "xfce4-screensaver", "/saver/idle-activation/delay",
+                state, error),
+            "authoritative absence was rejected: " + error);
+    require(state.kind == XfcePropertyStateKind::Absent &&
+                state.type == XfcePropertyType::Other && state.value.empty(),
+            "absence was not reported as an explicit Absent state");
+    require(commands.executables == std::vector<std::string>{kHelperPath},
+            "XFCE absent read did not use the trusted canonical helper");
+}
+
 void testGetPropertyStateRejectsMalformedProtocol() {
     const char* malformedOutputs[] = {
         "",
         "type=int\nvalue=5\n",
+        // Old protocol version must fail closed: helper and daemon ship as
+        // one product version, no compatibility fallback exists.
+        "fic-xfconf-inspect-protocol=1\ntype=int\nvalue=5\n",
+        "fic-xfconf-inspect-protocol=3\nstate=present\ntype=int\nvalue=5\n",
         "fic-xfconf-inspect-protocol=2\ntype=int\nvalue=5\n",
-        "fic-xfconf-inspect-protocol=1\nvalue=5\n",
-        "fic-xfconf-inspect-protocol=1\ntype=\n",
-        "fic-xfconf-inspect-protocol=1\ntype=int\noutput=5\n",
-        "fic-xfconf-inspect-protocol=1\ntype=int\nvalue=5\nextra=1\n",
+        "fic-xfconf-inspect-protocol=2\nstate=unknown\n",
+        // Absence must stay bare: no type/value records may ride along.
+        "fic-xfconf-inspect-protocol=2\nstate=absent\ntype=int\n",
+        "fic-xfconf-inspect-protocol=2\nstate=absent\nvalue=5\n",
+        "fic-xfconf-inspect-protocol=2\nstate=absent\ntype=int\nvalue=5\n",
+        // Present requires a type, and a value only for policy-known types.
+        "fic-xfconf-inspect-protocol=2\nstate=present\n",
+        "fic-xfconf-inspect-protocol=2\nstate=present\ntype=\n",
+        "fic-xfconf-inspect-protocol=2\nstate=present\ntype=int\n",
+        "fic-xfconf-inspect-protocol=2\nstate=present\ntype=int\noutput=5\n",
+        "fic-xfconf-inspect-protocol=2\nstate=present\ntype=gint64\nvalue=5\n",
+        "fic-xfconf-inspect-protocol=2\nstate=present\ntype=int\nvalue=5\nextra=1\n",
+        "fic-xfconf-inspect-protocol=2\nstate=present\ntype=int\nvalue=5\nvalue=6\n",
     };
     for (const char* malformedOutput : malformedOutputs) {
         FakeCommands commands;
@@ -202,6 +237,7 @@ int main() {
     testSetPropertyFailureHasNoUntypedFallback();
     testAvailabilityOnlyQueriesExistingLocker();
     testGetPropertyStateUsesTrustedHelperAndParsesTypes();
+    testGetPropertyStateReportsAuthoritativeAbsence();
     testGetPropertyStateRejectsMalformedProtocol();
     testGetPropertyStateFailsClosedOnHelperFailure();
     return 0;

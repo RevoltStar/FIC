@@ -41,22 +41,60 @@ bool parseHelperOutput(
     }
     while (!lines.empty() && lines.back().empty()) lines.pop_back();
 
-    if (lines.size() < 2 || lines.size() > 3 ||
-        lines[0] != "fic-xfconf-inspect-protocol=1") {
+    // Only the exact current protocol version is accepted; an unknown
+    // version or a malformed record fails closed.
+    if (lines.size() < 2 || lines[0] != "fic-xfconf-inspect-protocol=2") {
         error = "malformed fic-xfconf-inspect output";
         return false;
     }
-    if (lines[1].rfind("type=", 0) != 0 || lines[1].size() == 5) {
-        error = "malformed fic-xfconf-inspect type record";
-        return false;
+
+    state = XfcePropertyState{};
+
+    if (lines[1] == "state=absent") {
+        // Absence is authoritative only as a bare record: no fake type or
+        // value may ride along with it.
+        if (lines.size() != 2) {
+            error = "malformed fic-xfconf-inspect absent record";
+            return false;
+        }
+        state.kind = XfcePropertyStateKind::Absent;
+        error.clear();
+        return true;
     }
-    if (lines.size() == 3 && lines[2].rfind("value=", 0) != 0) {
-        error = "malformed fic-xfconf-inspect value record";
+
+    if (lines[1] != "state=present") {
+        error = "malformed fic-xfconf-inspect state record";
         return false;
     }
 
-    state.type = xfcePropertyTypeFromHelperToken(lines[1].substr(5));
-    state.value = lines.size() == 3 ? lines[2].substr(6) : std::string();
+    // Present requires a non-empty type record; the value record is allowed
+    // only for policy-known scalar types.
+    if (lines.size() != 3 && lines.size() != 4) {
+        error = "malformed fic-xfconf-inspect present record";
+        return false;
+    }
+    if (lines[2].rfind("type=", 0) != 0 || lines[2].size() == 5) {
+        error = "malformed fic-xfconf-inspect type record";
+        return false;
+    }
+    const XfcePropertyType type =
+        xfcePropertyTypeFromHelperToken(lines[2].substr(5));
+    if (type == XfcePropertyType::Other) {
+        // Policy-unknown storage types (gint64, aggregates, ...) must not
+        // carry a value: the backend sees the mismatch, never a guess.
+        if (lines.size() != 3) {
+            error = "malformed fic-xfconf-inspect unknown type record";
+            return false;
+        }
+    } else {
+        if (lines.size() != 4 || lines[3].rfind("value=", 0) != 0) {
+            error = "malformed fic-xfconf-inspect value record";
+            return false;
+        }
+        state.value = lines[3].substr(6);
+    }
+    state.kind = XfcePropertyStateKind::Present;
+    state.type = type;
     error.clear();
     return true;
 }

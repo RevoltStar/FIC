@@ -20,7 +20,20 @@ enum class XfcePropertyType {
     Other
 };
 
+// Explicit presence of an Xfconf property. Absent is a well-defined,
+// authoritative Xfconf state (exact D-Bus error
+// org.xfce.Xfconf.Error.PropertyNotFound from a live daemon) and is distinct
+// from read/runtime/protocol failures, which are reported as backend method
+// failure instead. Absence is legitimate on a fresh XFCE profile and must be
+// treated as a mismatch that the typed writer materializes, never as a read
+// error.
+enum class XfcePropertyStateKind {
+    Present,
+    Absent
+};
+
 struct XfcePropertyState {
+    XfcePropertyStateKind kind = XfcePropertyStateKind::Absent;
     XfcePropertyType type = XfcePropertyType::Other;
     std::string value;
 };
@@ -62,10 +75,13 @@ public:
         std::string& error
     ) const;
 
-    // Type-aware read through the trusted session helper. A successfully read
-    // property with a wrong storage type is reported as regular state (the
-    // type is part of XfcePropertyState); only absent/unreadable properties
-    // and helper/protocol failures return false.
+    // Type-aware read through the trusted session helper. Semantics:
+    //   true  + kind=Present → property successfully read; the storage type is
+    //           part of XfcePropertyState, a wrong type is regular state;
+    //   true  + kind=Absent  → authoritative PropertyNotFound from a live
+    //           Xfconf daemon (the property does not exist);
+    //   false                → real read/runtime/protocol/helper failure;
+    //           the caller must fail closed and never write.
     bool getPropertyState(
         const std::string& channel,
         const std::string& property,

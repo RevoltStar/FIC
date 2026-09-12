@@ -24,10 +24,13 @@ target_link_libraries(fic-session-agent PRIVATE fic-ipc PkgConfig::SESSION_AGENT
 
 # Typed Xfconf property inspection helper. Runs inside the target graphical
 # session (the daemon executes it through the session-scoped path) and reports
-# the actual storage GType of an Xfconf property, which the plain
-# `xfconf-query` text output cannot provide. The libxfconf development package
-# is a mandatory build dependency in every supported build profile; the runtime
-# libxfconf dependency is detected per-package by the packaging scripts.
+# the actual storage type and explicit presence of an Xfconf property, which
+# the plain `xfconf-query` text output cannot provide. The property is read
+# through the org.xfce.Xfconf D-Bus API directly (GDBus), so an absent
+# property is distinguishable from a real read/runtime failure. The libxfconf
+# development package is a mandatory build dependency in every supported build
+# profile; the runtime libxfconf dependency is detected per-package by the
+# packaging scripts.
 pkg_check_modules(SESSION_AGENT_LIBXFCONF REQUIRED IMPORTED_TARGET libxfconf-0)
 
 add_executable(fic-xfconf-inspect

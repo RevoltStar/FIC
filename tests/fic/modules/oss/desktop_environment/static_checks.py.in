@@ -231,7 +231,37 @@ assert "fic-xfconf-inspect" in xfce_session
 for forbidden in ("libxfconf", "xfconf_channel_get", "xfconf_init"):
     assert forbidden not in xfce_session
 assert "xfcePropertyTypeName(actual.type)" in xfce_handler
+assert "XfcePropertyStateKind::Absent" in xfce_handler
+assert "kind == XfcePropertyStateKind::Absent" in xfce_handler
 assert '"/saver/fullscreen-inhibit", "bool", "false"' in xfce_handler
+assert '"--create", "--type"' in xfce_session
+assert '"--property", property, "--set"' not in xfce_session
+assert "getPropertyState" in xfce_session and "getPropertyState" in xfce_handler
+assert "::getProperty(" not in xfce_session
+assert "FIC_XFCONF_INSPECT_PATH" in xfce_session
+assert "fic-xfconf-inspect" in xfce_session
+# In-process libxfconf в root daemon запрещён: typed read идёт только через
+# session-scoped helper.
+for forbidden in ("libxfconf", "xfconf_channel_get", "xfconf_init"):
+    assert forbidden not in xfce_session
+# Helper protocol v2: Present/Absent/Error — три разных состояния. Absent
+# кодируется внутри протокола (state=absent), а не как process failure; только
+# точное remote error name PropertyNotFound означает отсутствие свойства.
+xfce_helper = (root / "fic-session-agent/src/xfconf-inspect/main.cpp").read_text()
+assert "fic-xfconf-inspect-protocol=2" in xfce_helper
+assert "state=present" in xfce_helper and "state=absent" in xfce_helper
+assert "org.xfce.Xfconf.Error.PropertyNotFound" in xfce_helper
+assert '"GetProperty"' in xfce_helper
+assert "g_dbus_error_get_remote_error" in xfce_helper
+assert "DO_NOT_AUTO_START" in xfce_helper
+assert "fic-xfconf-inspect-protocol=1" not in xfce_helper
+assert "xfconf_channel_get_property" not in xfce_helper
+assert "xfconf_init" not in xfce_helper
+# Backend строго валидирует protocol v2 и различает Present/Absent/failure.
+assert "fic-xfconf-inspect-protocol=2" in xfce_session
+assert "XfcePropertyStateKind::Present" in xfce_session
+assert "XfcePropertyStateKind::Absent" in xfce_session
+assert "fic-xfconf-inspect-protocol=1" not in xfce_session
 for obsolete in ("ensureGlobalState", "applyGlobalValue",
                  "applyGlobalProtection", "verifyGlobalState"):
     assert obsolete not in screenlock
