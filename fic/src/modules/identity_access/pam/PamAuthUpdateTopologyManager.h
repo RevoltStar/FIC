@@ -65,6 +65,12 @@ private:
         InvalidSelection
     };
 
+    enum class ExternalFaillockGraphState {
+        Clear,
+        Present,
+        Error
+    };
+
     // Snapshot of one file: nullopt content means the file did not exist.
     using StateSnapshot =
         std::map<std::filesystem::path, std::optional<std::string>>;
@@ -91,9 +97,11 @@ private:
     // state database (per-type "Module:" entries). FIC-owned topologies
     // are recognized through this database; a faillock topology without
     // FIC profile selection is treated as external and is not mutated.
-    std::set<std::string> enabledStateIdentifiers() const;
-    Ownership detectOwnership() const;
-    bool externalFaillockPresent(std::string& error) const;
+    bool enabledStateIdentifiers(std::set<std::string>& identifiers,
+                                 std::string& error) const;
+    bool detectOwnership(Ownership& ownership, std::string& error) const;
+    ExternalFaillockGraphState externalFaillockGraphState(
+        std::string& error) const;
 
     // Detects the pam_faillock strategy independently for every configured
     // PAM service. All services must agree on one strategy; conflicting

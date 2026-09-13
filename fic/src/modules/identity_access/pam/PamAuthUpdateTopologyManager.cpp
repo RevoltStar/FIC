@@ -13,6 +13,7 @@
 #include <iterator>
 #include <set>
 #include <sstream>
+#include <system_error>
 #include <utility>
 
 namespace fic::identity::pam {
@@ -42,6 +43,19 @@ bool readFileIfPresent(const std::filesystem::path& path,
     content.assign(std::istreambuf_iterator<char>(stream),
                    std::istreambuf_iterator<char>());
     return true;
+}
+
+bool pamStackContainsModule(const std::vector<PamStackEntry>& entries,
+                            const std::string& moduleName) {
+    for (const auto& entry : entries) {
+        if (std::filesystem::path(entry.rule.module).filename() == moduleName) {
+            return true;
+        }
+        if (pamStackContainsModule(entry.substack, moduleName)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool contains(const std::vector<std::string>& values,
@@ -108,15 +122,39 @@ PamAuthUpdateTopologyManager::transactionPaths() const {
     return paths;
 }
 
-std::set<std::string>
-PamAuthUpdateTopologyManager::enabledStateIdentifiers() const {
-    std::set<std::string> identifiers;
+bool PamAuthUpdateTopologyManager::enabledStateIdentifiers(
+    std::set<std::string>& identifiers,
+    std::string& error) const {
+    identifiers.clear();
     for (const std::string& type :
          {"auth", "account", "password", "session",
           "session-noninteractive"}) {
-        std::string content;
-        if (!readFileIfPresent(stateDirectory() / type, content)) {
+        const std::filesystem::path path = stateDirectory() / type;
+        std::error_code statusError;
+        const std::filesystem::file_status status =
+            std::filesystem::symlink_status(path, statusError);
+        if (statusError) {
+            if (statusError ==
+                std::make_error_code(std::errc::no_such_file_or_directory)) {
+                continue;
+            }
+            error = "could not stat pam-auth-update state file " +
+                path.string() + ": " + statusError.message();
+            return false;
+        }
+        if (!std::filesystem::exists(status)) {
             continue;
+        }
+        if (!std::filesystem::is_regular_file(status)) {
+            error = "pam-auth-update state path is not a regular file: " +
+                path.string();
+            return false;
+        }
+        std::string content;
+        if (!readFileIfPresent(path, content)) {
+            error = "could not read pam-auth-update state file " +
+                path.string();
+            return false;
         }
         std::istringstream stream(content);
         std::string line;
@@ -127,12 +165,17 @@ PamAuthUpdateTopologyManager::enabledStateIdentifiers() const {
             }
         }
     }
-    return identifiers;
+    error.clear();
+    return true;
 }
 
-PamAuthUpdateTopologyManager::Ownership
-PamAuthUpdateTopologyManager::detectOwnership() const {
-    const std::set<std::string> enabled = enabledStateIdentifiers();
+bool PamAuthUpdateTopologyManager::detectOwnership(
+    Ownership& ownership,
+    std::string& error) const {
+    std::set<std::string> enabled;
+    if (!enabledStateIdentifiers(enabled, error)) {
+        return false;
+    }
     std::set<std::string> ficEnabled;
     for (const std::string& identifier : knownActivationIdentifiers()) {
         if (enabled.count(identifier) != 0) {
@@ -140,7 +183,9 @@ PamAuthUpdateTopologyManager::detectOwnership() const {
         }
     }
     if (ficEnabled.empty()) {
-        return Ownership::NoFicProfiles;
+        ownership = Ownership::NoFicProfiles;
+        error.clear();
+        return true;
     }
     if (capability_.capability ==
             fic::platform::PamCapability::AuthenticationLockout &&
@@ -153,15 +198,22 @@ PamAuthUpdateTopologyManager::detectOwnership() const {
                 activation.activationIdentifiers.begin(),
                 activation.activationIdentifiers.end());
             if (ficEnabled == recipe) {
-                return Ownership::FicOwned;
+                ownership = Ownership::FicOwned;
+                error.clear();
+                return true;
             }
         }
-        return Ownership::InvalidSelection;
+        ownership = Ownership::InvalidSelection;
+        error.clear();
+        return true;
     }
-    return Ownership::FicOwned;
+    ownership = Ownership::FicOwned;
+    error.clear();
+    return true;
 }
 
-bool PamAuthUpdateTopologyManager::externalFaillockPresent(
+PamAuthUpdateTopologyManager::ExternalFaillockGraphState
+PamAuthUpdateTopologyManager::externalFaillockGraphState(
     std::string& error) const {
     PamConfiguration configuration(platformConfig_);
     for (PamManagementGroup group :
@@ -170,19 +222,19 @@ bool PamAuthUpdateTopologyManager::externalFaillockPresent(
             PamEffectiveStack stack;
             if (!configuration.buildEffectiveStack(
                     service, group, stack, error)) {
-                return false;
+                error = "could not build effective PAM " +
+                    pamManagementGroupName(group) + " stack for service " +
+                    service + ": " + error;
+                return ExternalFaillockGraphState::Error;
             }
-            for (const auto& entry : stack.entries) {
-                if (std::filesystem::path(entry.rule.module).filename() ==
-                    "pam_faillock.so") {
-                    error.clear();
-                    return true;
-                }
+            if (pamStackContainsModule(stack.entries, "pam_faillock.so")) {
+                error.clear();
+                return ExternalFaillockGraphState::Present;
             }
         }
     }
     error.clear();
-    return false;
+    return ExternalFaillockGraphState::Clear;
 }
 
 bool PamAuthUpdateTopologyManager::detectUniformStrategy(
@@ -247,7 +299,16 @@ bool PamAuthUpdateTopologyManager::inspect(PamTopologyStatus& status,
         // through FIC pam-auth-update profiles is external. It can be
         // inspected, but FIC must not treat it as its own and must not
         // change its strategy or stack FIC profiles on top of it.
-        switch (detectOwnership()) {
+        Ownership ownership = Ownership::NoFicProfiles;
+        std::string ownershipError;
+        if (!detectOwnership(ownership, ownershipError)) {
+            status = {PamTopologyState::Broken, true, {},
+                "could not determine pam-auth-update ownership: " +
+                    ownershipError};
+            error = status.detail;
+            return false;
+        }
+        switch (ownership) {
         case Ownership::FicOwned:
             break;
         case Ownership::NoFicProfiles:
@@ -431,15 +492,33 @@ bool PamAuthUpdateTopologyManager::canEnableStrategy(
     }
     // An external faillock topology must never be overwritten with FIC
     // profiles: FIC can inspect and analyze it, but not mutate it.
-    switch (detectOwnership()) {
+    Ownership ownership = Ownership::NoFicProfiles;
+    std::string ownershipError;
+    if (!detectOwnership(ownership, ownershipError)) {
+        error = "could not determine pam-auth-update ownership; refusing to "
+            "change the strategy: " + ownershipError;
+        return false;
+    }
+    switch (ownership) {
     case Ownership::FicOwned:
         break;
     case Ownership::NoFicProfiles: {
         std::string externalError;
-        if (externalFaillockPresent(externalError)) {
+        const ExternalFaillockGraphState graph =
+            externalFaillockGraphState(externalError);
+        if (graph == ExternalFaillockGraphState::Present) {
             error = "external pam_faillock topology already exists and is "
                 "not selected through FIC pam-auth-update profiles; FIC "
-                "will not take ownership: " + externalError;
+                "will not take ownership";
+            if (!externalError.empty()) {
+                error += ": " + externalError;
+            }
+            return false;
+        }
+        if (graph == ExternalFaillockGraphState::Error) {
+            error = "could not inspect existing PAM topology for external "
+                "pam_faillock; refusing to change the strategy: " +
+                externalError;
             return false;
         }
         break;
@@ -470,13 +549,13 @@ bool PamAuthUpdateTopologyManager::enableStrategy(
     if (!inspect(current, error)) {
         return false;
     }
+    if (current.state == PamTopologyState::Enabled && !current.manageable) {
+        error = "external pam_faillock topology is not managed by FIC; "
+            "refusing to change the strategy";
+        return false;
+    }
     if (current.state == PamTopologyState::Enabled &&
         current.activeStrategy == strategy) {
-        if (!current.manageable) {
-            error = "external pam_faillock topology is not managed by FIC; "
-                "refusing to change the strategy";
-            return false;
-        }
         error.clear();
         return true;
     }

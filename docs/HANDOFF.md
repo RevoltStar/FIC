@@ -2,15 +2,16 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `310a33d` (HEAD); рабочее дерево содержит
-  незакоммиченную corrective-реализацию трёх стратегий pam_faillock.
+- Ветка `main`, базовый commit `34ab2cb` (HEAD); рабочее дерево содержит
+  незакоммиченные follow-up исправления fail-closed ownership/external
+  detection для pam-auth-update стратегии.
 
 ## Current task
 
-- Исправление реализации `enable_authentication_lockout` после
-  `de86d56599087e35c87c3309f8ee8ec467e74ef1`: сохранить стратегический дизайн
-  (`preauth_requisite`, `preauth_required`, `authsucc`), закрыть rollback,
-  ownership, CFG-анализ, ALT round-trip и Debian/Ubuntu placement blockers.
+- Follow-up исправления `enable_authentication_lockout`: не менять
+  архитектуру трёх стратегий, а закрыть оставшиеся fail-open cases в
+  pam-auth-update ownership/external-topology detection и поправить описание
+  `preauth_required`.
 
 ## Accepted architecture / invariants
 
@@ -29,8 +30,9 @@
 - `PamAuthUpdateTopologyManager` распознаёт FIC ownership по pam-auth-update
   state DB, отказывается мутировать external valid topology, проверяет
   одинаковую strategy по всем target services и rollback'ит snapshot state DB
-  + generated `common-*` при любой post-mutation ошибке. Rollback failure
-  диагностируется как CRITICAL.
+  + generated `common-*` при любой post-mutation ошибке. Ownership analysis,
+  unreadable state DB и external-graph inspection errors fail-closed. Rollback
+  failure диагностируется как CRITICAL.
 - ALT `authsucc` хранит original `pam_tcb` auth rule в anchor marker и
   `buildDisabledContent()` восстанавливает original bytes как из preauth
   block, так и из authsucc anchor.
@@ -54,6 +56,16 @@
   order: `pam_unix success=2` -> `pam_faillock authfail` -> `pam_deny` ->
   `pam_permit` -> Additional `pam_faillock authsucc`; account phase не содержит
   `pam_faillock`.
+- `PamAuthUpdateTopologyManager` получил tri-state external inspection
+  (`Clear`/`Present`/`Error`), recursive detection of `pam_faillock` inside
+  substacks, fail-closed pam-auth-update state DB reads, and an unconditional
+  `Enabled && !manageable` mutation guard.
+- `PamAuthUpdateTopologyManagerTests.cpp` расширен targeted regression cases:
+  nested external faillock, malformed effective stack, invalid state DB, and
+  unmanaged enabled topology mutation refusal.
+- RU/EN description `enable_authentication_lockout` исправлен: для
+  `preauth_required` final denial comes from remembered required auth failure,
+  while account `pam_faillock` is for success accounting/reset.
 
 ## Changed areas
 
@@ -77,6 +89,8 @@
 - Debian13 Docker structural generation using local
   `fic-pam-lab-v7:debian13`: PASSED for generated `common-auth` /
   `common-account` shape described above.
+- Manual `PamAuthUpdateTopologyManagerTests.cpp` g++ build + run after
+  follow-up fail-closed changes: PASSED
 - `git diff --check`: PASSED
 
 ## Remaining

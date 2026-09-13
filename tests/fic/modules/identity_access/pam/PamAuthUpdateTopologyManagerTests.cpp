@@ -524,13 +524,90 @@ void testExternalTopologyIsNotMutated(const TestTree& tree) {
                 error.find("external") != std::string::npos,
             "external topology was not refused: " + error);
     require(!manager.enableStrategy(PamFaillockStrategy::Authsucc, error),
-            "external topology was mutated");
+            "external topology was mutated to a different strategy");
     require(fake.calls == 0, "refused transition invoked pam-auth-update");
     // Restore the clean stack for the following tests.
     TestTree::writeFile(tree.authFile(), TestTree::kClean);
     std::error_code ignored;
     fs::remove(tree.stateDir() / "auth", ignored);
     fs::remove(tree.stateDir() / "account", ignored);
+}
+
+void testNestedExternalFaillockIsNotMutated(const TestTree& tree) {
+    resetTree(tree);
+    const std::string conf = " conf=" +
+        (tree.root / "security/faillock.conf").string();
+    TestTree::writeFile(tree.authFile(),
+                        "auth substack external-auth\n"
+                        "account required pam_faillock.so" + conf + "\n"
+                        "account required pam_unix.so\n");
+    TestTree::writeFile(tree.root / "pam.d/external-auth",
+                        "auth required pam_faillock.so preauth" + conf + "\n" +
+                        "auth [success=2 default=ignore] pam_unix.so nullok\n"
+                        "auth [default=die] pam_faillock.so authfail" + conf +
+                        "\n"
+                        "auth requisite pam_deny.so\n"
+                        "auth required pam_permit.so\n");
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    fic::platform::PlatformExecutableResolver resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    fic::identity::pam::PamTopologyStatus status;
+    require(manager.inspect(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Enabled &&
+                !status.manageable,
+            "nested external topology was not recognized as unmanaged: " +
+                error);
+    require(!manager.canEnableStrategy(PamFaillockStrategy::Authsucc, error),
+            "nested external topology was accepted");
+    require(!manager.enableStrategy(PamFaillockStrategy::Authsucc, error),
+            "nested external topology was mutated");
+    require(fake.calls == 0, "nested external topology invoked pam-auth-update");
+    resetTree(tree);
+    std::error_code ignored;
+    fs::remove(tree.root / "pam.d/external-auth", ignored);
+}
+
+void testMalformedStackInspectionFailsClosed(const TestTree& tree) {
+    resetTree(tree);
+    TestTree::writeFile(tree.authFile(), "auth include missing-auth\n");
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    fic::platform::PlatformExecutableResolver resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    require(!manager.canEnableStrategy(PamFaillockStrategy::Authsucc, error) &&
+                error.find("could not inspect") != std::string::npos,
+            "malformed effective stack did not fail closed: " + error);
+    require(fake.calls == 0, "malformed stack invoked pam-auth-update");
+    resetTree(tree);
+}
+
+void testUnreadableStateFailsClosed(const TestTree& tree) {
+    resetTree(tree);
+    fs::remove(tree.stateDir() / "auth");
+    fs::create_directory(tree.stateDir() / "auth");
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    fic::platform::PlatformExecutableResolver resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    require(!manager.canEnableStrategy(PamFaillockStrategy::Authsucc, error) &&
+                error.find("ownership") != std::string::npos,
+            "invalid state DB did not fail closed: " + error);
+    require(!manager.enableStrategy(PamFaillockStrategy::Authsucc, error),
+            "invalid state DB was mutated");
+    require(fake.calls == 0, "invalid state DB invoked pam-auth-update");
+    std::error_code ignored;
+    fs::remove_all(tree.stateDir() / "auth", ignored);
+    resetTree(tree);
 }
 
 void testConflictingStrategiesAcrossServices(const TestTree& tree) {
@@ -613,6 +690,9 @@ int main() {
         testPostconditionFailuresRollBack(tree);
         testRollbackFailureIsCritical(tree);
         testExternalTopologyIsNotMutated(tree);
+        testNestedExternalFaillockIsNotMutated(tree);
+        testMalformedStackInspectionFailsClosed(tree);
+        testUnreadableStateFailsClosed(tree);
         testConflictingStrategiesAcrossServices(tree);
         testPartialProfileSelectionIsBroken(tree);
     } catch (const std::exception& exception) {

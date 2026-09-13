@@ -1164,6 +1164,8 @@ set(FIC_UNIT_TESTS
     sysctl_configuration_tests
     grub_policy_tests
     pam_configuration_tests
+    pam_control_flow_analyzer_tests
+    pam_auth_update_topology_tests
     pam_disable_nopasswdlogin_policy_tests
     passwdqc_config_file_tests
     alt_pam_faillock_topology_tests
