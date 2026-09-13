@@ -38,10 +38,23 @@ def main() -> int:
                 "required\t\t\tpam_faillock.so",
             ),
         },
-        "fic-faillock": {
+        "fic-faillock-authfail": {
             "Name": "FIC PAM faillock failed authentication counter",
-            "Priority": "0",
+            "Priority": "1",
             "rules": ("[default=die]\t\t\tpam_faillock.so authfail",),
+        },
+        "fic-faillock-preauth-required": {
+            "Name": "FIC PAM faillock pre-authentication and account check (required)",
+            "Priority": "1025",
+            "rules": (
+                "pam_faillock.so preauth",
+                "required\t\t\tpam_faillock.so",
+            ),
+        },
+        "fic-faillock-authsucc": {
+            "Name": "FIC PAM faillock success accounting",
+            "Priority": "0",
+            "rules": ("[success=ok default=bad]\tpam_faillock.so authsucc",),
         },
         "fic-pwhistory": {
             "Name": "FIC PAM password history checking",
@@ -78,8 +91,22 @@ def main() -> int:
     require(field(notify, "Account-Type") == "Primary", "notify profile Account-Type is not Primary")
     require("requisite\t\t\tpam_faillock.so preauth" in notify, "notify profile has wrong preauth control")
 
-    authfail = (profile_dir / "fic-faillock").read_text(encoding="utf-8")
+    authfail = (profile_dir / "fic-faillock-authfail").read_text(encoding="utf-8")
     require(field(authfail, "Auth-Type") == "Primary", "authfail profile Auth-Type is not Primary")
+    preauth_required = (profile_dir / "fic-faillock-preauth-required").read_text(encoding="utf-8")
+    require(field(preauth_required, "Auth-Type") == "Primary",
+            "preauth-required profile Auth-Type is not Primary")
+    require(field(preauth_required, "Account-Type") == "Primary",
+            "preauth-required profile Account-Type is not Primary")
+    require("required\t\t\tpam_faillock.so preauth" in preauth_required,
+            "preauth-required profile has wrong preauth control")
+    authsucc = (profile_dir / "fic-faillock-authsucc").read_text(encoding="utf-8")
+    require(field(authsucc, "Auth-Type") == "Primary", "authsucc profile Auth-Type is not Primary")
+    require("[success=ok default=bad]\tpam_faillock.so authsucc" in authsucc,
+            "authsucc profile has wrong control; upstream sufficient must not be copied blindly")
+    require("sufficient" not in authsucc, "authsucc profile must not use sufficient control")
+    require("Account-Type" not in authsucc,
+            "authsucc profile must not add an account pam_faillock phase")
 
     history = (profile_dir / "fic-pwhistory").read_text(encoding="utf-8")
     require(field(history, "Password-Type") == "Primary", "history profile Password-Type is not Primary")

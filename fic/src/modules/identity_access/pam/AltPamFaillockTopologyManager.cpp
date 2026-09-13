@@ -47,6 +47,9 @@ struct ManagedInspection {
     std::set<std::size_t> blockLines;
     std::set<std::size_t> ruleLines;
     std::optional<std::string> originalAuthLine;
+    // Topology strategy proven by the managed block markers. Set only when
+    // the inspection proves exactly one supported strategy.
+    std::optional<fic::platform::PamFaillockStrategy> strategy;
 };
 
 using ManagedTargetRole =
@@ -77,7 +80,10 @@ constexpr BlockSpec kSimpleBlocks[] = {
      AltPamFaillockTopologyManager::AUTHFAIL_END},
     {AltPamFaillockTopologyManager::ACCOUNT_BEGIN,
      AltPamFaillockTopologyManager::ACCOUNT_RULE,
-     AltPamFaillockTopologyManager::ACCOUNT_END}
+     AltPamFaillockTopologyManager::ACCOUNT_END},
+    {AltPamFaillockTopologyManager::AUTHSUCC_BEGIN,
+     AltPamFaillockTopologyManager::AUTHSUCC_RULE,
+     AltPamFaillockTopologyManager::AUTHSUCC_END}
 };
 
 std::string hexEncode(const std::string& value) {
@@ -120,6 +126,16 @@ bool hexDecode(const std::string& encoded,
 
 std::string canonicalSufficientAuthenticator(const PamRule& rule) {
     std::string result = "auth\tsufficient\t" + rule.module;
+    for (const std::string& argument : rule.arguments) {
+        result += " " + argument;
+    }
+    return result;
+}
+
+std::string canonicalJumpAuthenticator(const PamRule& rule) {
+    std::string result = std::string(
+        AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_RULE_PREFIX) +
+        rule.module;
     for (const std::string& argument : rule.arguments) {
         result += " " + argument;
     }
@@ -190,16 +206,31 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
     std::size_t presentBlocks = 0;
     bool authfailPresent = false;
     bool accountPresent = false;
+    bool authsuccRulePresent = false;
 
     std::vector<std::size_t> preauthBegins;
     std::vector<std::size_t> preauthEnds;
+    std::vector<std::size_t> authsuccAnchorBegins;
+    std::vector<std::size_t> authsuccAnchorEnds;
     std::vector<std::size_t> originalMarkers;
+    const std::string preauthRequisiteRule(
+        AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE);
+    const std::string preauthRequiredRule(
+        AltPamFaillockTopologyManager::PREAUTH_RULE_REQUIRED);
     for (std::size_t index = 0; index < lines.size(); ++index) {
         if (lines[index].text == AltPamFaillockTopologyManager::PREAUTH_BEGIN) {
             preauthBegins.push_back(index);
         }
         if (lines[index].text == AltPamFaillockTopologyManager::PREAUTH_END) {
             preauthEnds.push_back(index);
+        }
+        if (lines[index].text ==
+                AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_BEGIN) {
+            authsuccAnchorBegins.push_back(index);
+        }
+        if (lines[index].text ==
+                AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_END) {
+            authsuccAnchorEnds.push_back(index);
         }
         if (lines[index].text.compare(
                 0,
@@ -208,6 +239,12 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
                 AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX) == 0) {
             originalMarkers.push_back(index);
         }
+    }
+    if (preauthBegins.size() + authsuccAnchorBegins.size() > 1) {
+        inspection.state = ManagedState::Broken;
+        error = "FIC pam_faillock topology combines preauth and authsucc "
+            "strategies";
+        return false;
     }
     if (!preauthBegins.empty() || !preauthEnds.empty()) {
         ++presentBlocks;
@@ -218,8 +255,9 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
             return false;
         }
         const std::size_t begin = preauthBegins.front();
-        if (lines[begin + 1].text !=
-                AltPamFaillockTopologyManager::PREAUTH_RULE ||
+        const std::string& preauthRule = lines[begin + 1].text;
+        if ((preauthRule != preauthRequisiteRule &&
+             preauthRule != preauthRequiredRule) ||
             lines[begin + 2].text.compare(
                 0,
                 std::strlen(AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX),
@@ -228,6 +266,12 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
             error = "modified FIC pam_faillock preauth block content";
             return false;
         }
+        inspection.strategy =
+            preauthRule == preauthRequisiteRule
+                ? std::optional<fic::platform::PamFaillockStrategy>(
+                      fic::platform::PamFaillockStrategy::PreauthRequisite)
+                : std::optional<fic::platform::PamFaillockStrategy>(
+                      fic::platform::PamFaillockStrategy::PreauthRequired);
         const std::string encoded = lines[begin + 2].text.substr(
             std::strlen(AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX));
         std::string original;
@@ -261,6 +305,61 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
         inspection.ruleLines.insert(begin + 2);
         inspection.originalAuthLine = std::move(original);
     }
+    if (!authsuccAnchorBegins.empty() || !authsuccAnchorEnds.empty()) {
+        ++presentBlocks;
+        if (authsuccAnchorBegins.size() != 1 ||
+            authsuccAnchorEnds.size() != 1 ||
+            authsuccAnchorBegins.front() + 3 !=
+                authsuccAnchorEnds.front()) {
+            inspection.state = ManagedState::Broken;
+            error = "partial, duplicated, or modified FIC pam_faillock "
+                "authsucc anchor block";
+            return false;
+        }
+        const std::size_t begin = authsuccAnchorBegins.front();
+        if (lines[begin + 1].text.compare(
+                0,
+                std::strlen(AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX),
+                AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX) != 0) {
+            inspection.state = ManagedState::Broken;
+            error = "modified FIC pam_faillock authsucc anchor block content";
+            return false;
+        }
+        inspection.strategy =
+            fic::platform::PamFaillockStrategy::Authsucc;
+        const std::string encoded = lines[begin + 1].text.substr(
+            std::strlen(AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX));
+        std::string original;
+        if (!hexDecode(encoded, original, error)) {
+            inspection.state = ManagedState::Broken;
+            return false;
+        }
+        PamRule originalRule;
+        PamRule managedRule;
+        const std::filesystem::path markerSource("<FIC-pam-faillock-marker>");
+        if (!parseSingleAuthenticator(
+                markerSource, original, originalRule, error) ||
+            (originalRule.control != "required" &&
+             originalRule.control != "sufficient") ||
+            !parseSingleAuthenticator(
+                markerSource, lines[begin + 2].text + "\n", managedRule, error) ||
+            managedRule.module != originalRule.module ||
+            managedRule.arguments != originalRule.arguments ||
+            lines[begin + 2].text !=
+                canonicalJumpAuthenticator(originalRule)) {
+            inspection.state = ManagedState::Broken;
+            if (error.empty()) {
+                error = "modified FIC-managed pam_tcb authentication rule";
+            }
+            return false;
+        }
+        for (std::size_t index = begin;
+                index <= authsuccAnchorEnds.front(); ++index) {
+            inspection.blockLines.insert(index + 1);
+        }
+        inspection.ruleLines.insert(begin + 2);
+        inspection.originalAuthLine = std::move(original);
+    }
 
     for (const BlockSpec& block : kSimpleBlocks) {
         std::vector<std::size_t> begins;
@@ -283,6 +382,9 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
         accountPresent = accountPresent ||
             std::strcmp(block.begin,
                         AltPamFaillockTopologyManager::ACCOUNT_BEGIN) == 0;
+        authsuccRulePresent = authsuccRulePresent ||
+            std::strcmp(block.begin,
+                        AltPamFaillockTopologyManager::AUTHSUCC_BEGIN) == 0;
         if (begins.size() != 1 || ends.size() != 1 ||
             begins.front() + 2 != ends.front() ||
             lines[begins.front() + 1].text != block.rule) {
@@ -300,6 +402,8 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
         if (line.text.find("FIC pam_faillock") != std::string::npos &&
             line.text != AltPamFaillockTopologyManager::PREAUTH_BEGIN &&
             line.text != AltPamFaillockTopologyManager::PREAUTH_END &&
+            line.text != AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_BEGIN &&
+            line.text != AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_END &&
             std::none_of(std::begin(kSimpleBlocks), std::end(kSimpleBlocks),
                 [&line](const BlockSpec& block) {
                     return line.text == block.begin || line.text == block.end;
@@ -309,22 +413,40 @@ bool inspectManagedBlocks(const std::vector<PhysicalLine>& lines,
             return false;
         }
     }
-    if (originalMarkers.size() != (preauthBegins.empty() ? 0 : 1)) {
+    const std::size_t expectedOriginalMarkers =
+        preauthBegins.empty() && authsuccAnchorBegins.empty() ? 0U : 1U;
+    if (originalMarkers.size() != expectedOriginalMarkers) {
         inspection.state = ManagedState::Broken;
         error = "orphaned or duplicated FIC original pam_tcb marker";
         return false;
     }
     if (presentBlocks == 0) {
         inspection.state = ManagedState::Absent;
+        inspection.strategy.reset();
         error.clear();
         return true;
     }
-    const bool expectedAccount = managesAccount(role);
-    const std::size_t expectedBlocks = expectedAccount ? 3U : 2U;
-    if (presentBlocks != expectedBlocks || preauthBegins.empty() ||
-        !authfailPresent || accountPresent != expectedAccount) {
+    const bool preauthStrategy = preauthBegins.size() == 1;
+    const bool authsuccStrategy = authsuccAnchorBegins.size() == 1;
+    // authsucc strategy has no account pam_faillock rule by design; the
+    // original account pam_tcb anchor stays untouched.
+    const bool expectedAccount = managesAccount(role) && !authsuccStrategy;
+    const std::size_t expectedBlocks =
+        (preauthStrategy || authsuccStrategy ? 1U : 0U) + 1U +
+        (authsuccStrategy ? 1U : 0U) + (expectedAccount ? 1U : 0U);
+    if (presentBlocks != expectedBlocks ||
+        !(preauthStrategy || authsuccStrategy) ||
+        !authfailPresent ||
+        authsuccRulePresent != authsuccStrategy ||
+        accountPresent != expectedAccount) {
         inspection.state = ManagedState::Broken;
         error = "incomplete FIC pam_faillock managed topology";
+        return false;
+    }
+    if (preauthStrategy && authsuccRulePresent) {
+        inspection.state = ManagedState::Broken;
+        error = "FIC pam_faillock topology combines preauth and authsucc "
+            "strategies";
         return false;
     }
     inspection.state = ManagedState::Present;
@@ -510,13 +632,21 @@ void appendBlock(std::vector<PhysicalLine>& output, const BlockSpec& block) {
     output.push_back(generatedLine(block.end));
 }
 
+const char* preauthRuleForStrategy(
+    fic::platform::PamFaillockStrategy strategy) {
+    return strategy == fic::platform::PamFaillockStrategy::PreauthRequired
+        ? AltPamFaillockTopologyManager::PREAUTH_RULE_REQUIRED
+        : AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE;
+}
+
 void appendPreauthBlock(std::vector<PhysicalLine>& output,
+                        fic::platform::PamFaillockStrategy strategy,
                         const PhysicalLine& original,
                         const PamRule& authRule) {
     output.push_back(generatedLine(
         AltPamFaillockTopologyManager::PREAUTH_BEGIN));
     output.push_back(generatedLine(
-        AltPamFaillockTopologyManager::PREAUTH_RULE));
+        preauthRuleForStrategy(strategy)));
     output.push_back(generatedLine(
         std::string(AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX) +
         hexEncode(original.text + original.ending)));
@@ -524,6 +654,20 @@ void appendPreauthBlock(std::vector<PhysicalLine>& output,
         canonicalSufficientAuthenticator(authRule)));
     output.push_back(generatedLine(
         AltPamFaillockTopologyManager::PREAUTH_END));
+}
+
+void appendAuthsuccAnchorBlock(std::vector<PhysicalLine>& output,
+                               const PhysicalLine& original,
+                               const PamRule& authRule) {
+    output.push_back(generatedLine(
+        AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_BEGIN));
+    output.push_back(generatedLine(
+        std::string(AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX) +
+        hexEncode(original.text + original.ending)));
+    output.push_back(generatedLine(
+        canonicalJumpAuthenticator(authRule)));
+    output.push_back(generatedLine(
+        AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_END));
 }
 
 bool findAnchors(const std::vector<PamRule>& rules,
@@ -583,6 +727,7 @@ bool findAnchors(const std::vector<PamRule>& rules,
 bool verifyManagedPlacement(const std::vector<PamRule>& rules,
                             const std::vector<PhysicalLine>& lines,
                             ManagedTargetRole role,
+                            const ManagedInspection& managed,
                             std::string& error) {
     std::size_t authLine = 0;
     std::size_t accountLine = 0;
@@ -594,6 +739,11 @@ bool verifyManagedPlacement(const std::vector<PamRule>& rules,
             return line.text ==
                 AltPamFaillockTopologyManager::PREAUTH_BEGIN;
         });
+    const auto authsuccAnchor = std::find_if(
+        lines.begin(), lines.end(), [](const PhysicalLine& line) {
+            return line.text ==
+                AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_BEGIN;
+        });
     const auto authfail = std::find_if(
         lines.begin(), lines.end(), [](const PhysicalLine& line) {
             return line.text ==
@@ -604,28 +754,61 @@ bool verifyManagedPlacement(const std::vector<PamRule>& rules,
             return line.text ==
                 AltPamFaillockTopologyManager::ACCOUNT_BEGIN;
         });
-    if (preauth == lines.end() || authfail == lines.end() ||
-        (managesAccount(role) ? account == lines.end()
-                              : account != lines.end())) {
-        error = "complete FIC pam_faillock markers are missing";
+    const bool authsucc = managed.strategy ==
+        std::optional<fic::platform::PamFaillockStrategy>(
+            fic::platform::PamFaillockStrategy::Authsucc);
+    const bool needsAccountBlock = managesAccount(role) && !authsucc;
+    const auto primary = authsucc ? authsuccAnchor : preauth;
+    if (primary == lines.end() || authfail == lines.end() ||
+        (authsucc ? preauth != lines.end() : authsuccAnchor != lines.end()) ||
+        (needsAccountBlock ? account == lines.end()
+                           : account != lines.end())) {
+        error = "complete FIC pam_faillock markers are missing or mixed "
+            "strategies are present";
         return false;
     }
-    const std::size_t preauthIndex =
-        static_cast<std::size_t>(std::distance(lines.begin(), preauth));
+    const std::size_t primaryIndex =
+        static_cast<std::size_t>(std::distance(lines.begin(), primary));
     const std::size_t authfailIndex =
         static_cast<std::size_t>(std::distance(lines.begin(), authfail));
-    if (authLine != preauthIndex + 4 ||
-        authfailIndex != preauthIndex + 5) {
-        error = "FIC pam_faillock blocks are not at the required pam_tcb anchors";
-        return false;
-    }
-    if (managesAccount(role)) {
-        const std::size_t accountIndex =
-            static_cast<std::size_t>(std::distance(lines.begin(), account));
-        if (accountLine != accountIndex + 4) {
-            error = "FIC pam_faillock account block is not at the required "
-                "pam_tcb anchor";
+    if (authsucc) {
+        // anchor block: begin, original marker, replacement, end
+        if (authLine != primaryIndex + 3 ||
+            authfailIndex != primaryIndex + 4) {
+            error = "FIC pam_faillock blocks are not at the required "
+                "pam_tcb anchors";
             return false;
+        }
+        const auto authsuccRule = std::find_if(
+            lines.begin(), lines.end(), [](const PhysicalLine& line) {
+                return line.text ==
+                    AltPamFaillockTopologyManager::AUTHSUCC_BEGIN;
+            });
+        if (authsuccRule == lines.end() ||
+            static_cast<std::size_t>(
+                std::distance(lines.begin(), authsuccRule)) !=
+                authfailIndex + 3) {
+            error = "FIC pam_faillock authsucc rule block is not at the "
+                "required position";
+            return false;
+        }
+    } else {
+        // preauth block: begin, rule, original marker, replacement, end
+        if (authLine != primaryIndex + 4 ||
+            authfailIndex != primaryIndex + 5) {
+            error = "FIC pam_faillock blocks are not at the required "
+                "pam_tcb anchors";
+            return false;
+        }
+        if (needsAccountBlock) {
+            const std::size_t accountIndex =
+                static_cast<std::size_t>(
+                    std::distance(lines.begin(), account));
+            if (accountLine != accountIndex + 4) {
+                error = "FIC pam_faillock account block is not at the "
+                    "required pam_tcb anchor";
+                return false;
+            }
         }
     }
     error.clear();
@@ -656,13 +839,15 @@ bool verifyNoExecutableAuthTail(
     return true;
 }
 
-std::string buildEnabledContent(const std::vector<PhysicalLine>& lines,
-                                const std::vector<PamRule>& rules,
-                                ManagedTargetRole role,
-                                std::size_t authLine,
-                                std::size_t accountLine) {
+std::string buildEnabledContent(
+    fic::platform::PamFaillockStrategy strategy,
+    const std::vector<PhysicalLine>& lines,
+    const std::vector<PamRule>& rules,
+    ManagedTargetRole role,
+    std::size_t authLine,
+    std::size_t accountLine) {
     std::vector<PhysicalLine> output;
-    output.reserve(lines.size() + 10);
+    output.reserve(lines.size() + 12);
     const auto authRule = std::find_if(
         rules.begin(), rules.end(), [authLine](const PamRule& rule) {
             return rule.line == authLine &&
@@ -671,11 +856,19 @@ std::string buildEnabledContent(const std::vector<PhysicalLine>& lines,
         });
     for (std::size_t line = 1; line <= lines.size(); ++line) {
         if (line == authLine) {
-            appendPreauthBlock(output, lines[line - 1], *authRule);
+            if (strategy == fic::platform::PamFaillockStrategy::Authsucc) {
+                appendAuthsuccAnchorBlock(output, lines[line - 1], *authRule);
+                appendBlock(output, kSimpleBlocks[0]);
+                appendBlock(output, kSimpleBlocks[2]);
+                continue;
+            }
+            appendPreauthBlock(output, strategy, lines[line - 1], *authRule);
             appendBlock(output, kSimpleBlocks[0]);
             continue;
         }
-        if (managesAccount(role) && line == accountLine) {
+        if (managesAccount(role) &&
+            strategy != fic::platform::PamFaillockStrategy::Authsucc &&
+            line == accountLine) {
             appendBlock(output, kSimpleBlocks[1]);
         }
         output.push_back(lines[line - 1]);
@@ -749,7 +942,8 @@ bool validatePresentTarget(const ManagedTargetState& target,
         return false;
     }
     if (!verifyManagedPlacement(
-            target.rules, target.lines, target.target.role, error)) {
+            target.rules, target.lines, target.target.role,
+            target.managed, error)) {
         error = "FIC pam_faillock placement is invalid in " +
             target.target.path.string() + ": " + error;
         return false;
@@ -766,6 +960,7 @@ bool validatePresentTarget(const ManagedTargetState& target,
 }
 
 bool prepareEnabledCandidate(ManagedTargetState& target,
+                             fic::platform::PamFaillockStrategy strategy,
                              std::string& error) {
     if (target.managed.state != ManagedState::Absent) {
         error = "managed PAM target is not disabled: " +
@@ -790,7 +985,7 @@ bool prepareEnabledCandidate(ManagedTargetState& target,
         return false;
     }
     target.candidate = buildEnabledContent(
-        target.lines, target.rules, target.target.role,
+        strategy, target.lines, target.rules, target.target.role,
         authLine, accountLine);
     ManagedTargetState checked;
     checked.target = target.target;
@@ -805,6 +1000,39 @@ bool prepareEnabledCandidate(ManagedTargetState& target,
         return false;
     }
     error.clear();
+    return true;
+}
+
+bool buildTransitionCandidate(
+    ManagedTargetState& target,
+    fic::platform::PamFaillockStrategy strategy,
+    std::string& error) {
+    if (target.managed.state != ManagedState::Present) {
+        error = "managed PAM target is not enabled: " +
+            target.target.path.string();
+        return false;
+    }
+    // Strip the currently enabled FIC blocks, restoring the original
+    // pam_tcb anchor, then rebuild the topology with the requested strategy.
+    const std::string stripped = buildDisabledContent(
+        target.lines, target.managed);
+    ManagedTargetState rebuilt;
+    rebuilt.target = target.target;
+    rebuilt.snapshot.content = stripped;
+    if (!parseAndInspect(
+            rebuilt.target.path, stripped, rebuilt.target.role,
+            rebuilt.lines, rebuilt.rules, rebuilt.managed, error) ||
+        rebuilt.managed.state != ManagedState::Absent) {
+        error = "could not restore the original PAM topology for a strategy "
+            "transition in " + target.target.path.string() + ": " + error;
+        return false;
+    }
+    if (!prepareEnabledCandidate(rebuilt, strategy, error)) {
+        error = "could not build the requested pam_faillock strategy "
+            "topology in " + target.target.path.string() + ": " + error;
+        return false;
+    }
+    target.candidate = rebuilt.candidate;
     return true;
 }
 
@@ -985,6 +1213,14 @@ bool AltPamFaillockTopologyManager::verifySemanticEffectiveness(
 bool AltPamFaillockTopologyManager::status(
     AltPamFaillockTopologyState& state,
     std::string& error) {
+    std::optional<fic::platform::PamFaillockStrategy> strategy;
+    return status(state, strategy, error);
+}
+
+bool AltPamFaillockTopologyManager::status(
+    AltPamFaillockTopologyState& state,
+    std::optional<fic::platform::PamFaillockStrategy>& strategy,
+    std::string& error) {
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::AuthenticationLockout);
     if (!canEnable(error) || capability == nullptr) {
@@ -1014,8 +1250,11 @@ bool AltPamFaillockTopologyManager::status(
         error = "partial FIC pam_faillock topology across managed targets";
         return false;
     }
+    std::optional<fic::platform::PamFaillockStrategy> detected =
+        targets.front().managed.strategy;
     for (const auto& target : targets) {
-        if (!validatePresentTarget(target, error)) {
+        if (target.managed.strategy != detected) {
+            error = "mixed FIC pam_faillock strategies across managed targets";
             return false;
         }
     }
@@ -1035,6 +1274,7 @@ bool AltPamFaillockTopologyManager::status(
         error = "FIC pam_faillock topology is not effective: " + error;
         return false;
     }
+    strategy = detected;
     state = AltPamFaillockTopologyState::Enabled;
     return true;
 }
@@ -1043,14 +1283,17 @@ bool AltPamFaillockTopologyManager::inspect(PamTopologyStatus& result,
                                             std::string& error)
 {
     AltPamFaillockTopologyState current;
-    if (!status(current, error)) {
-        result = {PamTopologyState::Broken, true, error};
+    std::optional<fic::platform::PamFaillockStrategy> strategy;
+    if (!status(current, strategy, error)) {
+        result = {PamTopologyState::Broken, true, {}, error};
         return false;
     }
     result.state = current == AltPamFaillockTopologyState::Enabled
         ? PamTopologyState::Enabled
         : PamTopologyState::Disabled;
     result.manageable = true;
+    result.activeStrategy =
+        result.state == PamTopologyState::Enabled ? strategy : std::nullopt;
     result.detail.clear();
     return true;
 }
@@ -1097,10 +1340,40 @@ bool AltPamFaillockTopologyManager::canEnable(std::string& error) const
     return true;
 }
 
+bool AltPamFaillockTopologyManager::canEnableStrategy(
+    fic::platform::PamFaillockStrategy strategy,
+    std::string& error) const {
+    if (!canEnable(error)) {
+        return false;
+    }
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    if (capability == nullptr ||
+        !fic::platform::supportsPamFaillockStrategy(*capability, strategy)) {
+        error = "pam_faillock strategy " +
+            fic::platform::pamFaillockStrategyName(strategy) +
+            " is not supported by this platform profile";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool AltPamFaillockTopologyManager::enable(std::string& error) {
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::AuthenticationLockout);
     if (!canEnable(error) || capability == nullptr) {
+        return false;
+    }
+    return enableStrategy(capability->defaultFaillockStrategy, error);
+}
+
+bool AltPamFaillockTopologyManager::enableStrategy(
+    fic::platform::PamFaillockStrategy strategy,
+    std::string& error) {
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    if (!canEnableStrategy(strategy, error) || capability == nullptr) {
         return false;
     }
     ExclusivePidLock lock(
@@ -1119,35 +1392,9 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
         targets.begin(), targets.end(), [](const ManagedTargetState& target) {
             return target.managed.state == ManagedState::Present;
         }));
-    if (present != 0) {
-        if (present != targets.size()) {
-            error = "partial FIC pam_faillock topology across managed targets";
-            return false;
-        }
-        for (const auto& target : targets) {
-            if (!validatePresentTarget(target, error)) {
-                return false;
-            }
-        }
-        const auto externalGraph = inspectExternalFaillockInRelevantGraph(
-            platformConfig_, targets, error);
-        if (externalGraph == ExternalFaillockGraphState::Error) {
-            error = "could not inspect relevant PAM graph for external "
-                "pam_faillock topology: " + error;
-            return false;
-        }
-        if (externalGraph == ExternalFaillockGraphState::Present) {
-            error = "existing FIC pam_faillock topology conflicts with "
-                "external topology: " + error;
-            return false;
-        }
-        if (!verifySemanticEffectiveness(error)) {
-            error = "existing FIC pam_faillock topology is not effective: " +
-                error;
-            return false;
-        }
-        error.clear();
-        return true;
+    if (present != 0 && present != targets.size()) {
+        error = "partial FIC pam_faillock topology across managed targets";
+        return false;
     }
 
     const auto externalGraph = inspectExternalFaillockInRelevantGraph(
@@ -1158,12 +1405,86 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
         return false;
     }
     if (externalGraph == ExternalFaillockGraphState::Present) {
-        error = "external pam_faillock topology already exists; FIC will not "
-            "take ownership: " + error;
+        error = present != 0
+            ? "existing FIC pam_faillock topology conflicts with external "
+              "topology: " + error
+            : "external pam_faillock topology already exists; FIC will not "
+              "take ownership: " + error;
         return false;
     }
+
+    if (present == targets.size()) {
+        // The topology is already enabled: validate it and either accept it
+        // as idempotent or perform an atomic strategy transition.
+        for (const auto& target : targets) {
+            if (!validatePresentTarget(target, error)) {
+                return false;
+            }
+        }
+        std::optional<fic::platform::PamFaillockStrategy> detected =
+            targets.front().managed.strategy;
+        for (const auto& target : targets) {
+            if (target.managed.strategy != detected) {
+                error = "mixed FIC pam_faillock strategies across managed "
+                    "targets";
+                return false;
+            }
+        }
+        if (detected == strategy) {
+            if (!verifySemanticEffectiveness(error)) {
+                error = "existing FIC pam_faillock topology is not "
+                    "effective: " + error;
+                return false;
+            }
+            error.clear();
+            return true;
+        }
+
+        for (auto& target : targets) {
+            if (!buildTransitionCandidate(target, strategy, error)) {
+                return false;
+            }
+        }
+        if (!writeCandidates(targets, options_, "strategy transition", error)) {
+            return false;
+        }
+        std::vector<ManagedTargetState> written;
+        std::string verificationError;
+        if (!loadManagedTargets(*capability, written, verificationError) ||
+            written.size() != targets.size()) {
+            return restoreOriginalTargets(
+                targets, options_,
+                "post-transition PAM verification failed: " +
+                    verificationError,
+                error);
+        }
+        for (std::size_t index = 0; index < written.size(); ++index) {
+            if (written[index].snapshot.content != targets[index].candidate ||
+                written[index].managed.strategy != strategy ||
+                !validatePresentTarget(written[index], verificationError)) {
+                return restoreOriginalTargets(
+                    targets, options_,
+                    "post-transition PAM verification failed: " +
+                        verificationError,
+                    error);
+            }
+        }
+        const auto writtenExternal = inspectExternalFaillockInRelevantGraph(
+            platformConfig_, written, verificationError);
+        if (writtenExternal != ExternalFaillockGraphState::Clear ||
+            !verifySemanticEffectiveness(verificationError)) {
+            return restoreOriginalTargets(
+                targets, options_,
+                "post-transition PAM verification failed: " +
+                    verificationError,
+                error);
+        }
+        error.clear();
+        return true;
+    }
+
     for (auto& target : targets) {
-        if (!prepareEnabledCandidate(target, error)) {
+        if (!prepareEnabledCandidate(target, strategy, error)) {
             return false;
         }
     }
@@ -1182,6 +1503,7 @@ bool AltPamFaillockTopologyManager::enable(std::string& error) {
     }
     for (std::size_t index = 0; index < written.size(); ++index) {
         if (written[index].snapshot.content != targets[index].candidate ||
+            written[index].managed.strategy != strategy ||
             !validatePresentTarget(written[index], verificationError)) {
             return restoreOriginalTargets(
                 targets, options_,
@@ -1235,7 +1557,8 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
 
     for (auto& target : targets) {
         if (!verifyManagedPlacement(
-                target.rules, target.lines, target.target.role, error)) {
+                target.rules, target.lines, target.target.role,
+                target.managed, error)) {
             error = "refusing to disable invalid FIC pam_faillock placement in " +
                 target.target.path.string() + ": " + error;
             return false;

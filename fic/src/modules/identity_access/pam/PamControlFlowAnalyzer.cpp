@@ -68,6 +68,7 @@ struct Evidence {
     bool preauthFailedClosed = false;
     bool authfailReached = false;
     bool authsuccSucceeded = false;
+    bool authsuccDenied = false;
     bool accountSucceeded = false;
     bool authenticationSuccessObserved = false;
     bool authenticationFailureObserved = false;
@@ -376,8 +377,12 @@ void recordEvidence(ExecutionState& state,
             state.evidence.preauthDenied |= result == "auth_err";
         } else if (hasArgument(rule, "authfail")) {
             state.evidence.authfailReached = true;
-        } else if (hasArgument(rule, "authsucc") && result == "success") {
-            state.evidence.authsuccSucceeded = true;
+        } else if (hasArgument(rule, "authsucc")) {
+            if (result == "success") {
+                state.evidence.authsuccSucceeded = true;
+            } else if (result != "ignore") {
+                state.evidence.authsuccDenied = true;
+            }
         }
         return;
     }
@@ -840,6 +845,26 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
                 addAcceptedTrustedAuthenticationBypass(analysis, state);
                 continue;
             }
+            if (authsuccTopology &&
+                state.evidence.authenticationFailureObserved &&
+                state.evidence.authfailReached) {
+                addFirstViolation(analysis, violationForState(
+                    PamFlowViolationKind::RecoverableFailureAccounting,
+                    authStack,
+                    "authentication failure was accounted by pam_faillock "
+                    "authfail but the stack still terminated successfully",
+                    state));
+                continue;
+            }
+            if (authsuccTopology && state.evidence.authsuccDenied) {
+                addFirstViolation(analysis, violationForState(
+                    PamFlowViolationKind::AuthenticationBypass,
+                    authStack,
+                    "successful authentication path bypasses the pam_faillock "
+                    "authsucc lockout denial",
+                    state));
+                continue;
+            }
             if ((state.evidence.authenticationFailureObserved &&
                  !state.evidence.authenticationSuccessObserved) ||
                 !state.evidence.providerReached ||
@@ -859,6 +884,13 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
                     "authsucc accounting",
                     state));
             }
+        } else if (authsuccTopology && state.evidence.authsuccSucceeded) {
+            addFirstViolation(analysis, violationForState(
+                PamFlowViolationKind::PrematureSuccessAccounting,
+                authStack,
+                "pam_faillock authsucc success accounting happened on a "
+                "path that finally failed authentication",
+                state));
         } else if (state.evidence.authenticationFailureObserved &&
                    !state.evidence.authenticationSuccessObserved &&
                    !state.evidence.authfailReached &&
@@ -920,6 +952,88 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
 
 } // namespace
 
+std::optional<fic::platform::PamFaillockStrategy>
+detectPamFaillockStrategy(const PamEffectiveStack& authStack,
+                          std::string& error) {
+    std::vector<const PamRule*> faillockRules;
+    std::vector<const PamStackEntry*> pending;
+    for (const auto& entry : authStack.entries) {
+        pending.push_back(&entry);
+    }
+    while (!pending.empty()) {
+        const PamStackEntry* entry = pending.back();
+        pending.pop_back();
+        if (entry->isSubstack()) {
+            for (const auto& child : entry->substack) {
+                pending.push_back(&child);
+            }
+            continue;
+        }
+        const PamRule& rule = entry->rule;
+        if (rule.includeKind != PamIncludeKind::None ||
+            moduleBaseName(rule) != "pam_faillock.so" ||
+            rule.group != PamManagementGroup::Auth) {
+            continue;
+        }
+        faillockRules.push_back(&rule);
+    }
+
+    std::vector<const PamRule*> preauthRules;
+    std::vector<const PamRule*> authfailRules;
+    std::vector<const PamRule*> authsuccRules;
+    for (const PamRule* rule : faillockRules) {
+        if (hasArgument(*rule, "preauth")) {
+            preauthRules.push_back(rule);
+        } else if (hasArgument(*rule, "authfail")) {
+            authfailRules.push_back(rule);
+        } else if (hasArgument(*rule, "authsucc")) {
+            authsuccRules.push_back(rule);
+        } else {
+            error = "unrecognized pam_faillock authentication rule without "
+                "preauth/authfail/authsucc role";
+            return std::nullopt;
+        }
+    }
+
+    if (authfailRules.empty()) {
+        error = "pam_faillock topology has no authfail accounting rule";
+        return std::nullopt;
+    }
+
+    if (preauthRules.size() > 1 || authsuccRules.size() > 1) {
+        error = "ambiguous pam_faillock topology with duplicated "
+            "preauth or authsucc rules";
+        return std::nullopt;
+    }
+
+    if (!preauthRules.empty()) {
+        if (!authsuccRules.empty()) {
+            error = "ambiguous pam_faillock topology combines preauth and "
+                "authsucc strategies";
+            return std::nullopt;
+        }
+        const std::string& control = preauthRules.front()->control;
+        if (control == "requisite") {
+            error.clear();
+            return fic::platform::PamFaillockStrategy::PreauthRequisite;
+        }
+        if (control == "required") {
+            error.clear();
+            return fic::platform::PamFaillockStrategy::PreauthRequired;
+        }
+        error = "unsupported pam_faillock preauth control: " + control;
+        return std::nullopt;
+    }
+
+    if (!authsuccRules.empty()) {
+        error.clear();
+        return fic::platform::PamFaillockStrategy::Authsucc;
+    }
+
+    error = "pam_faillock topology has neither preauth nor authsucc rules";
+    return std::nullopt;
+}
+
 bool PamControlFlowAnalyzer::analyze(
     PamConfiguration& configuration,
     const fic::platform::PamPlatformConfig& platformConfig,
@@ -969,8 +1083,12 @@ std::string pamFlowViolationKindName(PamFlowViolationKind kind) {
         return "password_enforcement_bypass";
     case PamFlowViolationKind::FailureAccountingBypass:
         return "failure_accounting_bypass";
+    case PamFlowViolationKind::RecoverableFailureAccounting:
+        return "recoverable_failure_accounting";
     case PamFlowViolationKind::SuccessAccountingBypass:
         return "success_accounting_bypass";
+    case PamFlowViolationKind::PrematureSuccessAccounting:
+        return "premature_success_accounting";
     case PamFlowViolationKind::UnsupportedControlFlow:
         return "unsupported_control_flow";
     }

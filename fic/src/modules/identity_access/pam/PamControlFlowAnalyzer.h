@@ -4,6 +4,7 @@
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamProviderInspector.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,7 +15,9 @@ enum class PamFlowViolationKind {
     AuthenticationBypass,
     PasswordEnforcementBypass,
     FailureAccountingBypass,
+    RecoverableFailureAccounting,
     SuccessAccountingBypass,
+    PrematureSuccessAccounting,
     UnsupportedControlFlow
 };
 
@@ -67,6 +70,14 @@ public:
                         PamControlFlowAnalysis& analysis,
                         std::string& error);
 };
+
+// Classifies the pam_faillock topology of an expanded authentication stack
+// into one of the supported integration strategies. Returns nullopt and sets
+// error when the topology is not enabled, is ambiguous, or cannot be proven
+// to match exactly one strategy (fail closed).
+std::optional<fic::platform::PamFaillockStrategy> detectPamFaillockStrategy(
+    const PamEffectiveStack& authStack,
+    std::string& error);
 
 std::string pamFlowViolationKindName(PamFlowViolationKind kind);
 std::string formatPamFlowViolation(const PamFlowViolation& violation);

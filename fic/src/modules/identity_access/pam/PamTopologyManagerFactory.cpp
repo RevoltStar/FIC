@@ -32,11 +32,11 @@ public:
                 configuration, platformConfig_, services_,
                 capability_.capability, capability_.provider, verification,
                 PamCapabilityVerificationMode::Structural)) {
-            status = {PamTopologyState::Enabled, false, {}};
+            status = {PamTopologyState::Enabled, false, {}, {}};
             error.clear();
             return true;
         }
-        status = {PamTopologyState::Broken, false,
+        status = {PamTopologyState::Broken, false, {},
                   formatPamCapabilityVerification(verification)};
         error = status.detail;
         return false;

@@ -1,6 +1,6 @@
 _schema_version=1
 enable_authentication_lockout.status=DISABLE
-enable_authentication_lockout.value=ENABLE
+enable_authentication_lockout.value=preauth_required
 enable_password_history.status=DISABLE
 enable_password_history.value=ENABLE
 enable_password_quality.status=DISABLE

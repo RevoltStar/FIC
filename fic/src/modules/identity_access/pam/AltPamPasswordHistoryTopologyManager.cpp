@@ -598,13 +598,13 @@ bool AltPamPasswordHistoryTopologyManager::inspect(PamTopologyStatus& result,
     if (!statusImpl(current, unavailable, error)) {
         result = {unavailable ? PamTopologyState::Unavailable
                               : PamTopologyState::Broken,
-                  true, error};
+                  true, {}, error};
         return false;
     }
     result = {current == AltPamPasswordHistoryTopologyState::Enabled
                   ? PamTopologyState::Enabled
                   : PamTopologyState::Disabled,
-              true, {}};
+              true, {}, {}};
     return true;
 }
 

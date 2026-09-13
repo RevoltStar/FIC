@@ -118,6 +118,12 @@ public:
              fic::platform::PamManagedTopologyTargetRole::
                  AuthenticationAndAccount}
         };
+        result.capabilities.front().supportedFaillockStrategies = {
+            fic::platform::PamFaillockStrategy::PreauthRequisite,
+            fic::platform::PamFaillockStrategy::PreauthRequired,
+            fic::platform::PamFaillockStrategy::Authsucc};
+        result.capabilities.front().defaultFaillockStrategy =
+            fic::platform::PamFaillockStrategy::PreauthRequisite;
         result.trustedServiceAliases = {
             {root / "pam.d/system-auth",
              {root / "pam.d/system-auth-local"}},
@@ -292,7 +298,7 @@ void testCanonicalRoundTrip() {
     const std::string enabled = TemporaryTree::read(tree.target());
     require(enabled.find(
                 std::string(AltPamFaillockTopologyManager::PREAUTH_BEGIN) +
-                "\n" + AltPamFaillockTopologyManager::PREAUTH_RULE + "\n") !=
+                "\n" + AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE + "\n") !=
                 std::string::npos,
             "preauth block is missing");
     require(enabled.find(
@@ -549,7 +555,7 @@ void testUseFirstPassBrokenMarkersFailClosed() {
             tree.root / "pam.d/system-auth-use_first_pass-local-only";
         const std::string partial =
             std::string(AltPamFaillockTopologyManager::PREAUTH_BEGIN) + "\n" +
-            AltPamFaillockTopologyManager::PREAUTH_RULE + "\n" +
+            AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE + "\n" +
             "auth required pam_tcb.so shadow fork nullok use_first_pass\n";
         TemporaryTree::write(target, partial);
         auto options = tree.options();
@@ -810,12 +816,12 @@ void testExternalTopologyRejected() {
 void testBrokenMarkersRejected() {
     for (const std::string& broken : {
              std::string(AltPamFaillockTopologyManager::PREAUTH_BEGIN) + "\n" +
-                 AltPamFaillockTopologyManager::PREAUTH_RULE + "\n" + kCanonical,
+                 AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE + "\n" + kCanonical,
              std::string(AltPamFaillockTopologyManager::PREAUTH_BEGIN) + "\n" +
-                 AltPamFaillockTopologyManager::PREAUTH_RULE + "\n" +
+                 AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE + "\n" +
                  AltPamFaillockTopologyManager::PREAUTH_END + "\n" +
                  AltPamFaillockTopologyManager::PREAUTH_BEGIN + "\n" +
-                 AltPamFaillockTopologyManager::PREAUTH_RULE + "\n" +
+                 AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE + "\n" +
                  AltPamFaillockTopologyManager::PREAUTH_END + "\n" + kCanonical,
              std::string(AltPamFaillockTopologyManager::ORIGINAL_AUTH_PREFIX) +
                  "00\n" + kCanonical}) {

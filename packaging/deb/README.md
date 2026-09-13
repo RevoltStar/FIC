@@ -35,7 +35,9 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - `/opt/fic/notify`
 - `/lib/systemd/system/*` from `fic/src/resources/service`
 - inactive package profiles `/usr/share/pam-configs/fic-faillock-notify`,
-  `/usr/share/pam-configs/fic-faillock` and
+  `/usr/share/pam-configs/fic-faillock-authfail`,
+  `/usr/share/pam-configs/fic-faillock-preauth-required`,
+  `/usr/share/pam-configs/fic-faillock-authsucc` and
   `/usr/share/pam-configs/fic-pwhistory`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
@@ -146,14 +148,26 @@ the administrator's selection.
 The capability activation policies use the following native recipes:
 
 ```bash
-enable_authentication_lockout: pam-auth-update --enable fic-faillock-notify fic-faillock
+# preauth_required strategy (FIC default):
+enable_authentication_lockout: pam-auth-update --enable fic-faillock-preauth-required fic-faillock-authfail
+# preauth_requisite strategy:
+enable_authentication_lockout: pam-auth-update --enable fic-faillock-notify fic-faillock-authfail
+# authsucc strategy (no pam_faillock account phase):
+enable_authentication_lockout: pam-auth-update --enable fic-faillock-authsucc fic-faillock-authfail
 enable_password_history:       pam-auth-update --enable fic-pwhistory
 enable_password_quality:       pam-auth-update --enable pwquality
 ```
 
-Faillock remains split across two physical profiles because `preauth`/account
-and `authfail` require different `pam-auth-update` priorities and placement in
-the generated stacks. The FIC profiles contain only topology and fixed role
+Faillock is compositional: the strategy value of
+`enable_authentication_lockout` selects exactly one faillock profile set, and
+a strategy change disables every other FIC faillock profile before enabling
+the requested set in one atomic `pam-auth-update` transition with rollback.
+The physical profiles are split because `preauth`/account, `authfail` and
+`authsucc` require different `pam-auth-update` priorities and placement in
+the generated stacks (`authsucc` runs after `authfail`, which now uses
+Priority 1; the `authsucc` rule uses `[success=ok default=bad]` instead of
+upstream `sufficient`, so a locked authentication is denied without skipping
+downstream modules such as `pam_gnome_keyring`). The FIC profiles contain only topology and fixed role
 arguments (`preauth`, `authfail`, `use_authtok`). Policy values remain in
 `/etc/security/faillock.conf`; history values use
 `/etc/security/pwhistory.conf` on modern Linux-PAM and the already activated

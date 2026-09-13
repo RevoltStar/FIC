@@ -655,7 +655,9 @@ set -e
 if [ "\$1" = "remove" ]; then
     pam-auth-update --package --remove \
         fic-faillock-notify \
-        fic-faillock \
+        fic-faillock-authfail \
+        fic-faillock-preauth-required \
+        fic-faillock-authsucc \
         fic-pwhistory
 fi
 
@@ -764,7 +766,8 @@ install_fic_pam_profiles() {
     local profile_dir="$package_root/usr/share/pam-configs"
 
     mkdir -p "$profile_dir"
-    for profile in fic-faillock-notify fic-faillock fic-pwhistory; do
+    for profile in fic-faillock-notify fic-faillock-authfail \
+        fic-faillock-preauth-required fic-faillock-authsucc fic-pwhistory; do
         install -m 0644 \
             "$ROOT_DIR/packaging/deb/pam-configs/$profile" \
             "$profile_dir/$profile"

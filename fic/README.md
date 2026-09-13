@@ -639,11 +639,16 @@ history update вместе с последующей записью `pam_tcb` �
 `enable_password_history` подключает topology, а history option policies
 отдельно задают `remember` и `enforce_for_root`.
 
-Три политики `enable_authentication_lockout`, `enable_password_history` и
-`enable_password_quality` имеют фиксированное значение `ENABLE`. Они выбирают
-strategy только через typed capability metadata, при необходимости вызывают
-native integration и затем создают новую `PamConfiguration` и выполняют
-`PamCapabilityVerifier` в режиме `Structural`. Успешный exit code native tool
+`enable_password_history` и `enable_password_quality` имеют фиксированное
+значение `ENABLE`. `enable_authentication_lockout` — стратегическая политика:
+её значение выбирает интеграцию pam_faillock (`preauth_requisite`,
+`preauth_required`, `authsucc`); поддерживаемый набор и значение по умолчанию
+объявлены в platform profile (`supportedFaillockStrategies`,
+`defaultFaillockStrategy`, для Debian/Ubuntu — также `strategyActivations`).
+Смена стратегии выполняется как атомарный переход с проверкой и откатом.
+Activation policies при необходимости вызывают native integration, затем
+создают новую `PamConfiguration` и выполняют `PamCapabilityVerifier` в режиме
+`Structural`. Успешный exit code native tool
 без корректного resulting effective graph считается ошибкой. Выключенный
 status такой FIC policy означает только отсутствие обеспечения со стороны FIC
 и никогда не запускает деактивацию PAM mechanism. Все option policies имеют

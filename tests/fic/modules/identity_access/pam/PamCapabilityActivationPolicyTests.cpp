@@ -89,7 +89,7 @@ public:
     bool inspect(fic::identity::pam::PamTopologyStatus& status,
                  std::string& error) override {
         ++state_->inspectCalls;
-        status = {state_->topologyState, true, "fake topology"};
+        status = {state_->topologyState, true, {}, "fake topology"};
         error = state_->inspectResult ? "" : "inspection failed";
         return state_->inspectResult;
     }

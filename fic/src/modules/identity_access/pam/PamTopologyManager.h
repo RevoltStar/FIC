@@ -1,6 +1,9 @@
 #ifndef FIC_IDENTITY_ACCESS_PAM_TOPOLOGY_MANAGER_H
 #define FIC_IDENTITY_ACCESS_PAM_TOPOLOGY_MANAGER_H
 
+#include "platform/PlatformProfile.h"
+
+#include <optional>
 #include <string>
 
 namespace fic::identity::pam {
@@ -15,6 +18,10 @@ enum class PamTopologyState {
 struct PamTopologyStatus {
     PamTopologyState state = PamTopologyState::Unavailable;
     bool manageable = false;
+    // Active pam_faillock integration strategy. Set when the inspected
+    // capability is AuthenticationLockout and the topology is enabled;
+    // nullopt means the topology is not strategy-aware or not enabled.
+    std::optional<fic::platform::PamFaillockStrategy> activeStrategy;
     std::string detail;
 };
 
@@ -27,6 +34,19 @@ public:
     virtual bool canEnable(std::string& error) const = 0;
     virtual bool enable(std::string& error) = 0;
     virtual bool disable(std::string& error) = 0;
+
+    // Strategy-aware faillock activation. Base implementations reject the
+    // operation: only faillock topology managers with declared strategies
+    // override them. A strategy transition must be atomic: inspect the
+    // current topology, snapshot it, build the candidate, apply, re-read,
+    // verify the postcondition, and only then commit; on failure restore
+    // the snapshot instead of leaving a mixed topology.
+    virtual bool canEnableStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error) const;
+    virtual bool enableStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error);
 };
 
 } // namespace fic::identity::pam

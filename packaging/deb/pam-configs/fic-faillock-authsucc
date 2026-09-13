@@ -1,0 +1,6 @@
+Name: FIC PAM faillock success accounting
+Default: no
+Priority: 0
+Auth-Type: Primary
+Auth:
+	[success=ok default=bad]	pam_faillock.so authsucc

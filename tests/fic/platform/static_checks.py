@@ -300,7 +300,11 @@ def main():
             and "PamProviderKind::PamPwhistory" in profiles[name]
             and "ExecutableId::PamAuthUpdate" in profiles[name]
             and "PamTopologyStrategyKind::PamAuthUpdate" in profiles[name]
-            and '"fic-faillock-notify", "fic-faillock"' in profiles[name]
+            and '"fic-faillock-notify", "fic-faillock-authfail"' in profiles[name]
+            and '"fic-faillock-preauth-required", "fic-faillock-authfail"' in profiles[name]
+            and '"fic-faillock-authsucc", "fic-faillock-authfail"' in profiles[name]
+            and 'supportedFaillockStrategies = {' in profiles[name]
+            and 'defaultFaillockStrategy =' in profiles[name]
             and '"fic-pwhistory"' in profiles[name]
             and '"pwquality"' in profiles[name],
             f"{name} does not compose the PAM activation recipes",

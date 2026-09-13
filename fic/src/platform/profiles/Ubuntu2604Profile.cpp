@@ -128,7 +128,21 @@ PlatformProfile makeBuildPlatformProfile() {
          PamTopologyStrategyKind::PamAuthUpdate, {}}
     };
     profile.pam.capabilities[0].activationIdentifiers = {
-        "fic-faillock-notify", "fic-faillock"};
+        "fic-faillock-notify", "fic-faillock-authfail"};
+    profile.pam.capabilities[0].supportedFaillockStrategies = {
+        PamFaillockStrategy::PreauthRequired,
+        PamFaillockStrategy::PreauthRequisite,
+        PamFaillockStrategy::Authsucc};
+    profile.pam.capabilities[0].defaultFaillockStrategy =
+        PamFaillockStrategy::PreauthRequired;
+    profile.pam.capabilities[0].strategyActivations = {
+        {PamFaillockStrategy::PreauthRequisite,
+         {"fic-faillock-notify", "fic-faillock-authfail"}},
+        {PamFaillockStrategy::PreauthRequired,
+         {"fic-faillock-preauth-required", "fic-faillock-authfail"}},
+        {PamFaillockStrategy::Authsucc,
+         {"fic-faillock-authsucc", "fic-faillock-authfail"}}
+    };
     profile.pam.capabilities[1].activationIdentifiers = {"pwquality"};
     profile.pam.capabilities[2].activationIdentifiers = {"fic-pwhistory"};
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";

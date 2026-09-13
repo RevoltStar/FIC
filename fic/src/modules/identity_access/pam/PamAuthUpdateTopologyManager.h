@@ -32,12 +32,33 @@ public:
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
 
+    bool canEnableStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error) const override;
+    bool enableStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error) override;
+
 private:
     fic::platform::PamPlatformConfig platformConfig_;
     fic::platform::PamCapabilityConfig capability_;
     std::vector<std::string> services_;
     const fic::platform::PlatformExecutableResolver& executables_;
     PamAuthUpdateTopologyManagerOptions options_;
+
+    // All faillock activation identifiers declared by this platform, across
+    // every supported strategy. Used to reset the profile selection before
+    // enabling the requested strategy.
+    std::vector<std::string> knownActivationIdentifiers() const;
+    const std::vector<std::string>* strategyActivationIdentifiers(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error) const;
+    bool runPamAuthUpdate(
+        const std::string& mode,
+        const std::vector<std::string>& identifiers,
+        std::string& error);
+    bool resolveExecutable(std::filesystem::path& executable,
+                           std::string& error) const;
 };
 
 } // namespace fic::identity::pam

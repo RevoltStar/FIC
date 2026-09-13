@@ -167,6 +167,12 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/pam.d/system-auth-use_first_pass-local-only",
          PamManagedTopologyTargetRole::Authentication}
     };
+    profile.pam.capabilities.front().supportedFaillockStrategies = {
+        PamFaillockStrategy::PreauthRequired,
+        PamFaillockStrategy::PreauthRequisite,
+        PamFaillockStrategy::Authsucc};
+    profile.pam.capabilities.front().defaultFaillockStrategy =
+        PamFaillockStrategy::PreauthRequired;
     profile.pam.passwordlessLoginControl = {
         "nopasswdlogin", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
         {

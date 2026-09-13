@@ -46,6 +46,11 @@ public:
 
     fic::platform::PamCapability capability() const { return capability_; }
 
+    // pam_faillock strategy encoded by a policy value. Only meaningful for
+    // the AuthenticationLockout capability.
+    std::optional<fic::platform::PamFaillockStrategy> strategyForValue(
+        const std::string& value) const;
+
 protected:
     bool applyPam(const std::string& expectedValue) override;
 
@@ -53,6 +58,8 @@ private:
     fic::platform::PamPlatformConfig platformConfig_;
     fic::platform::PamCapability capability_;
     PamCapabilityActivationPolicyOptions options_;
+
+    bool strategyAware() const;
 
     bool verifyFresh(
         const fic::platform::PamCapabilityConfig& capability,

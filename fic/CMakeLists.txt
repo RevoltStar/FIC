@@ -62,6 +62,7 @@ configure_file(
 add_library(fic-platform STATIC
     src/platform/PlatformCompatibility.cpp
     src/platform/PlatformExecutableResolver.cpp
+    src/platform/PamFaillockStrategy.cpp
     src/platform/PamProviderMetadata.cpp
     ${FIC_TARGET_PLATFORM_PROFILE_SOURCE}
 )

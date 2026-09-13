@@ -139,6 +139,22 @@ enum class PamTopologyStrategyKind {
     AltTcbManaged
 };
 
+// pam_faillock integration strategies for the AuthenticationLockout
+// capability. The strategy selects which control-flow topology FIC builds
+// and verifies; it is a persistent policy value, not a runtime toggle.
+enum class PamFaillockStrategy {
+    PreauthRequisite,
+    PreauthRequired,
+    Authsucc
+};
+
+std::string pamFaillockStrategyName(PamFaillockStrategy strategy);
+std::optional<PamFaillockStrategy> parsePamFaillockStrategy(
+    const std::string& name);
+bool supportsPamFaillockStrategy(
+    const struct PamCapabilityConfig& capability,
+    PamFaillockStrategy strategy);
+
 enum class PamConfigPrecedence {
     DropInsThenPrimary
 };
@@ -215,6 +231,13 @@ struct PamManagedTopologyTarget {
         PamManagedTopologyTargetRole::Authentication;
 };
 
+// Per-strategy activation recipe for topology managers that activate a set
+// of platform recipes (pam-auth-update profiles).
+struct PamFaillockStrategyActivation {
+    PamFaillockStrategy strategy = PamFaillockStrategy::PreauthRequired;
+    std::vector<std::string> activationIdentifiers;
+};
+
 struct PamCapabilityConfig {
     PamCapability capability = PamCapability::AuthenticationLockout;
     PamProviderKind provider = PamProviderKind::PamFaillock;
@@ -230,6 +253,15 @@ struct PamCapabilityConfig {
         PamCapabilityConfigurationMode::ProviderConfigFile;
     std::vector<PamManagedTopologyTarget> managedTopologyTargets;
     std::vector<std::string> activationIdentifiers;
+    // pam_faillock strategies this platform supports. Empty means the
+    // capability has no strategy-aware integration (fixed topology).
+    std::vector<PamFaillockStrategy> supportedFaillockStrategies;
+    PamFaillockStrategy defaultFaillockStrategy =
+        PamFaillockStrategy::PreauthRequired;
+    // Per-strategy activation recipes for topology managers that activate
+    // a set of platform recipes (pam-auth-update profiles). Strategies
+    // without a recipe cannot be activated on such platforms.
+    std::vector<PamFaillockStrategyActivation> strategyActivations;
 };
 
 struct PamPlatformConfig {
