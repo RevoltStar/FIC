@@ -39,7 +39,8 @@
   block, так и из authsucc anchor.
 - `PamControlFlowAnalyzer` учитывает `authsuccDenied` в symbolic-state
   identity и имеет negative coverage для RecoverableFailureAccounting,
-  PrematureSuccessAccounting и authsucc-denial bypass paths.
+  PrematureSuccessAccounting, authsucc-denial bypass paths, and typed SDDM
+  root subject exclusions.
 
 ## Completed
 
@@ -73,9 +74,15 @@
 - RU/EN description `enable_authentication_lockout` исправлен: для
   `preauth_required` final denial comes from remembered required auth failure,
   while account `pam_faillock` is for success accounting/reset.
-- Коммит добавил модель trusted authentication exclusions, Debian12/13 SDDM
+- Добавлена модель trusted authentication exclusions, Debian12/13 SDDM
   root exclusion declaration, policy `disable_root_sddm_login`, wiring в
   daemon policy list, RU/EN/default config entries и targeted tests.
+- `disable_root_sddm_login` writes the hardened SDDM gate
+  `auth requisite pam_succeed_if.so user != root quiet_success`; Debian-native
+  `control=required` remains declared as the distribution form and is upgraded
+  in place to `requisite`. CFG analysis treats both `required` and enforced
+  `requisite` controls as the same typed subject exclusion, with `requisite`
+  recorded on `die` control flow.
 
 ## Changed areas
 
@@ -109,6 +116,7 @@
 - Manual `PamAuthUpdateTopologyManagerTests.cpp` g++ build + run after
   missing-candidate service filtering: PASSED
 - `git diff --check`: PASSED
+- `git diff --check`: PASSED after SDDM enforced-control follow-up.
 
 ## Remaining
 

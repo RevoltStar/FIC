@@ -60,7 +60,7 @@ fic::platform::PamPlatformConfig makeSddmPlatform(const fs::path& root) {
          fic::platform::PamTrustedAuthenticationExclusionReason::
              ExplicitSubjectExclusion,
          "root", "required", {"user", "!=", "root", "quiet_success"},
-         root / "pam.d/sddm", "common-auth"}};
+         root / "pam.d/sddm", "common-auth", "requisite"}};
     return platform;
 }
 
@@ -350,6 +350,18 @@ void testSddmRootExclusionWithAuthsucc(const fs::path& root) {
                          PamFlowViolationKind::PrematureSuccessAccounting),
             "authsucc reset of an excluded root tally was accepted while "
             "even_deny_root is enabled");
+
+    // The hardening policy upgrades the narrowing gate to requisite. Root is
+    // then rejected before common-auth, so authsucc cannot reset root's tally
+    // even when even_deny_root is enabled.
+    writeFile(root / "pam.d/sddm",
+              "auth requisite pam_nologin.so\n"
+              "auth requisite pam_succeed_if.so user != root quiet_success\n"
+              "@include common-auth\n"
+              "@include common-account\n");
+    analysis = analyzeService(platform, "sddm");
+    require(analysis.effective,
+            "requisite SDDM root exclusion rejected safe authsucc topology");
 
     writeFile(root / "security/faillock.conf", "# even_deny_root\n");
     writeFile(root / "pam.d/sddm",

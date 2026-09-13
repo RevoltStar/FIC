@@ -110,7 +110,7 @@ PlatformProfile makeBuildPlatformProfile() {
         {"sddm", "pam_succeed_if.so",
          PamTrustedAuthenticationExclusionReason::ExplicitSubjectExclusion,
          "root", "required", {"user", "!=", "root", "quiet_success"},
-         "/etc/pam.d/sddm", "common-auth"}
+         "/etc/pam.d/sddm", "common-auth", "requisite"}
     };
     profile.pam.capabilities = {
         {PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock,

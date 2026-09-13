@@ -124,9 +124,13 @@ matchingTrustedAuthenticationExclusion(
         platformConfig.trustedAuthenticationExclusions.begin(),
         platformConfig.trustedAuthenticationExclusions.end(),
         [&](const auto& candidate) {
+            const bool controlMatches =
+                candidate.control == rule.control ||
+                (!candidate.enforcedControl.empty() &&
+                 candidate.enforcedControl == rule.control);
             return candidate.service == service &&
                 candidate.module == module &&
-                candidate.control == rule.control &&
+                controlMatches &&
                 candidate.arguments == rule.arguments &&
                 (!candidate.source.has_value() ||
                  candidate.source->lexically_normal() ==
@@ -508,7 +512,8 @@ void recordTrustedAuthenticationExclusion(
     const std::string& service,
     const fic::platform::PamPlatformConfig& platformConfig) {
     if (rule.group != PamManagementGroup::Auth || result != "auth_err" ||
-        action.kind != ActionKind::Bad) {
+        (action.kind != ActionKind::Bad &&
+         action.kind != ActionKind::Die)) {
         return;
     }
     const auto* matched = matchingTrustedAuthenticationExclusion(

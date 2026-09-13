@@ -60,7 +60,7 @@ struct Tree {
              fic::platform::PamTrustedAuthenticationExclusionReason::
                  ExplicitSubjectExclusion,
              "root", "required", {"user", "!=", "root", "quiet_success"},
-             sddm, "common-auth"}};
+             sddm, "common-auth", "requisite"}};
     }
 
     ~Tree() {
@@ -96,10 +96,17 @@ const std::string kBase =
     "@include common-auth\n"
     "@include common-account\n";
 
-const std::string kManaged =
+const std::string kNative =
     "#%PAM-1.0\n"
     "auth requisite pam_nologin.so\n"
     "auth required pam_succeed_if.so user != root quiet_success\n"
+    "@include common-auth\n"
+    "@include common-account\n";
+
+const std::string kManaged =
+    "#%PAM-1.0\n"
+    "auth requisite pam_nologin.so\n"
+    "auth requisite pam_succeed_if.so user != root quiet_success\n"
     "@include common-auth\n"
     "@include common-account\n";
 
@@ -112,6 +119,11 @@ void runTests() {
     require(policy.apply() && policy.apply() && readFile(tree.sddm) == kManaged,
             "already compliant SDDM topology was not idempotent");
 
+    writeFile(tree.sddm, kNative);
+    require(policy.apply() && readFile(tree.sddm) == kManaged,
+            "native required SDDM root exclusion was not upgraded to "
+            "requisite");
+
     writeFile(tree.sddm, kBase);
     require(policy.apply() && readFile(tree.sddm) == kManaged,
             "missing SDDM root exclusion was not inserted before common-auth");
@@ -120,7 +132,7 @@ void runTests() {
 
     const std::string conflict =
         "auth requisite pam_nologin.so\n"
-        "auth requisite pam_succeed_if.so user != root quiet_success\n"
+        "auth sufficient pam_succeed_if.so user != root quiet_success\n"
         "@include common-auth\n"
         "@include common-account\n";
     writeFile(tree.sddm, conflict);

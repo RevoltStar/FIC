@@ -118,6 +118,10 @@ struct PamTrustedAuthenticationExclusionRule {
     std::optional<std::filesystem::path> source;
     // Optional placement contract used by a policy that manages this rule.
     std::string insertBeforeIncludeTarget;
+    // Optional stronger control enforced by the hardening policy. Both the
+    // distribution-native control above and this control are understood by
+    // the CFG analyzer as the same typed subject exclusion.
+    std::string enforcedControl;
 };
 
 struct PamTrustedServiceAlias {

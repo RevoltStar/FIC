@@ -16,6 +16,7 @@ using ExclusionRule = fic::platform::PamTrustedAuthenticationExclusionRule;
 
 enum class RuleState {
     Compliant,
+    Upgradeable,
     Missing,
     Conflict
 };
@@ -23,6 +24,7 @@ enum class RuleState {
 struct Inspection {
     RuleState state = RuleState::Conflict;
     std::size_t includeIndex = 0;
+    std::size_t ruleIndex = 0;
 };
 
 std::vector<std::string> tokens(const std::string& line) {
@@ -63,14 +65,19 @@ std::string joinLines(const std::vector<std::string>& lines) {
 }
 
 bool exactRule(const std::vector<std::string>& fields,
-               const ExclusionRule& rule) {
+               const ExclusionRule& rule,
+               const std::string& control) {
     if (fields.size() != 3 + rule.arguments.size() ||
-        fields[0] != "auth" || fields[1] != rule.control ||
+        fields[0] != "auth" || fields[1] != control ||
         fields[2] != rule.module) {
         return false;
     }
     return std::equal(rule.arguments.begin(), rule.arguments.end(),
                       fields.begin() + 3);
+}
+
+const std::string& enforcedControl(const ExclusionRule& rule) {
+    return rule.enforcedControl.empty() ? rule.control : rule.enforcedControl;
 }
 
 bool rootSucceedIfRule(const std::vector<std::string>& fields) {
@@ -97,8 +104,9 @@ Inspection inspectContent(const std::string& content,
                           const ExclusionRule& rule,
                           std::string& error) {
     const auto lines = splitLines(content);
-    std::size_t exactCount = 0;
-    std::size_t exactIndex = 0;
+    std::size_t knownCount = 0;
+    std::size_t knownIndex = 0;
+    bool knownIsEnforced = false;
     std::size_t includeCount = 0;
     std::size_t includeIndex = 0;
     bool conflictingRootRule = false;
@@ -108,9 +116,14 @@ Inspection inspectContent(const std::string& content,
         if (fields.empty()) {
             continue;
         }
-        if (exactRule(fields, rule)) {
-            ++exactCount;
-            exactIndex = i;
+        const bool isEnforced =
+            exactRule(fields, rule, enforcedControl(rule));
+        const bool isNative =
+            !isEnforced && exactRule(fields, rule, rule.control);
+        if (isEnforced || isNative) {
+            ++knownCount;
+            knownIndex = i;
+            knownIsEnforced = isEnforced;
             continue;
         }
         if (rootSucceedIfRule(fields)) {
@@ -125,26 +138,27 @@ Inspection inspectContent(const std::string& content,
     if (includeCount != 1) {
         error = "SDDM PAM topology must contain exactly one @include " +
             rule.insertBeforeIncludeTarget;
-        return {RuleState::Conflict, 0};
+        return {RuleState::Conflict, 0, 0};
     }
-    if (exactCount > 1) {
+    if (knownCount > 1) {
         error = "SDDM PAM topology contains duplicate root exclusion rules";
-        return {RuleState::Conflict, includeIndex};
+        return {RuleState::Conflict, includeIndex, knownIndex};
     }
     if (conflictingRootRule) {
         error = "SDDM PAM topology contains an unmanaged root exclusion rule";
-        return {RuleState::Conflict, includeIndex};
+        return {RuleState::Conflict, includeIndex, knownIndex};
     }
-    if (exactCount == 1) {
-        if (exactIndex >= includeIndex) {
+    if (knownCount == 1) {
+        if (knownIndex >= includeIndex) {
             error = "SDDM root exclusion rule is not placed before common-auth";
-            return {RuleState::Conflict, includeIndex};
+            return {RuleState::Conflict, includeIndex, knownIndex};
         }
         error.clear();
-        return {RuleState::Compliant, includeIndex};
+        return {knownIsEnforced ? RuleState::Compliant : RuleState::Upgradeable,
+                includeIndex, knownIndex};
     }
     error.clear();
-    return {RuleState::Missing, includeIndex};
+    return {RuleState::Missing, includeIndex, 0};
 }
 
 bool readTarget(const std::filesystem::path& path,
@@ -203,7 +217,8 @@ const ExclusionRule* rootSddmContract(
     if (selected == nullptr || !selected->source.has_value() ||
         selected->control.empty() || selected->module.empty() ||
         selected->arguments.empty() ||
-        selected->insertBeforeIncludeTarget.empty()) {
+        selected->insertBeforeIncludeTarget.empty() ||
+        selected->enforcedControl.empty()) {
         error = "platform does not declare a complete SDDM root exclusion contract";
         return nullptr;
     }
@@ -212,7 +227,8 @@ const ExclusionRule* rootSddmContract(
 }
 
 std::string canonicalRule(const ExclusionRule& rule) {
-    std::string line = "auth " + rule.control + " " + rule.module;
+    std::string line =
+        "auth " + enforcedControl(rule) + " " + rule.module;
     for (const auto& argument : rule.arguments) {
         line += " " + argument;
     }
@@ -265,13 +281,22 @@ bool PamDisableRootSddmLoginPolicy::applyPam(const std::string&) {
     }
 
     auto lines = splitLines(original);
-    if (inspection.includeIndex > lines.size()) {
-        log("Refusing to modify SDDM PAM topology: invalid include position",
-            logLevel::ERROR);
-        return false;
+    if (inspection.state == RuleState::Upgradeable) {
+        if (inspection.ruleIndex >= lines.size()) {
+            log("Refusing to modify SDDM PAM topology: invalid rule position",
+                logLevel::ERROR);
+            return false;
+        }
+        lines[inspection.ruleIndex] = canonicalRule(*contract);
+    } else {
+        if (inspection.includeIndex > lines.size()) {
+            log("Refusing to modify SDDM PAM topology: invalid include position",
+                logLevel::ERROR);
+            return false;
+        }
+        lines.insert(lines.begin() + inspection.includeIndex,
+                     canonicalRule(*contract));
     }
-    lines.insert(lines.begin() + inspection.includeIndex,
-                 canonicalRule(*contract));
     const std::string candidate = joinLines(lines);
 
     AtomicWriteOptions options = writeOptions(originalMetadata, original);
