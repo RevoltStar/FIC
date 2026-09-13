@@ -212,13 +212,37 @@ bool PamAuthUpdateTopologyManager::detectOwnership(
     return true;
 }
 
+bool PamAuthUpdateTopologyManager::existingVerificationServices(
+    PamConfiguration& configuration,
+    std::vector<std::string>& existing,
+    std::string& error) const {
+    if (!configuration.existingServices(services_, existing, error)) {
+        if (error.empty()) {
+            error = "could not determine existing PAM services";
+        } else {
+            error = "could not determine existing PAM services: " + error;
+        }
+        return false;
+    }
+    if (existing.empty()) {
+        error = "none of the configured PAM services exists";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 PamAuthUpdateTopologyManager::ExternalFaillockGraphState
 PamAuthUpdateTopologyManager::externalFaillockGraphState(
     std::string& error) const {
     PamConfiguration configuration(platformConfig_);
+    std::vector<std::string> services;
+    if (!existingVerificationServices(configuration, services, error)) {
+        return ExternalFaillockGraphState::Error;
+    }
     for (PamManagementGroup group :
          {PamManagementGroup::Auth, PamManagementGroup::Account}) {
-        for (const std::string& service : services_) {
+        for (const std::string& service : services) {
             PamEffectiveStack stack;
             if (!configuration.buildEffectiveStack(
                     service, group, stack, error)) {
@@ -246,7 +270,11 @@ bool PamAuthUpdateTopologyManager::detectUniformStrategy(
         return false;
     }
     PamConfiguration configuration(platformConfig_);
-    for (const std::string& service : services_) {
+    std::vector<std::string> services;
+    if (!existingVerificationServices(configuration, services, error)) {
+        return false;
+    }
+    for (const std::string& service : services) {
         PamEffectiveStack stack;
         if (!configuration.buildEffectiveStack(
                 service, PamManagementGroup::Auth, stack, error)) {

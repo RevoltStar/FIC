@@ -16,6 +16,8 @@
 
 namespace fic::identity::pam {
 
+class PamConfiguration;
+
 struct PamAuthUpdateTopologyManagerOptions {
     std::function<ProcessResult(
         const std::string&, const std::vector<std::string>&,
@@ -100,6 +102,10 @@ private:
     bool enabledStateIdentifiers(std::set<std::string>& identifiers,
                                  std::string& error) const;
     bool detectOwnership(Ownership& ownership, std::string& error) const;
+    bool existingVerificationServices(
+        PamConfiguration& configuration,
+        std::vector<std::string>& existing,
+        std::string& error) const;
     ExternalFaillockGraphState externalFaillockGraphState(
         std::string& error) const;
 

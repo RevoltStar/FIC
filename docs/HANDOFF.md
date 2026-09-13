@@ -10,8 +10,9 @@
 
 - Follow-up исправления `enable_authentication_lockout`: не менять
   архитектуру трёх стратегий, а закрыть оставшиеся fail-open cases в
-  pam-auth-update ownership/external-topology detection и поправить описание
-  `preauth_required`.
+  pam-auth-update ownership/external-topology detection, поправить описание
+  `preauth_required`, и корректно обрабатывать отсутствующие optional PAM
+  services из platform-profile superset.
 
 ## Accepted architecture / invariants
 
@@ -60,9 +61,15 @@
   (`Clear`/`Present`/`Error`), recursive detection of `pam_faillock` inside
   substacks, fail-closed pam-auth-update state DB reads, and an unconditional
   `Enabled && !manageable` mutation guard.
+- `PamAuthUpdateTopologyManager` теперь фильтрует `services_` через
+  `PamConfiguration::existingServices()` перед external `pam_faillock`
+  inspection и uniform-strategy detection: absent candidate services
+  (`gdm-password`/`lightdm` на SDDM-only host) игнорируются, пустой набор и
+  ошибки резолва остаются fail-closed.
 - `PamAuthUpdateTopologyManagerTests.cpp` расширен targeted regression cases:
   nested external faillock, malformed effective stack, invalid state DB, and
-  unmanaged enabled topology mutation refusal.
+  unmanaged enabled topology mutation refusal, plus missing candidate PAM
+  services during `preauth_required` activation/inspection.
 - RU/EN description `enable_authentication_lockout` исправлен: для
   `preauth_required` final denial comes from remembered required auth failure,
   while account `pam_faillock` is for success accounting/reset.
@@ -91,12 +98,19 @@
   `common-account` shape described above.
 - Manual `PamAuthUpdateTopologyManagerTests.cpp` g++ build + run after
   follow-up fail-closed changes: PASSED
+- Manual `PamAuthUpdateTopologyManagerTests.cpp` g++ build + run after
+  missing-candidate service filtering: PASSED
 - `git diff --check`: PASSED
 
 ## Remaining
 
 - Full root CTest was not run in this WSL checkout; root configure is known to
   require missing `gio-2.0` dev for `fic-session-agent`.
+- `cmake --build build-check --target pam_auth_update_topology_tests -j2`
+  could not run because `build-check` has no tests target; the existing
+  `build-check-container` cache points at `/src`; a fresh `/tmp` configure
+  still fails on missing `gio-2.0`. Targeted validation was therefore done via
+  manual g++ build of the `pam_auth_update_topology_tests` source set.
 - Full runtime PAM matrix from the prompt is not complete. Only Debian13
   structural pam-auth-update generation was verified live. Debian12,
   Ubuntu 24.04/26.04 and ALT p11 runtime login/tally/reset behavior remain

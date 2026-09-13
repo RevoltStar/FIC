@@ -355,6 +355,34 @@ void testEnableFromDisabledAndIdempotency(const TestTree& tree) {
             "idempotent re-application changed the stack");
 }
 
+void testMissingCandidateServicesAreIgnored(const TestTree& tree) {
+    resetTree(tree);
+    FakePamAuthUpdate fake;
+    const std::vector<std::string> services = {
+        "common-auth", "gdm-password", "lightdm"};
+    auto platform = tree.platform(services);
+    fic::platform::PlatformExecutableResolver resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), services, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    require(manager.enableStrategy(PamFaillockStrategy::PreauthRequired,
+                                   error),
+            "missing candidate PAM services blocked activation: " + error);
+    require(fake.calls == 1,
+            "activation with missing candidate services invoked pam-auth-update "
+            "more than once");
+
+    fic::identity::pam::PamTopologyStatus status;
+    require(manager.inspect(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Enabled &&
+                status.manageable &&
+                status.activeStrategy ==
+                    PamFaillockStrategy::PreauthRequired,
+            "missing candidate PAM services blocked inspection: " + error);
+    resetTree(tree);
+}
+
 void testSixPairwiseTransitions(const TestTree& tree) {
     for (PamFaillockStrategy from : kStrategies) {
         for (PamFaillockStrategy to : kStrategies) {
@@ -685,6 +713,7 @@ int main() {
     try {
         TestTree tree;
         testEnableFromDisabledAndIdempotency(tree);
+        testMissingCandidateServicesAreIgnored(tree);
         testSixPairwiseTransitions(tree);
         testEnableFailureRollsBack(tree);
         testPostconditionFailuresRollBack(tree);
