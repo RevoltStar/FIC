@@ -675,6 +675,23 @@ add_test(
     COMMAND pam_disable_nopasswdlogin_policy_tests
 )
 
+add_executable(pam_disable_root_sddm_login_policy_tests
+    fic/modules/identity_access/pam/PamDisableRootSddmLoginPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamDisableRootSddmLoginPolicy.cpp
+)
+target_include_directories(pam_disable_root_sddm_login_policy_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_disable_root_sddm_login_policy_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(
+    NAME pam_disable_root_sddm_login_policy_tests
+    COMMAND pam_disable_root_sddm_login_policy_tests
+)
+
 add_executable(pam_capability_activation_policy_tests
     fic/modules/identity_access/pam/PamCapabilityActivationPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
@@ -1167,6 +1184,7 @@ set(FIC_UNIT_TESTS
     pam_control_flow_analyzer_tests
     pam_auth_update_topology_tests
     pam_disable_nopasswdlogin_policy_tests
+    pam_disable_root_sddm_login_policy_tests
     passwdqc_config_file_tests
     alt_pam_faillock_topology_tests
     alt_pam_password_history_topology_tests

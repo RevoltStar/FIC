@@ -104,6 +104,8 @@
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Неудачные PAM-аутентификации до блокировки
 [module:IDENTITY_ACCESS][policy:disable_nopasswdlogin]=Отключение беспарольного входа через nopasswdlogin
 [module:IDENTITY_ACCESS][policy:disable_nopasswdlogin][description]=Удаляет локальную supplementary membership из объявленной платформой группы nopasswdlogin и проверяет отсутствие effective membership через поддерживаемую ALT NSS topology. Не изменяет primary GID и fail-closed отклоняет остаточную, remote или неизвестную NSS membership.
+[module:IDENTITY_ACCESS][policy:disable_root_sddm_login]=Запрет входа root через SDDM
+[module:IDENTITY_ACCESS][policy:disable_root_sddm_login][description]=Гарантирует наличие объявленного платформой SDDM PAM-ограничения auth required pam_succeed_if.so user != root quiet_success перед common-auth. Неизвестная или конфликтующая PAM-топология отклоняется fail-closed.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts][description]=Задаёт deny в каноническом конфиге pam_faillock. Все целевые службы аутентификации должны использовать одну полную схему pam_faillock; pam_tally и pam_tally2 считаются конфликтующими providers.
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period]=Период подсчёта неуспешных попыток входа
 [module:IDENTITY_ACCESS][policy:failed_authentication_counting_period][description]=Задаёт fail_interval в секундах в каноническом конфиге pam_faillock. При достижении порога deny учитываются неуспешные аутентификации, произошедшие внутри этого временного окна.

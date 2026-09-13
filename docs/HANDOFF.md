@@ -11,7 +11,7 @@
 - Follow-up исправления `enable_authentication_lockout`: не менять
   архитектуру трёх стратегий, а закрыть оставшиеся fail-open cases в
   pam-auth-update ownership/external-topology detection, поправить описание
-  `preauth_required`, и корректно обрабатывать отсутствующие optional PAM
+  `preauth_required`, корректно обрабатывать отсутствующие optional PAM
   services из platform-profile superset.
 
 ## Accepted architecture / invariants
@@ -73,13 +73,21 @@
 - RU/EN description `enable_authentication_lockout` исправлен: для
   `preauth_required` final denial comes from remembered required auth failure,
   while account `pam_faillock` is for success accounting/reset.
+- Коммит добавил модель trusted authentication exclusions, Debian12/13 SDDM
+  root exclusion declaration, policy `disable_root_sddm_login`, wiring в
+  daemon policy list, RU/EN/default config entries и targeted tests.
 
 ## Changed areas
 
 - `fic/src/modules/identity_access/pam/` (pam-auth-update manager, ALT
-  manager, CFG analyzer, activation policy)
+  manager, CFG analyzer, activation policy, SDDM root-login policy)
 - `packaging/deb/pam-configs/*`, `packaging/deb/README.md`
 - `fic/README.md`, `ru.lang`, `en.lang`
+- `fic/src/platform/PlatformProfile.h`
+- `fic/src/platform/profiles/Debian12Profile.cpp`,
+  `fic/src/platform/profiles/Debian13Profile.cpp`
+- `fic/src/daemon/main_function.*`
+- `fic/src/resources/config/IDENTITY_ACCESS.conf.in`
 - `tests/CMakeLists.txt`
 - `tests/fic/modules/identity_access/pam/*`
 - `tests/integration/packaging/PamPackagingChecks.py`

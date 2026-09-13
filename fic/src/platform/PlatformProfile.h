@@ -100,6 +100,26 @@ struct PamTrustedAuthenticationBypassRule {
     std::optional<std::filesystem::path> source;
 };
 
+enum class PamTrustedAuthenticationExclusionReason {
+    ExplicitSubjectExclusion
+};
+
+// A platform-declared authentication gate that only narrows the set of
+// subjects allowed to complete a PAM service.  Unlike a trusted bypass it
+// never grants authentication by itself.
+struct PamTrustedAuthenticationExclusionRule {
+    std::string service;
+    std::string module;
+    PamTrustedAuthenticationExclusionReason reason =
+        PamTrustedAuthenticationExclusionReason::ExplicitSubjectExclusion;
+    std::string excludedUser;
+    std::string control;
+    std::vector<std::string> arguments;
+    std::optional<std::filesystem::path> source;
+    // Optional placement contract used by a policy that manages this rule.
+    std::string insertBeforeIncludeTarget;
+};
+
 struct PamTrustedServiceAlias {
     std::filesystem::path aliasPath;
     std::vector<std::filesystem::path> allowedTargets;
@@ -271,6 +291,8 @@ struct PamPlatformConfig {
     std::vector<PamCapabilityConfig> capabilities;
     std::vector<PamTrustedAuthenticationBypassRule>
         trustedAuthenticationBypasses;
+    std::vector<PamTrustedAuthenticationExclusionRule>
+        trustedAuthenticationExclusions;
     std::vector<PamTrustedServiceAlias> trustedServiceAliases;
     struct PasswordlessLoginControl {
         struct NssServiceContract {

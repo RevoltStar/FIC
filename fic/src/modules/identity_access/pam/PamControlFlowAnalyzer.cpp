@@ -1,4 +1,5 @@
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
+#include "modules/identity_access/pam/PamOptionFile.h"
 
 #include <algorithm>
 #include <cctype>
@@ -60,6 +61,17 @@ struct TrustedAuthenticationBypassEvidence {
     std::size_t line = 0;
 };
 
+struct TrustedAuthenticationExclusionEvidence {
+    std::string service;
+    std::string module;
+    fic::platform::PamTrustedAuthenticationExclusionReason reason =
+        fic::platform::PamTrustedAuthenticationExclusionReason::
+            ExplicitSubjectExclusion;
+    std::string excludedUser;
+    std::filesystem::path source;
+    std::size_t line = 0;
+};
+
 struct Evidence {
     bool providerReached = false;
     bool providerSucceeded = false;
@@ -74,6 +86,8 @@ struct Evidence {
     bool authenticationFailureObserved = false;
     std::optional<TrustedAuthenticationBypassEvidence>
         trustedAuthenticationBypass;
+    std::optional<TrustedAuthenticationExclusionEvidence>
+        trustedAuthenticationExclusion;
 };
 
 struct ExecutionState {
@@ -98,6 +112,29 @@ std::string lowerCopy(std::string value) {
 
 std::string moduleBaseName(const PamRule& rule) {
     return std::filesystem::path(rule.module).filename().string();
+}
+
+const fic::platform::PamTrustedAuthenticationExclusionRule*
+matchingTrustedAuthenticationExclusion(
+    const PamRule& rule,
+    const std::string& service,
+    const fic::platform::PamPlatformConfig& platformConfig) {
+    const std::string module = moduleBaseName(rule);
+    const auto matched = std::find_if(
+        platformConfig.trustedAuthenticationExclusions.begin(),
+        platformConfig.trustedAuthenticationExclusions.end(),
+        [&](const auto& candidate) {
+            return candidate.service == service &&
+                candidate.module == module &&
+                candidate.control == rule.control &&
+                candidate.arguments == rule.arguments &&
+                (!candidate.source.has_value() ||
+                 candidate.source->lexically_normal() ==
+                     rule.source.lexically_normal());
+        });
+    return matched == platformConfig.trustedAuthenticationExclusions.end()
+        ? nullptr
+        : &*matched;
 }
 
 const std::vector<std::string>& allReturnCodes() {
@@ -234,7 +271,10 @@ bool parseControl(const PamRule& rule,
     return true;
 }
 
-std::vector<std::string> moduleOutcomes(const PamRule& rule) {
+std::vector<std::string> moduleOutcomes(
+    const PamRule& rule,
+    const std::string& service,
+    const fic::platform::PamPlatformConfig& platformConfig) {
     const std::string module = moduleBaseName(rule);
     if (module == "pam_permit.so") {
         return {"success"};
@@ -249,6 +289,16 @@ std::vector<std::string> moduleOutcomes(const PamRule& rule) {
         return {"success", "auth_err"};
     }
     if (module == "pam_succeed_if.so") {
+        // The exact platform contract makes this a typed two-way subject
+        // predicate rather than an arbitrary gate.  Its arguments are known
+        // to be syntactically valid and the display manager supplies PAM_USER,
+        // so model the two semantic outcomes: admitted subject vs excluded
+        // subject.  Unknown pam_succeed_if rules remain nondeterministic over
+        // PAM_SERVICE_ERR as before.
+        if (matchingTrustedAuthenticationExclusion(
+                rule, service, platformConfig) != nullptr) {
+            return {"success", "auth_err"};
+        }
         return {"success", "auth_err", "service_err"};
     }
     if (module == "pam_faillock.so") {
@@ -450,6 +500,28 @@ void recordTrustedAuthenticationBypass(
             service, module, matched->reason, rule.source, rule.line};
 }
 
+void recordTrustedAuthenticationExclusion(
+    ExecutionState& state,
+    const PamRule& rule,
+    const std::string& result,
+    const ControlAction& action,
+    const std::string& service,
+    const fic::platform::PamPlatformConfig& platformConfig) {
+    if (rule.group != PamManagementGroup::Auth || result != "auth_err" ||
+        action.kind != ActionKind::Bad) {
+        return;
+    }
+    const auto* matched = matchingTrustedAuthenticationExclusion(
+        rule, service, platformConfig);
+    if (matched == nullptr || matched->excludedUser.empty()) {
+        return;
+    }
+    state.evidence.trustedAuthenticationExclusion =
+        TrustedAuthenticationExclusionEvidence{
+            service, moduleBaseName(rule), matched->reason,
+            matched->excludedUser, rule.source, rule.line};
+}
+
 std::string actionName(const ControlAction& action) {
     switch (action.kind) {
     case ActionKind::Ignore:
@@ -484,6 +556,21 @@ bool sameTrustedAuthenticationBypass(
          left->line == right->line);
 }
 
+bool sameTrustedAuthenticationExclusion(
+    const std::optional<TrustedAuthenticationExclusionEvidence>& left,
+    const std::optional<TrustedAuthenticationExclusionEvidence>& right) {
+    if (left.has_value() != right.has_value()) {
+        return false;
+    }
+    return !left.has_value() ||
+        (left->service == right->service &&
+         left->module == right->module &&
+         left->reason == right->reason &&
+         left->excludedUser == right->excludedUser &&
+         left->source == right->source &&
+         left->line == right->line);
+}
+
 bool sameState(const ExecutionState& left, const ExecutionState& right) {
     const auto& a = left.evidence;
     const auto& b = right.evidence;
@@ -501,7 +588,10 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
         a.authenticationFailureObserved == b.authenticationFailureObserved &&
         sameTrustedAuthenticationBypass(
             a.trustedAuthenticationBypass,
-            b.trustedAuthenticationBypass);
+            b.trustedAuthenticationBypass) &&
+        sameTrustedAuthenticationExclusion(
+            a.trustedAuthenticationExclusion,
+            b.trustedAuthenticationExclusion);
 }
 
 bool addUnique(std::vector<ExecutionState>& states,
@@ -582,7 +672,8 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
             if (!parseControl(entry.rule, control, error)) {
                 return false;
             }
-            for (const auto& result : moduleOutcomes(entry.rule)) {
+            for (const auto& result : moduleOutcomes(
+                     entry.rule, service, platformConfig)) {
                 if (++budget.transitions > kMaximumSymbolicTransitions) {
                     error = "PAM symbolic transition limit exceeded";
                     return false;
@@ -595,6 +686,9 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                     : found->second;
                 recordProviderFailClosedEvidence(
                     state, entry.rule, result, action, provider);
+                recordTrustedAuthenticationExclusion(
+                    state, entry.rule, result, action, service,
+                    platformConfig);
                 if (state.trace.size() < kMaximumTraceSteps) {
                     state.trace.push_back({
                         entry.rule.source,
@@ -761,6 +855,76 @@ void addAcceptedTrustedAuthenticationBypass(
             state.traceTruncated
         });
     }
+}
+
+void addAcceptedTrustedAuthenticationExclusion(
+    PamControlFlowAnalysis& analysis,
+    const ExecutionState& state) {
+    if (!state.evidence.trustedAuthenticationExclusion.has_value()) {
+        return;
+    }
+    const auto& evidence = *state.evidence.trustedAuthenticationExclusion;
+    const bool duplicate = std::any_of(
+        analysis.acceptedTrustedAuthenticationExclusions.begin(),
+        analysis.acceptedTrustedAuthenticationExclusions.end(),
+        [&](const auto& existing) {
+            return existing.service == evidence.service &&
+                existing.module == evidence.module &&
+                existing.reason == evidence.reason &&
+                existing.excludedUser == evidence.excludedUser &&
+                existing.source == evidence.source &&
+                existing.line == evidence.line;
+        });
+    if (!duplicate) {
+        analysis.acceptedTrustedAuthenticationExclusions.push_back({
+            evidence.service,
+            evidence.module,
+            evidence.reason,
+            evidence.excludedUser,
+            evidence.source,
+            evidence.line,
+            state.trace,
+            state.traceTruncated
+        });
+    }
+}
+
+bool pamFaillockRootLockoutEnabled(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    bool& enabled,
+    std::string& error) {
+    const auto capability = std::find_if(
+        platformConfig.capabilities.begin(),
+        platformConfig.capabilities.end(),
+        [](const auto& candidate) {
+            return candidate.capability ==
+                       fic::platform::PamCapability::AuthenticationLockout &&
+                candidate.provider == fic::platform::PamProviderKind::PamFaillock;
+        });
+    if (capability == platformConfig.capabilities.end() ||
+        capability->configPath.empty()) {
+        error = "pam_faillock root-lockout state cannot be determined: "
+                "the platform has no canonical faillock configuration path";
+        return false;
+    }
+
+    std::string enabledError;
+    if (PamOptionFile::hasFlag(
+            capability->configPath, "even_deny_root", true, enabledError)) {
+        enabled = true;
+        error.clear();
+        return true;
+    }
+    std::string disabledError;
+    if (PamOptionFile::hasFlag(
+            capability->configPath, "even_deny_root", false, disabledError)) {
+        enabled = false;
+        error.clear();
+        return true;
+    }
+    error = "could not determine pam_faillock even_deny_root state: " +
+        (disabledError.empty() ? enabledError : disabledError);
+    return false;
 }
 
 bool analyzePasswordStack(const PamEffectiveStack& stack,
@@ -946,6 +1110,28 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
             }
         } else if (authsuccTopology && state.evidence.authsuccSucceeded &&
                    state.impression == Impression::Negative) {
+            const auto& exclusion =
+                state.evidence.trustedAuthenticationExclusion;
+            if (exclusion.has_value() && exclusion->excludedUser == "root") {
+                bool rootLockoutEnabled = false;
+                if (!pamFaillockRootLockoutEnabled(
+                        platformConfig, rootLockoutEnabled, error)) {
+                    return false;
+                }
+                if (!rootLockoutEnabled) {
+                    addAcceptedTrustedAuthenticationExclusion(analysis, state);
+                    continue;
+                }
+                addFirstViolation(analysis, violationForState(
+                    PamFlowViolationKind::PrematureSuccessAccounting,
+                    authStack,
+                    "pam_faillock authsucc reset the root tally on a path "
+                    "that the PAM service explicitly excludes from "
+                    "successful authentication while even_deny_root is "
+                    "enabled",
+                    state));
+                continue;
+            }
             addFirstViolation(analysis, violationForState(
                 PamFlowViolationKind::PrematureSuccessAccounting,
                 authStack,

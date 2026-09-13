@@ -490,6 +490,19 @@ bool initPolicyRegistry(
         cafArr.push_back(std::make_unique<PamDisableNopasswdloginPolicy>(
             platform.pam, executables));
     }
+    if (std::any_of(
+            platform.pam.trustedAuthenticationExclusions.begin(),
+            platform.pam.trustedAuthenticationExclusions.end(),
+            [](const auto& rule) {
+                return rule.service == "sddm" &&
+                    rule.excludedUser == "root" &&
+                    rule.reason == fic::platform::
+                        PamTrustedAuthenticationExclusionReason::
+                            ExplicitSubjectExclusion;
+            })) {
+        cafArr.push_back(std::make_unique<PamDisableRootSddmLoginPolicy>(
+            platform.pam));
+    }
     registerPamPolicy(
         fic::platform::PamPolicyFeature::FailedAuthenticationAttempts,
         std::make_unique<PamFailedAuthenticationAttemptsPolicy>(platform.pam));

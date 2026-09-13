@@ -31,6 +31,7 @@
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamFailedAuthenticationUnlockTimePolicy.h"
 #include "modules/identity_access/pam/policies/PamDisableNopasswdloginPolicy.h"
+#include "modules/identity_access/pam/policies/PamDisableRootSddmLoginPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordMinClassesPolicy.h"

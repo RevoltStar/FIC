@@ -52,6 +52,18 @@ fic::platform::PamPlatformConfig makePlatform(const fs::path& root) {
     return platform;
 }
 
+fic::platform::PamPlatformConfig makeSddmPlatform(const fs::path& root) {
+    auto platform = makePlatform(root);
+    platform.scopes.front().services = {"sddm"};
+    platform.trustedAuthenticationExclusions = {
+        {"sddm", "pam_succeed_if.so",
+         fic::platform::PamTrustedAuthenticationExclusionReason::
+             ExplicitSubjectExclusion,
+         "root", "required", {"user", "!=", "root", "quiet_success"},
+         root / "pam.d/sddm", "common-auth"}};
+    return platform;
+}
+
 PamControlFlowAnalysis analyzeService(
     const fic::platform::PamPlatformConfig& platform,
     const std::string& service) {
@@ -305,6 +317,52 @@ void testPrematureSuccessAccounting(const fs::path& root) {
             "detected");
 }
 
+void testSddmRootExclusionWithAuthsucc(const fs::path& root) {
+    fs::remove(root / "security/faillock.conf");
+    writeFile(root / "pam.d/sddm",
+              "#%PAM-1.0\n"
+              "auth requisite pam_nologin.so\n"
+              "auth required pam_succeed_if.so user != root quiet_success\n"
+              "@include common-auth\n"
+              "-auth optional pam_gnome_keyring.so\n"
+              "-auth optional pam_kwallet5.so\n"
+              "@include common-account\n");
+    writeFile(root / "pam.d/common-auth", kDebianAuthsucc);
+    writeFile(root / "pam.d/common-account",
+              "account required pam_unix.so\n");
+
+    auto platform = makeSddmPlatform(root);
+    auto analysis = analyzeService(platform, "sddm");
+    require(analysis.effective,
+            "trusted SDDM root exclusion rejected authsucc with root "
+            "lockout disabled: " +
+                (analysis.violations.empty()
+                     ? std::string()
+                     : analysis.violations.front().message));
+    require(!analysis.acceptedTrustedAuthenticationExclusions.empty() &&
+                analysis.acceptedTrustedAuthenticationExclusions.front().
+                    excludedUser == "root",
+            "trusted SDDM root exclusion was not recorded in evidence");
+
+    writeFile(root / "security/faillock.conf", "even_deny_root\n");
+    analysis = analyzeService(platform, "sddm");
+    require(hasViolation(analysis,
+                         PamFlowViolationKind::PrematureSuccessAccounting),
+            "authsucc reset of an excluded root tally was accepted while "
+            "even_deny_root is enabled");
+
+    writeFile(root / "security/faillock.conf", "# even_deny_root\n");
+    writeFile(root / "pam.d/sddm",
+              "auth requisite pam_nologin.so\n"
+              "auth required pam_succeed_if.so user != root quiet\n"
+              "@include common-auth\n"
+              "@include common-account\n");
+    analysis = analyzeService(platform, "sddm");
+    require(hasViolation(analysis,
+                         PamFlowViolationKind::PrematureSuccessAccounting),
+            "non-exact SDDM pam_succeed_if rule was trusted");
+}
+
 void testAuthsuccDenialBypassDetected(const fs::path& root) {
     auto platform = makePlatform(root);
 
@@ -435,6 +493,7 @@ int main() {
         testDebianGeneratedTopologiesAreEffective(root);
         testRecoverableFailureAccounting(root);
         testPrematureSuccessAccounting(root);
+        testSddmRootExclusionWithAuthsucc(root);
         testAuthsuccDenialBypassDetected(root);
         testProviderUnreachableAfterAuthfail(root);
     } catch (const std::exception& exception) {

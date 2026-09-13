@@ -51,11 +51,26 @@ struct PamTrustedAuthenticationBypassAcceptance {
     bool pathTruncated = false;
 };
 
+struct PamTrustedAuthenticationExclusionAcceptance {
+    std::string service;
+    std::string module;
+    fic::platform::PamTrustedAuthenticationExclusionReason reason =
+        fic::platform::PamTrustedAuthenticationExclusionReason::
+            ExplicitSubjectExclusion;
+    std::string excludedUser;
+    std::filesystem::path source;
+    std::size_t line = 0;
+    std::vector<PamFlowStep> path;
+    bool pathTruncated = false;
+};
+
 struct PamControlFlowAnalysis {
     bool effective = false;
     std::vector<PamFlowViolation> violations;
     std::vector<PamTrustedAuthenticationBypassAcceptance>
         acceptedTrustedAuthenticationBypasses;
+    std::vector<PamTrustedAuthenticationExclusionAcceptance>
+        acceptedTrustedAuthenticationExclusions;
 };
 
 class PamControlFlowAnalyzer {
