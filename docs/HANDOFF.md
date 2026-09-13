@@ -83,6 +83,10 @@
   in place to `requisite`. CFG analysis treats both `required` and enforced
   `requisite` controls as the same typed subject exclusion, with `requisite`
   recorded on `die` control flow.
+- ALT topology test targets that compile `PamControlFlowAnalyzer.cpp` now also
+  compile `PamOptionFile.cpp`; the analyzer reads canonical pam_faillock config
+  flags through `PamOptionFile::hasFlag()`, so omitting that source caused CI
+  linker failures.
 
 ## Changed areas
 
@@ -117,6 +121,11 @@
   missing-candidate service filtering: PASSED
 - `git diff --check`: PASSED
 - `git diff --check`: PASSED after SDDM enforced-control follow-up.
+- Manual `AltPamPasswordHistoryTopologyManagerTests.cpp` g++ build + run after
+  linker fix: PASSED (`SKIP wrong-gid mutation` on this filesystem).
+- Manual `AltPamFaillockTopologyManagerTests.cpp` g++ build + run after linker
+  fix: PASSED.
+- `git diff --check`: PASSED after ALT topology test linker fix.
 
 ## Remaining
 
