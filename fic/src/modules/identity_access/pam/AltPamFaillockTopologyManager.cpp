@@ -702,7 +702,12 @@ bool findAnchors(const std::vector<PamRule>& rules,
         return false;
     }
     const PamRule& auth = *authCandidates.front();
-    if ((auth.control != "required" && auth.control != "sufficient") ||
+    // The authsucc strategy replaces the plain anchor with the canonical
+    // jump authenticator (success skips the authfail accounting into the
+    // authsucc rule), so its exact control is a valid anchor control too.
+    const std::string authsuccAnchorControl = "[success=1 default=bad]";
+    if ((auth.control != "required" && auth.control != "sufficient" &&
+         auth.control != authsuccAnchorControl) ||
         (managesAccount(role) &&
          accountCandidates.front()->control != "required")) {
         error = "unsupported pam_tcb.so control topology in ALT local stack";
@@ -880,8 +885,15 @@ std::string buildDisabledContent(const std::vector<PhysicalLine>& lines,
                                  const ManagedInspection& managed) {
     std::string output;
     for (std::size_t line = 1; line <= lines.size(); ++line) {
+        // Both the preauth block and the authsucc anchor block carry the
+        // hex-encoded original pam_tcb authentication rule; either marker
+        // restores it byte-for-byte. Skipping this for the authsucc anchor
+        // would delete the original authentication rule on disable or on
+        // any transition away from the authsucc strategy.
         if (lines[line - 1].text ==
-                AltPamFaillockTopologyManager::PREAUTH_BEGIN) {
+                AltPamFaillockTopologyManager::PREAUTH_BEGIN ||
+            lines[line - 1].text ==
+                AltPamFaillockTopologyManager::AUTHSUCC_ANCHOR_BEGIN) {
             output += managed.originalAuthLine.value_or("");
         }
         if (managed.blockLines.find(line) == managed.blockLines.end()) {

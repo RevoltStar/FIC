@@ -16,6 +16,11 @@ def field(profile: str, name: str) -> str:
     return match.group(1).strip()
 
 
+def optional_field(profile: str, name: str) -> str:
+    match = re.search(rf"^{re.escape(name)}:\s*(.+)$", profile, re.MULTILINE)
+    return "" if match is None else match.group(1).strip()
+
+
 def function_body(script: str, name: str) -> str:
     match = re.search(
         rf"^{re.escape(name)}\(\) \{{\n(?P<body>.*?)^\}}$",
@@ -52,9 +57,9 @@ def main() -> int:
             ),
         },
         "fic-faillock-authsucc": {
-            "Name": "FIC PAM faillock success accounting",
-            "Priority": "0",
-            "rules": ("[success=ok default=bad]\tpam_faillock.so authsucc",),
+            "Name": "FIC PAM faillock success accounting and lock denial",
+            "Priority": "1025",
+            "rules": ("required\t\t\tpam_faillock.so authsucc",),
         },
         "fic-pwhistory": {
             "Name": "FIC PAM password history checking",
@@ -101,12 +106,42 @@ def main() -> int:
     require("required\t\t\tpam_faillock.so preauth" in preauth_required,
             "preauth-required profile has wrong preauth control")
     authsucc = (profile_dir / "fic-faillock-authsucc").read_text(encoding="utf-8")
-    require(field(authsucc, "Auth-Type") == "Primary", "authsucc profile Auth-Type is not Primary")
-    require("[success=ok default=bad]\tpam_faillock.so authsucc" in authsucc,
-            "authsucc profile has wrong control; upstream sufficient must not be copied blindly")
+    # authsucc must run in the Additional auth block: a Primary authsucc is
+    # jumped over by successful primary credential providers (success=N
+    # jumps past the whole primary block into pam_permit), which lets a
+    # locked user with a correct password authenticate.
+    require(field(authsucc, "Auth-Type") == "Additional",
+            "authsucc profile Auth-Type is not Additional; Primary authsucc "
+            "is bypassed by primary provider success jumps")
+    require("required\t\t\tpam_faillock.so authsucc" in authsucc,
+            "authsucc profile has wrong control; upstream sufficient must not "
+            "be copied blindly and the denial must not be skippable")
     require("sufficient" not in authsucc, "authsucc profile must not use sufficient control")
     require("Account-Type" not in authsucc,
             "authsucc profile must not add an account pam_faillock phase")
+    # The three strategy-selector profiles conflict with each other so
+    # pam-auth-update cannot generate a mixed strategy. The shared authfail
+    # profile must not conflict with them because every strategy recipe
+    # enables authfail together with one selector.
+    selector_profiles = {
+        "fic-faillock-notify",
+        "fic-faillock-preauth-required",
+        "fic-faillock-authsucc",
+    }
+    for conflicting in selector_profiles:
+        profile = (profile_dir / conflicting).read_text(encoding="utf-8")
+        conflicts = optional_field(profile, "Conflicts")
+        for other in selector_profiles:
+            if other == conflicting:
+                continue
+            require(other in conflicts,
+                    f"{conflicting} does not declare a Conflicts entry for {other}")
+        require("fic-faillock-authfail" not in conflicts,
+                f"{conflicting} conflicts with the shared authfail profile")
+    authfail_conflicts = optional_field(authfail, "Conflicts")
+    for selector in selector_profiles:
+        require(selector not in authfail_conflicts,
+                f"authfail conflicts with required selector {selector}")
 
     history = (profile_dir / "fic-pwhistory").read_text(encoding="utf-8")
     require(field(history, "Password-Type") == "Primary", "history profile Password-Type is not Primary")

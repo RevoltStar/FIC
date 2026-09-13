@@ -1,6 +1,7 @@
-Name: FIC PAM faillock success accounting
+Name: FIC PAM faillock success accounting and lock denial
 Default: no
-Priority: 0
-Auth-Type: Primary
+Priority: 1025
+Conflicts: fic-faillock-notify, fic-faillock-preauth-required
+Auth-Type: Additional
 Auth:
-	[success=ok default=bad]	pam_faillock.so authsucc
+	required			pam_faillock.so authsucc

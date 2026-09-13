@@ -149,26 +149,51 @@ The capability activation policies use the following native recipes:
 
 ```bash
 # preauth_required strategy (FIC default):
-enable_authentication_lockout: pam-auth-update --enable fic-faillock-preauth-required fic-faillock-authfail
+enable_authentication_lockout: pam-auth-update --disable <other FIC faillock profiles> --enable fic-faillock-preauth-required fic-faillock-authfail
 # preauth_requisite strategy:
-enable_authentication_lockout: pam-auth-update --enable fic-faillock-notify fic-faillock-authfail
+enable_authentication_lockout: pam-auth-update --disable <other FIC faillock profiles> --enable fic-faillock-notify fic-faillock-authfail
 # authsucc strategy (no pam_faillock account phase):
-enable_authentication_lockout: pam-auth-update --enable fic-faillock-authsucc fic-faillock-authfail
+enable_authentication_lockout: pam-auth-update --disable <other FIC faillock profiles> --enable fic-faillock-authsucc fic-faillock-authfail
 enable_password_history:       pam-auth-update --enable fic-pwhistory
 enable_password_quality:       pam-auth-update --enable pwquality
 ```
 
 Faillock is compositional: the strategy value of
 `enable_authentication_lockout` selects exactly one faillock profile set, and
-a strategy change disables every other FIC faillock profile before enabling
-the requested set in one atomic `pam-auth-update` transition with rollback.
+a strategy change disables every other FIC faillock profile and enables the
+requested set in one `pam-auth-update` invocation
+(`pam-auth-update --disable ... --enable ...`), wrapped into a transaction
+that snapshots `/var/lib/pam` and the generated `common-*` files, re-verifies
+the exact requested strategy for every configured service, and restores the
+snapshot when application or verification fails (a failed rollback is
+reported as CRITICAL).
 The physical profiles are split because `preauth`/account, `authfail` and
 `authsucc` require different `pam-auth-update` priorities and placement in
-the generated stacks (`authsucc` runs after `authfail`, which now uses
-Priority 1; the `authsucc` rule uses `[success=ok default=bad]` instead of
-upstream `sufficient`, so a locked authentication is denied without skipping
-downstream modules such as `pam_gnome_keyring`). The FIC profiles contain only topology and fixed role
-arguments (`preauth`, `authfail`, `use_authtok`). Policy values remain in
+the generated stacks. In the generated `common-auth` the Primary block is
+emitted in descending priority order and every primary credential provider
+jumps on success past the remaining primary lines into `pam_permit`-style
+continuation after `pam_deny`; therefore:
+
+- `fic-faillock-notify` / `fic-faillock-preauth-required` (Priority 1025,
+  Primary) run before all credential providers: preauth_requisite stops a
+  locked user before the password prompt, preauth_required defers the denial
+  to the account phase;
+- `fic-faillock-authfail` (Priority 1, Primary, `[default=die]`) is the last
+  Primary line, so it runs only after every credential provider has failed;
+- `fic-faillock-authsucc` (Priority 1025, **Additional**, `required`) runs
+  after `pam_permit`, so a successful primary provider always reaches it: a
+  locked user is denied there, a normal login resets the tally, and
+  downstream Additional modules such as `pam_gnome_keyring` still run.
+  A Primary authsucc would be jumped over by successful primary providers
+  and must never be used.
+
+The strategy selector profiles (`notify`, `preauth-required`, `authsucc`)
+declare mutual `Conflicts`, so `pam-auth-update` cannot keep two faillock
+strategy selections at once. The shared `fic-faillock-authfail` profile does
+not conflict with them: every strategy recipe enables exactly one selector
+plus `authfail`. The FIC profiles contain only topology and fixed role
+arguments (`preauth`, `authfail`, `authsucc`, `use_authtok`). Policy values
+remain in
 `/etc/security/faillock.conf`; history values use
 `/etc/security/pwhistory.conf` on modern Linux-PAM and the already activated
 `pam_pwhistory.so` rule arguments on Debian 12/Linux-PAM 1.5.2. Activation

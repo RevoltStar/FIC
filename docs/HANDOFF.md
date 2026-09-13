@@ -3,98 +3,90 @@
 ## Current base
 
 - Ветка `main`, базовый commit `310a33d` (HEAD); рабочее дерево содержит
-  незакоммиченную реализацию стратегии pam_faillock (см. ниже).
+  незакоммиченную corrective-реализацию трёх стратегий pam_faillock.
 
 ## Current task
 
-- Трансформация `enable_authentication_lockout` из fixed-ENABLE политики в
-  трёх-стратегическую pam_faillock интеграцию (`preauth_requisite`,
-  `preauth_required`, `authsucc`) end-to-end. Ядро реализовано; остаются
-  runtime-валидация и дополнительные тесты (см. Remaining).
+- Исправление реализации `enable_authentication_lockout` после
+  `de86d56599087e35c87c3309f8ee8ec467e74ef1`: сохранить стратегический дизайн
+  (`preauth_requisite`, `preauth_required`, `authsucc`), закрыть rollback,
+  ownership, CFG-анализ, ALT round-trip и Debian/Ubuntu placement blockers.
 
 ## Accepted architecture / invariants
 
-- `PamFaillockStrategy` живёт в `fic::platform` (`PlatformProfile.h`).
-- `PamCapabilityConfig` получил `supportedFaillockStrategies`,
-  `defaultFaillockStrategy` (по умолчанию `preauth_required`) и
-  `strategyActivations` (рецепты pam-auth-update на стратегию). Все пять
-  профилей объявляют все три стратегии.
-- `PamTopologyStatus` получил `activeStrategy`; `PamTopologyManager` получил
-  `canEnableStrategy`/`enableStrategy` (базовая реализация fail-closed).
-  Стратегия-переход атомарен: inspect → snapshot → candidate → apply →
-  re-read → verify → commit; rollback через существующие механизмы.
 - `enable_authentication_lockout.value`: `preauth_required` |
-  `preauth_requisite` | `authsucc` (default `preauth_required`). НЕТ миграции
-  `ENABLE`: старое значение в пользовательском конфиге станет invalid →
-  fail-closed. Только lockout — стратегическая политика; history/quality
-  остались `ENABLE` (fallback в `PamCapabilityActivationPolicy`).
-- `PamControlFlowAnalyzer`: новые violation kinds
-  `RecoverableFailureAccounting` (authsucc-топология: authfail учёл сбой, но
-  стек завершился успешно) и `PrematureSuccessAccounting` (authsucc учёл
-  успех на пути, завершившемся отказом); evidence-флаг `authsuccDenied`;
-  общий детектор `detectPamFaillockStrategy(authStack, error)` — fail-closed
-  при неоднозначности (requisite/required preauth, authsucc, комбинированные
-  формы отклоняются).
-- Debian/Ubuntu: монолитный `fic-faillock` заменён композиционными
-  pam-configs профилями: `fic-faillock-authfail` (Priority 1),
-  `fic-faillock-preauth-required` (1025, required preauth + account),
-  `fic-faillock-authsucc` (Priority 0, control
-  `[success=ok default=bad]`, БЕЗ account-фазы; upstream `sufficient`
-  сознательно не копируется). `fic-faillock-notify` (1025) остался для
-  preauth_requisite. Рецепты в профилях:
-  requisite={notify,authfail}, required={preauth-required,authfail},
-  authsucc={authsucc,authfail}. Переход = `pam-auth-update --disable` всех
-  нецелевых fic-faillock профилей → `--enable` целевых, с rollback.
-- ALT: `AltPamFaillockTopologyManager` поддерживает все 3 стратегии. Layout:
-  preauth-блок с `requisite|required` правилом + authfail + account;
-  authsucc — якорный блок (original pam_tcb hex + jump
-  `[success=1 default=bad] pam_tcb...`) + authfail + authsucc-правило
-  `[success=ok default=bad] pam_faillock.so authsucc`, БЕЗ account-блока.
-  Стратегия определяется по маркерам блоков (не через общий детектор).
-- GUI/CLI изменений не требуют: комбо-бокс строится из editor spec
-  (`PossibleListPolicyTypeValue`), первое значение = default.
+  `preauth_requisite` | `authsucc`; legacy `ENABLE` не мигрируется и остаётся
+  invalid/fail-closed.
+- Debian/Ubuntu используют compositional pam-auth-update profiles:
+  один selector (`fic-faillock-notify`, `fic-faillock-preauth-required` или
+  `fic-faillock-authsucc`) плюс общий `fic-faillock-authfail`.
+- Selector profiles конфликтуют только между собой; `fic-faillock-authfail`
+  не конфликтует с selectors, иначе pam-auth-update удаляет `authfail` из
+  generated stack.
+- `fic-faillock-authsucc` — `Auth-Type: Additional`, `required`, без account
+  phase. Primary authsucc запрещён: successful Primary providers могут
+  перепрыгнуть его numeric jump'ом.
+- `PamAuthUpdateTopologyManager` распознаёт FIC ownership по pam-auth-update
+  state DB, отказывается мутировать external valid topology, проверяет
+  одинаковую strategy по всем target services и rollback'ит snapshot state DB
+  + generated `common-*` при любой post-mutation ошибке. Rollback failure
+  диагностируется как CRITICAL.
+- ALT `authsucc` хранит original `pam_tcb` auth rule в anchor marker и
+  `buildDisabledContent()` восстанавливает original bytes как из preauth
+  block, так и из authsucc anchor.
+- `PamControlFlowAnalyzer` учитывает `authsuccDenied` в symbolic-state
+  identity и имеет negative coverage для RecoverableFailureAccounting,
+  PrematureSuccessAccounting и authsucc-denial bypass paths.
 
 ## Completed
 
-- Platform contract, профили, менеджеры (pam-auth-update + ALT), политика
-  (`PamCapabilityActivationPolicy`), analyzer (2 violation kinds + детектор),
-  compositional pam-configs, packaging builders (prerm/install списки),
-  `IDENTITY_ACCESS.conf.in` default, ru/en.lang, README (fic, deb packaging),
-  обновлены затронутые тесты и static checks.
+- Исправлены Debian pam-config conflicts: `authfail` стал shared profile,
+  selectors конфликтуют только между собой.
+- Исправлены/дописаны unit tests:
+  `PamControlFlowAnalyzerTests.cpp`,
+  `PamAuthUpdateTopologyManagerTests.cpp`,
+  ALT pairwise/idempotency/authsucc round-trip coverage.
+- Исправлены test fixtures: explicit `conf=<tmp>/security/faillock.conf`,
+  correct snapshot config directory, test isolation/reset, valid external
+  topology account phase.
+- Проверен Debian13 generated pam-auth-update output в disposable Docker image:
+  во всех трёх стратегиях `authfail` присутствует; для `authsucc` generated
+  order: `pam_unix success=2` -> `pam_faillock authfail` -> `pam_deny` ->
+  `pam_permit` -> Additional `pam_faillock authsucc`; account phase не содержит
+  `pam_faillock`.
 
 ## Changed areas
 
-- `fic/src/platform/PlatformProfile.h`, `fic/src/platform/PamFaillockStrategy.cpp` (новый),
-  `fic/src/platform/profiles/*`
-- `fic/src/modules/identity_access/pam/` (менеджеры, analyzer, policy,
-  `PamTopologyManager.cpp` новый, factory)
-- `packaging/deb/pam-configs/*`, `packaging/deb/build-fic-debian12-deb.sh`
-  (debian13/ubuntu делегируют ему), `packaging/deb/README.md`
-- `fic/src/resources/config/IDENTITY_ACCESS.conf.in`, `ru.lang`, `en.lang`
-- `tests/integration/packaging/PamPackagingChecks.py`,
-  `tests/fic/platform/static_checks.py`,
-  `tests/fic/modules/identity_access/pam/{AltPamFaillockTopologyManager,PamCapabilityActivationPolicy}Tests.cpp`
-- `fic/README.md`
+- `fic/src/modules/identity_access/pam/` (pam-auth-update manager, ALT
+  manager, CFG analyzer, activation policy)
+- `packaging/deb/pam-configs/*`, `packaging/deb/README.md`
+- `fic/README.md`, `ru.lang`, `en.lang`
+- `tests/CMakeLists.txt`
+- `tests/fic/modules/identity_access/pam/*`
+- `tests/integration/packaging/PamPackagingChecks.py`
 
 ## Validation
 
-- `cmake --build build-check --target fic`: PASSED (configure только через
-  `cmake -S fic -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04`, т.к.
-  root-configure падает на отсутствии gio-2.0 для fic-session-agent).
-- `python3 tests/integration/packaging/PamPackagingChecks.py .`: PASSED.
-- `python3 tests/fic/platform/static_checks.py .`: PASSED.
-- Синтаксическая проверка изменённых тестов (g++ -fsyntax-only): PASSED.
-- `git diff --check`: PASSED.
+- `cmake --build build-check --target fic -j2`: PASSED
+- Manual `PamControlFlowAnalyzerTests.cpp` g++ build + run: PASSED
+- Manual `PamAuthUpdateTopologyManagerTests.cpp` g++ build + run: PASSED
+- Manual `AltPamFaillockTopologyManagerTests.cpp` g++ build + run: PASSED
+- `python3 tests/integration/packaging/PamPackagingChecks.py .`: PASSED
+- `python3 tests/fic/platform/static_checks.py .`: PASSED
+- `python3 tests/common/static_checks.py .`: PASSED
+- Debian13 Docker structural generation using local
+  `fic-pam-lab-v7:debian13`: PASSED for generated `common-auth` /
+  `common-account` shape described above.
+- `git diff --check`: PASSED
 
 ## Remaining
 
-- Полный CTest не выполнялся: root CMake configure требует gio-2.0 dev
-  (WSL), плюс runtime PAM-тесты требуют реальные Debian 12/13, Ubuntu
-  24.04/26.04 и ALT окружения (контейнеры или documented deferral).
-- Новые unit-тесты на стратегии ещё не написаны: 6 pairwise переходов + 3
-  идемпотентности для обоих менеджеров, authsucc-инварианты analyzer
-  (Recoverable/Premature cases), отсутствие стратегии в рецепте платформы.
-- Проверить сгенерированный pam-auth-update common-auth на реальной
-  Debian/Ubuntu системе: порядок fic-faillock-authfail (P1) vs authsucc (P0)
-  и отсутствие прыжка мимо authsucc.
+- Full root CTest was not run in this WSL checkout; root configure is known to
+  require missing `gio-2.0` dev for `fic-session-agent`.
+- Full runtime PAM matrix from the prompt is not complete. Only Debian13
+  structural pam-auth-update generation was verified live. Debian12,
+  Ubuntu 24.04/26.04 and ALT p11 runtime login/tally/reset behavior remain
+  deferred to suitable disposable environments.
+- Additional provider runtime topologies (`pam_sss`, `pam_ccreds`) were not
+  exercised live; analyzer/unit fixtures cover symbolic ordering risks.
 - Коммит не создавать без отдельного запроса пользователя.

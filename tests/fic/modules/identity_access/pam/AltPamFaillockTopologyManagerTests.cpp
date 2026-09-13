@@ -1080,9 +1080,158 @@ void testRoundTripPreservesNativeServiceAlias() {
 
 } // namespace
 
+namespace {
+
+const std::vector<fic::platform::PamFaillockStrategy> kAltStrategies = {
+    fic::platform::PamFaillockStrategy::PreauthRequisite,
+    fic::platform::PamFaillockStrategy::PreauthRequired,
+    fic::platform::PamFaillockStrategy::Authsucc};
+
+std::string altStrategyName(fic::platform::PamFaillockStrategy strategy) {
+    return fic::platform::pamFaillockStrategyName(strategy);
+}
+
+void expectStrategyTopology(const TemporaryTree& tree,
+                            fic::platform::PamFaillockStrategy strategy) {
+    const std::string content = TemporaryTree::read(tree.target());
+    using M = AltPamFaillockTopologyManager;
+    if (strategy == fic::platform::PamFaillockStrategy::Authsucc) {
+        require(content.find(M::AUTHSUCC_ANCHOR_BEGIN) != std::string::npos &&
+                    content.find(M::AUTHSUCC_RULE) != std::string::npos,
+                "authsucc anchor block is missing");
+        require(content.find(M::PREAUTH_BEGIN) == std::string::npos,
+                "authsucc topology contains a preauth block");
+        require(content.find(std::string(M::ORIGINAL_AUTH_PREFIX)) !=
+                    std::string::npos,
+                "authsucc anchor lost the original pam_tcb marker");
+    } else {
+        const std::string& expectedRule =
+            strategy == fic::platform::PamFaillockStrategy::PreauthRequisite
+                ? std::string(M::PREAUTH_RULE_REQUISITE)
+                : std::string(M::PREAUTH_RULE_REQUIRED);
+        const std::string& otherRule =
+            strategy == fic::platform::PamFaillockStrategy::PreauthRequisite
+                ? std::string(M::PREAUTH_RULE_REQUIRED)
+                : std::string(M::PREAUTH_RULE_REQUISITE);
+        require(content.find(M::PREAUTH_BEGIN) != std::string::npos &&
+                    content.find(expectedRule) != std::string::npos,
+                "preauth block for the requested strategy is missing");
+        require(content.find(otherRule) == std::string::npos,
+                "preauth topology contains a foreign preauth rule");
+        require(content.find(M::AUTHSUCC_ANCHOR_BEGIN) == std::string::npos,
+                "preauth topology contains an authsucc anchor");
+    }
+    std::size_t begins = 0;
+    for (std::size_t position = content.find("# BEGIN FIC pam_faillock");
+         position != std::string::npos;
+         position = content.find("# BEGIN FIC pam_faillock", position + 1)) {
+        ++begins;
+    }
+    require(begins == 3,
+            "unexpected number of FIC faillock blocks: " +
+                std::to_string(begins));
+    require(content.find("pam_tcb.so shadow fork nullok") != std::string::npos,
+            "original pam_tcb authentication rule was lost");
+}
+
+void testAltStrategyTransitions() {
+    // Every pairwise transition between the three strategies, plus one
+    // idempotency check per strategy.
+    for (fic::platform::PamFaillockStrategy from : kAltStrategies) {
+        for (fic::platform::PamFaillockStrategy to : kAltStrategies) {
+            TemporaryTree tree;
+            AltPamFaillockTopologyManager manager(tree.platform(),
+                                                  tree.options());
+            std::string error;
+            require(manager.canEnableStrategy(from, error), error);
+            require(manager.enableStrategy(from, error),
+                    "enable " + altStrategyName(from) + ": " + error);
+            expectStrategyTopology(tree, from);
+            // Idempotency: re-applying the same strategy must not change
+            // the file (exact bytes).
+            const std::string enabled = TemporaryTree::read(tree.target());
+            require(manager.enableStrategy(from, error),
+                    "idempotent " + altStrategyName(from) + ": " + error);
+            require(TemporaryTree::read(tree.target()) == enabled,
+                    "idempotent " + altStrategyName(from) +
+                        " changed the file");
+            if (from == to) {
+                continue;
+            }
+            require(manager.enableStrategy(to, error),
+                    "transition " + altStrategyName(from) + " -> " +
+                        altStrategyName(to) + ": " + error);
+            expectStrategyTopology(tree, to);
+            PamTopologyStatus status;
+            require(manager.inspect(status, error) &&
+                        status.state == PamTopologyState::Enabled &&
+                        status.activeStrategy == to,
+                    "transitioned topology does not report strategy " +
+                        altStrategyName(to) + ": " + error);
+            const std::string transitioned =
+                TemporaryTree::read(tree.target());
+            require(manager.enableStrategy(to, error), error);
+            require(TemporaryTree::read(tree.target()) == transitioned,
+                    "post-transition idempotency changed the file");
+            // Disabling any strategy topology must restore the exact
+            // original bytes (including the pam_tcb anchor).
+            require(manager.disable(error),
+                    "disable after " + altStrategyName(to) + ": " + error);
+            require(TemporaryTree::read(tree.target()) == kCanonical,
+                    "disable after " + altStrategyName(to) +
+                        " did not restore exact original bytes");
+        }
+    }
+}
+
+void testAltAuthsuccRoundTripChains() {
+    // original -> authsucc -> disable == exact original.
+    {
+        TemporaryTree tree;
+        AltPamFaillockTopologyManager manager(tree.platform(),
+                                              tree.options());
+        std::string error;
+        require(manager.enableStrategy(
+                    fic::platform::PamFaillockStrategy::Authsucc, error),
+                error);
+        expectStrategyTopology(
+            tree, fic::platform::PamFaillockStrategy::Authsucc);
+        require(manager.disable(error), error);
+        require(TemporaryTree::read(tree.target()) == kCanonical,
+                "authsucc -> disable did not restore exact original bytes");
+    }
+    // original -> authsucc -> required -> authsucc -> requisite -> disable
+    // == exact original.
+    {
+        TemporaryTree tree;
+        AltPamFaillockTopologyManager manager(tree.platform(),
+                                              tree.options());
+        std::string error;
+        const std::vector<fic::platform::PamFaillockStrategy> chain = {
+            fic::platform::PamFaillockStrategy::Authsucc,
+            fic::platform::PamFaillockStrategy::PreauthRequired,
+            fic::platform::PamFaillockStrategy::Authsucc,
+            fic::platform::PamFaillockStrategy::PreauthRequisite};
+        for (const auto strategy : chain) {
+            require(manager.enableStrategy(strategy, error),
+                    "chain enable " + altStrategyName(strategy) + ": " +
+                        error);
+            expectStrategyTopology(tree, strategy);
+        }
+        require(manager.disable(error), error);
+        require(TemporaryTree::read(tree.target()) == kCanonical,
+                "strategy chain -> disable did not restore exact original "
+                "bytes");
+    }
+}
+
+} // namespace
+
 int main() {
     try {
         testCanonicalRoundTrip();
+        testAltStrategyTransitions();
+        testAltAuthsuccRoundTripChains();
         testWhitespaceAndUnrelatedContent();
         testSssModeVerifiesManagedLocalBranch();
         testAtomicWriteRejectsReplacementAfterSnapshotCheck();

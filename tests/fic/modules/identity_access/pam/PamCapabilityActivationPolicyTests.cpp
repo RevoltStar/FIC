@@ -6,15 +6,19 @@
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <sys/stat.h>
@@ -61,7 +65,20 @@ fic::platform::PamPlatformConfig makePlatform(
          root / "security/pwquality.conf",
          fic::platform::PamTopologyStrategyKind::PamAuthUpdate}};
     platform.capabilities[0].activationIdentifiers = {
-        "fic-faillock-notify", "fic-faillock"};
+        "fic-faillock-notify", "fic-faillock-authfail"};
+    platform.capabilities[0].supportedFaillockStrategies = {
+        fic::platform::PamFaillockStrategy::PreauthRequired,
+        fic::platform::PamFaillockStrategy::PreauthRequisite,
+        fic::platform::PamFaillockStrategy::Authsucc};
+    platform.capabilities[0].defaultFaillockStrategy =
+        fic::platform::PamFaillockStrategy::PreauthRequired;
+    platform.capabilities[0].strategyActivations = {
+        {fic::platform::PamFaillockStrategy::PreauthRequisite,
+         {"fic-faillock-notify", "fic-faillock-authfail"}},
+        {fic::platform::PamFaillockStrategy::PreauthRequired,
+         {"fic-faillock-preauth-required", "fic-faillock-authfail"}},
+        {fic::platform::PamFaillockStrategy::Authsucc,
+         {"fic-faillock-authsucc", "fic-faillock-authfail"}}};
     platform.capabilities[1].activationIdentifiers = {"fic-pwhistory"};
     platform.capabilities[2].activationIdentifiers = {"pwquality"};
     return platform;
@@ -73,10 +90,16 @@ struct ManagerState {
     int canEnableCalls = 0;
     int enableCalls = 0;
     int disableCalls = 0;
+    int canEnableStrategyCalls = 0;
+    int enableStrategyCalls = 0;
     bool inspectResult = true;
     bool canEnableResult = true;
     bool enableResult = true;
     bool transitionToEnabled = true;
+    bool canEnableStrategyResult = true;
+    bool enableStrategyResult = true;
+    std::optional<fic::platform::PamFaillockStrategy> activeStrategy;
+    std::vector<fic::platform::PamFaillockStrategy> requestedStrategies;
     fic::identity::pam::PamTopologyState topologyState =
         fic::identity::pam::PamTopologyState::Disabled;
 };
@@ -89,7 +112,8 @@ public:
     bool inspect(fic::identity::pam::PamTopologyStatus& status,
                  std::string& error) override {
         ++state_->inspectCalls;
-        status = {state_->topologyState, true, {}, "fake topology"};
+        status = {state_->topologyState, true, state_->activeStrategy,
+                  "fake topology"};
         error = state_->inspectResult ? "" : "inspection failed";
         return state_->inspectResult;
     }
@@ -109,6 +133,34 @@ public:
     }
     bool disable(std::string& error) override {
         ++state_->disableCalls;
+        error.clear();
+        return true;
+    }
+    bool canEnableStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error) const override {
+        ++state_->canEnableStrategyCalls;
+        if (!state_->canEnableStrategyResult) {
+            error = "cannot enable strategy";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+    bool enableStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error) override {
+        ++state_->enableStrategyCalls;
+        state_->requestedStrategies.push_back(strategy);
+        if (!state_->enableStrategyResult) {
+            error = "strategy transition failed";
+            return false;
+        }
+        state_->activeStrategy = strategy;
+        if (state_->transitionToEnabled) {
+            state_->topologyState =
+                fic::identity::pam::PamTopologyState::Enabled;
+        }
         error.clear();
         return true;
     }
@@ -168,6 +220,12 @@ fic::platform::PamPlatformConfig makeAltLockoutPlatform(
     platform.capabilities.front().managedTopologyTargets = {{
         root / "pam.d/system-auth-local-only",
         fic::platform::PamManagedTopologyTargetRole::AuthenticationAndAccount}};
+    platform.capabilities.front().supportedFaillockStrategies = {
+        fic::platform::PamFaillockStrategy::PreauthRequired,
+        fic::platform::PamFaillockStrategy::PreauthRequisite,
+        fic::platform::PamFaillockStrategy::Authsucc};
+    platform.capabilities.front().defaultFaillockStrategy =
+        fic::platform::PamFaillockStrategy::PreauthRequired;
     return platform;
 }
 
@@ -221,7 +279,7 @@ int main() {
         writeFile(
             root / "config/IDENTITY_ACCESS.conf",
             "enable_authentication_lockout.status=ENABLE\n"
-            "enable_authentication_lockout.value=ENABLE\n"
+            "enable_authentication_lockout.value=preauth_required\n"
             "enable_password_history.status=ENABLE\n"
             "enable_password_history.value=ENABLE\n"
             "enable_password_quality.status=DISABLE\n"
@@ -231,6 +289,8 @@ int main() {
         auto state = std::make_shared<ManagerState>();
         state->topologyState =
             fic::identity::pam::PamTopologyState::Enabled;
+        state->activeStrategy =
+            fic::platform::PamFaillockStrategy::PreauthRequired;
         int verifierCalls = 0;
         auto factoryCapability =
             fic::platform::PamCapability::PasswordQuality;
@@ -240,15 +300,19 @@ int main() {
         require(alreadyEnabled.policyName == "enable_authentication_lockout" &&
                     alreadyEnabled.capability() ==
                         fic::platform::PamCapability::AuthenticationLockout &&
+                    alreadyEnabled.getDefaultValue() == "preauth_required" &&
                     alreadyEnabled.apply() && alreadyEnabled.apply() &&
                     verifierCalls == 2 &&
                     state->factoryCalls == 2 && state->inspectCalls == 2 &&
-                    state->canEnableCalls == 0 && state->enableCalls == 0,
+                    state->canEnableCalls == 0 && state->enableCalls == 0 &&
+                    state->enableStrategyCalls == 0,
                 "manager-first repeated activation was not idempotent");
 
         state = std::make_shared<ManagerState>();
         state->topologyState =
             fic::identity::pam::PamTopologyState::Enabled;
+        state->activeStrategy =
+            fic::platform::PamFaillockStrategy::PreauthRequired;
         verifierCalls = 0;
         auto enabledButStructurallyInvalid = makePolicy(
             platform, fic::platform::PamCapability::AuthenticationLockout,
@@ -257,6 +321,89 @@ int main() {
                     state->factoryCalls == 1 && state->inspectCalls == 1 &&
                     state->enableCalls == 0 && verifierCalls == 1,
                 "manager-enabled topology bypassed fresh verification");
+
+        // Strategy mismatch on an already-enabled topology: the activation
+        // policy must request an atomic strategy transition.
+        state = std::make_shared<ManagerState>();
+        state->topologyState =
+            fic::identity::pam::PamTopologyState::Enabled;
+        state->activeStrategy =
+            fic::platform::PamFaillockStrategy::PreauthRequisite;
+        verifierCalls = 0;
+        auto strategyMismatch = makePolicy(
+            platform, fic::platform::PamCapability::AuthenticationLockout,
+            state, {true}, verifierCalls, factoryCapability);
+        require(strategyMismatch.apply() &&
+                    state->enableCalls == 0 &&
+                    state->enableStrategyCalls == 1 &&
+                    state->requestedStrategies.size() == 1 &&
+                    state->requestedStrategies.front() ==
+                        fic::platform::PamFaillockStrategy::PreauthRequired,
+                "strategy mismatch did not request the configured strategy");
+
+        // A refused strategy transition must fail the activation without
+        // any non-strategy mutation.
+        state = std::make_shared<ManagerState>();
+        state->topologyState =
+            fic::identity::pam::PamTopologyState::Enabled;
+        state->activeStrategy =
+            fic::platform::PamFaillockStrategy::PreauthRequisite;
+        state->canEnableStrategyResult = false;
+        verifierCalls = 0;
+        auto strategyRefused = makePolicy(
+            platform, fic::platform::PamCapability::AuthenticationLockout,
+            state, {true}, verifierCalls, factoryCapability);
+        require(!strategyRefused.apply() &&
+                    state->enableStrategyCalls == 0 &&
+                    state->enableCalls == 0 && verifierCalls == 0,
+                "refused strategy transition was bypassed");
+
+        // A failing strategy transition must fail the activation.
+        state = std::make_shared<ManagerState>();
+        state->topologyState =
+            fic::identity::pam::PamTopologyState::Enabled;
+        state->activeStrategy =
+            fic::platform::PamFaillockStrategy::Authsucc;
+        state->enableStrategyResult = false;
+        verifierCalls = 0;
+        auto strategyTransitionFailed = makePolicy(
+            platform, fic::platform::PamCapability::AuthenticationLockout,
+            state, {}, verifierCalls, factoryCapability);
+        require(!strategyTransitionFailed.apply() &&
+                    state->enableStrategyCalls == 1 && verifierCalls == 0,
+                "failed strategy transition was accepted");
+
+        // An unsupported strategy value must be rejected before any
+        // manager call; the legacy ENABLE value is not a strategy.
+        writeFile(
+            root / "config/IDENTITY_ACCESS.conf",
+            "enable_authentication_lockout.status=ENABLE\n"
+            "enable_authentication_lockout.value=ENABLE\n"
+            "enable_password_history.status=ENABLE\n"
+            "enable_password_history.value=ENABLE\n"
+            "enable_password_quality.status=DISABLE\n"
+            "enable_password_quality.value=ENABLE\n");
+        state = std::make_shared<ManagerState>();
+        state->topologyState =
+            fic::identity::pam::PamTopologyState::Enabled;
+        state->activeStrategy =
+            fic::platform::PamFaillockStrategy::PreauthRequired;
+        verifierCalls = 0;
+        auto unsupportedValue = makePolicy(
+            platform, fic::platform::PamCapability::AuthenticationLockout,
+            state, {}, verifierCalls, factoryCapability);
+        require(!unsupportedValue.apply() && state->inspectCalls == 0 &&
+                    !unsupportedValue.strategyForValue("ENABLE").has_value() &&
+                    unsupportedValue.strategyForValue("authsucc").has_value(),
+                "legacy ENABLE value was accepted as a faillock strategy");
+        writeFile(
+            root / "config/IDENTITY_ACCESS.conf",
+            "enable_authentication_lockout.status=ENABLE\n"
+            "enable_authentication_lockout.value=preauth_required\n"
+            "enable_password_history.status=ENABLE\n"
+            "enable_password_history.value=ENABLE\n"
+            "enable_password_quality.status=DISABLE\n"
+            "enable_password_quality.value=ENABLE\n");
 
         state = std::make_shared<ManagerState>();
         state->inspectResult = false;
@@ -571,7 +718,102 @@ int main() {
         std::string observedExecutable;
         std::vector<std::string> observedArguments;
         bool observedClearEnvironment = false;
+        const fs::path pamAuthUpdateState = root / "var/lib/pam";
+        fs::create_directories(pamAuthUpdateState);
+        writeFile(root / "security/pam_faillock.so", "fixture\n");
+        writeFile(root / "security/pam_tcb.so", "fixture\n");
+        const std::string faillockConfigArgument =
+            " conf=" + (root / "security/faillock.conf").string();
+        // Effective login stacks as pam-auth-update would generate them for
+        // each strategy (simplified: pam-auth-update template boilerplate
+        // omitted, module order preserved).
+        const std::string lockoutPreauthRequisite =
+            "auth requisite pam_faillock.so preauth" +
+            faillockConfigArgument + "\n"
+            "auth sufficient pam_tcb.so shadow fork nullok\n"
+            "auth [default=die] pam_faillock.so authfail" +
+            faillockConfigArgument + "\n"
+            "account required pam_faillock.so" +
+            faillockConfigArgument + "\n"
+            "account required pam_tcb.so shadow fork\n";
+        const std::string lockoutPreauthRequired =
+            "auth required pam_faillock.so preauth" +
+            faillockConfigArgument + "\n"
+            "auth sufficient pam_tcb.so shadow fork nullok\n"
+            "auth [default=die] pam_faillock.so authfail" +
+            faillockConfigArgument + "\n"
+            "account required pam_faillock.so" +
+            faillockConfigArgument + "\n"
+            "account required pam_tcb.so shadow fork\n";
+        const std::string lockoutAuthsucc =
+            "auth sufficient pam_tcb.so shadow fork nullok\n"
+            "auth [default=die] pam_faillock.so authfail" +
+            faillockConfigArgument + "\n"
+            "auth required pam_faillock.so authsucc" +
+            faillockConfigArgument + "\n"
+            "account required pam_tcb.so shadow fork\n";
+        struct StrategyRecipe {
+            std::vector<std::string> ids;
+            std::string content;
+        };
+        const std::map<fic::platform::PamFaillockStrategy, StrategyRecipe>
+            recipes = {
+                {fic::platform::PamFaillockStrategy::PreauthRequisite,
+                 {{"fic-faillock-notify", "fic-faillock-authfail"},
+                  lockoutPreauthRequisite}},
+                {fic::platform::PamFaillockStrategy::PreauthRequired,
+                 {{"fic-faillock-preauth-required", "fic-faillock-authfail"},
+                  lockoutPreauthRequired}},
+                {fic::platform::PamFaillockStrategy::Authsucc,
+                 {{"fic-faillock-authsucc", "fic-faillock-authfail"},
+                  lockoutAuthsucc}}};
+        // Simulated pam-auth-update: applies the --disable/--enable profile
+        // selection, rewrites the effective stack and the state database.
+        const auto applyPamAuthUpdate =
+            [&](const std::vector<std::string>& arguments)
+            -> std::optional<fic::platform::PamFaillockStrategy> {
+            std::vector<std::string> enableIds;
+            bool collecting = false;
+            for (const std::string& argument : arguments) {
+                if (argument == "--enable") {
+                    collecting = true;
+                    continue;
+                }
+                if (argument == "--disable") {
+                    collecting = false;
+                    continue;
+                }
+                if (collecting) {
+                    enableIds.push_back(argument);
+                }
+            }
+            std::sort(enableIds.begin(), enableIds.end());
+            std::optional<fic::platform::PamFaillockStrategy> applied;
+            for (const auto& [strategy, recipe] : recipes) {
+                std::vector<std::string> sortedIds = recipe.ids;
+                std::sort(sortedIds.begin(), sortedIds.end());
+                if (sortedIds == enableIds) {
+                    applied = strategy;
+                }
+            }
+            if (!applied.has_value()) {
+                return std::nullopt;
+            }
+            const StrategyRecipe& recipe = recipes.at(*applied);
+            writeFile(root / "pam.d/login", recipe.content);
+            std::string stateContent;
+            for (const std::string& id : recipe.ids) {
+                stateContent += "Module: " + id + "\n";
+            }
+            writeFile(pamAuthUpdateState / "auth",
+                      "Module: unix\n" + stateContent);
+            writeFile(pamAuthUpdateState / "account",
+                      "Module: unix\n" + stateContent);
+            return applied;
+        };
         fic::identity::pam::PamAuthUpdateTopologyManagerOptions commandOptions;
+        commandOptions.stateDirectory = pamAuthUpdateState;
+        commandOptions.configDirectory = root / "etc/pam.d";
         commandOptions.runner =
             [&](const std::string& executable,
                 const std::vector<std::string>& arguments,
@@ -581,7 +823,8 @@ int main() {
                 observedClearEnvironment = processOptions.clearEnvironment;
                 ProcessResult result;
                 result.started = true;
-                result.exitCode = 0;
+                result.exitCode =
+                    applyPamAuthUpdate(arguments).has_value() ? 0 : 1;
                 return result;
             };
         fic::identity::pam::PamAuthUpdateTopologyManager commandManager(
@@ -589,39 +832,35 @@ int main() {
             commandOptions);
         require(commandManager.enable(error) &&
                     observedExecutable == pamAuthUpdate.string() &&
-                    observedArguments == std::vector<std::string>{
-                        "--enable", "fic-faillock-notify",
-                        "fic-faillock"} &&
                     observedClearEnvironment,
                 "pam-auth-update activation did not use typed argv");
+        require(observedArguments == std::vector<std::string>{
+                    "--disable", "fic-faillock-notify",
+                    "fic-faillock-preauth-required", "fic-faillock-authsucc",
+                    "--enable", "fic-faillock-preauth-required",
+                    "fic-faillock-authfail"},
+                "pam-auth-update activation did not combine the disable and "
+                "enable selection in a single invocation");
         require(!commandManager.disable(error),
                 "pam-auth-update manager allowed automatic deactivation");
+        // Idempotency at the manager level.
+        require(commandManager.enable(error) &&
+                    observedArguments.front() == "--disable",
+                "repeated pam-auth-update activation was not idempotent");
 
-        const std::string faillockConfigArgument =
-            " conf=" + (root / "security/faillock.conf").string();
-        const std::string effectiveLockout =
-            "#%PAM-1.0\n"
-            "auth requisite pam_faillock.so preauth" +
-            faillockConfigArgument + "\n" +
-            "auth sufficient pam_tcb.so shadow fork nullok\n"
-            "auth [default=die] pam_faillock.so authfail" +
-            faillockConfigArgument + "\n" +
-            "account required pam_faillock.so" +
-            faillockConfigArgument + "\n" +
-            "account required pam_tcb.so shadow fork\n";
-        writeFile(root / "security/pam_faillock.so", "fixture\n");
-        writeFile(root / "security/pam_tcb.so", "fixture\n");
         int pamAuthUpdateCalls = 0;
         fic::identity::pam::PamAuthUpdateTopologyManagerOptions policyCommand;
+        policyCommand.stateDirectory = pamAuthUpdateState;
+        policyCommand.configDirectory = root / "etc/pam.d";
         policyCommand.runner =
             [&](const std::string&,
-                const std::vector<std::string>&,
+                const std::vector<std::string>& arguments,
                 const ProcessOptions&) {
                 ++pamAuthUpdateCalls;
-                writeFile(root / "pam.d/login", effectiveLockout);
                 ProcessResult result;
                 result.started = true;
-                result.exitCode = 0;
+                result.exitCode =
+                    applyPamAuthUpdate(arguments).has_value() ? 0 : 1;
                 return result;
             };
         const auto makePamAuthUpdatePolicy = [&]() {
@@ -641,7 +880,7 @@ int main() {
                 std::move(policyOptions));
         };
 
-        writeFile(root / "pam.d/login", effectiveLockout);
+        writeFile(root / "pam.d/login", lockoutPreauthRequired);
         auto pamAuthUpdateAlreadyEnabled = makePamAuthUpdatePolicy();
         require(pamAuthUpdateAlreadyEnabled.apply() &&
                     pamAuthUpdateCalls == 0,
@@ -650,6 +889,8 @@ int main() {
         writeFile(root / "pam.d/login",
                   "auth required pam_tcb.so shadow fork nullok\n"
                   "account required pam_tcb.so shadow fork\n");
+        fs::remove(pamAuthUpdateState / "auth");
+        fs::remove(pamAuthUpdateState / "account");
         auto pamAuthUpdateDisabled = makePamAuthUpdatePolicy();
         require(pamAuthUpdateDisabled.apply() && pamAuthUpdateCalls == 1,
                 "disabled pam-auth-update topology was not activated once");

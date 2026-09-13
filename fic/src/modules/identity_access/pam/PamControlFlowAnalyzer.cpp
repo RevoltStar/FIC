@@ -495,6 +495,7 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
         a.preauthFailedClosed == b.preauthFailedClosed &&
         a.authfailReached == b.authfailReached &&
         a.authsuccSucceeded == b.authsuccSucceeded &&
+        a.authsuccDenied == b.authsuccDenied &&
         a.accountSucceeded == b.accountSucceeded &&
         a.authenticationSuccessObserved == b.authenticationSuccessObserved &&
         a.authenticationFailureObserved == b.authenticationFailureObserved &&
@@ -829,8 +830,61 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
     const bool authsuccTopology = stackHasFaillockRole(
         authStack.entries, "authsucc", PamManagementGroup::Auth);
     const bool accountTopology = !authsuccTopology;
+    // Invariant: pam_faillock authfail accounting must run only after
+    // authentication failure can no longer be recovered by another
+    // credential provider. A credential authenticator placed after the
+    // authfail rule can never run: an earlier provider's success jumps
+    // past the remainder of the primary block, and a failure reaches the
+    // authfail rule first, which terminates the stack.
+    const auto authfailIndex = std::find_if(
+        authStack.entries.begin(), authStack.entries.end(),
+        [](const PamStackEntry& entry) {
+            const PamRule& rule = entry.rule;
+            return rule.group == PamManagementGroup::Auth &&
+                moduleBaseName(rule) == "pam_faillock.so" &&
+                hasArgument(rule, "authfail");
+        });
+    if (authfailIndex != authStack.entries.end()) {
+        const auto lateProvider = std::find_if(
+            std::next(authfailIndex), authStack.entries.end(),
+            [](const PamStackEntry& entry) {
+                return entry.rule.group == PamManagementGroup::Auth &&
+                    moduleRole(moduleBaseName(entry.rule)) ==
+                    PamModuleRole::CredentialAuthenticator;
+            });
+        if (lateProvider != authStack.entries.end()) {
+            PamFlowViolation violation;
+            violation.kind = PamFlowViolationKind::ProviderUnreachable;
+            violation.service = service;
+            violation.group = PamManagementGroup::Auth;
+            violation.message =
+                "credential provider " +
+                moduleBaseName(lateProvider->rule) +
+                " follows the pam_faillock authfail accounting rule and can "
+                "never be reached; authentication failure would be accounted "
+                "even though it is still recoverable by this provider";
+            violation.path.push_back({
+                lateProvider->rule.source,
+                lateProvider->rule.line,
+                lateProvider->rule.module,
+                "unreachable",
+                lateProvider->rule.control,
+                "unreachable"
+            });
+            addFirstViolation(analysis, std::move(violation));
+        }
+    }
+    // A positive termination with PAM_NEW_AUTHTOK_REQD is a successful
+    // authentication outcome (the stack asks for a token update), not a
+    // failed one; unknown Additional modules may legitimately end such a
+    // path, so the faillock classification must not treat it as a failure.
+    const auto terminatedPositively = [](const ExecutionState& state) {
+        return state.impression == Impression::Positive &&
+            (state.status == "success" ||
+             state.status == "new_authtok_reqd");
+    };
     const auto successful = std::find_if(
-        authStates.begin(), authStates.end(), stackSucceeded);
+        authStates.begin(), authStates.end(), terminatedPositively);
     if (successful == authStates.end()) {
         addFirstViolation(analysis, violationForState(
             PamFlowViolationKind::UnsupportedControlFlow,
@@ -840,7 +894,7 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
     }
 
     for (const auto& state : authStates) {
-        if (stackSucceeded(state)) {
+        if (terminatedPositively(state)) {
             if (state.evidence.trustedAuthenticationBypass.has_value()) {
                 addAcceptedTrustedAuthenticationBypass(analysis, state);
                 continue;
@@ -868,7 +922,13 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
             if ((state.evidence.authenticationFailureObserved &&
                  !state.evidence.authenticationSuccessObserved) ||
                 !state.evidence.providerReached ||
-                (accountTopology && !state.evidence.preauthSucceeded)) {
+                // preauth_required topologies deliberately let a locked
+                // user finish the authentication phase (preauth denied,
+                // stack continues); the denial is enforced by the
+                // separately verified account phase, so an auth-phase
+                // success after a preauth denial is not a bypass.
+                (accountTopology && !state.evidence.preauthSucceeded &&
+                 !state.evidence.preauthDenied)) {
                 addFirstViolation(analysis, violationForState(
                     PamFlowViolationKind::AuthenticationBypass,
                     authStack,
@@ -884,7 +944,8 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
                     "authsucc accounting",
                     state));
             }
-        } else if (authsuccTopology && state.evidence.authsuccSucceeded) {
+        } else if (authsuccTopology && state.evidence.authsuccSucceeded &&
+                   state.impression == Impression::Negative) {
             addFirstViolation(analysis, violationForState(
                 PamFlowViolationKind::PrematureSuccessAccounting,
                 authStack,

@@ -1,6 +1,7 @@
 Name: FIC PAM faillock pre-authentication and account check (required)
 Default: no
 Priority: 1025
+Conflicts: fic-faillock-notify, fic-faillock-authsucc
 Auth-Type: Primary
 Auth:
 	required			pam_faillock.so preauth

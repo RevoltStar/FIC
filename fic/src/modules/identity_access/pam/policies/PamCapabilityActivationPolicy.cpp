@@ -44,7 +44,12 @@ PamCapabilityActivationPolicy::PamCapabilityActivationPolicy(
         fic::identity::pam::capabilityConfig(platformConfig_, capability_);
     if (capabilityConfig == nullptr ||
         capabilityConfig->supportedFaillockStrategies.empty()) {
-        policyTypeValue = std::make_unique<FixedPolicyTypeValue>("ENABLE");
+        // No strategy is supported on this platform profile: the policy is
+        // unsupported here. It stays fail-closed (any apply attempt is
+        // rejected with an explicit diagnostic) instead of pretending a
+        // legacy fixed "ENABLE" topology exists. The daemon only registers
+        // this policy when at least one strategy is declared.
+        policyTypeValue = std::make_unique<FixedPolicyTypeValue>("DISABLED");
         return;
     }
     // The default strategy is presented first: PossibleListPolicyTypeValue
@@ -67,8 +72,14 @@ PamCapabilityActivationPolicy::PamCapabilityActivationPolicy(
 }
 
 bool PamCapabilityActivationPolicy::strategyAware() const {
-    return capability_ ==
-        fic::platform::PamCapability::AuthenticationLockout;
+    if (capability_ !=
+        fic::platform::PamCapability::AuthenticationLockout) {
+        return false;
+    }
+    const fic::platform::PamCapabilityConfig* capabilityConfig =
+        fic::identity::pam::capabilityConfig(platformConfig_, capability_);
+    return capabilityConfig != nullptr &&
+        !capabilityConfig->supportedFaillockStrategies.empty();
 }
 
 std::optional<fic::platform::PamFaillockStrategy>
@@ -113,6 +124,14 @@ bool PamCapabilityActivationPolicy::applyPam(
         }
     } else if (expectedValue != "ENABLE") {
         log("PAM capability activation value must be ENABLE", logLevel::ERROR);
+        return false;
+    }
+    if (capability_ ==
+            fic::platform::PamCapability::AuthenticationLockout &&
+        !strategyAware()) {
+        log("PAM authentication lockout is not supported by this platform "
+                "profile: no pam_faillock strategy is declared",
+            logLevel::ERROR);
         return false;
     }
 

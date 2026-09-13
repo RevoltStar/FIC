@@ -6,6 +6,8 @@
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
+#include <algorithm>
+
 /*Функции вывода справки*/
 void print_program_info(){
     std::cout << "  FREE INTEGRITY CONTROL (FIC) - программа настройки СЗИ для ОС на базе ядра Linux" << std::endl;
@@ -419,14 +421,26 @@ bool initPolicyRegistry(
                 managerError);
         };
     cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
-        platform.pam, fic::platform::PamCapability::AuthenticationLockout,
-        activationOptions));
-    cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
         platform.pam, fic::platform::PamCapability::PasswordHistory,
         activationOptions));
     cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
         platform.pam, fic::platform::PamCapability::PasswordQuality,
         activationOptions));
+    // The authentication lockout activation policy is only registered when
+    // the platform profile declares at least one supported pam_faillock
+    // strategy; otherwise the capability is unsupported on this platform.
+    if (std::any_of(
+            platform.pam.capabilities.begin(),
+            platform.pam.capabilities.end(),
+            [](const fic::platform::PamCapabilityConfig& capability) {
+                return capability.capability ==
+                    fic::platform::PamCapability::AuthenticationLockout &&
+                    !capability.supportedFaillockStrategies.empty();
+            })) {
+        cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
+            platform.pam, fic::platform::PamCapability::AuthenticationLockout,
+            activationOptions));
+    }
     registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinLength,
         std::make_unique<PamPasswordMinLengthPolicy>(platform.pam));
     registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinClasses,

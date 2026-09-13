@@ -627,7 +627,7 @@ platform id. Поэтому synthetic `passwdqc+pwhistory` и `pwquality` без
 | Debian 12/13, Ubuntu 24.04/26.04 | PasswordQuality | pam_pwquality | key/value | `PamAuthUpdate`: `pwquality` |
 | Debian 12 | PasswordHistory | pam_pwhistory | module arguments | `PamAuthUpdate`: `fic-pwhistory` |
 | Debian 13, Ubuntu 24.04/26.04 | PasswordHistory | pam_pwhistory | key/value | `PamAuthUpdate`: `fic-pwhistory` |
-| Debian 12/13, Ubuntu 24.04/26.04 | AuthenticationLockout | pam_faillock | key/value | `PamAuthUpdate`: `fic-faillock-notify`, `fic-faillock` |
+| Debian 12/13, Ubuntu 24.04/26.04 | AuthenticationLockout | pam_faillock | key/value | `PamAuthUpdate`: strategy recipes `fic-faillock-notify`/`fic-faillock-preauth-required` + `fic-faillock-authfail`, `fic-faillock-authsucc` + `fic-faillock-authfail` |
 | ALT p11 | PasswordQuality | pam_passwdqc | strict `option=value` | `StaticVerifyOnly` native topology |
 | ALT p11 | AuthenticationLockout | pam_faillock | key/value | `AltTcbManaged`: `AltPamFaillockTopologyManager` |
 | ALT p11 | PasswordHistory | pam_pwhistory | key/value в `/etc/security/fic-pwhistory.conf` | `AltTcbManaged`: serialized TCB transaction |
@@ -645,7 +645,17 @@ history update вместе с последующей записью `pam_tcb` �
 `preauth_required`, `authsucc`); поддерживаемый набор и значение по умолчанию
 объявлены в platform profile (`supportedFaillockStrategies`,
 `defaultFaillockStrategy`, для Debian/Ubuntu — также `strategyActivations`).
-Смена стратегии выполняется как атомарный переход с проверкой и откатом.
+Capability без объявленных стратегий считается на платформе неподдерживаемым:
+политика активации не регистрируется, а попытка применения отклоняется.
+Смена стратегии выполняется одной операцией платформы: snapshot состояния
+pam-auth-update (`/var/lib/pam`) и generated `common-*` файлов, один вызов
+`pam-auth-update` с `--disable`/`--enable`, повторная проверка exact strategy
+для всех целевых служб и восстановление snapshot при любой ошибке применения
+или проверки; неудача rollback возвращает CRITICAL диагностику. Топология
+без FIC profile selection в state database считается внешней: она может
+анализироваться, но FIC не меняет её стратегию и не накладывает поверх неё
+свои profiles. Ownership определяется по profile selection state, а стратегия
+должна быть одинаковой во всех целевых службах (иначе topology Broken).
 Activation policies при необходимости вызывают native integration, затем
 создают новую `PamConfiguration` и выполняют `PamCapabilityVerifier` в режиме
 `Structural`. Успешный exit code native tool
