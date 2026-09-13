@@ -87,6 +87,10 @@
   compile `PamOptionFile.cpp`; the analyzer reads canonical pam_faillock config
   flags through `PamOptionFile::hasFlag()`, so omitting that source caused CI
   linker failures.
+- `pam_capability_activation_policy_tests` also compiles
+  `PamControlFlowAnalyzer.cpp`, so it now includes `PamOptionFile.cpp` as well.
+  A source-set scan confirms no remaining test target has analyzer without
+  option-file implementation.
 
 ## Changed areas
 
@@ -125,6 +129,10 @@
   linker fix: PASSED (`SKIP wrong-gid mutation` on this filesystem).
 - Manual `AltPamFaillockTopologyManagerTests.cpp` g++ build + run after linker
   fix: PASSED.
+- Manual `PamCapabilityActivationPolicyTests.cpp` g++ build after linker fix:
+  PASSED.
+- Source-set scan for test targets with `PamControlFlowAnalyzer.cpp` but no
+  `PamOptionFile.cpp`: none.
 - `git diff --check`: PASSED after ALT topology test linker fix.
 
 ## Remaining
