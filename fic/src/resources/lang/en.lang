@@ -68,17 +68,17 @@
 
 # Identity and access: PAM
 [module:IDENTITY_ACCESS][policy:password_min_length]=Minimum password length
-[module:IDENTITY_ACCESS][policy:password_min_length][description]=Sets minlen in the canonical pam_pwquality configuration. Application fails if pam_pwquality is not active for every configured password service, if another password-quality provider is active, or if a PAM argument overrides the requested value.
+[module:IDENTITY_ACCESS][policy:password_min_length][description]=Sets minlen in the canonical pam_pwquality configuration. Application fails if pam_pwquality is not active for every configured password service, if another password-quality provider is active, or if a PAM argument overrides the requested value. With positive credits, the effective length may be lower than minlen.
 [module:IDENTITY_ACCESS][policy:password_min_classes]=Minimum password character classes
 [module:IDENTITY_ACCESS][policy:password_min_classes][description]=Sets minclass in the canonical pam_pwquality configuration after provider and effective PAM graph verification.
 [module:IDENTITY_ACCESS][policy:password_check_username]=Check user name in password
-[module:IDENTITY_ACCESS][policy:password_check_username][description]=Checks whether the new password contains the user name in a form recognized by pam_pwquality.
+[module:IDENTITY_ACCESS][policy:password_check_username][description]=Checks whether the new password contains the user name in a form recognized by pam_pwquality. Very short names have exceptions.
 [module:IDENTITY_ACCESS][policy:password_check_gecos]=Check GECOS data in password
-[module:IDENTITY_ACCESS][policy:password_check_gecos][description]=Checks whether the new password contains significant words from the local account GECOS field.
+[module:IDENTITY_ACCESS][policy:password_check_gecos][description]=Checks whether the new password contains significant words (3 or more characters) from the local account GECOS field.
 [module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root]=Enforce password quality for root
-[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Applies password-quality checks when root sets a password. The provider backend maps yes/no to the native pam_pwquality or pam_passwdqc representation.
+[module:IDENTITY_ACCESS][policy:password_quality_enforce_for_root][description]=Changes the active PAM password-quality provider setting that controls whether checks are mandatory when root changes a password. For pam_pwquality, yes enables the enforce_for_root flag and no removes it; for pam_passwdqc, yes sets enforce=everyone and no sets enforce=users. The policy does not enable a password-quality module, but changes its existing configuration.
 [module:IDENTITY_ACCESS][policy:password_min_changed_characters]=Minimum change from previous password
-[module:IDENTITY_ACCESS][policy:password_min_changed_characters][description]=Sets difok, the minimum number of changes from the previous password. A value of 0 disables similarity checks except exact equality; comparison is normally unavailable for root because the previous password is not provided.
+[module:IDENTITY_ACCESS][policy:password_min_changed_characters][description]=Sets difok, the minimum number of changes from the previous password (more precisely, the number of characters in the new password that are not present in the old one, plus there are other similarity checks). A value of 0 disables similarity checks except exact equality; comparison is normally unavailable for root because the previous password is not provided.
 [module:IDENTITY_ACCESS][policy:password_min_lowercase]=Minimum lowercase letters
 [module:IDENTITY_ACCESS][policy:password_min_lowercase][description]=Requires the specified minimum number of lowercase letters through pam_pwquality lcredit; 0 disables the separate minimum for this class.
 [module:IDENTITY_ACCESS][policy:password_min_uppercase]=Minimum uppercase letters
@@ -88,17 +88,17 @@
 [module:IDENTITY_ACCESS][policy:password_min_other]=Minimum other characters
 [module:IDENTITY_ACCESS][policy:password_min_other][description]=Requires the specified minimum number of characters from other classes through pam_pwquality ocredit; 0 disables the separate minimum for this class.
 [module:IDENTITY_ACCESS][policy:passwdqc_strength_thresholds]=passwdqc strength thresholds
-[module:IDENTITY_ACCESS][policy:passwdqc_strength_thresholds][description]=Sets the native passwdqc min tuple with exactly five non-increasing numeric or disabled fields.
+[module:IDENTITY_ACCESS][policy:passwdqc_strength_thresholds][description]=Sets the native passwdqc min tuple with exactly five non-increasing numeric or disabled fields. The five values have specific meanings: N0 is a one-class password, N1 is two classes, N2 is a passphrase, N3 is three classes, and N4 is four classes.
 [module:IDENTITY_ACCESS][policy:passwdqc_passphrase_words]=passwdqc passphrase word count
 [module:IDENTITY_ACCESS][policy:passwdqc_passphrase_words][description]=Sets the native passwdqc passphrase option; 0 disables the passphrase-specific check.
 [module:IDENTITY_ACCESS][policy:passwdqc_match_length]=passwdqc match length
-[module:IDENTITY_ACCESS][policy:passwdqc_match_length][description]=Sets the native passwdqc match option; 0 disables the substring match check.
+[module:IDENTITY_ACCESS][policy:passwdqc_match_length][description]=Sets the native passwdqc match option; 0 disables the substring match check. match=N does not mean "substring N found -> reject the password". The matching part is partially discounted, then the password is evaluated for strength again.
 [module:IDENTITY_ACCESS][policy:passwdqc_similar_password]=passwdqc similar-password handling
-[module:IDENTITY_ACCESS][policy:passwdqc_similar_password][description]=Selects the native passwdqc similar value: deny or permit.
+[module:IDENTITY_ACCESS][policy:passwdqc_similar_password][description]=Selects the native passwdqc similar value: deny or permit. similar=deny works by comparing with the previous password; when the old token is unavailable, comparison is impossible (this matters primarily for root). Also, "similarity" is not a simple string distance, but common substring + strength after discount.
 [module:IDENTITY_ACCESS][policy:passwdqc_retry_count]=passwdqc retry count
-[module:IDENTITY_ACCESS][policy:passwdqc_retry_count][description]=Sets the native passwdqc retry count used by pam_passwdqc.
+[module:IDENTITY_ACCESS][policy:passwdqc_retry_count][description]=Sets the native passwdqc retry count used by pam_passwdqc. retry applies to the number of interactive new-password prompts made by pam_passwdqc itself; with use_authtok, interactivity is disabled.
 [module:IDENTITY_ACCESS][policy:password_history_depth]=Password history depth
-[module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets native pam_pwhistory remember semantics using the platform-selected configuration-file or module-argument strategy. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten.
+[module:IDENTITY_ACCESS][policy:password_history_depth][description]=Sets native pam_pwhistory remember semantics using the platform-selected configuration-file or module-argument strategy. pam_unix remember= is detected as a distinct unsupported provider instead of being rewritten. A characteristic of pam_pwhistory is that, when a password change is attempted, the current password is added to the history before the new password is checked. Therefore, even a rejected attempt to use a previously used password can shift the history and remove the oldest stored password from it. As a result, that password may become available for reuse earlier than the configured history depth would imply.
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Enforce password history for root
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Controls native pam_pwhistory enforce_for_root semantics using the platform-selected configuration-file or module-argument strategy.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Failed PAM authentications before lockout
@@ -110,7 +110,7 @@
 [module:IDENTITY_ACCESS][policy:failed_authentication_enforce_for_root]=Lock root after failed authentications
 [module:IDENTITY_ACCESS][policy:failed_authentication_enforce_for_root][description]=Controls the even_deny_root flag in the canonical pam_faillock configuration. The value yes enables root lockout and no removes the flag. Applying no is rejected if root_unlock_time or a PAM argument still enables root lockout.
 [module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time]=Authentication lockout duration
-[module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Sets unlock_time in seconds in the canonical pam_faillock configuration. A value of 0 means that automatic time-based unlocking is disabled.
+[module:IDENTITY_ACCESS][policy:failed_authentication_unlock_time][description]=Sets unlock_time in seconds in the canonical pam_faillock configuration. A value of 0 means that automatic time-based unlocking is disabled. With the standard tally-dir (/run/faillock), records disappear on reboot. The root_unlock_time parameter sets a separate time for root (not configured here).
 [module:IDENTITY_ACCESS][policy:enable_authentication_lockout]=Enable authentication lockout
 [module:IDENTITY_ACCESS][policy:enable_authentication_lockout][description]=Activates the PAM lockout mechanism through native platform integration and rechecks the actual effective PAM stack. It does not set thresholds, counting periods, or unlock times.
 [module:IDENTITY_ACCESS][policy:enable_password_history]=Enable password history

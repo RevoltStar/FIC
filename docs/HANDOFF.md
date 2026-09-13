@@ -6,33 +6,37 @@
 
 ## Current task
 
-- Уточнить пользовательское RU/EN description политики
-  `IDENTITY_ACCESS/enable_password_history` с описанием поведения
-  `pam_pwhistory` при отклонённой смене пароля.
+- Синхронизировать `en.lang` с пользовательскими изменениями описаний PAM
+  policy в `ru.lang`.
 
 ## Accepted architecture / invariants
 
-- Меняется только локализованное описание политики.
-- Policy identifier/name/value/dependencies, `password_history_depth`, PAM
-  configuration и runtime implementation не меняются.
+- Меняются только локализованные description strings.
+- Policy identifiers, names, values, dependencies, PAM configuration и runtime
+  implementation не меняются.
 
 ## Completed
 
-- Обновлены парные description keys в `ru.lang` и `en.lang`.
-- Исходное описание активации механизма сохранено в начале; примечание о
-  поведении `pam_pwhistory` добавлено в конец.
-- Проверено отсутствие прежних формулировок и неизменность description
-  `password_history_depth`.
+- Обновлены парные EN descriptions для изменённых RU keys:
+  `password_min_length`, `password_check_username`, `password_check_gecos`,
+  `password_quality_enforce_for_root`, `password_min_changed_characters`,
+  `passwdqc_strength_thresholds`, `passwdqc_match_length`,
+  `passwdqc_similar_password`, `passwdqc_retry_count`,
+  `password_history_depth`, `failed_authentication_unlock_time`.
 
 ## Changed areas
 
 - `fic/src/resources/lang/ru.lang`
 - `fic/src/resources/lang/en.lang`
+- `docs/HANDOFF.md`
 
 ## Validation
 
-- `path_layout_static_checks`, `module_ui_static_checks`,
-  `identity_policy_hierarchy_tests`: 3/3 passed.
+- `python3 tests/common/static_checks.py .`: passed.
+- `python3 tests/fic-gui/policies/static_checks.py .`: passed.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04`: failed
+  before test generation because `gio-2.0` is not installed for
+  `fic-session-agent`.
 - `git diff --check`: passed.
 
 ## Remaining
