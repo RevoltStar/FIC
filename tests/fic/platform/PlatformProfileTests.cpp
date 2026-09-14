@@ -452,6 +452,10 @@ void testSelectedProfile() {
         require(
             faillock->topology ==
                     fic::platform::PamTopologyStrategyKind::AltTcbManaged &&
+                faillock->supportedFaillockStrategies ==
+                    std::vector<fic::platform::PamFaillockStrategy>{
+                        fic::platform::PamFaillockStrategy::PreauthRequired,
+                        fic::platform::PamFaillockStrategy::PreauthRequisite} &&
                 history->topology ==
                     fic::platform::PamTopologyStrategyKind::AltTcbManaged &&
                 quality->topology ==
@@ -459,7 +463,8 @@ void testSelectedProfile() {
                 faillock->activationIdentifiers.empty() &&
                 history->activationIdentifiers.empty() &&
                 quality->activationIdentifiers.empty(),
-            "ALT PAM capabilities must use native managed/static strategies");
+            "ALT PAM capabilities or supported faillock strategies are "
+            "incorrect");
     } else {
         const auto hasStrategyActivation =
             [&](fic::platform::PamFaillockStrategy strategy,

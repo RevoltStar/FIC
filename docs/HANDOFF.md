@@ -2,80 +2,57 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `ab8f4bd` (HEAD).
-- Рабочее дерево содержит незакоммиченные исправления оставшихся CI failures
-  вокруг PAM faillock strategies, platform profile validation и тестовых PAM
-  fixtures.
+- Ветка `main`, базовый commit `9891276`.
+- Рабочее дерево содержит незакоммиченную текущую PAM-правку.
 
 ## Current task
 
-- Закрыть оставшиеся CI failures после typed `pam_faillock` strategies:
-  актуализировать валидатор platform profiles, Debian/Ubuntu profile data и
-  targeted PAM tests без изменения runtime platform profiles services.
+- Убрать небезопасную стратегию `authsucc` из advertised capabilities ALT p11
+  и закрепить CFG regression для внешнего отказа после возврата из
+  `system-auth-use_first_pass`.
 
 ## Accepted architecture / invariants
 
-- `enable_authentication_lockout.value`: `preauth_required` |
-  `preauth_requisite` | `authsucc`; legacy `ENABLE` остаётся invalid.
-- Debian/Ubuntu `AuthenticationLockout` pam-auth-update capability является
-  strategy-aware: legacy `activationIdentifiers` пустой, а strategy recipes
-  задаются через `strategyActivations`.
-- Debian/Ubuntu platform profiles продолжают содержать superset PAM services
-  (`sddm`, `gdm-password`, `lightdm` и т.д.); отсутствующие service-файлы
-  фильтруются manager-side, а не удаляются из profiles.
-- `PamControlFlowAnalyzer` должен считать терминальный
-  `PAM_NEW_AUTHTOK_REQD` положительным исходом для trusted authentication
-  bypass evidence так же, как обычный `success`.
+- ALT p11 поддерживает для `enable_authentication_lockout` только
+  `preauth_required` и `preauth_requisite`; default остаётся
+  `preauth_required`.
+- `authsucc` внутри ALT `system-auth*` небезопасен: внешний service-level gate
+  может завершить аутентификацию отказом уже после сброса tally.
+- Общий CFG analyzer и поддержка `authsucc` для Debian/Ubuntu не ослабляются.
 
 ## Completed
 
-- `PlatformCompatibility` теперь валидирует strategy-aware pam-auth-update
-  recipes отдельно от legacy activation identifiers и fail-closed отклоняет
-  пустые, дублирующиеся или смешанные объявления.
-- Debian12/Debian13/Ubuntu24.04/Ubuntu26.04 profiles больше не дублируют legacy
-  faillock `activationIdentifiers` при наличии strategy recipes.
-- PAM test fixtures приведены к валидным effective stacks для
-  `preauth_required` и `authsucc`, включая account phase там, где она нужна
-  для root-lockout semantics.
-- `pam_capability_activation_policy_tests` сбрасывает policy value и fake
-  pam-auth-update state между сценариями, чтобы проверка typed argv/idempotency
-  не зависела от предыдущих блоков теста.
-- `platform_profile_tests` проверяет пустой legacy recipe для strategy-aware
-  faillock и полный набор strategy activation recipes.
-- `PamControlFlowAnalyzer` учитывает positive terminal `new_authtok_reqd` при
-  записи trusted bypass evidence.
+- `Authsucc` удалён из `supportedFaillockStrategies` профиля ALT p11.
+- Platform-profile test проверяет exact ALT strategy set.
+- Добавлен analyzer regression с цепочкой
+  `sshd -> common-login-use_first_pass -> system-auth-use_first_pass ->
+  pam_nologin`, ожидающий `PrematureSuccessAccounting`.
+- README уточняет платформенные различия стратегий.
 
 ## Changed areas
 
-- `fic/src/platform/PlatformCompatibility.cpp`
-- `fic/src/platform/profiles/Debian12Profile.cpp`
-- `fic/src/platform/profiles/Debian13Profile.cpp`
-- `fic/src/platform/profiles/Ubuntu2404Profile.cpp`
-- `fic/src/platform/profiles/Ubuntu2604Profile.cpp`
-- `fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp`
-- `tests/fic/modules/identity_access/*`
+- `fic/src/platform/profiles/AltP11Profile.cpp`
 - `tests/fic/platform/PlatformProfileTests.cpp`
+- `tests/fic/modules/identity_access/pam/PamControlFlowAnalyzerTests.cpp`
+- `fic/README.md`
 
 ## Validation
 
-- Manual `PamCapabilityActivationPolicyTests.cpp` g++ build + run: PASSED.
-- Manual `PamConfigurationTests.cpp` g++ build + run: PASSED.
-- Manual `IdentityPolicyHierarchyTests.cpp` g++ build + run: PASSED.
-- Manual direct-source `PlatformProfileTests.cpp` g++ build + run for current
-  `ubuntu-24.04` profile: PASSED.
-- `python3 tests/fic/platform/static_checks.py .`: PASSED.
-- `python3 tests/common/static_checks.py .`: PASSED.
-- `cmake --build build-check --target fic -j2`: PASSED.
-- `ctest --test-dir build-check -N -R
-  'pam_configuration_tests|pam_capability_activation_policy_tests|identity_policy_hierarchy_tests|platform_profile_tests'`:
-  `Total Tests: 0`.
-- `git diff --check`: PASSED.
+- ALT CMake configure с локальным configure-only `libsystemd.pc` shim — passed.
+- Build targets `pam_control_flow_analyzer_tests`, `platform_profile_tests` —
+  passed.
+- Targeted CTest: 4/4 passed (`pam_control_flow_analyzer_tests`,
+  `platform_profile_static_checks`, `pam_packaging_static_checks`,
+  `pam_policy_defaults_tests`).
+- Узкий executable против собранного `fic-platform` подтвердил exact ALT set
+  `{PreauthRequired, PreauthRequisite}` и default `PreauthRequired` — passed.
+- `python3 tests/fic/platform/static_checks.py .` — passed.
+- `python3 tests/common/static_checks.py .` — passed.
+- Общий `platform_profile_tests` проходит новую ALT assertion, затем падает на
+  существующем несвязанном `/etc/resolv.conf` provider-target test helper,
+  который не применим к ALT profile.
 
 ## Remaining
 
-- Full root CTest не запускался: текущий `build-check` не содержит test
-  targets, а свежая root configure в этом окружении ранее упиралась в
-  отсутствующий `gio-2.0` dev для `fic-session-agent`.
-- Runtime PAM/login matrix не прогонялся; validation ограничена source/build
-  тестами и статическими проверками.
-- Коммит не создавать без отдельного запроса пользователя.
+- Изменения не закоммичены.
+- Полная сборка и полный CTest не запускались.

@@ -317,6 +317,37 @@ void testPrematureSuccessAccounting(const fs::path& root) {
             "detected");
 }
 
+void testAltSshAuthsuccBeforeOuterNologinIsPremature(const fs::path& root) {
+    // ALT's sshd stack obtains the password before entering the native
+    // use_first_pass substack. An authsucc call inside system-auth therefore
+    // clears the tally before control returns to the outer pam_nologin gate.
+    writeFile(root / "pam.d/sshd",
+              "#%PAM-1.0\n"
+              "auth required pam_userpass.so\n"
+              "auth include common-login-use_first_pass\n");
+    writeFile(root / "pam.d/common-login-use_first_pass",
+              "#%PAM-1.0\n"
+              "auth substack system-auth-use_first_pass\n"
+              "auth required pam_nologin.so\n");
+    writeFile(root / "pam.d/system-auth-use_first_pass",
+              "#%PAM-1.0\n"
+              "auth include system-auth-use_first_pass-local-only\n");
+    writeFile(root / "pam.d/system-auth-use_first_pass-local-only",
+              "#%PAM-1.0\n"
+              "auth [success=1 default=bad] pam_tcb.so shadow fork nullok "
+              "use_first_pass\n"
+              "auth [default=die] pam_faillock.so authfail\n"
+              "auth [success=ok default=bad] pam_faillock.so authsucc\n");
+
+    auto platform = makePlatform(root);
+    platform.scopes.front().services = {"sshd"};
+    const auto analysis = analyzeService(platform, "sshd");
+    require(hasViolation(analysis,
+                         PamFlowViolationKind::PrematureSuccessAccounting),
+            "ALT sshd authsucc topology was accepted even though outer "
+            "pam_nologin can fail after the tally reset");
+}
+
 void testSddmRootExclusionWithAuthsucc(const fs::path& root) {
     fs::remove(root / "security/faillock.conf");
     writeFile(root / "pam.d/sddm",
@@ -505,6 +536,7 @@ int main() {
         testDebianGeneratedTopologiesAreEffective(root);
         testRecoverableFailureAccounting(root);
         testPrematureSuccessAccounting(root);
+        testAltSshAuthsuccBeforeOuterNologinIsPremature(root);
         testSddmRootExclusionWithAuthsucc(root);
         testAuthsuccDenialBypassDetected(root);
         testProviderUnreachableAfterAuthfail(root);

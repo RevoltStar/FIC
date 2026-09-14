@@ -169,8 +169,7 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.pam.capabilities.front().supportedFaillockStrategies = {
         PamFaillockStrategy::PreauthRequired,
-        PamFaillockStrategy::PreauthRequisite,
-        PamFaillockStrategy::Authsucc};
+        PamFaillockStrategy::PreauthRequisite};
     profile.pam.capabilities.front().defaultFaillockStrategy =
         PamFaillockStrategy::PreauthRequired;
     profile.pam.passwordlessLoginControl = {

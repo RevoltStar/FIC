@@ -641,10 +641,14 @@ history update вместе с последующей записью `pam_tcb` �
 
 `enable_password_history` и `enable_password_quality` имеют фиксированное
 значение `ENABLE`. `enable_authentication_lockout` — стратегическая политика:
-её значение выбирает интеграцию pam_faillock (`preauth_requisite`,
-`preauth_required`, `authsucc`); поддерживаемый набор и значение по умолчанию
-объявлены в platform profile (`supportedFaillockStrategies`,
-`defaultFaillockStrategy`, для Debian/Ubuntu — также `strategyActivations`).
+её значение выбирает интеграцию pam_faillock. Debian/Ubuntu поддерживают
+`preauth_requisite`, `preauth_required` и `authsucc`; ALT p11 поддерживает
+только `preauth_requisite` и `preauth_required`, поскольку его внешний
+service stack может отказать уже после возврата из управляемого
+`system-auth*` substack, где `authsucc` преждевременно сбросил бы tally.
+Поддерживаемый набор и значение по умолчанию объявлены в platform profile
+(`supportedFaillockStrategies`, `defaultFaillockStrategy`, для Debian/Ubuntu —
+также `strategyActivations`).
 Capability без объявленных стратегий считается на платформе неподдерживаемым:
 политика активации не регистрируется, а попытка применения отклоняется.
 Смена стратегии выполняется одной операцией платформы: snapshot состояния
