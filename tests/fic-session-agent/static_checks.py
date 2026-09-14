@@ -137,7 +137,7 @@ for dockerfile, dependency in (
     ("packaging/deb/Dockerfile.debian13", "libglib2.0-dev"),
     ("packaging/deb/Dockerfile.ubuntu2404", "libglib2.0-dev"),
     ("packaging/deb/Dockerfile.ubuntu2604", "libglib2.0-dev"),
-    ("packaging/rpm/Dockerfile", "glib2-devel"),
+    ("packaging/rpm/Dockerfile", "libgio-devel"),
 ):
     require(dependency in (root / dockerfile).read_text(),
             f"{dockerfile} does not install {dependency}")

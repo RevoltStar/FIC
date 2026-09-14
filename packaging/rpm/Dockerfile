@@ -8,7 +8,7 @@ RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
     && apt-get update && apt-get install -y \
     cmake \
     gcc-c++ \
-    glib2-devel \
+    libgio-devel \
     glibc-devel \
     libglvnd-devel \
     libpam0-devel \
