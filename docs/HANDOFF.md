@@ -2,55 +2,59 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `9891276`.
+- Ветка `main`, базовый commit `856f62509fcee34b5cd4b1b10bd1aac740615df7`.
 - Рабочее дерево содержит незакоммиченную текущую PAM-правку.
 
 ## Current task
 
-- Убрать небезопасную стратегию `authsucc` из advertised capabilities ALT p11
-  и закрепить CFG regression для внешнего отказа после возврата из
-  `system-auth-use_first_pass`.
+- Безопасная поддержка штатного ALT p11 FreeIPA/SSSD PAM/NSS layout без
+  распространения локальных `pam_faillock`/`passwdqc` policies на domain users.
 
 ## Accepted architecture / invariants
 
-- ALT p11 поддерживает для `enable_authentication_lockout` только
-  `preauth_required` и `preauth_requisite`; default остаётся
-  `preauth_required`.
-- `authsucc` внутри ALT `system-auth*` небезопасен: внешний service-level gate
-  может завершить аутентификацию отказом уже после сброса tally.
-- Общий CFG analyzer и поддержка `authsucc` для Debian/Ubuntu не ослабляются.
+- ALT trusted aliases разрешают только перечисленные exact `system-auth-*`
+  targets, включая штатные `*-sss`; произвольные targets остаются fail-closed.
+- ALT `AuthenticationLockout` и `PasswordQuality` имеют typed
+  `LocalUsersOnly` semantics. CFG различает local/non-local paths по
+  `pam_localuser`; неизвестный subject остаётся в fail-closed анализе.
+- `PasswordQuality` проверяет только `system-auth-local-only`; SSS password
+  branch не обязана содержать `pam_passwdqc`.
+- При NSS `sss` policy `disable_nopasswdlogin` не использует enumeration, а
+  атомарно удаляет exact typed GDM/LightDM PAM bypass rules с postcondition и
+  exact rollback. Локальный NSS сохраняет group-membership enforcement.
 
 ## Completed
 
-- `Authsucc` удалён из `supportedFaillockStrategies` профиля ALT p11.
-- Platform-profile test проверяет exact ALT strategy set.
-- Добавлен analyzer regression с цепочкой
-  `sshd -> common-login-use_first_pass -> system-auth-use_first_pass ->
-  pam_nologin`, ожидающий `PrematureSuccessAccounting`.
-- README уточняет платформенные различия стратегий.
+- Добавлены exact ALT SSS aliases и local-only capability metadata.
+- CFG analyzer моделирует subject identity и принимает штатный hybrid router,
+  сохраняя обязательность `pam_faillock` на local branch.
+- Реализован SSS-safe PAM enforcement для `disable_nopasswdlogin`.
+- Добавлены regressions для aliases, router, local `passwdqc`, SSS без
+  enumeration, exact/non-exact rules, idempotency и rollback.
+- Обновлены относящиеся к контракту README, architecture docs и policy text.
 
 ## Changed areas
 
-- `fic/src/platform/profiles/AltP11Profile.cpp`
-- `tests/fic/platform/PlatformProfileTests.cpp`
-- `tests/fic/modules/identity_access/pam/PamControlFlowAnalyzerTests.cpp`
-- `fic/README.md`
+- `fic/src/platform/`
+- `fic/src/modules/identity_access/pam/`
+- PAM/platform tests и `tests/CMakeLists.txt`
+- `fic/README.md`, `docs/architecture-diagrams.md`, policy localization
 
 ## Validation
 
-- ALT CMake configure с локальным configure-only `libsystemd.pc` shim — passed.
-- Build targets `pam_control_flow_analyzer_tests`, `platform_profile_tests` —
-  passed.
-- Targeted CTest: 4/4 passed (`pam_control_flow_analyzer_tests`,
-  `platform_profile_static_checks`, `pam_packaging_static_checks`,
-  `pam_policy_defaults_tests`).
-- Узкий executable против собранного `fic-platform` подтвердил exact ALT set
-  `{PreauthRequired, PreauthRequisite}` и default `PreauthRequired` — passed.
+- ALT configure в `build-alt-sss` — passed ранее с configure-only
+  `libsystemd.pc` shim.
+- Targeted build: `pam_configuration_tests`,
+  `pam_control_flow_analyzer_tests`, `pam_disable_nopasswdlogin_policy_tests`,
+  `alt_pam_faillock_topology_tests`, `platform_profile_tests` — passed.
+- Targeted CTest: 7/7 passed, включая два relevant static checks.
+- Additional PAM CTest: 3/3 passed (`pam_capability_activation_policy_tests`,
+  `passwdqc_config_file_tests`, `pam_policy_defaults_tests`).
 - `python3 tests/fic/platform/static_checks.py .` — passed.
 - `python3 tests/common/static_checks.py .` — passed.
-- Общий `platform_profile_tests` проходит новую ALT assertion, затем падает на
-  существующем несвязанном `/etc/resolv.conf` provider-target test helper,
-  который не применим к ALT profile.
+- Production target `fic` запущен, но окружение не содержит
+  `systemd/sd-daemon.h`; сборка остановилась на `fic/src/main.cpp` до link.
+- `git diff --check` — passed.
 
 ## Remaining
 

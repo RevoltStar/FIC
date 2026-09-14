@@ -278,6 +278,7 @@ void testSelectedProfile() {
                     profile.pam.trustedServiceAliases.front().allowedTargets ==
                         std::vector<std::filesystem::path>{
                             "/etc/pam.d/system-auth-local",
+                            "/etc/pam.d/system-auth-sss",
                             "/etc/pam.d/system-auth-ldap",
                             "/etc/pam.d/system-auth-krb5",
                             "/etc/pam.d/system-auth-krb5_ccreds",
@@ -289,6 +290,7 @@ void testSelectedProfile() {
                     profile.pam.trustedServiceAliases[1].allowedTargets ==
                         std::vector<std::filesystem::path>{
                             "/etc/pam.d/system-auth-use_first_pass-local",
+                            "/etc/pam.d/system-auth-use_first_pass-sss",
                             "/etc/pam.d/system-auth-use_first_pass-ldap",
                             "/etc/pam.d/system-auth-use_first_pass-krb5",
                             "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds",
@@ -373,6 +375,9 @@ void testSelectedProfile() {
                             {"files"}, {"files", "systemd"},
                             {"files", "role"},
                             {"files", "systemd", "role"}} &&
+                    profile.pam.passwordlessLoginControl->
+                            pamBypassNssServices ==
+                        std::vector<std::string>{"sss"} &&
                     profile.pam.passwordlessLoginControl->supportedNss.
                             initgroups ==
                         std::vector<std::vector<std::string>>{
@@ -404,8 +409,10 @@ void testSelectedProfile() {
             "password-quality provider configuration path is incorrect");
     require(
         quality->subjectScope ==
-            fic::platform::PamIdentitySubjectScope::AllPamSubjects,
-        "password-quality capability subject scope is not explicit/all-subject");
+            (profile.id == "alt-p11"
+                 ? fic::platform::PamIdentitySubjectScope::LocalUsersOnly
+                 : fic::platform::PamIdentitySubjectScope::AllPamSubjects),
+        "password-quality capability subject scope is incorrect");
     const bool legacyHistory = profile.id == "debian-12";
     const std::filesystem::path expectedHistoryConfig =
         profile.id == "alt-p11"
@@ -452,6 +459,10 @@ void testSelectedProfile() {
         require(
             faillock->topology ==
                     fic::platform::PamTopologyStrategyKind::AltTcbManaged &&
+                faillock->subjectScope ==
+                    fic::platform::PamIdentitySubjectScope::LocalUsersOnly &&
+                quality->scope ==
+                    fic::platform::PamScope::LocalPasswordChange &&
                 faillock->supportedFaillockStrategies ==
                     std::vector<fic::platform::PamFaillockStrategy>{
                         fic::platform::PamFaillockStrategy::PreauthRequired,
@@ -1042,11 +1053,17 @@ void testInvalidProfileIsRejected() {
         [](std::function<void(fic::platform::FileAccessRule&)> mutate) {
             fic::platform::PlatformProfile profile =
                 fic::platform::makeBuildPlatformProfile();
+            bool mutated = false;
             for (fic::platform::FileAccessRule& rule :
                  profile.dac.protectedSystemFiles) {
-                if (rule.path == "/etc/resolv.conf") {
+                if (rule.path == "/etc/resolv.conf" &&
+                    !rule.providerManagedFinalSymlinkTargets.empty()) {
                     mutate(rule);
+                    mutated = true;
                 }
+            }
+            if (!mutated) {
+                return;
             }
             std::string validationError;
             require(!fic::platform::validatePlatformProfile(
@@ -1075,7 +1092,7 @@ void testInvalidProfileIsRejected() {
     });
     withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
         rule.providerManagedFinalSymlinkTargets.front().path =
-            "/run//NetworkManager/resolv.conf";
+            "/run/NetworkManager/../resolv.conf";
     });
 
     profile = fic::platform::makeBuildPlatformProfile();
@@ -1115,6 +1132,18 @@ void testInvalidProfileIsRejected() {
             {"files", "systemd", "role"});
         require(!fic::platform::validatePlatformProfile(profile, error),
                 "duplicate passwordless NSS contract must be rejected");
+
+        profile = fic::platform::makeBuildPlatformProfile();
+        profile.pam.passwordlessLoginControl->pamBypassNssServices = {
+            "sss", "sss"};
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "duplicate PAM-bypass NSS service must be rejected");
+
+        profile = fic::platform::makeBuildPlatformProfile();
+        profile.pam.passwordlessLoginControl->pamBypassNssServices = {
+            "sss [SUCCESS=return]"};
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "unsafe PAM-bypass NSS service name must be rejected");
     }
 
     profile = fic::platform::makeBuildPlatformProfile();
@@ -1182,8 +1211,16 @@ void testInvalidProfileIsRejected() {
         profile.pam,
         fic::platform::PamCapability::AuthenticationLockout)->subjectScope =
             fic::platform::PamIdentitySubjectScope::LocalUsersOnly;
+    auto* localLockout = pamCapability(
+        profile.pam, fic::platform::PamCapability::AuthenticationLockout);
+    if (localLockout->topology ==
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged) {
+        localLockout->topology =
+            fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
+        localLockout->managedTopologyTargets.clear();
+    }
     require(!fic::platform::validatePlatformProfile(profile, error),
-            "non-quality PAM capability accepted local-only subject scope");
+            "non-ALT lockout capability accepted local-only subject scope");
 
     profile = fic::platform::makeBuildPlatformProfile();
     pamCapability(profile.pam,

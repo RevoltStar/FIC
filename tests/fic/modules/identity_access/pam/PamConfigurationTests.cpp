@@ -2,6 +2,7 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/pam/PamOptionFile.h"
 #include "modules/identity_access/pam/PamOptionValueCodec.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamProviderInspector.h"
 #include "modules/identity_access/pam/PamPwhistoryArguments.h"
@@ -2378,7 +2379,8 @@ void testTrustedPamServiceAliasSecurityContract() {
         if (allow) {
             platform.trustedServiceAliases = {
                 {temp.path() / "pam.d/system-auth",
-                 {temp.path() / "pam.d/system-auth-local"}}
+                 {temp.path() / "pam.d/system-auth-local",
+                  temp.path() / "pam.d/system-auth-sss"}}
             };
         }
         return platform;
@@ -2400,6 +2402,30 @@ void testTrustedPamServiceAliasSecurityContract() {
                         temp.path() / "pam.d/system-auth-local" &&
                     sources.count(temp.path() / "pam.d/system-auth-local") == 1,
                 "trusted alias did not expose its authoritative regular source");
+    }
+    for (const auto& [alias, target] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"system-auth", "system-auth-sss"},
+             {"system-auth-use_first_pass",
+              "system-auth-use_first_pass-sss"}}) {
+        TempDirectory temp;
+        auto platform = makePlatform(temp);
+        platform.authenticationServices = {alias};
+        platform.trustedServiceAliases = {
+            {temp.path() / "pam.d" / alias,
+             {temp.path() / "pam.d" / target}}};
+        writeFile(temp.path() / "pam.d" / target,
+                  "auth required pam_permit.so\n");
+        std::filesystem::create_symlink(
+            target, temp.path() / "pam.d" / alias);
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(collect(platform, alias, rules, sources, error) &&
+                    rules.size() == 1 &&
+                    rules.front().source == temp.path() / "pam.d" / target,
+                "exact ALT SSS PAM alias target was rejected: " + target +
+                    ": " + error);
     }
     {
         TempDirectory temp;
@@ -2872,6 +2898,73 @@ void testPasswdqcConfigArgumentAndInlineOverride() {
         "one ineffective passwdqc service was hidden by another service");
 }
 
+void testAltPasswdqcUsesOnlyLocalPasswordBranch() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.scopes.push_back({
+        fic::platform::PamScope::LocalPasswordChange,
+        {"system-auth-local-only"}});
+    platform.capabilities[1].provider =
+        fic::platform::PamProviderKind::PamPasswdqc;
+    platform.capabilities[1].scope =
+        fic::platform::PamScope::LocalPasswordChange;
+    platform.capabilities[1].subjectScope =
+        fic::platform::PamIdentitySubjectScope::LocalUsersOnly;
+    platform.passwordQualityConfigPath = temp.path() / "passwdqc.conf";
+    writeFile(platform.passwordQualityConfigPath, "enforce=everyone\n");
+    writeFile(temp.path() / "security/pam_passwdqc.so", "test", 0555);
+    writeFile(
+        temp.path() / "pam.d/system-auth-local-only",
+        "password required pam_passwdqc.so config=" +
+            platform.passwordQualityConfigPath.string() + "\n"
+        "password required pam_tcb.so use_authtok\n");
+    writeFile(
+        temp.path() / "pam.d/system-auth-sss-only",
+        "password required pam_sss.so use_authtok\n");
+    writeFile(
+        temp.path() / "pam.d/system-auth-sss",
+        "password substack system-auth-local-only\n"
+        "password substack system-auth-sss-only\n");
+
+    const fic::platform::PamCapabilityConfig* capability = nullptr;
+    const std::vector<std::string>* services = nullptr;
+    std::string error;
+    require(
+        fic::identity::pam::resolveCapability(
+            platform, fic::platform::PamCapability::PasswordQuality,
+            capability, services, error),
+        error);
+    require(
+        capability != nullptr &&
+            capability->subjectScope ==
+                fic::platform::PamIdentitySubjectScope::LocalUsersOnly &&
+            services != nullptr &&
+            *services == std::vector<std::string>{"system-auth-local-only"},
+        "ALT passwdqc capability did not resolve to the local password "
+        "branch");
+
+    auto verification = verifyCapability(
+        platform, fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPasswdqc, *services);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Effective,
+        "remote pam_sss password branch incorrectly required passwdqc: " +
+            fic::identity::pam::formatPamCapabilityVerification(
+                verification));
+
+    writeFile(
+        temp.path() / "pam.d/system-auth-local-only",
+        "password required pam_tcb.so use_authtok\n");
+    verification = verifyCapability(
+        platform, fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPasswdqc, *services);
+    require(
+        verification.state !=
+            fic::identity::pam::PamEnforcementState::Effective,
+        "ALT local password branch without passwdqc was accepted");
+}
+
 } // namespace
 
 int main() {
@@ -2927,6 +3020,7 @@ int main() {
         testLegacyPwhistoryNativeRememberSemantics();
         testPasswordHistoryAlternativeIsDetected();
         testPasswdqcConfigArgumentAndInlineOverride();
+        testAltPasswdqcUsesOnlyLocalPasswordBranch();
     } catch (const std::exception& error) {
         std::cerr << "PamConfigurationTests failed: " << error.what() << '\n';
         return 1;

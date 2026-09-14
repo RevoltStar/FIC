@@ -1,6 +1,7 @@
 #include "modules/identity_access/pam/policies/PamDisableNopasswdloginPolicy.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,8 @@ struct Tree {
     fs::path passwd;
     fs::path nsswitch;
     fs::path gpasswd;
+    fs::path gdm;
+    fs::path lightdm;
     fic::platform::PamPlatformConfig platform;
     fic::platform::PlatformExecutableResolver resolver;
 
@@ -56,6 +59,8 @@ struct Tree {
           group(root / "etc/group"), passwd(root / "etc/passwd"),
           nsswitch(root / "etc/nsswitch.conf"),
           gpasswd(root / "bin/gpasswd"),
+          gdm(root / "etc/pam.d/gdm-password"),
+          lightdm(root / "etc/pam.d/lightdm"),
           resolver(
               fic::platform::PlatformExecutables{{
                   {fic::platform::ExecutableId::Gpasswd, {gpasswd}}}},
@@ -69,7 +74,17 @@ struct Tree {
                  {"files", "systemd", "role"}},
                 {{"files"}, {"files", "systemd"}, {"files", "role"},
                  {"files", "systemd", "role"}}
-            }};
+            },
+            {"sss"}};
+        platform.trustedAuthenticationBypasses = {
+            {"gdm-password", "pam_succeed_if.so",
+             fic::platform::PamTrustedAuthenticationBypassReason::
+                 ExplicitPasswordlessLogin,
+             "sufficient", {"user", "ingroup", "nopasswdlogin"}, gdm},
+            {"lightdm", "pam_succeed_if.so",
+             fic::platform::PamTrustedAuthenticationBypassReason::
+                 ExplicitPasswordlessLogin,
+             "sufficient", {"user", "ingroup", "nopasswdlogin"}, lightdm}};
     }
 
     ~Tree() {
@@ -113,14 +128,17 @@ void runTests() {
     Tree tree;
     initializeRuntime(tree.root);
     std::size_t calls = 0;
+    std::size_t membershipCalls = 0;
     bool clearEffectiveOnMutation = true;
     bool resolverFailure = false;
     fic::identity::pam::PamEffectiveGroupMembership effective;
-    auto membershipResolver = [&effective, &resolverFailure](
+    auto membershipResolver =
+        [&effective, &resolverFailure, &membershipCalls](
                                   const std::string& group,
                                   fic::identity::pam::
-                                      PamEffectiveGroupMembership& result,
+                                  PamEffectiveGroupMembership& result,
                                   std::string& error) {
+        ++membershipCalls;
         require(group == "nopasswdlogin", "unexpected NSS group lookup");
         if (resolverFailure) {
             error = "fixture NSS failure";
@@ -145,11 +163,12 @@ void runTests() {
         return result;
     };
     auto makePolicy = [&](PamDisableNopasswdloginPolicy::Runner runner = {},
-                          fic::core::TrustedFilePostValidationHook hook = {}) {
+                          fic::core::TrustedFilePostValidationHook hook = {},
+                          PamDisableNopasswdloginPolicy::Writer writer = {}) {
         if (!runner) runner = clearingRunner;
         return std::make_unique<PamDisableNopasswdloginPolicy>(
             tree.platform, tree.resolver, std::move(runner),
-            membershipResolver, std::move(hook));
+            membershipResolver, std::move(hook), std::move(writer));
     };
 
     tree.reset("users:x:1000:alice\n");
@@ -231,7 +250,7 @@ void runTests() {
     require(policy->apply(), "supported systemd-only topology was rejected");
 
     for (const std::string& remote :
-         {"sss", "winbind", "ldap", "nis", "compat"}) {
+         {"winbind", "ldap", "nis", "compat"}) {
         tree.reset("nopasswdlogin:x:2000:\n",
                    "alice:x:1000:1000::/home/alice:/bin/sh\n",
                    "passwd: files systemd\ngroup: files " + remote + "\n");
@@ -241,21 +260,96 @@ void runTests() {
                 "remote NSS service was accepted: " + remote);
     }
 
+    const std::string exactBypass =
+        "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n";
+    const std::string sssNss =
+        "passwd: files systemd sss\n"
+        "group: files systemd role\n"
+        "initgroups: files systemd role\n";
+    tree.reset("nopasswdlogin:x:2000:domain-user\n",
+               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
+    writeFile(tree.gdm, exactBypass + "auth required pam_nologin.so\n");
+    writeFile(tree.lightdm,
+              "auth required pam_nologin.so\n" + exactBypass);
+    const std::size_t membershipBeforeSss = membershipCalls;
+    std::size_t pamWrites = 0;
+    auto countingWriter = [&](const std::string& path,
+                              const std::string& content,
+                              const AtomicWriteOptions& options,
+                              std::string* error) {
+        ++pamWrites;
+        return AtomicFileWriter::write(path, content, options, error);
+    };
+    policy = makePolicy({}, {}, countingWriter);
+    require(policy->apply() && policy->apply() && pamWrites == 2 &&
+                membershipCalls == membershipBeforeSss &&
+                readFile(tree.gdm) == "auth required pam_nologin.so\n" &&
+                readFile(tree.lightdm) ==
+                    "auth required pam_nologin.so\n",
+            "SSS enforcement did not remove exact PAM bypasses "
+            "idempotently without membership enumeration");
+
     tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n",
-               "passwd: files sss\ngroup: files\n");
-    effective = {true, 2000, {}};
+               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
+    const std::string nonExact =
+        "auth required pam_succeed_if.so user ingroup nopasswdlogin\n";
+    writeFile(tree.gdm, nonExact);
+    fs::remove(tree.lightdm);
     policy = makePolicy();
-    require(!policy->apply(),
-            "remote passwd NSS service was reported as disabled");
+    require(!policy->apply() && readFile(tree.gdm) == nonExact,
+            "non-exact passwordless PAM rule was modified or accepted");
+
+    tree.reset("nopasswdlogin:x:2000:\n",
+               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
+    writeFile(tree.gdm, exactBypass);
+    writeFile(tree.lightdm, exactBypass);
+    std::size_t failingWrites = 0;
+    auto secondWriteFails = [&](const std::string& path,
+                                const std::string& content,
+                                const AtomicWriteOptions& options,
+                                std::string* error) {
+        ++failingWrites;
+        if (failingWrites == 2) {
+            if (error != nullptr) *error = "injected second write failure";
+            return false;
+        }
+        return AtomicFileWriter::write(path, content, options, error);
+    };
+    policy = makePolicy({}, {}, secondWriteFails);
+    require(!policy->apply() && failingWrites == 3 &&
+                readFile(tree.gdm) == exactBypass &&
+                readFile(tree.lightdm) == exactBypass,
+            "multi-service PAM write failure did not restore exact bytes");
+
+    tree.reset("nopasswdlogin:x:2000:\n",
+               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
+    writeFile(tree.gdm, exactBypass);
+    fs::remove(tree.lightdm);
+    std::size_t postconditionWrites = 0;
+    auto ineffectiveWriter = [&](const std::string& path,
+                                 const std::string& content,
+                                 const AtomicWriteOptions& options,
+                                 std::string* error) {
+        ++postconditionWrites;
+        const std::string actual = postconditionWrites == 1
+            ? content + exactBypass
+            : content;
+        return AtomicFileWriter::write(path, actual, options, error);
+    };
+    policy = makePolicy({}, {}, ineffectiveWriter);
+    require(!policy->apply() && postconditionWrites == 2 &&
+                readFile(tree.gdm) == exactBypass,
+            "PAM postcondition failure did not restore exact bytes");
 
     tree.reset("nopasswdlogin:x:2000:\n",
                "alice:x:1000:1000::/home/alice:/bin/sh\n",
                "passwd: files\ngroup: files\ninitgroups: files sss\n");
     effective = {true, 2000, {}};
+    const std::size_t membershipBeforeInitgroupsSss = membershipCalls;
     policy = makePolicy();
-    require(!policy->apply(),
-            "remote NSS initgroups membership was reported as disabled");
+    require(policy->apply() &&
+                membershipCalls == membershipBeforeInitgroupsSss,
+            "SSS initgroups topology used incomplete membership enumeration");
 
     tree.reset("nopasswdlogin:x:2000:\n",
                "alice:x:1000:1000::/home/alice:/bin/sh\n",

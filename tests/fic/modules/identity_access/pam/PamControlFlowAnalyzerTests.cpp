@@ -348,6 +348,64 @@ void testAltSshAuthsuccBeforeOuterNologinIsPremature(const fs::path& root) {
             "pam_nologin can fail after the tally reset");
 }
 
+void writeAltSssRouter(const fs::path& root, bool withLocalFaillock) {
+    writeFile(root / "pam.d/system-auth",
+              "auth include system-check-localuser\n"
+              "auth substack system-auth-local-only\n"
+              "auth [default=1] pam_permit.so\n"
+              "auth substack system-auth-sss-only\n"
+              "auth substack system-auth-common\n"
+              "account include system-check-localuser\n"
+              "account substack system-auth-local-only\n"
+              "account [default=1] pam_permit.so\n"
+              "account substack system-auth-sss-only\n"
+              "account substack system-auth-common\n");
+    writeFile(root / "pam.d/system-check-localuser",
+              "auth [success=1 perm_denied=ignore default=die] "
+              "pam_localuser.so\n"
+              "auth [success=2 auth_err=ignore default=bad] "
+              "pam_succeed_if.so uid >= 65536 quiet\n"
+              "account [success=1 perm_denied=ignore default=die] "
+              "pam_localuser.so\n"
+              "account [success=2 auth_err=ignore default=bad] "
+              "pam_succeed_if.so uid >= 65536 quiet\n");
+    writeFile(root / "pam.d/system-auth-local-only",
+              withLocalFaillock
+                  ? "auth required pam_faillock.so preauth\n"
+                    "auth [success=1 default=bad] pam_tcb.so shadow fork "
+                    "nullok\n"
+                    "auth [default=die] pam_faillock.so authfail\n"
+                    "account required pam_faillock.so\n"
+                    "account required pam_tcb.so shadow fork\n"
+                  : "auth required pam_tcb.so shadow fork nullok\n"
+                    "account required pam_tcb.so shadow fork\n");
+    writeFile(root / "pam.d/system-auth-sss-only",
+              "auth required pam_sss.so forward_pass\n"
+              "account required pam_sss.so\n");
+    writeFile(root / "pam.d/system-auth-common", "# empty\n");
+}
+
+void testAltLocalOnlyFaillockAcrossSssRouter(const fs::path& root) {
+    auto platform = makePlatform(root);
+    platform.scopes.front().services = {"system-auth"};
+    platform.capabilities.front().topology =
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged;
+    platform.capabilities.front().subjectScope =
+        fic::platform::PamIdentitySubjectScope::LocalUsersOnly;
+
+    writeAltSssRouter(root, true);
+    auto analysis = analyzeService(platform, "system-auth");
+    require(analysis.effective,
+            "ALT SSS router required local pam_faillock on the remote "
+            "pam_sss branch");
+
+    writeAltSssRouter(root, false);
+    analysis = analyzeService(platform, "system-auth");
+    require(hasViolation(analysis,
+                         PamFlowViolationKind::AuthenticationBypass),
+            "ALT SSS router accepted a local branch without pam_faillock");
+}
+
 void testSddmRootExclusionWithAuthsucc(const fs::path& root) {
     fs::remove(root / "security/faillock.conf");
     writeFile(root / "pam.d/sddm",
@@ -537,6 +595,7 @@ int main() {
         testRecoverableFailureAccounting(root);
         testPrematureSuccessAccounting(root);
         testAltSshAuthsuccBeforeOuterNologinIsPremature(root);
+        testAltLocalOnlyFaillockAcrossSssRouter(root);
         testSddmRootExclusionWithAuthsucc(root);
         testAuthsuccDenialBypassDetected(root);
         testProviderUnreachableAfterAuthfail(root);

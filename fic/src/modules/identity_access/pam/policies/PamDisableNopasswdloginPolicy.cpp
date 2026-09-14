@@ -1,12 +1,16 @@
 #include "modules/identity_access/pam/policies/PamDisableNopasswdloginPolicy.h"
 #include "modules/identity_access/nss/NssConfiguration.h"
+#include "modules/identity_access/pam/PamConfiguration.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
 #include <fic/core/fs/TrustedFileReader.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
+#include <cstring>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <unistd.h>
 #include <utility>
@@ -17,6 +21,11 @@ struct GroupState {
     bool exists = false;
     unsigned long gid = 0;
     std::vector<std::string> members;
+};
+
+enum class EnforcementMode {
+    GroupMembership,
+    PamBypass
 };
 
 bool readIdentityFile(
@@ -57,17 +66,30 @@ bool parseUnsigned(const std::string& value, unsigned long& parsed) {
     }
 }
 
-bool matchesSupportedServices(
+bool classifyServices(
     const std::vector<fic::identity::nss::NssService>& services,
     const std::vector<std::vector<std::string>>& supported,
+    const std::vector<std::string>& pamBypassServices,
     const std::string& database,
+    bool& requiresPamBypass,
     std::string& error) {
     std::vector<std::string> names;
+    std::set<std::string> unique;
     for (const auto& service : services) {
         if (!service.actions.empty()) {
             error = "NSS " + database +
                 " uses service actions outside the platform contract";
             return false;
+        }
+        if (!unique.insert(service.name).second) {
+            error = "NSS " + database + " contains a duplicate service: " +
+                service.name;
+            return false;
+        }
+        if (std::find(pamBypassServices.begin(), pamBypassServices.end(),
+                      service.name) != pamBypassServices.end()) {
+            requiresPamBypass = true;
+            continue;
         }
         names.push_back(service.name);
     }
@@ -85,8 +107,9 @@ bool matchesSupportedServices(
     return true;
 }
 
-bool verifySupportedNss(
+bool classifyNss(
     const fic::platform::PamPlatformConfig::PasswordlessLoginControl& control,
+    EnforcementMode& mode,
     std::string& error) {
     fic::identity::nss::NssConfigurationOptions options;
     options.mainFile.path = control.nsswitchPath;
@@ -107,15 +130,29 @@ bool verifySupportedNss(
         error = "NSS passwd and group databases must have explicit entries";
         return false;
     }
-    if (!matchesSupportedServices(
-            *passwd, control.supportedNss.passwd, "passwd", error) ||
-        !matchesSupportedServices(
-            *group, control.supportedNss.group, "group", error)) {
+    bool requiresPamBypass = false;
+    if (!classifyServices(
+            *passwd, control.supportedNss.passwd,
+            control.pamBypassNssServices, "passwd", requiresPamBypass,
+            error) ||
+        !classifyServices(
+            *group, control.supportedNss.group,
+            control.pamBypassNssServices, "group", requiresPamBypass,
+            error)) {
         return false;
     }
     // glibc getgrouplist() uses the group database when initgroups is absent.
-    return !initgroups.has_value() || matchesSupportedServices(
-        *initgroups, control.supportedNss.initgroups, "initgroups", error);
+    if (initgroups.has_value() &&
+        !classifyServices(
+            *initgroups, control.supportedNss.initgroups,
+            control.pamBypassNssServices, "initgroups", requiresPamBypass,
+            error)) {
+        return false;
+    }
+    mode = requiresPamBypass
+        ? EnforcementMode::PamBypass
+        : EnforcementMode::GroupMembership;
+    return true;
 }
 
 bool parseGroupState(const std::string& content,
@@ -178,6 +215,267 @@ bool findPrimaryGroup(const std::string& content,
     return false;
 }
 
+using BypassRule = fic::platform::PamTrustedAuthenticationBypassRule;
+
+struct PamTarget {
+    const BypassRule* rule = nullptr;
+    std::filesystem::path path;
+    std::string original;
+    std::string candidate;
+    fic::core::TrustedFileMetadata metadata;
+};
+
+bool readPamTarget(const std::filesystem::path& path,
+                   bool& exists,
+                   std::string& content,
+                   fic::core::TrustedFileMetadata& metadata,
+                   std::string& error) {
+    struct stat info {};
+    if (::lstat(path.c_str(), &info) != 0) {
+        if (errno == ENOENT) {
+            exists = false;
+            error.clear();
+            return true;
+        }
+        error = "could not inspect PAM service " + path.string() + ": " +
+            std::strerror(errno);
+        return false;
+    }
+    exists = true;
+    fic::core::TrustedFileReadOptions options;
+    options.expectedOwner = ::geteuid();
+    options.forbiddenMode = S_IWGRP | S_IWOTH;
+    options.requireRegularFile = true;
+    options.requireSingleLink = true;
+    return fic::core::readTrustedFile(path, options, content, error, &metadata);
+}
+
+AtomicTargetState atomicState(
+    const fic::core::TrustedFileMetadata& metadata,
+    const std::string& content) {
+    AtomicTargetState state;
+    state.identity.device = metadata.device;
+    state.identity.inode = metadata.inode;
+    state.content = content;
+    state.mode = metadata.mode & 07777;
+    state.owner = metadata.owner;
+    state.group = metadata.group;
+    return state;
+}
+
+AtomicWriteOptions writeOptions(
+    const fic::core::TrustedFileMetadata& metadata,
+    const std::string& content) {
+    AtomicWriteOptions options;
+    options.createIfMissing = false;
+    options.rejectSymlink = true;
+    options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
+    options.expectedTargetState = atomicState(metadata, content);
+    return options;
+}
+
+bool targetsPasswordlessGroup(const fic::identity::pam::PamRule& rule,
+                              const std::string& group) {
+    for (std::size_t index = 0; index + 1 < rule.arguments.size(); ++index) {
+        if (rule.arguments[index] == "ingroup" &&
+            rule.arguments[index + 1] == group) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool removeLine(const std::string& content,
+                std::size_t line,
+                std::string& candidate) {
+    if (line == 0) {
+        return false;
+    }
+    std::size_t begin = 0;
+    for (std::size_t current = 1; current < line; ++current) {
+        begin = content.find('\n', begin);
+        if (begin == std::string::npos) {
+            return false;
+        }
+        ++begin;
+    }
+    std::size_t end = content.find('\n', begin);
+    end = end == std::string::npos ? content.size() : end + 1;
+    candidate = content;
+    candidate.erase(begin, end - begin);
+    return true;
+}
+
+bool inspectPamBypass(const std::filesystem::path& path,
+                      const std::string& content,
+                      const BypassRule& contract,
+                      std::string& candidate,
+                      bool& compliant,
+                      std::string& error) {
+    std::vector<fic::identity::pam::PamRule> rules;
+    if (!fic::identity::pam::PamConfiguration::parseRulesContent(
+            path, content, rules, error)) {
+        return false;
+    }
+    const fic::identity::pam::PamRule* exact = nullptr;
+    for (const auto& rule : rules) {
+        if (rule.group != fic::identity::pam::PamManagementGroup::Auth ||
+            rule.includeKind != fic::identity::pam::PamIncludeKind::None ||
+            std::filesystem::path(rule.module).filename() != contract.module ||
+            !targetsPasswordlessGroup(rule, contract.arguments.back())) {
+            continue;
+        }
+        const bool matches = rule.control == contract.control &&
+            rule.arguments == contract.arguments;
+        if (!matches || exact != nullptr) {
+            error = path.string() +
+                ": conflicting passwordless PAM bypass rule";
+            return false;
+        }
+        exact = &rule;
+    }
+    if (exact == nullptr) {
+        compliant = true;
+        candidate = content;
+        error.clear();
+        return true;
+    }
+    compliant = false;
+    if (!removeLine(content, exact->line, candidate)) {
+        error = path.string() + ": invalid passwordless PAM rule position";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool restorePamTargets(
+    const std::vector<PamTarget>& targets,
+    std::size_t written,
+    const PamDisableNopasswdloginPolicy::Writer& writer,
+    const std::string& failure,
+    std::string& error) {
+    std::string rollbackFailures;
+    while (written > 0) {
+        const PamTarget& target = targets[--written];
+        bool exists = false;
+        std::string current;
+        fic::core::TrustedFileMetadata metadata;
+        std::string targetError;
+        if (!readPamTarget(
+                target.path, exists, current, metadata, targetError) ||
+            !exists ||
+            !writer(target.path.string(), target.original,
+                    writeOptions(metadata, current), &targetError)) {
+            if (!rollbackFailures.empty()) {
+                rollbackFailures += "; ";
+            }
+            rollbackFailures += target.path.string() + ": " + targetError;
+            continue;
+        }
+        std::string restored;
+        fic::core::TrustedFileMetadata restoredMetadata;
+        if (!readPamTarget(target.path, exists, restored, restoredMetadata,
+                           targetError) ||
+            !exists || restored != target.original) {
+            if (!rollbackFailures.empty()) {
+                rollbackFailures += "; ";
+            }
+            rollbackFailures += target.path.string() +
+                ": rollback verification failed: " + targetError;
+        }
+    }
+    error = failure;
+    if (rollbackFailures.empty()) {
+        error += "; original PAM configuration restored";
+    } else {
+        error += "; CRITICAL: rollback failed: " + rollbackFailures;
+    }
+    return false;
+}
+
+bool enforcePamBypasses(
+    const fic::platform::PamPlatformConfig& platform,
+    const PamDisableNopasswdloginPolicy::Writer& writer,
+    std::string& error) {
+    std::vector<PamTarget> targets;
+    for (const auto& rule : platform.trustedAuthenticationBypasses) {
+        if (rule.reason != fic::platform::
+                PamTrustedAuthenticationBypassReason::
+                    ExplicitPasswordlessLogin) {
+            continue;
+        }
+        if (!rule.source.has_value() || rule.arguments.empty()) {
+            error = "incomplete platform passwordless PAM bypass contract";
+            return false;
+        }
+        PamTarget target;
+        target.rule = &rule;
+        target.path = *rule.source;
+        bool exists = false;
+        if (!readPamTarget(target.path, exists, target.original,
+                           target.metadata, error)) {
+            return false;
+        }
+        if (!exists) {
+            continue;
+        }
+        bool compliant = false;
+        if (!inspectPamBypass(target.path, target.original, rule,
+                              target.candidate, compliant, error)) {
+            return false;
+        }
+        if (!compliant) {
+            targets.push_back(std::move(target));
+        }
+    }
+
+    std::size_t written = 0;
+    for (const auto& target : targets) {
+        std::string writeError;
+        if (!writer(target.path.string(), target.candidate,
+                    writeOptions(target.metadata, target.original),
+                    &writeError)) {
+            return restorePamTargets(
+                targets, written, writer,
+                "could not atomically disable passwordless PAM bypass at " +
+                    target.path.string() + ": " + writeError,
+                error);
+        }
+        ++written;
+    }
+
+    for (const auto& rule : platform.trustedAuthenticationBypasses) {
+        if (rule.reason != fic::platform::
+                PamTrustedAuthenticationBypassReason::
+                    ExplicitPasswordlessLogin) {
+            continue;
+        }
+        bool exists = false;
+        std::string verified;
+        std::string ignoredCandidate;
+        fic::core::TrustedFileMetadata metadata;
+        std::string verifyError;
+        bool compliant = true;
+        const auto& path = *rule.source;
+        if (!readPamTarget(path, exists, verified, metadata, verifyError) ||
+            (exists &&
+             (!inspectPamBypass(path, verified, rule, ignoredCandidate,
+                                compliant, verifyError) ||
+              !compliant))) {
+            return restorePamTargets(
+                targets, written, writer,
+                "passwordless PAM bypass postcondition failed at " +
+                    path.string() + ": " +
+                    (verifyError.empty() ? "bypass remains active"
+                                         : verifyError),
+                error);
+        }
+    }
+    error.clear();
+    return true;
+}
+
 } // namespace
 
 PamDisableNopasswdloginPolicy::PamDisableNopasswdloginPolicy(
@@ -185,11 +483,13 @@ PamDisableNopasswdloginPolicy::PamDisableNopasswdloginPolicy(
     const fic::platform::PlatformExecutableResolver& executables,
     Runner runner,
     EffectiveMembershipResolver membershipResolver,
-    fic::core::TrustedFilePostValidationHook readValidationHook)
+    fic::core::TrustedFilePostValidationHook readValidationHook,
+    Writer writer)
     : platform_(std::move(platform)), executables_(executables),
       runner_(std::move(runner)),
       membershipResolver_(std::move(membershipResolver)),
-      readValidationHook_(std::move(readValidationHook)) {
+      readValidationHook_(std::move(readValidationHook)),
+      writer_(std::move(writer)) {
     policyName = "disable_nopasswdlogin";
     policyTypeValue = std::make_unique<FixedPolicyTypeValue>("ENABLE");
     if (!runner_) {
@@ -202,6 +502,9 @@ PamDisableNopasswdloginPolicy::PamDisableNopasswdloginPolicy(
         membershipResolver_ =
             fic::identity::pam::resolvePamEffectiveGroupMembership;
     }
+    if (!writer_) {
+        writer_ = AtomicFileWriter::write;
+    }
 }
 
 bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
@@ -212,10 +515,19 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
     }
     const auto& control = *platform_.passwordlessLoginControl;
     std::string error;
-    if (!verifySupportedNss(control, error)) {
+    EnforcementMode enforcementMode = EnforcementMode::GroupMembership;
+    if (!classifyNss(control, enforcementMode, error)) {
         log("Cannot prove passwordless group is safely enforceable: " + error,
             logLevel::ERROR);
         return false;
+    }
+    if (enforcementMode == EnforcementMode::PamBypass) {
+        if (!enforcePamBypasses(platform_, writer_, error)) {
+            log("Could not disable passwordless PAM bypass: " + error,
+                logLevel::ERROR);
+            return false;
+        }
+        return true;
     }
     GroupState group;
     std::string groupContent;
@@ -288,7 +600,8 @@ bool PamDisableNopasswdloginPolicy::applyPam(const std::string&) {
     groupContent.clear();
     passwdContent.clear();
     error.clear();
-    if (!verifySupportedNss(control, error) ||
+    if (!classifyNss(control, enforcementMode, error) ||
+        enforcementMode != EnforcementMode::GroupMembership ||
         !readIdentityFile(control.groupPath, readValidationHook_,
                           groupContent, error) ||
         !parseGroupState(

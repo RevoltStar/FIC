@@ -125,6 +125,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.pam.trustedServiceAliases = {
         {"/etc/pam.d/system-auth",
          {"/etc/pam.d/system-auth-local",
+          "/etc/pam.d/system-auth-sss",
           "/etc/pam.d/system-auth-ldap",
           "/etc/pam.d/system-auth-krb5",
           "/etc/pam.d/system-auth-krb5_ccreds",
@@ -133,6 +134,7 @@ PlatformProfile makeBuildPlatformProfile() {
           "/etc/pam.d/system-auth-pkcs11"}},
         {"/etc/pam.d/system-auth-use_first_pass",
          {"/etc/pam.d/system-auth-use_first_pass-local",
+          "/etc/pam.d/system-auth-use_first_pass-sss",
           "/etc/pam.d/system-auth-use_first_pass-ldap",
           "/etc/pam.d/system-auth-use_first_pass-krb5",
           "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds",
@@ -148,12 +150,12 @@ PlatformProfile makeBuildPlatformProfile() {
          PamScope::EffectiveAuthenticationStack,
          "/etc/security/faillock.conf",
          PamTopologyStrategyKind::AltTcbManaged,
-         {}},
+         {}, std::nullopt, PamIdentitySubjectScope::LocalUsersOnly},
         {PamCapability::PasswordQuality, PamProviderKind::PamPasswdqc,
-         PamScope::EffectivePasswordStack,
+         PamScope::LocalPasswordChange,
          "/etc/passwdqc.conf",
          PamTopologyStrategyKind::StaticVerifyOnly, {}, std::nullopt,
-         PamIdentitySubjectScope::AllPamSubjects},
+         PamIdentitySubjectScope::LocalUsersOnly},
         {PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
          PamScope::LocalPasswordChange,
          "/etc/security/fic-pwhistory.conf",
@@ -180,7 +182,8 @@ PlatformProfile makeBuildPlatformProfile() {
              {"files", "systemd", "role"}},
             {{"files"}, {"files", "systemd"}, {"files", "role"},
              {"files", "systemd", "role"}}
-        }};
+        },
+        {"sss"}};
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";

@@ -715,11 +715,14 @@ libpwquality 1.4.5 читает native default topology и не поддержи
 state, включая integer clamps, signed credits, `enforcing` и SET-style
 `enforce_for_root`. Unknown/invalid/unreadable/untrusted input даёт `Broken`;
 валидный final `enforcing=0` даёт `Ineffective` в `SecurityEffective`, но
-остаётся допустимым в `Structural`. Password-quality capability всех
-поддерживаемых profiles явно имеет subject scope `AllPamSubjects`, поэтому
-валидный final `local_users_only` также даёт `Ineffective` в
+остаётся допустимым в `Structural`. Profiles с subject scope
+`AllPamSubjects` считают валидный final `local_users_only` состоянием
+`Ineffective` в
 `SecurityEffective`: FIC не объявляет enforcement для всех PAM identities,
-когда provider ограничен локальными пользователями. Option policies используют
+когда provider ограничен локальными пользователями. Исключение задаётся
+явным typed scope: ALT `pam_passwdqc` имеет `LocalUsersOnly` и проверяется
+только в `system-auth-local-only`, поэтому SSS password branch не обязана
+содержать локальный provider. Option policies используют
 эту security-effective semantics после изменения значения; activation policy
 отдельно доказывает только структурную подключённость provider.
 
@@ -936,13 +939,16 @@ graph целевых authentication services и отклоняет любой н
 `nopasswdlogin` моделируется отдельно как `ExplicitPasswordlessLogin`: trusted
 contract сопоставляет exact service/module/source/simple control/ordered argv,
 а acceptance остаётся видна в analyzer evidence. Политика
-`disable_nopasswdlogin` не меняет PAM topology: она принимает только typed
+`disable_nopasswdlogin` использует два typed enforcement mode. Для локального
 ALT NSS contract (`files` с опциональным `systemd`, плюс завершающий `role`
-для group/initgroups), отклоняет primary-GID и неизвестные/remote NSS services,
-очищает только supplementary local members через hash-verified `gpasswd`, а
-затем доказывает отсутствие effective membership тем же NSS-путём, который
-использует `pam_succeed_if user ingroup`. Остаточная membership, включая
-полученную через `role`, завершает policy ошибкой. Это Recommended dependency lockout
+для group/initgroups) она отклоняет primary-GID, очищает только supplementary
+local members через hash-verified `gpasswd`, а затем доказывает отсутствие
+effective membership тем же NSS-путём, который использует `pam_succeed_if user
+ingroup`. При объявленном `sss` policy не полагается на неполную enumeration:
+она атомарно удаляет exact `ExplicitPasswordlessLogin` rules из declared
+GDM/LightDM sources, проверяет отсутствие всех declared bypass и делает exact
+rollback исходных bytes при ошибке. Похожее non-exact правило или неизвестный
+NSS service дают fail-closed. Это Recommended dependency lockout
 policies, но не password quality/history. Disable требует неизменного placement
 managed blocks. Atomic replacement получает ожидаемые `dev+ino` target и
 отклоняет уже заменённый inode непосредственно перед commit. Внешняя topology

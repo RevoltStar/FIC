@@ -310,6 +310,10 @@ struct PamPlatformConfig {
         std::filesystem::path groupPath;
         std::filesystem::path nsswitchPath;
         NssServiceContract supportedNss;
+        // NSS services whose membership cannot be proven safely by complete
+        // enumeration. When one is active, enforcement disables the exact
+        // platform-declared PAM bypass rules instead of inspecting members.
+        std::vector<std::string> pamBypassNssServices;
     };
     std::optional<PasswordlessLoginControl> passwordlessLoginControl;
 };

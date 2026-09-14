@@ -7,6 +7,7 @@
 #include "platform/PlatformProfile.h"
 
 #include <fic/core/process/ProcessExecutor.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/fs/TrustedFileReader.h>
 
 #include <functional>
@@ -19,13 +20,19 @@ public:
         const std::string&,
         fic::identity::pam::PamEffectiveGroupMembership&,
         std::string&)>;
+    using Writer = std::function<bool(
+        const std::string&,
+        const std::string&,
+        const AtomicWriteOptions&,
+        std::string*)>;
 
     PamDisableNopasswdloginPolicy(
         fic::platform::PamPlatformConfig platform,
         const fic::platform::PlatformExecutableResolver& executables,
         Runner runner = {},
         EffectiveMembershipResolver membershipResolver = {},
-        fic::core::TrustedFilePostValidationHook readValidationHook = {});
+        fic::core::TrustedFilePostValidationHook readValidationHook = {},
+        Writer writer = {});
 
 protected:
     bool applyPam(const std::string& expectedValue) override;
@@ -36,6 +43,7 @@ private:
     Runner runner_;
     EffectiveMembershipResolver membershipResolver_;
     fic::core::TrustedFilePostValidationHook readValidationHook_;
+    Writer writer_;
 };
 
 #endif

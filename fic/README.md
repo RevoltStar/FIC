@@ -737,12 +737,18 @@ source, simple control и ordered arguments. Evidence сохраняется о�
 явном `initgroups` NSS она оставляет
 отсутствующую/пустую группу без изменений либо очищает supplementary members
 через hash-verified `gpasswd`; primary GID и внешний NSS приводят к fail-closed.
+При штатном ALT `sss` в NSS policy не пытается перечислять доменных
+пользователей: она атомарно удаляет exact typed passwordless PAM bypass из
+объявленных GDM/LightDM services, проверяет отсутствие всех таких bypass и
+восстанавливает exact исходные bytes при ошибке записи или postcondition.
 Она является Recommended dependency только для lockout/authentication PAM
 policies, поэтому её warning не блокирует основную policy.
 Moved managed blocks и заменённый после snapshot target inode любого target
 отклоняются без записи. Внешняя topology никогда не присваивается FIC.
 Штатный ALT `pam_passwdqc` остаётся без FIC activation facility: его уже
-подключённая native topology проверяется как `PasswordQuality`. FIC управляет
+подключённая native topology проверяется как local-only `PasswordQuality` в
+`system-auth-local-only`; SSS password branch не обязана содержать passwdqc.
+FIC управляет
 native settings `min`, `passphrase`, `match`, `similar`, `retry` и enforcement
 scope; pwquality-only `minlen`, `minclass`, `difok`, user/GECOS checks и class
 credits на ALT отсутствуют. `pam_pwhistory` активируется отдельной facility

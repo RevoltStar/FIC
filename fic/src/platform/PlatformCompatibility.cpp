@@ -353,6 +353,18 @@ bool validatePamTrustedAuthenticationBypasses(
                 passwordless->supportedNss.initgroups, "initgroups", error)) {
             return false;
         }
+        std::set<std::string> pamBypassServices;
+        for (const auto& service :
+             passwordless->pamBypassNssServices) {
+            if (service.empty() ||
+                service.find_first_of("[]=:, \t\r\n") !=
+                    std::string::npos ||
+                !pamBypassServices.insert(service).second) {
+                error = "invalid or duplicate passwordless-login PAM-bypass "
+                    "NSS service";
+                return false;
+            }
+        }
         const bool allExplicitRulesMatch = std::all_of(
             pam.trustedAuthenticationBypasses.begin(),
             pam.trustedAuthenticationBypasses.end(),
@@ -571,9 +583,14 @@ bool validatePamComposition(const PamPlatformConfig& pam,
         case PamIdentitySubjectScope::AllPamSubjects:
             break;
         case PamIdentitySubjectScope::LocalUsersOnly:
-            if (capability.capability != PamCapability::PasswordQuality) {
+            if (capability.capability != PamCapability::PasswordQuality &&
+                !(capability.capability ==
+                      PamCapability::AuthenticationLockout &&
+                  capability.topology ==
+                      PamTopologyStrategyKind::AltTcbManaged)) {
                 error = "local-only PAM subject scope is only supported for "
-                    "password-quality capability";
+                    "password-quality or ALT-managed authentication-lockout "
+                    "capabilities";
                 return false;
             }
             break;
