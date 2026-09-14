@@ -151,13 +151,14 @@ void createFaillockGraph(const TempDirectory& temp,
     writeFile(
         temp.path() / "pam.d/common-auth",
         "auth required pam_faillock.so preauth" + configArgument + "\n"
-        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [success=2 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail" + configArgument +
             " " + authExtra + "\n"
-        "auth sufficient pam_faillock.so authsucc" + configArgument + "\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n");
     writeFile(
         temp.path() / "pam.d/common-account",
+        "account required pam_faillock.so" + configArgument + "\n"
         "account required pam_unix.so\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
 }
@@ -369,6 +370,9 @@ void testIncompleteFaillockFails() {
         "auth required pam_faillock.so preauth\n"
         "auth required pam_unix.so\n"
         "auth required pam_faillock.so authfail\n");
+    writeFile(
+        temp.path() / "pam.d/common-account",
+        "account required pam_unix.so\n");
 
     fic::identity::pam::PamConfiguration configuration(platform);
     fic::identity::pam::PamProviderInspection inspection;
@@ -1584,11 +1588,11 @@ void testTrustedSuRootokPathIsAccepted() {
     writeFile(
         temp.path() / "pam.d/su",
         "auth sufficient pam_rootok.so\n"
-        "auth requisite pam_faillock.so preauth\n"
-        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [success=2 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "auth required pam_faillock.so authsucc\n");
     writeFile(
         temp.path() / "pam.d/su-l",
         "auth include su\n");
@@ -1638,12 +1642,12 @@ void testTrustedSuRootokPathIsAccepted() {
     writeFile(
         brokenTemp.path() / "pam.d/su",
         "auth sufficient pam_rootok.so\n"
-        "auth required pam_faillock.so preauth\n"
-        "auth required pam_unix.so\n"
+        "auth [success=3 default=bad] pam_unix.so\n"
         "auth [success=1 default=ignore] pam_env.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "auth required pam_faillock.so authsucc\n");
     writeFile(
         brokenTemp.path() / "security/pam_faillock.so", "test", 0555);
     const auto broken = verifyCapability(
@@ -1724,11 +1728,11 @@ void testPamSucceedIfTrustedBypassMustMatchExactRule() {
 
     writeFile(
         temp.path() / "pam.d/common-login",
-        "auth requisite pam_faillock.so preauth\n"
-        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [success=2 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "auth required pam_faillock.so authsucc\n");
     const auto exact = verify(
         "gdm-password",
         "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n"
@@ -1903,7 +1907,7 @@ void testAltLightdmPasswordlessBypassMustMatchExactRule() {
 
     const auto wrongControl = verify(
         "lightdm",
-        stack("auth required pam_succeed_if.so user ingroup nopasswdlogin"));
+        stack("auth optional pam_succeed_if.so user ingroup nopasswdlogin"));
     require(wrongControl.state ==
                 fic::identity::pam::PamEnforcementState::Effective &&
                 acceptedBypasses("lightdm").empty(),
@@ -2003,14 +2007,21 @@ void testSddmSucceedIfGateIsEffective() {
     TempDirectory temp;
     auto platform = makePlatform(temp);
     platform.authenticationServices = {"sddm"};
+    platform.trustedAuthenticationExclusions = {
+        {"sddm", "pam_succeed_if.so",
+         fic::platform::PamTrustedAuthenticationExclusionReason::
+             ExplicitSubjectExclusion,
+         "root", "required", {"user", "!=", "root", "quiet_success"},
+         temp.path() / "pam.d/sddm"}
+    };
     writeFile(
         temp.path() / "pam.d/sddm",
         "auth required pam_succeed_if.so user != root quiet_success\n"
-        "auth requisite pam_faillock.so preauth\n"
-        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [success=2 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "auth required pam_faillock.so authsucc\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
     const auto verification = verifyCapability(
         platform,
@@ -2030,11 +2041,11 @@ void testSucceedIfSufficientBypassIsRejected() {
     writeFile(
         temp.path() / "pam.d/login",
         "auth sufficient pam_succeed_if.so user ingroup admins\n"
-        "auth requisite pam_faillock.so preauth\n"
-        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [success=2 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "auth required pam_faillock.so authsucc\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
     const auto verification = verifyCapability(
         platform,
@@ -2057,11 +2068,13 @@ void testGateSuccessDoesNotMaskCredentialFailure() {
         temp.path() / "pam.d/login",
         "auth required pam_succeed_if.so user != root quiet_success\n"
         "auth required pam_faillock.so preauth\n"
-        "auth required pam_unix.so\n"
+        "auth [success=3 default=bad] pam_unix.so\n"
         "auth [success=1 default=ignore] pam_env.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "account required pam_faillock.so\n"
+        "account required pam_unix.so\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
     const auto verification = verifyCapability(
         platform,
@@ -2084,11 +2097,12 @@ void testGateFailureIsNotCredentialFailure() {
     writeFile(
         temp.path() / "pam.d/login",
         "auth required pam_succeed_if.so user != root quiet_success\n"
-        "auth required pam_faillock.so preauth\n"
+        "auth requisite pam_faillock.so preauth\n"
         "auth [success=1 default=ignore] pam_env.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth required pam_permit.so\n"
+        "account required pam_faillock.so\n"
+        "account required pam_unix.so\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
     const auto verification = verifyCapability(
         platform,
@@ -2245,11 +2259,13 @@ void testFailureAccountingBypass() {
     writeFile(
         temp.path() / "pam.d/login",
         "auth required pam_faillock.so preauth\n"
-        "auth required pam_unix.so\n"
+        "auth [success=3 default=bad] pam_unix.so\n"
         "auth [success=1 default=ignore] pam_env.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "account required pam_faillock.so\n"
+        "account required pam_unix.so\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
     const auto verification = verifyCapability(
         platform,
@@ -2274,10 +2290,12 @@ void testCredentialFailureBeforeFaillockRemainsABypass() {
         temp.path() / "pam.d/sshd",
         "auth requisite pam_userpass.so\n"
         "auth requisite pam_faillock.so preauth\n"
-        "auth [success=1 default=bad] pam_unix.so\n"
+        "auth [success=2 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
-        "auth sufficient pam_faillock.so authsucc\n"
-        "auth required pam_deny.so\n");
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "account required pam_faillock.so\n"
+        "account required pam_unix.so\n");
     writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
     const auto verification = verifyCapability(
         platform,

@@ -121,8 +121,6 @@ PlatformProfile makeBuildPlatformProfile() {
          "/etc/security/pwhistory.conf",
          PamTopologyStrategyKind::PamAuthUpdate, {}}
     };
-    profile.pam.capabilities[0].activationIdentifiers = {
-        "fic-faillock-notify", "fic-faillock-authfail"};
     profile.pam.capabilities[0].supportedFaillockStrategies = {
         PamFaillockStrategy::PreauthRequired,
         PamFaillockStrategy::PreauthRequisite,

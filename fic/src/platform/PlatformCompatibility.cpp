@@ -615,22 +615,59 @@ bool validatePamComposition(const PamPlatformConfig& pam,
             return false;
         }
         if (capability.topology == PamTopologyStrategyKind::PamAuthUpdate) {
-            if (capability.activationIdentifiers.empty()) {
-                error = "pam-auth-update activation recipe is empty";
-                return false;
-            }
-            std::set<std::string> identifiers;
-            for (const auto& identifier : capability.activationIdentifiers) {
-                if (identifier.empty() ||
-                    identifier.find_first_of(" \t\r\n/\\") !=
-                        std::string::npos ||
-                    !identifiers.insert(identifier).second) {
-                    error = "pam-auth-update activation recipe contains an "
-                        "invalid or duplicate profile identifier";
+            const auto validateActivationIdentifier =
+                [](const std::string& identifier,
+                   std::set<std::string>& identifiers,
+                   std::string& error) {
+                    if (identifier.empty() ||
+                        identifier.find_first_of(" \t\r\n/\\") !=
+                            std::string::npos ||
+                        !identifiers.insert(identifier).second) {
+                        error = "pam-auth-update activation recipe contains "
+                            "an invalid or duplicate profile identifier";
+                        return false;
+                    }
+                    return true;
+                };
+            if (capability.capability == PamCapability::AuthenticationLockout &&
+                !capability.strategyActivations.empty()) {
+                if (!capability.activationIdentifiers.empty()) {
+                    error = "strategy-aware pam-auth-update activation must "
+                        "not declare legacy activation identifiers";
                     return false;
                 }
+                std::set<PamFaillockStrategy> strategies;
+                for (const auto& activation : capability.strategyActivations) {
+                    if (!strategies.insert(activation.strategy).second ||
+                        activation.activationIdentifiers.empty()) {
+                        error = "pam-auth-update strategy activation recipe "
+                            "is missing or duplicated";
+                        return false;
+                    }
+                    std::set<std::string> identifiers;
+                    for (const auto& identifier :
+                         activation.activationIdentifiers) {
+                        if (!validateActivationIdentifier(
+                                identifier, identifiers, error)) {
+                            return false;
+                        }
+                    }
+                }
+            } else if (capability.activationIdentifiers.empty()) {
+                error = "pam-auth-update activation recipe is empty";
+                return false;
+            } else {
+                std::set<std::string> identifiers;
+                for (const auto& identifier :
+                     capability.activationIdentifiers) {
+                    if (!validateActivationIdentifier(
+                            identifier, identifiers, error)) {
+                        return false;
+                    }
+                }
             }
-        } else if (!capability.activationIdentifiers.empty()) {
+        } else if (!capability.activationIdentifiers.empty() ||
+                   !capability.strategyActivations.empty()) {
             error = "PAM activation identifiers are set for a non-"
                 "pam-auth-update strategy";
             return false;

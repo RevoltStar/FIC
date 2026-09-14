@@ -91,7 +91,7 @@ fic::platform::OsReleaseValues compatibleValues(
 }
 
 bool hasRule(const std::vector<fic::platform::FileAccessRule>& rules,
-             const std::filesystem::path& path) {
+             std::filesystem::path path) {
     return std::any_of(
         rules.begin(), rules.end(),
         [&path](const fic::platform::FileAccessRule& rule) {
@@ -101,7 +101,7 @@ bool hasRule(const std::vector<fic::platform::FileAccessRule>& rules,
 
 const fic::platform::FileAccessRule& findRule(
     const std::vector<fic::platform::FileAccessRule>& rules,
-    const std::filesystem::path& path) {
+    std::filesystem::path path) {
     const auto found = std::find_if(
         rules.begin(), rules.end(),
         [&path](const fic::platform::FileAccessRule& rule) {
@@ -424,15 +424,16 @@ void testSelectedProfile() {
         profile.id == "alt-p11"
             ? std::filesystem::path("/etc/pam.d/system-auth-local-only")
             : std::filesystem::path{};
-    const std::vector<fic::platform::PamManagedTopologyTarget>
-        expectedFaillockTargets = profile.id == "alt-p11"
-        ? std::vector<fic::platform::PamManagedTopologyTarget>{
-              {"/etc/pam.d/system-auth-local-only",
-               fic::platform::PamManagedTopologyTargetRole::
-                   AuthenticationAndAccount},
-              {"/etc/pam.d/system-auth-use_first_pass-local-only",
-               fic::platform::PamManagedTopologyTargetRole::Authentication}}
-        : std::vector<fic::platform::PamManagedTopologyTarget>{};
+    std::vector<fic::platform::PamManagedTopologyTarget>
+        expectedFaillockTargets;
+    if (profile.id == "alt-p11") {
+        expectedFaillockTargets = {
+            {"/etc/pam.d/system-auth-local-only",
+             fic::platform::PamManagedTopologyTargetRole::
+                 AuthenticationAndAccount},
+            {"/etc/pam.d/system-auth-use_first_pass-local-only",
+             fic::platform::PamManagedTopologyTargetRole::Authentication}};
+    }
     require(faillock->topologyTarget.empty() &&
                 faillock->managedTopologyTargets.size() ==
                     expectedFaillockTargets.size() &&
@@ -460,6 +461,17 @@ void testSelectedProfile() {
                 quality->activationIdentifiers.empty(),
             "ALT PAM capabilities must use native managed/static strategies");
     } else {
+        const auto hasStrategyActivation =
+            [&](fic::platform::PamFaillockStrategy strategy,
+                const std::vector<std::string>& identifiers) {
+                return std::any_of(
+                    faillock->strategyActivations.begin(),
+                    faillock->strategyActivations.end(),
+                    [&](const auto& activation) {
+                        return activation.strategy == strategy &&
+                            activation.activationIdentifiers == identifiers;
+                    });
+            };
         require(
             faillock->topology ==
                     fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
@@ -467,9 +479,17 @@ void testSelectedProfile() {
                     fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
                 quality->topology ==
                     fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
-                faillock->activationIdentifiers ==
-                    std::vector<std::string>{
-                        "fic-faillock-notify", "fic-faillock"} &&
+                faillock->activationIdentifiers.empty() &&
+                hasStrategyActivation(
+                    fic::platform::PamFaillockStrategy::PreauthRequisite,
+                    {"fic-faillock-notify", "fic-faillock-authfail"}) &&
+                hasStrategyActivation(
+                    fic::platform::PamFaillockStrategy::PreauthRequired,
+                    {"fic-faillock-preauth-required",
+                     "fic-faillock-authfail"}) &&
+                hasStrategyActivation(
+                    fic::platform::PamFaillockStrategy::Authsucc,
+                    {"fic-faillock-authsucc", "fic-faillock-authfail"}) &&
                 history->activationIdentifiers ==
                     std::vector<std::string>{"fic-pwhistory"} &&
                 quality->activationIdentifiers ==

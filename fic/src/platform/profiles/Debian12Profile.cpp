@@ -128,8 +128,6 @@ PlatformProfile makeBuildPlatformProfile() {
          PamIdentitySubjectScope::AllPamSubjects,
          PamCapabilityConfigurationMode::ModuleArguments}
     };
-    profile.pam.capabilities[0].activationIdentifiers = {
-        "fic-faillock-notify", "fic-faillock-authfail"};
     profile.pam.capabilities[0].supportedFaillockStrategies = {
         PamFaillockStrategy::PreauthRequired,
         PamFaillockStrategy::PreauthRequisite,

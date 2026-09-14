@@ -64,8 +64,6 @@ fic::platform::PamPlatformConfig makePlatform(
          fic::platform::PamScope::EffectivePasswordStack,
          root / "security/pwquality.conf",
          fic::platform::PamTopologyStrategyKind::PamAuthUpdate}};
-    platform.capabilities[0].activationIdentifiers = {
-        "fic-faillock-notify", "fic-faillock-authfail"};
     platform.capabilities[0].supportedFaillockStrategies = {
         fic::platform::PamFaillockStrategy::PreauthRequired,
         fic::platform::PamFaillockStrategy::PreauthRequisite,
@@ -705,6 +703,15 @@ int main() {
                     readFile(staticRoot / "pam.d/passwd") == staticPamBefore,
                 "StaticVerifyOnly passwdqc was mutated or rejected");
 
+        writeFile(
+            root / "config/IDENTITY_ACCESS.conf",
+            "enable_authentication_lockout.status=ENABLE\n"
+            "enable_authentication_lockout.value=preauth_required\n"
+            "enable_password_history.status=ENABLE\n"
+            "enable_password_history.value=ENABLE\n"
+            "enable_password_quality.status=DISABLE\n"
+            "enable_password_quality.value=ENABLE\n");
+
         const fs::path pamAuthUpdate = root / "bin/pam-auth-update";
         writeFile(pamAuthUpdate, "#!/bin/sh\nexit 0\n");
         require(::chmod(pamAuthUpdate.c_str(), 0755) == 0,
@@ -721,7 +728,7 @@ int main() {
         const fs::path pamAuthUpdateState = root / "var/lib/pam";
         fs::create_directories(pamAuthUpdateState);
         writeFile(root / "security/pam_faillock.so", "fixture\n");
-        writeFile(root / "security/pam_tcb.so", "fixture\n");
+        writeFile(root / "security/pam_unix.so", "fixture\n");
         const std::string faillockConfigArgument =
             " conf=" + (root / "security/faillock.conf").string();
         // Effective login stacks as pam-auth-update would generate them for
@@ -730,28 +737,33 @@ int main() {
         const std::string lockoutPreauthRequisite =
             "auth requisite pam_faillock.so preauth" +
             faillockConfigArgument + "\n"
-            "auth sufficient pam_tcb.so shadow fork nullok\n"
+            "auth [success=2 default=ignore] pam_unix.so nullok\n"
             "auth [default=die] pam_faillock.so authfail" +
             faillockConfigArgument + "\n"
+            "auth requisite pam_deny.so\n"
+            "auth required pam_permit.so\n"
             "account required pam_faillock.so" +
             faillockConfigArgument + "\n"
-            "account required pam_tcb.so shadow fork\n";
+            "account required pam_unix.so\n";
         const std::string lockoutPreauthRequired =
             "auth required pam_faillock.so preauth" +
             faillockConfigArgument + "\n"
-            "auth sufficient pam_tcb.so shadow fork nullok\n"
+            "auth [success=2 default=ignore] pam_unix.so nullok\n"
             "auth [default=die] pam_faillock.so authfail" +
             faillockConfigArgument + "\n"
+            "auth requisite pam_deny.so\n"
+            "auth required pam_permit.so\n"
             "account required pam_faillock.so" +
             faillockConfigArgument + "\n"
-            "account required pam_tcb.so shadow fork\n";
+            "account required pam_unix.so\n";
         const std::string lockoutAuthsucc =
-            "auth sufficient pam_tcb.so shadow fork nullok\n"
+            "auth [success=2 default=ignore] pam_unix.so nullok\n"
             "auth [default=die] pam_faillock.so authfail" +
             faillockConfigArgument + "\n"
+            "auth requisite pam_deny.so\n"
+            "auth required pam_permit.so\n"
             "auth required pam_faillock.so authsucc" +
-            faillockConfigArgument + "\n"
-            "account required pam_tcb.so shadow fork\n";
+            faillockConfigArgument + "\n";
         struct StrategyRecipe {
             std::vector<std::string> ids;
             std::string content;
@@ -830,13 +842,19 @@ int main() {
         fic::identity::pam::PamAuthUpdateTopologyManager commandManager(
             platform, platform.capabilities[0], {"login"}, resolver,
             commandOptions);
+        writeFile(root / "pam.d/login",
+                  "auth required pam_unix.so nullok\n"
+                  "account required pam_unix.so\n");
+        std::error_code ignored;
+        fs::remove(pamAuthUpdateState / "auth", ignored);
+        fs::remove(pamAuthUpdateState / "account", ignored);
         require(commandManager.enable(error) &&
                     observedExecutable == pamAuthUpdate.string() &&
                     observedClearEnvironment,
                 "pam-auth-update activation did not use typed argv");
         require(observedArguments == std::vector<std::string>{
                     "--disable", "fic-faillock-notify",
-                    "fic-faillock-preauth-required", "fic-faillock-authsucc",
+                    "fic-faillock-authsucc",
                     "--enable", "fic-faillock-preauth-required",
                     "fic-faillock-authfail"},
                 "pam-auth-update activation did not combine the disable and "
@@ -882,13 +900,17 @@ int main() {
 
         writeFile(root / "pam.d/login", lockoutPreauthRequired);
         auto pamAuthUpdateAlreadyEnabled = makePamAuthUpdatePolicy();
-        require(pamAuthUpdateAlreadyEnabled.apply() &&
-                    pamAuthUpdateCalls == 0,
-                "already-enabled pam-auth-update topology was mutated");
+        const bool alreadyEnabledApplied = pamAuthUpdateAlreadyEnabled.apply();
+        require(
+            alreadyEnabledApplied && pamAuthUpdateCalls == 0,
+            "already-enabled pam-auth-update topology was mutated: apply=" +
+                std::string(alreadyEnabledApplied ? "true" : "false") +
+                " calls=" + std::to_string(pamAuthUpdateCalls) +
+                " error=" + error);
 
         writeFile(root / "pam.d/login",
-                  "auth required pam_tcb.so shadow fork nullok\n"
-                  "account required pam_tcb.so shadow fork\n");
+                  "auth required pam_unix.so nullok\n"
+                  "account required pam_unix.so\n");
         fs::remove(pamAuthUpdateState / "auth");
         fs::remove(pamAuthUpdateState / "account");
         auto pamAuthUpdateDisabled = makePamAuthUpdatePolicy();

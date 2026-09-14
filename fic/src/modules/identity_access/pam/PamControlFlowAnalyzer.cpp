@@ -755,7 +755,10 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                 }
                 }
 
-                if (terminate && stackSucceeded(state)) {
+                if (terminate &&
+                    state.impression == Impression::Positive &&
+                    (state.status == "success" ||
+                     state.status == "new_authtok_reqd")) {
                     recordTrustedAuthenticationBypass(
                         state,
                         entry.rule,

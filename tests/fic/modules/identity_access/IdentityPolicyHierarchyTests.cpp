@@ -1251,12 +1251,14 @@ int main() {
             root / "pam.d/login",
             "auth required pam_faillock.so preauth conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
-            "auth [success=1 default=bad] pam_unix.so\n"
+            "auth [success=2 default=bad] pam_unix.so\n"
             "auth [default=die] pam_faillock.so authfail conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
-            "auth sufficient pam_faillock.so authsucc conf=" +
+            "auth requisite pam_deny.so\n"
+            "auth required pam_permit.so\n"
+            "account required pam_faillock.so conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
-            "auth required pam_deny.so\n");
+            "account required pam_unix.so\n");
         writeFile(root / "security/pam_faillock.so", "test", 0555);
         writeFile(
             authenticationPlatform.faillockConfigPath,
@@ -1335,7 +1337,7 @@ int main() {
             "auth [success=1 default=bad] pam_unix.so\n"
             "auth [default=die] pam_faillock.so authfail conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
-            "auth sufficient pam_faillock.so authsucc conf=" +
+            "auth required pam_faillock.so authsucc conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
             "auth required pam_deny.so\n");
         require(rootHistoryDisabled.apply(),
@@ -1344,12 +1346,14 @@ int main() {
             root / "pam.d/login",
             "auth required pam_faillock.so preauth conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
-            "auth [success=1 default=bad] pam_unix.so\n"
+            "auth [success=2 default=bad] pam_unix.so\n"
             "auth [default=die] pam_faillock.so authfail conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
-            "auth sufficient pam_faillock.so authsucc conf=" +
+            "auth requisite pam_deny.so\n"
+            "auth required pam_permit.so\n"
+            "account required pam_faillock.so conf=" +
                 authenticationPlatform.faillockConfigPath.string() + "\n"
-            "auth required pam_deny.so\n");
+            "account required pam_unix.so\n");
 
         writeIdentityConfig(root, "no", "no");
         auto passwdqcPlatform = requiredPlatform;
