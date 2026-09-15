@@ -20,6 +20,10 @@ struct SudoersValueObservation {
 struct SudoersOperationResult {
     bool ok = false;
     bool changed = false;
+    // Rollback diagnostics: the FIC-owned value drifted from the recorded one.
+    bool conflict = false;
+    // Rollback diagnostics: the managed file does not own the requested key.
+    bool targetMissing = false;
     std::string message;
     std::vector<std::string> diagnostics;
 };
@@ -43,6 +47,13 @@ public:
     SudoersOperationResult ensureManagedGlobalDefault(
         const std::string& key,
         const std::string& renderedLine,
+        const std::string& expectedValue);
+
+    // Rollback support: remove the FIC-managed global Defaults entry for the
+    // given key. Fails closed on drift (conflict) and refuses to touch values
+    // owned by other files (targetMissing).
+    SudoersOperationResult removeManagedGlobalDefault(
+        const std::string& key,
         const std::string& expectedValue);
 
     SudoersOperationResult enforceAuthentication();

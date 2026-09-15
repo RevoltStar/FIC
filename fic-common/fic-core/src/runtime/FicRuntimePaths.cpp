@@ -49,7 +49,8 @@ FicProductPaths FicProductPaths::production() {
         path_defaults::COMMAND_HASH_FILE,
         path_defaults::DEVICE_DB_FILE,
         path_defaults::DEVICE_DB_LOCK_FILE,
-        path_defaults::LOCK_DEBUG_LOG_FILE
+        path_defaults::LOCK_DEBUG_LOG_FILE,
+        path_defaults::MUTATION_JOURNAL_FILE
     };
 }
 
@@ -72,7 +73,8 @@ bool FicProductPaths::validate(std::string& error) const {
         {&commandHashFile, "commandHashFile"},
         {&deviceDatabaseFile, "deviceDatabaseFile"},
         {&deviceDatabaseLockFile, "deviceDatabaseLockFile"},
-        {&lockDebugLogFile, "lockDebugLogFile"}
+        {&lockDebugLogFile, "lockDebugLogFile"},
+        {&mutationJournalFile, "mutationJournalFile"}
     };
 
     for (const auto& field : fields) {

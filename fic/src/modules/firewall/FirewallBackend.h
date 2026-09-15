@@ -16,6 +16,7 @@ public:
 
     bool applyPolicy(const std::string& policyName,
                      const std::vector<FirewallRule>& rules,
+                     bool& changed,
                      std::string& error) const;
 
     bool applyExclusive(std::vector<ForeignBaseChain>& neutralized,

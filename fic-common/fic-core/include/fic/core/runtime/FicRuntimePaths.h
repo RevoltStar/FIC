@@ -22,6 +22,7 @@ struct FicProductPaths {
     std::filesystem::path deviceDatabaseFile;
     std::filesystem::path deviceDatabaseLockFile;
     std::filesystem::path lockDebugLogFile;
+    std::filesystem::path mutationJournalFile;
 
     static FicProductPaths production();
     bool validate(std::string& error) const;

@@ -18,6 +18,7 @@ inline constexpr const char* COMMAND_HASH_FILE = "@FIC_COMMAND_HASH_FILE@";
 inline constexpr const char* DEVICE_DB_FILE = "@FIC_DEVICE_DB_FILE@";
 inline constexpr const char* DEVICE_DB_LOCK_FILE = "@FIC_DEVICE_DB_LOCK_FILE@";
 inline constexpr const char* LOCK_DEBUG_LOG_FILE = "@FIC_LOCK_DEBUG_LOG_FILE@";
+inline constexpr const char* MUTATION_JOURNAL_FILE = "@FIC_MUTATION_JOURNAL_FILE@";
 
 } // namespace fic::core::path_defaults
 

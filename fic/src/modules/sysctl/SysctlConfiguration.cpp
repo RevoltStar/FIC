@@ -712,3 +712,98 @@ SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string&
     }
     return result;
 }
+
+SysctlOperationResult SysctlConfiguration::removeManagedKey(
+    const std::string& key,
+    const std::string& appliedValue) {
+    SysctlOperationResult result;
+    const std::string requested = fic::sysctl::internalKeyToCanonicalPath(key);
+    if (requested.empty()) {
+        result.message = "Пустое имя sysctl-параметра";
+        return result;
+    }
+
+    ManagedAssignments managed;
+    const std::vector<std::string> managedLines = linesWithEndings(managedContent_);
+    std::string error;
+    if (!inspectManagedAssignments(managedLines, managed, error)) {
+        result.message = error;
+        return result;
+    }
+
+    const auto managedValue = managed.values.find(requested);
+    if (managedValue == managed.values.end()) {
+        result.ok = true;
+        result.targetMissing = true;
+        result.message = "Managed sysctl-значение '" + requested +
+                         "' отсутствует в managed sysctl-файле FIC";
+        return result;
+    }
+    if (!appliedValue.empty() && managedValue->second != appliedValue) {
+        result.conflict = true;
+        result.message = "Managed sysctl-значение '" + requested +
+                         "' изменилось с момента применения: ожидалось '" +
+                         appliedValue + "', найдено '" + managedValue->second + "'";
+        return result;
+    }
+
+    const SysctlValueObservation effective = inspect(requested);
+    if (effective.found &&
+        effective.source.path != options_.platform.managedConfigPath) {
+        result.ok = true;
+        result.targetMissing = true;
+        result.message = "Эффективное значение '" + requested +
+                         "' определяется вне managed sysctl-файла FIC: " +
+                         sourceText(effective.source);
+        return result;
+    }
+
+    if (!snapshotUnchanged(error)) {
+        result.message = error;
+        return result;
+    }
+
+    managed.values.erase(managedValue);
+    const bool persisted = managed.values.empty()
+        ? deleteManaged(error)
+        : writeManaged(renderManagedContent(managedContent_, managed.values), error);
+    if (!persisted) {
+        result.message = "Не удалось удалить managed sysctl-значение '" +
+                         requested + "': " + error;
+        return result;
+    }
+    result.changed = true;
+
+    SysctlConfiguration verification(options_);
+    if (!verification.load(error)) {
+        std::string rollbackError;
+        const bool rolledBack = restoreManaged(rollbackError);
+        result.message = "Не удалось перечитать sysctl после удаления managed значения: " +
+                         error;
+        if (!rolledBack) {
+            result.message += ". Ошибка отката: " + rollbackError;
+        }
+        return result;
+    }
+    const SysctlValueObservation after = verification.inspect(requested);
+    if (after.found && after.source.path == options_.platform.managedConfigPath) {
+        std::string rollbackError;
+        const bool rolledBack = restoreManaged(rollbackError);
+        result.message = "Managed значение '" + requested +
+                         "' осталось в managed sysctl-файле FIC после удаления";
+        if (!rolledBack) {
+            result.message += ". Ошибка отката: " + rollbackError;
+        }
+        return result;
+    }
+
+    result.ok = true;
+    result.message = "Managed sysctl-значение '" + requested +
+                     "' удалено из managed sysctl-файла FIC";
+    if (after.found) {
+        result.diagnostics.push_back(
+            "Эффективное значение после удаления определяет: " +
+            sourceText(after.source));
+    }
+    return result;
+}

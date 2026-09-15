@@ -59,6 +59,11 @@ public:
         throw std::runtime_error("policyTypeValue не был установлен. Требуются правки кода");
     }
 
+    //Стабильная ссылка на политику (модуль/субмодуль/имя) для общих контрактов
+    PolicyRef policyRef() const {
+        return PolicyRef{this->moduleName, this->submoduleName, this->policyName};
+    }
+
     //Получаем значение параметра
     //Возвращаем nullopt, если значение не установлено или невалидно
     std::optional<std::string> getValue() {

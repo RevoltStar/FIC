@@ -1,10 +1,15 @@
 #include "main_function.h"
 
+#include "modules/dac/sudo/Sudo.h"
+#include "modules/sysctl/Sysctl.h"
 #include "policy/registry/PolicyRegistryInitialization.h"
 #include "policy/registry/PolicyRegistryMutation.h"
+#include "rollback/RollbackExecutor.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
+#include <fic/ipc/FicIpcClient.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 
@@ -307,10 +312,77 @@ bool apply(PolicyRegistry& policyRegistry, std::string module, std::string polic
 }
 
 //Отключить политику
-bool disable (PolicyRegistry& policyRegistry, std::string module, std::string policy){
+bool disable (PolicyRegistry& policyRegistry,
+              const fic::platform::PlatformProfile& platform,
+              const fic::platform::PlatformExecutableResolver& executables,
+              std::string module, std::string policy){
     Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим отключение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
+
+        // Rollback pre-step: revert the OS changes that FIC backends made
+        // while the policy was enabled. The policy status is flipped only
+        // when the rollback completes (or has nothing to do).
+        const PolicyRef policyRef{
+            concretePolicy->moduleName, concretePolicy->submoduleName,
+            concretePolicy->policyName};
+        std::string resourceHint;
+        if (const Sysctl* sysctlPolicy = dynamic_cast<const Sysctl*>(concretePolicy)) {
+            resourceHint = sysctlPolicy->managedResource();
+        } else if (const Sudo* sudoPolicy = dynamic_cast<const Sudo*>(concretePolicy)) {
+            resourceHint = sudoPolicy->managedResource();
+        }
+
+        fic::rollback::RollbackExecutorDeps rollbackDeps =
+            fic::rollback::productionRollbackDeps(
+                platform, executables,
+                [&policyRegistry](const std::string& feature,
+                                  std::string& featureError) {
+                    auto enabled = [&](const std::string& name) {
+                        if (name == feature) {
+                            return false;
+                        }
+                        Policy* devicePolicy =
+                            getPolicyClass(policyRegistry, "DC", name);
+                        return devicePolicy != nullptr && devicePolicy->isEnabled();
+                    };
+                    const json response = fic::ipc::Client(
+                        fic::ipc::Endpoint::DeviceDaemon).request({
+                        {"command", "device_regenerate_policy"},
+                        {"block_usb_storage", enabled("block_usb_storage")},
+                        {"block_printers_scanners", enabled("block_printers_scanners")},
+                        {"block_optical_drives", enabled("block_optical_drives")}
+                    });
+                    if (!response.value("ok", false)) {
+                        featureError = response.value(
+                            "message", "unknown device daemon error");
+                        return false;
+                    }
+                    return true;
+                });
+
+        const fic::rollback::RollbackReport rollbackReport =
+            fic::rollback::rollbackPolicyBeforeDisable(
+                policyRef, resourceHint, rollbackDeps);
+        for (const fic::rollback::MutationRollbackOutcome& outcome :
+             rollbackReport.outcomes) {
+            std::cout << "Rollback [" << outcome.id << "] " << outcome.resource
+                      << ": " << fic::rollback::rollbackStatusToString(outcome.status)
+                      << (outcome.message.empty()
+                              ? ""
+                              : (": " + outcome.message))
+                      << '\n';
+        }
+        if (!rollbackReport.rollbackCompleted()) {
+            std::cout << "Rollback не завершен: " << rollbackReport.message << '\n';
+            std::cout << "Отключение политики отменено, чтобы не оставить "
+                         "незадокументированные изменения FIC." << '\n';
+            return false;
+        }
+        if (rollbackReport.status == fic::rollback::RollbackStatus::Success) {
+            std::cout << "Rollback выполнен: " << rollbackReport.message << '\n';
+        }
+
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
         if(!mcfh.loadConfig()){
             std::cout << "Не удалось загрузить конфигурационный файл" << '\n';

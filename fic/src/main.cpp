@@ -34,6 +34,7 @@
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "policy/registry/PolicyRegistryJson.h"
+#include "rollback/DaemonMutationJournal.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/ipc/FicIpcPathDefaults.h>
@@ -472,6 +473,46 @@ json handle_request(json request,
             Policy* devicePolicy = getPolicyClass(policyRegistry, "DC", name);
             return devicePolicy != nullptr && devicePolicy->isEnabled();
         };
+
+        // Rollback provenance: before the device daemon enforces desired
+        // states, record Prepared mutations for every active DC feature so
+        // that disable_policy can roll the generated policy back. Fail closed
+        // when the journal cannot record provenance.
+        std::vector<std::pair<std::string, fic::rollback::MutationId>> prepared;
+        auto discardPrepared = [&prepared]() {
+            for (const auto& [feature, id] : prepared) {
+                std::string discardError;
+                (void)fic::rollback::discardMutation(id, discardError);
+            }
+        };
+        for (const std::string& feature :
+             {"block_usb_storage", "block_printers_scanners",
+              "block_optical_drives"}) {
+            if (!enabled(feature)) {
+                continue;
+            }
+            Policy* devicePolicy = getPolicyClass(policyRegistry, "DC", feature);
+            if (devicePolicy == nullptr) {
+                continue;
+            }
+            const PolicyRef policyRef{
+                devicePolicy->moduleName, devicePolicy->submoduleName,
+                devicePolicy->policyName};
+            fic::rollback::MutationId mutationId = 0;
+            std::string journalError;
+            fic::rollback::UndoAction undo{
+                fic::rollback::MutationBackend::DeviceControl,
+                fic::rollback::UndoDisableDeviceFeature{feature}};
+            if (!fic::rollback::recordPreparedMutation(
+                    policyRef, feature, undo, mutationId, journalError)) {
+                discardPrepared();
+                return fic::ipc::make_error_response(
+                    "device policy was not regenerated because the mutation "
+                    "journal could not record provenance: " + journalError);
+            }
+            prepared.emplace_back(feature, mutationId);
+        }
+
         const json response = fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon).request({
             {"command", "device_regenerate_policy"},
             {"block_usb_storage", enabled("block_usb_storage")},
@@ -479,8 +520,16 @@ json handle_request(json request,
             {"block_optical_drives", enabled("block_optical_drives")}
         });
         if (response.value("ok", false)) {
+            for (const auto& [feature, id] : prepared) {
+                std::string commitError;
+                if (!fic::rollback::commitMutation(id, commitError)) {
+                    std::cerr << "Failed to commit mutation journal record for "
+                              << feature << ": " << commitError << std::endl;
+                }
+            }
             return std::nullopt;
         }
+        discardPrepared();
         return fic::ipc::make_error_response(
             "DC configuration was saved, but generated device policy was not activated: " +
             response.value("message", "unknown device daemon error"));
@@ -603,7 +652,7 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to enable policy");
         }
         if (command == "disable_policy") {
-            bool ok = disable(policyRegistry, module, policy);
+            bool ok = disable(policyRegistry, platform, executables, module, policy);
             if (ok) {
                 if (auto reloadError = reloadRegistryAndGlobalConfig()) {
                     return fic::ipc::make_error_response(

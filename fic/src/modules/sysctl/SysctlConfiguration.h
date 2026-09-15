@@ -22,6 +22,10 @@ struct SysctlValueObservation {
 struct SysctlOperationResult {
     bool ok = false;
     bool changed = false;
+    // Rollback diagnostics: the FIC-owned value drifted from the recorded one.
+    bool conflict = false;
+    // Rollback diagnostics: the managed file does not own the requested key.
+    bool targetMissing = false;
     std::string message;
     std::vector<std::string> diagnostics;
 };
@@ -48,6 +52,13 @@ public:
     SysctlValueObservation inspect(const std::string& key) const;
     SysctlOperationResult ensureManagedValue(const std::string& key,
                                              const std::string& value);
+
+    // Rollback support: remove the FIC-managed entry for the given key from
+    // the managed sysctl configuration. Fails closed on drift (conflict) and
+    // refuses to touch values owned by other files (targetMissing).
+    SysctlOperationResult removeManagedKey(
+        const std::string& key,
+        const std::string& expectedValue);
 
 private:
     struct Document {

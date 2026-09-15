@@ -1,6 +1,7 @@
 #include "modules/sysctl/Sysctl.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlRuntime.h"
+#include "rollback/DaemonMutationJournal.h"
 
 #include <mutex>
 #include <optional>
@@ -91,11 +92,40 @@ bool Sysctl::apply (){
                   logLevel::WARN);
     }
 
+    // Crash-consistent journaling: prepare the rollback record before the
+    // system mutation. A mutation is recorded only when FIC will actually
+    // change the system; a compliant state stays unrecorded (no provenance).
+    fic::rollback::MutationId mutationId = 0;
+    bool mutationPrepared = false;
+    const bool sysctlNeedsChange =
+        !observation.found || observation.value != value || runtimeBefore != value;
+    if (sysctlNeedsChange) {
+        std::string journalError;
+        fic::rollback::UndoAction undo{
+            fic::rollback::MutationBackend::Sysctl,
+            fic::rollback::UndoRemoveManagedSetting{param, value}};
+        if (!fic::rollback::recordPreparedMutation(
+                this->policyRef(), param, undo, mutationId, journalError)) {
+            this->log("Не удалось подготовить запись mutation journal: " +
+                          journalError,
+                      logLevel::ERROR);
+            return false;
+        }
+        mutationPrepared = true;
+    }
+
     const SysctlOperationResult operation = configuration.ensureManagedValue(param, value);
     for (const std::string& diagnostic : operation.diagnostics) {
         this->log(diagnostic, operation.ok ? logLevel::INFO : logLevel::WARN);
     }
     if (!operation.ok) {
+        std::string discardError;
+        if (mutationPrepared &&
+            !fic::rollback::discardMutation(mutationId, discardError)) {
+            this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                          discardError,
+                      logLevel::WARN);
+        }
         this->log(operation.message, logLevel::ERROR);
         return false;
     }
@@ -112,6 +142,22 @@ bool Sysctl::apply (){
     }
     const SysctlRuntimeResult runtimeOperation = runtime.ensureValue(param, value);
     if (!runtimeOperation.ok) {
+        std::string journalError;
+        if (operation.changed) {
+            // The persistent FIC-owned change did happen; keep provenance so
+            // disable can still roll the managed value back.
+            if (mutationPrepared &&
+                !fic::rollback::commitMutation(mutationId, journalError)) {
+                this->log("Ошибка фиксации записи mutation journal: " +
+                              journalError,
+                          logLevel::WARN);
+            }
+        } else if (mutationPrepared &&
+                   !fic::rollback::discardMutation(mutationId, journalError)) {
+            this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                          journalError,
+                      logLevel::WARN);
+        }
         this->log(
             "Persistent-конфигурация sysctl подготовлена, но обязательное runtime-применение "
             "не завершено: " + runtimeOperation.message,
@@ -122,8 +168,22 @@ bool Sysctl::apply (){
     this->log(runtimeOperation.message, logLevel::INFO);
 
     if (operation.changed || runtimeOperation.changed) {
+        std::string journalError;
+        if (mutationPrepared &&
+            !fic::rollback::commitMutation(mutationId, journalError)) {
+            this->log("Ошибка фиксации записи mutation journal: " +
+                          journalError,
+                      logLevel::WARN);
+        }
         this->notify("Исправлена конфигурация sysctl для политики: " + this->policyName,
                      notifyLevel::INFO);
+    } else if (mutationPrepared) {
+        std::string journalError;
+        if (!fic::rollback::discardMutation(mutationId, journalError)) {
+            this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                          journalError,
+                      logLevel::WARN);
+        }
     }
     return true;
 }

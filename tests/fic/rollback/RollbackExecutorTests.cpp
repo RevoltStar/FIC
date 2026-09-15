@@ -1,0 +1,749 @@
+#include "rollback/DaemonMutationJournal.h"
+#include "rollback/RollbackExecutor.h"
+
+#include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/sysctl/SysctlConfiguration.h"
+#include "modules/sysctl/SysctlRuntime.h"
+
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <sys/stat.h>
+
+namespace {
+
+using namespace fic::rollback;
+
+class TempTree {
+public:
+    TempTree(const std::string& pattern) {
+        char* created = ::mkdtemp(const_cast<char*>(pattern.data()));
+        if (created == nullptr) {
+            throw std::runtime_error("mkdtemp failed");
+        }
+        root = created;
+    }
+
+    ~TempTree() {
+        std::error_code ignored;
+        std::filesystem::permissions(root,
+            std::filesystem::perms::owner_all, ignored);
+        std::filesystem::remove_all(root, ignored);
+    }
+
+    std::filesystem::path root;
+};
+
+void writeFile(const std::filesystem::path& path, const std::string& content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream.is_open()) {
+        throw std::runtime_error("could not create " + path.string());
+    }
+    stream << content;
+    if (!stream.good()) {
+        throw std::runtime_error("could not write " + path.string());
+    }
+}
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream),
+                       std::istreambuf_iterator<char>());
+}
+
+void require(bool condition, const std::string& message) {
+    if (!condition) {
+        throw std::runtime_error(message);
+    }
+}
+
+// RAII guard for the daemon journal override.
+class JournalOverride {
+public:
+    explicit JournalOverride(std::filesystem::path path) {
+        DaemonMutationJournal::instance().setOverridePath(std::move(path));
+    }
+    ~JournalOverride() { DaemonMutationJournal::instance().resetOverride(); }
+};
+
+class TempJournal {
+public:
+    TempJournal()
+        : tree("/tmp/fic-rollback-journal-XXXXXX") {
+        std::filesystem::create_directories(tree.root);
+    }
+    TempTree tree;
+};
+
+// Records a committed Applied mutation for the given policy.
+MutationId recordApplied(const PolicyRef& policy,
+                         const std::string& resource,
+                         const UndoAction& undo) {
+    MutationId id = 0;
+    std::string error;
+    require(fic::rollback::recordPreparedMutation(policy, resource, undo, id, error),
+            error);
+    require(fic::rollback::commitMutation(id, error), error);
+    return id;
+}
+
+// ---------------------------------------------------------------- sysctl ----
+
+class SysctlTree {
+public:
+    SysctlTree()
+        : tree("/tmp/fic-rollback-sysctl-XXXXXX") {
+        for (const char* directory : {"etc/sysctl.d", "run/sysctl.d",
+                                      "usr/local/lib/sysctl.d",
+                                      "usr/lib/sysctl.d", "lib/sysctl.d",
+                                      "proc/sys/vm"}) {
+            std::filesystem::create_directories(tree.root / directory);
+        }
+    }
+
+    SysctlConfigurationOptions options() const {
+        SysctlConfigurationOptions value;
+        value.platform.loader = fic::platform::SysctlLoaderKind::SystemdSysctl;
+        value.platform.managedConfigPath = tree.root / "etc/sysctl.d/zzzz-fic.conf";
+        value.directories = {
+            tree.root / "etc/sysctl.d",
+            tree.root / "run/sysctl.d",
+            tree.root / "usr/local/lib/sysctl.d",
+            tree.root / "usr/lib/sysctl.d",
+            tree.root / "lib/sysctl.d"
+        };
+        value.procpsMainPath = tree.root / "etc/sysctl.conf";
+        value.enforceOwnership = false;
+        return value;
+    }
+
+    void createManagedValue(const std::string& key, const std::string& value) const {
+        SysctlConfiguration configuration(options());
+        std::string error;
+        require(configuration.load(error), error);
+        const SysctlOperationResult operation =
+            configuration.ensureManagedValue(key, value);
+        require(operation.ok && operation.changed, operation.message);
+    }
+
+    RollbackExecutorDeps deps() const {
+        RollbackExecutorDeps value;
+        SysctlConfigurationOptions options = this->options();
+        value.sysctlOptions = [options]() { return options; };
+        value.sysctlRuntimeRoot = tree.root / "proc/sys";
+        return value;
+    }
+
+    TempTree tree;
+};
+
+const PolicyRef kSysctlPolicy{"SYSCTL", "Global", "swappiness_policy"};
+
+UndoAction sysctlUndo(const std::string& value) {
+    return UndoAction{MutationBackend::Sysctl,
+                      UndoRemoveManagedSetting{"vm.swappiness", value}};
+}
+
+// ----------------------------------------------------------------- sudo -----
+
+class SudoersTree {
+public:
+    SudoersTree()
+        : tree("/tmp/fic-rollback-sudoers-XXXXXX") {
+        std::filesystem::create_directories(tree.root / "sudoers.d");
+    }
+
+    SudoersConfigurationOptions options(const std::string& mainContent) const {
+        SudoersConfigurationOptions value;
+        value.mainPath = tree.root / "sudoers";
+        value.managedPath = tree.root / "sudoers.d" / "zzzz-fic";
+        value.validatorPath.clear();
+        value.verifyValidatorHash = false;
+        value.enforceOwnership = false;
+        writeFile(value.mainPath,
+                  mainContent +
+                  "\n@includedir " + (tree.root / "sudoers.d").string() + "\n");
+        return value;
+    }
+
+    RollbackExecutorDeps deps(const std::string& mainContent) const {
+        RollbackExecutorDeps value;
+        SudoersConfigurationOptions options = this->options(mainContent);
+        value.sudoersOptions = [options]() { return options; };
+        return value;
+    }
+
+    TempTree tree;
+};
+
+const PolicyRef kSudoPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
+
+// ---------------------------------------------------------------- tests -----
+
+void testEnrollmentMatrix() {
+    require(rollbackEnrollment({"SYSCTL", "Global", "anything"}) ==
+                RollbackEnrollment::Supported,
+            "all SYSCTL policies must be enrolled");
+    require(rollbackEnrollment({"DAC", "SudoEdit", "sudo_passwd_tries"}) ==
+                RollbackEnrollment::Supported,
+            "SudoEdit must be enrolled");
+    require(rollbackEnrollment({"DAC", "SudoEdit",
+                                "sudo_require_authentication"}) ==
+                RollbackEnrollment::Unsupported,
+            "sudo_require_authentication must refuse automatic rollback");
+    require(rollbackEnrollment({"FIREWALL", "HostFiltering", "block_rdp"}) ==
+                RollbackEnrollment::Supported,
+            "HostFiltering policies must be enrolled");
+    require(rollbackEnrollment({"FIREWALL", "HostFiltering",
+                                "exclusive_firewall_control"}) ==
+                RollbackEnrollment::Unsupported,
+            "exclusive_firewall_control must refuse automatic rollback");
+    require(rollbackEnrollment({"DC", "DeviceControl", "block_usb_storage"}) ==
+                RollbackEnrollment::Supported,
+            "DC category features must be enrolled");
+    require(rollbackEnrollment({"DC", "DeviceControl", "unknown_feature"}) ==
+                RollbackEnrollment::Unsupported,
+            "unknown DC features must refuse automatic rollback");
+    require(rollbackEnrollment({"OSS", "Grub", "grub_timeout"}) ==
+                RollbackEnrollment::NotEnrolled,
+            "modules outside the rollback system keep legacy disable behavior");
+}
+
+void testNotEnrolledPolicyKeepsLegacyDisable() {
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        {"OSS", "Grub", "grub_timeout"}, "", RollbackExecutorDeps{});
+    require(report.status == RollbackStatus::Success,
+            "not enrolled policy must allow legacy disable");
+    require(report.rollbackCompleted(), "legacy disable must not be refused");
+}
+
+void testUnsupportedPolicyRefusesDisable() {
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        {"DAC", "SudoEdit", "sudo_require_authentication"}, "",
+        RollbackExecutorDeps{});
+    require(report.status == RollbackStatus::Unsupported,
+            "enrolled but unsupported policy must refuse disable");
+    require(!report.rollbackCompleted(),
+            "unsupported rollback must refuse the disable");
+}
+
+void testSysctlRollbackRemovesManagedKeyAndMovesRuntime() {
+    SysctlTree tree;
+    tree.createManagedValue("vm.swappiness", "10");
+    writeFile(tree.tree.root / "etc/sysctl.d/10-base.conf",
+              "vm.swappiness = 30\n");
+    writeFile(tree.tree.root / "proc/sys/vm/swappiness", "10\n");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const MutationId id = recordApplied(
+        kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Success, report.message);
+    require(report.rollbackCompleted(), "successful rollback must allow disable");
+    require(report.outcomes.size() == 1 &&
+                report.outcomes.front().status == RollbackStatus::Success,
+            report.message);
+
+    // The managed override must be gone; the base configuration value stays.
+    SysctlConfiguration verification(tree.options());
+    std::string error;
+    require(verification.load(error), error);
+    const SysctlValueObservation after = verification.inspect("vm.swappiness");
+    require(after.found && after.value == "30", report.message);
+    require(after.source.path.filename() == "10-base.conf",
+            "rollback must leave the non-FIC source in place");
+
+    // Runtime must be moved to the recomputed effective value, never guessed.
+    SysctlRuntime runtime({tree.tree.root / "proc/sys"});
+    std::string runtimeValue;
+    require(runtime.readValue("vm.swappiness", runtimeValue, error), error);
+    require(runtimeValue == "30",
+            "runtime sysctl must follow the remaining configuration value");
+
+    // Journal must record the rollback.
+    MutationJournal stored(journal.tree.root / "journal.json");
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().id == id &&
+                stored.records().front().status == MutationStatus::RolledBack,
+            "rollback must be persisted as rolled_back");
+}
+
+void testSysctlRollbackConflictOnDrift() {
+    SysctlTree tree;
+    // The managed value drifted from the recorded applied value.
+    tree.createManagedValue("vm.swappiness", "20");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Conflict,
+            "drifted managed value must fail closed as conflict: " +
+                report.message);
+    require(!report.rollbackCompleted(),
+            "conflict must refuse the disable");
+
+    // The drifted value must be left untouched.
+    SysctlConfiguration verification(tree.options());
+    std::string error;
+    require(verification.load(error), error);
+    const SysctlValueObservation after = verification.inspect("vm.swappiness");
+    require(after.found && after.value == "20",
+            "conflicting managed value must not be modified");
+}
+
+void testSysctlRollbackSkipsForeignSource() {
+    SysctlTree tree;
+    tree.createManagedValue("vm.swappiness", "10");
+    // A file sorting after the FIC managed file owns the effective value.
+    writeFile(tree.tree.root / "etc/sysctl.d/zzzzz-override.conf",
+              "vm.swappiness = 99\n");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::NothingToDo,
+            "FIC must not touch a value owned by a foreign source: " +
+                report.message);
+    require(report.rollbackCompleted(),
+            "nothing-to-do rollback must allow the disable");
+
+    SysctlConfiguration verification(tree.options());
+    std::string error;
+    require(verification.load(error), error);
+    const SysctlValueObservation after = verification.inspect("vm.swappiness");
+    require(after.found && after.value == "99",
+            "foreign override must remain effective");
+}
+
+void testSysctlProvenanceUnavailableWithoutJournal() {
+    SysctlTree tree;
+    // The FIC managed file owns the resource, but no journal records exist
+    // (legacy apply before the rollback system): disable must be refused.
+    tree.createManagedValue("vm.swappiness", "10");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Unsupported,
+            "unprovenanced FIC-owned sysctl change must refuse disable: " +
+                report.message);
+    require(!report.rollbackCompleted(),
+            "provenance failure must refuse the disable");
+}
+
+void testSysctlNoRecordsAndNotOwnedIsNothingToDo() {
+    SysctlTree tree;
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::NothingToDo,
+            "no records and no FIC-owned resource must allow legacy disable: " +
+                report.message);
+    require(report.rollbackCompleted(), "nothing to do must allow disable");
+}
+
+
+void testSudoRollbackRemovesManagedDefault() {
+    SudoersTree tree;
+    const auto options = tree.options("Defaults passwd_tries=2");
+    {
+        SudoersConfiguration configuration(options);
+        std::string error;
+        require(configuration.load(error), error);
+        const SudoersOperationResult operation = configuration
+            .ensureManagedGlobalDefault("passwd_tries",
+                                        "Defaults passwd_tries=3", "3");
+        require(operation.ok && operation.changed, operation.message);
+    }
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const MutationId id = recordApplied(
+        kSudoPolicy, "passwd_tries",
+        UndoAction{MutationBackend::Sudo,
+                   UndoRemoveManagedSetting{"passwd_tries", "3"}});
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
+    require(report.status == RollbackStatus::Success, report.message);
+    require(report.outcomes.size() == 1 &&
+                report.outcomes.front().status == RollbackStatus::Success,
+            report.message);
+
+    require(!std::filesystem::exists(options.managedPath),
+            "empty FIC managed sudoers file must be removed by rollback");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().id == id &&
+                stored.records().front().status == MutationStatus::RolledBack,
+            "sudo rollback must be persisted as rolled_back");
+}
+
+void testSudoRollbackConflictOnDrift() {
+    SudoersTree tree;
+    const auto options = tree.options("Defaults passwd_tries=2");
+    {
+        SudoersConfiguration configuration(options);
+        std::string error;
+        require(configuration.load(error), error);
+        const SudoersOperationResult operation = configuration
+            .ensureManagedGlobalDefault("passwd_tries",
+                                        "Defaults passwd_tries=5", "5");
+        require(operation.ok && operation.changed, operation.message);
+    }
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(
+        kSudoPolicy, "passwd_tries",
+        UndoAction{MutationBackend::Sudo,
+                   UndoRemoveManagedSetting{"passwd_tries", "3"}});
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
+    require(report.status == RollbackStatus::Conflict,
+            "drifted sudoers value must fail closed as conflict: " +
+                report.message);
+    require(!report.rollbackCompleted(), "conflict must refuse the disable");
+    require(readFile(options.managedPath).find("passwd_tries=5") !=
+                std::string::npos,
+            "conflicting managed value must not be modified");
+}
+
+void testSudoRollbackForeignSourceIsNothingToDo() {
+    SudoersTree tree;
+    // The effective value comes from the main sudoers, not the FIC managed
+    // file: FIC does not own it and must not touch it.
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(
+        kSudoPolicy, "passwd_tries",
+        UndoAction{MutationBackend::Sudo,
+                   UndoRemoveManagedSetting{"passwd_tries", "3"}});
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=7"));
+    require(report.status == RollbackStatus::NothingToDo,
+            "FIC must not roll back a value owned by the main sudoers: " +
+                report.message);
+    require(report.rollbackCompleted(),
+            "nothing-to-do rollback must allow the disable");
+}
+
+void testSysctlRollbackKeepsOtherPolicySetting() {
+    SysctlTree tree;
+    tree.createManagedValue("vm.swappiness", "10");
+    tree.createManagedValue("kernel.dmesg_restrict", "1");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+    // A second policy owns another key of the same FIC managed file.
+    const PolicyRef other{"SYSCTL", "Global", "dmesg_policy"};
+    recordApplied(other, "kernel.dmesg_restrict",
+                  UndoAction{MutationBackend::Sysctl,
+                             UndoRemoveManagedSetting{"kernel.dmesg_restrict", "1"}});
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Success, report.message);
+
+    const std::string managed =
+        readFile(tree.options().platform.managedConfigPath);
+    require(managed.find("vm.swappiness") == std::string::npos,
+            "rolled back key must be removed from the managed file");
+    require(managed.find("kernel.dmesg_restrict") != std::string::npos,
+            "another policy setting in the same managed file must survive");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    for (const MutationRecord& record : stored.records()) {
+        if (record.resource == "vm.swappiness") {
+            require(record.status == MutationStatus::RolledBack,
+                    "first policy mutation must be rolled back");
+        } else if (record.resource == "kernel.dmesg_restrict") {
+            require(record.status == MutationStatus::Applied,
+                    "other policy mutation must stay applied");
+        }
+    }
+}
+
+void testSysctlRollbackRetryIsIdempotent() {
+    SysctlTree tree;
+    tree.createManagedValue("vm.swappiness", "10");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+
+    const RollbackReport first = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(first.status == RollbackStatus::Success, first.message);
+
+    // Retry (e.g. after daemon restart): the record is already rolled back
+    // and the managed file is gone, the retry must be nothing-to-do.
+    const RollbackReport retry = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(retry.status == RollbackStatus::NothingToDo, retry.message);
+    require(retry.rollbackCompleted(), "retry must allow the disable");
+}
+
+void testSudoRollbackKeepsOtherManagedDefault() {
+    SudoersTree tree;
+    const auto options = tree.options("Defaults passwd_tries=2");
+    {
+        SudoersConfiguration configuration(options);
+        std::string error;
+        require(configuration.load(error), error);
+        const SudoersOperationResult first = configuration
+            .ensureManagedGlobalDefault("passwd_tries",
+                                        "Defaults passwd_tries=3", "3");
+        require(first.ok && first.changed, first.message);
+        const SudoersOperationResult second = configuration
+            .ensureManagedGlobalDefault("secure_path",
+                                        "Defaults secure_path=/usr/sbin:/usr/bin",
+                                        "/usr/sbin:/usr/bin");
+        require(second.ok && second.changed, second.message);
+    }
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kSudoPolicy, "passwd_tries",
+                  UndoAction{MutationBackend::Sudo,
+                             UndoRemoveManagedSetting{"passwd_tries", "3"}});
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
+    require(report.status == RollbackStatus::Success, report.message);
+
+    const std::string managed = readFile(options.managedPath);
+    require(managed.find("passwd_tries") == std::string::npos,
+            "rolled back sudo default must be removed");
+    require(managed.find("secure_path") != std::string::npos,
+            "another FIC managed sudo default must survive");
+    require(std::filesystem::exists(options.managedPath),
+            "non-empty managed sudoers file must not be removed");
+}
+
+
+void testFirewallUndoInvokesBackend() {
+    const PolicyRef policy{"FIREWALL", "HostFiltering", "block_rdp"};
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(policy, "block_rdp",
+                  UndoAction{MutationBackend::Firewall,
+                             UndoRemoveFirewallPolicy{"fic_block_rdp"}});
+
+    std::string undonePolicy;
+    RollbackExecutorDeps deps;
+    deps.undoFirewallPolicy = [&undonePolicy](const std::string& policyName,
+                                              std::string&) {
+        undonePolicy = policyName;
+        return true;
+    };
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "block_rdp", deps);
+    require(report.status == RollbackStatus::Success, report.message);
+    require(undonePolicy == "fic_block_rdp",
+            "firewall undo must call the reconciliation backend with the "
+            "recorded policy name");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().status == MutationStatus::RolledBack,
+            "firewall rollback must be persisted");
+}
+
+void testFirewallUndoFailureFailsClosed() {
+    const PolicyRef policy{"FIREWALL", "HostFiltering", "block_ftp"};
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const MutationId id = recordApplied(
+        policy, "block_ftp",
+        UndoAction{MutationBackend::Firewall,
+                   UndoRemoveFirewallPolicy{"fic_block_ftp"}});
+
+    RollbackExecutorDeps deps;
+    deps.undoFirewallPolicy = [](const std::string&, std::string& error) {
+        error = "nft reconciliation failed";
+        return false;
+    };
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "block_ftp", deps);
+    require(report.status == RollbackStatus::Failed,
+            "failed firewall undo must fail closed: " + report.message);
+    require(!report.rollbackCompleted(), "failed rollback must refuse disable");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().id == id &&
+                stored.records().front().status == MutationStatus::RollbackFailed,
+            "failed rollback must be persisted as rollback_failed");
+}
+
+void testDeviceFeatureUndoInvokesBackend() {
+    const PolicyRef policy{"DC", "DeviceControl", "block_usb_storage"};
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(policy, "block_usb_storage",
+                  UndoAction{MutationBackend::DeviceControl,
+                             UndoDisableDeviceFeature{"block_usb_storage"}});
+
+    std::string disabledFeature;
+    RollbackExecutorDeps deps;
+    deps.disableDeviceFeature = [&disabledFeature](const std::string& feature,
+                                                   std::string&) {
+        disabledFeature = feature;
+        return true;
+    };
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "block_usb_storage", deps);
+    require(report.status == RollbackStatus::Success, report.message);
+    require(disabledFeature == "block_usb_storage",
+            "DC undo must disable the recorded feature");
+}
+
+void testDeviceFeatureUndoUnknownFeatureIsUnsupported() {
+    const PolicyRef policy{"DC", "DeviceControl", "future_feature"};
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(policy, "future_feature",
+                  UndoAction{MutationBackend::DeviceControl,
+                             UndoDisableDeviceFeature{"future_feature"}});
+
+    RollbackExecutorDeps deps;
+    deps.disableDeviceFeature = [](const std::string&, std::string&) {
+        return true;
+    };
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "future_feature", deps);
+    require(report.status == RollbackStatus::Unsupported,
+            "unknown DC feature undo must be unsupported: " + report.message);
+    require(!report.rollbackCompleted(), "unsupported undo must refuse disable");
+}
+
+
+void testJournalUpdateFailureFailsClosed() {
+    // A successful backend undo with a journal that can no longer be written
+    // must still fail closed: provenance must reflect the actual state.
+    SysctlTree tree;
+    tree.createManagedValue("vm.swappiness", "10");
+
+    TempJournal journal;
+    {
+        JournalOverride overrideGuard(journal.tree.root / "journal.json");
+        recordApplied(kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+    }
+    // Simulate a journal that cannot be updated anymore (broken content).
+    const std::filesystem::path journalPath = journal.tree.root / "journal.json";
+    writeFile(journalPath, "{ broken");
+
+    JournalOverride overrideGuard(journalPath);
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Failed,
+            "broken journal must fail closed: " + report.message);
+    require(!report.rollbackCompleted(),
+            "unprovenanced rollback must refuse the disable");
+}
+
+void testEmptyJournalWithSysctlHintAndNoManagedOwnership() {
+    // No records at all and the resource hint points to a key that is not
+    // owned by the FIC managed file: legacy disable must proceed.
+    SysctlTree tree;
+    writeFile(tree.tree.root / "etc/sysctl.d/10-base.conf",
+              "vm.swappiness = 30\n");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::NothingToDo,
+            "resource not owned by FIC must allow legacy disable: " +
+                report.message);
+    require(report.rollbackCompleted(), "legacy disable must proceed");
+}
+
+} // namespace
+
+int main() {
+    const struct {
+        const char* name;
+        void (*test)();
+    } tests[] = {
+        {"enrollment matrix", testEnrollmentMatrix},
+        {"not enrolled policy keeps legacy disable", testNotEnrolledPolicyKeepsLegacyDisable},
+        {"unsupported policy refuses disable", testUnsupportedPolicyRefusesDisable},
+        {"sysctl rollback removes managed key and moves runtime",
+         testSysctlRollbackRemovesManagedKeyAndMovesRuntime},
+        {"sysctl rollback conflict on drift", testSysctlRollbackConflictOnDrift},
+        {"sysctl rollback skips foreign source", testSysctlRollbackSkipsForeignSource},
+        {"sysctl provenance unavailable without journal",
+         testSysctlProvenanceUnavailableWithoutJournal},
+        {"sysctl no records and not owned is nothing to do",
+         testSysctlNoRecordsAndNotOwnedIsNothingToDo},
+        {"sudo rollback removes managed default", testSudoRollbackRemovesManagedDefault},
+        {"sudo rollback conflict on drift", testSudoRollbackConflictOnDrift},
+        {"sudo rollback foreign source is nothing to do",
+         testSudoRollbackForeignSourceIsNothingToDo},
+        {"sysctl rollback keeps other policy setting",
+         testSysctlRollbackKeepsOtherPolicySetting},
+        {"sysctl rollback retry is idempotent", testSysctlRollbackRetryIsIdempotent},
+        {"sudo rollback keeps other managed default",
+         testSudoRollbackKeepsOtherManagedDefault},
+        {"firewall undo invokes backend", testFirewallUndoInvokesBackend},
+        {"firewall undo failure fails closed", testFirewallUndoFailureFailsClosed},
+        {"device feature undo invokes backend", testDeviceFeatureUndoInvokesBackend},
+        {"device feature undo unknown feature is unsupported",
+         testDeviceFeatureUndoUnknownFeatureIsUnsupported},
+        {"journal update failure fails closed", testJournalUpdateFailureFailsClosed},
+        {"empty journal with sysctl hint and no managed ownership",
+         testEmptyJournalWithSysctlHintAndNoManagedOwnership}
+    };
+
+    std::size_t failures = 0;
+    for (const auto& [name, test] : tests) {
+        try {
+            test();
+            std::cout << "PASS: " << name << '\n';
+        } catch (const std::exception& exception) {
+            ++failures;
+            std::cerr << "FAIL: " << name << ": " << exception.what() << '\n';
+        }
+    }
+    return failures == 0 ? 0 : 1;
+}
+

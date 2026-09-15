@@ -22,6 +22,9 @@ public:
     bool apply () override;
     Sysctl();
     void setPlatformConfig(fic::platform::SysctlPlatformConfig platformConfig);
+
+    // Managed resource identifier for the rollback system (the sysctl key).
+    const std::string& managedResource() const { return sysctlParameter; }
 };
 
 #endif // SYSCTLEDIT_H

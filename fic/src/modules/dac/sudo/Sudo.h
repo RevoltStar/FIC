@@ -91,6 +91,23 @@ public:
          const fic::platform::PlatformExecutableResolver& executables);
     bool apply() override;
     ~Sudo() override;
+
+    // Managed resource identifier for the rollback system (the sudoers
+    // Defaults key), empty when the parameter type has no managed key.
+    std::string managedResource() const {
+        if (!sudoParameter) {
+            return {};
+        }
+        if (const auto* keyValue = dynamic_cast<const KeyValueDefaultsSudoersParam*>(
+                sudoParameter.get())) {
+            return keyValue->getKey();
+        }
+        if (const auto* single = dynamic_cast<const SingleDefaultsSudoersParam*>(
+                sudoParameter.get())) {
+            return single->getKey();
+        }
+        return {};
+    }
 };
 
 #endif // SUDOEDIT_H

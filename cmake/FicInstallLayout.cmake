@@ -29,6 +29,7 @@ set(FIC_COMMAND_HASH_FILE "${FIC_DATA_DIR}/commandhash.txt" CACHE FILEPATH "Trus
 set(FIC_DEVICE_DB_FILE "${FIC_DATA_DIR}/devices.db" CACHE FILEPATH "FIC device database")
 set(FIC_DEVICE_DB_LOCK_FILE "${FIC_LOG_DIR}/db_lock" CACHE FILEPATH "FIC device database lock")
 set(FIC_LOCK_DEBUG_LOG_FILE "${FIC_LOG_DIR}/lock_log.txt" CACHE FILEPATH "PID lock debug log")
+set(FIC_MUTATION_JOURNAL_FILE "${FIC_DATA_DIR}/mutation-journal.json" CACHE FILEPATH "Persistent mutation rollback journal")
 
 set(FIC_SYSTEMD_UNIT_DIR "/lib/systemd/system" CACHE PATH "systemd unit installation directory")
 set(FIC_TMPFILES_DIR "/usr/lib/tmpfiles.d" CACHE PATH "systemd-tmpfiles installation directory")

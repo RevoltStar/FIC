@@ -167,7 +167,10 @@ bool policy_list(PolicyRegistry& policyRegistry, std::string module);
 bool apply(PolicyRegistry& policyRegistry, std::string module, std::string policy);
 
 //Отключить политику
-bool disable (PolicyRegistry& policyRegistry, std::string module, std::string policy);
+bool disable (PolicyRegistry& policyRegistry,
+              const fic::platform::PlatformProfile& platform,
+              const fic::platform::PlatformExecutableResolver& executables,
+              std::string module, std::string policy);
 //Включить политику
 bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy);
 

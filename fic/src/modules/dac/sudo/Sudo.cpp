@@ -1,5 +1,6 @@
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "rollback/DaemonMutationJournal.h"
 
 #include <filesystem>
 #include <mutex>
@@ -123,6 +124,26 @@ bool Sudo::apply() {
     const SudoersValueObservation observation = configuration.inspectGlobalDefault(key);
     const std::string valueOld = observation.found ? observation.value : "[NOT SET]";
 
+    // Crash-consistent journaling: prepare the rollback record before the
+    // system mutation; record only a real FIC-owned change.
+    fic::rollback::MutationId mutationId = 0;
+    bool mutationPrepared = false;
+    const bool sudoNeedsChange = valueOld != valueNew;
+    if (sudoNeedsChange) {
+        std::string journalError;
+        fic::rollback::UndoAction undo{
+            fic::rollback::MutationBackend::Sudo,
+            fic::rollback::UndoRemoveManagedSetting{key, expectedValue}};
+        if (!fic::rollback::recordPreparedMutation(
+                this->policyRef(), key, undo, mutationId, journalError)) {
+            this->log("Не удалось подготовить запись mutation journal: " +
+                          journalError,
+                      logLevel::ERROR);
+            return false;
+        }
+        mutationPrepared = true;
+    }
+
     if(valueOld == valueNew){
         const std::string source = observation.source.path.empty()
             ? ""
@@ -141,8 +162,21 @@ bool Sudo::apply() {
         this->log(diagnostic, operation.ok ? logLevel::INFO : logLevel::WARN);
     }
     if (!operation.ok) {
+        std::string discardError;
+        if (mutationPrepared &&
+            !fic::rollback::discardMutation(mutationId, discardError)) {
+            this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                          discardError,
+                      logLevel::WARN);
+        }
         this->log(operation.message, logLevel::ERROR);
         return false;
+    }
+
+    std::string journalError;
+    if (mutationPrepared && !fic::rollback::commitMutation(mutationId, journalError)) {
+        this->log("Ошибка фиксации записи mutation journal: " + journalError,
+                  logLevel::WARN);
     }
 
     this->log(operation.message, logLevel::INFO);

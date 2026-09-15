@@ -1158,3 +1158,120 @@ SudoersOperationResult SudoersConfiguration::enforceAuthentication() {
         : "Нарушения требования аутентификации не обнаружены";
     return result;
 }
+
+SudoersOperationResult SudoersConfiguration::removeManagedGlobalDefault(
+    const std::string& key,
+    const std::string& expectedValue) {
+    SudoersOperationResult result;
+    std::string error;
+    if (!validate(error)) {
+        result.message = "Исходная конфигурация sudoers не прошла проверку: " + error;
+        return result;
+    }
+    if (!isManagedDirectoryIncluded()) {
+        result.message = "Каталог managed-файла не подключен через includedir: " +
+                         options_.managedPath.parent_path().string();
+        return result;
+    }
+
+    const SudoersValueObservation before = inspectGlobalDefault(key);
+    if (!before.found) {
+        result.ok = true;
+        result.targetMissing = true;
+        result.message = "Эффективное значение параметра " + key + " не найдено";
+        return result;
+    }
+    if (before.source.path != options_.managedPath) {
+        result.ok = true;
+        result.targetMissing = true;
+        result.message = "Эффективное значение " + key +
+                         " определяется вне managed-файла FIC: " +
+                         before.source.path.string();
+        return result;
+    }
+    if (!expectedValue.empty() && before.value != expectedValue) {
+        result.conflict = true;
+        result.message = "Управляемое значение " + key +
+                         " изменилось с момента применения: ожидалось '" +
+                         expectedValue + "', найдено '" + before.value + "'";
+        return result;
+    }
+
+    std::error_code existsError;
+    const bool managedExisted = std::filesystem::exists(options_.managedPath, existsError);
+    if (existsError) {
+        result.message = "Не удалось проверить managed-файл: " + existsError.message();
+        return result;
+    }
+    std::string originalContent;
+    if (managedExisted && !readExistingFile(options_.managedPath, originalContent, error)) {
+        result.message = error;
+        return result;
+    }
+
+    std::vector<std::string> lines;
+    size_t removedLines = 0;
+    for (const auto& [number, line] : physicalLines(originalContent)) {
+        (void)number;
+        if (startsManagedDefault(line, key) ||
+            line == "# Managed by FIC. Manual changes may be overwritten.") {
+            // The header marker is FIC-owned content too: it must not keep
+            // an otherwise-empty managed fragment alive.
+            ++removedLines;
+            continue;
+        }
+        lines.push_back(line);
+    }
+    const bool onlyBlankLinesRemain =
+        std::all_of(lines.begin(), lines.end(), [](const std::string& line) {
+            return line.find_first_not_of(" \t\r") == std::string::npos;
+        });
+
+    std::string newContent;
+    for (const std::string& line : lines) {
+        newContent += line + "\n";
+    }
+    if (managedExisted && onlyBlankLinesRemain) {
+        // The FIC-owned file became empty: remove it entirely instead of
+        // leaving an empty managed sudoers fragment behind.
+        std::error_code removeError;
+        std::filesystem::remove(options_.managedPath, removeError);
+        if (removeError) {
+            result.message = "Не удалось удалить пустой managed sudoers-файл: " +
+                             removeError.message();
+            return result;
+        }
+    } else if (!writeDocument(options_.managedPath, newContent, true, error)) {
+        result.message = "Не удалось записать managed sudoers-файл: " + error;
+        return result;
+    }
+    result.changed = removedLines > 0;
+
+    if (!validate(error)) {
+        std::string restoreError;
+        restoreManagedFile(managedExisted, originalContent, restoreError);
+        result.message = "Конфигурация sudoers не прошла проверку после удаления: " + error;
+        if (!restoreError.empty()) {
+            result.diagnostics.push_back("Ошибка отката: " + restoreError);
+        }
+        return result;
+    }
+
+    if (!load(error)) {
+        std::string restoreError;
+        restoreManagedFile(managedExisted, originalContent, restoreError);
+        result.message = "Не удалось перечитать sudoers после удаления: " + error;
+        return result;
+    }
+    const SudoersValueObservation after = inspectGlobalDefault(key);
+    if (after.found) {
+        result.diagnostics.push_back(
+            "Эффективное значение после удаления определяет: " +
+            after.source.path.string() + ":" + std::to_string(after.source.line));
+    }
+
+    result.ok = true;
+    result.message = "Managed значение " + key + " удалено из " +
+                     options_.managedPath.string();
+    return result;
+}

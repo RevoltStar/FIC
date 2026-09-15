@@ -98,7 +98,9 @@ bool FirewallBackend::executeScript(const std::string& executable,
 
 bool FirewallBackend::applyPolicy(const std::string& policyName,
                                   const std::vector<FirewallRule>& rules,
+                                  bool& changed,
                                   std::string& error) const {
+    changed = false;
     std::string executable;
     if (!resolveNft(executable, error)) {
         return false;
@@ -115,8 +117,9 @@ bool FirewallBackend::applyPolicy(const std::string& policyName,
         Logger::log("Refreshing managed firewall rule set: " + policyName,
                     logLevel::DEBUG, "daemon");
     }
-    if (!executeScript(
-            executable, buildPolicyScript(policyName, rules, actual), error)) {
+    const std::string script = buildPolicyScript(policyName, rules, actual);
+    changed = !script.empty();
+    if (!executeScript(executable, script, error)) {
         return false;
     }
     FirewallActualState verified;

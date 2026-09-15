@@ -563,6 +563,41 @@ target_include_directories(sysctl_configuration_tests PRIVATE
 target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
 add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
 
+add_executable(mutation_journal_tests
+    fic/rollback/MutationJournalTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+)
+target_include_directories(mutation_journal_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(mutation_journal_tests PRIVATE fic-core Threads::Threads)
+add_test(NAME mutation_journal_tests COMMAND mutation_journal_tests)
+
+add_executable(rollback_executor_tests
+    fic/rollback/RollbackExecutorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+)
+target_include_directories(rollback_executor_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(rollback_executor_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME rollback_executor_tests COMMAND rollback_executor_tests)
+
 add_executable(grub_policy_tests
     fic/modules/oss/grub/GrubPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
@@ -1189,6 +1224,8 @@ set(FIC_UNIT_TESTS
     file_handler_options_tests
     trusted_file_reader_tests
     sysctl_configuration_tests
+    mutation_journal_tests
+    rollback_executor_tests
     grub_policy_tests
     pam_configuration_tests
     pam_control_flow_analyzer_tests

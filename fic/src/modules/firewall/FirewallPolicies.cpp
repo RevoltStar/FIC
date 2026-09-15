@@ -4,6 +4,8 @@
 #include <fic/core/logging/Logger.h>
 #include <fic/core/config/ModuleConfigFileHandler.h>
 
+#include "rollback/DaemonMutationJournal.h"
+
 #include <iostream>
 #include <utility>
 
@@ -93,11 +95,55 @@ FirewallPolicy::FirewallPolicy(
 
 bool FirewallPolicy::applyRules(const std::vector<FirewallRule>& rules) {
     FirewallBackend backend(executables_);
+
+    // Crash-consistent journaling: prepare the rollback record before the
+    // nftables mutation; discard it when the apply turns out to be a no-op.
+    fic::rollback::MutationId mutationId = 0;
+    bool mutationPrepared = false;
+    {
+        std::string journalError;
+        fic::rollback::UndoAction undo{
+            fic::rollback::MutationBackend::Firewall,
+            fic::rollback::UndoRemoveFirewallPolicy{this->policyName}};
+        if (!fic::rollback::recordPreparedMutation(
+                this->policyRef(), this->policyName, undo, mutationId,
+                journalError)) {
+            this->log("Не удалось подготовить запись mutation journal: " +
+                          journalError,
+                      logLevel::ERROR);
+            return false;
+        }
+        mutationPrepared = true;
+    }
+
+    bool changed = false;
     std::string error;
-    if (!backend.applyPolicy(this->policyName, rules, error)) {
+    if (!backend.applyPolicy(this->policyName, rules, changed, error)) {
+        std::string discardError;
+        if (mutationPrepared &&
+            !fic::rollback::discardMutation(mutationId, discardError)) {
+            this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                          discardError,
+                      logLevel::WARN);
+        }
         this->log("Firewall policy apply failed: " + error, logLevel::ERROR);
         return false;
     }
+
+    std::string journalError;
+    if (!mutationPrepared) {
+        // unreachable, defensive
+    } else if (changed) {
+        if (!fic::rollback::commitMutation(mutationId, journalError)) {
+            this->log("Ошибка фиксации записи mutation journal: " + journalError,
+                      logLevel::WARN);
+        }
+    } else if (!fic::rollback::discardMutation(mutationId, journalError)) {
+        this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                      journalError,
+                  logLevel::WARN);
+    }
+
     this->log("Firewall policy state applied: " + this->policyName, logLevel::INFO);
     return true;
 }
