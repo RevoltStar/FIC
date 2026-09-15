@@ -118,11 +118,14 @@ I/O), это ошибка загрузки — fail closed. Существующ
 
 * `UndoRemoveManagedSetting{key, appliedValue}` — SYSCTL и SUDO: удалить
   FIC-owned запись ключа из managed-файла; `appliedValue` — fingerprint
-  последнего применённого значения для обнаружения drift. Для SYSCTL после
-  удаления пересчитывается эффективное значение из оставшихся источников
-  precedence и runtime sysctl приводится к нему (default не угадывается).
-  Для SUDO результат обязательно валидируется `visudo`; FIC-owned файл,
-  ставший пустым, удаляется.
+  последнего применённого значения для обнаружения drift. Ownership
+  определяется содержимым FIC managed-артефакта, а не текущим effective
+  source: внешняя запись (главный sudoers или другой include), перекрывающая
+  FIC-запись, не мешает её удалению. Drift внутри managed-артефакта —
+  `Conflict`. Для SYSCTL после удаления пересчитывается эффективное значение
+  из оставшихся источников precedence и runtime sysctl приводится к нему
+  (default не угадывается). Для SUDO результат обязательно валидируется
+  `visudo`; FIC-owned файл, ставший пустым, удаляется.
 * `UndoRemoveFirewallPolicy{policyName}` — удаление FIC-managed правила и
   обычная firewall reconciliation. Snapshot всего nftables ruleset не
   выполняется.
@@ -153,9 +156,9 @@ I/O), это ошибка загрузки — fail closed. Существующ
 
 Результат отката — типизированный `RollbackStatus`:
 `Success / NothingToDo / Conflict / Unsupported / Failed / Partial`.
-`NothingToDo` означает, что активные записи не требуют отката: для SYSCTL —
-FIC-owned запись нет в managed-артефакте (внешнее состояние никогда не
-трогается); это позволяет disable.
+`NothingToDo` означает, что активные записи не требуют отката: для SYSCTL
+и SUDO — FIC-owned запись нет в managed-артефакте (внешнее состояние никогда
+не трогается); это позволяет disable.
 Для legacy-установок (политика ENABLE, journal пуст) FIC не угадывает
 владение: provenance проверяется по содержимому FIC managed-артефакта
 (не по effective source), и при наличии там ресурса возвращается

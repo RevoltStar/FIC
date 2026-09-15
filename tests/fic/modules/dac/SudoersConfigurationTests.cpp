@@ -117,6 +117,39 @@ void testManagedOverrideRollsBackWhenNotEffective() {
     require(!std::filesystem::exists(options.managedPath), "failed override must be rolled back");
 }
 
+void testManagedInspectionIsIndependentFromEffectiveSource() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "Defaults timestamp_timeout=2\n"
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    // Sorts after zzzz-fic: shadows the FIC managed entry effectively.
+    writeFile(tree.root / "sudoers.d" / "zzzzz-external",
+              "Defaults timestamp_timeout=10\n");
+    writeFile(options.managedPath, "Defaults timestamp_timeout=5\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    const auto effective = configuration.inspectGlobalDefault("timestamp_timeout");
+    require(effective.found && effective.value == "10",
+            "external source must win the effective inspection");
+    require(effective.source.path != options.managedPath,
+            "effective value must not come from the FIC managed file");
+
+    const auto managed = configuration.inspectManagedGlobalDefault("timestamp_timeout");
+    require(managed.found, "shadowed managed entry must still be visible");
+    require(managed.value == "5",
+            "managed inspection must report the managed artifact value");
+    require(managed.source.path == options.managedPath,
+            "managed inspection source must be the FIC managed file");
+
+    const auto missing = configuration.inspectManagedGlobalDefault("passwd_tries");
+    require(!missing.found,
+            "keys absent from the managed artifact must not be reported");
+}
+
 void testAuthenticationRewrite() {
     TempTree tree;
     const auto options = optionsFor(tree);
@@ -399,6 +432,7 @@ int main() {
     try {
         testIncludeOrderAndManagedOverride();
         testManagedOverrideRollsBackWhenNotEffective();
+        testManagedInspectionIsIndependentFromEffectiveSource();
         testAuthenticationRewrite();
         testIncludeCycleAndMissingInclude();
         testUnsupportedCompoundHostSpecFailsClosed();

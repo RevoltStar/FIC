@@ -44,14 +44,22 @@ public:
     bool load(std::string& error);
     SudoersValueObservation inspectGlobalDefault(const std::string& key) const;
 
+    // Rollback support: inspect the FIC managed sudoers artifact only. The
+    // result reflects what FIC physically owns in options_.managedPath and
+    // is independent of which sudoers source currently wins precedence.
+    SudoersValueObservation inspectManagedGlobalDefault(
+        const std::string& key) const;
+
     SudoersOperationResult ensureManagedGlobalDefault(
         const std::string& key,
         const std::string& renderedLine,
         const std::string& expectedValue);
 
     // Rollback support: remove the FIC-managed global Defaults entry for the
-    // given key. Fails closed on drift (conflict) and refuses to touch values
-    // owned by other files (targetMissing).
+    // given key. Ownership is the managed artifact content: an external
+    // sudoers source may shadow the FIC entry while the entry still exists
+    // and is FIC-owned. Fails closed on drift (conflict) and reports
+    // targetMissing when the managed file has no entry for the key.
     SudoersOperationResult removeManagedGlobalDefault(
         const std::string& key,
         const std::string& expectedValue);

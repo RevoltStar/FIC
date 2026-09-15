@@ -816,6 +816,34 @@ SudoersValueObservation SudoersConfiguration::inspectGlobalDefault(const std::st
     return result;
 }
 
+SudoersValueObservation SudoersConfiguration::inspectManagedGlobalDefault(
+    const std::string& key) const {
+    SudoersValueObservation result;
+    const auto managedDocument = std::find_if(
+        documents_.begin(), documents_.end(),
+        [this](const Document& document) {
+            return document.path == options_.managedPath;
+        });
+    if (managedDocument == documents_.end()) {
+        return result;
+    }
+    const size_t documentIndex =
+        static_cast<size_t>(managedDocument - documents_.begin());
+    for (const OrderedLine& line : orderedLines_) {
+        if (line.documentIndex != documentIndex) {
+            continue;
+        }
+        std::string value;
+        if (!parseGlobalDefaults(line.text, key, value)) {
+            continue;
+        }
+        result.found = true;
+        result.value = std::move(value);
+        result.source = {managedDocument->path, line.firstLine};
+    }
+    return result;
+}
+
 bool SudoersConfiguration::isManagedDirectoryIncluded() const {
     const auto managedDirectory = normalizedExistingPath(options_.managedPath.parent_path());
     return std::find(includedDirectories_.begin(), includedDirectories_.end(), managedDirectory) !=
@@ -1174,26 +1202,23 @@ SudoersOperationResult SudoersConfiguration::removeManagedGlobalDefault(
         return result;
     }
 
-    const SudoersValueObservation before = inspectGlobalDefault(key);
-    if (!before.found) {
+    // Ownership is the managed artifact content, not the current effective
+    // source: an external sudoers file may shadow the FIC entry while the
+    // entry still exists and is FIC-owned. Such an entry must still be
+    // removed so it cannot become effective again later.
+    const SudoersValueObservation managed = inspectManagedGlobalDefault(key);
+    if (!managed.found) {
         result.ok = true;
         result.targetMissing = true;
-        result.message = "Эффективное значение параметра " + key + " не найдено";
+        result.message = "Managed запись параметра " + key +
+                         " отсутствует в managed-файле FIC";
         return result;
     }
-    if (before.source.path != options_.managedPath) {
-        result.ok = true;
-        result.targetMissing = true;
-        result.message = "Эффективное значение " + key +
-                         " определяется вне managed-файла FIC: " +
-                         before.source.path.string();
-        return result;
-    }
-    if (!expectedValue.empty() && before.value != expectedValue) {
+    if (!expectedValue.empty() && managed.value != expectedValue) {
         result.conflict = true;
         result.message = "Управляемое значение " + key +
                          " изменилось с момента применения: ожидалось '" +
-                         expectedValue + "', найдено '" + before.value + "'";
+                         expectedValue + "', найдено '" + managed.value + "'";
         return result;
     }
 

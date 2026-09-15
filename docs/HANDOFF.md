@@ -7,9 +7,11 @@
 
 ## Current task
 
-- Follow-up ревизия rollback MVP: исправление ownership semantics SYSCTL,
-  strong consistency MutationJournal, fail-closed open/read, enrollment
-  whitelist, commit-failure semantics backend'ов + regression tests
+- Follow-up #2 rollback MVP: SUDO managed Defaults rollback переведён на
+  managed-artifact ownership (как SYSCTL): новый
+  `SudoersConfiguration::inspectManagedGlobalDefault()`,
+  `removeManagedGlobalDefault` без effective-source guard, SUDO-ветка
+  `checkUnrecordedOwnership` по managed-артефакту + regression tests
   (см. `docs/rollback.md` — авторитетное описание).
 
 ## Accepted architecture / invariants
@@ -53,6 +55,13 @@
   consistency + fail-closed open/read + zero-byte invalid; enrollment
   whitelist; commit failure → apply failure в `Sysctl.cpp`, `Sudo.cpp`,
   `FirewallPolicies.cpp`, DC enable path `fic/src/main.cpp`.
+- Follow-up #2 (SUDO ownership): `inspectManagedGlobalDefault` (inspects
+  только managed-артефакт), `removeManagedGlobalDefault` — ownership по
+  managed-файлу (внешний override не мешает удалению FIC-записи, drift
+  managed-значения — Conflict), legacy provenance check SUDO — по
+  managed-артефакту. Regression tests: shadowed rollback, shadowed legacy
+  refusal, missing entry NothingToDo, visudo failure fail-closed, repeated
+  disable idempotent; unit-тест managed inspection.
 - `tests/CMakeLists.txt`: `mutation_journal_tests` теперь линкует
   `fic-policy` (include `fic/policy/PolicyDependency.h`).
 - `docs/rollback.md` обновлён по всем пунктам follow-up.
@@ -77,11 +86,9 @@
 ## Remaining
 
 - Изменения не закоммичены.
-- Если full CTest не был завершён — прогнать
-  `ctest --test-dir build-check --output-on-failure`.
-- Известное same-class ограничение вне follow-up scope: SUDO
-  `removeManagedGlobalDefault`/legacy-check по-прежнему используют
-  effective-source семантику (как для SYSCTL не переводились на
-  managed-artifact ownership); при перекрытии managed sudoers-значения
-  главным sudoers disabling может дать NothingToDo вместо удаления FIC
-  записи. Потенциальный следующий fix, требует отдельной задачи.
+- Известное ограничение вне scope: эффективная модель precedence sudoers в
+  `SudoersConfiguration` (последний совпавший `Defaults` в порядке
+  expand) не моделирует все нюансы реального sudo (см. `docs/rollback.md`);
+  на rollback safety не влияет — rollback работает по managed-артефакту.
+- Ownership SUDO NOPASSWD/PASSWD specs (`sudo_require_authentication`) —
+  Unsupported и вне rollback scope.

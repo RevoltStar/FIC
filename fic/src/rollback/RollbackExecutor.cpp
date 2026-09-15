@@ -378,10 +378,13 @@ RollbackReport checkUnrecordedOwnership(
             report.message = "Не удалось проанализировать sudoers: " + error;
             return report;
         }
-        const SudoersValueObservation observation =
-            configuration.inspectGlobalDefault(resourceHint);
-        if (observation.found &&
-            observation.source.path == options.managedPath) {
+        // Legacy provenance check uses the FIC managed artifact content, not
+        // the effective source: an entry shadowed by the main sudoers or
+        // another include is still FIC-owned persistent state and must not
+        // be silently kept.
+        const SudoersValueObservation managed =
+            configuration.inspectManagedGlobalDefault(resourceHint);
+        if (managed.found) {
             return provenanceUnavailable(policy);
         }
         return report;
