@@ -605,6 +605,7 @@ add_executable(grub_policy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/Grub.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_timeout.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_cmdline_linux.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_disable_recovery.cpp

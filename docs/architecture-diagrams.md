@@ -1222,7 +1222,10 @@ validate-only. Metadata всех provider targets валидируется fail-
 topology. Остальные ALT package-owned связи остаются обычными remediate
 aliases: `/etc/sysctl.conf` → `/etc/sysctl.d/99-sysctl.conf` и `/etc/grub.cfg`
 → `/boot/grub/grub.cfg`. GRUB-политики редактируют regular file
-`/etc/sysconfig/grub2`, а не symlink `/etc/default/grub`.
+`/etc/sysconfig/grub2`, а не symlink `/etc/default/grub`. На Debian/Ubuntu
+GRUB-политики не редактируют shared `/etc/default/grub`: FIC владеет строгим
+drop-in `/etc/default/grub.d/zzzz-fic.cfg` и fail closed при наличии более
+позднего применимого `*.cfg`.
 
 Для защищаемых системных команд исключений также нет;
 пути merged-`/usr` с symlink-каталогами продолжают работать как обычные пути,

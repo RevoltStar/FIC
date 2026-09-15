@@ -31,6 +31,13 @@ struct GrubConfigurationOptions {
     bool enforceOwnership = true;
 };
 
+struct GrubManagedConfigurationOptions {
+    std::filesystem::path managedPath;
+    std::filesystem::path rebuildExecutable;
+    std::vector<std::string> rebuildArguments;
+    bool enforceOwnership = true;
+};
+
 using GrubCommandRunner = std::function<ProcessResult(
     const std::string&,
     const std::vector<std::string>&,
@@ -72,5 +79,11 @@ private:
     bool rollbackAfterRebuildFailure(std::string& error) const;
     void clear();
 };
+
+GrubOperationResult ensureManagedGrubDropInValue(
+    const GrubManagedConfigurationOptions& options,
+    const std::string& key,
+    const std::string& value,
+    GrubCommandRunner runner = {});
 
 #endif // FIC_OSS_GRUB_CONFIGURATION_H

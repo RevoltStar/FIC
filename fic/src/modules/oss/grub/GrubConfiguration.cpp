@@ -1,4 +1,5 @@
 #include "modules/oss/grub/GrubConfiguration.h"
+#include "modules/oss/grub/GrubManagedConfig.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
@@ -223,21 +224,44 @@ std::string processFailure(const ProcessResult& result) {
     return "код возврата " + std::to_string(result.exitCode);
 }
 
+GrubCommandRunner effectiveRunner(GrubCommandRunner runner) {
+    if (runner) return runner;
+    return [](const std::string& executable,
+              const std::vector<std::string>& arguments,
+              const ProcessOptions& processOptions) {
+        return VerifiedProcessExecutor::execute(
+            executable, arguments, processOptions);
+    };
+}
+
+bool runRebuild(const std::filesystem::path& executable,
+                const std::vector<std::string>& arguments,
+                const GrubCommandRunner& runner,
+                std::string& error) {
+    if (executable.empty() || !executable.is_absolute()) {
+        error = "Профиль платформы не задаёт команду пересборки GRUB";
+        return false;
+    }
+    ProcessOptions processOptions;
+    processOptions.clearEnvironment = true;
+    processOptions.timeout = std::chrono::seconds(60);
+    const ProcessResult result = runner(
+        executable.string(), arguments, processOptions);
+    if (!result.success()) {
+        error = "Не удалось пересобрать конфигурацию GRUB: " +
+            processFailure(result);
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 } // namespace
 
 GrubConfiguration::GrubConfiguration(GrubConfigurationOptions options,
                                      GrubCommandRunner runner)
     : options_(std::move(options)),
-      runner_(std::move(runner)) {
-    if (!runner_) {
-        runner_ = [](const std::string& executable,
-                     const std::vector<std::string>& arguments,
-                     const ProcessOptions& processOptions) {
-            return VerifiedProcessExecutor::execute(
-                executable, arguments, processOptions);
-        };
-    }
-}
+      runner_(effectiveRunner(std::move(runner))) {}
 
 void GrubConfiguration::clear() {
     document_ = {};
@@ -399,25 +423,9 @@ bool GrubConfiguration::verifyOriginalRestored(std::string& error) const {
 }
 
 bool GrubConfiguration::rebuild(std::string& error) const {
-    if (options_.rebuildExecutable.empty() ||
-        !options_.rebuildExecutable.is_absolute()) {
-        error = "Профиль платформы не задаёт команду пересборки GRUB";
-        return false;
-    }
-
-    ProcessOptions processOptions;
-    processOptions.clearEnvironment = true;
-    processOptions.timeout = std::chrono::seconds(60);
-    const ProcessResult result = runner_(
-        options_.rebuildExecutable.string(), options_.rebuildArguments,
-        processOptions);
-    if (!result.success()) {
-        error = "Не удалось пересобрать конфигурацию GRUB: " +
-            processFailure(result);
-        return false;
-    }
-    error.clear();
-    return true;
+    return runRebuild(
+        options_.rebuildExecutable, options_.rebuildArguments,
+        runner_, error);
 }
 
 bool GrubConfiguration::rollbackAfterRebuildFailure(std::string& error) const {
@@ -557,5 +565,110 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
         result.diagnostics.push_back(
             "Параметр " + requested + " отсутствовал в GRUB-конфигурации");
     }
+    return result;
+}
+
+GrubOperationResult ensureManagedGrubDropInValue(
+    const GrubManagedConfigurationOptions& options,
+    const std::string& key,
+    const std::string& value,
+    GrubCommandRunner runner) {
+    GrubOperationResult result;
+    runner = effectiveRunner(std::move(runner));
+    GrubManagedConfig configuration({
+        options.managedPath, options.enforceOwnership});
+    if (!configuration.loadConfig()) {
+        result.message = "Не удалось загрузить managed GRUB-конфигурацию: " +
+            configuration.lastError();
+        return result;
+    }
+
+    const bool found = configuration.isParameterExists(key);
+    const std::string previousValue = found
+        ? configuration.getValue(key)
+        : std::string{};
+    if (found && configuration.getValue(key) == value) {
+        std::string rebuildError;
+        if (!configuration.snapshotUnchanged(rebuildError)) {
+            result.message = "Managed GRUB-конфигурация изменилась перед "
+                "пересборкой: " + rebuildError;
+            return result;
+        }
+        if (!runRebuild(
+                options.rebuildExecutable, options.rebuildArguments,
+                runner, rebuildError)) {
+            result.message = rebuildError;
+            return result;
+        }
+        result.ok = true;
+        result.message =
+            "Persistent-значение GRUB соответствует политике; grub.cfg пересобран";
+        return result;
+    }
+
+    if (!configuration.setValue(key, value)) {
+        result.message = configuration.lastError();
+        return result;
+    }
+
+    auto restore = [&](const std::string& context) {
+        std::string restoreError;
+        if (!configuration.restoreOriginal(restoreError) ||
+            !configuration.verifyOriginal(restoreError)) {
+            result.diagnostics.push_back(
+                context + ": не удалось восстановить исходный managed GRUB-файл: " +
+                restoreError);
+            return false;
+        }
+        return true;
+    };
+
+    std::string error;
+    bool installed = false;
+    if (!configuration.saveConfig(error, installed)) {
+        result.message = "Не удалось записать managed GRUB-конфигурацию: " + error;
+        if (installed) restore("Ошибка записи после atomic replace");
+        return result;
+    }
+
+    GrubManagedConfig verification({
+        options.managedPath, options.enforceOwnership});
+    if (!verification.loadConfig() ||
+        verification.entries() != configuration.entries()) {
+        const std::string verificationError = verification.lastError().empty()
+            ? "managed GRUB-файл не соответствует записанному состоянию"
+            : verification.lastError();
+        result.message = "Не удалось проверить managed GRUB-файл после записи: " +
+            verificationError;
+        restore("Ошибка post-write verification");
+        return result;
+    }
+
+    if (!runRebuild(
+            options.rebuildExecutable, options.rebuildArguments,
+            runner, error)) {
+        result.message = "Новая GRUB-конфигурация не активирована: " + error;
+        if (restore("Ошибка пересборки GRUB")) {
+            std::string compensationError;
+            if (!runRebuild(
+                    options.rebuildExecutable, options.rebuildArguments,
+                    runner, compensationError)) {
+                result.diagnostics.push_back(
+                    "Исходный managed GRUB-файл восстановлен, но "
+                    "компенсирующая пересборка завершилась ошибкой: " +
+                    compensationError);
+            }
+        }
+        return result;
+    }
+
+    result.ok = true;
+    result.changed = true;
+    result.message = "Отклонение GRUB исправлено и grub.cfg пересобран";
+    result.diagnostics.push_back(
+        found
+            ? "Предыдущее managed-значение " + key + " = " +
+                previousValue
+            : "Параметр " + key + " отсутствовал в managed GRUB-конфигурации");
     return result;
 }

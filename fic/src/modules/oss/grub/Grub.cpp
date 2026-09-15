@@ -62,21 +62,39 @@ bool Grub::applyGrubValue(
         return false;
     }
 
-    GrubConfiguration configuration(GrubConfigurationOptions{
-        platformConfig_.defaultsPath,
-        rebuildExecutable,
-        platformConfig_.rebuildArguments,
-        enforceOwnership_
-    });
-    std::string error;
-    if (!configuration.load(error)) {
-        this->log("Не удалось загрузить GRUB-конфигурацию: " + error,
+    GrubOperationResult operation;
+    switch (platformConfig_.topology) {
+    case fic::platform::GrubConfigTopology::OwnedDefaultsDropIn:
+        operation = ensureManagedGrubDropInValue(
+            GrubManagedConfigurationOptions{
+                platformConfig_.managedConfigPath,
+                rebuildExecutable,
+                platformConfig_.rebuildArguments,
+                enforceOwnership_},
+            grubKey,
+            actualExpected);
+        break;
+    case fic::platform::GrubConfigTopology::SharedDefaultsFile: {
+        GrubConfiguration configuration(GrubConfigurationOptions{
+            platformConfig_.sharedDefaultsPath,
+            rebuildExecutable,
+            platformConfig_.rebuildArguments,
+            enforceOwnership_});
+        std::string error;
+        if (!configuration.load(error)) {
+            this->log("Не удалось загрузить GRUB-конфигурацию: " + error,
+                      logLevel::ERROR);
+            return false;
+        }
+        operation = configuration.ensureManagedValue(
+            grubKey, actualExpected);
+        break;
+    }
+    default:
+        this->log("Неизвестная topology GRUB-конфигурации",
                   logLevel::ERROR);
         return false;
     }
-
-    const GrubOperationResult operation =
-        configuration.ensureManagedValue(grubKey, actualExpected);
     for (const std::string& diagnostic : operation.diagnostics) {
         this->log(diagnostic, operation.ok ? logLevel::INFO : logLevel::WARN);
     }

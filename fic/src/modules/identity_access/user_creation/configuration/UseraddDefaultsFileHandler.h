@@ -31,7 +31,7 @@ public:
     bool loadConfig() override;
     std::string getValue(const std::string& parameter) const override;
     bool setValue(const std::string& parameter, const std::string& value) override;
-    bool removeValue(const std::string& parameter);
+    bool removeValue(const std::string& parameter) override;
     UseraddDefaultsValue lookup(const std::string& parameter) const;
     bool saveAndReload();
 

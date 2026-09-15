@@ -188,7 +188,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {"/etc/gdm/custom.conf"};
-    profile.grub.defaultsPath = "/etc/sysconfig/grub2";
+    profile.grub.topology = GrubConfigTopology::SharedDefaultsFile;
+    profile.grub.sharedDefaultsPath = "/etc/sysconfig/grub2";
     profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};
     profile.dac.protectedSystemFiles = {
         {"/etc/bashrc", "root", "root", 0644},

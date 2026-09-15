@@ -518,12 +518,20 @@ void testSelectedProfile() {
                             "/usr/bin/pam-auth-update"},
                 "Debian-family pam-auth-update executable contract is incorrect");
     }
-    const std::filesystem::path expectedGrubDefaults =
-        profile.id == "alt-p11"
-            ? "/etc/sysconfig/grub2"
-            : "/etc/default/grub";
-    require(profile.grub.defaultsPath == expectedGrubDefaults,
-            "GRUB defaults path is incorrect");
+    if (profile.id == "alt-p11") {
+        require(profile.grub.topology ==
+                    fic::platform::GrubConfigTopology::SharedDefaultsFile &&
+                    profile.grub.sharedDefaultsPath == "/etc/sysconfig/grub2" &&
+                    profile.grub.managedConfigPath.empty(),
+                "ALT GRUB shared-file topology is incorrect");
+    } else {
+        require(profile.grub.topology ==
+                    fic::platform::GrubConfigTopology::OwnedDefaultsDropIn &&
+                    profile.grub.sharedDefaultsPath.empty() &&
+                    profile.grub.managedConfigPath ==
+                        "/etc/default/grub.d/zzzz-fic.cfg",
+                "Debian-family GRUB owned-drop-in topology is incorrect");
+    }
     require(hasRule(profile.dac.protectedSystemFiles,
                     profile.sudo.mainConfigPath),
             "the selected sudoers configuration must be protected by DAC policy");
@@ -1297,9 +1305,25 @@ void testInvalidProfileIsRejected() {
             "a numeric user primary group default must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.grub.defaultsPath = "etc/default/grub";
+    if (profile.grub.topology ==
+        fic::platform::GrubConfigTopology::OwnedDefaultsDropIn) {
+        profile.grub.managedConfigPath = "etc/default/grub.d/zzzz-fic.cfg";
+    } else {
+        profile.grub.sharedDefaultsPath = "etc/sysconfig/grub2";
+    }
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative GRUB defaults path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    if (profile.grub.topology ==
+        fic::platform::GrubConfigTopology::OwnedDefaultsDropIn) {
+        profile.grub.sharedDefaultsPath = "/etc/default/grub";
+    } else {
+        profile.grub.managedConfigPath =
+            "/etc/default/grub.d/zzzz-fic.cfg";
+    }
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "GRUB topology with both path kinds must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.sudo.securePathDefault = "/usr/bin::/bin";

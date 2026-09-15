@@ -226,7 +226,7 @@ def main():
         "PamCapability::PasswordQuality",
         "displayManager.sddmConfigPath",
         "displayManager.gdmConfigCandidates",
-        "grub.defaultsPath",
+        "grub.topology",
         "grub.rebuildArguments",
         "dac.protectedSystemFiles",
         "dac.protectedSystemCommands",
@@ -431,8 +431,23 @@ def main():
     )
 
     alt_profile = profiles["alt-p11"]
+    grub_apply = (root / "fic/src/modules/oss/grub/Grub.cpp").read_text(
+        encoding="utf-8"
+    )
     require(
-        'profile.grub.defaultsPath = "/etc/sysconfig/grub2";' in alt_profile,
+        "switch (platformConfig_.topology)" in grub_apply
+        and "OwnedDefaultsDropIn" in grub_apply
+        and "SharedDefaultsFile" in grub_apply,
+        "GRUB apply does not select an explicit platform topology",
+    )
+    require(
+        "/etc/default/grub" not in grub_apply and "removeValue" not in grub_apply,
+        "GRUB policy layer must not edit the Debian shared file or clean up on DISABLE",
+    )
+    require(
+        "profile.grub.topology = GrubConfigTopology::SharedDefaultsFile;" in alt_profile
+        and 'profile.grub.sharedDefaultsPath = "/etc/sysconfig/grub2";' in alt_profile
+        and "profile.grub.managedConfigPath" not in alt_profile,
         "ALT p11 GRUB policies do not use the canonical regular defaults file",
     )
     require(
@@ -462,6 +477,14 @@ def main():
             f"ALT p11 does not allow the package-owned target of {path}",
         )
     for name in ("debian-12", "debian-13", "ubuntu-24.04", "ubuntu-26.04"):
+        require(
+            "profile.grub.topology = GrubConfigTopology::OwnedDefaultsDropIn;"
+            in profiles[name]
+            and 'profile.grub.managedConfigPath = "/etc/default/grub.d/zzzz-fic.cfg";'
+            in profiles[name]
+            and "profile.grub.sharedDefaultsPath" not in profiles[name],
+            f"{name} GRUB owned drop-in topology is incorrect",
+        )
         require(
             "profile.grub.rebuildArguments = {};" in profiles[name],
             f"{name} update-grub must not receive arguments",

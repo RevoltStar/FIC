@@ -386,8 +386,15 @@ struct DisplayManagerPlatformConfig {
     std::vector<std::filesystem::path> gdmConfigCandidates;
 };
 
+enum class GrubConfigTopology {
+    OwnedDefaultsDropIn,
+    SharedDefaultsFile
+};
+
 struct GrubPlatformConfig {
-    std::filesystem::path defaultsPath;
+    GrubConfigTopology topology = GrubConfigTopology::OwnedDefaultsDropIn;
+    std::filesystem::path sharedDefaultsPath;
+    std::filesystem::path managedConfigPath;
     std::vector<std::string> rebuildArguments;
 };
 

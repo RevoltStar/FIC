@@ -3,6 +3,7 @@
 #include "modules/oss/grub/policies/OSS_grub_disable_recovery.h"
 #include "modules/oss/grub/policies/OSS_grub_timeout.h"
 #include "modules/oss/grub/GrubConfiguration.h"
+#include "modules/oss/grub/GrubManagedConfig.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 
@@ -47,6 +48,13 @@ std::string readFile(const fs::path& path) {
     return std::string(
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>());
+}
+
+struct stat fileStatus(const fs::path& path) {
+    struct stat status {};
+    require(::lstat(path.c_str(), &status) == 0,
+            "could not stat " + path.string());
+    return status;
 }
 
 void initializeRuntimePaths(const fs::path& root) {
@@ -111,7 +119,8 @@ public:
         const fic::platform::PlatformExecutableResolver& executables)
         : Grub(
               fic::platform::GrubPlatformConfig{
-                  "/etc/default/grub", {}},
+                  fic::platform::GrubConfigTopology::SharedDefaultsFile,
+                  "/etc/default/grub", {}, {}},
               executables) {
         this->policyName = "grub_test_policy";
         this->policyTypeValue =
@@ -151,6 +160,16 @@ private:
 GrubConfigurationOptions testOptions(const fs::path& defaults) {
     GrubConfigurationOptions options;
     options.defaultsPath = defaults;
+    options.rebuildExecutable = "/test/grub-rebuild";
+    options.rebuildArguments = {"--output", "/test/grub.cfg"};
+    options.enforceOwnership = false;
+    return options;
+}
+
+GrubManagedConfigurationOptions managedTestOptions(
+    const fs::path& managed) {
+    GrubManagedConfigurationOptions options;
+    options.managedPath = managed;
     options.rebuildExecutable = "/test/grub-rebuild";
     options.rebuildArguments = {"--output", "/test/grub.cfg"};
     options.enforceOwnership = false;
@@ -335,10 +354,233 @@ void testUnsafeInputAndPathsFailClosed(const fs::path& root) {
             "missing GRUB defaults must not be created implicitly");
 }
 
+void testAltSharedTopologyStaysShared(const fs::path& root) {
+    const fs::path defaults = root / "alt/etc/sysconfig/grub2";
+    const fs::path managed =
+        root / "alt/etc/default/grub.d/zzzz-fic.cfg";
+    writeFile(defaults, "GRUB_TIMEOUT=5\n");
+    std::size_t rebuildCalls = 0;
+    GrubConfigurationOptions options = testOptions(defaults);
+    options.rebuildArguments = {"-o", "/etc/grub.cfg"};
+    GrubConfiguration configuration(
+        options,
+        [&rebuildCalls](const std::string&,
+                        const std::vector<std::string>& arguments,
+                        const ProcessOptions&) {
+            ++rebuildCalls;
+            require(arguments == std::vector<std::string>{
+                        "-o", "/etc/grub.cfg"},
+                    "ALT rebuild arguments changed");
+            return successfulProcess();
+        });
+    std::string error;
+    require(configuration.load(error), error);
+    const GrubOperationResult result =
+        configuration.ensureManagedValue("GRUB_TIMEOUT", "10");
+    require(result.ok && result.changed && rebuildCalls == 1 &&
+                readFile(defaults).find("GRUB_TIMEOUT=\"10\"") !=
+                    std::string::npos &&
+                !fs::exists(managed),
+            "ALT shared topology used a managed Debian drop-in");
+}
+
+void testManagedDropInEditingAndIdempotence(const fs::path& root) {
+    const fs::path directory = root / "managed-edit/etc/default/grub.d";
+    const fs::path managed = directory / "zzzz-fic.cfg";
+    const fs::path shared = root / "managed-edit/etc/default/grub";
+    fs::create_directories(directory);
+    writeFile(shared, "GRUB_TIMEOUT=3\n");
+    writeFile(directory / "50-vendor.cfg", "GRUB_DEFAULT=0\n");
+
+    std::size_t rebuildCalls = 0;
+    const GrubCommandRunner runner =
+        [&rebuildCalls](const std::string& executable,
+                        const std::vector<std::string>& arguments,
+                        const ProcessOptions& processOptions) {
+            ++rebuildCalls;
+            require(executable == "/test/grub-rebuild" &&
+                        arguments == std::vector<std::string>{
+                            "--output", "/test/grub.cfg"} &&
+                        processOptions.clearEnvironment,
+                    "managed GRUB rebuild contract changed");
+            return successfulProcess();
+        };
+
+    GrubOperationResult result = ensureManagedGrubDropInValue(
+        managedTestOptions(managed), "GRUB_TIMEOUT", "10", runner);
+    require(result.ok && result.changed && rebuildCalls == 1,
+            "missing managed GRUB file was not created and rebuilt");
+    require(readFile(shared) == "GRUB_TIMEOUT=3\n",
+            "Debian owned topology modified /etc/default/grub");
+    require(readFile(managed) ==
+                "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"10\"\n",
+            "managed GRUB file was not canonically generated");
+    require((fileStatus(managed).st_mode & 07777) == 0644,
+            "managed GRUB file mode is unsafe");
+
+    const std::string cmdline =
+        "quiet \"quoted\" \\path $literal `literal` ;&";
+    result = ensureManagedGrubDropInValue(
+        managedTestOptions(managed), "GRUB_CMDLINE_LINUX", cmdline, runner);
+    require(result.ok && result.changed && rebuildCalls == 2,
+            "second managed GRUB key was not added");
+    GrubManagedConfig verification({managed, false});
+    require(verification.loadConfig() &&
+                verification.getValue("GRUB_TIMEOUT") == "10" &&
+                verification.getValue("GRUB_CMDLINE_LINUX") == cmdline,
+            "managed GRUB escaping did not round-trip logical values");
+    const std::string escaped = readFile(managed);
+    require(escaped.find("\\\"quoted\\\"") != std::string::npos &&
+                escaped.find("\\\\path") != std::string::npos &&
+                escaped.find("\\$literal") != std::string::npos &&
+                escaped.find("\\`literal\\`") != std::string::npos,
+            "managed GRUB shell-special characters were not escaped");
+
+    result = ensureManagedGrubDropInValue(
+        managedTestOptions(managed), "GRUB_TIMEOUT", "20", runner);
+    require(result.ok && result.changed && rebuildCalls == 3,
+            "existing managed GRUB value was not changed");
+    const ino_t inodeBefore = fileStatus(managed).st_ino;
+    const std::string contentBefore = readFile(managed);
+    result = ensureManagedGrubDropInValue(
+        managedTestOptions(managed), "GRUB_TIMEOUT", "20", runner);
+    require(result.ok && !result.changed && rebuildCalls == 4 &&
+                fileStatus(managed).st_ino == inodeBefore &&
+                readFile(managed) == contentBefore,
+            "idempotent managed apply rewrote the file or skipped rebuild");
+}
+
+void testManagedTopologyAndStrictFormat(const fs::path& root) {
+    const fs::path directory = root / "managed-strict/etc/default/grub.d";
+    fs::create_directories(directory);
+
+    const std::vector<std::string> invalidDocuments = {
+        "GRUB_TIMEOUT=\"10\"\n",
+        "# Managed by FIC. Do not edit.\nUNKNOWN=\"x\"\n",
+        "# Managed by FIC. Do not edit.\nGRUB_TIMEOUT=\"5\"\nGRUB_TIMEOUT=\"10\"\n",
+        "# Managed by FIC. Do not edit.\nGRUB_TIMEOUT=10\n",
+        "# Managed by FIC. Do not edit.\nGRUB_TIMEOUT=\"1\"0\"\n",
+        "# Managed by FIC. Do not edit.\nGRUB_CMDLINE_LINUX=\"quiet $(id)\"\n",
+        "# Managed by FIC. Do not edit.\nsource /tmp/other\n"
+    };
+    for (std::size_t index = 0; index < invalidDocuments.size(); ++index) {
+        const fs::path caseDirectory = directory / std::to_string(index);
+        const fs::path path = caseDirectory / "zzzz-fic.cfg";
+        fs::create_directories(caseDirectory);
+        writeFile(path, invalidDocuments[index]);
+        GrubManagedConfig configuration({path, false});
+        require(!configuration.loadConfig(),
+                "invalid managed GRUB document was accepted: " +
+                    std::to_string(index));
+    }
+
+    const fs::path inputDirectory = directory / "input";
+    const fs::path inputPath = inputDirectory / "zzzz-fic.cfg";
+    fs::create_directories(inputDirectory);
+    GrubManagedConfig input({inputPath, false});
+    require(input.loadConfig(), input.lastError());
+    require(!input.setValue("GRUB_TIMEOUT", "10\r") &&
+                !input.setValue("GRUB_TIMEOUT", "10\n") &&
+                !input.setValue("GRUB_TIMEOUT", std::string("10\0x", 4)),
+            "CR, LF, or NUL managed GRUB values were accepted");
+    require(!fs::exists(inputPath),
+            "rejected managed values created the managed file");
+
+    const fs::path symlinkDirectory = directory / "symlink";
+    const fs::path symlinkPath = symlinkDirectory / "zzzz-fic.cfg";
+    fs::create_directories(symlinkDirectory);
+    writeFile(symlinkDirectory / "target", "# Managed by FIC. Do not edit.\n");
+    fs::create_symlink("target", symlinkPath);
+    GrubManagedConfig symlinkConfig({symlinkPath, false});
+    require(!symlinkConfig.loadConfig(),
+            "managed GRUB symlink was accepted");
+
+    const fs::path unsafeDirectory = directory / "unsafe";
+    const fs::path unsafePath = unsafeDirectory / "zzzz-fic.cfg";
+    fs::create_directories(unsafeDirectory);
+    writeFile(unsafePath, "# Managed by FIC. Do not edit.\n", 0666);
+    GrubManagedConfig unsafeConfig({unsafePath, true});
+    require(!unsafeConfig.loadConfig(),
+            "unsafe managed GRUB ownership or mode was accepted");
+}
+
+void testManagedDropInOrdering(const fs::path& root) {
+    const fs::path earlyDirectory = root / "ordering-early/etc/default/grub.d";
+    const fs::path earlyManaged = earlyDirectory / "zzzz-fic.cfg";
+    fs::create_directories(earlyDirectory);
+    writeFile(earlyDirectory / "00-vendor.cfg", "GRUB_DEFAULT=0\n");
+    writeFile(earlyDirectory / ".zzzzz-hidden.cfg", "GRUB_TIMEOUT=99\n");
+    std::size_t earlyCalls = 0;
+    GrubOperationResult early = ensureManagedGrubDropInValue(
+        managedTestOptions(earlyManaged), "GRUB_TIMEOUT", "10",
+        [&earlyCalls](const std::string&, const std::vector<std::string>&,
+                      const ProcessOptions&) {
+            ++earlyCalls;
+            return successfulProcess();
+        });
+    require(early.ok && earlyCalls == 1,
+            "earlier GRUB drop-in incorrectly blocked apply");
+
+    const fs::path lateDirectory = root / "ordering-late/etc/default/grub.d";
+    const fs::path lateManaged = lateDirectory / "zzzz-fic.cfg";
+    fs::create_directories(lateDirectory);
+    const std::string original =
+        "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"5\"\n";
+    writeFile(lateManaged, original);
+    writeFile(lateDirectory / "zzzzz-local.cfg", "GRUB_TIMEOUT=99\n");
+    std::size_t lateCalls = 0;
+    GrubOperationResult late = ensureManagedGrubDropInValue(
+        managedTestOptions(lateManaged), "GRUB_TIMEOUT", "10",
+        [&lateCalls](const std::string&, const std::vector<std::string>&,
+                     const ProcessOptions&) {
+            ++lateCalls;
+            return successfulProcess();
+        });
+    require(!late.ok && lateCalls == 0 && readFile(lateManaged) == original,
+            "later GRUB drop-in did not fail before mutation and rebuild");
+}
+
+void testManagedRebuildFailureCompensation(const fs::path& root) {
+    const auto runCase = [&](const std::string& name,
+                             bool initiallyExists,
+                             bool compensationSucceeds) {
+        const fs::path directory =
+            root / ("managed-compensation-" + name) / "etc/default/grub.d";
+        const fs::path managed = directory / "zzzz-fic.cfg";
+        fs::create_directories(directory);
+        const std::string original =
+            "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"5\"\n";
+        if (initiallyExists) writeFile(managed, original);
+        std::size_t calls = 0;
+        GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed), "GRUB_TIMEOUT", "10",
+            [&calls, compensationSucceeds](
+                const std::string&, const std::vector<std::string>&,
+                const ProcessOptions&) {
+                ++calls;
+                return calls == 2 && compensationSucceeds
+                    ? successfulProcess()
+                    : failedProcess("injected rebuild failure");
+            });
+        require(!result.ok && calls == 2,
+                "managed rebuild failure did not run compensation rebuild");
+        require(initiallyExists
+                    ? fs::exists(managed) && readFile(managed) == original
+                    : !fs::exists(managed),
+                "managed source was not restored after rebuild failure");
+        require(compensationSucceeds || !result.diagnostics.empty(),
+                "compensating rebuild failure was not diagnosed");
+    };
+    runCase("existing", true, true);
+    runCase("created", false, true);
+    runCase("double-failure", true, false);
+}
+
 void testConcretePolicyContracts(
     const fic::platform::PlatformExecutableResolver& executables) {
     const fic::platform::GrubPlatformConfig platform{
-        "/etc/default/grub", {}};
+        fic::platform::GrubConfigTopology::OwnedDefaultsDropIn,
+        {}, "/etc/default/grub.d/zzzz-fic.cfg", {}};
     OSS_grub_timeout timeout(platform, executables);
     require(timeout.moduleName == "OSS" && timeout.submoduleName == "Grub" &&
                 timeout.policyName == "grub_timeout",
@@ -413,7 +655,8 @@ int main() {
             fakeExecutable.string() +
                 "=275239824e00e61b0a220e61a41791c7e9b4bd726f8b0c27077a338f8131c9dc\n");
         ApplyingGrubPolicy applyingPolicy(
-            {applyDefaults, {}}, resolver);
+            {fic::platform::GrubConfigTopology::SharedDefaultsFile,
+             applyDefaults, {}, {}}, resolver);
         require(!applyingPolicy.apply(),
                 "matching defaults bypassed the mandatory GRUB rebuild");
 
@@ -428,7 +671,8 @@ int main() {
         require(!invalidPolicy.apply() && !invalidPolicy.called,
                 "invalid value must fail before Grub hook");
         OSS_grub_cmdline_linux malformedCmdline(
-            {applyDefaults, {}}, resolver);
+            {fic::platform::GrubConfigTopology::SharedDefaultsFile,
+             applyDefaults, {}, {}}, resolver);
         require(!malformedCmdline.apply(),
                 "malformed stored GRUB value must fail without escaping apply");
 
@@ -436,6 +680,11 @@ int main() {
         testAmbiguousAndDynamicAssignmentsFailClosed(root);
         testRebuildFailureCompensates(root);
         testUnsafeInputAndPathsFailClosed(root);
+        testAltSharedTopologyStaysShared(root);
+        testManagedDropInEditingAndIdempotence(root);
+        testManagedTopologyAndStrictFormat(root);
+        testManagedDropInOrdering(root);
+        testManagedRebuildFailureCompensation(root);
         testConcretePolicyContracts(resolver);
     } catch (const std::exception& error) {
         std::cerr << "GrubPolicyTests failed: " << error.what() << '\n';

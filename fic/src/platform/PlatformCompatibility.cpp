@@ -195,6 +195,40 @@ bool validatePaths(const std::vector<std::filesystem::path>& paths,
     return true;
 }
 
+bool validateGrubConfig(const GrubPlatformConfig& grub,
+                        std::string& error) {
+    switch (grub.topology) {
+    case GrubConfigTopology::OwnedDefaultsDropIn:
+        if (!grub.sharedDefaultsPath.empty()) {
+            error = "owned GRUB topology must not define a shared defaults path";
+            return false;
+        }
+        if (!validatePath(
+                grub.managedConfigPath, "managed GRUB config path", error)) {
+            return false;
+        }
+        if (grub.managedConfigPath.filename() != "zzzz-fic.cfg") {
+            error = "managed GRUB config must be named zzzz-fic.cfg";
+            return false;
+        }
+        break;
+    case GrubConfigTopology::SharedDefaultsFile:
+        if (!grub.managedConfigPath.empty()) {
+            error = "shared GRUB topology must not define a managed config path";
+            return false;
+        }
+        if (!validatePath(
+                grub.sharedDefaultsPath, "shared GRUB defaults path", error)) {
+            return false;
+        }
+        break;
+    default:
+        error = "unknown GRUB configuration topology";
+        return false;
+    }
+    return true;
+}
+
 bool validatePamServices(const std::vector<std::string>& services,
                          const std::string& label,
                          std::string& error) {
@@ -981,8 +1015,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                       "LightDM configuration path", error) ||
         !validatePaths(profile.displayManager.gdmConfigCandidates,
                        "GDM configuration path", error) ||
-        !validatePath(profile.grub.defaultsPath,
-                      "GRUB defaults path", error) ||
+        !validateGrubConfig(profile.grub, error) ||
         !validateArguments(profile.grub.rebuildArguments,
                            "GRUB rebuild arguments", error) ||
         !validateFileAccessRules(profile.dac.protectedSystemFiles,
