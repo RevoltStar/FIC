@@ -35,6 +35,15 @@ bool isSupportedFirewallPolicy(const std::string& policyName) {
            policyName == "custom_rules";
 }
 
+// Explicit whitelist: a future SUDO policy must never become automatically
+// rollback-supported without its own journal integration and undo action.
+bool isSupportedSudoPolicy(const std::string& policyName) {
+    return policyName == "sudo_env_reset" ||
+           policyName == "sudo_passwd_tries" ||
+           policyName == "sudo_securepath" ||
+           policyName == "sudo_timeout";
+}
+
 MutationRollbackOutcome outcomeFromOperation(
     MutationId id,
     const std::string& resource,
@@ -66,7 +75,6 @@ MutationRollbackOutcome undoSysctlSetting(
     SysctlConfigurationOptions options = deps.sysctlOptions
         ? deps.sysctlOptions()
         : SysctlConfigurationOptions{};
-    const std::string managedPath = options.platform.managedConfigPath.string();
 
     SysctlConfiguration configuration(options);
     std::string error;
@@ -80,15 +88,21 @@ MutationRollbackOutcome undoSysctlSetting(
     }
 
     const std::string canonical = fic::sysctl::internalKeyToCanonicalPath(undo.key);
-    const SysctlValueObservation before = configuration.inspect(canonical);
-    if (before.found && before.source.path.string() != managedPath) {
-        // The effective value comes from a non-FIC source; FIC does not own it.
+
+    // Ownership is determined by the FIC managed artifact, not by the current
+    // effective source: an external file may shadow the FIC entry, but the
+    // entry must still be removed so it cannot become effective again later.
+    const SysctlValueObservation managed =
+        configuration.inspectManagedValue(undo.key);
+    if (!managed.found) {
+        // No FIC-owned persistent entry: an idempotent retry (or the entry
+        // was already removed). Never touch any foreign configuration.
         MutationRollbackOutcome outcome;
         outcome.id = record.id;
         outcome.resource = record.resource;
         outcome.status = RollbackStatus::NothingToDo;
-        outcome.message = "Эффективное значение " + undo.key +
-                          " определяется вне managed sysctl-файла FIC";
+        outcome.message = "Managed sysctl-значение '" + undo.key +
+                          "' отсутствует в managed sysctl-файле FIC";
         return outcome;
     }
 
@@ -292,13 +306,18 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
         if (policy.policyName == "sudo_require_authentication") {
             return RollbackEnrollment::Unsupported;
         }
-        return RollbackEnrollment::Supported;
+        return isSupportedSudoPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
     }
     if (policy.moduleName == "FIREWALL" && policy.submoduleName == "HostFiltering") {
         if (policy.policyName == "exclusive_firewall_control") {
             return RollbackEnrollment::Unsupported;
         }
-        return RollbackEnrollment::Supported;
+        // No default-positive enrollment for unknown firewall policies.
+        return isSupportedFirewallPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
     }
     if (policy.moduleName == "DC" && policy.submoduleName == "DeviceControl") {
         return isDcCategoryFeature(policy.policyName)
@@ -328,7 +347,6 @@ RollbackReport checkUnrecordedOwnership(
         SysctlConfigurationOptions options = deps.sysctlOptions
             ? deps.sysctlOptions()
             : SysctlConfigurationOptions{};
-        const std::string managedPath = options.platform.managedConfigPath.string();
         SysctlConfiguration configuration(options);
         std::string error;
         if (!configuration.load(error)) {
@@ -336,10 +354,12 @@ RollbackReport checkUnrecordedOwnership(
             report.message = "Не удалось проанализировать конфигурацию sysctl: " + error;
             return report;
         }
-        const SysctlValueObservation observation = configuration.inspect(
-            fic::sysctl::internalKeyToCanonicalPath(resourceHint));
-        if (observation.found &&
-            observation.source.path.string() == managedPath) {
+        // Legacy provenance check uses the FIC managed artifact content, not
+        // the effective source: an entry shadowed by an external file is
+        // still FIC-owned persistent state and must not be silently kept.
+        const SysctlValueObservation managed =
+            configuration.inspectManagedValue(resourceHint);
+        if (managed.found) {
             return provenanceUnavailable(policy);
         }
         return report;

@@ -520,12 +520,26 @@ json handle_request(json request,
             {"block_optical_drives", enabled("block_optical_drives")}
         });
         if (response.value("ok", false)) {
+            // Provenance commit failure after a successful device daemon
+            // mutation must not be masked as a successful apply (fail
+            // closed): the Prepared records stay active on disk and remain
+            // safely resolvable by the rollback executor.
+            std::string commitFailures;
             for (const auto& [feature, id] : prepared) {
                 std::string commitError;
                 if (!fic::rollback::commitMutation(id, commitError)) {
-                    std::cerr << "Failed to commit mutation journal record for "
-                              << feature << ": " << commitError << std::endl;
+                    if (!commitFailures.empty()) {
+                        commitFailures += "; ";
+                    }
+                    commitFailures += feature + ": " + commitError;
                 }
+            }
+            if (!commitFailures.empty()) {
+                std::cerr << "Failed to commit mutation journal records: "
+                          << commitFailures << std::endl;
+                return fic::ipc::make_error_response(
+                    "device policy was regenerated, but the mutation journal "
+                    "could not commit provenance: " + commitFailures);
             }
             return std::nullopt;
         }

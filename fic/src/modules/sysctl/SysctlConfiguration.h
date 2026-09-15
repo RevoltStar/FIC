@@ -53,9 +53,17 @@ public:
     SysctlOperationResult ensureManagedValue(const std::string& key,
                                              const std::string& value);
 
+    // Rollback support: inspect the value recorded in the FIC managed sysctl
+    // file only. Ownership semantics: the result does not depend on which
+    // source currently wins precedence (an external file may shadow the FIC
+    // entry while the entry still exists and is FIC-owned).
+    SysctlValueObservation inspectManagedValue(const std::string& key) const;
+
     // Rollback support: remove the FIC-managed entry for the given key from
-    // the managed sysctl configuration. Fails closed on drift (conflict) and
-    // refuses to touch values owned by other files (targetMissing).
+    // the managed sysctl configuration. Ownership is determined by the
+    // managed file content, not by the current effective source: a missing
+    // managed entry reports targetMissing, a drifted managed value fails
+    // closed (conflict).
     SysctlOperationResult removeManagedKey(
         const std::string& key,
         const std::string& expectedValue);

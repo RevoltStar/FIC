@@ -148,9 +148,11 @@ bool Sysctl::apply (){
             // disable can still roll the managed value back.
             if (mutationPrepared &&
                 !fic::rollback::commitMutation(mutationId, journalError)) {
+                // The persistent FIC-owned change did happen; keep provenance
+                // (the Prepared record stays active) and fail the apply.
                 this->log("Ошибка фиксации записи mutation journal: " +
                               journalError,
-                          logLevel::WARN);
+                          logLevel::ERROR);
             }
         } else if (mutationPrepared &&
                    !fic::rollback::discardMutation(mutationId, journalError)) {
@@ -168,12 +170,18 @@ bool Sysctl::apply (){
     this->log(runtimeOperation.message, logLevel::INFO);
 
     if (operation.changed || runtimeOperation.changed) {
-        std::string journalError;
-        if (mutationPrepared &&
-            !fic::rollback::commitMutation(mutationId, journalError)) {
-            this->log("Ошибка фиксации записи mutation journal: " +
-                          journalError,
-                      logLevel::WARN);
+        if (mutationPrepared) {
+            std::string journalError;
+            if (!fic::rollback::commitMutation(mutationId, journalError)) {
+                // The system mutation already happened: apply must not report
+                // success without reliable provenance. The Prepared record
+                // stays active on disk and remains safely resolvable by the
+                // rollback executor.
+                this->log("Ошибка фиксации записи mutation journal: " +
+                              journalError,
+                          logLevel::ERROR);
+                return false;
+            }
         }
         this->notify("Исправлена конфигурация sysctl для политики: " + this->policyName,
                      notifyLevel::INFO);

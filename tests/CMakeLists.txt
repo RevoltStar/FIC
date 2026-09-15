@@ -178,6 +178,8 @@ add_executable(firewall_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
 )
 target_include_directories(firewall_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -571,7 +573,7 @@ add_executable(mutation_journal_tests
 target_include_directories(mutation_journal_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(mutation_journal_tests PRIVATE fic-core Threads::Threads)
+target_link_libraries(mutation_journal_tests PRIVATE fic-core fic-policy Threads::Threads)
 add_test(NAME mutation_journal_tests COMMAND mutation_journal_tests)
 
 add_executable(rollback_executor_tests

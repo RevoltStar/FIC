@@ -135,8 +135,12 @@ bool FirewallPolicy::applyRules(const std::vector<FirewallRule>& rules) {
         // unreachable, defensive
     } else if (changed) {
         if (!fic::rollback::commitMutation(mutationId, journalError)) {
+            // The nftables mutation already happened: apply must not report
+            // success without reliable provenance. The Prepared record stays
+            // active on disk and remains safely resolvable.
             this->log("Ошибка фиксации записи mutation journal: " + journalError,
-                      logLevel::WARN);
+                      logLevel::ERROR);
+            return false;
         }
     } else if (!fic::rollback::discardMutation(mutationId, journalError)) {
         this->log("Ошибка удаления подготовленной записи mutation journal: " +

@@ -713,6 +713,30 @@ SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string&
     return result;
 }
 
+SysctlValueObservation SysctlConfiguration::inspectManagedValue(
+    const std::string& key) const {
+    SysctlValueObservation result;
+    const std::string requested = fic::sysctl::internalKeyToCanonicalPath(key);
+    if (requested.empty()) {
+        return result;
+    }
+    ManagedAssignments managed;
+    const std::vector<std::string> managedLines = linesWithEndings(managedContent_);
+    std::string error;
+    if (!inspectManagedAssignments(managedLines, managed, error)) {
+        return result;
+    }
+    const auto managedValue = managed.values.find(requested);
+    if (managedValue == managed.values.end()) {
+        return result;
+    }
+    result.found = true;
+    result.value = managedValue->second;
+    result.source = {options_.platform.managedConfigPath,
+                     options_.platform.managedConfigPath.string(), 0};
+    return result;
+}
+
 SysctlOperationResult SysctlConfiguration::removeManagedKey(
     const std::string& key,
     const std::string& appliedValue) {
@@ -747,16 +771,9 @@ SysctlOperationResult SysctlConfiguration::removeManagedKey(
         return result;
     }
 
-    const SysctlValueObservation effective = inspect(requested);
-    if (effective.found &&
-        effective.source.path != options_.platform.managedConfigPath) {
-        result.ok = true;
-        result.targetMissing = true;
-        result.message = "Эффективное значение '" + requested +
-                         "' определяется вне managed sysctl-файла FIC: " +
-                         sourceText(effective.source);
-        return result;
-    }
+    // Ownership is the managed file content: even when an external file
+    // currently shadows the FIC entry, the FIC-owned persistent entry must
+    // still be removed so it cannot become effective again later.
 
     if (!snapshotUnchanged(error)) {
         result.message = error;

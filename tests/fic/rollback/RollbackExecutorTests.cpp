@@ -192,17 +192,29 @@ void testEnrollmentMatrix() {
     require(rollbackEnrollment({"DAC", "SudoEdit", "sudo_passwd_tries"}) ==
                 RollbackEnrollment::Supported,
             "SudoEdit must be enrolled");
+    require(rollbackEnrollment({"DAC", "SudoEdit", "sudo_env_reset"}) ==
+                RollbackEnrollment::Supported,
+            "known supported sudo policies stay enrolled");
     require(rollbackEnrollment({"DAC", "SudoEdit",
                                 "sudo_require_authentication"}) ==
                 RollbackEnrollment::Unsupported,
             "sudo_require_authentication must refuse automatic rollback");
+    require(rollbackEnrollment({"DAC", "SudoEdit", "sudo_future_policy"}) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future sudo policy must not be auto-enrolled");
     require(rollbackEnrollment({"FIREWALL", "HostFiltering", "block_rdp"}) ==
                 RollbackEnrollment::Supported,
             "HostFiltering policies must be enrolled");
+    require(rollbackEnrollment({"FIREWALL", "HostFiltering", "custom_rules"}) ==
+                RollbackEnrollment::Supported,
+            "known supported firewall policies stay enrolled");
     require(rollbackEnrollment({"FIREWALL", "HostFiltering",
                                 "exclusive_firewall_control"}) ==
                 RollbackEnrollment::Unsupported,
             "exclusive_firewall_control must refuse automatic rollback");
+    require(rollbackEnrollment({"FIREWALL", "HostFiltering", "future_firewall"}) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future firewall policy must not be auto-enrolled");
     require(rollbackEnrollment({"DC", "DeviceControl", "block_usb_storage"}) ==
                 RollbackEnrollment::Supported,
             "DC category features must be enrolled");
@@ -307,31 +319,55 @@ void testSysctlRollbackConflictOnDrift() {
             "conflicting managed value must not be modified");
 }
 
-void testSysctlRollbackSkipsForeignSource() {
+void testSysctlRollbackRemovesShadowedManagedEntry() {
     SysctlTree tree;
     tree.createManagedValue("vm.swappiness", "10");
-    // A file sorting after the FIC managed file owns the effective value.
-    writeFile(tree.tree.root / "etc/sysctl.d/zzzzz-override.conf",
-              "vm.swappiness = 99\n");
+    // A later external source shadows the FIC entry: the effective value is
+    // not FIC-owned anymore, but the FIC-owned persistent entry must still be
+    // removed so it cannot become effective again after the override is gone.
+    writeFile(tree.tree.root / "etc/sysctl.d/zzzzz-external.conf",
+              "vm.swappiness = 1\n");
+    writeFile(tree.tree.root / "proc/sys/vm/swappiness", "1\n");
 
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    recordApplied(kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+    const MutationId id = recordApplied(
+        kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
 
     const RollbackReport report = rollbackPolicyBeforeDisable(
         kSysctlPolicy, "vm.swappiness", tree.deps());
-    require(report.status == RollbackStatus::NothingToDo,
-            "FIC must not touch a value owned by a foreign source: " +
-                report.message);
-    require(report.rollbackCompleted(),
-            "nothing-to-do rollback must allow the disable");
+    require(report.status == RollbackStatus::Success, report.message);
+    require(report.rollbackCompleted(), "successful rollback must allow disable");
 
+    // The FIC entry is gone from the managed artifact.
     SysctlConfiguration verification(tree.options());
     std::string error;
     require(verification.load(error), error);
+    const SysctlValueObservation managedAfter =
+        verification.inspectManagedValue("vm.swappiness");
+    require(!managedAfter.found,
+            "shadowed FIC managed entry must still be removed by rollback");
+
+    // The external source keeps ownership of the effective value.
     const SysctlValueObservation after = verification.inspect("vm.swappiness");
-    require(after.found && after.value == "99",
-            "foreign override must remain effective");
+    require(after.found && after.value == "1" &&
+                after.source.path.filename() == "zzzzz-external.conf",
+            "external override must remain the effective source");
+
+    // Runtime follows the recomputed external value.
+    SysctlRuntime runtime({tree.tree.root / "proc/sys"});
+    std::string runtimeValue;
+    require(runtime.readValue("vm.swappiness", runtimeValue, error), error);
+    require(runtimeValue == "1",
+            "runtime sysctl must follow the remaining external value");
+
+    // Journal must record the rollback.
+    MutationJournal stored(journal.tree.root / "journal.json");
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().id == id &&
+                stored.records().front().status == MutationStatus::RolledBack,
+            "shadowed entry rollback must be persisted as rolled_back");
 }
 
 void testSysctlProvenanceUnavailableWithoutJournal() {
@@ -349,6 +385,35 @@ void testSysctlProvenanceUnavailableWithoutJournal() {
                 report.message);
     require(!report.rollbackCompleted(),
             "provenance failure must refuse the disable");
+}
+
+void testSysctlLegacyProvenanceRefusedWhenShadowed() {
+    SysctlTree tree;
+    // Legacy state: the FIC managed file contains the key, but an external
+    // source currently shadows it and no journal records exist. The hidden
+    // FIC-owned state must refuse the disable (fail closed), not be ignored.
+    tree.createManagedValue("vm.swappiness", "10");
+    writeFile(tree.tree.root / "etc/sysctl.d/zzzzz-external.conf",
+              "vm.swappiness = 1\n");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Unsupported,
+            "unprovenanced FIC-owned sysctl state must refuse disable even "
+            "when shadowed by an external source: " + report.message);
+    require(!report.rollbackCompleted(),
+            "provenance failure must refuse the disable");
+
+    // The shadowed FIC entry must be left untouched.
+    SysctlConfiguration verification(tree.options());
+    std::string error;
+    require(verification.load(error), error);
+    const SysctlValueObservation managed =
+        verification.inspectManagedValue("vm.swappiness");
+    require(managed.found && managed.value == "10",
+            "refused rollback must not remove the FIC managed entry");
 }
 
 void testSysctlNoRecordsAndNotOwnedIsNothingToDo() {
@@ -511,6 +576,108 @@ void testSysctlRollbackRetryIsIdempotent() {
         kSysctlPolicy, "vm.swappiness", tree.deps());
     require(retry.status == RollbackStatus::NothingToDo, retry.message);
     require(retry.rollbackCompleted(), "retry must allow the disable");
+}
+
+void testSysctlRepeatedApplyRepairsDriftThenRollback() {
+    SysctlTree tree;
+    tree.createManagedValue("vm.swappiness", "10");
+    writeFile(tree.tree.root / "proc/sys/vm/swappiness", "10\n");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const MutationId originalId = recordApplied(
+        kSysctlPolicy, "vm.swappiness", sysctlUndo("10"));
+
+    // Repairable drift appears after the initial apply: the FIC managed
+    // entry itself is changed externally to 20.
+    writeFile(tree.tree.root / "etc/sysctl.d/zzzz-fic.conf",
+              "vm.swappiness = 20\n");
+
+    // Repeated apply at the configuration/journal level: the managed content
+    // drifted, so the single active record is refreshed (Applied -> Prepared
+    // -> Applied) and the managed value is repaired without duplicating
+    // provenance.
+    MutationId refreshedId = 0;
+    std::string error;
+    require(recordPreparedMutation(kSysctlPolicy, "vm.swappiness",
+                                   sysctlUndo("10"), refreshedId, error),
+            error);
+    require(refreshedId == originalId,
+            "repeated apply must refresh the existing active record");
+    {
+        SysctlConfiguration configuration(tree.options());
+        require(configuration.load(error), error);
+        const SysctlOperationResult operation =
+            configuration.ensureManagedValue("vm.swappiness", "10");
+        require(operation.ok, operation.message);
+        require(operation.changed,
+                "repeated apply must repair the drifted managed value");
+    }
+    require(commitMutation(refreshedId, error), error);
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().id == originalId &&
+                stored.records().front().status == MutationStatus::Applied,
+            "repeated apply must keep a single refreshed active record");
+
+    // Disable after the drift repair must still roll back correctly: the
+    // recorded undo value must match the repaired managed value.
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Success, report.message);
+
+    SysctlConfiguration verification(tree.options());
+    require(verification.load(error), error);
+    const SysctlValueObservation managedAfter =
+        verification.inspectManagedValue("vm.swappiness");
+    require(!managedAfter.found,
+            "repaired-state rollback must remove the FIC managed entry");
+    // No remaining persistent source exists: the runtime value is left as is
+    // (never guessed), and the last applied runtime value was 10.
+    SysctlRuntime runtime({tree.tree.root / "proc/sys"});
+    std::string runtimeValue;
+    require(runtime.readValue("vm.swappiness", runtimeValue, error), error);
+    require(runtimeValue == "10",
+            "rollback must not guess a new runtime value without a "
+            "remaining persistent source");
+}
+
+void testExecutorResolvesPreparedRecordAfterFailedCommit() {
+    SysctlTree tree;
+    tree.createManagedValue("vm.swappiness", "10");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    // Backend invariant scenario: the system mutation succeeded, the
+    // Prepared -> Applied commit failed, and the Prepared record stays
+    // active on disk. The disable must still resolve this state safely.
+    MutationId id = 0;
+    std::string error;
+    require(recordPreparedMutation(kSysctlPolicy, "vm.swappiness",
+                                   sysctlUndo("10"), id, error),
+            error);
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSysctlPolicy, "vm.swappiness", tree.deps());
+    require(report.status == RollbackStatus::Success, report.message);
+    require(report.rollbackCompleted(),
+            "prepared provenance must be resolvable by the rollback executor");
+
+    SysctlConfiguration verification(tree.options());
+    require(verification.load(error), error);
+    const SysctlValueObservation managedAfter =
+        verification.inspectManagedValue("vm.swappiness");
+    require(!managedAfter.found,
+            "prepared provenance must still lead to managed entry removal");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().id == id &&
+                stored.records().front().status == MutationStatus::RolledBack,
+            "prepared record resolution must be persisted as rolled_back");
 }
 
 void testSudoRollbackKeepsOtherManagedDefault() {
@@ -710,9 +877,12 @@ int main() {
         {"sysctl rollback removes managed key and moves runtime",
          testSysctlRollbackRemovesManagedKeyAndMovesRuntime},
         {"sysctl rollback conflict on drift", testSysctlRollbackConflictOnDrift},
-        {"sysctl rollback skips foreign source", testSysctlRollbackSkipsForeignSource},
+        {"sysctl rollback removes shadowed managed entry",
+         testSysctlRollbackRemovesShadowedManagedEntry},
         {"sysctl provenance unavailable without journal",
          testSysctlProvenanceUnavailableWithoutJournal},
+        {"sysctl legacy provenance refused when shadowed",
+         testSysctlLegacyProvenanceRefusedWhenShadowed},
         {"sysctl no records and not owned is nothing to do",
          testSysctlNoRecordsAndNotOwnedIsNothingToDo},
         {"sudo rollback removes managed default", testSudoRollbackRemovesManagedDefault},
@@ -722,6 +892,10 @@ int main() {
         {"sysctl rollback keeps other policy setting",
          testSysctlRollbackKeepsOtherPolicySetting},
         {"sysctl rollback retry is idempotent", testSysctlRollbackRetryIsIdempotent},
+        {"sysctl repeated apply repairs drift then rollback",
+         testSysctlRepeatedApplyRepairsDriftThenRollback},
+        {"executor resolves prepared record after failed commit",
+         testExecutorResolvesPreparedRecordAfterFailedCommit},
         {"sudo rollback keeps other managed default",
          testSudoRollbackKeepsOtherManagedDefault},
         {"firewall undo invokes backend", testFirewallUndoInvokesBackend},

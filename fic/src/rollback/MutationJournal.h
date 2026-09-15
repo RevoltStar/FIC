@@ -16,8 +16,12 @@ namespace fic::rollback {
 //   * the document carries a schema_version and is rejected (fail closed) on
 //     unknown schema versions, unknown enum values or structurally broken
 //     content;
-//   * a missing file is an empty journal; a malformed file is a load error and
-//     callers must refuse rollback rather than guess.
+//   * a missing file is an empty journal; a malformed file, a file that cannot
+//     be opened/read, and an existing zero-byte file are load errors and
+//     callers must refuse rollback rather than guess;
+//   * every mutating operation has a strong in-memory guarantee: if persist
+//     fails, the observable journal state stays logically identical to the
+//     state before the operation (including record ordering).
 class MutationJournal {
 public:
     static constexpr std::uint32_t kSchemaVersion = 1;

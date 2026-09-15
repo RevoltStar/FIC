@@ -7,6 +7,7 @@
 #include <ctime>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 #include <utility>
 
 namespace fic::rollback {
@@ -213,14 +214,32 @@ MutationJournal::MutationJournal(std::filesystem::path path)
 }
 
 bool MutationJournal::load(std::string& error) {
-    std::ifstream stream(path_, std::ios::binary);
-    if (!stream.is_open()) {
+    std::error_code probeError;
+    const std::filesystem::file_status status =
+        std::filesystem::status(path_, probeError);
+    if (probeError &&
+        status.type() != std::filesystem::file_type::not_found) {
+        error = "Не удалось проверить наличие mutation journal " +
+                path_.string() + ": " + probeError.message();
+        return false;
+    }
+    if (status.type() == std::filesystem::file_type::not_found ||
+        !std::filesystem::exists(status)) {
         // A missing journal is an empty journal: no provenance exists yet.
         records_.clear();
         nextId_ = 1;
         loaded_ = true;
         error.clear();
         return true;
+    }
+
+    std::ifstream stream(path_, std::ios::binary);
+    if (!stream.is_open()) {
+        // The file exists but cannot be opened: never treat permission or
+        // I/O failures as an absent journal (fail closed).
+        error = "Существующий mutation journal недоступен для чтения "
+                "(fail closed): " + path_.string();
+        return false;
     }
     std::ostringstream buffer;
     buffer << stream.rdbuf();
@@ -230,11 +249,12 @@ bool MutationJournal::load(std::string& error) {
     }
     const std::string content = buffer.str();
     if (content.empty()) {
-        records_.clear();
-        nextId_ = 1;
-        loaded_ = true;
-        error.clear();
-        return true;
+        // An existing zero-byte journal is corrupted persistent security
+        // state: fail closed instead of silently assuming an empty journal.
+        // A valid empty journal must carry the schema document.
+        error = "Mutation journal существует, но пуст (fail closed): " +
+                path_.string();
+        return false;
     }
 
     json document;
@@ -356,12 +376,19 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             existing.policy == record.policy &&
             existing.undo.backend == record.undo.backend &&
             existing.resource == record.resource) {
+            const MutationRecord previous = existing;
             existing.undo = record.undo;
             existing.status = MutationStatus::Prepared;
             existing.error.clear();
             existing.updatedAtEpoch = currentEpochSeconds();
             id = existing.id;
-            return persist(error);
+            if (!persist(error)) {
+                // Strong in-memory consistency: the observable journal state
+                // must stay logically identical to the pre-operation state.
+                existing = previous;
+                return false;
+            }
+            return true;
         }
     }
 
@@ -401,10 +428,18 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
         error = "Mutation record не найден: " + std::to_string(id);
         return false;
     }
+    const MutationRecord previous = *record;
     record->status = status;
     record->error = message;
     record->updatedAtEpoch = currentEpochSeconds();
-    return persist(error);
+    if (!persist(error)) {
+        // Strong in-memory consistency: on persist failure the journal keeps
+        // its pre-operation logical state, so retries still see the original
+        // active record (fail closed).
+        *record = previous;
+        return false;
+    }
+    return true;
 }
 
 bool MutationJournal::discard(MutationId id, std::string& error) {
@@ -412,13 +447,18 @@ bool MutationJournal::discard(MutationId id, std::string& error) {
         error = "Mutation journal не загружен";
         return false;
     }
-    for (auto it = records_.begin(); it != records_.end(); ++it) {
-        if (it->id == id) {
-            const MutationRecord removed = *it;
-            records_.erase(it);
+    for (std::size_t index = 0; index < records_.size(); ++index) {
+        if (records_[index].id == id) {
+            const MutationRecord removed = records_[index];
+            records_.erase(records_.begin() +
+                           static_cast<std::ptrdiff_t>(index));
             if (!persist(error)) {
-                // Keep the in-memory state consistent with the failed write.
-                records_.push_back(removed);
+                // Restore the record at its original position: the journal
+                // must stay logically identical (including record ordering)
+                // to the state before the failed operation.
+                records_.insert(records_.begin() +
+                                    static_cast<std::ptrdiff_t>(index),
+                                removed);
                 return false;
             }
             return true;

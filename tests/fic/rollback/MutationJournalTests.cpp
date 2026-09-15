@@ -150,7 +150,98 @@ void testDiscardRemovesRecord() {
             "discard must be persisted to disk");
 }
 
+// Makes every later persist() fail while keeping the previous journal file
+// intact: the parent directory becomes read-only, so the atomic writer
+// cannot create its temp file next to the target.
+void breakPersist(const TempFile& file) {
+    std::error_code ec;
+    std::filesystem::permissions(
+        file.directory,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec,
+        ec);
+    require(!ec, "breakPersist: could not restrict the journal directory");
+}
+
+void restorePersist(const TempFile& file) {
+    std::error_code ec;
+    std::filesystem::permissions(file.directory,
+                                 std::filesystem::perms::owner_all, ec);
+    require(!ec, "restorePersist: could not restore the journal directory");
+}
+
+void testSetStatusPersistFailureRestoresRecord() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+
+    breakPersist(file);
+    require(!journal.setStatus(id, MutationStatus::RolledBack, error),
+            "persist failure must be reported to the caller");
+    require(!error.empty(), "persist failure must produce an error message");
+
+    // Strong in-memory consistency: the record is still logically Applied,
+    // so a repeated operation still sees the original active mutation.
+    require(journal.records().size() == 1,
+            "failed persist must not add or remove records");
+    require(journal.records().front().status == MutationStatus::Applied,
+            "failed persist must not change the in-memory status");
+    require(journal.activeRecords(sysctlPolicy()).size() == 1,
+            "repeated operation after failed persist must still see the "
+            "original active mutation");
+
+    restorePersist(file);
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1 &&
+                reloaded.records().front().status == MutationStatus::Applied,
+            "disk state must stay unchanged after failed persist");
+}
+
+void testPrepareExistingPersistFailureRestoresRecord() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+
+    breakPersist(file);
+    MutationRecord updated = preparedRecord(sysctlPolicy());
+    updated.undo = sysctlUndo("77");
+    MutationId refreshedId = 0;
+    require(!journal.prepareMutation(std::move(updated), refreshedId, error),
+            "refreshing an existing record must fail when persist fails");
+    require(refreshedId == id, "refresh must report the existing record id");
+
+    require(journal.records().size() == 1,
+            "failed refresh must not add or remove records");
+    const MutationRecord& record = journal.records().front();
+    require(record.status == MutationStatus::Applied,
+            "failed refresh must restore the previous status");
+    const auto* payload =
+        std::get_if<UndoRemoveManagedSetting>(&record.undo.payload);
+    require(payload != nullptr && payload->appliedValue == "10",
+            "failed refresh must restore the previous undo payload");
+    require(journal.activeRecords(sysctlPolicy()).size() == 1,
+            "repeated operation after failed refresh must still see the "
+            "original active mutation");
+
+    restorePersist(file);
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1 &&
+                reloaded.records().front().status == MutationStatus::Applied,
+            "disk state must stay unchanged after failed refresh");
+}
 void testActiveRecordsFiltering() {
+
     TempFile file;
     MutationJournal journal(file.path);
     std::string error;
@@ -176,6 +267,99 @@ void testActiveRecordsFiltering() {
     const std::vector<MutationRecord> firewallActive = journal.activeRecords(other);
     require(firewallActive.size() == 1 && firewallActive.front().id == firewallId,
             "active records of other policies must be returned");
+}
+
+void testDiscardPersistFailureRestoresStateAndOrder() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId firstId = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), firstId, error),
+            error);
+    MutationRecord second = preparedRecord(sysctlPolicy());
+    second.policy = PolicyRef{"SYSCTL", "Global", "other_policy"};
+    second.resource = "kernel.kptr_restrict";
+    second.undo = UndoAction{MutationBackend::Sysctl,
+                             UndoRemoveManagedSetting{"kernel.kptr_restrict", "2"}};
+    MutationId secondId = 0;
+    require(journal.prepareMutation(std::move(second), secondId, error), error);
+
+    breakPersist(file);
+    require(!journal.discard(firstId, error),
+            "discard must fail when persist fails");
+
+    // Exact logical restoration including the original record ordering.
+    require(journal.records().size() == 2,
+            "failed discard must keep both records");
+    require(journal.records()[0].id == firstId &&
+                journal.records()[1].id == secondId,
+            "failed discard must restore the record at its original position");
+    require(journal.activeRecords(sysctlPolicy()).size() == 1,
+            "repeated operation after failed discard must still see the "
+            "original active mutation");
+
+    restorePersist(file);
+    MutationId thirdId = 0;
+    MutationRecord third = preparedRecord(sysctlPolicy());
+    third.policy = PolicyRef{"SYSCTL", "Global", "third_policy"};
+    third.resource = "kernel.randomize_va_space";
+    third.undo = UndoAction{MutationBackend::Sysctl,
+                            UndoRemoveManagedSetting{"kernel.randomize_va_space", "2"}};
+    require(journal.prepareMutation(std::move(third), thirdId, error), error);
+    require(thirdId == secondId + 1,
+            "failed operations must not consume mutation ids");
+
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 3 &&
+                reloaded.records()[0].id == firstId &&
+                reloaded.records()[1].id == secondId &&
+                reloaded.records()[2].id == thirdId,
+            "restored state must persist identically");
+}
+
+void testPreparedRecordRemainsActiveAfterFailedCommit() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+
+    // Backend invariant: the system mutation succeeded, but the
+    // Prepared -> Applied commit failed. The Prepared provenance must stay
+    // active so a later disable can still resolve the state safely.
+    breakPersist(file);
+    require(!journal.setStatus(id, MutationStatus::Applied, error),
+            "commit failure must be reported");
+    require(journal.activeRecords(sysctlPolicy()).size() == 1 &&
+                journal.records().front().status == MutationStatus::Prepared,
+            "failed commit must leave the Prepared provenance active");
+}
+
+void testUnreadableJournalFailsClosed() {
+    TempFile file;
+    // An existing path that cannot be read as a journal (here: a directory
+    // occupying the journal path) must fail closed, not be silently treated
+    // as an absent journal.
+    std::error_code ec;
+    std::filesystem::create_directory(file.path, ec);
+    require(!ec, "could not occupy the journal path with a directory");
+    MutationJournal journal(file.path);
+    std::string error;
+    require(!journal.load(error), "unreadable existing journal must fail closed");
+    require(!error.empty(), "unreadable journal must produce an error message");
+}
+
+void testZeroByteJournalFailsClosed() {
+    TempFile file;
+    file.write("");
+    MutationJournal journal(file.path);
+    std::string error;
+    require(!journal.load(error), "existing zero-byte journal must fail closed");
+    require(!error.empty(), "zero-byte journal must produce an error message");
 }
 
 void testMalformedFileFailsClosed() {
@@ -317,6 +501,17 @@ int main() {
         {"prepare commit reload persistence", testPrepareCommitAndReloadPersistence},
         {"prepare idempotency", testPrepareIsIdempotentForSameTriple},
         {"discard removes record", testDiscardRemovesRecord},
+        {"set status persist failure restores record",
+         testSetStatusPersistFailureRestoresRecord},
+        {"prepare existing persist failure restores record",
+         testPrepareExistingPersistFailureRestoresRecord},
+        {"discard persist failure restores state and order",
+         testDiscardPersistFailureRestoresStateAndOrder},
+        {"prepared record remains active after failed commit",
+         testPreparedRecordRemainsActiveAfterFailedCommit},
+        {"unreadable existing journal fails closed",
+         testUnreadableJournalFailsClosed},
+        {"zero byte journal fails closed", testZeroByteJournalFailsClosed},
         {"active records filtering", testActiveRecordsFiltering},
         {"malformed file fails closed", testMalformedFileFailsClosed},
         {"unknown schema version fails closed", testUnknownSchemaVersionFailsClosed},

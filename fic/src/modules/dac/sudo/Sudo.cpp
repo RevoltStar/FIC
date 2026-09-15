@@ -175,8 +175,12 @@ bool Sudo::apply() {
 
     std::string journalError;
     if (mutationPrepared && !fic::rollback::commitMutation(mutationId, journalError)) {
+        // The sudoers mutation already happened: apply must not report
+        // success without reliable provenance. The Prepared record stays
+        // active on disk and remains safely resolvable.
         this->log("Ошибка фиксации записи mutation journal: " + journalError,
-                  logLevel::WARN);
+                  logLevel::ERROR);
+        return false;
     }
 
     this->log(operation.message, logLevel::INFO);
