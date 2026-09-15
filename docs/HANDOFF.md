@@ -2,61 +2,58 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `856f62509fcee34b5cd4b1b10bd1aac740615df7`.
-- Рабочее дерево содержит незакоммиченную текущую PAM-правку.
+- Ветка `main`, базовый commit `614af8666cbdfced575979a8800b5d1c2c59d21d`.
+- Рабочее дерево содержит незакоммиченную notification/packaging правку.
 
 ## Current task
 
-- Безопасная поддержка штатного ALT p11 FreeIPA/SSSD PAM/NSS layout без
-  распространения локальных `pam_faillock`/`passwdqc` policies на domain users.
+- Перевести desktop notification dispatcher с `runuser` на `setpriv` и
+  закрепить реальные DEB/RPM runtime dependencies.
 
 ## Accepted architecture / invariants
 
-- ALT trusted aliases разрешают только перечисленные exact `system-auth-*`
-  targets, включая штатные `*-sss`; произвольные targets остаются fail-closed.
-- ALT `AuthenticationLockout` и `PasswordQuality` имеют typed
-  `LocalUsersOnly` semantics. CFG различает local/non-local paths по
-  `pam_localuser`; неизвестный subject остаётся в fail-closed анализе.
-- `PasswordQuality` проверяет только `system-auth-local-only`; SSS password
-  branch не обязана содержать `pam_passwdqc`.
-- При NSS `sss` policy `disable_nopasswdlogin` не использует enumeration, а
-  атомарно удаляет exact typed GDM/LightDM PAM bypass rules с postcondition и
-  exact rollback. Локальный NSS сохраняет group-membership enforcement.
+- Dispatcher запускает `notify-send` через `setpriv` с numeric UID/primary GID,
+  initialized supplementary groups, очищенными inheritable capabilities и
+  reset environment.
+- В дочернее окружение явно передаются только session D-Bus coordinates;
+  `DISPLAY` для notification delivery не используется.
+- ALT RPM зависит от `notify-send` и `util-linux`; Debian-family DEB — от
+  `libnotify-bin` и `util-linux`.
+- Существующий recipient filter сохраняется: уведомления получают только
+  пользователи активных локальных graphical sessions, состоящие в группе
+  `fic`. Обычные пользователи вне группы `fic` уведомления не получают.
 
 ## Completed
 
-- Добавлены exact ALT SSS aliases и local-only capability metadata.
-- CFG analyzer моделирует subject identity и принимает штатный hybrid router,
-  сохраняя обязательность `pam_faillock` на local branch.
-- Реализован SSS-safe PAM enforcement для `disable_nopasswdlogin`.
-- Добавлены regressions для aliases, router, local `passwdqc`, SSS без
-  enumeration, exact/non-exact rules, idempotency и rollback.
-- Обновлены относящиеся к контракту README, architecture docs и policy text.
+- `runuser` удалён из runtime dispatcher без fallback.
+- Добавлены проверки обязательных runtime commands и прямой вызов
+  `env notify-send` с отдельными аргументами без shell evaluation.
+- Обновлены DEB/RPM dependency declarations и packaging README.
+- Добавлен `notification_packaging_static_checks` для dispatcher, service и
+  package metadata contracts.
 
 ## Changed areas
 
-- `fic/src/platform/`
-- `fic/src/modules/identity_access/pam/`
-- PAM/platform tests и `tests/CMakeLists.txt`
-- `fic/README.md`, `docs/architecture-diagrams.md`, policy localization
+- `fic/src/resources/notify/fic-notify-dispatcher`
+- `packaging/deb/`, `packaging/rpm/`
+- `tests/CMakeLists.txt`
+- `tests/integration/packaging/notification-packaging-checks.py.in`
 
 ## Validation
 
-- ALT configure в `build-alt-sss` — passed ранее с configure-only
-  `libsystemd.pc` shim.
-- Targeted build: `pam_configuration_tests`,
-  `pam_control_flow_analyzer_tests`, `pam_disable_nopasswdlogin_policy_tests`,
-  `alt_pam_faillock_topology_tests`, `platform_profile_tests` — passed.
-- Targeted CTest: 7/7 passed, включая два relevant static checks.
-- Additional PAM CTest: 3/3 passed (`pam_capability_activation_policy_tests`,
-  `passwdqc_config_file_tests`, `pam_policy_defaults_tests`).
-- `python3 tests/fic/platform/static_checks.py .` — passed.
-- `python3 tests/common/static_checks.py .` — passed.
-- Production target `fic` запущен, но окружение не содержит
-  `systemd/sd-daemon.h`; сборка остановилась на `fic/src/main.cpp` до link.
+- CMake configure `build-alt-sss` для `alt-p11` — passed.
+- Targeted CTest: 6/6 passed (`notification_packaging_static_checks`,
+  path/platform/PAM packaging static checks, version/release contracts).
+- Direct notification packaging check — passed.
+- `bash -n` для dispatcher и обоих package builders — passed.
+- Repository search: runtime `runuser` отсутствует; слово осталось только в
+  regression assertion.
 - `git diff --check` — passed.
 
 ## Remaining
 
 - Изменения не закоммичены.
-- Полная сборка и полный CTest не запускались.
+- DEB/RPM artifacts и полный проект не собирались; полный CTest не запускался.
+- Runtime delivery в реальной graphical session не проверялась.
+- Непривилегированный local smoke полного `setpriv --init-groups` ожидаемо
+  завершился `Operation not permitted`; dispatcher штатно запускается от root.

@@ -75,6 +75,8 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
   `libpam-pwquality`: the first provides `pam-auth-update`, the second owns the
   PAM modules referenced by the FIC profiles, and the third owns the distro
   `pwquality` profile selected by password-quality activation
+- `fic` directly depends on `libnotify-bin` for `notify-send` and on
+  `util-linux` for the notification dispatcher's `setpriv`
 - `fic` recommends `fic-session-agent`
 - `fic-gui` depends on both `fic` and `fic-dick`
 

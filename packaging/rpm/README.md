@@ -214,6 +214,8 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 ## Dependency chain
 
 - `fic` requires `fic-dick`
+- `fic` requires `notify-send` for desktop notification delivery and
+  `util-linux` for the notification dispatcher's `setpriv`
 - `fic-session-agent` is optional and must be installed separately when
   graphical-session policies are needed; ALT p11 RPM does not support the
   `Recommends` spec tag

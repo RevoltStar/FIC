@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+
+import re
+import sys
+from pathlib import Path
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
+def dependency_line(builder: str, marker: str) -> str:
+    for line in builder.splitlines():
+        if marker in line and "fic-dick" in line:
+            return line
+    raise RuntimeError(f"could not find fic dependency declaration: {marker}")
+
+
+def main() -> int:
+    root = Path(sys.argv[1]).resolve()
+    dispatcher = (
+        root / "fic/src/resources/notify/fic-notify-dispatcher"
+    ).read_text(encoding="utf-8")
+    service = (
+        root / "fic/src/resources/service/fic-notify.service.in"
+    ).read_text(encoding="utf-8")
+    deb_builder = (
+        root / "packaging/deb/build-fic-debian12-deb.sh"
+    ).read_text(encoding="utf-8")
+    rpm_builder = (
+        root / "packaging/rpm/build-fic-alt-p11-rpm.sh"
+    ).read_text(encoding="utf-8")
+
+    require(
+        re.search(r"\brunuser\b", dispatcher) is None,
+        "notification dispatcher must not use runuser",
+    )
+    require(
+        re.search(r"\beval\b|\bbash\s+-c\b|\bsh\s+-c\b", dispatcher) is None,
+        "notification dispatcher must pass untrusted fields without shell evaluation",
+    )
+    for fragment in (
+        'uid="$(id -u "$user"',
+        'gid="$(id -g "$user"',
+        'setpriv \\\n',
+        '--reuid "$uid"',
+        '--regid "$gid"',
+        "--init-groups",
+        "--inh-caps=-all",
+        "--reset-env",
+        "-- env",
+        'XDG_RUNTIME_DIR="$runtime_dir"',
+        'DBUS_SESSION_BUS_ADDRESS="$bus_address"',
+        'notify-send --app-name=FIC --urgency="$urgency" "$title" "$message"',
+    ):
+        require(fragment in dispatcher, f"dispatcher is missing: {fragment}")
+    require("DISPLAY" not in dispatcher, "dispatcher must use session D-Bus without DISPLAY")
+    require(
+        "for command_name in awk env grep id loginctl mkdir notify-send rm setpriv sleep" in dispatcher
+        and 'command -v "$command_name"' in dispatcher
+        and "Missing required runtime command for FIC notifications" in dispatcher,
+        "dispatcher does not diagnose missing runtime commands",
+    )
+    require(
+        "x11|wayland|mir" in dispatcher,
+        "dispatcher no longer recognizes supported graphical session types",
+    )
+    require(
+        'is_fic_user "$user" || continue' in dispatcher,
+        "dispatcher unexpectedly changed the fic-group recipient filter",
+    )
+    require(
+        "ExecStart=@FIC_PRIVATE_BINDIR@/fic-notify-dispatcher" in service,
+        "fic-notify.service no longer starts the packaged dispatcher",
+    )
+
+    deb_dependencies = dependency_line(deb_builder, "package_depends=")
+    require(
+        '"libnotify-bin"' in deb_dependencies,
+        "Debian fic package must depend on libnotify-bin",
+    )
+    require(
+        '"util-linux"' in deb_dependencies,
+        "Debian fic package must depend on util-linux",
+    )
+
+    rpm_dependencies = dependency_line(rpm_builder, "fic-dick =")
+    require(
+        "notify-send" in rpm_dependencies and "libnotify" not in rpm_dependencies,
+        "ALT fic package must depend on notify-send instead of libnotify",
+    )
+    require(
+        "util-linux" in rpm_dependencies,
+        "ALT fic package must depend on util-linux",
+    )
+
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except RuntimeError as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)

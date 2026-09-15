@@ -851,7 +851,7 @@ build_fic_package() {
         "$package_name" \
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
-        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, libnotify, nftables, control, pam >= 1.7.1, pam-config >= 1.10.0" \
+        "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, notify-send, util-linux, nftables, control, pam >= 1.7.1, pam-config >= 1.10.0" \
         "$(system_integration_pre_script "$(fic_pam_facility_pre_upgrade_script)")" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_post_script)")" \
         "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_preun_script)")")" || return 1
