@@ -51,6 +51,15 @@ struct AtomicWriteResult {
     // Set when the write was refused because the target no longer matches the
     // expected identity/state precondition. Nothing was replaced in that case.
     bool preconditionFailed = false;
+    // Present only when installed == true: the exact target state FIC
+    // installed through rename (temp file identity, final metadata applied to
+    // the temp file, exact written content). It is built from the temp file
+    // descriptor, NOT from a post-rename capture of the target: an external
+    // writer could replace the target between rename and a fresh capture.
+    // Note: installed == true stays set even when a later durability step
+    // (directory fsync) fails and the write reports failure — the system may
+    // already have been mutated, so callers must treat it as installed.
+    std::optional<AtomicTargetState> installedTargetState;
 };
 
 class AtomicFileWriter {

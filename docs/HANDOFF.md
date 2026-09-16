@@ -2,49 +2,54 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `4156ac9` (SSH rollback MVP закоммичен).
-- Изменения follow-up (mutation-local drift, TOCTOU, компенсация) — в
-  рабочем дереве, не закоммичены.
+- Ветка `main`, базовый commit `8180806` (предыдущий follow-up persistent
+  rollback SSH).
+- Изменения второго follow-up — в рабочем дереве, не закоммичены.
 
 ## Current task
 
-- Follow-up к persistent rollback `NET/SshEdit`: замена whole-global
-  fingerprint на mutation-local BEFORE/AFTER matching, idempotent
-  crash-recovery, optimistic conditional writes shared `sshd_config`,
-  prepared-discard только при полной подтверждённой компенсации.
+- Follow-up к persistent rollback `NET/SshEdit`: repeated apply без
+  незаписанных mutations (fail closed на untracked occurrences), ordered
+  mutation-local BEFORE/AFTER classification, identical duplicates, BEFORE
+  runtime reconciliation, компенсация по exact FIC-installed state.
 
 ## Accepted architecture / invariants
 
 - Undo payload: `UndoRestoreSshDirective{parameter, appliedValue, occurrences}`,
-  где `occurrences` — `SshDirectiveOccurrenceMutation{occurrenceIndex,
-  beforeLine, afterLine}` (нормализованный keyword; `beforeLine=null` —
-  строка вставлена FIC). Payload self-contained, без full-file snapshot.
-- Rollback: classifyRecordedMutation — для каждой occurrence точное
-  текстовое совпадение текущей строки global section с afterLine (AFTER) или
-  beforeLine (BEFORE), однозначно (count==1). Все AFTER → undo; все BEFORE →
-  `NothingToDo` → journal `RolledBack`; иначе (смешанное/неоднозначное/
-  drift, в т.ч. вставленная директива с другим значением) → `Conflict`.
-  Абсолютные line index'ы не идентификатор мутации; вставленная директива
-  при BEFORE-проверке требует полного отсутствия keyword в global section.
-  Match/includes не восстанавливаются и не мешают. Регистр не нормализуется
-  (fail closed).
-- Legacy historical SSH record засчитывается как resolved только при статусе
-  `RolledBack`/`Detached`; иные статусы — fail closed.
-- TOCTOU: `AtomicFileWriter::captureTargetState` (shared helper в fic-core) +
-  `FileHandler::saveFileIfUnchanged` (conditional write через
-  `expectedTargetState`). `SshConfigFileHandler::loadConfig()` строится из
-  одного snapshot; apply и rollback пишут только при неизменности файла;
-  concurrent modification → отказ без перезаписи (Conflict для rollback,
-  apply failure с discard нового Prepared для apply).
-- Prepared discard: новый Prepared удаляется только если доказано, что
-  системная мутация не произошла (write refused, `AtomicWriteResult::
-  installed=false`) либо apply-time компенсация полностью подтверждена
-  (restore + `sshd -T` + reload restored при активном сервисе); иначе
-  остаётся активным.
-- Journal serialization: `occurrences` (occurrence/before/after); legacy
-  формат (`fingerprint`/`reverse_edits`) явно отвергается при загрузке —
-  записи промежуточного коммита 4156ac9 требуют ручного разрешения (feature
-  не release'd, backward compat не требуется).
+  где `occurrences` — `SshDirectiveOccurrenceMutation{beforeLine, afterLine}`
+  (нормализованный keyword; `beforeLine=null` — строка вставлена FIC).
+  `occurrenceIndex` удалён (Вариант B): порядок вектора полностью выражает
+  identity. Одинаковые `afterLine` валидны. Payload self-contained, без
+  full-file snapshot.
+- Classification — ordered mutation-local projection: проекция target
+  resource (active-директивы keyword + exact recorded BEFORE/AFTER строки,
+  в file order) сравнивается целиком с AFTER- и BEFORE-последовательностями.
+  Никакого независимого per-occurrence `countExactLines()`. `beforeLine`
+  одной occurrence может совпадать с `afterLine` другой без ложного Conflict.
+- Repeated apply: если существует active `UndoRestoreSshDirective` ресурса,
+  generic `setValue()` не вызывается. Текущие вхождения сопоставляются
+  слотам (`matchRecordedMutationForRepair`): owned drifted slot ремонтируется
+  до recorded AFTER (baseline сохраняется); untracked occurrence → fail
+  closed (файл и journal не изменяются). Single insertion repairable только
+  при полном отсутствии keyword.
+- BEFORE ≠ сразу `NothingToDo`: сначала runtime reconciliation (`sshd -T`
+  + reload активного сервиса), только после успеха `NothingToDo`/`RolledBack`;
+  провал — `Failed`, запись активна, disable отказан.
+- Компенсация (apply и rollback) — conditional restore по exact
+  FIC-installed state: `restoreSshConfigContentIfCurrentState(path, content,
+  expectedTargetState)`; expected state — `AtomicWriteResult::
+  installedTargetState` (temp-inode/content/metadata, опубликованные rename;
+  при post-rename durability ошибке `installed=true`). Свежий snapshot как
+  proof of ownership запрещён.
+- TOCTOU: optimistic expected-target precondition (`captureTargetState` +
+  `saveFileIfUnchanged`/`writeWithResult`). Это НЕ полноценный filesystem
+  CAS: между финальной проверкой и `rename()` остаётся малое residual race
+  window против non-cooperating writer (известное ограничение).
+- Journal serialization: `occurrences` (before/after, порядок = identity);
+  legacy форматы (`fingerprint`/`reverse_edits`, промежуточный `4156ac9`)
+  отвергаются fail closed. Historical SSH record засчитывается как resolved
+  только при статусе `RolledBack`/`Detached`; иные — fail closed.
+  Writer→reader invariant покрыт тестом на всех production plan fixtures.
 - Legacy (нет journal-записей): директива присутствует в global section →
   `Unsupported`; отсутствует → `NothingToDo`.
 - Enrollment `NET/SshEdit` — только explicit whitelist; неизвестная политика
@@ -52,25 +57,23 @@
 
 ## Completed
 
-- `SshLineReverseEdit` + fingerprint → `SshDirectiveOccurrenceMutation`;
-  `planSetValue`/`setValue` переписаны; `classifyRecordedMutation` +
-  `applyRecordedReverseEdits` вместо `applyReverseEdits`/fingerprint.
-- `SshRollback`: BEFORE→NothingToDo (`SshRollbackResult::nothingToDo`),
-  conditional write, transactional restore поверх conditional write.
-- `Ssh::apply`: single snapshot, conditional save, §11 fix (Prepared
-  остаётся при неполной компенсации), beforeWriteHook_ test seam.
-- `RollbackExecutor`: NothingToDo маппинг, §21 явная проверка статусов.
-- `MutationJournal`: сериализация `occurrences` + fail-closed reject legacy
-  payload; усиленная валидация (occurrence indices с 0, before!=after,
-  distinct after lines, insert = единственная occurrence).
-- fic-core: `AtomicFileWriter::captureTargetState`,
-  `AtomicWriteResult::preconditionFailed`, `FileHandler::saveFileIfUnchanged`
-  (+`loadSnapshot()`).
-- Тесты: мульти-политики (2 и 4 политики, произвольный порядок, insert+
-  replace, дубликаты), crash-after-undo → NothingToDo, TOCTOU apply и
-  rollback (deterministic beforeWrite seam), неполная компенсация (validation/
-  reload restored fails → Prepared остаётся; полная → Prepared discarded),
-  legacy journal reject, malformed occurrences payload.
+- `SshConfigFile`: ordered projection classification; repair matcher
+  (`matchRecordedMutationForRepair` + `applyRecordedRepairEdits`).
+- `Ssh::apply`: journal lookup до любой мутации; ветка repeated apply через
+  existing undo; first apply — plan → Prepared → apply; compensation по
+  `installedTargetState`; beforeRestoreHook_ test seam.
+- `SshRollback`: BEFORE runtime reconciliation; conditional компенсация;
+  `beforeRestore` seam; `restoreSshConfigContent` →
+  `restoreSshConfigContentIfCurrentState`.
+- fic-core: `AtomicWriteResult::installed` + `installedTargetState`
+  (captured до rename из temp fd; исправлен баг fstat-после-close);
+  `saveFileIfUnchanged` возвращает installed state.
+- `MutationJournal`: distinct-afterLine требование убрано; структурные
+  проверки сохранены.
+- Тесты новые: BEFORE/AFTER collision rollback, identical duplicates +
+  restart, repeated apply refuse untracked occurrence, writer→reader
+  payload invariant (5 fixtures), apply/rollback compensation race,
+  BEFORE crash recovery (reload success/fail).
 
 ## Changed areas
 
@@ -94,6 +97,10 @@
 - Изменения не закоммичены.
 - Native интеграционной проверки с реальным sshd не выполнялось (sandbox);
   только fake-runner unit tests.
+- Residual TOCTOU window между final check и `rename()` — known limitation
+  (optimistic precondition, не filesystem CAS).
 - Точный textual AFTER/BEFORE matching: любое внешнее изменение
   FIC-controlled строки (включая comment-out) даёт `Conflict` — осознанный
   fail-closed выбор, three-way merge не реализовывался.
+- Dynamic journal extension для untracked occurrences не реализован
+  (осознанно; conservative fail closed).

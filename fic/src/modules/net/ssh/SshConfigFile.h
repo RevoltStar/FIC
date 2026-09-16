@@ -6,8 +6,10 @@
 #include <fic/core/fs/FileHandler.h>
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // In-memory plan of the exact textual mutation setValue() performs. Built
@@ -50,14 +52,43 @@ public:
                       const std::string& value,
                       SshDirectiveMutationPlan& plan) const;
 
-    // Classifies the current global section against a recorded mutation
-    // (mutation-local BEFORE/AFTER matching). When the result is After,
-    // afterLineIndices receives the current file line index of every
+    // Classifies the current global section against a recorded mutation by
+    // comparing the whole ordered mutation-local projection of the target
+    // resource against the recorded BEFORE and AFTER sequences (never by
+    // absolute line indices, never by per-occurrence independent counting).
+    // Identical line texts and before/after collisions across occurrences
+    // are handled naturally by the sequence comparison. When the result is
+    // After, afterLineIndices receives the current file line index of every
     // recorded occurrence (parallel to undo.occurrences).
     SshMutationState classifyRecordedMutation(
         const fic::rollback::UndoRestoreSshDirective& undo,
         std::vector<std::size_t>& afterLineIndices,
         std::string& error) const;
+
+    // Repeated-apply matcher: maps the current target-resource projection
+    // onto the slots of an already recorded mutation. A slot is repairable
+    // when it is already in the recorded AFTER state or when it is an active
+    // directive of the same keyword in a slot FIC owns (beforeLine exists);
+    // the repair rewrites it to the recorded AFTER representation while the
+    // journal keeps the original BEFORE baseline. Any untracked target
+    // occurrence (structural drift) fails closed: nothing may be mutated
+    // without undo provenance. A single inserted occurrence is repairable
+    // when the keyword is completely absent (the re-insertion is exactly the
+    // recorded mutation). On success slotLineIndices holds the current file
+    // line index per occurrence (nullopt = re-insert at the end of the
+    // global section) and needsWrite tells whether any slot must be
+    // rewritten.
+    bool matchRecordedMutationForRepair(
+        const fic::rollback::UndoRestoreSshDirective& undo,
+        std::vector<std::optional<std::size_t>>& slotLineIndices,
+        bool& needsWrite,
+        std::string& error) const;
+
+    // Applies the repair edits produced by matchRecordedMutationForRepair().
+    bool applyRecordedRepairEdits(
+        const fic::rollback::UndoRestoreSshDirective& undo,
+        const std::vector<std::optional<std::size_t>>& slotLineIndices,
+        std::string& error);
 
     // Applies recorded reverse edits by the indices produced by
     // classifyRecordedMutation(). Fails closed when a target line no longer
@@ -69,11 +100,15 @@ public:
 
 private:
     bool findFirstMatchLine(std::size_t& line) const;
-    std::size_t countExactLines(const std::string& text,
-                                std::size_t globalEnd) const;
-    std::size_t countParameterDirectives(const std::string& normalizedParameter,
-                                         std::size_t globalEnd,
-                                         bool& parseError) const;
+    // Mutation-local projection of the target resource: every global-section
+    // line that is an active directive of the target keyword or exactly
+    // matches a recorded BEFORE/AFTER line, in file order, paired with its
+    // file line index.
+    bool buildTargetProjection(
+        const std::string& normalizedParameter,
+        const std::vector<std::string>& recordedLines,
+        std::vector<std::pair<std::size_t, std::string>>& projection,
+        std::string& error) const;
 
     std::unordered_map<std::string, std::string> config_;
     std::unordered_map<std::string, std::string> canonicalNames_;

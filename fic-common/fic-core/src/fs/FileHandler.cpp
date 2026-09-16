@@ -110,7 +110,12 @@ bool FileHandler::saveFile(){
     return true;
 }
 
-FileHandler::FileSaveResult FileHandler::saveFileIfUnchanged(std::string& error) {
+FileHandler::FileSaveResult FileHandler::saveFileIfUnchanged(
+    std::string& error,
+    std::optional<AtomicTargetState>* installedState) {
+    if (installedState != nullptr) {
+        installedState->reset();
+    }
     if (!loadSnapshot_.has_value()) {
         error = "Файл не был загружен через snapshot; conditional save невозможен: " +
                 filepath_;
@@ -131,6 +136,9 @@ FileHandler::FileSaveResult FileHandler::saveFileIfUnchanged(std::string& error)
             return FileSaveResult::RefusedChanged;
         }
         return FileSaveResult::Failed;
+    }
+    if (installedState != nullptr && result.installedTargetState.has_value()) {
+        *installedState = result.installedTargetState;
     }
     return FileSaveResult::Installed;
 }

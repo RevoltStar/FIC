@@ -107,6 +107,101 @@ bool Ssh::apply() {
         originalContent = this->sshConfig_->loadSnapshot()->content;
     }
 
+    const std::string resource =
+        sshMutationResource(platformConfig_.configPath, this->sshParameter);
+
+    // Crash-consistent journaling: resolve the provenance BEFORE any
+    // mutation. An existing active record for the same resource keeps its
+    // original rollback baseline across repeated applies and forces the
+    // repeated-apply path below: the current target-resource state must be
+    // matched against the recorded mutation, because a generic apply would
+    // mutate every occurrence of the keyword — including untracked ones the
+    // journal has no undo provenance for. Untracked occurrences fail closed
+    // instead of being mutated without persisted provenance.
+    fic::rollback::MutationId mutationId = 0;
+    bool newRecord = false;
+    bool hasExistingRecord = false;
+    fic::rollback::UndoRestoreSshDirective existingUndo;
+    {
+        std::string journalError;
+        fic::rollback::MutationJournal* journal =
+            fic::rollback::DaemonMutationJournal::instance().tryGet(journalError);
+        if (journal == nullptr) {
+            this->log("Mutation journal недоступен" +
+                          std::string(journalError.empty() ? "" : ": " + journalError),
+                      logLevel::ERROR);
+            return false;
+        }
+        for (const fic::rollback::MutationRecord& record :
+             journal->activeRecords(this->policyRef())) {
+            if (record.undo.backend == fic::rollback::MutationBackend::Ssh &&
+                record.resource == resource) {
+                mutationId = record.id;
+                if (const auto* sshUndo =
+                        std::get_if<fic::rollback::UndoRestoreSshDirective>(
+                            &record.undo.payload)) {
+                    existingUndo = *sshUndo;
+                    hasExistingRecord = true;
+                }
+                break;
+            }
+        }
+    }
+
+    const auto dropNewPrepared = [this, &newRecord, &mutationId](
+                                     const std::string& context) {
+        if (!newRecord) {
+            return;
+        }
+        std::string discardError;
+        if (!fic::rollback::discardMutation(mutationId, discardError)) {
+            this->log(context + ": ошибка удаления подготовленной записи "
+                              "mutation journal: " + discardError,
+                      logLevel::WARN);
+        }
+    };
+
+    if (hasExistingRecord) {
+        // Repeated apply with an active recorded mutation. The generic
+        // setValue() must not run here: it would mutate every occurrence of
+        // the keyword in the current file, creating system mutations the
+        // journal has no provenance for. Instead the current projection is
+        // mapped onto the recorded slots; only owned drifted slots are
+        // repaired to the recorded AFTER representation while the journal
+        // keeps the original BEFORE baseline.
+        std::vector<std::optional<std::size_t>> slotLineIndices;
+        bool needsWrite = false;
+        std::string matchError;
+        if (!this->sshConfig_->matchRecordedMutationForRepair(
+                existingUndo, slotLineIndices, needsWrite, matchError)) {
+            this->log("Повторное применение SSH-политики отменено (файл не "
+                          "изменён, journal baseline сохранён): " + matchError,
+                      logLevel::ERROR);
+            return false;
+        }
+        if (!needsWrite) {
+            // The target resource already matches the recorded AFTER state;
+            // the effective mismatch comes from an external include, a Match
+            // block or a pending service reload. FIC owns neither include
+            // nor Match and must not record a no-op mutation.
+            this->log("Effective-значение SSH-параметра '" + this->sshParameter +
+                          "' не соответствует политике из-за внешней конфигурации "
+                          "(Include/Match); main sshd_config уже содержит "
+                          "ожидаемую директиву",
+                      logLevel::ERROR);
+            return false;
+        }
+        if (!this->sshConfig_->applyRecordedRepairEdits(
+                existingUndo, slotLineIndices, matchError)) {
+            this->log("Повторное применение SSH-политики отменено (файл не "
+                          "изменён): " + matchError,
+                      logLevel::ERROR);
+            return false;
+        }
+        this->log("Обнаружен дрейф FIC-owned директивы '" + this->sshParameter +
+                      "'; выполняется ремонт до записанного AFTER-состояния",
+                  logLevel::WARN);
+    } else {
     const std::string currentValue = this->sshConfig_->getValue(this->sshParameter);
     if (currentValue == expectedValue) {
         // The main config already carries the expected directive; the
@@ -146,32 +241,11 @@ bool Ssh::apply() {
         return false;
     }
 
-    // Crash-consistent journaling: record Prepared before the system
-    // mutation. An existing active record for the same resource keeps its
-    // original rollback baseline across repeated applies.
-    fic::rollback::MutationId mutationId = 0;
-    bool newRecord = false;
-    {
-        std::string journalError;
-        fic::rollback::MutationJournal* journal =
-            fic::rollback::DaemonMutationJournal::instance().tryGet(journalError);
-        if (journal == nullptr) {
-            this->log("Mutation journal недоступен" +
-                          std::string(journalError.empty() ? "" : ": " + journalError),
-                      logLevel::ERROR);
-            return false;
-        }
-        const std::string resource =
-            sshMutationResource(platformConfig_.configPath, this->sshParameter);
-        for (const fic::rollback::MutationRecord& record :
-             journal->activeRecords(this->policyRef())) {
-            if (record.undo.backend == fic::rollback::MutationBackend::Ssh &&
-                record.resource == resource) {
-                mutationId = record.id;
-                break;
-            }
-        }
-        if (mutationId == 0) {
+        // Crash-consistent journaling: record Prepared before the system
+        // mutation so the persisted undo provenance always exists before the
+        // first textual change of the shared sshd_config.
+        {
+            std::string journalError;
             fic::rollback::UndoAction undo{
                 fic::rollback::MutationBackend::Ssh,
                 fic::rollback::UndoRestoreSshDirective{
@@ -187,40 +261,29 @@ bool Ssh::apply() {
             }
             newRecord = true;
         }
-    }
 
-    const auto dropNewPrepared = [this, newRecord, mutationId](
-                                     const std::string& context) {
-        if (!newRecord) {
-            return;
+        // Apply the planned mutation in memory; persistence happens below
+        // with an optimistic precondition: the write is refused when
+        // sshd_config changed between the planning snapshot and the write
+        // (TOCTOU).
+        if (!this->sshConfig_->setValue(this->sshParameter, expectedValue)) {
+            dropNewPrepared("SSH-мутация не выполнена");
+            this->log(LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:update_failed_part1]") +
+                          this->sshParameter +
+                          LocalizationManager::getLang(
+                              "[module:NET][submodule:SshEdit][message:update_failed_part2]"),
+                      logLevel::ERROR);
+            return false;
         }
-        std::string discardError;
-        if (!fic::rollback::discardMutation(mutationId, discardError)) {
-            this->log(context + ": ошибка удаления подготовленной записи "
-                              "mutation journal: " + discardError,
-                      logLevel::WARN);
-        }
-    };
-
-    // Apply the planned mutation and persist it atomically with an
-    // optimistic precondition: the write is refused when sshd_config changed
-    // between the planning snapshot and the write (TOCTOU).
-    if (!this->sshConfig_->setValue(this->sshParameter, expectedValue)) {
-        dropNewPrepared("SSH-мутация не выполнена");
-        this->log(LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:update_failed_part1]") +
-                      this->sshParameter +
-                      LocalizationManager::getLang(
-                          "[module:NET][submodule:SshEdit][message:update_failed_part2]"),
-                  logLevel::ERROR);
-        return false;
     }
     if (this->beforeWriteHook_) {
         this->beforeWriteHook_();
     }
     std::string saveError;
+    std::optional<AtomicTargetState> installedState;
     const FileHandler::FileSaveResult saveResult =
-        this->sshConfig_->saveFileIfUnchanged(saveError);
+        this->sshConfig_->saveFileIfUnchanged(saveError, &installedState);
     if (saveResult != FileHandler::FileSaveResult::Installed) {
         if (saveResult == FileHandler::FileSaveResult::RefusedChanged) {
             // The write was refused before anything was installed: the
@@ -264,8 +327,12 @@ bool Ssh::apply() {
         // restored activation when the service is active); otherwise the
         // provenance stays active so the next disable can resolve it.
         std::string restoreError;
-        const bool restored = restoreSshConfigContent(
-            platformConfig_.configPath, originalContent, restoreError);
+        if (this->beforeRestoreHook_) {
+            this->beforeRestoreHook_();
+        }
+        const bool restored = restoreSshConfigContentIfCurrentState(
+            platformConfig_.configPath, originalContent, *installedState,
+            restoreError);
         if (!restored) {
             this->log(failureContext + ". Ошибка отката: " + restoreError +
                           ". Prepared mutation остаётся активной",
@@ -308,8 +375,12 @@ bool Ssh::apply() {
         // Runtime activation failure (§12): try to fully restore the
         // pre-attempt configuration before reporting failure.
         std::string restoreError;
-        const bool restored = restoreSshConfigContent(
-            platformConfig_.configPath, originalContent, restoreError);
+        if (this->beforeRestoreHook_) {
+            this->beforeRestoreHook_();
+        }
+        const bool restored = restoreSshConfigContentIfCurrentState(
+            platformConfig_.configPath, originalContent, *installedState,
+            restoreError);
         if (!restored) {
             this->log("Ошибка восстановления исходной SSH-конфигурации: " +
                           restoreError +

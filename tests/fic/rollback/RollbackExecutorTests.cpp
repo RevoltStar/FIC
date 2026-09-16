@@ -1151,6 +1151,7 @@ public:
         value.serviceUnits = {"ssh.service", "sshd.service"};
         value.executables = executables_.get();
         value.runner = runner();
+        value.beforeRestore = beforeRestore;
         return value;
     }
 
@@ -1194,6 +1195,10 @@ public:
     std::string sshResource() const {
         return sshResource("Port");
     }
+
+    // Deterministic seam invoked right before the rollback compensation
+    // restore (simulates an external modification racing with the restore).
+    std::function<void()> beforeRestore;
 
     TempTree tree;
     std::shared_ptr<FakeSshCommands> commands_;
@@ -1738,6 +1743,117 @@ void testSshCrashAfterUndoIsNothingToDo() {
     require(second.rollbackCompleted(), "the repeated disable must proceed");
 }
 
+void testSshCrashAfterUndoReloadsActiveRuntime() {
+    SshTree tree;
+    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
+    recordApplied(kSshPolicy, tree.sshResource(),
+                  UndoAction{MutationBackend::Ssh, undo});
+
+    // Crash after the file undo but before the service reload: the file is
+    // already BEFORE while the runtime sshd still uses the FIC state.
+    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.commands_->isActive = sshSuccess();
+    tree.commands_->reloadCalls = 0;
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::NothingToDo,
+            "a crash recovery with a valid active service must resolve as "
+            "nothing to do: " + report.message);
+    require(tree.commands_->reloadCalls >= 1,
+            "BEFORE crash recovery must reload the active runtime sshd");
+    require(readFile(tree.configPath()) ==
+                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
+            "the already rolled back file must not be touched again");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().status == MutationStatus::RolledBack,
+            "the successful runtime reconciliation must persist RolledBack");
+}
+
+void testSshCrashAfterUndoReloadFailureRefusesDisable() {
+    SshTree tree;
+    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
+    recordApplied(kSshPolicy, tree.sshResource(),
+                  UndoAction{MutationBackend::Ssh, undo});
+
+    // BEFORE state, active service, but the reload of the reconciled
+    // configuration fails: the mutation must stay active and the disable
+    // must be refused.
+    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.commands_->isActive = sshSuccess();
+    tree.commands_->reload = sshFailing("reload job failed");
+    tree.commands_->reloadCalls = 0;
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Failed,
+            "a failed runtime reconciliation must refuse the disable: " +
+                report.message);
+    require(tree.commands_->reloadCalls >= 1,
+            "the crash recovery must attempt the reload");
+    require(readFile(tree.configPath()) ==
+                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
+            "the BEFORE file state must be preserved");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().isActive(),
+            "a failed BEFORE runtime reconciliation must keep the mutation "
+            "active");
+}
+
+void testSshRollbackCompensationRacePreservesExternalEdit() {
+    SshTree tree;
+    const std::string ficState =
+        "Port 2222\n"
+        "Match User backup\n"
+        "    PermitRootLogin yes\n";
+    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
+    recordApplied(kSshPolicy, tree.sshResource(),
+                  UndoAction{MutationBackend::Ssh, undo});
+
+    // The reverse write installs BEFORE, then an external actor modifies the
+    // file; the reload failure triggers the compensation, which must refuse
+    // to overwrite the external change.
+    tree.commands_->isActive = sshSuccess();
+    tree.commands_->reload = sshFailing("reload job failed");
+    const std::string external =
+        "Port 22\nMaxAuthTries 2\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.beforeRestore = [&tree, external]() {
+        writeFile(tree.configPath(), external);
+    };
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Failed,
+            "a refused rollback compensation must fail: " + report.message);
+    require(readFile(tree.configPath()) == external,
+            "the external modification made after the reverse write must be "
+            "preserved");
+
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().isActive(),
+            "a refused rollback compensation must keep the mutation active");
+}
+
 void testSshRollbackConflictWhenInsertedDirectiveDrifted() {
     SshTree tree;
     tree.writeConfig(
@@ -1815,7 +1931,6 @@ void testSshLegacyDetachedRecordIsNothingToDo() {
     undo.parameter = "Port";
     undo.appliedValue = "2222";
     SshDirectiveOccurrenceMutation occurrence;
-    occurrence.occurrenceIndex = 0;
     occurrence.beforeLine = "Port 22";
     occurrence.afterLine = "Port 2222";
     undo.occurrences = {occurrence};
@@ -1919,6 +2034,12 @@ int main() {
          testSshDuplicateDirectiveWithOtherPolicySurvives},
         {"ssh crash after undo is nothing to do",
          testSshCrashAfterUndoIsNothingToDo},
+        {"ssh crash after undo reloads active runtime",
+         testSshCrashAfterUndoReloadsActiveRuntime},
+        {"ssh crash after undo reload failure refuses disable",
+         testSshCrashAfterUndoReloadFailureRefusesDisable},
+        {"ssh rollback compensation race preserves external edit",
+         testSshRollbackCompensationRacePreservesExternalEdit},
         {"ssh rollback conflict when inserted directive drifted",
          testSshRollbackConflictWhenInsertedDirectiveDrifted},
         {"ssh rollback refused on concurrent modification",

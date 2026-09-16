@@ -4,6 +4,8 @@
 #include "modules/net/ssh/SshRuntime.h"
 #include "rollback/MutationRecord.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
+
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -21,6 +23,10 @@ struct SshRollbackOptions {
     const fic::platform::PlatformExecutableResolver* executables = nullptr;
     SshCommandRunner runner;
     std::function<void()> beforeWrite;
+    // Deterministic test seam invoked right before the conditional
+    // compensation write (simulates an external modification racing with the
+    // restore attempt).
+    std::function<void()> beforeRestore;
 };
 
 struct SshRollbackResult {
@@ -31,24 +37,30 @@ struct SshRollbackResult {
 };
 
 // Restores only the recorded FIC textual mutation of the main sshd_config
-// global section. The current state is matched mutation-locally against the
-// recorded AFTER/BEFORE representations: AFTER -> undo, BEFORE ->
-// NothingToDo (crash after a successful undo before the journal update is
-// resolved by a repeated disable), otherwise Conflict; nothing is written.
+// global section. The current target-resource projection is matched as a
+// whole against the recorded AFTER/BEFORE sequences: AFTER -> undo, BEFORE ->
+// runtime reconciliation (validate + reload of the already rolled-back
+// configuration; crash after the file undo but before the reload is resolved
+// here) and only then NothingToDo, otherwise Conflict; nothing is written.
 // The rollback is transactional relative to its own change: if validation or
-// reload fails after the reverse write, the pre-rollback content is restored
-// (and reloaded when the service is active) and the mutation stays active.
+// reload fails after the reverse write, the exact FIC-installed pre-rollback
+// state is restored conditionally (the restore is refused when the file is
+// no longer the FIC-installed state) and the mutation stays active.
 // Match blocks and included files are never touched.
 SshRollbackResult undoSshDirectiveMutation(
     const SshRollbackOptions& options,
     const fic::rollback::UndoRestoreSshDirective& undo);
 
-// Atomic content restore helper shared by apply-time and rollback-time
-// compensation writes. Captures a fresh optimistic snapshot of the target
-// and refuses the replacement when the file changes before the write
-// (preserves existing file metadata, refuses symlinks).
-bool restoreSshConfigContent(const std::filesystem::path& path,
-                             const std::string& content,
-                             std::string& error);
+// Conditional content restore shared by apply-time and rollback-time
+// compensation writes. The expectedTargetState must be the last proven
+// FIC-installed state of the target (never a fresh capture): the replacement
+// is performed only when the target still is exactly that state (identity,
+// metadata, content), so an external modification made after the FIC write is
+// never overwritten. Refuses symlinks, preserves existing file metadata.
+bool restoreSshConfigContentIfCurrentState(
+    const std::filesystem::path& path,
+    const std::string& content,
+    const AtomicTargetState& expectedTargetState,
+    std::string& error);
 
 #endif // SSHROLLBACK_H

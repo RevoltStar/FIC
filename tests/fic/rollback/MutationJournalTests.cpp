@@ -497,7 +497,6 @@ UndoAction sshUndo() {
     undo.parameter = "Port";
     undo.appliedValue = "2222";
     SshDirectiveOccurrenceMutation replacement;
-    replacement.occurrenceIndex = 0;
     replacement.beforeLine = "Port 22";
     replacement.afterLine = "Port 2222";
     undo.occurrences = {replacement};
@@ -536,8 +535,7 @@ void testSshUndoPayloadRoundTrip() {
             "ssh parameter and applied value must survive reload");
     require(undo->occurrences.size() == 1,
             "the ssh occurrence mutation must survive reload");
-    require(undo->occurrences[0].occurrenceIndex == 0 &&
-                undo->occurrences[0].beforeLine.has_value() &&
+    require(undo->occurrences[0].beforeLine.has_value() &&
                 *undo->occurrences[0].beforeLine == "Port 22" &&
                 undo->occurrences[0].afterLine == "Port 2222",
             "the replacement occurrence must survive reload");

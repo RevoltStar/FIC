@@ -38,7 +38,8 @@ json serializeUndoAction(const UndoAction& action) {
         for (const SshDirectiveOccurrenceMutation& occurrence :
              sshDirective->occurrences) {
             json item;
-            item["occurrence"] = occurrence.occurrenceIndex;
+            // The vector order is the mutation identity; no positional index
+            // is serialized.
             if (occurrence.beforeLine.has_value()) {
                 item["before"] = *occurrence.beforeLine;
             } else {
@@ -103,28 +104,27 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
                     "applied value and occurrences";
             return false;
         }
-        std::optional<std::size_t> previousOccurrence;
-        std::vector<std::string> afterLines;
+        std::size_t position = 0;
         for (const json& item : *occurrencesIt) {
             if (!item.is_object()) {
                 error = "ssh occurrence mutation must be an object";
                 return false;
             }
+            // The occurrence vector order is the mutation identity. The
+            // redundant positional field of the intermediate development
+            // format is tolerated only when it matches the vector position
+            // exactly (same semantics); anything else is rejected fail
+            // closed instead of being silently re-interpreted.
             const auto occurrenceIt = item.find("occurrence");
-            if (occurrenceIt == item.end() || !occurrenceIt->is_number_unsigned()) {
-                error = "ssh occurrence mutation requires an unsigned "
-                        "occurrence index";
-                return false;
+            if (occurrenceIt != item.end()) {
+                if (!occurrenceIt->is_number_unsigned() ||
+                    occurrenceIt->get<std::size_t>() != position) {
+                    error = "ssh occurrence index does not match the "
+                            "recorded occurrence order";
+                    return false;
+                }
             }
-            const std::size_t occurrenceIndex = occurrenceIt->get<std::size_t>();
-            if (occurrenceIndex !=
-                (previousOccurrence.has_value() ? *previousOccurrence + 1 : 0)) {
-                error = "ssh occurrence indices must start at 0 and increase";
-                return false;
-            }
-            previousOccurrence = occurrenceIndex;
             SshDirectiveOccurrenceMutation occurrence;
-            occurrence.occurrenceIndex = occurrenceIndex;
             const auto beforeIt = item.find("before");
             if (beforeIt == item.end() ||
                 (!beforeIt->is_string() && !beforeIt->is_null())) {
@@ -163,15 +163,11 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
                         "occurrence mutation";
                 return false;
             }
-            for (const std::string& after : afterLines) {
-                if (after == occurrence.afterLine) {
-                    error = "ssh occurrence mutations must have distinct "
-                            "after lines";
-                    return false;
-                }
-            }
-            afterLines.push_back(occurrence.afterLine);
+            // Identical after lines are legal: duplicated directives produce
+            // identical commented lines (e.g. two "#Port 22" duplicates), and
+            // the ordered sequence comparison keeps the payload unambiguous.
             payload.occurrences.push_back(std::move(occurrence));
+            ++position;
         }
         action.payload = std::move(payload);
         return true;

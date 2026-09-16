@@ -276,6 +276,17 @@ bool AtomicFileWriter::writeWithResult(
         cleanup(tempFd, tempPath);
         return false;
     }
+    // Capture the final temp file metadata (after fchown/fchmod) so the
+    // installed state below describes exactly what rename() will publish.
+    // Must happen before the descriptor is closed.
+    struct stat installedStat {};
+    if (::fstat(tempFd, &installedStat) < 0) {
+        setError(errorMessage,
+                 "could not stat prepared temporary file " + tempPath.string() +
+                     ": " + errnoMessage());
+        cleanup(tempFd, tempPath);
+        return false;
+    }
     if (!closeFd(tempFd)) {
         setError(errorMessage, "could not close " + tempPath.string() + ": " + errnoMessage());
         cleanup(tempFd, tempPath);
@@ -296,6 +307,16 @@ bool AtomicFileWriter::writeWithResult(
     }
     if (result != nullptr) {
         result->installed = true;
+        // Built from the temp descriptor that rename() just published: never
+        // from a fresh post-rename capture of the target path (an external
+        // writer could replace the target in between).
+        result->installedTargetState = AtomicTargetState{};
+        result->installedTargetState->identity.device = installedStat.st_dev;
+        result->installedTargetState->identity.inode = installedStat.st_ino;
+        result->installedTargetState->mode = installedStat.st_mode & 07777;
+        result->installedTargetState->owner = installedStat.st_uid;
+        result->installedTargetState->group = installedStat.st_gid;
+        result->installedTargetState->content = content;
     }
 
     int dirFd = ::open(targetDir.c_str(), O_RDONLY | O_DIRECTORY);

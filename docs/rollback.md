@@ -137,40 +137,60 @@ I/O), это ошибка загрузки — fail closed. Существующ
   `Match`) shared-файла `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu,
   `/etc/openssh/sshd_config` ALT). Main `sshd_config` **не считается
   FIC-owned**: full-file snapshot не хранится и не восстанавливается,
-  `Match` blocks и included-файлы не трогаются. Каждый элемент `occurrences`
-  описывает одну мутацию вхождения директивы: `occurrenceIndex` — позиция
-  вхождения среди global-section директив того же keyword в момент apply,
-  `beforeLine` — исходная строка (`null` для строк, вставленных FIC — при
-  rollback они удаляются), `afterLine` — строка после мутации FIC. Дубликаты
-  директив, заменённые/закомментированные FIC, восстанавливаются полностью.
-  Drift detection — **mutation-local** (whole-global fingerprint не
-  используется): текущее состояние каждой recorded occurrence сопоставляется
-  с её AFTER- и BEFORE-представлением (точное текстовое совпадение, без
-  нормализации регистра):
-  * текущее состояние == AFTER → FIC-мутация ещё применена → откат;
-  * текущее состояние == BEFORE → мутация уже фактически отменена (в т.ч.
-    crash после успешного undo, но до обновления journal) → `NothingToDo`,
-    journal переводится в `RolledBack`, disable разрешён;
-  * ни то, ни другое (в т.ч. смешанное состояние и неоднозначные совпадения)
-    → `Conflict` без записи в файл.
+  `Match` blocks и included-файлы не трогаются. Resource identity — это
+  конкретная recorded-мутация директивы (target directive mutation), а не
+  whole global section. Каждый элемент `occurrences` описывает одну мутацию
+  вхождения директивы: `beforeLine` — исходная строка (`null` для строк,
+  вставленных FIC — при rollback они удаляются), `afterLine` — строка после
+  мутации FIC. Позиция вхождения не хранится отдельно: порядок вектора
+  `occurrences` полностью выражает identity (mutation-local ordered
+  representation). Дубликаты директив, заменённые/закомментированные FIC,
+  восстанавливаются полностью; одинаковые `afterLine` (например несколько
+  закомментированных `#Port 22`) допустимы.
+  Drift detection — **mutation-local ordered projection** (whole-global
+  fingerprint и независимый per-occurrence подсчёт строк не используются):
+  строится упорядоченная проекция target resource (active-директивы keyword
+  плюс строки, точно совпадающие с recorded BEFORE/AFTER строками), которая
+  сравнивается целиком с recorded AFTER- и BEFORE-последовательностями:
+  * проекция == AFTER-последовательность → FIC-мутация применена → откат;
+  * проекция == BEFORE-последовательность → persistent undo уже применён
+    (в т.ч. crash после file-undo, но до reload/journal update) → runtime
+    reconciliation: валидация `sshd -T` и reload активного сервиса; только
+    после успеха — `NothingToDo`, journal → `RolledBack`, disable разрешён.
+    Провал валидации или reload оставляет запись активной и отказывает в
+    disable;
+  * ни то, ни другое (в т.ч. structural drift: число вхождений keyword не
+    соответствует записанной мутации) → `Conflict` без записи в файл.
   Внешнее изменение другой директивы (в т.ч. сделанное другой FIC SSH
   политикой — у каждой политики свой keyword/resource) не блокирует откат и
   не восстанавливается; изменение после первого `Match` и во внешних include
   этому тоже не мешает. Абсолютные номера строк не являются идентификатором
-  мутации: вхождения заново ищутся по recorded AFTER/BEFORE-представлениям.
+  мутации: проекция заново строится по recorded AFTER/BEFORE-представлениям.
+  Повторный apply при существующей активной записи работает через existing
+  undo, а не generic apply: текущие вхождения сопоставляются с записанными
+  слотами; owned drifted slot (active-директива того же keyword) ремонтируется
+  до recorded AFTER при сохранении исходного BEFORE baseline; любые новые /
+  untracked вхождения keyword дают **fail closed** — файл и journal не
+  изменяются, никакая мутация не выполняется без предварительно записанного
+  undo provenance. Effective-compliant состояние не присваивается FIC: если
+  директива уже в AFTER-состоянии, файл не пишется, journal не меняется.
   После reverse-записи обязательны валидация `sshd -T` и reload активного
-  сервиса; при провале восстанавливается pre-rollback содержимое (reload при
-  активном сервисе), возвращается `Failed`, запись остаётся активной.
-  Effective-значение после rollback не проверяется на равенство исходному: за
-  время жизни политики администратор мог изменить include-файлы, `Match`
-  blocks и package defaults.
-  Повторный apply при существующей активной записи не перезаписывает исходный
-  baseline (исходная запись используется как provenance).
+  сервиса; при провале восстанавливается pre-rollback содержимое **только при
+  условии, что текущий файл — это точное FIC-installed state** reverse-записи
+  (identity, metadata, content, полученные от rename, а не свежий snapshot):
+  иначе восстановление отказывает, внешнее изменение сохраняется, запись
+  остаётся активной, возвращается `Failed`.
   Все записи и откаты shared `sshd_config` выполняются через optimistic
   conditional write (`AtomicWriteOptions::expectedTargetState`): атомарный
   snapshot (inode, metadata, content) захватывается при чтении, и запись
   отказывает (`Conflict`/apply failure без перезаписи), если файл изменился
-  между чтением и записью.
+  между чтением и записью. Это **optimistic expected-target precondition**,
+  а не полноценный filesystem CAS: между финальной проверкой и `rename()`
+  остаётся малое residual race window против non-cooperating writer
+  (известное ограничение). `AtomicWriteResult` различает «ничего не
+  установлено» и «rename уже произошёл» (`installed`, `installedTargetState`
+  — точное состояние temp-inode/content/metadata, опубликованное rename; в
+  т.ч. при ошибке durability после rename `installed == true`).
 * `UndoDisableDeviceFeature{feature}` — отключение category-level desired
   state DC и пересборка `99-fic-devices.rules` через device daemon;
   per-device пользовательские правила не затрагиваются.

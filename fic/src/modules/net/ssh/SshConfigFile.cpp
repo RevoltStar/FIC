@@ -3,6 +3,7 @@
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
+#include <algorithm>
 #include <iostream>
 
 namespace {
@@ -127,7 +128,6 @@ bool SshConfigFileHandler::planSetValue(const std::string& parameter,
     plan.canonicalParameter = canonicalParameter;
     plan.appliedValue = value;
 
-    std::size_t occurrenceIndex = 0;
     bool updated = false;
     for (std::size_t index = 0; index < globalEnd; ++index) {
         const SshLineParseResult parsed = parseSshConfigLine(original_lines_[index]);
@@ -139,7 +139,6 @@ bool SshConfigFileHandler::planSetValue(const std::string& parameter,
             continue;
         }
         fic::rollback::SshDirectiveOccurrenceMutation occurrence;
-        occurrence.occurrenceIndex = occurrenceIndex++;
         occurrence.beforeLine = original_lines_[index];
         occurrence.afterLine = updated ? "#" + original_lines_[index] : newLine;
         updated = true;
@@ -151,7 +150,6 @@ bool SshConfigFileHandler::planSetValue(const std::string& parameter,
         // The directive does not exist yet: FIC will insert the line before
         // the first Match (or at the end of the file). Rollback removes it.
         fic::rollback::SshDirectiveOccurrenceMutation occurrence;
-        occurrence.occurrenceIndex = 0;
         occurrence.beforeLine = std::nullopt;
         occurrence.afterLine = newLine;
         plan.occurrences.push_back(std::move(occurrence));
@@ -161,36 +159,36 @@ bool SshConfigFileHandler::planSetValue(const std::string& parameter,
     return true;
 }
 
-std::size_t SshConfigFileHandler::countExactLines(const std::string& text,
-                                                  std::size_t globalEnd) const {
-    std::size_t count = 0;
-    for (std::size_t index = 0; index < globalEnd && index < original_lines_.size();
-         ++index) {
-        if (original_lines_[index] == text) {
-            ++count;
-        }
-    }
-    return count;
-}
-
-std::size_t SshConfigFileHandler::countParameterDirectives(
+bool SshConfigFileHandler::buildTargetProjection(
     const std::string& normalizedParameter,
-    std::size_t globalEnd,
-    bool& parseError) const {
-    std::size_t count = 0;
+    const std::vector<std::string>& recordedLines,
+    std::vector<std::pair<std::size_t, std::string>>& projection,
+    std::string& error) const {
+    projection.clear();
+    std::size_t globalEnd = 0;
+    if (!findFirstMatchLine(globalEnd)) {
+        error = "Не удалось выделить global section sshd_config";
+        return false;
+    }
     for (std::size_t index = 0; index < globalEnd && index < original_lines_.size();
          ++index) {
-        const SshLineParseResult parsed = parseSshConfigLine(original_lines_[index]);
+        const std::string& line = original_lines_[index];
+        const SshLineParseResult parsed = parseSshConfigLine(line);
         if (!parsed.ok) {
-            parseError = true;
-            return 0;
+            error = "Не удалось разобрать строку " + std::to_string(index + 1) +
+                    " sshd_config";
+            return false;
         }
-        if (parsed.hasDirective &&
-            normalizeSshKeyword(parsed.directive.keyword) == normalizedParameter) {
-            ++count;
+        const bool keywordDirective = parsed.hasDirective &&
+            normalizeSshKeyword(parsed.directive.keyword) == normalizedParameter;
+        const bool recordedLine =
+            std::find(recordedLines.begin(), recordedLines.end(), line) !=
+            recordedLines.end();
+        if (keywordDirective || recordedLine) {
+            projection.emplace_back(index, line);
         }
     }
-    return count;
+    return true;
 }
 
 SshMutationState SshConfigFileHandler::classifyRecordedMutation(
@@ -198,91 +196,226 @@ SshMutationState SshConfigFileHandler::classifyRecordedMutation(
     std::vector<std::size_t>& afterLineIndices,
     std::string& error) const {
     afterLineIndices.clear();
-    std::size_t globalEnd = 0;
-    if (!findFirstMatchLine(globalEnd)) {
-        error = "Не удалось выделить global section sshd_config";
-        return SshMutationState::Conflict;
-    }
 
-    // Mutation-local matching: only the state each recorded occurrence
-    // actually controls is inspected. Unrelated global-section lines (other
-    // FIC SSH policies, comments, external edits of other directives) are
-    // irrelevant, and everything after the first Match is never considered.
-    bool anyAfter = false;
-    bool anyBefore = false;
+    // The recorded mutation as whole ordered BEFORE and AFTER sequences of
+    // the target resource projection. Identical line texts across
+    // occurrences and before/after collisions between occurrences are
+    // expressed exactly by the sequences; there is no per-occurrence
+    // independent line counting.
+    std::vector<std::string> beforeSequence;
+    std::vector<std::string> afterSequence;
+    std::vector<std::string> recordedLines;
+    beforeSequence.reserve(undo.occurrences.size());
+    afterSequence.reserve(undo.occurrences.size());
     for (const fic::rollback::SshDirectiveOccurrenceMutation& occurrence :
          undo.occurrences) {
-        const std::size_t afterCount = countExactLines(occurrence.afterLine, globalEnd);
         if (occurrence.beforeLine.has_value()) {
-            const std::size_t beforeCount =
-                countExactLines(*occurrence.beforeLine, globalEnd);
-            if (afterCount == 1 && beforeCount == 0) {
-                anyAfter = true;
-            } else if (beforeCount == 1 && afterCount == 0) {
-                anyBefore = true;
-            } else {
-                error = "Записанное состояние директивы '" + undo.parameter +
-                        "' в sshd_config не соответствует ни AFTER-, ни "
-                        "BEFORE-состоянию FIC-мутации";
-                return SshMutationState::Conflict;
+            beforeSequence.push_back(*occurrence.beforeLine);
+            if (std::find(recordedLines.begin(), recordedLines.end(),
+                          *occurrence.beforeLine) == recordedLines.end()) {
+                recordedLines.push_back(*occurrence.beforeLine);
             }
-        } else {
-            // FIC inserted the line: exactly one copy must exist for AFTER.
-            if (afterCount == 1) {
-                anyAfter = true;
-            } else if (afterCount == 0) {
-                // Inserted line absent: BEFORE only when the directive is
-                // completely absent from the global section; any other
-                // representation of the keyword is external drift (Conflict).
-                bool parseError = false;
-                const std::size_t directiveCount = countParameterDirectives(
-                    undo.parameter, globalEnd, parseError);
-                if (parseError || directiveCount != 0) {
-                    error = "Вставленная FIC директива '" + undo.parameter +
-                            "' изменена внешним образом; откат отменён";
-                    return SshMutationState::Conflict;
-                }
-                anyBefore = true;
-            } else {
-                error = "Строка вставленной FIC директивы '" + undo.parameter +
-                        "' присутствует в sshd_config неоднозначно";
-                return SshMutationState::Conflict;
-            }
+        }
+        afterSequence.push_back(occurrence.afterLine);
+        if (std::find(recordedLines.begin(), recordedLines.end(),
+                      occurrence.afterLine) == recordedLines.end()) {
+            recordedLines.push_back(occurrence.afterLine);
         }
     }
 
-    if (anyAfter && anyBefore) {
-        error = "Состояние директивы '" + undo.parameter +
-                "' в sshd_config частично соответствует AFTER- и частично "
-                "BEFORE-состоянию FIC-мутации";
+    std::vector<std::pair<std::size_t, std::string>> projection;
+    if (!buildTargetProjection(undo.parameter, recordedLines, projection, error)) {
         return SshMutationState::Conflict;
     }
 
-    if (anyBefore) {
+    const auto sameSequence =
+        [&projection](const std::vector<std::string>& sequence) {
+            if (projection.size() != sequence.size()) {
+                return false;
+            }
+            for (std::size_t index = 0; index < sequence.size(); ++index) {
+                if (projection[index].second != sequence[index]) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+    if (sameSequence(afterSequence)) {
+        for (const auto& entry : projection) {
+            afterLineIndices.push_back(entry.first);
+        }
+        return SshMutationState::After;
+    }
+    if (sameSequence(beforeSequence)) {
         return SshMutationState::Before;
     }
 
-    // Every occurrence is in its AFTER state; capture the exact current line
-    // index of each occurrence for the reverse application.
+    if (projection.size() != beforeSequence.size() &&
+        projection.size() != afterSequence.size()) {
+        error = "Число вхождений директивы '" + undo.parameter +
+                "' в sshd_config не соответствует записанной FIC-мутации "
+                "(structural drift / untracked SSH directive occurrence)";
+    } else {
+        error = "Состояние директивы '" + undo.parameter +
+                "' в sshd_config не соответствует ни AFTER-, ни "
+                "BEFORE-состоянию FIC-мутации";
+    }
+    return SshMutationState::Conflict;
+}
+bool SshConfigFileHandler::matchRecordedMutationForRepair(
+    const fic::rollback::UndoRestoreSshDirective& undo,
+    std::vector<std::optional<std::size_t>>& slotLineIndices,
+    bool& needsWrite,
+    std::string& error) const {
+    slotLineIndices.clear();
+    needsWrite = false;
+
+    std::vector<std::string> recordedLines;
     for (const fic::rollback::SshDirectiveOccurrenceMutation& occurrence :
          undo.occurrences) {
-        bool found = false;
-        for (std::size_t index = 0;
-             index < globalEnd && index < original_lines_.size(); ++index) {
-            if (original_lines_[index] == occurrence.afterLine) {
-                afterLineIndices.push_back(index);
-                found = true;
-                break;
-            }
+        if (occurrence.beforeLine.has_value() &&
+            std::find(recordedLines.begin(), recordedLines.end(),
+                      *occurrence.beforeLine) == recordedLines.end()) {
+            recordedLines.push_back(*occurrence.beforeLine);
         }
-        if (!found) {
-            error = "Не удалось найти записанную строку FIC-мутации '" +
-                    undo.parameter + "' в sshd_config";
-            return SshMutationState::Conflict;
+        if (std::find(recordedLines.begin(), recordedLines.end(),
+                      occurrence.afterLine) == recordedLines.end()) {
+            recordedLines.push_back(occurrence.afterLine);
         }
     }
-    return SshMutationState::After;
+
+    std::vector<std::pair<std::size_t, std::string>> projection;
+    if (!buildTargetProjection(undo.parameter, recordedLines, projection, error)) {
+        return false;
+    }
+
+    const bool singleInsertion = undo.occurrences.size() == 1 &&
+        !undo.occurrences.front().beforeLine.has_value();
+    if (singleInsertion) {
+        // BEFORE state: the keyword is completely absent, so re-inserting
+        // the recorded line reproduces exactly the recorded mutation — the
+        // existing provenance fully covers it.
+        if (projection.empty()) {
+            slotLineIndices.push_back(std::nullopt);
+            needsWrite = true;
+            return true;
+        }
+        // AFTER state: the single inserted line is present.
+        if (projection.size() == 1 &&
+            projection.front().second == undo.occurrences.front().afterLine) {
+            slotLineIndices.push_back(projection.front().first);
+            return true;
+        }
+        error = "structural drift / untracked SSH directive occurrence '" +
+                undo.parameter + "': повторное применение отменено, файл не "
+                "изменён";
+        return false;
+    }
+
+    if (projection.size() != undo.occurrences.size()) {
+        error = "structural drift / untracked SSH directive occurrence '" +
+                undo.parameter + "': число вхождений в sshd_config не "
+                "соответствует записанной мутации; повторное применение "
+                "отменено, файл не изменён";
+        return false;
+    }
+
+    for (std::size_t slot = 0; slot < undo.occurrences.size(); ++slot) {
+        const fic::rollback::SshDirectiveOccurrenceMutation& occurrence =
+            undo.occurrences[slot];
+        const std::size_t lineIndex = projection[slot].first;
+        const std::string& line = projection[slot].second;
+        if (line == occurrence.afterLine) {
+            slotLineIndices.push_back(lineIndex);
+            continue;
+        }
+        // A drifted slot FIC owns: only an active directive of the same
+        // keyword may be repaired to the recorded AFTER representation.
+        // Anything else (commented-out lines, foreign text, parse failures)
+        // is unattributable drift and fails closed.
+        const SshLineParseResult parsed = parseSshConfigLine(line);
+        if (!parsed.ok) {
+            error = "Не удалось разобрать строку " +
+                    std::to_string(lineIndex + 1) + " sshd_config";
+            return false;
+        }
+        if (occurrence.beforeLine.has_value() && parsed.hasDirective &&
+            normalizeSshKeyword(parsed.directive.keyword) == undo.parameter) {
+            slotLineIndices.push_back(lineIndex);
+            needsWrite = true;
+            continue;
+        }
+        error = "structural drift / untracked SSH directive occurrence '" +
+                undo.parameter + "': вхождение '" + line +
+                "' не может быть сопоставлено записанной мутации; повторное "
+                "применение отменено, файл не изменён";
+        return false;
+    }
+    return true;
 }
+
+
+
+bool SshConfigFileHandler::applyRecordedRepairEdits(
+    const fic::rollback::UndoRestoreSshDirective& undo,
+    const std::vector<std::optional<std::size_t>>& slotLineIndices,
+    std::string& error) {
+    if (slotLineIndices.size() != undo.occurrences.size()) {
+        error = "Число индексов ремонта не соответствует записанной SSH-мутации";
+        return false;
+    }
+    // Fail closed before changing anything: every concrete slot must either
+    // be already in the AFTER state or be an active directive FIC owns.
+    for (std::size_t position = 0; position < undo.occurrences.size(); ++position) {
+        const std::optional<std::size_t>& index = slotLineIndices[position];
+        const fic::rollback::SshDirectiveOccurrenceMutation& occurrence =
+            undo.occurrences[position];
+        if (!index.has_value()) {
+            if (occurrence.beforeLine.has_value()) {
+                error = "Слот ремонта не соответствует записанной SSH-мутации";
+                return false;
+            }
+            continue;
+        }
+        if (*index >= original_lines_.size() ||
+            original_lines_[*index] == occurrence.afterLine) {
+            continue;
+        }
+        const SshLineParseResult parsed = parseSshConfigLine(original_lines_[*index]);
+        if (!occurrence.beforeLine.has_value() || !parsed.ok ||
+            !parsed.hasDirective) {
+            error = "Строка " + std::to_string(*index) +
+                    " sshd_config не может быть отремонтирована до "
+                    "зафиксированного AFTER-состояния";
+            return false;
+        }
+    }
+    // Apply from the bottom so insertions keep the remaining indices valid.
+    for (std::size_t position = undo.occurrences.size(); position-- > 0;) {
+        const fic::rollback::SshDirectiveOccurrenceMutation& occurrence =
+            undo.occurrences[position];
+        const std::optional<std::size_t>& index = slotLineIndices[position];
+        if (!index.has_value()) {
+            std::size_t insertAt = 0;
+            if (!findFirstMatchLine(insertAt)) {
+                error = "Не удалось выделить global section sshd_config";
+                return false;
+            }
+            if (insertAt > original_lines_.size()) {
+                insertAt = original_lines_.size();
+            }
+            original_lines_.insert(
+                original_lines_.begin() +
+                    static_cast<std::ptrdiff_t>(insertAt),
+                occurrence.afterLine);
+        } else if (original_lines_[*index] != occurrence.afterLine) {
+            original_lines_[*index] = occurrence.afterLine;
+        }
+    }
+    return true;
+}
+
 
 bool SshConfigFileHandler::applyRecordedReverseEdits(
     const fic::rollback::UndoRestoreSshDirective& undo,

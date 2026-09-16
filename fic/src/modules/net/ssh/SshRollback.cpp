@@ -20,26 +20,26 @@ SshRuntime makeRuntime(const SshRollbackOptions& options) {
 
 } // namespace
 
-bool restoreSshConfigContent(const std::filesystem::path& path,
-                             const std::string& content,
-                             std::string& error) {
-    // TOCTOU protection: capture a fresh optimistic snapshot of the target
-    // and refuse the restore when the file changes before the write.
-    AtomicTargetState snapshot;
-    if (!AtomicFileWriter::captureTargetState(path.string(), snapshot, &error)) {
-        return false;
-    }
+bool restoreSshConfigContentIfCurrentState(
+    const std::filesystem::path& path,
+    const std::string& content,
+    const AtomicTargetState& expectedTargetState,
+    std::string& error) {
+    // Conditional restore: the replacement happens only when the target is
+    // still exactly the state FIC proved to install (expectedTargetState —
+    // the state captured at rename time, never a fresh capture, which could
+    // silently legitimize an external modification made after the FIC write).
     AtomicWriteOptions options;
     options.createIfMissing = false;
     options.rejectSymlink = true;
     options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
-    options.expectedTargetState = snapshot;
+    options.expectedTargetState = expectedTargetState;
     AtomicWriteResult result;
     if (!AtomicFileWriter::writeWithResult(
             path.string(), content, options, &error, &result)) {
         if (result.preconditionFailed) {
-            error = "Файл изменился перед восстановлением; запись отменена: " +
-                    error;
+            error = "Файл изменился после FIC-записи; восстановление отменено, "
+                    "внешнее содержимое сохранено: " + error;
         }
         return false;
     }
@@ -78,13 +78,42 @@ SshRollbackResult undoSshDirectiveMutation(
     const SshMutationState state = handler.classifyRecordedMutation(
         undo, afterLineIndices, classifyError);
     if (state == SshMutationState::Before) {
-        // The system is already in the recorded pre-FIC state: either the
-        // mutation was never applied or a previous undo completed (possibly
-        // with a crash before the journal update). Safe to mark resolved.
+        // The file already matches the recorded pre-FIC state: either the
+        // mutation was never applied or a previous undo wrote the file but
+        // crashed before the journal update / service reload. BEFORE means
+        // the persistent undo succeeded, so the runtime sshd must still be
+        // reconciled: validate the current configuration and reload it when
+        // the service is active. Only a fully successful runtime
+        // reconciliation resolves the mutation; a failed validation or a
+        // failed reload leaves the journal active and refuses the rollback.
         result.nothingToDo = true;
+        SshRuntime runtime = makeRuntime(options);
+        std::string validationError;
+        if (!runtime.validateConfiguration(validationError)) {
+            result.nothingToDo = false;
+            result.message = "Состояние директивы " + undo.parameter +
+                             " уже соответствует состоянию до FIC-мутации, но "
+                             "sshd -T не принимает текущую конфигурацию; откат "
+                             "не подтверждён, мутация остаётся активной: " +
+                             validationError;
+            return result;
+        }
+        const SshActivationResult activation = runtime.activateIfRunning();
+        if (!activation.ok) {
+            result.nothingToDo = false;
+            result.message = "Состояние директивы " + undo.parameter +
+                             " уже соответствует состоянию до FIC-мутации, но "
+                             "перезагрузка SSH-сервиса не удалась; откат не "
+                             "подтверждён, мутация остаётся активной: " +
+                             activation.message;
+            return result;
+        }
         result.message = "Состояние директивы " + undo.parameter +
-                         " уже соответствует состоянию до FIC-мутации; откат "
-                         "не требуется";
+                         " уже соответствует состоянию до FIC-мутации" +
+                         (activation.reloaded
+                              ? "; SSH-сервис перезагружен (crash recovery)"
+                              : "; SSH-сервис неактивен, перезагрузка не требуется") +
+                         "; откат не требуется";
         return result;
     }
     if (state == SshMutationState::Conflict) {
@@ -105,12 +134,13 @@ SshRollbackResult undoSshDirectiveMutation(
     }
 
     std::string error;
+    std::optional<AtomicTargetState> installedState;
     if (!handler.applyRecordedReverseEdits(undo, afterLineIndices, error)) {
         result.message = "Откат SSH-мутации отменён (файл не изменён): " + error;
         return result;
     }
     const FileHandler::FileSaveResult saveResult =
-        handler.saveFileIfUnchanged(error);
+        handler.saveFileIfUnchanged(error, &installedState);
     if (saveResult != FileHandler::FileSaveResult::Installed) {
         if (saveResult == FileHandler::FileSaveResult::RefusedChanged) {
             // The shared sshd_config changed concurrently after the snapshot
@@ -127,13 +157,23 @@ SshRollbackResult undoSshDirectiveMutation(
     }
 
     SshRuntime runtime = makeRuntime(options);
+    const auto runBeforeRestore = [&options]() {
+        if (options.beforeRestore) {
+            options.beforeRestore();
+        }
+    };
     std::string validationError;
     if (!runtime.validateConfiguration(validationError)) {
         // Post-rollback validation failed: restore the pre-rollback (FIC)
-        // state. Do not reload a configuration sshd does not accept.
+        // state. Do not reload a configuration sshd does not accept. The
+        // restore is conditional on the target still being the exact state
+        // FIC installed through the reverse write; an external modification
+        // made after that write is never overwritten.
         std::string restoreError;
-        const bool stateRestored = restoreSshConfigContent(
-            options.configPath, preRollbackContent, restoreError);
+        runBeforeRestore();
+        const bool stateRestored = restoreSshConfigContentIfCurrentState(
+            options.configPath, preRollbackContent, *installedState,
+            restoreError);
         if (stateRestored) {
             result.message = "Откат SSH-мутации записан, но sshd -T не принял "
                              "результат; состояние до отката восстановлено: " +
@@ -141,7 +181,8 @@ SshRollbackResult undoSshDirectiveMutation(
         } else {
             result.message = "Откат SSH-мутации не прошёл валидацию (" +
                              validationError + "); восстановить состояние до " +
-                             "отката не удалось: " + restoreError;
+                             "отката не удалось, мутация остаётся активной: " +
+                             restoreError;
         }
         return result;
     }
@@ -149,12 +190,15 @@ SshRollbackResult undoSshDirectiveMutation(
     const SshActivationResult activation = runtime.activateIfRunning();
     if (!activation.ok) {
         std::string restoreError;
-        const bool stateRestored = restoreSshConfigContent(
-            options.configPath, preRollbackContent, restoreError);
+        runBeforeRestore();
+        const bool stateRestored = restoreSshConfigContentIfCurrentState(
+            options.configPath, preRollbackContent, *installedState,
+            restoreError);
         if (!stateRestored) {
             result.message = "Перезагрузка SSH-сервиса не удалась (" +
                              activation.message +
-                             "); восстановить состояние до отката не удалось: " +
+                             "); восстановить состояние до отката не удалось, "
+                             "мутация остаётся активной: " +
                              restoreError;
             return result;
         }

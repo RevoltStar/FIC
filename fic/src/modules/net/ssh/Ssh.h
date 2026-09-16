@@ -26,12 +26,20 @@ protected:
     // Deterministic test seam invoked right before the conditional atomic
     // write of the apply path (simulates concurrent external modification).
     std::function<void()> beforeWriteHook_;
+    // Deterministic test seam invoked right before the apply-time
+    // compensation restore (simulates an external modification racing with
+    // the compensation write).
+    std::function<void()> beforeRestoreHook_;
 
 public:
     Ssh(fic::platform::SshPlatformConfig platformConfig,
         const fic::platform::PlatformExecutableResolver& executables);
     bool apply() override;
     virtual ~Ssh();
+
+    void setBeforeRestoreHook(std::function<void()> hook) {
+        beforeRestoreHook_ = std::move(hook);
+    }
 
     // Managed resource identifier for the rollback system: the SSH parameter
     // FIC mutates in the shared main sshd_config.

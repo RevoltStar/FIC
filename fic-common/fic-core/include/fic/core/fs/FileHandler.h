@@ -49,13 +49,18 @@ public:
     // shared configuration files against concurrent external modification
     // between load and save (TOCTOU). Returns RefusedChanged without writing
     // anything when the file changed, Failed when the write failed without
-    // installing anything, Installed on success.
+    // installing anything, Installed on success. When installedState is
+    // provided and the file was installed, it receives the exact state FIC
+    // published through rename (identity, metadata, content) — the
+    // compensation anchor for later conditional restores.
     enum class FileSaveResult {
         Installed,
         RefusedChanged,
         Failed
     };
-    FileSaveResult saveFileIfUnchanged(std::string& error);
+    FileSaveResult saveFileIfUnchanged(
+        std::string& error,
+        std::optional<AtomicTargetState>* installedState = nullptr);
 
     // Target state (identity, metadata, content) captured by the last load,
     // when the concrete handler captures it; empty otherwise.
