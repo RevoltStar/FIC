@@ -400,6 +400,26 @@ bool AtomicFileWriter::ensureTargetDurable(const std::string& path,
     return fsyncParentDirectory(resolvedPath.parent_path(), errorMessage);
 }
 
+bool AtomicFileWriter::ensureTargetDurableIfCurrentState(
+    const std::string& path,
+    const AtomicTargetState& expected,
+    std::string* errorMessage) {
+    // Re-prove ownership before the barrier: the durability confirmation
+    // applies to the exact captured state, never to whatever happens to
+    // occupy the path now. An external replacement between the original
+    // capture and this point must fail closed instead of being fsynced into
+    // legitimacy.
+    std::string matchError;
+    if (!targetStateMatches(path, expected, &matchError)) {
+        setError(errorMessage,
+                 "state changed before durability confirmation: " + matchError);
+        return false;
+    }
+    // The state still matches: the remaining failure mode is the directory
+    // fsync itself and its error is reported as-is.
+    return ensureTargetDurable(path, errorMessage);
+}
+
 bool AtomicFileWriter::targetStateMatches(const std::string& path,
                                           const AtomicTargetState& expected,
                                           std::string* errorMessage) {

@@ -21,6 +21,15 @@ public:
     // Returns nullptr when FIC runtime paths are not initialized (unit-test
     // environment). Sets error and returns nullptr when the journal exists
     // but cannot be loaded: callers must fail closed in that case.
+    //
+    // Operational access gate: the journal is returned ONLY while it is
+    // usable (loaded + Healthy). A journal that became Indeterminate is not
+    // handed out for ANY decision — apply, rollback, disable ownership
+    // resolution, detach or anything journal-backed. tryGet() attempts a
+    // lazy recovery through the durability-proven load(); if that fails
+    // (for example the directory fsync is still impossible) it returns
+    // nullptr with an explicit error: a successful reload or a daemon
+    // restart is then required.
     MutationJournal* tryGet(std::string& error);
 
     void setOverridePath(std::filesystem::path path);

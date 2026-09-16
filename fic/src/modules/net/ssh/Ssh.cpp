@@ -237,14 +237,23 @@ bool Ssh::apply() {
             }
         }
 
-        // Durability barrier: the observed AFTER/BEFORE state may have been
-        // published by a rename whose parent directory fsync never completed
-        // (crash between rename and fsync). The journal status must not
-        // resolve (commit Applied / discard) a persistent state whose
-        // durability is not proven.
+        // Durability barrier bound to the exact classified snapshot. The
+        // AFTER/BEFORE state may have been published by a rename whose
+        // parent directory fsync never completed (crash between rename and
+        // fsync). The journal status must not resolve (commit Applied /
+        // discard) a persistent state whose durability is not proven, and
+        // the barrier must never fsync a file that an external writer
+        // replaced after the classification: the snapshot captured at
+        // loadConfig() is re-proved against the current path first.
+        if (!this->sshConfig_->loadSnapshot().has_value()) {
+            return failRecovery("in-memory snapshot sshd_config недоступен; "
+                                "durability не может быть привязана к "
+                                "classified state");
+        }
         std::string barrierError;
-        if (!AtomicFileWriter::ensureTargetDurable(sshPath, &barrierError)) {
-            return failRecovery("durability текущего состояния sshd_config "
+        if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                sshPath, *this->sshConfig_->loadSnapshot(), &barrierError)) {
+            return failRecovery("durability classified snapshot sshd_config "
                                 "не подтверждена: " + barrierError);
         }
 

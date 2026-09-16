@@ -89,12 +89,14 @@ Prepared + AFTER
    scalar match, Match/Include conditional overrides, audit overrides;
    используется recorded appliedValue — recovery сначала завершает старую
    persisted-транзакцию, а не новый desired value)
-→ durability barrier (ensureTargetDurable)
+→ durability barrier (ensureTargetDurableIfCurrentState: re-prove exact
+   classified snapshot, затем fsync каталога)
 → reload (если сервис активен)
 → commit Prepared → Applied
 Prepared + BEFORE
 → sshd -T validate
-→ durability barrier (ensureTargetDurable)
+→ durability barrier (ensureTargetDurableIfCurrentState: re-prove exact
+   classified snapshot, затем fsync каталога)
 → reload (если сервис активен)
 → discard устаревшей Prepared
 → продолжение обычного fresh apply нового desired value
@@ -163,6 +165,16 @@ reverse-запись): открывает parent directory target, выполн�
 файл не изменяет (temp-файл всегда fsync'ится до rename, поэтому
 единственный потерянный barrier — directory entry).
 
+`AtomicFileWriter::ensureTargetDurableIfCurrentState(path, expected, error)`
+— state-bound вариант того же барьера: сначала re-prove, что target всё ещё
+точно равен captured state (`targetStateMatches`), и только потом fsync
+каталога. Ошибки дифференцированы: mismatch → «state changed before
+durability confirmation», провал fsync → собственная ошибка fsync. Все
+callers, ранее захватившие snapshot (classified sshd_config snapshot,
+прочитанный journal-документ, FIC-installed state), обязаны использовать
+этот helper вместо голого `ensureTargetDurable()`. Residual TOCTOU между
+re-prove и fsync остаётся известным MVP-ограничением (не filesystem CAS).
+
 `FileHandler::FileSaveOutcome` содержит `durabilityConfirmed`;
 `FileSaveResult::Installed` возвращается только для
 durable-записи. `restoreSshConfigContentIfCurrentState()` возвращает
@@ -209,10 +221,40 @@ fsync внутри `ensureTargetDurable` для данного target-path; пр
   установленному документу (никогда не откатывается к previous), все
   мутирующие операции (`prepareMutation`, `setStatus`,
   `setStatusWithMessage`, `discard`) отказываются, продолжать нормальную
-  работу с неизвестным persistent state запрещено. Только успешный
-  `load()` (перечитывает и re-parse текущий disk-документ) возвращает
-  журнал в `Healthy`. WAL/SQLite не вводятся: порядок
-  temp write → temp fsync → rename → parent fsync сохраняется.
+  работу с неизвестным persistent state запрещено.
+
+**Journal load и `Healthy`**. Readable/parsible journal ≠ `Healthy`.
+`Healthy` — свойство durability, и `load()` требует:
+
+```text
+capture exact document (AtomicFileWriter::captureTargetState)
+→ parse + validate именно snapshot.content
+→ re-proof: targetStateMatches(path, snapshot) — тот же документ всё ещё
+   занимает путь
+→ durability barrier: fsync parent directory
+→ только после этого: publish parsed state в памяти, health = Healthy
+```
+
+Провал re-proof или barrier → `load() == false`, journal остаётся
+`Indeterminate` (unusable), in-memory состояние не заменяется частично.
+Отсутствующий файл — прежняя семантика «empty provenance» (directory
+durability отсутствующего файла не требуется). Retry `load()` после
+восстановления fsync возвращает `Healthy` с записями, соответствующими
+дисковому документу.
+
+**`Indeterminate` блокирует все operational-решения, не только записи**.
+`DaemonMutationJournal::tryGet()` возвращает journal только при
+`usable()` (loaded + `Healthy`). Если открытый singleton стал
+`Indeterminate`, следующий `tryGet()` пытается lazy recovery через
+исправленный durability-proven `load()`; при неудаче возвращает `nullptr`
+с ошибкой «Mutation journal is Indeterminate; successful reload or daemon
+restart is required». Так автоматически fail-closed блокируются apply,
+rollback, disable ownership resolution и любые будущие journal-backed
+consumers (включая read-based решения через `activeRecords()`/`records()` —
+эти методы остаются raw inspection API для tests/debug, но operational
+решения обязаны опираться только на `usable()` journal). WAL/SQLite не
+вводятся: порядок temp write → temp fsync → rename → parent fsync
+сохраняется.
 
 Путь: `FIC_MUTATION_JOURNAL_FILE` (по умолчанию
 `/opt/fic/db/mutation-journal.json`), настраивается как остальные product

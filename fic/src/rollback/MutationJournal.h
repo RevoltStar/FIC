@@ -4,6 +4,7 @@
 #include "rollback/MutationRecord.h"
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,13 @@ namespace fic::rollback {
 //     document (never rolled back to the previous state), every mutating
 //     operation fails closed, and only a successful load() may restore the
 //     Healthy state.
+//   * Healthy is a DURABILITY property, not a readability property: a
+//     journal document that was successfully read and parsed is still not
+//     Healthy until the exact captured snapshot was re-proved to still
+//     occupy the path AND the parent directory fsync succeeded (visible !=
+//     proven durable). A failed load durability barrier poisons the journal
+//     (Indeterminate) and it stays unusable for ALL operational decisions
+//     (reads included) until a successful load() or daemon restart.
 enum class JournalHealth {
     Healthy,
     Indeterminate
@@ -43,14 +51,24 @@ public:
 
     explicit MutationJournal(std::filesystem::path path);
 
-    // Loads the journal from disk. Must be called before mutations. A
+    // Loads the journal from disk. Must be called before mutations. The load
+    // is snapshot-bound and durability-proven: the exact current document is
+    // captured, parsed, re-proved to still occupy the path, and the parent
+    // directory is fsynced BEFORE any state is published; only then does the
+    // journal become Healthy. A missing file is an empty journal (existing
+    // semantics; no directory durability is required for an absent file). A
     // successful load re-parses the current disk document and resets an
     // Indeterminate health back to Healthy.
     bool load(std::string& error);
     bool loaded() const { return loaded_; }
-
     const std::vector<MutationRecord>& records() const { return records_; }
     JournalHealth health() const { return health_; }
+
+    // A journal may drive operational decisions ONLY while it is loaded and
+    // Healthy. Tests and diagnostics may still use records()/health() for
+    // inspection, but daemon facades must gate every journal-backed decision
+    // (apply, rollback, ownership resolution, detach) on usable().
+    bool usable() const { return loaded_ && health_ == JournalHealth::Healthy; }
 
     // Inserts a new Prepared record, or updates an existing active record for
     // the same (policy, backend, resource) triple. Returns the record id.
@@ -61,6 +79,13 @@ public:
     bool discard(MutationId id, std::string& error);
 
     std::vector<MutationRecord> activeRecords(const PolicyRef& policy) const;
+
+    // Test-only deterministic seam between the capture of the journal
+    // document and its parse/re-proof/durability confirmation inside load().
+    // It lets tests inject an external journal replacement exactly in the
+    // window that targetStateMatches() must detect. Production code must
+    // never set this hook.
+    static void setLoadAfterCaptureHookForTests(std::function<void()> hook);
 
 private:
     enum class PersistOutcome {

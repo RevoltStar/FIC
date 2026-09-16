@@ -19,7 +19,27 @@ DaemonMutationJournal& DaemonMutationJournal::instance() {
 MutationJournal* DaemonMutationJournal::open(std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (open_) {
-        return journal_.get();
+        if (journal_ == nullptr) {
+            error = "Mutation journal не инициализирован";
+            return nullptr;
+        }
+        if (journal_->usable()) {
+            error.clear();
+            return journal_.get();
+        }
+        // Lazy recovery (fail closed): the journal became unusable
+        // (Indeterminate durability, not yet loaded). Retry through the
+        // corrected load(), which requires the parsed snapshot to be
+        // re-proved against the path AND the parent directory fsync to
+        // succeed — a merely readable journal never restores Healthy.
+        std::string reloadError;
+        if (journal_->load(reloadError)) {
+            error.clear();
+            return journal_.get();
+        }
+        error = "Mutation journal is Indeterminate; successful reload or "
+                "daemon restart is required: " + reloadError;
+        return nullptr;
     }
     std::filesystem::path path = overridePath_;
     if (path.empty()) {

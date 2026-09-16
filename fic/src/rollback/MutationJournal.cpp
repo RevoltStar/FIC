@@ -5,8 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <ctime>
-#include <fstream>
-#include <sstream>
+#include <functional>
 #include <system_error>
 #include <utility>
 
@@ -17,6 +16,12 @@ using nlohmann::json;
 
 std::int64_t currentEpochSeconds() {
     return static_cast<std::int64_t>(::time(nullptr));
+}
+
+// Test-only seam storage (see setLoadAfterCaptureHookForTests()).
+std::function<void()>& loadAfterCaptureHook() {
+    static std::function<void()> hook;
+    return hook;
 }
 
 json serializeUndoAction(const UndoAction& action) {
@@ -348,22 +353,21 @@ bool MutationJournal::load(std::string& error) {
         return true;
     }
 
-    std::ifstream stream(path_, std::ios::binary);
-    if (!stream.is_open()) {
-        // The file exists but cannot be opened: never treat permission or
-        // I/O failures as an absent journal (fail closed).
+    // Snapshot-bound read: capture the exact current document (identity,
+    // metadata, content) through one descriptor. Parsing happens strictly
+    // against snapshot.content, so a durability confirmation later in this
+    // function always refers to the same bytes that were parsed.
+    AtomicTargetState snapshot;
+    std::string captureError;
+    if (!AtomicFileWriter::captureTargetState(path_.string(), snapshot,
+                                              &captureError)) {
+        // The file exists but cannot be opened/read: never treat permission,
+        // symlink or I/O failures as an absent journal (fail closed).
         error = "Существующий mutation journal недоступен для чтения "
-                "(fail closed): " + path_.string();
+                "(fail closed): " + captureError;
         return false;
     }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    if (!stream.good() && !stream.eof()) {
-        error = "Не удалось прочитать mutation journal: " + path_.string();
-        return false;
-    }
-    const std::string content = buffer.str();
-    if (content.empty()) {
+    if (snapshot.content.empty()) {
         // An existing zero-byte journal is corrupted persistent security
         // state: fail closed instead of silently assuming an empty journal.
         // A valid empty journal must carry the schema document.
@@ -371,6 +375,14 @@ bool MutationJournal::load(std::string& error) {
                 path_.string();
         return false;
     }
+
+    // Test-only seam: an external writer may replace the journal between the
+    // capture and the re-proof below; the re-proof must detect it.
+    if (loadAfterCaptureHook()) {
+        loadAfterCaptureHook()();
+    }
+
+    const std::string& content = snapshot.content;
 
     json document;
     try {
@@ -405,6 +417,9 @@ bool MutationJournal::load(std::string& error) {
         return false;
     }
 
+    // Transactional parse: everything above worked on local state; the
+    // in-memory journal is only replaced after the parsed snapshot was
+    // re-proved and durably confirmed.
     std::vector<MutationRecord> parsed;
     parsed.reserve(recordsIt->size());
     for (const json& item : *recordsIt) {
@@ -434,12 +449,31 @@ bool MutationJournal::load(std::string& error) {
         }
     }
 
+    // The parsed document is proven, but readable != durable: the visible
+    // file may still be the result of a rename whose parent directory fsync
+    // never completed. Re-prove the exact captured snapshot against the
+    // current path (an external writer may have replaced the journal since
+    // the capture) and run the durability barrier BEFORE publishing anything.
+    std::string durabilityError;
+    if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+            path_.string(), snapshot, &durabilityError)) {
+        // Fail closed: without the proven durability of the exact parsed
+        // snapshot the journal must not become operational. The previous
+        // in-memory state is left untouched; health is poisoned so that no
+        // operational decision (reads included) may use ambiguous provenance
+        // until a successful load() or a daemon restart.
+        health_ = JournalHealth::Indeterminate;
+        error = "Durability mutation journal не подтверждена для прочитанного "
+                "snapshot (fail closed): " + durabilityError;
+        return false;
+    }
+
     records_ = std::move(parsed);
     nextId_ = parsedNextId;
     loaded_ = true;
-    // A successful load re-parsed the current disk document: an ambiguous
-    // earlier persistence is now resolved against the actual persistent
-    // state, so the journal is usable again.
+    // The exact captured document was parsed, re-proved against the path and
+    // durably confirmed: an ambiguous earlier persistence is now resolved
+    // against actual persistent state, so the journal is usable again.
     health_ = JournalHealth::Healthy;
     error.clear();
     return true;
@@ -483,10 +517,8 @@ MutationJournal::PersistOutcome MutationJournal::persist(std::string& error) {
         // failure (memory=old / disk=new must never continue as normal).
         std::string barrierError;
         if (result.installedTargetState.has_value() &&
-            AtomicFileWriter::targetStateMatches(
-                path_.string(), *result.installedTargetState, &barrierError) &&
-            AtomicFileWriter::ensureTargetDurable(path_.string(),
-                                                  &barrierError)) {
+            AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                path_.string(), *result.installedTargetState, &barrierError)) {
             return PersistOutcome::Persisted;
         }
         error = "Mutation journal записан (rename), но durability "
@@ -675,6 +707,11 @@ std::vector<MutationRecord> MutationJournal::activeRecords(
         }
     }
     return result;
+}
+
+void MutationJournal::setLoadAfterCaptureHookForTests(
+    std::function<void()> hook) {
+    loadAfterCaptureHook() = std::move(hook);
 }
 
 } // namespace fic::rollback

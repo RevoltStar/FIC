@@ -121,6 +121,13 @@ struct FakeSshRuntime {
     bool sshdFails = false;
     int failTAfterCall = 0;
     int reloadFailuresRemaining = 0;
+    // Deterministic external-replacement seam: when an sshd -T call has this
+    // ordinal (counted like tCalls), the sshd_config file is rewritten to
+    // rewriteContent BEFORE the fake answers. Used to simulate an external
+    // writer replacing the file exactly between the recovery
+    // classification/verification and the durability barrier.
+    int rewriteConfigOnTCall = 0;
+    std::string rewriteContent;
 };
 
 } // namespace
@@ -187,7 +194,8 @@ public:
 
     SshCommandRunner runner() const {
         std::shared_ptr<FakeSshRuntime> runtime = runtime_;
-        return [runtime](const std::string&,
+        const std::string configPathString = configPath().string();
+        return [runtime, configPathString](const std::string&,
                          const std::vector<std::string>& arguments,
                          const ProcessOptions&) {
             if (std::find(arguments.begin(), arguments.end(), "-T") !=
@@ -198,6 +206,11 @@ public:
                     return sshFailing("sshd -T refused the configuration");
                 }
                 ++runtime->tCalls;
+                if (runtime->rewriteConfigOnTCall > 0 &&
+                    runtime->tCalls == runtime->rewriteConfigOnTCall &&
+                    !runtime->rewriteContent.empty()) {
+                    writeFile(configPathString, runtime->rewriteContent);
+                }
                 const std::string& port =
                     runtime->tCalls < runtime->appliedFromCall
                         ? runtime->preApplyPort
@@ -1632,6 +1645,165 @@ void testApplyCompensationDurabilityGate() {
     }
 }
 
+// An unusable (Indeterminate) journal must block the whole apply BEFORE any
+// compliance or mutation work: the file stays unchanged and sshd -T never
+// runs on ambiguous provenance.
+void testApplyBlockedByIndeterminateJournal() {
+    SshApplyTree tree;
+    const std::string original =
+        "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(original);
+    tree.writePolicyValue("2222");
+    JournalOverride overrideGuard(tree.journalPath());
+    recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
+
+    // Poison the open singleton journal (the fsync hook is scoped so the
+    // later journal inspections can load normally).
+    std::string error;
+    {
+        MutationJournal* journal =
+            DaemonMutationJournal::instance().tryGet(error);
+        require(journal != nullptr, error);
+        const std::string journalPath = tree.journalPath().string();
+        auto remaining = std::make_shared<int>(1000);
+        AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [journalPath, remaining](const std::string& targetPath) {
+                if (targetPath != journalPath) {
+                    return true;
+                }
+                if (*remaining > 0) {
+                    --*remaining;
+                    return false;
+                }
+                return true;
+            });
+        struct HookReset {
+            ~HookReset() {
+                AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+            }
+        } hookReset;
+        require(!journal->setStatus(journal->records().front().id,
+                                    MutationStatus::Applied, error),
+                error);
+        require(journal->health() == JournalHealth::Indeterminate, error);
+
+        // The fsync hook stays active: the lazy recovery load() inside
+        // tryGet() keeps failing, so the journal stays operationally
+        // unusable (unrecoverable Indeterminate within this process).
+        require(!tree.makePolicy()->apply(),
+                "an unusable journal must block the apply fail closed");
+        require(tree.runtime()->tCalls == 0,
+                "no sshd -T call may run without a usable journal");
+        require(readFile(tree.configPath()) == original,
+                "the file must stay unchanged without a usable journal");
+    }
+    // The failed journal commit already published Applied on disk (rename
+    // succeeded); the blocked apply must not have changed anything further.
+    require(singleRecordStatus(tree) == MutationStatus::Applied,
+            "the installed record must stay untouched by the blocked apply");
+}
+
+// Prepared AFTER recovery: an external writer replaces sshd_config between
+// the classification/verification and the durability barrier. The barrier
+// must re-prove the exact classified snapshot and refuse to fsync the
+// foreign replacement into legitimacy.
+void testPreparedAfterRecoveryExternalReplacementFailsClosed() {
+    SshApplyTree tree;
+    const std::string after =
+        "Port 2222\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(after);
+    tree.writePolicyValue("2222");
+    tree.runtime()->serviceActive = true;
+    tree.runtime()->appliedFromCall = 1;
+    // The verification sshd -T call (the only one of the recovery) replaces
+    // the file exactly between verifyPolicyValue and the durability barrier.
+    tree.runtime()->rewriteConfigOnTCall = 1;
+    tree.runtime()->rewriteContent =
+        "Port 2200\nMatch User backup\n    PermitRootLogin yes\n";
+    JournalOverride overrideGuard(tree.journalPath());
+    recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
+
+    require(!tree.makePolicy()->apply(),
+            "a replaced sshd_config must fail the Prepared AFTER recovery");
+
+    require(readFile(tree.configPath()) ==
+                "Port 2200\nMatch User backup\n    PermitRootLogin yes\n",
+            "the external replacement must be preserved verbatim");
+    require(tree.runtime()->reloadCalls == 0,
+            "no reload may run after the state re-proof failed");
+    require(singleRecordStatus(tree) == MutationStatus::Prepared,
+            "the Prepared record must stay active");
+}
+
+// Prepared BEFORE recovery: an external replacement between the BEFORE
+// classification/validation and the durability barrier must leave the
+// Prepared record unresolved — no discard, no fresh apply.
+void testPreparedBeforeRecoveryExternalReplacementFailsClosed() {
+    SshApplyTree tree;
+    const std::string before =
+        "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(before);
+    tree.writePolicyValue("2222");
+    tree.runtime()->serviceActive = true;
+    // The validation sshd -T call of the recovery replaces the file.
+    tree.runtime()->rewriteConfigOnTCall = 1;
+    tree.runtime()->rewriteContent =
+        "Port 2200\nMatch User backup\n    PermitRootLogin yes\n";
+    JournalOverride overrideGuard(tree.journalPath());
+    recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
+
+    require(!tree.makePolicy()->apply(),
+            "a replaced sshd_config must fail the Prepared BEFORE recovery");
+
+    require(readFile(tree.configPath()) ==
+                "Port 2200\nMatch User backup\n    PermitRootLogin yes\n",
+            "the external replacement must be preserved verbatim");
+    require(tree.runtime()->reloadCalls == 0,
+            "no reload may run after the state re-proof failed");
+    require(singleRecordStatus(tree) == MutationStatus::Prepared,
+            "the Prepared record must stay active and undiscarded");
+}
+
+// Rollback BEFORE recovery: an external replacement between the BEFORE
+// classification/validation and the durability barrier must NOT resolve the
+// rollback (never NothingToDo) and must preserve the external file.
+void testRollbackBeforeRecoveryExternalReplacementFailsClosed() {
+    SshApplyTree tree;
+    const std::string before =
+        "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(before);
+    tree.writePolicyValue("2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy();
+    require(policy->apply(), "the initial apply must succeed");
+
+    // Simulate a crash right after the reverse rename: the file already
+    // shows the BEFORE state (published without a durability proof).
+    tree.writeConfig(before);
+
+    // The rollback validation sshd -T call (third call overall: two during
+    // the initial apply) replaces the file before the durability barrier.
+    tree.runtime()->rewriteConfigOnTCall = 3;
+    tree.runtime()->rewriteContent =
+        "Port 2200\nMatch User backup\n    PermitRootLogin yes\n";
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.rollbackDeps());
+    require(report.status != RollbackStatus::Success &&
+                report.status != RollbackStatus::NothingToDo,
+            report.message);
+    require(readFile(tree.configPath()) ==
+                "Port 2200\nMatch User backup\n    PermitRootLogin yes\n",
+            "the external replacement must be preserved verbatim");
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().isActive(),
+            "the rollback must stay unresolved on ambiguous provenance");
+}
+
 void testAllFourSshPoliciesAreRollbackWired() {
     SshApplyTree tree;
     const std::vector<std::pair<std::string, std::string>> expected = {
@@ -1774,6 +1946,14 @@ int main() {
          testRollbackReverseWriteDurabilityBarrierFailsClosed},
         {"apply compensation durability gate",
          testApplyCompensationDurabilityGate},
+        {"apply blocked by indeterminate journal",
+         testApplyBlockedByIndeterminateJournal},
+        {"prepared after recovery external replacement fails closed",
+         testPreparedAfterRecoveryExternalReplacementFailsClosed},
+        {"prepared before recovery external replacement fails closed",
+         testPreparedBeforeRecoveryExternalReplacementFailsClosed},
+        {"rollback before recovery external replacement fails closed",
+         testRollbackBeforeRecoveryExternalReplacementFailsClosed},
         {"all four ssh policies are rollback wired",
          testAllFourSshPoliciesAreRollbackWired}
     };

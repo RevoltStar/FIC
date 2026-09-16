@@ -6,6 +6,8 @@
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlRuntime.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1962,6 +1964,69 @@ void testSshLegacyDetachedRecordIsNothingToDo() {
 
 } // namespace
 
+// An Indeterminate journal must fail the rollback closed BEFORE any backend
+// runs: read-based ownership decisions (including "no active records →
+// NothingToDo") must never be made on ambiguous provenance.
+void testIndeterminateJournalFailsRollbackClosed() {
+    TempJournal file;
+    JournalOverride overrideGuard(file.tree.root / "journal.json");
+
+    std::string error;
+    MutationId id = 0;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+
+    UndoRestoreSshDirective undo;
+    undo.parameter = "Port";
+    undo.appliedValue = "2222";
+    SshDirectiveOccurrenceMutation occurrence;
+    occurrence.beforeLine = "Port 22";
+    occurrence.afterLine = "Port 2222";
+    undo.occurrences = {occurrence};
+    require(recordPreparedMutation(
+                PolicyRef{"NET", "SshEdit", "ssh_port"},
+                "ssh:/etc/ssh/sshd_config:Port",
+                UndoAction{MutationBackend::Ssh, undo}, id, error),
+            error);
+
+    // Poison the open singleton journal: the post-rename durability of the
+    // journal update cannot be confirmed.
+    const std::string journalPath = (file.tree.root / "journal.json").string();
+    auto remaining = std::make_shared<int>(1000);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [journalPath, remaining](const std::string& targetPath) {
+            if (targetPath != journalPath) {
+                return true;
+            }
+            if (*remaining > 0) {
+                --*remaining;
+                return false;
+            }
+            return true;
+        });
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+
+    std::string poisonError;
+    require(!journal->setStatus(id, MutationStatus::Applied, poisonError),
+            poisonError);
+    require(journal->health() == JournalHealth::Indeterminate, poisonError);
+
+    // The rollback executor must refuse the journal-backed decision instead
+    // of consulting the ambiguous in-memory state (which no longer contains
+    // an active record the executor could reason about).
+    const RollbackExecutorDeps deps;
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        PolicyRef{"NET", "SshEdit", "ssh_port"}, "Port", deps);
+    require(report.status == RollbackStatus::Failed, report.message);
+    require(report.message.find("Indeterminate") != std::string::npos,
+            report.message);
+    require(report.status != RollbackStatus::NothingToDo &&
+                report.status != RollbackStatus::Success,
+            report.message);
+}
+
 int main() {
     const struct {
         const char* name;
@@ -2051,7 +2116,9 @@ int main() {
          testDeviceFeatureUndoUnknownFeatureIsUnsupported},
         {"journal update failure fails closed", testJournalUpdateFailureFailsClosed},
         {"empty journal with sysctl hint and no managed ownership",
-         testEmptyJournalWithSysctlHintAndNoManagedOwnership}
+         testEmptyJournalWithSysctlHintAndNoManagedOwnership},
+        {"indeterminate journal fails rollback closed",
+         testIndeterminateJournalFailsRollbackClosed}
     };
 
     std::size_t failures = 0;

@@ -136,21 +136,35 @@ SshRollbackResult undoSshDirectiveMutation(
                              validationError;
             return result;
         }
-        // Durability barrier: the observed BEFORE state may have been
-        // published by a reverse rename whose parent directory fsync never
-        // completed (crash between rename and fsync). The rollback may only
-        // be resolved once this state is confirmed crash-durable; otherwise
-        // NothingToDo would claim a resolved rollback the disk may not keep.
-        std::string barrierError;
-        if (!AtomicFileWriter::ensureTargetDurable(
-                options.configPath.string(), &barrierError)) {
+        // Durability barrier bound to the exact loaded snapshot. The BEFORE
+        // state may have been published by a reverse rename whose parent
+        // directory fsync never completed (crash between rename and fsync).
+        // The rollback may only be resolved once this state is confirmed
+        // crash-durable, and the barrier must never fsync a file that an
+        // external writer replaced after the classification: the snapshot
+        // captured at loadConfig() is re-proved against the current path
+        // first; otherwise NothingToDo would claim a resolved rollback based
+        // on ambiguous provenance.
+        if (!handler.loadSnapshot().has_value()) {
             result.nothingToDo = false;
             result.message = "Состояние директивы " + undo.parameter +
                              " уже соответствует состоянию до FIC-мутации, но "
-                             "durability состояния sshd_config не подтверждена "
-                             "(crash может потерять rename); откат не "
-                             "подтверждён, мутация остаётся активной: " +
-                             barrierError;
+                             "in-memory snapshot sshd_config недоступен; "
+                             "durability не может быть привязана к "
+                             "classified state; откат не подтверждён, "
+                             "мутация остаётся активной";
+            return result;
+        }
+        std::string barrierError;
+        if (!ensureSshConfigDurableIfCurrentState(
+                options.configPath, *handler.loadSnapshot(), barrierError)) {
+            result.nothingToDo = false;
+            result.message = "Состояние директивы " + undo.parameter +
+                             " уже соответствует состоянию до FIC-мутации, но "
+                             "durability classified snapshot sshd_config не "
+                             "подтверждена (crash может потерять rename или "
+                             "файл был заменён); откат не подтверждён, "
+                             "мутация остаётся активной: " + barrierError;
             return result;
         }
         const SshActivationResult activation = runtime.activateIfRunning();

@@ -697,7 +697,8 @@ void testSetStatusDurabilityRetryFailurePoisonsJournal() {
     require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
             error);
 
-    JournalFsyncFailure failure(file, 1000);
+    {
+        JournalFsyncFailure failure(file, 1000);
     require(!journal.setStatus(id, MutationStatus::Applied, error),
             "an unconfirmable journal durability must fail the operation");
     require(journal.health() == JournalHealth::Indeterminate,
@@ -716,10 +717,16 @@ void testSetStatusDurabilityRetryFailurePoisonsJournal() {
     require(!journal.discard(id, error), "a poisoned journal must refuse discard");
     require(!journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
             "a poisoned journal must refuse new mutations");
-
+    require(!journal.usable(),
+            "a poisoned journal must not be usable for operational decisions");
+    }
     // The disk document carries the installed new content (rename happened).
+    // The load must prove durability of the exact parsed snapshot before it
+    // may publish anything.
     MutationJournal reloaded(file.path);
     require(reloaded.load(error), error);
+    require(reloaded.health() == JournalHealth::Healthy,
+            "a durability-proven load must restore a healthy journal");
     require(reloaded.records().size() == 1 &&
                 reloaded.records().front().status == MutationStatus::Applied,
             "the installed document must survive on disk");
@@ -739,14 +746,25 @@ void testReloadRestoresHealthyJournalAfterIndeterminate() {
         require(!journal.setStatus(id, MutationStatus::Applied, error), error);
         require(journal.health() == JournalHealth::Indeterminate, error);
 
-        // An explicit load() re-parses the current disk document and resets
-        // the indeterminate state back to Healthy.
-        require(journal.load(error), error);
-        require(journal.health() == JournalHealth::Healthy,
-                "a successful reload must restore the healthy journal");
-        require(journal.records().front().status == MutationStatus::Applied,
-                "the reloaded journal must reflect the installed document");
+        // Healthy is a durability property, not a readability property: the
+        // disk document is readable and parses, but while the directory fsync
+        // barrier is impossible the load must fail closed and the journal
+        // must stay Indeterminate (visible != proven durable).
+        require(!journal.load(error),
+                "a load without the durability barrier must not succeed");
+        require(journal.health() == JournalHealth::Indeterminate,
+                "a failed load barrier must keep the journal indeterminate");
+        require(!journal.usable(),
+                "an indeterminate journal must not be usable for operational "
+                "decisions");
     }
+    // A load() that CAN complete the durability barrier re-parses the
+    // current disk document and resets the indeterminate state to Healthy.
+    require(journal.load(error), error);
+    require(journal.health() == JournalHealth::Healthy,
+            "a durability-proven reload must restore the healthy journal");
+    require(journal.records().front().status == MutationStatus::Applied,
+            "the reloaded journal must reflect the installed document");
     // Outside the failure scope the journal is fully usable again.
     require(journal.setStatus(id, MutationStatus::RolledBack, error), error);
     require(journal.records().front().status == MutationStatus::RolledBack,
@@ -805,6 +823,129 @@ void testDiscardPostRenameDurabilityFailurePoisonsJournal() {
             "the installed document without the record must survive on disk");
 }
 
+void testLoadDurabilityBarrierFailureAndRetry() {
+    TempFile file;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+        MutationId id = 0;
+        require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+                error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    {
+        // The journal document on disk is readable and parses correctly, but
+        // its directory entry durability cannot be confirmed (the visible
+        // file may be the result of a rename whose parent fsync failed): a
+        // successful read must never imply durability.
+        JournalFsyncFailure failure(file, 1000);
+        MutationJournal reloaded(file.path);
+        std::string error;
+        require(!reloaded.load(error),
+                "a readable journal must not become healthy without the "
+                "durability barrier");
+        require(reloaded.health() == JournalHealth::Indeterminate, error);
+        require(!reloaded.usable(),
+                "an unproven journal must not drive operational decisions");
+        require(reloaded.records().empty(),
+                "a failed load must not replace the in-memory state");
+    }
+    // Retry after the durability becomes confirmable.
+    MutationJournal reloaded(file.path);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.health() == JournalHealth::Healthy, error);
+    require(reloaded.records().size() == 1 &&
+                reloaded.records().front().status == MutationStatus::Applied,
+            "the reloaded records must match the disk document");
+}
+
+void testLoadRaceBetweenCaptureAndBarrier() {
+    TempFile file;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+        MutationId id = 0;
+        require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+                error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    // Deterministic race: an external actor replaces the journal exactly
+    // between the load capture and the re-proof/durability barrier. The load
+    // must never parse one document and durability-confirm another.
+    const std::string replacement =
+        "{\"schema_version\":1,\"next_id\":2,\"records\":[]}";
+    MutationJournal::setLoadAfterCaptureHookForTests(
+        [&file, &replacement]() { file.write(replacement); });
+    struct HookReset {
+        ~HookReset() {
+            MutationJournal::setLoadAfterCaptureHookForTests(nullptr);
+        }
+    } hookReset;
+
+    MutationJournal journal(file.path);
+    std::string error;
+    require(!journal.load(error),
+            "a journal replaced between capture and barrier must fail closed");
+    require(journal.health() == JournalHealth::Indeterminate, error);
+    require(!journal.usable(), error);
+
+    // After the external writer is gone, the load publishes exactly the
+    // document that occupies the path.
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.health() == JournalHealth::Healthy, error);
+    require(reloaded.records().empty(),
+            "the replacement document must be what load publishes");
+}
+
+void testDaemonJournalTryGetBlocksIndeterminateAndRecovers() {
+    TempFile file;
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    struct OverrideReset {
+        ~OverrideReset() { DaemonMutationJournal::instance().resetOverride(); }
+    } overrideReset;
+
+    std::string error;
+    MutationId id = 0;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->health() == JournalHealth::Healthy,
+            "a fresh daemon journal must be healthy");
+    require(recordPreparedMutation(sysctlPolicy(), "vm.swappiness",
+                                   sysctlUndo(), id, error),
+            error);
+
+    {
+        // A post-rename durability failure poisons the open singleton journal.
+        JournalFsyncFailure failure(file, 1000);
+        require(!journal->setStatus(id, MutationStatus::Applied, error), error);
+        require(journal->health() == JournalHealth::Indeterminate, error);
+
+        // Operational access is blocked: tryGet() must not hand out an
+        // indeterminate journal for ANY decision (apply, rollback, disable
+        // ownership resolution), and the lazy recovery load() cannot succeed
+        // while the directory fsync is impossible.
+        std::string gateError;
+        require(DaemonMutationJournal::instance().tryGet(gateError) == nullptr,
+                "an indeterminate journal must fail operational access closed");
+        require(gateError.find("Indeterminate") != std::string::npos,
+                "the gate must explain that a reload or restart is required: " +
+                    gateError);
+    }
+
+    // Retry once the durability barrier becomes confirmable: the lazy
+    // recovery load() succeeds and the journal is handed out again.
+    MutationJournal* recovered = DaemonMutationJournal::instance().tryGet(error);
+    require(recovered != nullptr, error);
+    require(recovered->health() == JournalHealth::Healthy, error);
+    require(recovered->records().size() == 1 &&
+                recovered->records().front().status == MutationStatus::Applied,
+            "the recovered journal must match the disk document");
+}
+
 int main() {
     const struct {
         const char* name;
@@ -845,7 +986,11 @@ int main() {
         {"ssh undo payload round trip", testSshUndoPayloadRoundTrip},
         {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
         {"daemon journal override and helpers", testDaemonJournalOverrideAndHelpers},
-        {"daemon journal fails closed on broken file", testDaemonJournalFailsClosedOnBrokenFile}
+        {"daemon journal fails closed on broken file", testDaemonJournalFailsClosedOnBrokenFile},
+        {"load durability barrier failure and retry", testLoadDurabilityBarrierFailureAndRetry},
+        {"load race between capture and barrier", testLoadRaceBetweenCaptureAndBarrier},
+        {"daemon journal tryGet blocks indeterminate and recovers",
+         testDaemonJournalTryGetBlocksIndeterminateAndRecovers}
     };
 
     std::size_t failures = 0;

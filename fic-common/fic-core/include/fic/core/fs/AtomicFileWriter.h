@@ -104,6 +104,20 @@ public:
     static bool ensureTargetDurable(const std::string& path,
                                     std::string* errorMessage = nullptr);
 
+    // State-bound recovery barrier: first re-proves that the target still IS
+    // exactly the given captured state (identity, metadata, exact content)
+    // and only then fsyncs the parent directory. A durability confirmation
+    // must never legitimize an externally replaced target, so every caller
+    // that captured its state earlier (config snapshot, journal document,
+    // FIC-installed state) should prefer this combined helper over a bare
+    // ensureTargetDurable(). Failure reasons are differentiated: a mismatched
+    // target reports "state changed before durability confirmation", a failed
+    // directory fsync reports the fsync error itself. Both cases fail closed.
+    static bool ensureTargetDurableIfCurrentState(
+        const std::string& path,
+        const AtomicTargetState& expected,
+        std::string* errorMessage = nullptr);
+
     // True when the target currently IS exactly the given captured state
     // (identity, metadata, exact content; symlinks refused). Used to re-prove
     // FIC ownership before finishing durability: a mere directory fsync must
