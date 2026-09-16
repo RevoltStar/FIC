@@ -24,6 +24,21 @@ struct SshActivationResult {
     std::string message;
 };
 
+// Effective SSH policy compliance. NonCompliant covers both a differing
+// effective value and a conditional (Match) override weakening the policy;
+// Unknown means the effective state could not be determined at all
+// (sshd unavailable, sshd -T failed) and callers must fail closed.
+enum class SshCompliance {
+    Compliant,
+    NonCompliant,
+    Unknown
+};
+
+struct SshComplianceResult {
+    SshCompliance compliance = SshCompliance::Unknown;
+    std::string error;
+};
+
 using SshCommandRunner = std::function<ProcessResult(
     const std::string&,
     const std::vector<std::string>&,
@@ -42,6 +57,14 @@ public:
     bool verifyPolicyValue(const std::string& parameter,
                            const std::string& expectedValue,
                            std::string& error) const;
+    // Tri-state effective compliance check used before any system mutation:
+    // a configuration that is already compliant must not be mutated or owned.
+    SshComplianceResult policyValueCompliance(
+        const std::string& parameter,
+        const std::string& expectedValue) const;
+    // sshd -T acceptance check: the configuration is syntactically valid and
+    // semantically accepted by sshd.
+    bool validateConfiguration(std::string& error) const;
     SshActivationResult activateIfRunning() const;
 
 private:
@@ -53,6 +76,10 @@ private:
 
     bool loadEffectiveConfiguration(EffectiveConfiguration& configuration,
                                     std::string& error) const;
+    bool verifyLoadedConfiguration(const EffectiveConfiguration& configuration,
+                                   const std::string& parameter,
+                                   const std::string& expectedValue,
+                                   std::string& error) const;
     bool auditConditionalOverrides(const std::string& parameter,
                                    const std::string& expectedValue,
                                    std::string& error) const;

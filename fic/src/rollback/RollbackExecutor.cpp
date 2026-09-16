@@ -4,6 +4,8 @@
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/firewall/FirewallPolicies.h"
+#include "modules/net/ssh/SshConfigFile.h"
+#include "modules/net/ssh/SshRollback.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlKey.h"
 #include "modules/sysctl/SysctlRuntime.h"
@@ -42,6 +44,16 @@ bool isSupportedSudoPolicy(const std::string& policyName) {
            policyName == "sudo_passwd_tries" ||
            policyName == "sudo_securepath" ||
            policyName == "sudo_timeout";
+}
+
+// Explicit whitelist: a future NET/SshEdit policy must never become
+// automatically rollback-supported without its own journal integration and
+// undo action.
+bool isSupportedSshPolicy(const std::string& policyName) {
+    return policyName == "ssh_port" ||
+           policyName == "ssh_max_auth_tries" ||
+           policyName == "ssh_root_login" ||
+           policyName == "ssh_pubkey_auth";
 }
 
 MutationRollbackOutcome outcomeFromOperation(
@@ -192,6 +204,40 @@ MutationRollbackOutcome undoSudoSetting(
     return outcome;
 }
 
+MutationRollbackOutcome undoSshDirective(
+    const RollbackExecutorDeps& deps,
+    const MutationRecord& record,
+    const UndoRestoreSshDirective& undo) {
+    const std::lock_guard<std::mutex> lock(rollbackBackendMutex());
+
+    MutationRollbackOutcome outcome;
+    outcome.id = record.id;
+    outcome.resource = record.resource;
+    if (!deps.sshOptions) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "SSH rollback backend не настроен";
+        return outcome;
+    }
+    SshRollbackOptions options = deps.sshOptions();
+    if (options.executables == nullptr || options.configPath.empty()) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "SSH rollback backend настроен неполно: путь к "
+                          "sshd_config или resolver executables не задан";
+        return outcome;
+    }
+
+    const SshRollbackResult result = undoSshDirectiveMutation(options, undo);
+    outcome.message = result.message;
+    if (result.ok) {
+        outcome.status = RollbackStatus::Success;
+    } else if (result.conflict) {
+        outcome.status = RollbackStatus::Conflict;
+    } else {
+        outcome.status = RollbackStatus::Failed;
+    }
+    return outcome;
+}
+
 MutationRollbackOutcome undoFirewallPolicyMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
@@ -259,6 +305,12 @@ MutationRollbackOutcome undoMutation(
             return undoSudoSetting(deps, record, *setting);
         }
     }
+    if (const auto* sshDirective =
+            std::get_if<UndoRestoreSshDirective>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Ssh) {
+            return undoSshDirective(deps, record, *sshDirective);
+        }
+    }
     if (const auto* firewallPolicy =
             std::get_if<UndoRemoveFirewallPolicy>(&record.undo.payload)) {
         return undoFirewallPolicyMutation(deps, record, *firewallPolicy);
@@ -319,6 +371,14 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
+    if (policy.moduleName == "NET" && policy.submoduleName == "SshEdit") {
+        // No default-positive enrollment for unknown SSH policies: the shared
+        // main sshd_config must only be rolled back through the recorded
+        // reverse delta of an integrated policy.
+        return isSupportedSshPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "DC" && policy.submoduleName == "DeviceControl") {
         return isDcCategoryFeature(policy.policyName)
             ? RollbackEnrollment::Supported
@@ -334,7 +394,8 @@ namespace {
 RollbackReport checkUnrecordedOwnership(
     const PolicyRef& policy,
     const std::string& resourceHint,
-    const RollbackExecutorDeps& deps) {
+    const RollbackExecutorDeps& deps,
+    const MutationJournal* journal) {
     RollbackReport report;
     report.status = RollbackStatus::NothingToDo;
     report.message = "Active mutation records отсутствуют; FIC не владеет "
@@ -389,6 +450,60 @@ RollbackReport checkUnrecordedOwnership(
         }
         return report;
     }
+    if (policy.moduleName == "NET" && policy.submoduleName == "SshEdit") {
+        if (resourceHint.empty()) {
+            return provenanceUnavailable(policy);
+        }
+        SshRollbackOptions options = deps.sshOptions
+            ? deps.sshOptions()
+            : SshRollbackOptions{};
+        if (options.executables == nullptr || options.configPath.empty()) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "SSH rollback backend настроен неполно: путь к "
+                             "sshd_config или resolver executables не задан";
+            return report;
+        }
+        SshConfigFileHandler handler(options.configPath.string());
+        if (!handler.loadConfig()) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "Не удалось проанализировать sshd_config: " +
+                             options.configPath.string();
+            return report;
+        }
+        // A resolved record (e.g. RolledBack from a previous disable) documents
+        // that the current directive state is the post-rollback state: FIC no
+        // longer owns anything there.
+        if (journal != nullptr) {
+            const std::string resource =
+                "ssh:" + options.configPath.string() + ":" + resourceHint;
+            for (const MutationRecord& record : journal->records()) {
+                if (record.policy == policy &&
+                    record.undo.backend == MutationBackend::Ssh &&
+                    record.resource == resource) {
+                    RollbackReport report;
+                    report.status = RollbackStatus::NothingToDo;
+                    report.message = "SSH-мутация политики уже была отозвана "
+                                     "ранее; FIC не владеет текущим состоянием";
+                    return report;
+                }
+            }
+        }
+        // Legacy provenance check (fail closed): the main sshd_config is a
+        // shared file. A target directive present in the global section
+        // cannot be attributed without journal provenance — even when its
+        // value matches the policy. Absent directive: FIC owns nothing there.
+        if (handler.isParameterExists(resourceHint)) {
+            return provenanceUnavailable(policy);
+        }
+        RollbackReport report;
+        report.status = RollbackStatus::NothingToDo;
+        report.message = "Active mutation records отсутствуют; директива " +
+                         resourceHint +
+                         " в global section sshd_config отсутствует";
+        return report;
+    }
     // FIREWALL and DC: no cheap safe ownership check without the journal.
     return provenanceUnavailable(policy);
 }
@@ -429,7 +544,7 @@ RollbackReport rollbackPolicyBeforeDisable(
 
     const std::vector<MutationRecord> active = journal->activeRecords(policy);
     if (active.empty()) {
-        return checkUnrecordedOwnership(policy, resourceHint, deps);
+        return checkUnrecordedOwnership(policy, resourceHint, deps, journal);
     }
 
     RollbackReport report;
@@ -524,6 +639,16 @@ RollbackExecutorDeps productionRollbackDeps(
                 fic::platform::ExecutableId::Visudo, validator, error)) {
             options.validatorPath = validator.string();
         }
+        return options;
+    };
+
+    const fic::platform::SshPlatformConfig sshConfig = platform.ssh;
+    deps.sshOptions = [sshConfig, &executables]() {
+        SshRollbackOptions options;
+        options.configPath = sshConfig.configPath;
+        options.includeBasePath = sshConfig.includeBasePath;
+        options.serviceUnits = sshConfig.serviceUnits;
+        options.executables = &executables;
         return options;
     };
 

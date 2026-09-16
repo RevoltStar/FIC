@@ -3,9 +3,12 @@
 
 #include <fic/policy/PolicyDependency.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace fic::rollback {
 
@@ -25,6 +28,7 @@ enum class MutationStatus {
 enum class MutationBackend {
     Sysctl,
     Sudo,
+    Ssh,
     Firewall,
     DeviceControl
 };
@@ -34,6 +38,26 @@ enum class MutationBackend {
 struct UndoRemoveManagedSetting {
     std::string key;          // managed key (canonical sysctl key, sudoers Defaults key)
     std::string appliedValue; // value/line FIC last applied; drift fingerprint
+};
+
+// One textual edit of the shared main sshd_config global section performed
+// by SshConfigFileHandler::setValue().
+struct SshLineReverseEdit {
+    std::size_t globalLineIndex = 0;        // 0-based file line index (global section)
+    std::optional<std::string> beforeLine;  // nullopt -> FIC inserted the line
+    std::string afterLine;                  // line content after the FIC mutation
+};
+
+// Restores only the textual FIC mutation of the shared main sshd_config.
+// The full file is never restored: Match blocks, included files and external
+// edits outside the recorded delta are not FIC-owned state.
+struct UndoRestoreSshDirective {
+    std::string parameter;                      // sshd directive keyword
+    std::string appliedValue;                   // value FIC last applied
+    std::vector<SshLineReverseEdit> reverseEdits;
+    // Fingerprint of the global section (start of file up to the first Match)
+    // after the FIC mutation; conservative drift detection for rollback.
+    std::string appliedGlobalSectionFingerprint;
 };
 
 struct UndoRemoveFirewallPolicy {
@@ -46,6 +70,7 @@ struct UndoDisableDeviceFeature {
 
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
+    UndoRestoreSshDirective,
     UndoRemoveFirewallPolicy,
     UndoDisableDeviceFeature>;
 

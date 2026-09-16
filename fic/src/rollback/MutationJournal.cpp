@@ -30,6 +30,24 @@ json serializeUndoAction(const UndoAction& action) {
             std::get_if<UndoRemoveManagedSetting>(&action.payload)) {
         value["key"] = setting->key;
         value["applied_value"] = setting->appliedValue;
+    } else if (const auto* sshDirective =
+                   std::get_if<UndoRestoreSshDirective>(&action.payload)) {
+        value["parameter"] = sshDirective->parameter;
+        value["applied_value"] = sshDirective->appliedValue;
+        value["fingerprint"] = sshDirective->appliedGlobalSectionFingerprint;
+        json edits = json::array();
+        for (const SshLineReverseEdit& edit : sshDirective->reverseEdits) {
+            json item;
+            item["line"] = edit.globalLineIndex;
+            if (edit.beforeLine.has_value()) {
+                item["before"] = *edit.beforeLine;
+            } else {
+                item["before"] = nullptr; // FIC inserted the line
+            }
+            item["after"] = edit.afterLine;
+            edits.push_back(std::move(item));
+        }
+        value["reverse_edits"] = std::move(edits);
     } else if (const auto* firewallPolicy =
                    std::get_if<UndoRemoveFirewallPolicy>(&action.payload)) {
         value["policy"] = firewallPolicy->policyName;
@@ -58,6 +76,66 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
             (backend == MutationBackend::Sudo && payload.appliedValue.empty())) {
             error = "remove_managed_setting undo requires a key";
             return false;
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
+    if (actionName == "restore_ssh_directive" &&
+        backend == MutationBackend::Ssh) {
+        UndoRestoreSshDirective payload;
+        payload.parameter = value.value("parameter", "");
+        payload.appliedValue = value.value("applied_value", "");
+        payload.appliedGlobalSectionFingerprint = value.value("fingerprint", "");
+        const auto editsIt = value.find("reverse_edits");
+        if (payload.parameter.empty() ||
+            payload.appliedValue.empty() ||
+            payload.appliedGlobalSectionFingerprint.empty() ||
+            editsIt == value.end() || !editsIt->is_array() || editsIt->empty()) {
+            error = "restore_ssh_directive undo requires a parameter, an "
+                    "applied value, a fingerprint and reverse edits";
+            return false;
+        }
+        std::optional<std::size_t> previousLine;
+        for (const json& item : *editsIt) {
+            if (!item.is_object()) {
+                error = "ssh reverse edit must be an object";
+                return false;
+            }
+            const auto lineIt = item.find("line");
+            if (lineIt == item.end() || !lineIt->is_number_unsigned()) {
+                error = "ssh reverse edit requires an unsigned line index";
+                return false;
+            }
+            const std::size_t lineIndex = lineIt->get<std::size_t>();
+            if (previousLine.has_value() && lineIndex <= *previousLine) {
+                error = "ssh reverse edit line indices must strictly increase";
+                return false;
+            }
+            previousLine = lineIndex;
+            SshLineReverseEdit edit;
+            edit.globalLineIndex = lineIndex;
+            const auto beforeIt = item.find("before");
+            if (beforeIt == item.end() ||
+                (!beforeIt->is_string() && !beforeIt->is_null())) {
+                error = "ssh reverse edit requires a string or null before line";
+                return false;
+            }
+            if (beforeIt->is_string()) {
+                std::string before = beforeIt->get<std::string>();
+                if (before.empty()) {
+                    error = "ssh reverse edit before line must not be empty";
+                    return false;
+                }
+                edit.beforeLine = std::move(before);
+            }
+            const auto afterIt = item.find("after");
+            if (afterIt == item.end() || !afterIt->is_string() ||
+                afterIt->get<std::string>().empty()) {
+                error = "ssh reverse edit requires a non-empty after line";
+                return false;
+            }
+            edit.afterLine = afterIt->get<std::string>();
+            payload.reverseEdits.push_back(std::move(edit));
         }
         action.payload = std::move(payload);
         return true;
@@ -182,6 +260,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     switch (backend) {
     case MutationBackend::Sysctl: return "sysctl";
     case MutationBackend::Sudo: return "sudo";
+    case MutationBackend::Ssh: return "ssh";
     case MutationBackend::Firewall: return "firewall";
     case MutationBackend::DeviceControl: return "device_control";
     }
@@ -191,6 +270,7 @@ std::string mutationBackendToString(MutationBackend backend) {
 bool mutationBackendFromString(const std::string& value, MutationBackend& backend) {
     if (value == "sysctl") { backend = MutationBackend::Sysctl; return true; }
     if (value == "sudo") { backend = MutationBackend::Sudo; return true; }
+    if (value == "ssh") { backend = MutationBackend::Ssh; return true; }
     if (value == "firewall") { backend = MutationBackend::Firewall; return true; }
     if (value == "device_control") { backend = MutationBackend::DeviceControl; return true; }
     return false;
@@ -199,6 +279,9 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
 std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoRemoveManagedSetting>(action.payload)) {
         return "remove_managed_setting";
+    }
+    if (std::holds_alternative<UndoRestoreSshDirective>(action.payload)) {
+        return "restore_ssh_directive";
     }
     if (std::holds_alternative<UndoRemoveFirewallPolicy>(action.payload)) {
         return "remove_firewall_policy";

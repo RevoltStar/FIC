@@ -46,6 +46,9 @@ Policy → backend → MutationRecord → persistent MutationJournal
   существует только для тестов).
 * `fic/src/rollback/RollbackExecutor.{h,cpp}` — `rollbackPolicyBeforeDisable`,
   enrollment матрица, production deps wiring.
+* `fic/src/modules/net/ssh/SshRollback.{h,cpp}` — SSH undo: применение reverse
+  delta главного `sshd_config`, валидация `sshd -T`, reload сервиса,
+  transactional restore.
 * `tests/fic/rollback/` — тесты journal и executor.
 
 ## Жизненный цикл мутации
@@ -129,6 +132,29 @@ I/O), это ошибка загрузки — fail closed. Существующ
 * `UndoRemoveFirewallPolicy{policyName}` — удаление FIC-managed правила и
   обычная firewall reconciliation. Snapshot всего nftables ruleset не
   выполняется.
+* `UndoRestoreSshDirective{parameter, appliedValue, reverseEdits,
+  appliedGlobalSectionFingerprint}` — SSH: откат точной текстовой мутации FIC
+  в global section (от начала файла до первого `Match`) shared-файла
+  `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu, `/etc/openssh/sshd_config`
+  ALT). Main `sshd_config` **не считается FIC-owned**: full-file snapshot не
+  хранится и не восстанавливается, `Match` blocks и included-файлы не
+  трогаются. Каждая запись `reverseEdits` описывает одну изменённую строку:
+  `beforeLine` — исходная строка (`null` для строк, вставленных FIC — при
+  rollback они удаляются), `afterLine` — строка после мутации FIC. Дубликаты
+  директив, заменённые/закомментированные FIC, восстанавливаются полностью.
+  Rollback выполняется только при совпадении fingerprint текущего global
+  section с fingerprint, зафиксированным при apply (консервативный drift
+  detection: любое несвязанное изменение global section, включая комментарии,
+  даёт `Conflict` без записи в файл; изменения после первого `Match` и во
+  внешних include этому не мешают). После reverse-записи обязательны валидация
+  `sshd -T` и reload активного сервиса; при провале восстанавливается
+  pre-rollback содержимое (reload при активном сервисе), возвращается `Failed`,
+  запись остаётся активной. Effective-значение после rollback не проверяется
+  на равенство исходному: за время жизни политики администратор мог изменить
+  include-файлы, `Match` blocks и package defaults.
+  Повторный apply при существующей активной записи не перезаписывает исходный
+  baseline (исходная запись используется как provenance; структурный drift
+  относительно неё — будущий `Conflict`).
 * `UndoDisableDeviceFeature{feature}` — отключение category-level desired
   state DC и пересборка `99-fic-devices.rules` через device daemon;
   per-device пользовательские правила не затрагиваются.
@@ -141,6 +167,8 @@ I/O), это ошибка загрузки — fail closed. Существующ
   * все `SYSCTL` policies;
   * `DAC/SudoEdit` managed Defaults (`sudo_env_reset`, `sudo_passwd_tries`,
     `sudo_securepath`, `sudo_timeout`);
+  * `NET/SshEdit` (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
+    `ssh_pubkey_auth`);
   * `FIREWALL/HostFiltering` (`block_ftp`, `block_rdp`, `custom_rules`);
   * `DC/DeviceControl` category features (`block_usb_storage`,
     `block_printers_scanners`, `block_optical_drives`);
@@ -158,16 +186,23 @@ I/O), это ошибка загрузки — fail closed. Существующ
 `Success / NothingToDo / Conflict / Unsupported / Failed / Partial`.
 `NothingToDo` означает, что активные записи не требуют отката: для SYSCTL
 и SUDO — FIC-owned запись нет в managed-артефакте (внешнее состояние никогда
-не трогается); это позволяет disable.
+не трогается); для SSH — target-директива отсутствует в global section
+главного конфига, либо политика ранее уже была отработана (запись
+`RolledBack` в journal документирует, что текущее состояние —
+post-rollback); это позволяет disable.
 Для legacy-установок (политика ENABLE, journal пуст) FIC не угадывает
 владение: provenance проверяется по содержимому FIC managed-артефакта
 (не по effective source), и при наличии там ресурса возвращается
 `Unsupported` (provenance unavailable), disable запрещается; при отсутствии
-— `NothingToDo` с диагностикой.
+— `NothingToDo` с диагностикой. Для SSH managed-артефакта нет — роль
+provenance-проверки выполняет сам главный `sshd_config`: присутствие
+target-директивы в global section без journal-записей означает
+`Unsupported` (даже при совпадении значения с политикой), отсутствие —
+`NothingToDo`.
 
 ## Расширение
 
-Новые backend'ы (PAM, SSH, GRUB, fstab, DAC и т.д.) подключаются добавлением
+Новые backend'ы (PAM, GRUB, fstab, DAC и т.д.) подключаются добавлением
 payload'а в `UndoAction`, ветки в `RollbackExecutor` и записи мутации в
 момент фактического изменения ресурса — без изменений в `Policy` и без
 новых виртуальных методов.

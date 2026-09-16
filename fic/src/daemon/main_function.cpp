@@ -1,6 +1,7 @@
 #include "main_function.h"
 
 #include "modules/dac/sudo/Sudo.h"
+#include "modules/net/ssh/Ssh.h"
 #include "modules/sysctl/Sysctl.h"
 #include "policy/registry/PolicyRegistryInitialization.h"
 #include "policy/registry/PolicyRegistryMutation.h"
@@ -331,6 +332,8 @@ bool disable (PolicyRegistry& policyRegistry,
             resourceHint = sysctlPolicy->managedResource();
         } else if (const Sudo* sudoPolicy = dynamic_cast<const Sudo*>(concretePolicy)) {
             resourceHint = sudoPolicy->managedResource();
+        } else if (const Ssh* sshPolicy = dynamic_cast<const Ssh*>(concretePolicy)) {
+            resourceHint = sshPolicy->managedResource();
         }
 
         fic::rollback::RollbackExecutorDeps rollbackDeps =

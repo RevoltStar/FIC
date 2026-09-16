@@ -588,6 +588,11 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
 )
 target_include_directories(rollback_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1023,6 +1028,41 @@ target_include_directories(ssh_runtime_tests PRIVATE
 target_link_libraries(ssh_runtime_tests PRIVATE fic-core fic-policy fic-platform)
 add_test(NAME ssh_runtime_tests COMMAND ssh_runtime_tests)
 
+add_executable(ssh_apply_rollback_tests
+    fic/modules/net/ssh/SshApplyRollbackTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/NET.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_max_auth_tries.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_port.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_pubkey_auth.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_root_login.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+)
+target_include_directories(ssh_apply_rollback_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(ssh_apply_rollback_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME ssh_apply_rollback_tests COMMAND ssh_apply_rollback_tests)
+
 add_executable(platform_profile_tests
     fic/platform/PlatformProfileTests.cpp
 )
@@ -1245,6 +1285,7 @@ set(FIC_UNIT_TESTS
     user_creation_tests
     identity_concrete_policies_tests
     ssh_runtime_tests
+    ssh_apply_rollback_tests
     platform_profile_tests
     command_hash_security_tests
     verified_process_executor_tests

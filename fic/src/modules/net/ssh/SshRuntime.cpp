@@ -248,19 +248,11 @@ bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
     return true;
 }
 
-bool SshRuntime::verifyPolicyValue(const std::string& parameter,
-                                   const std::string& expectedValue,
-                                   std::string& error) const {
-    if (parameter.empty() || expectedValue.empty()) {
-        error = "SSH parameter or expected value is empty";
-        return false;
-    }
-
-    EffectiveConfiguration configuration;
-    if (!loadEffectiveConfiguration(configuration, error)) {
-        return false;
-    }
-
+bool SshRuntime::verifyLoadedConfiguration(
+    const EffectiveConfiguration& configuration,
+    const std::string& parameter,
+    const std::string& expectedValue,
+    std::string& error) const {
     const std::string normalizedParameter = lowerCopy(parameter);
     const auto found = configuration.find(normalizedParameter);
     if (found == configuration.end() || found->second.empty()) {
@@ -324,6 +316,54 @@ bool SshRuntime::verifyPolicyValue(const std::string& parameter,
     }
 
     return auditConditionalOverrides(parameter, expectedValue, error);
+}
+
+bool SshRuntime::verifyPolicyValue(const std::string& parameter,
+                                   const std::string& expectedValue,
+                                   std::string& error) const {
+    if (parameter.empty() || expectedValue.empty()) {
+        error = "SSH parameter or expected value is empty";
+        return false;
+    }
+
+    EffectiveConfiguration configuration;
+    if (!loadEffectiveConfiguration(configuration, error)) {
+        return false;
+    }
+
+    return verifyLoadedConfiguration(configuration, parameter, expectedValue, error);
+}
+
+SshComplianceResult SshRuntime::policyValueCompliance(
+    const std::string& parameter,
+    const std::string& expectedValue) const {
+    SshComplianceResult result;
+    if (parameter.empty() || expectedValue.empty()) {
+        result.error = "SSH parameter or expected value is empty";
+        return result;
+    }
+
+    EffectiveConfiguration configuration;
+    std::string error;
+    if (!loadEffectiveConfiguration(configuration, error)) {
+        // The effective state cannot be determined: callers must fail closed
+        // instead of mutating a configuration they do not understand.
+        result.error = error;
+        return result;
+    }
+
+    if (verifyLoadedConfiguration(configuration, parameter, expectedValue, error)) {
+        result.compliance = SshCompliance::Compliant;
+    } else {
+        result.compliance = SshCompliance::NonCompliant;
+        result.error = error;
+    }
+    return result;
+}
+
+bool SshRuntime::validateConfiguration(std::string& error) const {
+    EffectiveConfiguration configuration;
+    return loadEffectiveConfiguration(configuration, error);
 }
 
 SshActivationResult SshRuntime::activateIfRunning() const {

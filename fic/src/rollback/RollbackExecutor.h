@@ -2,6 +2,7 @@
 #define FIC_ROLLBACK_ROLLBACK_EXECUTOR_H
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/net/ssh/SshRollback.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -57,6 +58,9 @@ struct RollbackExecutorDeps {
     std::filesystem::path sysctlRuntimeRoot;
     // SUDO backend configuration (managed sudoers etc.).
     std::function<SudoersConfigurationOptions()> sudoersOptions;
+    // SSH backend configuration: shared main sshd_config, service units and
+    // the executable resolver used for sshd -T validation and service reload.
+    std::function<SshRollbackOptions()> sshOptions;
     // FIREWALL undo: reconcile the nftables state without the given policy.
     std::function<bool(const std::string& policyName, std::string& error)> undoFirewallPolicy;
     // DC undo: disable one category feature via the device daemon.

@@ -490,6 +490,139 @@ void testDaemonJournalFailsClosedOnBrokenFile() {
     DaemonMutationJournal::instance().resetOverride();
 }
 
+// ------------------------------------------------------------------ ssh -----
+
+UndoAction sshUndo() {
+    UndoRestoreSshDirective undo;
+    undo.parameter = "Port";
+    undo.appliedValue = "2222";
+    SshLineReverseEdit replacement;
+    replacement.globalLineIndex = 3;
+    replacement.beforeLine = "Port 22";
+    replacement.afterLine = "Port 2222";
+    SshLineReverseEdit insertion;
+    insertion.globalLineIndex = 5;
+    insertion.beforeLine = std::nullopt; // FIC inserted the line
+    insertion.afterLine = "MaxAuthTries 3";
+    undo.reverseEdits = {replacement, insertion};
+    undo.appliedGlobalSectionFingerprint = "0123456789abcdef";
+    return UndoAction{MutationBackend::Ssh, std::move(undo)};
+}
+
+MutationRecord preparedSshRecord() {
+    MutationRecord record;
+    record.policy = PolicyRef{"NET", "SshEdit", "ssh_port"};
+    record.resource = "ssh:/etc/ssh/sshd_config:Port";
+    record.undo = sshUndo();
+    return record;
+}
+
+void testSshUndoPayloadRoundTrip() {
+    TempFile file;
+    MutationId id = 0;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+        require(journal.prepareMutation(preparedSshRecord(), id, error), error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    MutationJournal reloaded(file.path);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1,
+            "ssh record must survive reload");
+    const MutationRecord& record = reloaded.records().front();
+    require(record.undo.backend == MutationBackend::Ssh,
+            "ssh backend must survive reload");
+    const auto* undo = std::get_if<UndoRestoreSshDirective>(&record.undo.payload);
+    require(undo != nullptr, "ssh undo payload must survive reload");
+    require(undo->parameter == "Port" && undo->appliedValue == "2222",
+            "ssh parameter and applied value must survive reload");
+    require(undo->appliedGlobalSectionFingerprint == "0123456789abcdef",
+            "ssh fingerprint must survive reload");
+    require(undo->reverseEdits.size() == 2,
+            "both ssh reverse edits must survive reload");
+    require(undo->reverseEdits[0].globalLineIndex == 3 &&
+                undo->reverseEdits[0].beforeLine.has_value() &&
+                *undo->reverseEdits[0].beforeLine == "Port 22" &&
+                undo->reverseEdits[0].afterLine == "Port 2222",
+            "the replacement edit must survive reload");
+    require(undo->reverseEdits[1].globalLineIndex == 5 &&
+                !undo->reverseEdits[1].beforeLine.has_value() &&
+                undo->reverseEdits[1].afterLine == "MaxAuthTries 3",
+            "the insertion edit must survive reload");
+}
+
+void requireBrokenSshJournalFailsClosed(const std::string& content,
+                                        const std::string& description) {
+    TempFile file;
+    file.write(content);
+    MutationJournal journal(file.path);
+    std::string error;
+    require(!journal.load(error),
+            "malformed ssh journal must fail closed: " + description);
+    require(!error.empty(), "ssh journal failure must report an error");
+}
+
+std::string sshJournalHead() {
+    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+           "\"policy\":{\"module\":\"NET\",\"submodule\":\"SshEdit\","
+           "\"policy\":\"ssh_port\"},\"resource\":\"ssh:/etc/ssh/sshd_config:Port\","
+           "\"backend\":\"ssh\",\"status\":\"applied\",\"created_at_epoch\":1,"
+           "\"updated_at_epoch\":1,\"error\":\"\",\"undo\":{";
+}
+
+void testSshUndoMalformedPayloadsFailClosed() {
+    const std::string head = sshJournalHead();
+    const std::string tail = "}}]}";
+
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\"}" + tail,
+        "missing payload fields");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":[]}" + tail,
+        "empty reverse edits");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"fingerprint\":\"\",\"reverse_edits\":[{\"line\":3,"
+               "\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" + tail,
+        "empty fingerprint");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
+               "[{\"line\":-1,\"before\":null,\"after\":\"Port 2222\"}]}" + tail,
+        "invalid line index");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
+               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"Port 2222\"},"
+               "{\"line\":3,\"before\":null,\"after\":\"Port 2222\"}]}" + tail,
+        "non-increasing line indices");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
+               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"\"}]}" + tail,
+        "empty after line");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"remove_managed_setting\",\"backend\":\"ssh\","
+               "\"key\":\"Port\",\"applied_value\":\"2222\"}" + tail,
+        "inconsistent action and backend");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"sudo\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
+               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" +
+            tail,
+        "inconsistent backend");
+}
+
 } // namespace
 
 int main() {
@@ -519,6 +652,8 @@ int main() {
         {"unknown enum value fails closed", testUnknownEnumValueFailsClosed},
         {"duplicate id fails closed", testDuplicateIdFailsClosed},
         {"status and backend string round trip", testStatusAndBackendStringRoundTrip},
+        {"ssh undo payload round trip", testSshUndoPayloadRoundTrip},
+        {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
         {"daemon journal override and helpers", testDaemonJournalOverrideAndHelpers},
         {"daemon journal fails closed on broken file", testDaemonJournalFailsClosedOnBrokenFile}
     };

@@ -2,68 +2,90 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `c1d1601`.
-- Изменения текущей GRUB-задачи находятся в рабочем дереве и не закоммичены.
+- Ветка `main`, базовый commit `d518cb0`.
+- Изменения текущей SSH rollback-задачи находятся в рабочем дереве и не
+  закоммичены.
 
 ## Current task
 
-- Разделить GRUB topology: Debian/Ubuntu используют FIC-owned
-  `/etc/default/grub.d/zzzz-fic.cfg`, ALT p11 сохраняет shared
-  `/etc/sysconfig/grub2`.
+- Persistent rollback для SSH-политик `NET/SshEdit`
+  (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`, `ssh_pubkey_auth`)
+  через typed `UndoRestoreSshDirective`: reverse delta global section shared
+  `sshd_config`, без drop-in миграции и без full-file snapshot.
 
 ## Accepted architecture / invariants
 
-- `GrubPlatformConfig` явно задаёт `OwnedDefaultsDropIn` либо
-  `SharedDefaultsFile`; topology не выводится из пустых path.
-- Debian/Ubuntu больше не изменяют `/etc/default/grub`. `GrubManagedConfig`
-  владеет всем `zzzz-fic.cfg`, принимает только три GRUB key и fail closed на
-  неизвестном, duplicate, malformed или dynamic shell-содержимом.
-- Перед mutation проверяются безопасная topology и отсутствие видимого
-  применимого `*.cfg`, идущего после `zzzz-fic.cfg` в C-locale byte order.
-- Idempotent apply не переписывает source-файл, но всегда запускает rebuild.
-- После неуспешного rebuild исходный managed-файл восстанавливается (или новый
-  удаляется), затем запускается compensating rebuild; DISABLE cleanup не
-  добавлен.
-- ALT сохраняет текущие `/etc/sysconfig/grub2` и
-  `grub-mkconfig -o /etc/grub.cfg`: локальный builder не содержит GRUB tooling,
-  поэтому изменение этого distro contract без native ALT evidence не принято.
+- Main `sshd_config` — shared ресурс, не FIC-owned. Mutation хранит только
+  exact reverse delta строк global section, которые реально изменил
+  `SshConfigFileHandler::setValue()` (замены, комментарии дубликатов,
+  вставленные строки).
+- Fingerprint global section (FNV-1a 64, начало файла до первого `Match`)
+  вычисляется в памяти ДО записи на диск (`planSetValue`) и сохраняется в
+  journal. Rollback выполняется только при совпадении fingerprint; иначе
+  `Conflict` без записи. Любое несвязанное изменение global section —
+  `Conflict` (консервативный MVP); изменения после `Match` и во внешних
+  include не мешают rollback и не восстанавливаются.
+- Apply flow: effective-проверка через `SshRuntime::policyValueCompliance`
+  (Compliant → без мутации, записи и reload; Unknown → fail closed) → план
+  → `Prepared` в journal (существующая активная запись переиспользуется,
+  исходный baseline не перезаписывается) → atomic write → verify → reload →
+  commit. Apply-time restore при провале verify/reload: restore + `sshd -T`
+  + reload restored; новый `Prepared` удаляется только при полном успешном
+  restore. Commit failure → apply false, `Prepared` остаётся.
+- Rollback executor: fingerprint check → reverse edits (с конца) → atomic
+  write → `sshd -T` → reload if active; при провале — restore pre-rollback
+  содержимого, `Failed`, запись остаётся активной.
+- Legacy (нет journal-записей): директива присутствует в global section →
+  `Unsupported` (disable запрещён); отсутствует → `NothingToDo`. Ранее
+  отработанная (`RolledBack`) запись этой политики → `NothingToDo`.
+- Enrollment `NET/SshEdit` — только explicit whitelist; неизвестная политика
+  → `Unsupported`.
+- Sudoers effective-precedence-model limitation (предыдущая задача):
+  диагностическое ограничение, не связано с SSH.
 
 ## Completed
 
-- Добавлены явный platform topology и строгий `GrubManagedConfig` на базе
-  `ConfigFileHandler`/`AtomicFileWriter`.
-- Сохранён существующий shared-file parser/editor ALT.
-- Добавлены проверки ownership/mode/type/parent directories, symlink,
-  concurrent mutation, canonical quoting и post-write verification.
-- Добавлены regression tests для owned CRUD/idempotence, ordering, strict
-  parser, escaping, unsafe input/metadata, compensation и ALT shared path.
-- Обновлены platform/static contracts и GRUB-документация.
+- `MutationBackend::Ssh`, `UndoRestoreSshDirective` + сериализация
+  `restore_ssh_directive` (fail closed: пустые поля, невалидные/не
+  возрастающие line indices, inconsistent backend/action → journal load
+  failure).
+- `SshConfigFileHandler::planSetValue/applyReverseEdits/
+  globalSectionFingerprint`; `setValue` переписан через план.
+- `SshRuntime`: `policyValueCompliance` (Compliant/NonCompliant/Unknown) и
+  `validateConfiguration` на общем пути парсинга `sshd -T`.
+- Новый `SshRollback.{h,cpp}` (`undoSshDirectiveMutation`,
+  `restoreSshConfigContent`); `Ssh::apply` переписан (journal integration,
+  §8–§14 ТЗ); `RollbackExecutor` SSH-ветки + `deps.sshOptions` +
+  production wiring; `Ssh::managedResource()`; resourceHint в
+  `main_function.cpp`.
+- Документация: `docs/rollback.md`.
 
 ## Changed areas
 
-- `fic/src/modules/oss/grub/`
-- `fic/src/platform/` и platform profiles
-- `fic-common/fic-core/include/fic/core/config/ConfigFileHandler.h`
-- `tests/fic/modules/oss/grub/`, `tests/fic/platform/`, `tests/CMakeLists.txt`
-- `fic/README.md`, `docs/architecture-diagrams.md`
+- `fic/src/rollback/` (`MutationRecord.h`, `MutationJournal.cpp`,
+  `RollbackExecutor.{h,cpp}`)
+- `fic/src/modules/net/ssh/` (`Ssh.{h,cpp}`, `SshConfigFile.{h,cpp}`,
+  `SshRuntime.{h,cpp}`, новый `SshRollback.{h,cpp}`)
+- `fic/src/daemon/main_function.cpp`
+- `tests/fic/rollback/`, `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`
+  (новый), `tests/CMakeLists.txt`
+- `docs/rollback.md`
 
 ## Validation
 
-- Debian 13 clean full build в `fic-deb-builder:debian13`: passed.
-- Non-root CTest (`-LE root`, без двух tests, требующих отсутствующий в образе
-  `git`): 92/92 passed.
-- `path_layout_static_checks` и `release_contract_tests` отдельно на host:
-  passed.
-- ALT p11 standalone `fic-platform` и `fic` build: passed.
-- Targeted `grub_policy_tests`, `platform_profile_tests` и
-  `platform_profile_static_checks`: passed.
-- `g++ -fsyntax-only` для GRUB implementation/tests: passed.
+- Targeted: `rollback_executor_tests` 40/40, `mutation_journal_tests` 21/21,
+  `ssh_apply_rollback_tests` 9/9, `ssh_runtime_tests` — passed.
+- Full CMake build (`build-check`, ubuntu-24.04): 100%, exit 0.
+- Full CTest: 96/96 passed (1 pre-existing env-dependent skip:
+  `command_hash_batch_tests`).
 - `git diff --check`: passed.
 
 ## Remaining
 
-- Нужен native ALT p11 integration test, подтверждающий, что штатный
-  `grub-mkconfig -o /etc/grub.cfg` с очищенным environment читает
-  `/etc/sysconfig/grub2`; в builder GRUB tooling не установлен.
-- Реальный GRUB rebuild и изменение host boot configuration намеренно не
-  выполнялись.
+- Изменения не закоммичены; diff чист и в scope задачи, готов к коммиту.
+- Консервативность fingerprint: любое несвязанное изменение global section
+  даёт `Conflict` (осознанное ограничение MVP, three-way merge не
+  реализовывался). Перезапись fingerprint при refresh-apply не выполняется —
+  structural drift между apply'ами → будущий `Conflict`.
+- Native интеграционной проверки с реальным sshd не выполнялось (sandbox);
+  только fake-runner unit tests.
