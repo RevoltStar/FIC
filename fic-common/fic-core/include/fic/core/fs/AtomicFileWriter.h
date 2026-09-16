@@ -1,6 +1,7 @@
 #ifndef ATOMICFILEWRITER_H
 #define ATOMICFILEWRITER_H
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -74,6 +75,14 @@ public:
                                 const AtomicWriteOptions& options,
                                 std::string* errorMessage,
                                 AtomicWriteResult* result);
+
+    // Test-only deterministic seam: when set, it replaces the real directory
+    // fsync performed after a successful rename of the given target. Returning
+    // false simulates a durability failure AFTER the target was installed
+    // (installed=true semantics), without relying on real filesystem faults.
+    // Production code must never set the hook.
+    static void setDirectoryFsyncHookForTests(
+        std::function<bool(const std::string& targetPath)> hook);
 
     // Captures an optimistic snapshot of a regular file: identity, metadata
     // and exact content read through the same descriptor. Refuses symlinks

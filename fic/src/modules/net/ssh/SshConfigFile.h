@@ -98,17 +98,18 @@ public:
         const std::vector<std::size_t>& afterLineIndices,
         std::string& error);
 
+    // Mutation-identity preflight (planner → classifier invariant): proves
+    // that the plan about to be persisted and applied, simulated on an
+    // in-memory copy of the loaded snapshot, is classified by the production
+    // rollback classifier as After. Any ambiguity (for example a pre-existing
+    // foreign line identical to a planned FIC-generated comment) refuses the
+    // first apply BEFORE the journal record and BEFORE any system write: FIC
+    // must never create a mutation it cannot immediately classify itself.
+    bool validatePlannedRollbackIdentity(
+        const SshDirectiveMutationPlan& plan, std::string& error) const;
+
 private:
     bool findFirstMatchLine(std::size_t& line) const;
-    // Mutation-local projection of the target resource: every global-section
-    // line that is an active directive of the target keyword or exactly
-    // matches a recorded BEFORE/AFTER line, in file order, paired with its
-    // file line index.
-    bool buildTargetProjection(
-        const std::string& normalizedParameter,
-        const std::vector<std::string>& recordedLines,
-        std::vector<std::pair<std::size_t, std::string>>& projection,
-        std::string& error) const;
 
     std::unordered_map<std::string, std::string> config_;
     std::unordered_map<std::string, std::string> canonicalNames_;

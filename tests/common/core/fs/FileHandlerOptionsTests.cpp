@@ -166,6 +166,116 @@ void testValueRemovalPreservesUnrelatedContent() {
             "unrelated value was unexpectedly removed");
 }
 
+// Minimal FileHandler that captures an optimistic snapshot at load time and
+// rewrites the whole content at save: enough to exercise the structured
+// conditional-save outcome at the fic-core/FileHandler boundary.
+class SnapshotFileHandlerUnderTest : public FileHandler {
+public:
+    explicit SnapshotFileHandlerUnderTest(const std::string& filepath)
+        : FileHandler(filepath, " ") {}
+
+    bool loadConfig() override {
+        AtomicTargetState snapshot;
+        std::string error;
+        if (!AtomicFileWriter::captureTargetState(filepath_, snapshot, &error)) {
+            return false;
+        }
+        original_lines_.clear();
+        std::string line;
+        std::istringstream stream(snapshot.content);
+        while (std::getline(stream, line)) {
+            original_lines_.push_back(line);
+        }
+        loadSnapshot_ = std::move(snapshot);
+        return true;
+    }
+
+    std::string getValue(const std::string&) const override { return {}; }
+
+    bool setValue(const std::string&, const std::string&) override {
+        original_lines_.push_back("key=new");
+        return true;
+    }
+};
+
+void testAtomicPostRenameDurabilityFailureKeepsInstalledState() {
+    TempTree tree;
+    const auto path = tree.root / "durable.conf";
+    writeFile(path, "old\n");
+
+    AtomicWriteOptions options;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+
+    std::string error;
+    AtomicWriteResult result;
+    require(!AtomicFileWriter::writeWithResult(
+                path.string(), "new\n", options, &error, &result),
+            "a simulated directory fsync failure must report failure");
+    require(result.installed,
+            "installed must stay true after a post-rename durability failure");
+    require(result.installedTargetState.has_value(),
+            "the exact installed target state must survive the failure");
+    require(result.installedTargetState->content == "new\n",
+            "the installed target state must describe the new content");
+    require(readFile(path) == "new\n",
+            "the target must carry the new content after the failure");
+}
+
+void testSaveFileIfUnchangedPropagatesInstalledOutcome() {
+    TempTree tree;
+    const auto path = tree.root / "outcome.conf";
+    writeFile(path, "key=old\n");
+
+    SnapshotFileHandlerUnderTest handler(path.string());
+    require(handler.loadConfig(), "the fixture must load");
+    require(handler.setValue("key", "new"), "the value must be staged");
+
+    // Simulate a post-rename durability failure: the replacement happens but
+    // the write reports failure.
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+
+    std::string error;
+    const FileHandler::FileSaveOutcome outcome =
+        handler.saveFileIfUnchanged(error);
+    require(outcome.result == FileHandler::FileSaveResult::Failed,
+            "a durability failure must be reported as Failed");
+    require(outcome.installed,
+            "the caller must observe that the replacement DID happen");
+    require(!outcome.preconditionFailed,
+            "a durability failure is not a precondition refusal");
+    require(outcome.installedTargetState.has_value(),
+            "the exact installed target state must be propagated to the caller");
+    require(outcome.installedTargetState->content == "key=new\nkey=new\n" ||
+                outcome.installedTargetState->content.find("key=new") !=
+                    std::string::npos,
+            "the installed target state must describe the staged content");
+    require(readFile(path).find("key=new") != std::string::npos,
+            "the file must carry the staged content after the failure");
+
+    // Restore the real durability path for the success scenario.
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+
+    // A successful save still reports Installed with the exact state.
+    SnapshotFileHandlerUnderTest reloaded(path.string());
+    require(reloaded.loadConfig(), "the mutated fixture must reload");
+    require(reloaded.setValue("key", "second"), "the second value must stage");
+    std::string secondError;
+    const FileHandler::FileSaveOutcome success =
+        reloaded.saveFileIfUnchanged(secondError);
+    require(success.result == FileHandler::FileSaveResult::Installed,
+            "a successful conditional save must report Installed");
+    require(success.installed && success.installedTargetState.has_value(),
+            "a successful save must expose the exact installed state");
+}
+
 void testAtomicExpectedTargetIdentity() {
     TempTree tree;
     const auto path = tree.root / "identity.conf";
@@ -206,6 +316,8 @@ int main() {
         testSymlinkIsRejected();
         testDeletionBetweenLoadAndSaveDoesNotRecreateFile();
         testValueRemovalPreservesUnrelatedContent();
+        testAtomicPostRenameDurabilityFailureKeepsInstalledState();
+        testSaveFileIfUnchangedPropagatesInstalledOutcome();
         testAtomicExpectedTargetIdentity();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

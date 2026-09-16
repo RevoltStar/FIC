@@ -2,16 +2,16 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `8180806` (предыдущий follow-up persistent
-  rollback SSH).
-- Изменения второго follow-up — в рабочем дереве, не закоммичены.
+- Ветка `main`, базовый commit `9a42417595483ffe8c691eae87405b1a0062c5d4`
+  (follow-up №2 к persistent rollback SSH).
+- Изменения третьего follow-up — в рабочем дереве, не закоммичены.
 
 ## Current task
 
-- Follow-up к persistent rollback `NET/SshEdit`: repeated apply без
-  незаписанных mutations (fail closed на untracked occurrences), ordered
-  mutation-local BEFORE/AFTER classification, identical duplicates, BEFORE
-  runtime reconciliation, компенсация по exact FIC-installed state.
+- Follow-up №3 к persistent rollback `NET/SshEdit`: Prepared recovery до
+  compliance fast-path, active value change fail closed, plan identity
+  preflight (planner → classifier), прокидывание `installed=true` через
+  `FileHandler` и post-install failure handling в SSH apply/rollback.
 
 ## Accepted architecture / invariants
 
@@ -41,6 +41,30 @@
   installedTargetState` (temp-inode/content/metadata, опубликованные rename;
   при post-rename durability ошибке `installed=true`). Свежий snapshot как
   proof of ownership запрещён.
+- `Ssh::apply()`: journal lookup ДО compliance; порядок: значение → load →
+  journal → Prepared recovery → RollbackFailed fail closed → active
+  value-change refusal → compliance → repeated-apply/fresh. `Prepared`
+  state machine: AFTER → validate/reload/commit Applied; BEFORE →
+  validate/reload/discard/fresh apply; drift → conflict fail closed. Файл
+  при recovery не перезаписывается.
+- Active value change (`expectedValue != undo.appliedValue`) при активной
+  SSH-мутации — явный отказ (файл/journal не изменяются, baseline
+  сохраняется); retarget — будущая transactional-версия.
+- Plan identity preflight: `SshConfigFileHandler::
+  validatePlannedRollbackIdentity(plan)` симулирует план на in-memory копии
+  и требует `classify == After` тем же production-алгоритмом (общий статик
+  `classifyLinesAgainstMutation`); отказ ДО journal и ДО записи файла
+  (foreign-comment collision fail closed). Валидные duplicate-сценарии
+  сохранены.
+- Atomic write: `FileHandler::saveFileIfUnchanged()` возвращает
+  `FileSaveOutcome{result, installed, preconditionFailed,
+  installedTargetState}`; `installed=true` при `result=Failed` означает
+  состоявшуюся замену (post-rename durability failure) — SSH apply
+  компенсирует по `installedTargetState` (успех → discard new Prepared /
+  существующий baseline остаётся; недоказано → запись активна), SSH
+  rollback при installed reverse-write продолжает validate/reload и не
+  маркирует Success без полного подтверждения. Test-only seam:
+  `AtomicFileWriter::setDirectoryFsyncHookForTests` (по target path).
 - TOCTOU: optimistic expected-target precondition (`captureTargetState` +
   `saveFileIfUnchanged`/`writeWithResult`). Это НЕ полноценный filesystem
   CAS: между финальной проверкой и `rename()` остаётся малое residual race
@@ -57,23 +81,29 @@
 
 ## Completed
 
-- `SshConfigFile`: ordered projection classification; repair matcher
-  (`matchRecordedMutationForRepair` + `applyRecordedRepairEdits`).
-- `Ssh::apply`: journal lookup до любой мутации; ветка repeated apply через
-  existing undo; first apply — plan → Prepared → apply; compensation по
-  `installedTargetState`; beforeRestoreHook_ test seam.
-- `SshRollback`: BEFORE runtime reconciliation; conditional компенсация;
-  `beforeRestore` seam; `restoreSshConfigContent` →
-  `restoreSshConfigContentIfCurrentState`.
-- fic-core: `AtomicWriteResult::installed` + `installedTargetState`
-  (captured до rename из temp fd; исправлен баг fstat-после-close);
-  `saveFileIfUnchanged` возвращает installed state.
-- `MutationJournal`: distinct-afterLine требование убрано; структурные
-  проверки сохранены.
-- Тесты новые: BEFORE/AFTER collision rollback, identical duplicates +
-  restart, repeated apply refuse untracked occurrence, writer→reader
-  payload invariant (5 fixtures), apply/rollback compensation race,
-  BEFORE crash recovery (reload success/fail).
+- `Ssh::apply`: перестроен порядок (provenance до compliance); Prepared
+  recovery state machine; RollbackFailed fail closed; active value-change
+  refusal; plan identity preflight перед `recordPreparedMutation`;
+  post-install failure компенсация.
+- `SshConfigFile`: классификация вынесена в общий
+  `classifyLinesAgainstMutation` (member classify + preflight используют
+  один алгоритм); `validatePlannedRollbackIdentity`; `buildTargetProjection`
+  → статический `buildProjectionForLines`.
+- `SshRollback`: structured `FileSaveOutcome`; installed reverse-write
+  продолжает validate/reload; fail closed при неизвестном installed state;
+  `restoreSshConfigContentIfCurrentState` считает installed=true успехом
+  restore (замена опубликована, провалилась только durability).
+- fic-core: `FileHandler::FileSaveOutcome` (замена
+  `saveFileIfUnchanged(error, installedState)` — контракт заменён чисто);
+  `AtomicFileWriter::setDirectoryFsyncHookForTests` (test-only seam для
+  post-rename durability failure).
+- Тесты новые: Prepared AFTER recovery (success/reload fail/commit fail +
+  retry), Prepared BEFORE recovery (fresh apply + reload fail), Prepared
+  Conflict fail closed, Prepared + changed desired value, active value
+  change refusal (+disable rollback), foreign-comment collision refusal,
+  apply/rollback post-install durability failure, fic-core
+  dir-fsync-failure + FileHandler propagation, planner→classifier invariant
+  на всех fixtures.
 
 ## Changed areas
 
@@ -82,7 +112,8 @@
   `RollbackExecutor.cpp`)
 - `fic/src/modules/net/ssh/` (`Ssh.{h,cpp}`, `SshConfigFile.{h,cpp}`,
   `SshRollback.{h,cpp}`)
-- `tests/fic/rollback/`, `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`
+- `tests/fic/rollback/`, `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`,
+  `tests/common/core/fs/FileHandlerOptionsTests.cpp`
 - `docs/rollback.md`
 
 ## Validation
@@ -104,3 +135,8 @@
   fail-closed выбор, three-way merge не реализовывался.
 - Dynamic journal extension для untracked occurrences не реализован
   (осознанно; conservative fail closed).
+- Retarget активного SSH desired value (multi-generation journal
+  transaction) — TODO, сейчас fail closed (disable → change → enable).
+- Foreign-comment collision: если существующая чужая строка точно совпадает
+  с планируемой FIC-generated (`#Port 22`), first apply отказывается
+  (fail closed) — foreign-комментарии не присваиваются.

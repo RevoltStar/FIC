@@ -110,16 +110,13 @@ bool FileHandler::saveFile(){
     return true;
 }
 
-FileHandler::FileSaveResult FileHandler::saveFileIfUnchanged(
-    std::string& error,
-    std::optional<AtomicTargetState>* installedState) {
-    if (installedState != nullptr) {
-        installedState->reset();
-    }
+FileHandler::FileSaveOutcome FileHandler::saveFileIfUnchanged(
+    std::string& error) {
+    FileSaveOutcome outcome;
     if (!loadSnapshot_.has_value()) {
         error = "Файл не был загружен через snapshot; conditional save невозможен: " +
                 filepath_;
-        return FileSaveResult::Failed;
+        return outcome;
     }
     std::string content;
     for (const std::string& line : original_lines_) {
@@ -132,15 +129,21 @@ FileHandler::FileSaveResult FileHandler::saveFileIfUnchanged(
     AtomicWriteResult result;
     if (!AtomicFileWriter::writeWithResult(
             filepath_, content, options, &error, &result)) {
-        if (result.preconditionFailed) {
-            return FileSaveResult::RefusedChanged;
-        }
-        return FileSaveResult::Failed;
+        // Propagate the installation outcome even on failure: a post-rename
+        // durability error means the target was already replaced, and the
+        // caller must be able to compensate using the exact installed state
+        // ("post-rename error != pre-install failure").
+        outcome.installed = result.installed;
+        outcome.preconditionFailed = result.preconditionFailed;
+        outcome.installedTargetState = result.installedTargetState;
+        outcome.result = result.preconditionFailed ? FileSaveResult::RefusedChanged
+                                                   : FileSaveResult::Failed;
+        return outcome;
     }
-    if (installedState != nullptr && result.installedTargetState.has_value()) {
-        *installedState = result.installedTargetState;
-    }
-    return FileSaveResult::Installed;
+    outcome.result = FileSaveResult::Installed;
+    outcome.installed = true;
+    outcome.installedTargetState = result.installedTargetState;
+    return outcome;
 }
 
 // Вспомогательная функция для удаления пробелов

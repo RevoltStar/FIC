@@ -72,27 +72,6 @@ bool Ssh::apply() {
 
     SshRuntime runtime(*runtimeOptions_, executables_, commandRunner_);
 
-    // Effective state first: a configuration that already complies (even via
-    // sshd defaults without an explicit directive) must not be mutated,
-    // recorded or reloaded — FIC must not claim foreign compliance.
-    const SshComplianceResult compliance =
-        runtime.policyValueCompliance(this->sshParameter, expectedValue);
-    if (compliance.compliance == SshCompliance::Compliant) {
-        this->log(LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:no_deviations_part1]") +
-                      this->sshParameter +
-                      LocalizationManager::getLang(
-                          "[module:NET][submodule:SshEdit][message:no_deviations_part2]"),
-                  logLevel::INFO);
-        return true;
-    }
-    if (compliance.compliance == SshCompliance::Unknown) {
-        this->log("Не удалось определить effective-состояние sshd: " +
-                      compliance.error,
-                  logLevel::ERROR);
-        return false;
-    }
-
     const std::string sshPath = platformConfig_.configPath.string();
     if (!this->sshConfig_->loadConfig()) {
         this->log(LocalizationManager::getLang(
@@ -110,17 +89,24 @@ bool Ssh::apply() {
     const std::string resource =
         sshMutationResource(platformConfig_.configPath, this->sshParameter);
 
-    // Crash-consistent journaling: resolve the provenance BEFORE any
-    // mutation. An existing active record for the same resource keeps its
-    // original rollback baseline across repeated applies and forces the
-    // repeated-apply path below: the current target-resource state must be
-    // matched against the recorded mutation, because a generic apply would
-    // mutate every occurrence of the keyword — including untracked ones the
-    // journal has no undo provenance for. Untracked occurrences fail closed
-    // instead of being mutated without persisted provenance.
+    // Crash-consistent journaling: resolve the provenance BEFORE the
+    // compliance decision and before any mutation. A crash can leave a
+    // Prepared record with the file already written while the reload / the
+    // journal commit never happened; the compliance fast-path must never
+    // bypass such a record, otherwise a prepared-but-not-reloaded change
+    // would be reported as applied without a runtime reload. An existing
+    // active record for the same resource keeps its original rollback
+    // baseline across repeated applies and forces the repeated-apply path
+    // below: the current target-resource state must be matched against the
+    // recorded mutation, because a generic apply would mutate every
+    // occurrence of the keyword — including untracked ones the journal has
+    // no undo provenance for. Untracked occurrences fail closed instead of
+    // being mutated without persisted provenance.
     fic::rollback::MutationId mutationId = 0;
     bool newRecord = false;
     bool hasExistingRecord = false;
+    fic::rollback::MutationStatus existingStatus =
+        fic::rollback::MutationStatus::Applied;
     fic::rollback::UndoRestoreSshDirective existingUndo;
     {
         std::string journalError;
@@ -137,6 +123,7 @@ bool Ssh::apply() {
             if (record.undo.backend == fic::rollback::MutationBackend::Ssh &&
                 record.resource == resource) {
                 mutationId = record.id;
+                existingStatus = record.status;
                 if (const auto* sshUndo =
                         std::get_if<fic::rollback::UndoRestoreSshDirective>(
                             &record.undo.payload)) {
@@ -160,6 +147,141 @@ bool Ssh::apply() {
                       logLevel::WARN);
         }
     };
+
+    // Prepared recovery state machine. A Prepared record means the journal
+    // was persisted but the mutation was never proven complete: the file
+    // write, the runtime reload and the journal commit form the recovery
+    // transaction, and each step must be confirmed before the record status
+    // changes. The recovery runs BEFORE the compliance fast-path so a
+    // crash between the file write and the reload can never be reported as
+    // a successful apply without a runtime reload.
+    if (hasExistingRecord &&
+        existingStatus == fic::rollback::MutationStatus::Prepared) {
+        std::vector<std::size_t> recoveryLineIndices;
+        std::string classifyError;
+        const SshMutationState recordedState =
+            this->sshConfig_->classifyRecordedMutation(
+                existingUndo, recoveryLineIndices, classifyError);
+
+        const auto failRecovery = [this](const std::string& reason) {
+            this->log("Prepared SSH mutation не восстановлена, запись "
+                      "остаётся активной: " + reason,
+                  logLevel::ERROR);
+            return false;
+        };
+
+        if (recordedState == SshMutationState::Conflict) {
+            // The persistent state matches neither BEFORE nor AFTER: the
+            // provenance of the prepared record cannot be proven, so the
+            // recovery must not guess and must not repair automatically.
+            return failRecovery(
+                "Prepared SSH mutation cannot be recovered because "
+                "persistent state drifted: " + classifyError);
+        }
+
+        // Common runtime reconciliation for AFTER and BEFORE: the current
+        // persistent configuration is validated and activated while the
+        // Prepared record stays untouched. The file itself is never
+        // rewritten here.
+        std::string validationError;
+        if (!runtime.validateConfiguration(validationError)) {
+            return failRecovery("sshd не принял текущую конфигурацию: " +
+                                validationError);
+        }
+        const SshActivationResult recoveryActivation =
+            runtime.activateIfRunning();
+        if (!recoveryActivation.ok) {
+            return failRecovery("перезагрузка не удалась: " +
+                                recoveryActivation.message);
+        }
+
+        if (recordedState == SshMutationState::Before) {
+            // BEFORE can mean the write never happened or the persistent
+            // compensation already restored the baseline; only a confirmed
+            // runtime reconciliation proves no active FIC mutation remains.
+            // The stale Prepared record is discarded afterwards and the
+            // apply continues as a fresh first apply of the desired value.
+            std::string discardError;
+            if (!fic::rollback::discardMutation(mutationId, discardError)) {
+                return failRecovery(
+                    "ошибка удаления устаревшей Prepared записи: " +
+                    discardError);
+            }
+            this->log("Устаревшая Prepared SSH-мутация согласована "
+                      "(конфигурация проверена, runtime активирован) и "
+                      "удалена из journal; выполняется обычное применение",
+                  logLevel::INFO);
+            hasExistingRecord = false;
+        } else {
+            // AFTER: the system write may already have happened while the
+            // reload / the journal commit did not. Validate + reload, then
+            // commit Prepared → Applied; the recovered mutation keeps its
+            // original rollback baseline.
+            std::string commitError;
+            if (!fic::rollback::commitMutation(mutationId, commitError)) {
+                return failRecovery(
+                    "ошибка фиксации восстановленной Prepared записи: " +
+                    commitError);
+            }
+            this->log("Prepared SSH-мутация восстановлена: конфигурация "
+                      "проверена, runtime активирован, journal переведён "
+                      "в Applied",
+                  logLevel::INFO);
+            existingStatus = fic::rollback::MutationStatus::Applied;
+        }
+    }
+
+    // An unfinished rollback must never be silently treated as a normal
+    // Applied baseline: the actual persistent state is not proven.
+    if (hasExistingRecord &&
+        existingStatus == fic::rollback::MutationStatus::RollbackFailed) {
+        this->log("Active SSH mutation is in state RollbackFailed; повторное "
+                      "применение отклонено (файл и journal не изменены). "
+                      "Требуется разрешение состояния отката",
+                  logLevel::ERROR);
+        return false;
+    }
+
+    // Active value change: the recorded baseline describes the currently
+    // owned system state. Retargeting it without a full crash-safe
+    // transaction protocol would create ambiguous provenance, so the apply
+    // fails closed and the rollback baseline is preserved unchanged
+    // (disable → change value → enable is required).
+    if (hasExistingRecord &&
+        expectedValue != existingUndo.appliedValue) {
+        this->log("SSH policy value changed while an active rollback baseline "
+                      "exists. Disable the policy first, then change the "
+                      "value and enable it again. (Параметр '" +
+                          this->sshParameter + "': желаемое значение '" +
+                          expectedValue + "', активная мутация '" +
+                          existingUndo.appliedValue +
+                          "'); файл и journal не изменены",
+                  logLevel::ERROR);
+        return false;
+    }
+
+    // Effective state: a configuration that already complies (even via
+    // sshd defaults without an explicit directive) must not be mutated,
+    // recorded or reloaded — FIC must not claim foreign compliance. This
+    // fast-path is safe only after the journal provenance above: a Prepared
+    // record never reaches it unreconciled.
+    const SshComplianceResult compliance =
+        runtime.policyValueCompliance(this->sshParameter, expectedValue);
+    if (compliance.compliance == SshCompliance::Compliant) {
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:no_deviations_part1]") +
+                      this->sshParameter +
+                      LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:no_deviations_part2]"),
+                  logLevel::INFO);
+        return true;
+    }
+    if (compliance.compliance == SshCompliance::Unknown) {
+        this->log("Не удалось определить effective-состояние sshd: " +
+                      compliance.error,
+                  logLevel::ERROR);
+        return false;
+    }
 
     if (hasExistingRecord) {
         // Repeated apply with an active recorded mutation. The generic
@@ -241,6 +363,23 @@ bool Ssh::apply() {
         return false;
     }
 
+        // Mutation-identity preflight (planner → classifier invariant):
+        // prove on an in-memory simulation that the plan about to be
+        // persisted produces a state the production rollback classifier
+        // immediately recognizes as the recorded AFTER. Otherwise the first
+        // apply is refused with no journal record and no system write — FIC
+        // must never create a mutation it cannot classify itself (for
+        // example when a pre-existing foreign line collides exactly with a
+        // planned FIC-generated comment).
+        std::string identityError;
+        if (!this->sshConfig_->validatePlannedRollbackIdentity(
+                plan, identityError)) {
+            this->log("Применение SSH-политики '" + this->sshParameter +
+                          "' отменено: " + identityError,
+                      logLevel::ERROR);
+            return false;
+        }
+
         // Crash-consistent journaling: record Prepared before the system
         // mutation so the persisted undo provenance always exists before the
         // first textual change of the shared sshd_config.
@@ -281,9 +420,9 @@ bool Ssh::apply() {
         this->beforeWriteHook_();
     }
     std::string saveError;
-    std::optional<AtomicTargetState> installedState;
-    const FileHandler::FileSaveResult saveResult =
-        this->sshConfig_->saveFileIfUnchanged(saveError, &installedState);
+    const FileHandler::FileSaveOutcome saveOutcome =
+        this->sshConfig_->saveFileIfUnchanged(saveError);
+    const FileHandler::FileSaveResult saveResult = saveOutcome.result;
     if (saveResult != FileHandler::FileSaveResult::Installed) {
         if (saveResult == FileHandler::FileSaveResult::RefusedChanged) {
             // The write was refused before anything was installed: the
@@ -294,9 +433,71 @@ bool Ssh::apply() {
                           "конкурентная запись отклонена, файл не изменён: " +
                               saveError,
                       logLevel::ERROR);
+        } else if (saveOutcome.installed) {
+            // Post-install durability failure: the rename already succeeded,
+            // so the target may already carry the new content. It must never
+            // be reported as "file unchanged". When the exact installed
+            // state is known, attempt a conditional compensation of that
+            // state; otherwise the provenance record stays active fail
+            // closed.
+            if (saveOutcome.installedTargetState.has_value()) {
+                this->log("Ошибка durable-записи sshd_config после успешной "
+                              "замены файла (" + saveError +
+                              "); выполняется компенсация установленного "
+                              "состояния",
+                          logLevel::ERROR);
+                std::string restoreError;
+                if (this->beforeRestoreHook_) {
+                    this->beforeRestoreHook_();
+                }
+                const bool restored = restoreSshConfigContentIfCurrentState(
+                    platformConfig_.configPath, originalContent,
+                    *saveOutcome.installedTargetState, restoreError);
+                if (!restored) {
+                    this->log("Ошибка компенсации после post-install "
+                                  "сбоя записи: " + restoreError +
+                                  ". Provenance-запись остаётся активной",
+                              logLevel::ERROR);
+                    return false;
+                }
+                std::string validationError;
+                if (!runtime.validateConfiguration(validationError)) {
+                    this->log("Исходная конфигурация восстановлена после "
+                                  "post-install сбоя, но sshd её не "
+                                  "принимает: " + validationError +
+                                  ". Provenance-запись остаётся активной",
+                              logLevel::ERROR);
+                    return false;
+                }
+                const SshActivationResult restoredActivation =
+                    runtime.activateIfRunning();
+                if (!restoredActivation.ok) {
+                    this->log("Исходная конфигурация восстановлена после "
+                                  "post-install сбоя, но перезагрузка не "
+                                  "удалась: " + restoredActivation.message +
+                                  ". Provenance-запись остаётся активной",
+                              logLevel::ERROR);
+                    return false;
+                }
+                // The compensation is fully proven: a new Prepared record of
+                // this attempt is discarded; an existing baseline record
+                // stays active unchanged.
+                dropNewPrepared(
+                    "Post-install сбой записи, исходная конфигурация "
+                    "восстановлена");
+                this->log("Post-install сбой записи sshd_config: исходная "
+                              "конфигурация восстановлена и активирована",
+                          logLevel::ERROR);
+            } else {
+                this->log("Ошибка записи sshd_config: " + saveError +
+                              ". Замена файла уже могла произойти "
+                              "(post-install сбой); provenance-запись "
+                              "остаётся активной",
+                          logLevel::ERROR);
+            }
         } else {
-            // The write failed; AtomicFileWriter reports installed=false in
-            // this case, but the provenance is kept fail closed.
+            // The write failed before anything was installed; the
+            // provenance is kept fail closed.
             this->log(LocalizationManager::getLang(
                           "[module:NET][submodule:SshEdit][message:save_failed]") +
                           ". Ошибка: " + saveError +
@@ -305,6 +506,8 @@ bool Ssh::apply() {
         }
         return false;
     }
+    const std::optional<AtomicTargetState>& installedState =
+        saveOutcome.installedTargetState;
 
     // Post-write verification: persistent content and effective configuration.
     std::string failureContext;

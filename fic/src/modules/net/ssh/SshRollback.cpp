@@ -37,6 +37,13 @@ bool restoreSshConfigContentIfCurrentState(
     AtomicWriteResult result;
     if (!AtomicFileWriter::writeWithResult(
             path.string(), content, options, &error, &result)) {
+        if (result.installed) {
+            // The replacement itself succeeded (rename published the target);
+            // only a later durability step (directory fsync) failed. The
+            // restored content is in place: treat the restore as done and
+            // let the caller continue with validation / activation.
+            return true;
+        }
         if (result.preconditionFailed) {
             error = "Файл изменился после FIC-записи; восстановление отменено, "
                     "внешнее содержимое сохранено: " + error;
@@ -134,15 +141,17 @@ SshRollbackResult undoSshDirectiveMutation(
     }
 
     std::string error;
-    std::optional<AtomicTargetState> installedState;
     if (!handler.applyRecordedReverseEdits(undo, afterLineIndices, error)) {
         result.message = "Откат SSH-мутации отменён (файл не изменён): " + error;
         return result;
     }
-    const FileHandler::FileSaveResult saveResult =
-        handler.saveFileIfUnchanged(error, &installedState);
-    if (saveResult != FileHandler::FileSaveResult::Installed) {
-        if (saveResult == FileHandler::FileSaveResult::RefusedChanged) {
+    const FileHandler::FileSaveOutcome saveOutcome =
+        handler.saveFileIfUnchanged(error);
+    const bool reverseInstalled =
+        saveOutcome.result == FileHandler::FileSaveResult::Installed ||
+        saveOutcome.installed;
+    if (!reverseInstalled) {
+        if (saveOutcome.result == FileHandler::FileSaveResult::RefusedChanged) {
             // The shared sshd_config changed concurrently after the snapshot
             // was captured: refuse without overwriting the external change.
             result.conflict = true;
@@ -155,6 +164,17 @@ SshRollbackResult undoSshDirectiveMutation(
         }
         return result;
     }
+    if (!saveOutcome.installedTargetState.has_value()) {
+        // The reverse write was installed but its exact state is unknown:
+        // fail closed without any compensation guess; the mutation stays
+        // active.
+        result.message = "Не удалось зафиксировать точное состояние "
+                         "sshd_config после записи отката"
+                             + std::string(error.empty() ? "" : (": " + error))
+                             + "; мутация остаётся активной";
+        return result;
+    }
+    const AtomicTargetState& installedState = *saveOutcome.installedTargetState;
 
     SshRuntime runtime = makeRuntime(options);
     const auto runBeforeRestore = [&options]() {
@@ -172,7 +192,7 @@ SshRollbackResult undoSshDirectiveMutation(
         std::string restoreError;
         runBeforeRestore();
         const bool stateRestored = restoreSshConfigContentIfCurrentState(
-            options.configPath, preRollbackContent, *installedState,
+            options.configPath, preRollbackContent, installedState,
             restoreError);
         if (stateRestored) {
             result.message = "Откат SSH-мутации записан, но sshd -T не принял "
@@ -192,7 +212,7 @@ SshRollbackResult undoSshDirectiveMutation(
         std::string restoreError;
         runBeforeRestore();
         const bool stateRestored = restoreSshConfigContentIfCurrentState(
-            options.configPath, preRollbackContent, *installedState,
+            options.configPath, preRollbackContent, installedState,
             restoreError);
         if (!stateRestored) {
             result.message = "Перезагрузка SSH-сервиса не удалась (" +

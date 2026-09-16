@@ -19,6 +19,12 @@ void setError(std::string* target, const std::string& message) {
     }
 }
 
+// Test-only seam storage (see setDirectoryFsyncHookForTests()).
+std::function<bool(const std::string&)>& testDirectoryFsyncHook() {
+    static std::function<bool(const std::string&)> hook;
+    return hook;
+}
+
 std::string errnoMessage() {
     return std::strerror(errno);
 }
@@ -319,6 +325,17 @@ bool AtomicFileWriter::writeWithResult(
         result->installedTargetState->content = content;
     }
 
+    // A test seam may simulate a durability failure after the rename. The
+    // target is already installed here: result->installed stays true and
+    // installedTargetState describes the published state (the invariant
+    // "post-rename error != pre-install failure").
+    if (testDirectoryFsyncHook() &&
+        !testDirectoryFsyncHook()(targetPath.string())) {
+        setError(errorMessage,
+                 "simulated directory fsync failure after install (test seam)");
+        return false;
+    }
+
     int dirFd = ::open(targetDir.c_str(), O_RDONLY | O_DIRECTORY);
     if (dirFd < 0) {
         setError(errorMessage, "could not open directory " + targetDir.string() + ": " + errnoMessage());
@@ -334,6 +351,11 @@ bool AtomicFileWriter::writeWithResult(
         return false;
     }
     return true;
+}
+
+void AtomicFileWriter::setDirectoryFsyncHookForTests(
+    std::function<bool(const std::string& targetPath)> hook) {
+    testDirectoryFsyncHook() = std::move(hook);
 }
 
 bool AtomicFileWriter::captureTargetState(const std::string& path,

@@ -44,23 +44,39 @@ public:
     //Сохранить файл
     bool saveFile();
 
-    // Optimistic save: replaces the file only when it still matches the
-    // target state captured by the last load (see loadSnapshot()). Protects
-    // shared configuration files against concurrent external modification
-    // between load and save (TOCTOU). Returns RefusedChanged without writing
-    // anything when the file changed, Failed when the write failed without
-    // installing anything, Installed on success. When installedState is
-    // provided and the file was installed, it receives the exact state FIC
-    // published through rename (identity, metadata, content) — the
-    // compensation anchor for later conditional restores.
     enum class FileSaveResult {
         Installed,
         RefusedChanged,
         Failed
     };
-    FileSaveResult saveFileIfUnchanged(
-        std::string& error,
-        std::optional<AtomicTargetState>* installedState = nullptr);
+
+    // Structured save outcome (see saveFileIfUnchanged()).
+    struct FileSaveOutcome {
+        FileSaveResult result = FileSaveResult::Failed;
+        // True when the replacement DID happen (rename succeeded), even when
+        // a later durability step (directory fsync) failed and result is
+        // Failed. Callers must never treat installed==true as "file
+        // unchanged": the system may already carry the new content.
+        bool installed = false;
+        // True when the write was refused by the optimistic precondition
+        // before anything was installed (nothing was replaced).
+        bool preconditionFailed = false;
+        // Present only when installed == true: the exact target state FIC
+        // published through rename — the compensation anchor for conditional
+        // restores. Available even when a post-rename durability step failed.
+        std::optional<AtomicTargetState> installedTargetState;
+    };
+
+    // Optimistic save: replaces the file only when it still matches the
+    // target state captured by the last load (see loadSnapshot()). Protects
+    // shared configuration files against concurrent external modification
+    // between load and save (TOCTOU). Returns RefusedChanged without writing
+    // anything when the file changed, Failed when the write failed — the
+    // structured outcome distinguishes a pre-install failure (installed ==
+    // false, nothing was replaced) from a post-rename durability failure
+    // (installed == true, the target already carries the new content and
+    // installedTargetState holds the exact installed state).
+    FileSaveOutcome saveFileIfUnchanged(std::string& error);
 
     // Target state (identity, metadata, content) captured by the last load,
     // when the concrete handler captures it; empty otherwise.

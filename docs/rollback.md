@@ -73,6 +73,74 @@ Crash-consistency: запись создаётся в состоянии `Prepar
 (restore исходного содержимого при провале postcondition) сохранены;
 persistent-запись коммитится только после успешного apply.
 
+### Prepared recovery (SSH backend)
+
+`Ssh::apply()` разрешает provenance (journal lookup) ДО проверки effective
+compliance: compliance fast-path никогда не обходит `Prepared`-запись,
+иначе крэш между записью файла и reload дал бы ложный успешный apply без
+runtime-перезагрузки. Для активной `Prepared`-записи выполняется recovery
+state machine (текущий файл классифицируется production-моделью
+`classifyRecordedMutation`, файл при recovery никогда не перезаписывается):
+
+```text
+Prepared + AFTER
+→ sshd -T validate
+→ reload (если сервис активен)
+→ commit Prepared → Applied
+Prepared + BEFORE
+→ sshd -T validate
+→ reload (если сервис активен)
+→ discard устаревшей Prepared
+→ продолжение обычного fresh apply нового desired value
+Prepared + ни AFTER, ни BEFORE (drift)
+→ conflict, fail closed; apply false, файл не изменён, Prepared остаётся
+```
+
+Любая неудача validate/reload/commit/discard оставляет `Prepared` активной и
+завершает apply ошибкой. После recovery `Applied`-записи проверка active
+value change применяется как к обычной активной мутации.
+
+### Active value changes (SSH, MVP)
+
+Изменение желаемого значения при активной SSH-мутации (`expectedValue !=
+undo.appliedValue`) явно отказывается (fail closed): файл и journal не
+изменяются, rollback baseline сохраняется. Журнал не ретаргетируется без
+полного crash-safe протокола (иначе крэш между rewrite journal и системной
+записью создаёт неоднозначный provenance). Требуемый путь: disable →
+изменить значение → enable. Retarget поддерживается в будущей
+transactional-версии (TODO).
+
+### Plan identity preflight (planner → classifier)
+
+Первый apply SSH-политики выполняется только если план, просимулированный на
+in-memory копии текущего конфига (`validatePlannedRollbackIdentity`),
+классифицируется тем же production-алгоритмом rollback-классификатора как
+`After`. Иначе (например, чужая существующая строка `#Port 22` коллидирует с
+планируемым FIC-комментарием) apply отказывается ДО записи journal и ДО
+системной записи: FIC не создаёт мутацию, которую сам не может однозначно
+классифицировать. Валидные сценарии дубликатов (`Port 22/Port 2022`, три
+одинаковых `Port 22`, before/after collision) сохраняются.
+
+### Atomic write result
+
+`AtomicFileWriter::writeWithResult()` различает pre-install failure и
+post-rename durability failure: при успехе `rename()` `installed=true` и
+`installedTargetState` сохраняются даже если последующий fsync каталога
+упал. `FileHandler::saveFileIfUnchanged()` возвращает структурированный
+`FileSaveOutcome` (`result`, `installed`, `preconditionFailed`,
+`installedTargetState`), так что вызывающий код (включая SSH apply и SSH
+rollback) обязан обрабатывать `installed=true` при `result=Failed` как
+факт состоявшейся замены: выполнить conditional-компенсацию по
+`installedTargetState` (только если цель всё ещё точно равна
+FIC-installed state), затем validate/reload; при недоказанной компенсации
+provenance-запись остаётся активной. Для deterministic-тестов в
+`AtomicFileWriter` есть test-only seam `setDirectoryFsyncHookForTests`
+(симулирует отказ fsync каталога после успешного rename; production-код
+его не устанавливает).
+
+`RollbackFailed` при повторном apply SSH fail closed (файл и journal не
+изменяются) — фактическое состояние не доказано, статус не «чинится» молча.
+
 ## Формат journal
 
 Путь: `FIC_MUTATION_JOURNAL_FILE` (по умолчанию
