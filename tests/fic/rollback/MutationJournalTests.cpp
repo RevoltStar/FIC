@@ -496,16 +496,11 @@ UndoAction sshUndo() {
     UndoRestoreSshDirective undo;
     undo.parameter = "Port";
     undo.appliedValue = "2222";
-    SshLineReverseEdit replacement;
-    replacement.globalLineIndex = 3;
+    SshDirectiveOccurrenceMutation replacement;
+    replacement.occurrenceIndex = 0;
     replacement.beforeLine = "Port 22";
     replacement.afterLine = "Port 2222";
-    SshLineReverseEdit insertion;
-    insertion.globalLineIndex = 5;
-    insertion.beforeLine = std::nullopt; // FIC inserted the line
-    insertion.afterLine = "MaxAuthTries 3";
-    undo.reverseEdits = {replacement, insertion};
-    undo.appliedGlobalSectionFingerprint = "0123456789abcdef";
+    undo.occurrences = {replacement};
     return UndoAction{MutationBackend::Ssh, std::move(undo)};
 }
 
@@ -539,19 +534,13 @@ void testSshUndoPayloadRoundTrip() {
     require(undo != nullptr, "ssh undo payload must survive reload");
     require(undo->parameter == "Port" && undo->appliedValue == "2222",
             "ssh parameter and applied value must survive reload");
-    require(undo->appliedGlobalSectionFingerprint == "0123456789abcdef",
-            "ssh fingerprint must survive reload");
-    require(undo->reverseEdits.size() == 2,
-            "both ssh reverse edits must survive reload");
-    require(undo->reverseEdits[0].globalLineIndex == 3 &&
-                undo->reverseEdits[0].beforeLine.has_value() &&
-                *undo->reverseEdits[0].beforeLine == "Port 22" &&
-                undo->reverseEdits[0].afterLine == "Port 2222",
-            "the replacement edit must survive reload");
-    require(undo->reverseEdits[1].globalLineIndex == 5 &&
-                !undo->reverseEdits[1].beforeLine.has_value() &&
-                undo->reverseEdits[1].afterLine == "MaxAuthTries 3",
-            "the insertion edit must survive reload");
+    require(undo->occurrences.size() == 1,
+            "the ssh occurrence mutation must survive reload");
+    require(undo->occurrences[0].occurrenceIndex == 0 &&
+                undo->occurrences[0].beforeLine.has_value() &&
+                *undo->occurrences[0].beforeLine == "Port 22" &&
+                undo->occurrences[0].afterLine == "Port 2222",
+            "the replacement occurrence must survive reload");
 }
 
 void requireBrokenSshJournalFailsClosed(const std::string& content,
@@ -580,36 +569,61 @@ void testSshUndoMalformedPayloadsFailClosed() {
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\"}" + tail,
         "missing payload fields");
+    // The abandoned intermediate format (fingerprint + absolute line
+    // indices) must be rejected explicitly, never silently converted.
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
                "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":[]}" + tail,
-        "empty reverse edits");
+               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
+               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" +
+            tail,
+        "legacy payload format");
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
                "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"fingerprint\":\"\",\"reverse_edits\":[{\"line\":3,"
+               "\"occurrences\":[]}" + tail,
+        "empty occurrences");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"occurrences\":[{\"occurrence\":1,"
                "\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" + tail,
-        "empty fingerprint");
+        "occurrence index must start at 0");
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
                "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
-               "[{\"line\":-1,\"before\":null,\"after\":\"Port 2222\"}]}" + tail,
-        "invalid line index");
+               "\"occurrences\":[{\"occurrence\":0,"
+               "\"before\":\"Port 22\",\"after\":\"Port 2222\"},"
+               "{\"occurrence\":0,\"before\":\"Port 2022\","
+               "\"after\":\"#Port 2022\"}]}" + tail,
+        "non-increasing occurrence indices");
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
                "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
-               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"Port 2222\"},"
-               "{\"line\":3,\"before\":null,\"after\":\"Port 2222\"}]}" + tail,
-        "non-increasing line indices");
-    requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
-               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"\"}]}" + tail,
+               "\"occurrences\":[{\"occurrence\":0,"
+               "\"before\":\"Port 22\",\"after\":\"\"}]}" + tail,
         "empty after line");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"occurrences\":[{\"occurrence\":0,"
+               "\"before\":\"Port 22\",\"after\":\"Port 22\"}]}" + tail,
+        "before and after lines must differ");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"occurrences\":[{\"occurrence\":0,\"before\":null,"
+               "\"after\":\"Port 2222\"},{\"occurrence\":1,"
+               "\"before\":\"Port 2022\",\"after\":\"#Port 2022\"}]}" + tail,
+        "inserted occurrence must be the only one");
+    requireBrokenSshJournalFailsClosed(
+        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
+               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
+               "\"occurrences\":[{\"occurrence\":0,"
+               "\"before\":\"Port 22\",\"after\":\"Port 2222\"},"
+               "{\"occurrence\":1,\"before\":\"Port 2022\","
+               "\"after\":\"Port 2222\"}]}" + tail,
+        "duplicate after lines");
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"remove_managed_setting\",\"backend\":\"ssh\","
                "\"key\":\"Port\",\"applied_value\":\"2222\"}" + tail,
@@ -617,9 +631,8 @@ void testSshUndoMalformedPayloadsFailClosed() {
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"restore_ssh_directive\",\"backend\":\"sudo\","
                "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
-               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" +
-            tail,
+               "\"occurrences\":[{\"occurrence\":0,"
+               "\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" + tail,
         "inconsistent backend");
 }
 

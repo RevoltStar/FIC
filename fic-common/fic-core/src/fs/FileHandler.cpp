@@ -110,6 +110,31 @@ bool FileHandler::saveFile(){
     return true;
 }
 
+FileHandler::FileSaveResult FileHandler::saveFileIfUnchanged(std::string& error) {
+    if (!loadSnapshot_.has_value()) {
+        error = "Файл не был загружен через snapshot; conditional save невозможен: " +
+                filepath_;
+        return FileSaveResult::Failed;
+    }
+    std::string content;
+    for (const std::string& line : original_lines_) {
+        content += line;
+        content.push_back('\n');
+    }
+
+    AtomicWriteOptions options = options_.writeOptions;
+    options.expectedTargetState = loadSnapshot_;
+    AtomicWriteResult result;
+    if (!AtomicFileWriter::writeWithResult(
+            filepath_, content, options, &error, &result)) {
+        if (result.preconditionFailed) {
+            return FileSaveResult::RefusedChanged;
+        }
+        return FileSaveResult::Failed;
+    }
+    return FileSaveResult::Installed;
+}
+
 // Вспомогательная функция для удаления пробелов
 void FileHandler::trim(std::string& str, bool needMid) const{
     str.erase(0, str.find_first_not_of(" \t\r\n"));

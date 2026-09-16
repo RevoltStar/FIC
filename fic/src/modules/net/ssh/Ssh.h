@@ -8,6 +8,7 @@
 #include "platform/PlatformProfile.h"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -22,6 +23,9 @@ protected:
     // Command runner hook for tests; an empty runner falls back to the
     // VerifiedProcessExecutor.
     SshCommandRunner commandRunner_;
+    // Deterministic test seam invoked right before the conditional atomic
+    // write of the apply path (simulates concurrent external modification).
+    std::function<void()> beforeWriteHook_;
 
 public:
     Ssh(fic::platform::SshPlatformConfig platformConfig,

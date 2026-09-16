@@ -6,9 +6,7 @@
 
 #include <fic/core/i18n/LocalizationManager.h>
 
-#include <fstream>
 #include <mutex>
-#include <sstream>
 #include <utility>
 
 namespace {
@@ -18,20 +16,6 @@ namespace {
 std::mutex& sshBackendMutex() {
     static std::mutex mutex;
     return mutex;
-}
-
-bool readFileContent(const std::string& path, std::string& content) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream.is_open()) {
-        return false;
-    }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    if (!stream.good() && !stream.eof()) {
-        return false;
-    }
-    content = buffer.str();
-    return true;
 }
 
 std::string sshMutationResource(const std::filesystem::path& configPath,
@@ -110,13 +94,17 @@ bool Ssh::apply() {
     }
 
     const std::string sshPath = platformConfig_.configPath.string();
-    std::string originalContent;
-    if (!readFileContent(sshPath, originalContent) ||
-        !this->sshConfig_->loadConfig()) {
+    if (!this->sshConfig_->loadConfig()) {
         this->log(LocalizationManager::getLang(
                       "[module:NET][submodule:SshEdit][message:load_failed]"),
                   logLevel::ERROR);
         return false;
+    }
+    // The handler captured an exact optimistic snapshot of the file; the
+    // pre-attempt content for compensation comes from the same snapshot.
+    std::string originalContent;
+    if (this->sshConfig_->loadSnapshot().has_value()) {
+        originalContent = this->sshConfig_->loadSnapshot()->content;
     }
 
     const std::string currentValue = this->sshConfig_->getValue(this->sshParameter);
@@ -187,10 +175,9 @@ bool Ssh::apply() {
             fic::rollback::UndoAction undo{
                 fic::rollback::MutationBackend::Ssh,
                 fic::rollback::UndoRestoreSshDirective{
-                    this->sshParameter,
+                    plan.parameter,
                     plan.appliedValue,
-                    plan.reverseEdits,
-                    plan.appliedGlobalSectionFingerprint}};
+                    plan.occurrences}};
             if (!fic::rollback::recordPreparedMutation(
                     this->policyRef(), resource, undo, mutationId, journalError)) {
                 this->log("Не удалось подготовить запись mutation journal: " +
@@ -215,7 +202,9 @@ bool Ssh::apply() {
         }
     };
 
-    // Apply the planned mutation and persist it atomically.
+    // Apply the planned mutation and persist it atomically with an
+    // optimistic precondition: the write is refused when sshd_config changed
+    // between the planning snapshot and the write (TOCTOU).
     if (!this->sshConfig_->setValue(this->sshParameter, expectedValue)) {
         dropNewPrepared("SSH-мутация не выполнена");
         this->log(LocalizationManager::getLang(
@@ -226,11 +215,31 @@ bool Ssh::apply() {
                   logLevel::ERROR);
         return false;
     }
-    if (!this->sshConfig_->saveFile()) {
-        dropNewPrepared("SSH-мутация не выполнена");
-        this->log(LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:save_failed]"),
-                  logLevel::ERROR);
+    if (this->beforeWriteHook_) {
+        this->beforeWriteHook_();
+    }
+    std::string saveError;
+    const FileHandler::FileSaveResult saveResult =
+        this->sshConfig_->saveFileIfUnchanged(saveError);
+    if (saveResult != FileHandler::FileSaveResult::Installed) {
+        if (saveResult == FileHandler::FileSaveResult::RefusedChanged) {
+            // The write was refused before anything was installed: the
+            // system was not mutated, so a new Prepared record is safely
+            // discarded and the apply fails closed.
+            dropNewPrepared("sshd_config изменился во время применения");
+            this->log("sshd_config изменился между планированием и записью; "
+                          "конкурентная запись отклонена, файл не изменён: " +
+                              saveError,
+                      logLevel::ERROR);
+        } else {
+            // The write failed; AtomicFileWriter reports installed=false in
+            // this case, but the provenance is kept fail closed.
+            this->log(LocalizationManager::getLang(
+                          "[module:NET][submodule:SshEdit][message:save_failed]") +
+                          ". Ошибка: " + saveError +
+                          ". Prepared mutation остаётся активной",
+                      logLevel::ERROR);
+        }
         return false;
     }
 
@@ -249,9 +258,11 @@ bool Ssh::apply() {
     }
 
     if (!failureContext.empty()) {
-        // Apply-time restore (§11): put the pre-attempt content back; a new
-        // Prepared record of this attempt is removed only after a successful
-        // restore, otherwise the provenance stays active.
+        // Apply-time restore (§11): put the pre-attempt content back. The new
+        // Prepared record of this attempt is removed only after the complete
+        // compensation is confirmed (restore write + sshd validation +
+        // restored activation when the service is active); otherwise the
+        // provenance stays active so the next disable can resolve it.
         std::string restoreError;
         const bool restored = restoreSshConfigContent(
             platformConfig_.configPath, originalContent, restoreError);
@@ -264,12 +275,27 @@ bool Ssh::apply() {
         std::string validationError;
         if (!runtime.validateConfiguration(validationError)) {
             this->log(failureContext + ". Исходная конфигурация восстановлена, "
-                          "но sshd её не принимает: " + validationError,
+                          "но sshd её не принимает: " + validationError +
+                          ". Prepared mutation остаётся активной",
                       logLevel::ERROR);
-        } else {
-            this->log(failureContext + ". Исходная конфигурация восстановлена",
-                      logLevel::ERROR);
+            return false;
         }
+        // Restore the runtime state of the restored configuration.
+        // activateIfRunning() is a no-op for an inactive service and reloads
+        // the restored configuration when the service is active.
+        const SshActivationResult restoredActivation =
+            runtime.activateIfRunning();
+        if (!restoredActivation.ok) {
+            this->log(failureContext + ". Исходная конфигурация восстановлена "
+                          "на диске, но перезагрузка не удалась: " +
+                              restoredActivation.message +
+                              ". Prepared mutation остаётся активной",
+                      logLevel::ERROR);
+            return false;
+        }
+        this->log(failureContext + ". Исходная конфигурация восстановлена и "
+                      "активирована",
+                  logLevel::INFO);
         dropNewPrepared(failureContext);
         return false;
     }

@@ -40,24 +40,31 @@ struct UndoRemoveManagedSetting {
     std::string appliedValue; // value/line FIC last applied; drift fingerprint
 };
 
-// One textual edit of the shared main sshd_config global section performed
-// by SshConfigFileHandler::setValue().
-struct SshLineReverseEdit {
-    std::size_t globalLineIndex = 0;        // 0-based file line index (global section)
+// One recorded per-occurrence textual mutation of an sshd directive in the
+// shared main sshd_config global section, performed by
+// SshConfigFileHandler::setValue(). occurrenceIndex is the 0-based position
+// of the directive among the global-section directives of the same keyword
+// at the time the mutation was applied. Rollback never relies on absolute
+// file line numbers: the current state is matched against the recorded
+// BEFORE/AFTER representations textually, so unrelated mutations of other
+// FIC SSH policies (different keywords) do not affect it.
+struct SshDirectiveOccurrenceMutation {
+    std::size_t occurrenceIndex = 0;        // semantic occurrence role/order
     std::optional<std::string> beforeLine;  // nullopt -> FIC inserted the line
     std::string afterLine;                  // line content after the FIC mutation
 };
 
 // Restores only the textual FIC mutation of the shared main sshd_config.
 // The full file is never restored: Match blocks, included files and external
-// edits outside the recorded delta are not FIC-owned state.
+// edits outside the recorded occurrences are not FIC-owned state.
+// Mutation-local drift model used by the rollback executor:
+//   current state == recorded AFTER  -> the FIC mutation is still applied; undo
+//   current state == recorded BEFORE -> already factually rolled back; NothingToDo
+//   neither                          -> drift of the FIC-controlled state; Conflict
 struct UndoRestoreSshDirective {
-    std::string parameter;                      // sshd directive keyword
+    std::string parameter;                      // normalized sshd directive keyword
     std::string appliedValue;                   // value FIC last applied
-    std::vector<SshLineReverseEdit> reverseEdits;
-    // Fingerprint of the global section (start of file up to the first Match)
-    // after the FIC mutation; conservative drift detection for rollback.
-    std::string appliedGlobalSectionFingerprint;
+    std::vector<SshDirectiveOccurrenceMutation> occurrences;
 };
 
 struct UndoRemoveFirewallPolicy {

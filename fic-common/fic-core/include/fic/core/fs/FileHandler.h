@@ -43,6 +43,25 @@ public:
 
     //Сохранить файл
     bool saveFile();
+
+    // Optimistic save: replaces the file only when it still matches the
+    // target state captured by the last load (see loadSnapshot()). Protects
+    // shared configuration files against concurrent external modification
+    // between load and save (TOCTOU). Returns RefusedChanged without writing
+    // anything when the file changed, Failed when the write failed without
+    // installing anything, Installed on success.
+    enum class FileSaveResult {
+        Installed,
+        RefusedChanged,
+        Failed
+    };
+    FileSaveResult saveFileIfUnchanged(std::string& error);
+
+    // Target state (identity, metadata, content) captured by the last load,
+    // when the concrete handler captures it; empty otherwise.
+    const std::optional<AtomicTargetState>& loadSnapshot() const {
+        return loadSnapshot_;
+    }
     //Закомментировать все параметры в файле
     /*virtual bool commentAllParameters();*/
 
@@ -59,6 +78,9 @@ protected:
     std::string filepath_;
     //Политика создания и безопасной записи файла
     FileHandlerOptions options_;
+    // Optimistic snapshot of the target captured by the concrete handler at
+    // load time; used by saveFileIfUnchanged().
+    std::optional<AtomicTargetState> loadSnapshot_;
     // Сохраняем оригинальные строки из файла
     std::vector<std::string> original_lines_;
 };

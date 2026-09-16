@@ -104,7 +104,9 @@ ProcessResult sshFailing(const std::string& errorText) {
 }
 
 // Controls the fake sshd -T output: the first call observes the state before
-// the FIC mutation, later calls observe the state after it.
+// the FIC mutation, later calls observe the state after it. failTAfterCall > 0
+// makes every sshd -T call after that ordinal fail (deterministic recovery
+// scenarios); reloadFailuresRemaining makes the next N reload attempts fail.
 struct FakeSshRuntime {
     std::string preApplyPort = "22";
     std::string appliedPort = "2222";
@@ -113,6 +115,8 @@ struct FakeSshRuntime {
     bool serviceActive = false;
     bool reloadFails = false;
     bool sshdFails = false;
+    int failTAfterCall = 0;
+    int reloadFailuresRemaining = 0;
 };
 
 } // namespace
@@ -138,6 +142,10 @@ public:
 
     void setRunner(SshCommandRunner runnerValue) {
         commandRunner_ = std::move(runnerValue);
+    }
+
+    void setBeforeWriteHook(std::function<void()> hook) {
+        beforeWriteHook_ = std::move(hook);
     }
 };
 
@@ -180,7 +188,9 @@ public:
                          const ProcessOptions&) {
             if (std::find(arguments.begin(), arguments.end(), "-T") !=
                 arguments.end()) {
-                if (runtime->sshdFails) {
+                if (runtime->sshdFails ||
+                    (runtime->failTAfterCall > 0 &&
+                     runtime->tCalls >= runtime->failTAfterCall)) {
                     return sshFailing("sshd -T refused the configuration");
                 }
                 ++runtime->tCalls;
@@ -198,9 +208,13 @@ public:
             if (std::find(arguments.begin(), arguments.end(), "reload") !=
                 arguments.end()) {
                 ++runtime->reloadCalls;
-                return runtime->reloadFails
-                    ? sshFailing("reload job failed")
-                    : sshSuccess();
+                if (runtime->reloadFails || runtime->reloadFailuresRemaining > 0) {
+                    if (runtime->reloadFailuresRemaining > 0) {
+                        --runtime->reloadFailuresRemaining;
+                    }
+                    return sshFailing("reload job failed");
+                }
+                return sshSuccess();
             }
             return sshInactive();
         };
@@ -330,13 +344,13 @@ void testApplyReplacesDirectiveAndRollbackRestores() {
             "the mutation record must identify the policy and the resource");
     const auto* undo =
         std::get_if<UndoRestoreSshDirective>(&record.undo.payload);
-    require(undo != nullptr && undo->parameter == "Port" &&
+    require(undo != nullptr && undo->parameter == "port" &&
                 undo->appliedValue == "2222" &&
-                undo->reverseEdits.size() == 1 &&
-                undo->reverseEdits.front().beforeLine.has_value() &&
-                *undo->reverseEdits.front().beforeLine == "Port 22" &&
-                undo->reverseEdits.front().afterLine == "Port 2222" &&
-                !undo->appliedGlobalSectionFingerprint.empty(),
+                undo->occurrences.size() == 1 &&
+                undo->occurrences.front().occurrenceIndex == 0 &&
+                undo->occurrences.front().beforeLine.has_value() &&
+                *undo->occurrences.front().beforeLine == "Port 22" &&
+                undo->occurrences.front().afterLine == "Port 2222",
             "the undo payload must carry the exact reverse delta");
 
     const RollbackReport report = rollbackPolicyBeforeDisable(
@@ -366,8 +380,8 @@ void testApplyInsertsDirectiveAndRollbackRemovesIt() {
     require(journal.load(error), error);
     const auto* undo = std::get_if<UndoRestoreSshDirective>(
         &journal.records().front().undo.payload);
-    require(undo != nullptr && undo->reverseEdits.size() == 1 &&
-                !undo->reverseEdits.front().beforeLine.has_value(),
+    require(undo != nullptr && undo->occurrences.size() == 1 &&
+                !undo->occurrences.front().beforeLine.has_value(),
             "an inserted line must be recorded without a before line");
 
     const RollbackReport report = rollbackPolicyBeforeDisable(
@@ -424,9 +438,9 @@ void testRepeatedApplyKeepsOriginalBaseline() {
             "a repeated apply must reuse the existing mutation record");
     const auto* undo = std::get_if<UndoRestoreSshDirective>(
         &journal.records().front().undo.payload);
-    require(undo != nullptr && undo->reverseEdits.size() == 1 &&
-                undo->reverseEdits.front().beforeLine.has_value() &&
-                *undo->reverseEdits.front().beforeLine == "Port 22",
+    require(undo != nullptr && undo->occurrences.size() == 1 &&
+                undo->occurrences.front().beforeLine.has_value() &&
+                *undo->occurrences.front().beforeLine == "Port 22",
             "the original rollback baseline must not be overwritten");
 
     const RollbackReport report = rollbackPolicyBeforeDisable(
@@ -477,12 +491,11 @@ void testCommitFailureFailsApplyAndKeepsPrepared() {
     UndoRestoreSshDirective baseline;
     baseline.parameter = "Port";
     baseline.appliedValue = "2222";
-    SshLineReverseEdit edit;
-    edit.globalLineIndex = 0;
+    SshDirectiveOccurrenceMutation edit;
+    edit.occurrenceIndex = 0;
     edit.beforeLine = std::string("Port 22");
     edit.afterLine = "Port 2222";
-    baseline.reverseEdits = {edit};
-    baseline.appliedGlobalSectionFingerprint = "0f0f0f0f0f0f0f0f";
+    baseline.occurrences = {edit};
     require(recordPreparedMutation(
                 kSshPortPolicy,
                 "ssh:" + tree.configPath().string() + ":Port",
@@ -513,6 +526,123 @@ void testCommitFailureFailsApplyAndKeepsPrepared() {
                 journal.records().front().status == MutationStatus::Prepared &&
                 journal.records().front().isActive(),
             "the prepared record must remain active after a failed commit");
+}
+
+void testApplyConcurrentModificationRefused() {
+    SshApplyTree tree;
+    const std::string external =
+        "Port 22\nMaxAuthTries 1\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writePolicyValue("2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    // Deterministic race seam: an external actor changes the shared file
+    // after FIC planned the mutation but before the conditional write.
+    auto policy = tree.makePolicy();
+    policy->setBeforeWriteHook([&tree, external]() {
+        writeFile(tree.configPath(), external);
+    });
+
+    require(!policy->apply(),
+            "a refused concurrent write must fail the apply");
+    require(readFile(tree.configPath()) == external,
+            "the concurrent external modification must be preserved");
+
+    // The write was refused before anything was installed: a new Prepared
+    // record is provably not backed by a system mutation and is discarded.
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().empty(),
+            "a refused write must not leave a prepared provenance record");
+}
+
+void testApplyCompensationFullSuccessDiscardsPrepared() {
+    SshApplyTree tree;
+    const std::string original =
+        "Port 22\n"
+        "Match User backup\n"
+        "    PermitRootLogin yes\n";
+    tree.writeConfig(original);
+    tree.writePolicyValue("2222");
+    tree.runtime()->serviceActive = true;
+    // The first reload (of the FIC mutation) fails; the reload of the restored
+    // original configuration succeeds: the compensation is fully confirmed.
+    tree.runtime()->reloadFailuresRemaining = 1;
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy();
+    require(!policy->apply(),
+            "a failed runtime reload must fail the apply");
+    require(readFile(tree.configPath()) == original,
+            "the pre-attempt configuration must be restored");
+    require(tree.runtime()->reloadCalls == 2,
+            "the restored configuration must be reloaded again");
+
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().empty(),
+            "a fully confirmed compensation must discard the new prepared "
+            "record");
+}
+
+void testApplyRestoredValidationFailureKeepsPrepared() {
+    SshApplyTree tree;
+    const std::string original =
+        "Port 22\n"
+        "Match User backup\n"
+        "    PermitRootLogin yes\n";
+    tree.writeConfig(original);
+    tree.writePolicyValue("2222");
+    tree.runtime()->serviceActive = true;
+    tree.runtime()->reloadFailuresRemaining = 1;
+    // sshd -T succeeds for the pre-check and the post-write verification
+    // (calls 1 and 2) and fails for the validation of the restored original
+    // configuration (call 3): the compensation is incomplete.
+    tree.runtime()->failTAfterCall = 2;
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy();
+    require(!policy->apply(), "the apply must fail");
+
+    require(readFile(tree.configPath()) == original,
+            "the pre-attempt configuration must be restored on disk");
+
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().isActive(),
+            "an unconfirmed compensation must keep the prepared provenance");
+}
+
+void testApplyRestoredReloadFailureKeepsPrepared() {
+    SshApplyTree tree;
+    const std::string original =
+        "Port 22\n"
+        "Match User backup\n"
+        "    PermitRootLogin yes\n";
+    tree.writeConfig(original);
+    tree.writePolicyValue("2222");
+    tree.runtime()->serviceActive = true;
+    // Both the FIC reload and the reload of the restored configuration fail:
+    // the compensation is incomplete and the provenance stays active.
+    tree.runtime()->reloadFailuresRemaining = 2;
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy();
+    require(!policy->apply(), "the apply must fail");
+
+    require(readFile(tree.configPath()) == original,
+            "the pre-attempt configuration must be restored on disk");
+
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().isActive(),
+            "an unconfirmed compensation must keep the prepared provenance");
 }
 
 void testAllFourSshPoliciesAreRollbackWired() {
@@ -603,6 +733,14 @@ int main() {
          testApplyReloadFailureRestoresPreAttemptState},
         {"commit failure fails the apply and keeps prepared",
          testCommitFailureFailsApplyAndKeepsPrepared},
+        {"apply concurrent modification is refused",
+         testApplyConcurrentModificationRefused},
+        {"apply full compensation discards prepared",
+         testApplyCompensationFullSuccessDiscardsPrepared},
+        {"apply restored validation failure keeps prepared",
+         testApplyRestoredValidationFailureKeepsPrepared},
+        {"apply restored reload failure keeps prepared",
+         testApplyRestoredReloadFailureKeepsPrepared},
         {"all four ssh policies are rollback wired",
          testAllFourSshPoliciesAreRollbackWired}
     };

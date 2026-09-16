@@ -34,20 +34,20 @@ json serializeUndoAction(const UndoAction& action) {
                    std::get_if<UndoRestoreSshDirective>(&action.payload)) {
         value["parameter"] = sshDirective->parameter;
         value["applied_value"] = sshDirective->appliedValue;
-        value["fingerprint"] = sshDirective->appliedGlobalSectionFingerprint;
-        json edits = json::array();
-        for (const SshLineReverseEdit& edit : sshDirective->reverseEdits) {
+        json occurrences = json::array();
+        for (const SshDirectiveOccurrenceMutation& occurrence :
+             sshDirective->occurrences) {
             json item;
-            item["line"] = edit.globalLineIndex;
-            if (edit.beforeLine.has_value()) {
-                item["before"] = *edit.beforeLine;
+            item["occurrence"] = occurrence.occurrenceIndex;
+            if (occurrence.beforeLine.has_value()) {
+                item["before"] = *occurrence.beforeLine;
             } else {
                 item["before"] = nullptr; // FIC inserted the line
             }
-            item["after"] = edit.afterLine;
-            edits.push_back(std::move(item));
+            item["after"] = occurrence.afterLine;
+            occurrences.push_back(std::move(item));
         }
-        value["reverse_edits"] = std::move(edits);
+        value["occurrences"] = std::move(occurrences);
     } else if (const auto* firewallPolicy =
                    std::get_if<UndoRemoveFirewallPolicy>(&action.payload)) {
         value["policy"] = firewallPolicy->policyName;
@@ -82,60 +82,96 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
     }
     if (actionName == "restore_ssh_directive" &&
         backend == MutationBackend::Ssh) {
+        // Fail closed on the abandoned intermediate payload format (global
+        // section fingerprint + absolute line indices): it must never be
+        // silently converted to the mutation-local semantics.
+        if (value.contains("fingerprint") || value.contains("reverse_edits")) {
+            error = "restore_ssh_directive undo uses the unsupported legacy "
+                    "payload format (fingerprint/reverse_edits); the record "
+                    "must be resolved manually";
+            return false;
+        }
         UndoRestoreSshDirective payload;
         payload.parameter = value.value("parameter", "");
         payload.appliedValue = value.value("applied_value", "");
-        payload.appliedGlobalSectionFingerprint = value.value("fingerprint", "");
-        const auto editsIt = value.find("reverse_edits");
+        const auto occurrencesIt = value.find("occurrences");
         if (payload.parameter.empty() ||
             payload.appliedValue.empty() ||
-            payload.appliedGlobalSectionFingerprint.empty() ||
-            editsIt == value.end() || !editsIt->is_array() || editsIt->empty()) {
+            occurrencesIt == value.end() || !occurrencesIt->is_array() ||
+            occurrencesIt->empty()) {
             error = "restore_ssh_directive undo requires a parameter, an "
-                    "applied value, a fingerprint and reverse edits";
+                    "applied value and occurrences";
             return false;
         }
-        std::optional<std::size_t> previousLine;
-        for (const json& item : *editsIt) {
+        std::optional<std::size_t> previousOccurrence;
+        std::vector<std::string> afterLines;
+        for (const json& item : *occurrencesIt) {
             if (!item.is_object()) {
-                error = "ssh reverse edit must be an object";
+                error = "ssh occurrence mutation must be an object";
                 return false;
             }
-            const auto lineIt = item.find("line");
-            if (lineIt == item.end() || !lineIt->is_number_unsigned()) {
-                error = "ssh reverse edit requires an unsigned line index";
+            const auto occurrenceIt = item.find("occurrence");
+            if (occurrenceIt == item.end() || !occurrenceIt->is_number_unsigned()) {
+                error = "ssh occurrence mutation requires an unsigned "
+                        "occurrence index";
                 return false;
             }
-            const std::size_t lineIndex = lineIt->get<std::size_t>();
-            if (previousLine.has_value() && lineIndex <= *previousLine) {
-                error = "ssh reverse edit line indices must strictly increase";
+            const std::size_t occurrenceIndex = occurrenceIt->get<std::size_t>();
+            if (occurrenceIndex !=
+                (previousOccurrence.has_value() ? *previousOccurrence + 1 : 0)) {
+                error = "ssh occurrence indices must start at 0 and increase";
                 return false;
             }
-            previousLine = lineIndex;
-            SshLineReverseEdit edit;
-            edit.globalLineIndex = lineIndex;
+            previousOccurrence = occurrenceIndex;
+            SshDirectiveOccurrenceMutation occurrence;
+            occurrence.occurrenceIndex = occurrenceIndex;
             const auto beforeIt = item.find("before");
             if (beforeIt == item.end() ||
                 (!beforeIt->is_string() && !beforeIt->is_null())) {
-                error = "ssh reverse edit requires a string or null before line";
+                error = "ssh occurrence mutation requires a string or null "
+                        "before line";
                 return false;
             }
             if (beforeIt->is_string()) {
                 std::string before = beforeIt->get<std::string>();
                 if (before.empty()) {
-                    error = "ssh reverse edit before line must not be empty";
+                    error = "ssh occurrence mutation before line must not be "
+                            "empty";
                     return false;
                 }
-                edit.beforeLine = std::move(before);
+                occurrence.beforeLine = std::move(before);
             }
             const auto afterIt = item.find("after");
             if (afterIt == item.end() || !afterIt->is_string() ||
                 afterIt->get<std::string>().empty()) {
-                error = "ssh reverse edit requires a non-empty after line";
+                error = "ssh occurrence mutation requires a non-empty after line";
                 return false;
             }
-            edit.afterLine = afterIt->get<std::string>();
-            payload.reverseEdits.push_back(std::move(edit));
+            occurrence.afterLine = afterIt->get<std::string>();
+            if (occurrence.beforeLine.has_value() &&
+                *occurrence.beforeLine == occurrence.afterLine) {
+                error = "ssh occurrence mutation before and after lines must "
+                        "differ";
+                return false;
+            }
+            // An inserted line is a single-occurrence mutation: the whole
+            // recorded mutation is either one replacement/comment set or one
+            // insertion.
+            if (!occurrence.beforeLine.has_value() &&
+                occurrencesIt->size() != 1) {
+                error = "an inserted ssh directive must be the only recorded "
+                        "occurrence mutation";
+                return false;
+            }
+            for (const std::string& after : afterLines) {
+                if (after == occurrence.afterLine) {
+                    error = "ssh occurrence mutations must have distinct "
+                            "after lines";
+                    return false;
+                }
+            }
+            afterLines.push_back(occurrence.afterLine);
+            payload.occurrences.push_back(std::move(occurrence));
         }
         action.payload = std::move(payload);
         return true;

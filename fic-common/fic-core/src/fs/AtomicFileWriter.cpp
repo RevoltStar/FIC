@@ -146,6 +146,12 @@ void cleanup(int& fd, const std::filesystem::path& path) {
     std::filesystem::remove(path, ignored);
 }
 
+void markPreconditionFailure(AtomicWriteResult* result) {
+    if (result != nullptr) {
+        result->preconditionFailed = true;
+    }
+}
+
 } // namespace
 
 bool AtomicFileWriter::write(const std::string& path,
@@ -186,6 +192,7 @@ bool AtomicFileWriter::writeWithResult(
         return false;
     }
     if (!matchesExpectedTarget(requestedPath, options)) {
+        markPreconditionFailure(result);
         setError(errorMessage,
                  "target state changed before atomic write: " + path);
         return false;
@@ -275,6 +282,7 @@ bool AtomicFileWriter::writeWithResult(
         return false;
     }
     if (!matchesExpectedTarget(targetPath, options)) {
+        markPreconditionFailure(result);
         setError(errorMessage,
                  "target state changed before atomic replacement: " +
                      targetPath.string());
@@ -304,5 +312,49 @@ bool AtomicFileWriter::writeWithResult(
         setError(errorMessage, "could not close directory " + targetDir.string() + ": " + errnoMessage());
         return false;
     }
+    return true;
+}
+
+bool AtomicFileWriter::captureTargetState(const std::string& path,
+                                          AtomicTargetState& state,
+                                          std::string* errorMessage) {
+    int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) {
+        setError(errorMessage, "could not open " + path + ": " + errnoMessage());
+        return false;
+    }
+    struct stat info {};
+    if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode)) {
+        setError(errorMessage, "refusing non-regular file: " + path);
+        closeFd(descriptor);
+        return false;
+    }
+    std::string content;
+    char buffer[8192];
+    while (true) {
+        const ssize_t count = ::read(descriptor, buffer, sizeof(buffer));
+        if (count == 0) {
+            break;
+        }
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            setError(errorMessage, "could not read " + path + ": " + errnoMessage());
+            closeFd(descriptor);
+            return false;
+        }
+        content.append(buffer, static_cast<std::size_t>(count));
+    }
+    if (!closeFd(descriptor)) {
+        setError(errorMessage, "could not close " + path + ": " + errnoMessage());
+        return false;
+    }
+    state.identity.device = info.st_dev;
+    state.identity.inode = info.st_ino;
+    state.mode = info.st_mode & 07777;
+    state.owner = info.st_uid;
+    state.group = info.st_gid;
+    state.content = std::move(content);
     return true;
 }

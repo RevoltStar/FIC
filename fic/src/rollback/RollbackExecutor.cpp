@@ -230,6 +230,10 @@ MutationRollbackOutcome undoSshDirective(
     outcome.message = result.message;
     if (result.ok) {
         outcome.status = RollbackStatus::Success;
+    } else if (result.nothingToDo) {
+        // The recorded mutation is already factually rolled back (e.g. a
+        // crash after a successful undo but before the journal update).
+        outcome.status = RollbackStatus::NothingToDo;
     } else if (result.conflict) {
         outcome.status = RollbackStatus::Conflict;
     } else {
@@ -472,9 +476,11 @@ RollbackReport checkUnrecordedOwnership(
                              options.configPath.string();
             return report;
         }
-        // A resolved record (e.g. RolledBack from a previous disable) documents
-        // that the current directive state is the post-rollback state: FIC no
-        // longer owns anything there.
+        // Only a successfully resolved historical record (RolledBack from a
+        // previous disable, or Detached) proves that the current directive
+        // state is the post-rollback state: FIC no longer owns anything
+        // there. Any other status must fail closed instead of being treated
+        // as proof of resolved ownership.
         if (journal != nullptr) {
             const std::string resource =
                 "ssh:" + options.configPath.string() + ":" + resourceHint;
@@ -482,10 +488,21 @@ RollbackReport checkUnrecordedOwnership(
                 if (record.policy == policy &&
                     record.undo.backend == MutationBackend::Ssh &&
                     record.resource == resource) {
+                    if (record.status == MutationStatus::RolledBack ||
+                        record.status == MutationStatus::Detached) {
+                        RollbackReport report;
+                        report.status = RollbackStatus::NothingToDo;
+                        report.message = "SSH-мутация политики уже была "
+                                         "отозвана ранее; FIC не владеет "
+                                         "текущим состоянием";
+                        return report;
+                    }
                     RollbackReport report;
-                    report.status = RollbackStatus::NothingToDo;
-                    report.message = "SSH-мутация политики уже была отозвана "
-                                     "ранее; FIC не владеет текущим состоянием";
+                    report.status = RollbackStatus::Failed;
+                    report.message =
+                        "Историческая SSH-мутация политики имеет статус " +
+                        mutationStatusToString(record.status) +
+                        "; FIC-владение не может быть разрешено";
                     return report;
                 }
             }

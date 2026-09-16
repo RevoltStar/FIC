@@ -132,29 +132,45 @@ I/O), это ошибка загрузки — fail closed. Существующ
 * `UndoRemoveFirewallPolicy{policyName}` — удаление FIC-managed правила и
   обычная firewall reconciliation. Snapshot всего nftables ruleset не
   выполняется.
-* `UndoRestoreSshDirective{parameter, appliedValue, reverseEdits,
-  appliedGlobalSectionFingerprint}` — SSH: откат точной текстовой мутации FIC
-  в global section (от начала файла до первого `Match`) shared-файла
-  `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu, `/etc/openssh/sshd_config`
-  ALT). Main `sshd_config` **не считается FIC-owned**: full-file snapshot не
-  хранится и не восстанавливается, `Match` blocks и included-файлы не
-  трогаются. Каждая запись `reverseEdits` описывает одну изменённую строку:
+* `UndoRestoreSshDirective{parameter, appliedValue, occurrences}` — SSH: откат
+  точной текстовой мутации FIC в global section (от начала файла до первого
+  `Match`) shared-файла `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu,
+  `/etc/openssh/sshd_config` ALT). Main `sshd_config` **не считается
+  FIC-owned**: full-file snapshot не хранится и не восстанавливается,
+  `Match` blocks и included-файлы не трогаются. Каждый элемент `occurrences`
+  описывает одну мутацию вхождения директивы: `occurrenceIndex` — позиция
+  вхождения среди global-section директив того же keyword в момент apply,
   `beforeLine` — исходная строка (`null` для строк, вставленных FIC — при
   rollback они удаляются), `afterLine` — строка после мутации FIC. Дубликаты
   директив, заменённые/закомментированные FIC, восстанавливаются полностью.
-  Rollback выполняется только при совпадении fingerprint текущего global
-  section с fingerprint, зафиксированным при apply (консервативный drift
-  detection: любое несвязанное изменение global section, включая комментарии,
-  даёт `Conflict` без записи в файл; изменения после первого `Match` и во
-  внешних include этому не мешают). После reverse-записи обязательны валидация
-  `sshd -T` и reload активного сервиса; при провале восстанавливается
-  pre-rollback содержимое (reload при активном сервисе), возвращается `Failed`,
-  запись остаётся активной. Effective-значение после rollback не проверяется
-  на равенство исходному: за время жизни политики администратор мог изменить
-  include-файлы, `Match` blocks и package defaults.
+  Drift detection — **mutation-local** (whole-global fingerprint не
+  используется): текущее состояние каждой recorded occurrence сопоставляется
+  с её AFTER- и BEFORE-представлением (точное текстовое совпадение, без
+  нормализации регистра):
+  * текущее состояние == AFTER → FIC-мутация ещё применена → откат;
+  * текущее состояние == BEFORE → мутация уже фактически отменена (в т.ч.
+    crash после успешного undo, но до обновления journal) → `NothingToDo`,
+    journal переводится в `RolledBack`, disable разрешён;
+  * ни то, ни другое (в т.ч. смешанное состояние и неоднозначные совпадения)
+    → `Conflict` без записи в файл.
+  Внешнее изменение другой директивы (в т.ч. сделанное другой FIC SSH
+  политикой — у каждой политики свой keyword/resource) не блокирует откат и
+  не восстанавливается; изменение после первого `Match` и во внешних include
+  этому тоже не мешает. Абсолютные номера строк не являются идентификатором
+  мутации: вхождения заново ищутся по recorded AFTER/BEFORE-представлениям.
+  После reverse-записи обязательны валидация `sshd -T` и reload активного
+  сервиса; при провале восстанавливается pre-rollback содержимое (reload при
+  активном сервисе), возвращается `Failed`, запись остаётся активной.
+  Effective-значение после rollback не проверяется на равенство исходному: за
+  время жизни политики администратор мог изменить include-файлы, `Match`
+  blocks и package defaults.
   Повторный apply при существующей активной записи не перезаписывает исходный
-  baseline (исходная запись используется как provenance; структурный drift
-  относительно неё — будущий `Conflict`).
+  baseline (исходная запись используется как provenance).
+  Все записи и откаты shared `sshd_config` выполняются через optimistic
+  conditional write (`AtomicWriteOptions::expectedTargetState`): атомарный
+  snapshot (inode, metadata, content) захватывается при чтении, и запись
+  отказывает (`Conflict`/apply failure без перезаписи), если файл изменился
+  между чтением и записью.
 * `UndoDisableDeviceFeature{feature}` — отключение category-level desired
   state DC и пересборка `99-fic-devices.rules` через device daemon;
   per-device пользовательские правила не затрагиваются.
@@ -186,10 +202,12 @@ I/O), это ошибка загрузки — fail closed. Существующ
 `Success / NothingToDo / Conflict / Unsupported / Failed / Partial`.
 `NothingToDo` означает, что активные записи не требуют отката: для SYSCTL
 и SUDO — FIC-owned запись нет в managed-артефакте (внешнее состояние никогда
-не трогается); для SSH — target-директива отсутствует в global section
-главного конфига, либо политика ранее уже была отработана (запись
-`RolledBack` в journal документирует, что текущее состояние —
-post-rollback); это позволяет disable.
+не трогается); для SSH — текущее состояние директивы совпадает с recorded
+BEFORE (мутация уже фактически отменена, в т.ч. crash-recovery), либо
+политика ранее уже была успешно отработана: resolved-запись (`RolledBack`
+или `Detached`) в journal документирует, что FIC не владеет текущим
+состоянием; историческая запись любого другого статуса fail-closed. Это
+позволяет disable.
 Для legacy-установок (политика ENABLE, journal пуст) FIC не угадывает
 владение: provenance проверяется по содержимому FIC managed-артефакта
 (не по effective source), и при наличии там ресурса возвращается

@@ -2,90 +2,98 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `d518cb0`.
-- Изменения текущей SSH rollback-задачи находятся в рабочем дереве и не
-  закоммичены.
+- Ветка `main`, базовый commit `4156ac9` (SSH rollback MVP закоммичен).
+- Изменения follow-up (mutation-local drift, TOCTOU, компенсация) — в
+  рабочем дереве, не закоммичены.
 
 ## Current task
 
-- Persistent rollback для SSH-политик `NET/SshEdit`
-  (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`, `ssh_pubkey_auth`)
-  через typed `UndoRestoreSshDirective`: reverse delta global section shared
-  `sshd_config`, без drop-in миграции и без full-file snapshot.
+- Follow-up к persistent rollback `NET/SshEdit`: замена whole-global
+  fingerprint на mutation-local BEFORE/AFTER matching, idempotent
+  crash-recovery, optimistic conditional writes shared `sshd_config`,
+  prepared-discard только при полной подтверждённой компенсации.
 
 ## Accepted architecture / invariants
 
-- Main `sshd_config` — shared ресурс, не FIC-owned. Mutation хранит только
-  exact reverse delta строк global section, которые реально изменил
-  `SshConfigFileHandler::setValue()` (замены, комментарии дубликатов,
-  вставленные строки).
-- Fingerprint global section (FNV-1a 64, начало файла до первого `Match`)
-  вычисляется в памяти ДО записи на диск (`planSetValue`) и сохраняется в
-  journal. Rollback выполняется только при совпадении fingerprint; иначе
-  `Conflict` без записи. Любое несвязанное изменение global section —
-  `Conflict` (консервативный MVP); изменения после `Match` и во внешних
-  include не мешают rollback и не восстанавливаются.
-- Apply flow: effective-проверка через `SshRuntime::policyValueCompliance`
-  (Compliant → без мутации, записи и reload; Unknown → fail closed) → план
-  → `Prepared` в journal (существующая активная запись переиспользуется,
-  исходный baseline не перезаписывается) → atomic write → verify → reload →
-  commit. Apply-time restore при провале verify/reload: restore + `sshd -T`
-  + reload restored; новый `Prepared` удаляется только при полном успешном
-  restore. Commit failure → apply false, `Prepared` остаётся.
-- Rollback executor: fingerprint check → reverse edits (с конца) → atomic
-  write → `sshd -T` → reload if active; при провале — restore pre-rollback
-  содержимого, `Failed`, запись остаётся активной.
+- Undo payload: `UndoRestoreSshDirective{parameter, appliedValue, occurrences}`,
+  где `occurrences` — `SshDirectiveOccurrenceMutation{occurrenceIndex,
+  beforeLine, afterLine}` (нормализованный keyword; `beforeLine=null` —
+  строка вставлена FIC). Payload self-contained, без full-file snapshot.
+- Rollback: classifyRecordedMutation — для каждой occurrence точное
+  текстовое совпадение текущей строки global section с afterLine (AFTER) или
+  beforeLine (BEFORE), однозначно (count==1). Все AFTER → undo; все BEFORE →
+  `NothingToDo` → journal `RolledBack`; иначе (смешанное/неоднозначное/
+  drift, в т.ч. вставленная директива с другим значением) → `Conflict`.
+  Абсолютные line index'ы не идентификатор мутации; вставленная директива
+  при BEFORE-проверке требует полного отсутствия keyword в global section.
+  Match/includes не восстанавливаются и не мешают. Регистр не нормализуется
+  (fail closed).
+- Legacy historical SSH record засчитывается как resolved только при статусе
+  `RolledBack`/`Detached`; иные статусы — fail closed.
+- TOCTOU: `AtomicFileWriter::captureTargetState` (shared helper в fic-core) +
+  `FileHandler::saveFileIfUnchanged` (conditional write через
+  `expectedTargetState`). `SshConfigFileHandler::loadConfig()` строится из
+  одного snapshot; apply и rollback пишут только при неизменности файла;
+  concurrent modification → отказ без перезаписи (Conflict для rollback,
+  apply failure с discard нового Prepared для apply).
+- Prepared discard: новый Prepared удаляется только если доказано, что
+  системная мутация не произошла (write refused, `AtomicWriteResult::
+  installed=false`) либо apply-time компенсация полностью подтверждена
+  (restore + `sshd -T` + reload restored при активном сервисе); иначе
+  остаётся активным.
+- Journal serialization: `occurrences` (occurrence/before/after); legacy
+  формат (`fingerprint`/`reverse_edits`) явно отвергается при загрузке —
+  записи промежуточного коммита 4156ac9 требуют ручного разрешения (feature
+  не release'd, backward compat не требуется).
 - Legacy (нет journal-записей): директива присутствует в global section →
-  `Unsupported` (disable запрещён); отсутствует → `NothingToDo`. Ранее
-  отработанная (`RolledBack`) запись этой политики → `NothingToDo`.
+  `Unsupported`; отсутствует → `NothingToDo`.
 - Enrollment `NET/SshEdit` — только explicit whitelist; неизвестная политика
   → `Unsupported`.
-- Sudoers effective-precedence-model limitation (предыдущая задача):
-  диагностическое ограничение, не связано с SSH.
 
 ## Completed
 
-- `MutationBackend::Ssh`, `UndoRestoreSshDirective` + сериализация
-  `restore_ssh_directive` (fail closed: пустые поля, невалидные/не
-  возрастающие line indices, inconsistent backend/action → journal load
-  failure).
-- `SshConfigFileHandler::planSetValue/applyReverseEdits/
-  globalSectionFingerprint`; `setValue` переписан через план.
-- `SshRuntime`: `policyValueCompliance` (Compliant/NonCompliant/Unknown) и
-  `validateConfiguration` на общем пути парсинга `sshd -T`.
-- Новый `SshRollback.{h,cpp}` (`undoSshDirectiveMutation`,
-  `restoreSshConfigContent`); `Ssh::apply` переписан (journal integration,
-  §8–§14 ТЗ); `RollbackExecutor` SSH-ветки + `deps.sshOptions` +
-  production wiring; `Ssh::managedResource()`; resourceHint в
-  `main_function.cpp`.
-- Документация: `docs/rollback.md`.
+- `SshLineReverseEdit` + fingerprint → `SshDirectiveOccurrenceMutation`;
+  `planSetValue`/`setValue` переписаны; `classifyRecordedMutation` +
+  `applyRecordedReverseEdits` вместо `applyReverseEdits`/fingerprint.
+- `SshRollback`: BEFORE→NothingToDo (`SshRollbackResult::nothingToDo`),
+  conditional write, transactional restore поверх conditional write.
+- `Ssh::apply`: single snapshot, conditional save, §11 fix (Prepared
+  остаётся при неполной компенсации), beforeWriteHook_ test seam.
+- `RollbackExecutor`: NothingToDo маппинг, §21 явная проверка статусов.
+- `MutationJournal`: сериализация `occurrences` + fail-closed reject legacy
+  payload; усиленная валидация (occurrence indices с 0, before!=after,
+  distinct after lines, insert = единственная occurrence).
+- fic-core: `AtomicFileWriter::captureTargetState`,
+  `AtomicWriteResult::preconditionFailed`, `FileHandler::saveFileIfUnchanged`
+  (+`loadSnapshot()`).
+- Тесты: мульти-политики (2 и 4 политики, произвольный порядок, insert+
+  replace, дубликаты), crash-after-undo → NothingToDo, TOCTOU apply и
+  rollback (deterministic beforeWrite seam), неполная компенсация (validation/
+  reload restored fails → Prepared остаётся; полная → Prepared discarded),
+  legacy journal reject, malformed occurrences payload.
 
 ## Changed areas
 
+- `fic-common/fic-core/` (`AtomicFileWriter.{h,cpp}`, `FileHandler.{h,cpp}`)
 - `fic/src/rollback/` (`MutationRecord.h`, `MutationJournal.cpp`,
-  `RollbackExecutor.{h,cpp}`)
+  `RollbackExecutor.cpp`)
 - `fic/src/modules/net/ssh/` (`Ssh.{h,cpp}`, `SshConfigFile.{h,cpp}`,
-  `SshRuntime.{h,cpp}`, новый `SshRollback.{h,cpp}`)
-- `fic/src/daemon/main_function.cpp`
+  `SshRollback.{h,cpp}`)
 - `tests/fic/rollback/`, `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`
-  (новый), `tests/CMakeLists.txt`
 - `docs/rollback.md`
 
 ## Validation
 
-- Targeted: `rollback_executor_tests` 40/40, `mutation_journal_tests` 21/21,
-  `ssh_apply_rollback_tests` 9/9, `ssh_runtime_tests` — passed.
-- Full CMake build (`build-check`, ubuntu-24.04): 100%, exit 0.
+- Full CMake build (build-check, ubuntu-24.04): 100%, exit 0.
 - Full CTest: 96/96 passed (1 pre-existing env-dependent skip:
   `command_hash_batch_tests`).
 - `git diff --check`: passed.
 
 ## Remaining
 
-- Изменения не закоммичены; diff чист и в scope задачи, готов к коммиту.
-- Консервативность fingerprint: любое несвязанное изменение global section
-  даёт `Conflict` (осознанное ограничение MVP, three-way merge не
-  реализовывался). Перезапись fingerprint при refresh-apply не выполняется —
-  structural drift между apply'ами → будущий `Conflict`.
+- Изменения не закоммичены.
 - Native интеграционной проверки с реальным sshd не выполнялось (sandbox);
   только fake-runner unit tests.
+- Точный textual AFTER/BEFORE matching: любое внешнее изменение
+  FIC-controlled строки (включая comment-out) даёт `Conflict` — осознанный
+  fail-closed выбор, three-way merge не реализовывался.

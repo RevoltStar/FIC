@@ -10,21 +10,6 @@
 
 namespace {
 
-bool readSshConfigContent(const std::filesystem::path& path,
-                          std::string& content) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream.is_open()) {
-        return false;
-    }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    if (!stream.good() && !stream.eof()) {
-        return false;
-    }
-    content = buffer.str();
-    return true;
-}
-
 SshRuntime makeRuntime(const SshRollbackOptions& options) {
     SshRuntimeOptions runtimeOptions;
     runtimeOptions.configPath = options.configPath;
@@ -38,11 +23,27 @@ SshRuntime makeRuntime(const SshRollbackOptions& options) {
 bool restoreSshConfigContent(const std::filesystem::path& path,
                              const std::string& content,
                              std::string& error) {
+    // TOCTOU protection: capture a fresh optimistic snapshot of the target
+    // and refuse the restore when the file changes before the write.
+    AtomicTargetState snapshot;
+    if (!AtomicFileWriter::captureTargetState(path.string(), snapshot, &error)) {
+        return false;
+    }
     AtomicWriteOptions options;
     options.createIfMissing = false;
     options.rejectSymlink = true;
     options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
-    return AtomicFileWriter::write(path.string(), content, options, &error);
+    options.expectedTargetState = snapshot;
+    AtomicWriteResult result;
+    if (!AtomicFileWriter::writeWithResult(
+            path.string(), content, options, &error, &result)) {
+        if (result.preconditionFailed) {
+            error = "Файл изменился перед восстановлением; запись отменена: " +
+                    error;
+        }
+        return false;
+    }
+    return true;
 }
 
 SshRollbackResult undoSshDirectiveMutation(
@@ -55,8 +56,7 @@ SshRollbackResult undoSshDirectiveMutation(
         options.configPath.empty() ||
         undo.parameter.empty() ||
         undo.appliedValue.empty() ||
-        undo.appliedGlobalSectionFingerprint.empty() ||
-        undo.reverseEdits.empty()) {
+        undo.occurrences.empty()) {
         result.message = "SSH rollback backend настроен неполно или undo payload "
                          "повреждён";
         return result;
@@ -69,35 +69,60 @@ SshRollbackResult undoSshDirectiveMutation(
         return result;
     }
 
-    // Conservative drift detection: rollback proceeds only when the whole
-    // global section is identical to the state FIC recorded after its
-    // mutation. Any unrelated global change (including comments) is a
-    // Conflict; nothing is written.
-    const std::string currentFingerprint = handler.globalSectionFingerprint();
-    if (currentFingerprint != undo.appliedGlobalSectionFingerprint) {
+    // Mutation-local drift detection: classify the current global section
+    // against the recorded BEFORE/AFTER representations of this concrete
+    // mutation. Unrelated changes (other FIC SSH policies, comments, edits of
+    // other directives, Match blocks, includes) do not affect the result.
+    std::vector<std::size_t> afterLineIndices;
+    std::string classifyError;
+    const SshMutationState state = handler.classifyRecordedMutation(
+        undo, afterLineIndices, classifyError);
+    if (state == SshMutationState::Before) {
+        // The system is already in the recorded pre-FIC state: either the
+        // mutation was never applied or a previous undo completed (possibly
+        // with a crash before the journal update). Safe to mark resolved.
+        result.nothingToDo = true;
+        result.message = "Состояние директивы " + undo.parameter +
+                         " уже соответствует состоянию до FIC-мутации; откат "
+                         "не требуется";
+        return result;
+    }
+    if (state == SshMutationState::Conflict) {
         result.conflict = true;
-        result.message = "Global section " + options.configPath.string() +
-                         " изменился после применения FIC; откат SSH-мутации "
-                         "отменён без изменения файла";
+        result.message = "Откат SSH-мутации отменён (файл не изменён): " +
+                         classifyError;
         return result;
     }
 
-    // In-memory pre-rollback copy used for transactional compensation.
-    std::string preRollbackContent;
-    if (!readSshConfigContent(options.configPath, preRollbackContent)) {
-        result.message = "Не удалось прочитать " + options.configPath.string() +
-                         " перед откатом";
-        return result;
+    // In-memory pre-rollback copy (the exact loaded snapshot content) used
+    // for transactional compensation.
+    const std::string preRollbackContent =
+        handler.loadSnapshot().has_value() ? handler.loadSnapshot()->content
+                                           : std::string();
+
+    if (options.beforeWrite) {
+        options.beforeWrite();
     }
 
     std::string error;
-    if (!handler.applyReverseEdits(undo.reverseEdits, error)) {
+    if (!handler.applyRecordedReverseEdits(undo, afterLineIndices, error)) {
         result.message = "Откат SSH-мутации отменён (файл не изменён): " + error;
         return result;
     }
-    if (!handler.saveFile()) {
-        result.message = "Не удалось записать откат SSH-мутации в " +
-                         options.configPath.string();
+    const FileHandler::FileSaveResult saveResult =
+        handler.saveFileIfUnchanged(error);
+    if (saveResult != FileHandler::FileSaveResult::Installed) {
+        if (saveResult == FileHandler::FileSaveResult::RefusedChanged) {
+            // The shared sshd_config changed concurrently after the snapshot
+            // was captured: refuse without overwriting the external change.
+            result.conflict = true;
+            result.message = "sshd_config изменился во время отката; "
+                             "конкурентная запись отклонена, файл не изменён: " +
+                             error;
+        } else {
+            result.message = "Не удалось записать откат SSH-мутации в " +
+                             options.configPath.string() + ": " + error;
+        }
         return result;
     }
 

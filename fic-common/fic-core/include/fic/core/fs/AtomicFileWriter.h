@@ -48,6 +48,9 @@ struct AtomicWriteOptions {
 
 struct AtomicWriteResult {
     bool installed = false;
+    // Set when the write was refused because the target no longer matches the
+    // expected identity/state precondition. Nothing was replaced in that case.
+    bool preconditionFailed = false;
 };
 
 class AtomicFileWriter {
@@ -62,6 +65,16 @@ public:
                                 const AtomicWriteOptions& options,
                                 std::string* errorMessage,
                                 AtomicWriteResult* result);
+
+    // Captures an optimistic snapshot of a regular file: identity, metadata
+    // and exact content read through the same descriptor. Refuses symlinks
+    // and non-regular files. The snapshot can be passed as
+    // AtomicWriteOptions::expectedTargetState to refuse replacement when the
+    // file changed between the snapshot and the write (TOCTOU protection for
+    // shared configuration files).
+    static bool captureTargetState(const std::string& path,
+                                   AtomicTargetState& state,
+                                   std::string* errorMessage = nullptr);
 };
 
 #endif // ATOMICFILEWRITER_H
