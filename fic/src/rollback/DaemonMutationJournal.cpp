@@ -32,13 +32,19 @@ MutationJournal* DaemonMutationJournal::open(std::string& error) {
         // corrected load(), which requires the parsed snapshot to be
         // re-proved against the path AND the parent directory fsync to
         // succeed — a merely readable journal never restores Healthy.
+        // Defensive re-check: the journal is handed out ONLY when it is
+        // usable() after all recovery actions, never merely because
+        // load() returned true.
         std::string reloadError;
-        if (journal_->load(reloadError)) {
+        if (journal_->load(reloadError) && journal_->usable()) {
             error.clear();
             return journal_.get();
         }
         error = "Mutation journal is Indeterminate; successful reload or "
-                "daemon restart is required: " + reloadError;
+                "daemon restart is required";
+        if (!reloadError.empty()) {
+            error += ": " + reloadError;
+        }
         return nullptr;
     }
     std::filesystem::path path = overridePath_;
@@ -51,8 +57,13 @@ MutationJournal* DaemonMutationJournal::open(std::string& error) {
         path = fic::core::FicRuntimePaths::get().mutationJournalFile;
     }
     auto journal = std::make_unique<MutationJournal>(std::move(path));
-    if (!journal->load(error)) {
-        // Fail closed: a broken journal must not silently lose provenance.
+    if (!journal->load(error) || !journal->usable()) {
+        // Fail closed: a broken journal must not silently lose provenance,
+        // and a journal that is not usable() after load must never become
+        // the process-wide operational journal.
+        if (error.empty()) {
+            error = "Mutation journal is not usable after load";
+        }
         return nullptr;
     }
     journal_ = std::move(journal);

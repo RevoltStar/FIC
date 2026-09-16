@@ -78,12 +78,38 @@ MutationRecord preparedRecord(const PolicyRef& policy) {
     return record;
 }
 
+// Structural comparison of in-memory records (MutationRecord has no
+// operator==): enough to prove that a failed reload did not replace the
+// previous in-memory state.
+bool sameRecords(const std::vector<MutationRecord>& a,
+                 const std::vector<MutationRecord>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < a.size(); ++index) {
+        if (a[index].id != b[index].id ||
+            a[index].resource != b[index].resource ||
+            a[index].status != b[index].status ||
+            a[index].error != b[index].error ||
+            a[index].createdAtEpoch != b[index].createdAtEpoch ||
+            a[index].updatedAtEpoch != b[index].updatedAtEpoch) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void testMissingFileIsEmptyJournal() {
     TempFile file;
     MutationJournal journal(file.path);
     std::string error;
     require(journal.load(error), error);
     require(journal.records().empty(), "missing journal must be empty");
+    require(journal.loaded(), "bootstrap missing journal must be loaded");
+    require(journal.health() == JournalHealth::Healthy,
+            "bootstrap missing journal must be healthy");
+    require(journal.usable(),
+            "bootstrap missing journal must be operationally usable");
 }
 
 void testPrepareCommitAndReloadPersistence() {
@@ -372,6 +398,13 @@ void testMalformedFileFailsClosed() {
     std::string error;
     require(!journal.load(error), "malformed journal must fail closed");
     require(!error.empty(), "malformed journal must produce an error message");
+    // Fresh-object failure contract: loaded stays false, but the journal is
+    // poisoned (Indeterminate) so that a later disappearance of the broken
+    // file cannot silently bootstrap an empty Healthy journal.
+    require(!journal.loaded(), "a failed fresh load must stay unloaded");
+    require(journal.health() == JournalHealth::Indeterminate,
+            "a failed fresh load must poison the journal");
+    require(!journal.usable(), "a failed fresh load must not be usable");
 }
 
 void testUnknownSchemaVersionFailsClosed() {
@@ -946,6 +979,165 @@ void testDaemonJournalTryGetBlocksIndeterminateAndRecovers() {
             "the recovered journal must match the disk document");
 }
 
+void testHealthyReloadMissingJournalFailsClosed() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    const std::vector<MutationRecord> before = journal.records();
+
+    // The journal was loaded and Healthy, but the file disappeared before
+    // the reload: the disappearance of previously known provenance is not
+    // equivalent to an empty journal (fail closed).
+    std::error_code ec;
+    require(std::filesystem::remove(file.path, ec), ec.message());
+    require(!journal.load(error),
+            "a previously loaded journal must not heal into an empty "
+            "journal after its file disappeared");
+    require(journal.health() == JournalHealth::Indeterminate, error);
+    require(!journal.usable(), error);
+    require(journal.loaded(),
+            "a failed reload must keep the loaded_ flag for diagnostics");
+    require(sameRecords(journal.records(), before),
+            "a failed reload must not touch the in-memory records");
+    require(error.find("disappeared") != std::string::npos,
+            "the error must explain the disappearance semantics: " + error);
+}
+
+void testIndeterminateReloadMissingJournalFailsClosed() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+
+    {
+        // Applied -> RolledBack: rename succeeds, durability cannot be
+        // confirmed, the journal becomes Indeterminate with the in-memory
+        // state identical to the installed (RolledBack) document.
+        JournalFsyncFailure failure(file, 1000);
+        require(!journal.setStatus(id, MutationStatus::RolledBack, error),
+                error);
+        require(journal.health() == JournalHealth::Indeterminate, error);
+        require(journal.records().size() == 1 &&
+                    journal.records().front().status ==
+                        MutationStatus::RolledBack,
+                "the in-memory record must match the installed document");
+    }
+
+    // The journal file disappears externally. A reload must NOT turn the
+    // ambiguous provenance into an empty Healthy journal (otherwise the
+    // inactive in-memory record would be lost and disable/ownership logic
+    // could wrongly answer NothingToDo).
+    std::error_code ec;
+    require(std::filesystem::remove(file.path, ec), ec.message());
+    require(!journal.load(error),
+            "an Indeterminate journal must fail closed when its file "
+            "disappears during reload");
+    require(journal.health() == JournalHealth::Indeterminate, error);
+    require(!journal.usable(), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::RolledBack,
+            "the old in-memory records must be preserved for diagnostics");
+    // Mutating operations stay refused.
+    require(!journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            "a poisoned journal must refuse new mutations");
+    require(!journal.setStatus(id, MutationStatus::Applied, error),
+            "a poisoned journal must refuse status updates");
+    require(!journal.discard(id, error),
+            "a poisoned journal must refuse discard");
+}
+
+void testHealthyMalformedReloadPoisonsJournal() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    const std::vector<MutationRecord> before = journal.records();
+    require(journal.usable(), error);
+    const std::string validDocument = file.read();
+
+    // An external actor corrupts the persistent journal after it was loaded.
+    file.write("{ broken json");
+    require(!journal.load(error), "a malformed reload must fail closed");
+    require(journal.health() == JournalHealth::Indeterminate,
+            "a failed reload of a previously Healthy journal must poison it");
+    require(!journal.usable(),
+            "a poisoned journal must not be operationally usable");
+    require(sameRecords(journal.records(), before),
+            "a failed reload must not replace the old in-memory records");
+
+    // All mutating operations must refuse after the failed reload.
+    require(!journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            "a poisoned journal must refuse new mutations");
+    require(!journal.setStatus(id, MutationStatus::RolledBack, error),
+            "a poisoned journal must refuse status updates");
+    require(!journal.discard(id, error),
+            "a poisoned journal must refuse discard");
+
+    // Recovery: after the persistent journal is fixed, a successful
+    // durability-proven load restores Healthy.
+    file.write(validDocument);
+    require(journal.load(error), error);
+    require(journal.health() == JournalHealth::Healthy, error);
+    require(journal.usable(), error);
+    require(sameRecords(journal.records(), before),
+            "the recovered journal must match the restored document");
+}
+
+void testDaemonJournalTryGetMissingAfterIndeterminate() {
+    TempFile file;
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    struct OverrideReset {
+        ~OverrideReset() { DaemonMutationJournal::instance().resetOverride(); }
+    } overrideReset;
+
+    std::string error;
+    MutationId id = 0;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(recordPreparedMutation(sysctlPolicy(), "vm.swappiness",
+                                   sysctlUndo(), id, error),
+            error);
+
+    {
+        // Poison the open singleton: post-rename durability unconfirmable.
+        JournalFsyncFailure failure(file, 1000);
+        require(!journal->setStatus(id, MutationStatus::RolledBack, error),
+                error);
+        require(journal->health() == JournalHealth::Indeterminate, error);
+    }
+
+    // The journal file disappears externally: the lazy recovery must not
+    // heal the Indeterminate singleton into an empty Healthy journal.
+    std::error_code ec;
+    require(std::filesystem::remove(file.path, ec), ec.message());
+    std::string gateError;
+    require(DaemonMutationJournal::instance().tryGet(gateError) == nullptr,
+            "a missing journal during Indeterminate recovery must fail "
+            "operational access closed");
+    require(gateError.find("Indeterminate") != std::string::npos,
+            "the gate must explain that a reload or restart is required: " +
+                gateError);
+    require(gateError.find("disappeared") != std::string::npos,
+            "the gate must surface the disappearance error: " + gateError);
+    require(journal->health() == JournalHealth::Indeterminate, gateError);
+    require(!journal->usable(), gateError);
+    require(journal->records().size() == 1,
+            "the in-memory provenance must be preserved for diagnostics");
+}
+
 int main() {
     const struct {
         const char* name;
@@ -990,7 +1182,15 @@ int main() {
         {"load durability barrier failure and retry", testLoadDurabilityBarrierFailureAndRetry},
         {"load race between capture and barrier", testLoadRaceBetweenCaptureAndBarrier},
         {"daemon journal tryGet blocks indeterminate and recovers",
-         testDaemonJournalTryGetBlocksIndeterminateAndRecovers}
+         testDaemonJournalTryGetBlocksIndeterminateAndRecovers},
+        {"healthy reload missing journal fails closed",
+         testHealthyReloadMissingJournalFailsClosed},
+        {"indeterminate reload missing journal fails closed",
+         testIndeterminateReloadMissingJournalFailsClosed},
+        {"healthy malformed reload poisons journal",
+         testHealthyMalformedReloadPoisonsJournal},
+        {"daemon journal tryGet missing after indeterminate",
+         testDaemonJournalTryGetMissingAfterIndeterminate}
     };
 
     std::size_t failures = 0;

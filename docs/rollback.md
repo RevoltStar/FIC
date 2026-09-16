@@ -235,18 +235,41 @@ capture exact document (AtomicFileWriter::captureTargetState)
 → только после этого: publish parsed state в памяти, health = Healthy
 ```
 
-Провал re-proof или barrier → `load() == false`, journal остаётся
-`Indeterminate` (unusable), in-memory состояние не заменяется частично.
-Отсутствующий файл — прежняя семантика «empty provenance» (directory
-durability отсутствующего файла не требуется). Retry `load()` после
-восстановления fsync возвращает `Healthy` с записями, соответствующими
+Провал любого шага (включая capture, parse, validate) → `load() == false`,
+journal переводится в `Indeterminate` (unusable), in-memory состояние
+(`records_`/`nextId_`/`loaded_`) не изменяется и остаётся доступным для
+диагностики. Retry `load()` после восстановления fsync или исправления
+дискового документа возвращает `Healthy` с записями, соответствующими
 дисковому документу.
 
+**Missing journal: bootstrap vs reload**. Отсутствующий файл — валидный
+empty journal ТОЛЬКО при initial bootstrap ещё никогда не загружавшегося
+объекта (`loaded_ == false` и `Healthy`): `records = empty`, `nextId = 1`,
+`loaded = true`, `Healthy`, directory durability отсутствующего файла не
+требуется. Исчезновение ранее известного journal (объект уже был `loaded_`
+или уже `Indeterminate`) НЕ эквивалентно empty journal: такой reload
+завершается ошибкой «mutation journal disappeared during reload/recovery;
+provenance cannot be treated as empty», объект остаётся `Indeterminate`,
+старые in-memory записи сохраняются. Автоматическое восстановление
+удалённого journal из in-memory состояния не выполняется (fail closed).
+Жизненный цикл:
+
+```text
+fresh + missing                → Healthy empty journal (bootstrap)
+Healthy + successful reload    → Healthy новый snapshot
+Healthy + failed reload        → Indeterminate, старая память сохранена
+Indeterminate + successful
+  durable reload               → Healthy
+Indeterminate + missing journal→ Indeterminate, fail closed
+```
+
 **`Indeterminate` блокирует все operational-решения, не только записи**.
-`DaemonMutationJournal::tryGet()` возвращает journal только при
-`usable()` (loaded + `Healthy`). Если открытый singleton стал
+`DaemonMutationJournal::tryGet()` возвращает non-null IFF journal существует
+И `usable()` (loaded + `Healthy`) после всех recovery-действий — никогда
+только потому, что `load()` вернул true. Если открытый singleton стал
 `Indeterminate`, следующий `tryGet()` пытается lazy recovery через
-исправленный durability-proven `load()`; при неудаче возвращает `nullptr`
+исправленный durability-proven `load()`; при неудаче (включая случай
+исчезнувшего journal-файла) возвращает `nullptr`
 с ошибкой «Mutation journal is Indeterminate; successful reload or daemon
 restart is required». Так автоматически fail-closed блокируются apply,
 rollback, disable ownership resolution и любые будущие journal-backed

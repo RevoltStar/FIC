@@ -333,24 +333,46 @@ MutationJournal::MutationJournal(std::filesystem::path path)
     : path_(std::move(path)) {
 }
 
+bool MutationJournal::failLoad(std::string message, std::string& error) {
+    // Transactional failure: never mutate records_/nextId_/loaded_ — the
+    // previous in-memory state stays for diagnostics — but revoke operational
+    // trust so stale provenance cannot drive any decision.
+    health_ = JournalHealth::Indeterminate;
+    error = std::move(message);
+    return false;
+}
+
 bool MutationJournal::load(std::string& error) {
     std::error_code probeError;
     const std::filesystem::file_status status =
         std::filesystem::status(path_, probeError);
     if (probeError &&
         status.type() != std::filesystem::file_type::not_found) {
-        error = "Не удалось проверить наличие mutation journal " +
-                path_.string() + ": " + probeError.message();
-        return false;
+        return failLoad("Не удалось проверить наличие mutation journal " +
+                            path_.string() + ": " + probeError.message(),
+                        error);
     }
     if (status.type() == std::filesystem::file_type::not_found ||
         !std::filesystem::exists(status)) {
-        // A missing journal is an empty journal: no provenance exists yet.
-        records_.clear();
-        nextId_ = 1;
-        loaded_ = true;
-        error.clear();
-        return true;
+        // A missing journal is an empty journal ONLY during the initial
+        // bootstrap of a never-loaded journal object. The disappearance of a
+        // previously known journal (loaded, or already Indeterminate) does
+        // not prove that the earlier ambiguous provenance safely vanished:
+        // it must fail closed instead of healing into an empty Healthy
+        // journal.
+        const bool bootstrapMissing =
+            !loaded_ && health_ == JournalHealth::Healthy;
+        if (bootstrapMissing) {
+            records_.clear();
+            nextId_ = 1;
+            loaded_ = true;
+            error.clear();
+            return true;
+        }
+        return failLoad("Mutation journal disappeared during reload/recovery; "
+                        "provenance cannot be treated as empty: " +
+                            path_.string(),
+                        error);
     }
 
     // Snapshot-bound read: capture the exact current document (identity,
@@ -363,17 +385,18 @@ bool MutationJournal::load(std::string& error) {
                                               &captureError)) {
         // The file exists but cannot be opened/read: never treat permission,
         // symlink or I/O failures as an absent journal (fail closed).
-        error = "Существующий mutation journal недоступен для чтения "
-                "(fail closed): " + captureError;
-        return false;
+        return failLoad("Существующий mutation journal недоступен для чтения "
+                        "(fail closed): " +
+                            captureError,
+                        error);
     }
     if (snapshot.content.empty()) {
         // An existing zero-byte journal is corrupted persistent security
         // state: fail closed instead of silently assuming an empty journal.
         // A valid empty journal must carry the schema document.
-        error = "Mutation journal существует, но пуст (fail closed): " +
-                path_.string();
-        return false;
+        return failLoad("Mutation journal существует, но пуст (fail closed): " +
+                            path_.string(),
+                        error);
     }
 
     // Test-only seam: an external writer may replace the journal between the
@@ -388,33 +411,36 @@ bool MutationJournal::load(std::string& error) {
     try {
         document = json::parse(content);
     } catch (const json::exception& exception) {
-        error = "Mutation journal повреждён (fail closed): " +
-                std::string(exception.what());
-        return false;
+        return failLoad("Mutation journal повреждён (fail closed): " +
+                            std::string(exception.what()),
+                        error);
     }
     if (!document.is_object()) {
-        error = "Mutation journal должен быть JSON-объектом (fail closed)";
-        return false;
+        return failLoad(
+            "Mutation journal должен быть JSON-объектом (fail closed)", error);
     }
     const auto schemaIt = document.find("schema_version");
     if (schemaIt == document.end() || !schemaIt->is_number_unsigned()) {
-        error = "Mutation journal не содержит schema_version (fail closed)";
-        return false;
+        return failLoad(
+            "Mutation journal не содержит schema_version (fail closed)",
+            error);
     }
     if (schemaIt->get<std::uint32_t>() != kSchemaVersion) {
-        error = "Неподдерживаемая schema_version mutation journal: " +
-                schemaIt->dump();
-        return false;
+        return failLoad("Неподдерживаемая schema_version mutation journal: " +
+                            schemaIt->dump(),
+                        error);
     }
     const auto nextIdIt = document.find("next_id");
     if (nextIdIt == document.end() || !nextIdIt->is_number_unsigned()) {
-        error = "Mutation journal не содержит корректный next_id (fail closed)";
-        return false;
+        return failLoad(
+            "Mutation journal не содержит корректный next_id (fail closed)",
+            error);
     }
     const auto recordsIt = document.find("records");
     if (recordsIt == document.end() || !recordsIt->is_array()) {
-        error = "Mutation journal не содержит массив records (fail closed)";
-        return false;
+        return failLoad(
+            "Mutation journal не содержит массив records (fail closed)",
+            error);
     }
 
     // Transactional parse: everything above worked on local state; the
@@ -426,9 +452,10 @@ bool MutationJournal::load(std::string& error) {
         MutationRecord record;
         std::string recordError;
         if (!deserializeRecord(item, record, recordError)) {
-            error = "Mutation journal содержит некорректную запись (fail closed): " +
-                    recordError;
-            return false;
+            return failLoad("Mutation journal содержит некорректную запись "
+                            "(fail closed): " +
+                                recordError,
+                            error);
         }
         parsed.push_back(std::move(record));
     }
@@ -436,15 +463,17 @@ bool MutationJournal::load(std::string& error) {
     const MutationId parsedNextId = nextIdIt->get<MutationId>();
     for (const MutationRecord& record : parsed) {
         if (record.id >= parsedNextId) {
-            error = "Mutation journal содержит id без next_id (fail closed)";
-            return false;
+            return failLoad(
+                "Mutation journal содержит id без next_id (fail closed)",
+                error);
         }
     }
     for (std::size_t outer = 0; outer < parsed.size(); ++outer) {
         for (std::size_t inner = outer + 1; inner < parsed.size(); ++inner) {
             if (parsed[outer].id == parsed[inner].id) {
-                error = "Mutation journal содержит дубликат id (fail closed)";
-                return false;
+                return failLoad(
+                    "Mutation journal содержит дубликат id (fail closed)",
+                    error);
             }
         }
     }
@@ -462,10 +491,10 @@ bool MutationJournal::load(std::string& error) {
         // in-memory state is left untouched; health is poisoned so that no
         // operational decision (reads included) may use ambiguous provenance
         // until a successful load() or a daemon restart.
-        health_ = JournalHealth::Indeterminate;
-        error = "Durability mutation journal не подтверждена для прочитанного "
-                "snapshot (fail closed): " + durabilityError;
-        return false;
+        return failLoad("Durability mutation journal не подтверждена для "
+                        "прочитанного snapshot (fail closed): " +
+                            durabilityError,
+                        error);
     }
 
     records_ = std::move(parsed);

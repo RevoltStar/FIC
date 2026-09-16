@@ -2027,6 +2027,76 @@ void testIndeterminateJournalFailsRollbackClosed() {
             report.message);
 }
 
+// Same poisoning scenario as above, but the journal file additionally
+// disappears before the rollback: the lazy recovery must not heal the
+// Indeterminate singleton into an empty Healthy journal, and the executor
+// must not run any backend (especially not resolve the inactive in-memory
+// record into NothingToDo) on vanished provenance.
+void testIndeterminateMissingJournalFailsRollbackClosed() {
+    TempJournal file;
+    const std::filesystem::path journalPath = file.tree.root / "journal.json";
+    JournalOverride overrideGuard(journalPath);
+
+    std::string error;
+    MutationId id = 0;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+
+    UndoRestoreSshDirective undo;
+    undo.parameter = "Port";
+    undo.appliedValue = "2222";
+    SshDirectiveOccurrenceMutation occurrence;
+    occurrence.beforeLine = "Port 22";
+    occurrence.afterLine = "Port 2222";
+    undo.occurrences = {occurrence};
+    require(recordPreparedMutation(
+                PolicyRef{"NET", "SshEdit", "ssh_port"},
+                "ssh:/etc/ssh/sshd_config:Port",
+                UndoAction{MutationBackend::Ssh, undo}, id, error),
+            error);
+
+    // Poison: rename succeeds, journal durability cannot be confirmed.
+    const std::string journalPathStr = journalPath.string();
+    auto remaining = std::make_shared<int>(1000);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [journalPathStr, remaining](const std::string& targetPath) {
+            if (targetPath != journalPathStr) {
+                return true;
+            }
+            if (*remaining > 0) {
+                --*remaining;
+                return false;
+            }
+            return true;
+        });
+    {
+        std::string poisonError;
+        require(!journal->setStatus(id, MutationStatus::Applied, poisonError),
+                poisonError);
+        require(journal->health() == JournalHealth::Indeterminate, poisonError);
+    }
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+
+    // The journal file disappears externally.
+    std::error_code ec;
+    require(std::filesystem::remove(journalPath, ec), ec.message());
+
+    const RollbackExecutorDeps deps;
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        PolicyRef{"NET", "SshEdit", "ssh_port"}, "Port", deps);
+    require(report.status == RollbackStatus::Failed, report.message);
+    require(report.status != RollbackStatus::NothingToDo &&
+                report.status != RollbackStatus::Success,
+            report.message);
+    // A fresh object over the now-missing path still bootstraps as an empty
+    // Healthy journal (bootstrap semantics are preserved for a new process),
+    // but the poisoned singleton must have stayed unusable.
+    require(journal->health() == JournalHealth::Indeterminate, report.message);
+    require(!journal->usable(), report.message);
+    require(!journal->records().empty(),
+            "the inactive in-memory record must be preserved for diagnostics");
+}
+
 int main() {
     const struct {
         const char* name;
@@ -2118,7 +2188,9 @@ int main() {
         {"empty journal with sysctl hint and no managed ownership",
          testEmptyJournalWithSysctlHintAndNoManagedOwnership},
         {"indeterminate journal fails rollback closed",
-         testIndeterminateJournalFailsRollbackClosed}
+         testIndeterminateJournalFailsRollbackClosed},
+        {"indeterminate missing journal fails rollback closed",
+         testIndeterminateMissingJournalFailsRollbackClosed}
     };
 
     std::size_t failures = 0;

@@ -55,10 +55,14 @@ public:
     // is snapshot-bound and durability-proven: the exact current document is
     // captured, parsed, re-proved to still occupy the path, and the parent
     // directory is fsynced BEFORE any state is published; only then does the
-    // journal become Healthy. A missing file is an empty journal (existing
-    // semantics; no directory durability is required for an absent file). A
-    // successful load re-parses the current disk document and resets an
-    // Indeterminate health back to Healthy.
+    // journal become Healthy. A missing file is an empty journal ONLY during
+    // the initial bootstrap of a never-loaded journal (loaded_ == false &&
+    // Healthy): the disappearance of a previously loaded or Indeterminate
+    // journal is NOT equivalent to an empty journal and fails closed. Any
+    // failed load poisons the journal (health = Indeterminate, usable() ==
+    // false) while records_/nextId_ stay untouched for diagnostics; a
+    // successful load re-parses the current disk document and restores
+    // Healthy.
     bool load(std::string& error);
     bool loaded() const { return loaded_; }
     const std::vector<MutationRecord>& records() const { return records_; }
@@ -100,6 +104,11 @@ private:
     };
 
     PersistOutcome persist(std::string& error);
+    // Centralized failed-load handling: revoke operational trust (health =
+    // Indeterminate, usable() == false) WITHOUT touching records_/nextId_/
+    // loaded_, so the previous in-memory state stays available for
+    // diagnostics and recovery while no operational decision may use it.
+    bool failLoad(std::string message, std::string& error);
     MutationRecord* find(MutationId id);
 
     std::filesystem::path path_;
