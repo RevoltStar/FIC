@@ -2,10 +2,13 @@
 #include "rollback/MutationJournal.h"
 #include "rollback/MutationRecord.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -636,6 +639,172 @@ void testSshUndoMalformedPayloadsFailClosed() {
 
 } // namespace
 
+// Arms a deterministic directory fsync hook for the journal path: the first
+// `failures` fsync attempts of the journal file fail, later ones succeed.
+class JournalFsyncFailure {
+public:
+    JournalFsyncFailure(const TempFile& file, int failures) {
+        const std::string journalPath = file.path.string();
+        auto remaining = std::make_shared<int>(failures);
+        AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [journalPath, remaining](const std::string& targetPath) {
+                if (targetPath != journalPath) {
+                    return true;
+                }
+                if (*remaining > 0) {
+                    --*remaining;
+                    return false;
+                }
+                return true;
+            });
+    }
+
+    ~JournalFsyncFailure() {
+        AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    }
+};
+
+void testSetStatusPostRenameDurabilityFailureCompletesDurability() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+
+    // The journal rename succeeds and only the first post-rename directory
+    // fsync fails; persist() must transparently finish the durability
+    // instead of reporting memory=old / disk=new ambiguity.
+    JournalFsyncFailure failure(file, 1);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    require(journal.health() == JournalHealth::Healthy,
+            "a completed durability barrier must keep the journal healthy");
+
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1 &&
+                reloaded.records().front().status == MutationStatus::Applied,
+            "the disk journal must carry the committed status");
+}
+
+void testSetStatusDurabilityRetryFailurePoisonsJournal() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+
+    JournalFsyncFailure failure(file, 1000);
+    require(!journal.setStatus(id, MutationStatus::Applied, error),
+            "an unconfirmable journal durability must fail the operation");
+    require(journal.health() == JournalHealth::Indeterminate,
+            "the journal must become indeterminate after an unconfirmable "
+            "post-rename durability failure");
+
+    // The in-memory state stays identical to the installed document (never
+    // rolled back to the previous state): the rename already published the
+    // new Applied status on disk.
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::Applied,
+            "the in-memory record must match the installed document");
+    // Every mutating operation refuses until an explicit reload.
+    require(!journal.setStatus(id, MutationStatus::RolledBack, error),
+            "a poisoned journal must refuse mutations");
+    require(!journal.discard(id, error), "a poisoned journal must refuse discard");
+    require(!journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            "a poisoned journal must refuse new mutations");
+
+    // The disk document carries the installed new content (rename happened).
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1 &&
+                reloaded.records().front().status == MutationStatus::Applied,
+            "the installed document must survive on disk");
+}
+
+void testReloadRestoresHealthyJournalAfterIndeterminate() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+
+    {
+        JournalFsyncFailure failure(file, 1000);
+        require(!journal.setStatus(id, MutationStatus::Applied, error), error);
+        require(journal.health() == JournalHealth::Indeterminate, error);
+
+        // An explicit load() re-parses the current disk document and resets
+        // the indeterminate state back to Healthy.
+        require(journal.load(error), error);
+        require(journal.health() == JournalHealth::Healthy,
+                "a successful reload must restore the healthy journal");
+        require(journal.records().front().status == MutationStatus::Applied,
+                "the reloaded journal must reflect the installed document");
+    }
+    // Outside the failure scope the journal is fully usable again.
+    require(journal.setStatus(id, MutationStatus::RolledBack, error), error);
+    require(journal.records().front().status == MutationStatus::RolledBack,
+            error);
+}
+
+void testPreparePostRenameDurabilityFailurePoisonsJournal() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+
+    MutationId id = 0;
+    {
+        JournalFsyncFailure failure(file, 1000);
+        require(!journal.prepareMutation(preparedRecord(sysctlPolicy()), id,
+                                         error),
+                "an unconfirmable prepare must fail");
+        require(journal.health() == JournalHealth::Indeterminate, error);
+        // The Prepared record stays in memory: it matches the installed
+        // document, so restoring "no record" would contradict the disk.
+        require(journal.records().size() == 1 &&
+                    journal.records().front().status ==
+                        MutationStatus::Prepared,
+                "the prepared record must stay consistent with the installed "
+                "document");
+    }
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1 &&
+                reloaded.records().front().status == MutationStatus::Prepared,
+            "the installed Prepared record must survive on disk");
+}
+
+void testDiscardPostRenameDurabilityFailurePoisonsJournal() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+
+    {
+        JournalFsyncFailure failure(file, 1000);
+        require(!journal.discard(id, error),
+                "an unconfirmable discard must fail");
+        require(journal.health() == JournalHealth::Indeterminate, error);
+        // The removal stays in memory: it matches the installed document.
+        require(journal.records().empty(),
+                "the removal must stay consistent with the installed document");
+    }
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    require(reloaded.records().empty(),
+            "the installed document without the record must survive on disk");
+}
+
 int main() {
     const struct {
         const char* name;
@@ -647,6 +816,16 @@ int main() {
         {"discard removes record", testDiscardRemovesRecord},
         {"set status persist failure restores record",
          testSetStatusPersistFailureRestoresRecord},
+        {"set status post-rename durability completes",
+         testSetStatusPostRenameDurabilityFailureCompletesDurability},
+        {"set status durability retry failure poisons journal",
+         testSetStatusDurabilityRetryFailurePoisonsJournal},
+        {"reload restores healthy journal after indeterminate",
+         testReloadRestoresHealthyJournalAfterIndeterminate},
+        {"prepare post-rename durability failure poisons journal",
+         testPreparePostRenameDurabilityFailurePoisonsJournal},
+        {"discard post-rename durability failure poisons journal",
+         testDiscardPostRenameDurabilityFailurePoisonsJournal},
         {"prepare existing persist failure restores record",
          testPrepareExistingPersistFailureRestoresRecord},
         {"discard persist failure restores state and order",

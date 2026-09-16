@@ -217,12 +217,76 @@ void testAtomicPostRenameDurabilityFailureKeepsInstalledState() {
             "a simulated directory fsync failure must report failure");
     require(result.installed,
             "installed must stay true after a post-rename durability failure");
+    require(!result.durabilityConfirmed,
+            "a failed directory fsync must not claim confirmed durability");
     require(result.installedTargetState.has_value(),
             "the exact installed target state must survive the failure");
     require(result.installedTargetState->content == "new\n",
             "the installed target state must describe the new content");
     require(readFile(path) == "new\n",
             "the target must carry the new content after the failure");
+
+    // The durability of the already installed state is completed by the
+    // recovery barrier once the directory fsync becomes available again.
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    std::string barrierError;
+    require(AtomicFileWriter::ensureTargetDurable(path.string(), &barrierError),
+            "ensureTargetDurable must confirm the already installed state: " +
+                barrierError);
+}
+
+void testAtomicFullSuccessConfirmsDurability() {
+    TempTree tree;
+    const auto path = tree.root / "full.conf";
+    writeFile(path, "old\n");
+
+    AtomicWriteOptions options;
+    std::string error;
+    AtomicWriteResult result;
+    require(AtomicFileWriter::writeWithResult(
+                path.string(), "new\n", options, &error, &result),
+            "a fully successful write must report success: " + error);
+    require(result.installed && result.durabilityConfirmed,
+            "a successful rename + directory fsync must confirm durability");
+}
+
+void testAtomicPreRenameFailureIsNotInstalled() {
+    TempTree tree;
+    const auto path = tree.root / "pre.conf";
+    writeFile(path, "old\n");
+
+    // Refuse the write through the missing-target precondition: the failure
+    // happens strictly before the rename.
+    AtomicWriteOptions options;
+    options.rejectSymlink = true;
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+
+    std::string error;
+    AtomicWriteResult result;
+    require(!AtomicFileWriter::writeWithResult(
+                path.string(), "new\n", options, &error, &result),
+            "a missing target must fail without createIfMissing");
+    require(!result.installed && !result.durabilityConfirmed,
+            "a pre-rename failure must not be installed or durable");
+    require(!result.preconditionFailed,
+            "a missing target is a hard failure, not a precondition refusal");
+}
+
+void testEnsureTargetDurableFailureStaysFailClosed() {
+    TempTree tree;
+    const auto path = tree.root / "barrier.conf";
+    writeFile(path, "content\n");
+
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+
+    std::string error;
+    require(!AtomicFileWriter::ensureTargetDurable(path.string(), &error),
+            "a failed durability barrier must be reported to the caller");
 }
 
 void testSaveFileIfUnchangedPropagatesInstalledOutcome() {
@@ -317,6 +381,9 @@ int main() {
         testDeletionBetweenLoadAndSaveDoesNotRecreateFile();
         testValueRemovalPreservesUnrelatedContent();
         testAtomicPostRenameDurabilityFailureKeepsInstalledState();
+        testAtomicFullSuccessConfirmsDurability();
+        testAtomicPreRenameFailureIsNotInstalled();
+        testEnsureTargetDurableFailureStaysFailClosed();
         testSaveFileIfUnchangedPropagatesInstalledOutcome();
         testAtomicExpectedTargetIdentity();
     } catch (const std::exception& error) {

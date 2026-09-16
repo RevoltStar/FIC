@@ -4,6 +4,7 @@
 
 #include "rollback/DaemonMutationJournal.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/i18n/LocalizationManager.h>
 
 #include <mutex>
@@ -148,6 +149,32 @@ bool Ssh::apply() {
         }
     };
 
+    // Compensation restore with fully proven durability: the conditional
+    // restore must be installed (rename) AND durably confirmed (parent
+    // directory fsync). A non-durable restore rename is completed by the
+    // recovery barrier — only when the target still is exactly the restored
+    // FIC-installed state; otherwise the compensation is not proven.
+    const auto restoreWithProvenDurability =
+        [this, &originalContent](const AtomicTargetState& expectedState,
+                                 std::string& restoreError) -> bool {
+            if (this->beforeRestoreHook_) {
+                this->beforeRestoreHook_();
+            }
+            const SshRestoreOutcome restored =
+                restoreSshConfigContentIfCurrentState(
+                    platformConfig_.configPath, originalContent, expectedState,
+                    restoreError);
+            if (!restored.installed) {
+                return false;
+            }
+            if (restored.durable) {
+                return true;
+            }
+            return ensureSshConfigDurableIfCurrentState(
+                platformConfig_.configPath, *restored.installedState,
+                restoreError);
+        };
+
     // Prepared recovery state machine. A Prepared record means the journal
     // was persisted but the mutation was never proven complete: the file
     // write, the runtime reload and the journal commit form the recovery
@@ -179,15 +206,48 @@ bool Ssh::apply() {
                 "persistent state drifted: " + classifyError);
         }
 
-        // Common runtime reconciliation for AFTER and BEFORE: the current
-        // persistent configuration is validated and activated while the
-        // Prepared record stays untouched. The file itself is never
-        // rewritten here.
-        std::string validationError;
-        if (!runtime.validateConfiguration(validationError)) {
-            return failRecovery("sshd не принял текущую конфигурацию: " +
-                                validationError);
+        // Prepared + AFTER: the recovery must never commit with a weaker
+        // postcondition than the original apply. verifyPolicyValue proves
+        // the same policy postcondition the first apply proves after its
+        // write (effective value semantics, scalar match, Match/Include
+        // conditional overrides, audit overrides) — a mere sshd -T parse
+        // acceptance is NOT enough. The recorded appliedValue is used: the
+        // recovery finishes the OLD persisted transaction first, the current
+        // desired value is checked later (active value-change refusal).
+        std::string policyError;
+        if (recordedState == SshMutationState::After &&
+            !runtime.verifyPolicyValue(existingUndo.parameter,
+                                       existingUndo.appliedValue,
+                                       policyError)) {
+            return failRecovery("effective-состояние sshd не подтверждает "
+                                "записанное значение политики '" +
+                                existingUndo.parameter + " = " +
+                                existingUndo.appliedValue + ": " +
+                                policyError);
         }
+
+        if (recordedState == SshMutationState::Before) {
+            // BEFORE means no FIC mutation is active, so the AFTER policy
+            // postcondition does not apply; the current configuration must
+            // still be syntactically accepted by sshd.
+            std::string validationError;
+            if (!runtime.validateConfiguration(validationError)) {
+                return failRecovery("sshd не принял текущую конфигурацию: " +
+                                    validationError);
+            }
+        }
+
+        // Durability barrier: the observed AFTER/BEFORE state may have been
+        // published by a rename whose parent directory fsync never completed
+        // (crash between rename and fsync). The journal status must not
+        // resolve (commit Applied / discard) a persistent state whose
+        // durability is not proven.
+        std::string barrierError;
+        if (!AtomicFileWriter::ensureTargetDurable(sshPath, &barrierError)) {
+            return failRecovery("durability текущего состояния sshd_config "
+                                "не подтверждена: " + barrierError);
+        }
+
         const SshActivationResult recoveryActivation =
             runtime.activateIfRunning();
         if (!recoveryActivation.ok) {
@@ -447,11 +507,7 @@ bool Ssh::apply() {
                               "состояния",
                           logLevel::ERROR);
                 std::string restoreError;
-                if (this->beforeRestoreHook_) {
-                    this->beforeRestoreHook_();
-                }
-                const bool restored = restoreSshConfigContentIfCurrentState(
-                    platformConfig_.configPath, originalContent,
+                const bool restored = restoreWithProvenDurability(
                     *saveOutcome.installedTargetState, restoreError);
                 if (!restored) {
                     this->log("Ошибка компенсации после post-install "
@@ -530,12 +586,8 @@ bool Ssh::apply() {
         // restored activation when the service is active); otherwise the
         // provenance stays active so the next disable can resolve it.
         std::string restoreError;
-        if (this->beforeRestoreHook_) {
-            this->beforeRestoreHook_();
-        }
-        const bool restored = restoreSshConfigContentIfCurrentState(
-            platformConfig_.configPath, originalContent, *installedState,
-            restoreError);
+        const bool restored = restoreWithProvenDurability(*installedState,
+                                                          restoreError);
         if (!restored) {
             this->log(failureContext + ". Ошибка отката: " + restoreError +
                           ". Prepared mutation остаётся активной",
@@ -578,12 +630,8 @@ bool Ssh::apply() {
         // Runtime activation failure (§12): try to fully restore the
         // pre-attempt configuration before reporting failure.
         std::string restoreError;
-        if (this->beforeRestoreHook_) {
-            this->beforeRestoreHook_();
-        }
-        const bool restored = restoreSshConfigContentIfCurrentState(
-            platformConfig_.configPath, originalContent, *installedState,
-            restoreError);
+        const bool restored = restoreWithProvenDurability(*installedState,
+                                                          restoreError);
         if (!restored) {
             this->log("Ошибка восстановления исходной SSH-конфигурации: " +
                           restoreError +

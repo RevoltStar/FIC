@@ -84,11 +84,17 @@ state machine (текущий файл классифицируется producti
 
 ```text
 Prepared + AFTER
-→ sshd -T validate
+→ verifyPolicyValue(recorded parameter, recorded appliedValue)
+  (та же policy postcondition, что и у original apply: effective value,
+   scalar match, Match/Include conditional overrides, audit overrides;
+   используется recorded appliedValue — recovery сначала завершает старую
+   persisted-транзакцию, а не новый desired value)
+→ durability barrier (ensureTargetDurable)
 → reload (если сервис активен)
 → commit Prepared → Applied
 Prepared + BEFORE
 → sshd -T validate
+→ durability barrier (ensureTargetDurable)
 → reload (если сервис активен)
 → discard устаревшей Prepared
 → продолжение обычного fresh apply нового desired value
@@ -96,9 +102,15 @@ Prepared + ни AFTER, ни BEFORE (drift)
 → conflict, fail closed; apply false, файл не изменён, Prepared остаётся
 ```
 
-Любая неудача validate/reload/commit/discard оставляет `Prepared` активной и
-завершает apply ошибкой. После recovery `Applied`-записи проверка active
-value change применяется как к обычной активной мутации.
+Recovery не имеет права коммитить mutation с более слабой postcondition, чем
+original apply: `validateConfiguration()` доказывает только, что sshd может
+разобрать effective config, поэтому для AFTER обязательна
+`runtime.verifyPolicyValue()` (effective value, Port semantics, scalar match,
+условные Match overrides, audit overrides). Любая неудача
+verify/validate/barrier/reload/commit/discard оставляет `Prepared` активной и
+завершает apply ошибкой (generic repair не выполняется). После recovery
+`Applied`-записи проверка active value change применяется как к обычной
+активной мутации.
 
 ### Active value changes (SSH, MVP)
 
@@ -121,27 +133,86 @@ in-memory копии текущего конфига (`validatePlannedRollbackId
 классифицировать. Валидные сценарии дубликатов (`Port 22/Port 2022`, три
 одинаковых `Port 22`, before/after collision) сохраняются.
 
-### Atomic write result
+### Atomic write result: installed != durable
 
-`AtomicFileWriter::writeWithResult()` различает pre-install failure и
-post-rename durability failure: при успехе `rename()` `installed=true` и
-`installedTargetState` сохраняются даже если последующий fsync каталога
-упал. `FileHandler::saveFileIfUnchanged()` возвращает структурированный
-`FileSaveOutcome` (`result`, `installed`, `preconditionFailed`,
-`installedTargetState`), так что вызывающий код (включая SSH apply и SSH
-rollback) обязан обрабатывать `installed=true` при `result=Failed` как
-факт состоявшейся замены: выполнить conditional-компенсацию по
-`installedTargetState` (только если цель всё ещё точно равна
-FIC-installed state), затем validate/reload; при недоказанной компенсации
-provenance-запись остаётся активной. Для deterministic-тестов в
-`AtomicFileWriter` есть test-only seam `setDirectoryFsyncHookForTests`
-(симулирует отказ fsync каталога после успешного rename; production-код
-его не устанавливает).
+`AtomicWriteResult` различает **installed** и **durability-confirmed**:
+
+```text
+rename(temp, target) succeeded → installed = true
+parent directory fsync succeeded → durabilityConfirmed = true
+```
+
+`installed=true` означает только, что target уже несёт новый контент в
+работающей системе; до успешного `fsync(parent directory)` rename может быть
+потерян при crash/power-loss. Поэтому главный инвариант:
+
+> Journal status нельзя переводить в resolved state (`Applied`, `RolledBack`,
+> discard provenance), если persistent system state, на котором основано это
+> решение, не имеет подтверждённой durability.
+
+`AtomicFileWriter::writeWithResult()`: pre-install failure →
+`installed=false, durabilityConfirmed=false` (persistent state точно не
+изменён); rename + провал fsync каталога (в т.ч. test seam) →
+`installed=true, durabilityConfirmed=false, installedTargetState` сохранён;
+успешный fsync → `durabilityConfirmed=true` (ошибка `close(dirFd)` после
+успешного fsync durability не отменяет).
+
+`AtomicFileWriter::ensureTargetDurable(path, error)` — recovery-барьер для
+уже наблюдаемого состояния (AFTER/BEFORE проекция, journal-документ,
+reverse-запись): открывает parent directory target, выполняет `fsync`, сам
+файл не изменяет (temp-файл всегда fsync'ится до rename, поэтому
+единственный потерянный barrier — directory entry).
+
+`FileHandler::FileSaveOutcome` содержит `durabilityConfirmed`;
+`FileSaveResult::Installed` возвращается только для
+durable-записи. `restoreSshConfigContentIfCurrentState()` возвращает
+структурированный `SshRestoreOutcome{installed, durable, preconditionFailed,
+installedState}` и не приравнивает `installed=true` к полному успеху;
+`ensureSshConfigDurableIfCurrentState()` завершает durability
+non-durable restore: сначала re-prove, что target всё ещё точно равен
+FIC-installed state (`targetStateMatches` — внешний replacement никогда не
+легитимизируется fsync'ом), затем fsync каталога. Компенсация считается
+полностью доказанной только при installed + durable + validate +
+runtime reconciliation; иначе provenance-запись остаётся активной (fail
+closed). Rollback BEFORE-recovery и reverse-запись отката также требуют
+durability-барьер до `NothingToDo`/`Success`.
+
+Для deterministic-тестов в `AtomicFileWriter` есть test-only seam
+`setDirectoryFsyncHookForTests` (заменяет post-rename fsync каталога И
+fsync внутри `ensureTargetDurable` для данного target-path; при simulated
+отказе `installed=true, durabilityConfirmed=false`; production-код его не
+устанавливает).
 
 `RollbackFailed` при повторном apply SSH fail closed (файл и journal не
 изменяются) — фактическое состояние не доказано, статус не «чинится» молча.
 
 ## Формат journal
+
+### Journal persistence и durability
+
+`MutationJournal::persist()` использует детализированный
+`AtomicFileWriter::writeWithResult()` и различает три исхода:
+
+* **Not installed** (новый документ не опубликован rename'ом): persistent
+  journal точно держит предыдущий документ, in-memory состояние безопасно
+  откатывается к pre-operation состоянию (strong in-memory consistency
+  действует только здесь), операции можно повторять;
+* **Installed + durable**: persist успешен;
+* **Installed + non-durable** (rename произошёл, fsync каталога не удался):
+  persistent state indeterminate относительно будущего crash, но текущий
+  target уже содержит новый документ. persist() сначала пытается
+  **прозрачно завершить durability**: re-prove
+  (`targetStateMatches(installedTargetState)`) + `ensureTargetDurable`;
+  успех → persist успешен. Если durability подтвердить нельзя (target
+  изменился, fsync снова failed) — журнал переходит в fail-closed состояние
+  `JournalHealth::Indeterminate`: in-memory состояние остаётся идентичным
+  установленному документу (никогда не откатывается к previous), все
+  мутирующие операции (`prepareMutation`, `setStatus`,
+  `setStatusWithMessage`, `discard`) отказываются, продолжать нормальную
+  работу с неизвестным persistent state запрещено. Только успешный
+  `load()` (перечитывает и re-parse текущий disk-документ) возвращает
+  журнал в `Healthy`. WAL/SQLite не вводятся: порядок
+  temp write → temp fsync → rename → parent fsync сохраняется.
 
 Путь: `FIC_MUTATION_JOURNAL_FILE` (по умолчанию
 `/opt/fic/db/mutation-journal.json`), настраивается как остальные product

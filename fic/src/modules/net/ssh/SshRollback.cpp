@@ -20,7 +20,7 @@ SshRuntime makeRuntime(const SshRollbackOptions& options) {
 
 } // namespace
 
-bool restoreSshConfigContentIfCurrentState(
+SshRestoreOutcome restoreSshConfigContentIfCurrentState(
     const std::filesystem::path& path,
     const std::string& content,
     const AtomicTargetState& expectedTargetState,
@@ -34,20 +34,51 @@ bool restoreSshConfigContentIfCurrentState(
     options.rejectSymlink = true;
     options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
     options.expectedTargetState = expectedTargetState;
+    SshRestoreOutcome outcome;
     AtomicWriteResult result;
     if (!AtomicFileWriter::writeWithResult(
             path.string(), content, options, &error, &result)) {
         if (result.installed) {
             // The replacement itself succeeded (rename published the target);
             // only a later durability step (directory fsync) failed. The
-            // restored content is in place: treat the restore as done and
-            // let the caller continue with validation / activation.
-            return true;
+            // restored content is in place in the running system, but it is
+            // NOT confirmed crash-durable: installed != durable. The caller
+            // must finish the durability before treating the compensation as
+            // proven.
+            outcome.installed = true;
+            outcome.durable = false;
+            outcome.installedState = result.installedTargetState;
+            return outcome;
         }
         if (result.preconditionFailed) {
+            outcome.preconditionFailed = true;
             error = "Файл изменился после FIC-записи; восстановление отменено, "
                     "внешнее содержимое сохранено: " + error;
         }
+        return outcome;
+    }
+    outcome.installed = true;
+    outcome.durable = result.durabilityConfirmed;
+    outcome.installedState = result.installedTargetState;
+    return outcome;
+}
+
+bool ensureSshConfigDurableIfCurrentState(
+    const std::filesystem::path& path,
+    const AtomicTargetState& installedState,
+    std::string& error) {
+    // Re-prove ownership before the barrier: the durability confirmation
+    // applies to the exact FIC-installed state, never to whatever happens to
+    // occupy the path now (an external replacement must not be fsynced into
+    // legitimacy).
+    if (!AtomicFileWriter::targetStateMatches(path.string(), installedState,
+                                              &error)) {
+        error = "Текущее состояние sshd_config не соответствует "
+                "FIC-installed state; durability не подтверждается: " + error;
+        return false;
+    }
+    if (!AtomicFileWriter::ensureTargetDurable(path.string(), &error)) {
+        error = "Durability-барьер sshd_config не выполнен: " + error;
         return false;
     }
     return true;
@@ -103,6 +134,23 @@ SshRollbackResult undoSshDirectiveMutation(
                              "sshd -T не принимает текущую конфигурацию; откат "
                              "не подтверждён, мутация остаётся активной: " +
                              validationError;
+            return result;
+        }
+        // Durability barrier: the observed BEFORE state may have been
+        // published by a reverse rename whose parent directory fsync never
+        // completed (crash between rename and fsync). The rollback may only
+        // be resolved once this state is confirmed crash-durable; otherwise
+        // NothingToDo would claim a resolved rollback the disk may not keep.
+        std::string barrierError;
+        if (!AtomicFileWriter::ensureTargetDurable(
+                options.configPath.string(), &barrierError)) {
+            result.nothingToDo = false;
+            result.message = "Состояние директивы " + undo.parameter +
+                             " уже соответствует состоянию до FIC-мутации, но "
+                             "durability состояния sshd_config не подтверждена "
+                             "(crash может потерять rename); откат не "
+                             "подтверждён, мутация остаётся активной: " +
+                             barrierError;
             return result;
         }
         const SshActivationResult activation = runtime.activateIfRunning();
@@ -176,6 +224,23 @@ SshRollbackResult undoSshDirectiveMutation(
     }
     const AtomicTargetState& installedState = *saveOutcome.installedTargetState;
 
+    // Post-install durability: a reverse write that succeeded through rename
+    // but failed its parent directory fsync is NOT a durable rollback. The
+    // durability is finished only when the target still is exactly the
+    // installed reverse state; otherwise the mutation stays active fail
+    // closed (a non-durable rename must never be reported as Success).
+    if (!saveOutcome.durabilityConfirmed) {
+        std::string barrierError;
+        if (!ensureSshConfigDurableIfCurrentState(options.configPath,
+                                                  installedState,
+                                                  barrierError)) {
+            result.message = "Запись отката sshd_config опубликована rename, "
+                             "но durability не подтверждена; мутация "
+                             "остаётся активной: " + barrierError;
+            return result;
+        }
+    }
+
     SshRuntime runtime = makeRuntime(options);
     const auto runBeforeRestore = [&options]() {
         if (options.beforeRestore) {
@@ -191,9 +256,17 @@ SshRollbackResult undoSshDirectiveMutation(
         // made after that write is never overwritten.
         std::string restoreError;
         runBeforeRestore();
-        const bool stateRestored = restoreSshConfigContentIfCurrentState(
+        const SshRestoreOutcome restored = restoreSshConfigContentIfCurrentState(
             options.configPath, preRollbackContent, installedState,
             restoreError);
+        bool stateRestored = restored.installed;
+        if (stateRestored && !restored.durable) {
+            // The restore rename succeeded but its durability did not: the
+            // compensation is only proven once the restored state is
+            // confirmed crash-durable.
+            stateRestored = ensureSshConfigDurableIfCurrentState(
+                options.configPath, *restored.installedState, restoreError);
+        }
         if (stateRestored) {
             result.message = "Откат SSH-мутации записан, но sshd -T не принял "
                              "результат; состояние до отката восстановлено: " +
@@ -211,9 +284,16 @@ SshRollbackResult undoSshDirectiveMutation(
     if (!activation.ok) {
         std::string restoreError;
         runBeforeRestore();
-        const bool stateRestored = restoreSshConfigContentIfCurrentState(
+        const SshRestoreOutcome restored = restoreSshConfigContentIfCurrentState(
             options.configPath, preRollbackContent, installedState,
             restoreError);
+        bool stateRestored = restored.installed;
+        if (stateRestored && !restored.durable) {
+            // The compensation must be durably proven before the restored
+            // configuration is activated and the rollback result reported.
+            stateRestored = ensureSshConfigDurableIfCurrentState(
+                options.configPath, *restored.installedState, restoreError);
+        }
         if (!stateRestored) {
             result.message = "Перезагрузка SSH-сервиса не удалась (" +
                              activation.message +

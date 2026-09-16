@@ -152,6 +152,30 @@ void cleanup(int& fd, const std::filesystem::path& path) {
     std::filesystem::remove(path, ignored);
 }
 
+// Durability barrier for a target directory: open the parent directory and
+// fsync it (close errors after a successful fsync do not un-confirm the
+// durability). Used both by the post-rename step of writeWithResult() and by
+// the recovery barrier ensureTargetDurable().
+bool fsyncParentDirectory(const std::filesystem::path& targetDir,
+                          std::string* errorMessage) {
+    int dirFd = ::open(targetDir.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dirFd < 0) {
+        setError(errorMessage, "could not open directory " + targetDir.string() + ": " + errnoMessage());
+        return false;
+    }
+    if (::fsync(dirFd) < 0) {
+        setError(errorMessage, "could not fsync directory " + targetDir.string() + ": " + errnoMessage());
+        closeFd(dirFd);
+        return false;
+    }
+    if (!closeFd(dirFd)) {
+        // The fsync itself succeeded: durability is confirmed even when the
+        // descriptor close reports an error afterwards.
+        setError(errorMessage, "could not close directory " + targetDir.string() + ": " + errnoMessage());
+    }
+    return true;
+}
+
 void markPreconditionFailure(AtomicWriteResult* result) {
     if (result != nullptr) {
         result->preconditionFailed = true;
@@ -336,18 +360,56 @@ bool AtomicFileWriter::writeWithResult(
         return false;
     }
 
-    int dirFd = ::open(targetDir.c_str(), O_RDONLY | O_DIRECTORY);
-    if (dirFd < 0) {
-        setError(errorMessage, "could not open directory " + targetDir.string() + ": " + errnoMessage());
+    if (!fsyncParentDirectory(targetDir, errorMessage)) {
         return false;
     }
-    if (::fsync(dirFd) < 0) {
-        setError(errorMessage, "could not fsync directory " + targetDir.string() + ": " + errnoMessage());
-        closeFd(dirFd);
+    if (result != nullptr) {
+        result->durabilityConfirmed = true;
+    }
+    return true;
+}
+
+bool AtomicFileWriter::ensureTargetDurable(const std::string& path,
+                                           std::string* errorMessage) {
+    // The test seam also replaces the barrier fsync, so recovery durability
+    // failures stay deterministic in tests (same target-path argument as the
+    // post-rename fsync of writeWithResult).
+    if (testDirectoryFsyncHook() && !testDirectoryFsyncHook()(path)) {
+        setError(errorMessage,
+                 "simulated directory fsync failure (test seam): " + path);
         return false;
     }
-    if (!closeFd(dirFd)) {
-        setError(errorMessage, "could not close directory " + targetDir.string() + ": " + errnoMessage());
+    const std::filesystem::path requestedPath(path);
+    // The target itself must stay a regular file: the barrier only confirms
+    // the directory entry of an already observed regular file.
+    struct stat info {};
+    if (::lstat(requestedPath.c_str(), &info) != 0 || !S_ISREG(info.st_mode)) {
+        setError(errorMessage, "could not stat regular file " + path + ": " +
+                                   errnoMessage());
+        return false;
+    }
+    std::error_code canonicalError;
+    const std::filesystem::path resolvedPath =
+        std::filesystem::canonical(requestedPath, canonicalError);
+    if (canonicalError) {
+        setError(errorMessage,
+                 "could not resolve file path " + path + ": " +
+                     canonicalError.message());
+        return false;
+    }
+    return fsyncParentDirectory(resolvedPath.parent_path(), errorMessage);
+}
+
+bool AtomicFileWriter::targetStateMatches(const std::string& path,
+                                          const AtomicTargetState& expected,
+                                          std::string* errorMessage) {
+    AtomicWriteOptions options;
+    options.expectedTargetState = expected;
+    if (!matchesExpectedTarget(std::filesystem::path(path), options)) {
+        setError(errorMessage,
+                 "target state does not match the expected FIC-installed "
+                 "state: " +
+                     path);
         return false;
     }
     return true;

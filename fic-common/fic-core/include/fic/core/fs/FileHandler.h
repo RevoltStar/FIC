@@ -57,7 +57,14 @@ public:
         // a later durability step (directory fsync) failed and result is
         // Failed. Callers must never treat installed==true as "file
         // unchanged": the system may already carry the new content.
+        // installed != durable: durability is proven only by
+        // durabilityConfirmed.
         bool installed = false;
+        // True only when the installed replacement was also confirmed
+        // durable by a successful fsync of the parent directory. An
+        // installed-but-not-durable state already carries the new content in
+        // the running system but may still be lost to a crash/power loss.
+        bool durabilityConfirmed = false;
         // True when the write was refused by the optimistic precondition
         // before anything was installed (nothing was replaced).
         bool preconditionFailed = false;
@@ -74,8 +81,10 @@ public:
     // anything when the file changed, Failed when the write failed — the
     // structured outcome distinguishes a pre-install failure (installed ==
     // false, nothing was replaced) from a post-rename durability failure
-    // (installed == true, the target already carries the new content and
-    // installedTargetState holds the exact installed state).
+    // (installed == true, durabilityConfirmed == false: the target already
+    // carries the new content and installedTargetState holds the exact
+    // installed state, but the rename is not crash-durable until the parent
+    // directory fsync succeeds).
     FileSaveOutcome saveFileIfUnchanged(std::string& error);
 
     // Target state (identity, metadata, content) captured by the last load,

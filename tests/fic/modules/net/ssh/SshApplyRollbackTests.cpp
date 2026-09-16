@@ -204,6 +204,7 @@ public:
                         : runtime->appliedPort;
                 return sshSuccess("port " + port + "\n"
                                   "maxauthtries 3\n"
+                                  "permitrootlogin no\n"
                                   "pubkeyauthentication yes\n");
             }
             if (std::find(arguments.begin(), arguments.end(), "is-active") !=
@@ -937,6 +938,9 @@ void testPreparedAfterCrashRecoveryValidatesReloadsAndCommits() {
     tree.writeConfig(after);
     tree.writePolicyValue("2222");
     tree.runtime()->serviceActive = true;
+    // The recovery policy postcondition (verifyPolicyValue) is the first
+    // sshd -T call and must already observe the recorded applied value.
+    tree.runtime()->appliedFromCall = 1;
     JournalOverride overrideGuard(tree.journalPath());
     recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
 
@@ -960,6 +964,7 @@ void testPreparedAfterRecoveryReloadFailureKeepsPrepared() {
     tree.writeConfig(after);
     tree.writePolicyValue("2222");
     tree.runtime()->serviceActive = true;
+    tree.runtime()->appliedFromCall = 1;
     tree.runtime()->reloadFails = true;
     JournalOverride overrideGuard(tree.journalPath());
     recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
@@ -981,6 +986,7 @@ void testPreparedAfterRecoveryCommitFailureKeepsPreparedAndRetries() {
     tree.writeConfig(after);
     tree.writePolicyValue("2222");
     tree.runtime()->serviceActive = true;
+    tree.runtime()->appliedFromCall = 1;
     JournalOverride overrideGuard(tree.journalPath());
     recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
 
@@ -1107,6 +1113,7 @@ void testPreparedRecoveryWithChangedDesiredValueFailsClosed() {
         "Port 2222\nMatch User backup\n    PermitRootLogin yes\n";
     tree.writeConfig(after);
     tree.writePolicyValue("2200"); // changed while the mutation was prepared
+    tree.runtime()->appliedFromCall = 1;
     JournalOverride overrideGuard(tree.journalPath());
     recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
 
@@ -1287,6 +1294,344 @@ void testRollbackPostInstallDurabilityFailureStaysTransactional() {
             "the rollback write must still have installed the BEFORE state");
 }
 
+const PolicyRef kSshRootLoginPolicy{"NET", "SshEdit", "ssh_root_login"};
+
+// Records a Prepared SSH mutation for the port resource with an arbitrary
+// recorded parameter/undo payload (the journal lookup is resource-based, so
+// recovery classification and verification run against the recorded payload).
+void recordPreparedDirective(SshApplyTree& tree,
+                             const std::string& parameter,
+                             const std::string& beforeLine,
+                             const std::string& afterLine,
+                             const std::string& appliedValue) {
+    MutationId id = 0;
+    std::string error;
+    UndoRestoreSshDirective undo;
+    undo.parameter = parameter;
+    undo.appliedValue = appliedValue;
+    SshDirectiveOccurrenceMutation edit;
+    if (!beforeLine.empty()) {
+        edit.beforeLine = std::string(beforeLine);
+    }
+    edit.afterLine = afterLine;
+    undo.occurrences = {edit};
+    require(recordPreparedMutation(
+                kSshPortPolicy,
+                "ssh:" + tree.configPath().string() + ":Port",
+                UndoAction{MutationBackend::Ssh, undo},
+                id, error),
+            error);
+}
+
+// Deterministic durability-barrier seam: the first `failures` directory
+// fsyncs of the sshd_config path fail, later ones succeed. Journal writes are
+// unaffected (the hook is scoped to the config path).
+class ConfigFsyncFailure {
+public:
+    ConfigFsyncFailure(const std::filesystem::path& configPath, int failures) {
+        const std::string path = configPath.string();
+        auto remaining = std::make_shared<int>(failures);
+        AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [path, remaining](const std::string& targetPath) {
+                if (targetPath != path) {
+                    return true;
+                }
+                if (*remaining > 0) {
+                    --*remaining;
+                    return false;
+                }
+                return true;
+            });
+    }
+
+    ~ConfigFsyncFailure() {
+        AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    }
+};
+
+void testPreparedAfterEffectiveMismatchFailsClosed() {
+    SshApplyTree tree;
+    const std::string after =
+        "Port 2222\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(after);
+    tree.writePolicyValue("2222");
+    // The sshd -T effective state does not match the recorded applied value:
+    // the prepared file state alone proves nothing about the policy.
+    tree.runtime()->appliedPort = "2200";
+    tree.runtime()->appliedFromCall = 1;
+    JournalOverride overrideGuard(tree.journalPath());
+    recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
+
+    auto policy = tree.makePolicy();
+    require(!policy->apply(),
+            "a Prepared AFTER state must satisfy the recorded policy "
+            "postcondition before it may be committed");
+
+    require(readFile(tree.configPath()) == after,
+            "the file must stay unchanged during recovery");
+    require(tree.runtime()->reloadCalls == 0,
+            "no reload may run before the policy postcondition is proven");
+    require(singleRecordStatus(tree) == MutationStatus::Prepared,
+            "the Prepared record must stay active");
+}
+
+void testPreparedAfterUnsafeConditionalOverrideFailsClosed() {
+    SshApplyTree tree;
+    // A Match-block override of the recorded parameter weakens the policy:
+    // the scalar effective value matches, but the policy postcondition
+    // (conditional override audit) must still refuse the commit.
+    const std::string after =
+        "PermitRootLogin no\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(after);
+    tree.writePolicyValue("2222");
+    tree.runtime()->appliedFromCall = 1;
+    JournalOverride overrideGuard(tree.journalPath());
+    recordPreparedDirective(tree, "PermitRootLogin", std::string(),
+                            "PermitRootLogin no", "no");
+
+    auto policy = tree.makePolicy();
+    require(!policy->apply(),
+            "an unsafe conditional override must fail the Prepared recovery");
+
+    require(readFile(tree.configPath()) == after,
+            "the file must stay unchanged during recovery");
+    require(tree.runtime()->reloadCalls == 0,
+            "no reload may run before the policy postcondition is proven");
+    require(singleRecordStatus(tree) == MutationStatus::Prepared,
+            "the Prepared record must stay active");
+}
+
+void testPreparedAfterDurabilityBarrierFailsThenRetries() {
+    SshApplyTree tree;
+    const std::string after =
+        "Port 2222\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(after);
+    tree.writePolicyValue("2222");
+    tree.runtime()->serviceActive = true;
+    tree.runtime()->appliedFromCall = 1;
+    JournalOverride overrideGuard(tree.journalPath());
+    recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
+
+    {
+        // The AFTER state may have been published by a rename whose parent
+        // directory fsync never completed: the commit must wait for the
+        // durability barrier.
+        ConfigFsyncFailure failure(tree.configPath(), 1000);
+        auto policy = tree.makePolicy();
+        require(!policy->apply(),
+                "a failed durability barrier must fail the Prepared recovery");
+        require(tree.runtime()->reloadCalls == 0,
+                "no reload may run before the durability barrier succeeds");
+        require(singleRecordStatus(tree) == MutationStatus::Prepared,
+                "the Prepared record must stay active");
+    }
+
+    // Retry once the durability becomes confirmable: verifyPolicyValue,
+    // durability barrier, reload, commit Prepared → Applied.
+    auto policy = tree.makePolicy();
+    require(policy->apply(), "the retry must complete the recovery");
+    require(tree.runtime()->reloadCalls == 1,
+            "the recovered mutation must be reloaded before the commit");
+    require(singleRecordStatus(tree) == MutationStatus::Applied,
+            "the retry must commit Prepared → Applied");
+}
+
+void testPreparedBeforeDurabilityBarrierFailsThenRetries() {
+    SshApplyTree tree;
+    const std::string before =
+        "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(before);
+    tree.writePolicyValue("2222");
+    tree.runtime()->serviceActive = true;
+    // Two apply attempts consume sshd -T calls: the failed attempt validates
+    // once, the retry validates again, the compliance pre-check must still
+    // observe the BEFORE value, and only the post-write verification observes
+    // the new value.
+    tree.runtime()->appliedFromCall = 4;
+    JournalOverride overrideGuard(tree.journalPath());
+    recordPortPrepared(tree, "Port 22", "Port 2222", "2222");
+
+    {
+        ConfigFsyncFailure failure(tree.configPath(), 1000);
+        auto policy = tree.makePolicy();
+        require(!policy->apply(),
+                "a failed durability barrier must keep the stale Prepared "
+                "record unresolved");
+        require(readFile(tree.configPath()) == before,
+                "no fresh apply may run before the barrier succeeds");
+        require(tree.runtime()->reloadCalls == 0,
+                "no reload may run before the durability barrier succeeds");
+        require(singleRecordStatus(tree) == MutationStatus::Prepared,
+                "the Prepared record must stay active and undiscarded");
+    }
+
+    // Retry: barrier → activate → discard → fresh apply.
+    auto policy = tree.makePolicy();
+    require(policy->apply(), "the retry must reconcile and apply freshly");
+    const std::string diagContent = readFile(tree.configPath());
+    MutationJournal diagJournal(tree.journalPath());
+    std::string diagError;
+    require(diagJournal.load(diagError), diagError);
+    std::string diagDump;
+    for (const MutationRecord& record : diagJournal.records()) {
+        diagDump += mutationStatusToString(record.status) + " ";
+    }
+    require(diagContent ==
+                "Port 2222\nMatch User backup\n    PermitRootLogin yes\n",
+            "the fresh apply must produce the desired AFTER state, got: '" +
+                diagContent + "' tCalls=" +
+                std::to_string(tree.runtime()->tCalls) + " reloadCalls=" +
+                std::to_string(tree.runtime()->reloadCalls) + " journal=[" +
+                diagDump + "]");
+    require(singleRecordStatus(tree) == MutationStatus::Applied,
+            "the fresh mutation must be committed");
+}
+
+void testRollbackBeforeRecoveryDurabilityBarrierFailsClosed() {
+    SshApplyTree tree;
+    const std::string before =
+        "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(before);
+    tree.writePolicyValue("2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy();
+    require(policy->apply(), "the initial apply must succeed");
+
+    // Simulate a crash right after the reverse rename: the file already
+    // shows the BEFORE state, but the rename was never fsynced.
+    tree.writeConfig(before);
+
+    {
+        ConfigFsyncFailure failure(tree.configPath(), 1000);
+        const RollbackReport report = rollbackPolicyBeforeDisable(
+            kSshPortPolicy, "Port", tree.rollbackDeps());
+        require(report.status != RollbackStatus::Success &&
+                    report.status != RollbackStatus::NothingToDo,
+                report.message);
+        require(readFile(tree.configPath()) == before,
+                "the rollback recovery must not rewrite the file");
+        MutationJournal journal(tree.journalPath());
+        std::string error;
+        require(journal.load(error), error);
+        require(journal.records().size() == 1 &&
+                    journal.records().front().isActive(),
+                "the rollback must stay unresolved without the barrier");
+    }
+
+    // Retry once the durability becomes confirmable.
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.rollbackDeps());
+    require(report.status == RollbackStatus::NothingToDo, report.message);
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::RolledBack,
+            "the resolved rollback must mark the record RolledBack");
+}
+
+void testRollbackReverseWriteDurabilityBarrierFailsClosed() {
+    SshApplyTree tree;
+    const std::string original =
+        "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+    tree.writeConfig(original);
+    tree.writePolicyValue("2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy();
+    require(policy->apply(), "the initial apply must succeed");
+
+    {
+        // The reverse write installs through rename, but the directory fsync
+        // is unconfirmable: the rollback must NOT be reported as Success.
+        ConfigFsyncFailure failure(tree.configPath(), 1000);
+        const RollbackReport report = rollbackPolicyBeforeDisable(
+            kSshPortPolicy, "Port", tree.rollbackDeps());
+        require(report.status != RollbackStatus::Success,
+                "a non-durable reverse write must not be a resolved rollback: " +
+                    report.message);
+        require(readFile(tree.configPath()) == original,
+                "the reverse rename must still have installed the BEFORE state");
+        MutationJournal journal(tree.journalPath());
+        std::string error;
+        require(journal.load(error), error);
+        require(journal.records().size() == 1 &&
+                    journal.records().front().isActive(),
+                "the mutation must stay active without the durability proof");
+    }
+
+    // Retry: the reverse state is already BEFORE; the recovery now proves the
+    // durability and resolves the rollback.
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.rollbackDeps());
+    require(report.status == RollbackStatus::NothingToDo, report.message);
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::RolledBack,
+            "the resolved rollback must mark the record RolledBack");
+}
+
+void testApplyCompensationDurabilityGate() {
+    // Variant 1: the compensation restore rename succeeds but its parent
+    // directory fsync is unconfirmable — the new Prepared record must NOT be
+    // discarded yet.
+    {
+        SshApplyTree tree;
+        const std::string original =
+            "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+        tree.writeConfig(original);
+        tree.writePolicyValue("2222");
+        JournalOverride overrideGuard(tree.journalPath());
+
+        ConfigFsyncFailure failure(tree.configPath(), 1000);
+        auto policy = tree.makePolicy();
+        require(!policy->apply(),
+                "a non-durable compensation must fail the apply");
+
+        require(readFile(tree.configPath()) == original,
+                "the compensation rename must have restored the original "
+                "content");
+        MutationJournal journal(tree.journalPath());
+        std::string error;
+        require(journal.load(error), error);
+        require(journal.records().size() == 1 &&
+                    journal.records().front().status ==
+                        MutationStatus::Prepared,
+                "an unproven compensation must keep the new Prepared record");
+    }
+
+    // Variant 2: the compensation durability barrier later succeeds — the
+    // compensation becomes fully proven (restore + durability + validate +
+    // reload) and the new Prepared record is discarded.
+    {
+        SshApplyTree tree;
+        const std::string original =
+            "Port 22\nMatch User backup\n    PermitRootLogin yes\n";
+        tree.writeConfig(original);
+        tree.writePolicyValue("2222");
+        JournalOverride overrideGuard(tree.journalPath());
+
+        // Config fsyncs: apply write fails, compensation restore fails, the
+        // durability barrier succeeds.
+        ConfigFsyncFailure failure(tree.configPath(), 2);
+        auto policy = tree.makePolicy();
+        require(!policy->apply(),
+                "a post-install durability failure must fail the apply");
+
+        require(readFile(tree.configPath()) == original,
+                "the proven compensation must keep the original content");
+        MutationJournal journal(tree.journalPath());
+        std::string error;
+        require(journal.load(error), error);
+        require(journal.records().empty(),
+                "a fully proven compensation must discard the new Prepared "
+                "record");
+    }
+}
+
 void testAllFourSshPoliciesAreRollbackWired() {
     SshApplyTree tree;
     const std::vector<std::pair<std::string, std::string>> expected = {
@@ -1415,6 +1760,20 @@ int main() {
          testApplyPostInstallDurabilityFailureCompensates},
         {"rollback post-install durability failure stays transactional",
          testRollbackPostInstallDurabilityFailureStaysTransactional},
+        {"prepared after effective mismatch fails closed",
+         testPreparedAfterEffectiveMismatchFailsClosed},
+        {"prepared after unsafe conditional override fails closed",
+         testPreparedAfterUnsafeConditionalOverrideFailsClosed},
+        {"prepared after durability barrier fails then retries",
+         testPreparedAfterDurabilityBarrierFailsThenRetries},
+        {"prepared before durability barrier fails then retries",
+         testPreparedBeforeDurabilityBarrierFailsThenRetries},
+        {"rollback before recovery durability barrier fails closed",
+         testRollbackBeforeRecoveryDurabilityBarrierFailsClosed},
+        {"rollback reverse write durability barrier fails closed",
+         testRollbackReverseWriteDurabilityBarrierFailsClosed},
+        {"apply compensation durability gate",
+         testApplyCompensationDurabilityGate},
         {"all four ssh policies are rollback wired",
          testAllFourSshPoliciesAreRollbackWired}
     };

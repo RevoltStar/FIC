@@ -51,16 +51,47 @@ SshRollbackResult undoSshDirectiveMutation(
     const SshRollbackOptions& options,
     const fic::rollback::UndoRestoreSshDirective& undo);
 
+// Outcome of a conditional compensation restore. installed means the
+// replacement was published by rename(2) (the system already carries the
+// restored content); durable means the replacement is additionally confirmed
+// crash-durable by a successful parent directory fsync — installed !=
+// durable. A proven compensation requires BOTH.
+struct SshRestoreOutcome {
+    bool installed = false;
+    bool durable = false;
+    // True when the restore was refused because the target is no longer the
+    // exact expected FIC-installed state: an external modification was
+    // preserved and nothing was replaced.
+    bool preconditionFailed = false;
+    // Present only when installed == true: the exact restored target state
+    // (the durability-finishing anchor).
+    std::optional<AtomicTargetState> installedState;
+};
+
 // Conditional content restore shared by apply-time and rollback-time
 // compensation writes. The expectedTargetState must be the last proven
 // FIC-installed state of the target (never a fresh capture): the replacement
 // is performed only when the target still is exactly that state (identity,
 // metadata, content), so an external modification made after the FIC write is
 // never overwritten. Refuses symlinks, preserves existing file metadata.
-bool restoreSshConfigContentIfCurrentState(
+// A non-durable restore (rename succeeded, parent directory fsync failed) is
+// reported as installed=true / durable=false: the caller must finish the
+// durability (see ensureSshConfigDurableIfCurrentState) before treating the
+// compensation as proven.
+SshRestoreOutcome restoreSshConfigContentIfCurrentState(
     const std::filesystem::path& path,
     const std::string& content,
     const AtomicTargetState& expectedTargetState,
+    std::string& error);
+
+// Confirms the crash-durability of an already installed FIC state: first
+// re-proves that the target still is exactly the installed state (a mere
+// directory fsync must never legitimize an externally replaced target), then
+// fsyncs the parent directory. Returns false (fail closed) when the target
+// drifted or the durability barrier fails.
+bool ensureSshConfigDurableIfCurrentState(
+    const std::filesystem::path& path,
+    const AtomicTargetState& installedState,
     std::string& error);
 
 #endif // SSHROLLBACK_H

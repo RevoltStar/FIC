@@ -132,8 +132,10 @@ FileHandler::FileSaveOutcome FileHandler::saveFileIfUnchanged(
         // Propagate the installation outcome even on failure: a post-rename
         // durability error means the target was already replaced, and the
         // caller must be able to compensate using the exact installed state
-        // ("post-rename error != pre-install failure").
+        // ("post-rename error != pre-install failure"). Durability stays a
+        // separate flag: installed != durable.
         outcome.installed = result.installed;
+        outcome.durabilityConfirmed = result.durabilityConfirmed;
         outcome.preconditionFailed = result.preconditionFailed;
         outcome.installedTargetState = result.installedTargetState;
         outcome.result = result.preconditionFailed ? FileSaveResult::RefusedChanged
@@ -142,6 +144,7 @@ FileHandler::FileSaveOutcome FileHandler::saveFileIfUnchanged(
     }
     outcome.result = FileSaveResult::Installed;
     outcome.installed = true;
+    outcome.durabilityConfirmed = result.durabilityConfirmed;
     outcome.installedTargetState = result.installedTargetState;
     return outcome;
 }

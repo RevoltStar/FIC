@@ -49,6 +49,13 @@ struct AtomicWriteOptions {
 
 struct AtomicWriteResult {
     bool installed = false;
+    // True only when the replacement was published by rename(2) AND its
+    // durability was confirmed by a successful fsync of the parent
+    // directory. installed alone means the target already carries the new
+    // content in the running system, but the rename can still be lost to a
+    // crash/power loss until the parent directory fsync succeeds —
+    // installed != durable.
+    bool durabilityConfirmed = false;
     // Set when the write was refused because the target no longer matches the
     // expected identity/state precondition. Nothing was replaced in that case.
     bool preconditionFailed = false;
@@ -77,12 +84,33 @@ public:
                                 AtomicWriteResult* result);
 
     // Test-only deterministic seam: when set, it replaces the real directory
-    // fsync performed after a successful rename of the given target. Returning
-    // false simulates a durability failure AFTER the target was installed
-    // (installed=true semantics), without relying on real filesystem faults.
-    // Production code must never set the hook.
+    // fsync performed after a successful rename of the given target AND the
+    // directory fsync performed by ensureTargetDurable() for the same path.
+    // Returning false simulates a durability failure AFTER the target was
+    // installed (installed=true semantics), without relying on real
+    // filesystem faults. Production code must never set the hook.
     static void setDirectoryFsyncHookForTests(
         std::function<bool(const std::string& targetPath)> hook);
+
+    // Confirms the durability of a target that was already observed on disk:
+    // fsyncs the parent directory WITHOUT touching the file itself. This is
+    // the recovery barrier for a state (for example a config AFTER/BEFORE
+    // projection or a journal document) that may have been published by a
+    // rename(2) whose parent directory fsync never completed (crash between
+    // rename and fsync): the observed content proves nothing about power-loss
+    // durability until the directory entry is fsynced. The temp file is
+    // always fsynced before rename by writeWithResult(), so the parent
+    // directory is the only missing barrier here.
+    static bool ensureTargetDurable(const std::string& path,
+                                    std::string* errorMessage = nullptr);
+
+    // True when the target currently IS exactly the given captured state
+    // (identity, metadata, exact content; symlinks refused). Used to re-prove
+    // FIC ownership before finishing durability: a mere directory fsync must
+    // never legitimize an externally replaced target.
+    static bool targetStateMatches(const std::string& path,
+                                   const AtomicTargetState& expected,
+                                   std::string* errorMessage = nullptr);
 
     // Captures an optimistic snapshot of a regular file: identity, metadata
     // and exact content read through the same descriptor. Refuses symlinks

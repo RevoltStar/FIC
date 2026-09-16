@@ -437,6 +437,10 @@ bool MutationJournal::load(std::string& error) {
     records_ = std::move(parsed);
     nextId_ = parsedNextId;
     loaded_ = true;
+    // A successful load re-parsed the current disk document: an ambiguous
+    // earlier persistence is now resolved against the actual persistent
+    // state, so the journal is usable again.
+    health_ = JournalHealth::Healthy;
     error.clear();
     return true;
 }
@@ -450,7 +454,7 @@ MutationRecord* MutationJournal::find(MutationId id) {
     return nullptr;
 }
 
-bool MutationJournal::persist(std::string& error) {
+MutationJournal::PersistOutcome MutationJournal::persist(std::string& error) {
     json document;
     document["schema_version"] = kSchemaVersion;
     document["next_id"] = nextId_;
@@ -464,8 +468,34 @@ bool MutationJournal::persist(std::string& error) {
     options.createIfMissing = true;
     options.rejectSymlink = true;
     options.fileMode = 0600;
-    return AtomicFileWriter::write(path_.string(), document.dump(2) + "\n",
-                                   options, &error);
+    AtomicWriteResult result;
+    if (!AtomicFileWriter::writeWithResult(path_.string(), document.dump(2) + "\n",
+                                           options, &error, &result)) {
+        if (!result.installed) {
+            // The new document was never published by rename: the persistent
+            // journal definitely still holds the previous content, so the
+            // caller may safely restore the in-memory state.
+            return PersistOutcome::NotInstalled;
+        }
+        // Post-rename durability failure: the journal target already carries
+        // the new document, but the rename is not crash-durable yet. Finish
+        // the durability transparently instead of reporting an ambiguous
+        // failure (memory=old / disk=new must never continue as normal).
+        std::string barrierError;
+        if (result.installedTargetState.has_value() &&
+            AtomicFileWriter::targetStateMatches(
+                path_.string(), *result.installedTargetState, &barrierError) &&
+            AtomicFileWriter::ensureTargetDurable(path_.string(),
+                                                  &barrierError)) {
+            return PersistOutcome::Persisted;
+        }
+        error = "Mutation journal записан (rename), но durability "
+                "подтвердить не удалось; journal переведён в состояние "
+                "Indeterminate (fail closed до успешного reload): " +
+                barrierError;
+        return PersistOutcome::Indeterminate;
+    }
+    return PersistOutcome::Persisted;
 }
 
 bool MutationJournal::prepareMutation(MutationRecord record,
@@ -473,6 +503,12 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                                       std::string& error) {
     if (!loaded_) {
         error = "Mutation journal не загружен";
+        return false;
+    }
+    if (health_ == JournalHealth::Indeterminate) {
+        error = "Mutation journal в состоянии Indeterminate: результат "
+                "последней persist-операции не был надёжно завершён; "
+                "требуется успешный reload journal";
         return false;
     }
     if (record.policy.moduleName.empty() || record.policy.policyName.empty()) {
@@ -497,13 +533,23 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             existing.error.clear();
             existing.updatedAtEpoch = currentEpochSeconds();
             id = existing.id;
-            if (!persist(error)) {
-                // Strong in-memory consistency: the observable journal state
-                // must stay logically identical to the pre-operation state.
+            const PersistOutcome outcome = persist(error);
+            if (outcome == PersistOutcome::Persisted) {
+                return true;
+            }
+            if (outcome == PersistOutcome::NotInstalled) {
+                // Pre-install failure: the persistent journal definitely
+                // still holds the previous document, so the in-memory state
+                // is safely restored (strong in-memory consistency holds).
                 existing = previous;
                 return false;
             }
-            return true;
+            // Indeterminate: the new document already occupies the journal
+            // target. Restoring the previous in-memory state would contradict
+            // the installed document; the new state is kept and the journal
+            // becomes fail closed until a successful load().
+            health_ = JournalHealth::Indeterminate;
+            return false;
         }
     }
 
@@ -516,14 +562,22 @@ bool MutationJournal::prepareMutation(MutationRecord record,
     id = record.id;
     nextId_ += 1;
     records_.push_back(std::move(record));
-    if (!persist(error)) {
+    const PersistOutcome outcome = persist(error);
+    if (outcome == PersistOutcome::Persisted) {
+        return true;
+    }
+    if (outcome == PersistOutcome::NotInstalled) {
         // Do not keep an unpersisted in-memory record: the caller must see the
-        // failure and refuse the system mutation (fail closed).
+        // failure and refuse the system mutation (fail closed). The persistent
+        // journal definitely still holds the previous document.
         records_.pop_back();
         nextId_ -= 1;
         return false;
     }
-    return true;
+    // Indeterminate: keep the new record (it matches the installed document)
+    // and poison the journal.
+    health_ = JournalHealth::Indeterminate;
+    return false;
 }
 
 bool MutationJournal::setStatus(MutationId id, MutationStatus status,
@@ -538,6 +592,12 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
         error = "Mutation journal не загружен";
         return false;
     }
+    if (health_ == JournalHealth::Indeterminate) {
+        error = "Mutation journal в состоянии Indeterminate: результат "
+                "последней persist-операции не был надёжно завершён; "
+                "требуется успешный reload journal";
+        return false;
+    }
     MutationRecord* record = find(id);
     if (record == nullptr) {
         error = "Mutation record не найден: " + std::to_string(id);
@@ -547,14 +607,23 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     record->status = status;
     record->error = message;
     record->updatedAtEpoch = currentEpochSeconds();
-    if (!persist(error)) {
-        // Strong in-memory consistency: on persist failure the journal keeps
-        // its pre-operation logical state, so retries still see the original
+    const PersistOutcome outcome = persist(error);
+    if (outcome == PersistOutcome::Persisted) {
+        return true;
+    }
+    if (outcome == PersistOutcome::NotInstalled) {
+        // Pre-install persist failure: the persistent journal definitely
+        // still holds the previous document, so the journal keeps its
+        // pre-operation logical state and retries still see the original
         // active record (fail closed).
         *record = previous;
         return false;
     }
-    return true;
+    // Indeterminate: the new document already occupies the journal target.
+    // Keep the in-memory record identical to the installed document and fail
+    // closed until a successful load() re-parses the disk.
+    health_ = JournalHealth::Indeterminate;
+    return false;
 }
 
 bool MutationJournal::discard(MutationId id, std::string& error) {
@@ -562,21 +631,35 @@ bool MutationJournal::discard(MutationId id, std::string& error) {
         error = "Mutation journal не загружен";
         return false;
     }
+    if (health_ == JournalHealth::Indeterminate) {
+        error = "Mutation journal в состоянии Indeterminate: результат "
+                "последней persist-операции не был надёжно завершён; "
+                "требуется успешный reload journal";
+        return false;
+    }
     for (std::size_t index = 0; index < records_.size(); ++index) {
         if (records_[index].id == id) {
             const MutationRecord removed = records_[index];
             records_.erase(records_.begin() +
                            static_cast<std::ptrdiff_t>(index));
-            if (!persist(error)) {
+            const PersistOutcome outcome = persist(error);
+            if (outcome == PersistOutcome::Persisted) {
+                return true;
+            }
+            if (outcome == PersistOutcome::NotInstalled) {
                 // Restore the record at its original position: the journal
                 // must stay logically identical (including record ordering)
-                // to the state before the failed operation.
+                // to the state before the failed operation; the persistent
+                // journal definitely still holds the previous document.
                 records_.insert(records_.begin() +
                                     static_cast<std::ptrdiff_t>(index),
                                 removed);
                 return false;
             }
-            return true;
+            // Indeterminate: keep the removal (it matches the installed
+            // document) and fail closed until a successful load().
+            health_ = JournalHealth::Indeterminate;
+            return false;
         }
     }
     error = "Mutation record не найден: " + std::to_string(id);
