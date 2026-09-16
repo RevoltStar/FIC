@@ -31,8 +31,13 @@ public:
     // journal-backed. tryGet() attempts a lazy recovery through the
     // durability-proven load(); if that fails (for example the directory
     // fsync is still impossible, or the previously known journal vanished)
-    // it returns nullptr with an explicit error: a successful reload or a
-    // daemon restart is then required.
+    // it returns nullptr with an explicit error: a successful durable
+    // reload/recovery of persistent journal state is then required. The
+    // initial open uses the witness-aware initializeOrLoad(): a journal
+    // missing while its persistent initialization witness exists is
+    // provenance loss and fails closed even after a daemon restart —
+    // manual provenance recovery is then required (a restart is NOT a
+    // recovery mechanism).
     MutationJournal* tryGet(std::string& error);
 
     void setOverridePath(std::filesystem::path path);

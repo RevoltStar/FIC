@@ -36,12 +36,12 @@ MutationJournal* DaemonMutationJournal::open(std::string& error) {
         // usable() after all recovery actions, never merely because
         // load() returned true.
         std::string reloadError;
-        if (journal_->load(reloadError) && journal_->usable()) {
+        if (journal_->initializeOrLoad(reloadError) && journal_->usable()) {
             error.clear();
             return journal_.get();
         }
-        error = "Mutation journal is Indeterminate; successful reload or "
-                "daemon restart is required";
+        error = "Mutation journal is Indeterminate; successful durable "
+                "reload/recovery of persistent journal state is required";
         if (!reloadError.empty()) {
             error += ": " + reloadError;
         }
@@ -57,7 +57,11 @@ MutationJournal* DaemonMutationJournal::open(std::string& error) {
         path = fic::core::FicRuntimePaths::get().mutationJournalFile;
     }
     auto journal = std::make_unique<MutationJournal>(std::move(path));
-    if (!journal->load(error) || !journal->usable()) {
+    // Witness-aware initialization: the ONLY operational initialization path
+    // (state table journal/witness, including migration and provenance-loss
+    // detection). A journal that is not usable() afterwards must never become
+    // the process-wide operational journal.
+    if (!journal->initializeOrLoad(error) || !journal->usable()) {
         // Fail closed: a broken journal must not silently lose provenance,
         // and a journal that is not usable() after load must never become
         // the process-wide operational journal.

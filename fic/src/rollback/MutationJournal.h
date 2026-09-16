@@ -18,7 +18,9 @@ namespace fic::rollback {
 //   * the document carries a schema_version and is rejected (fail closed) on
 //     unknown schema versions, unknown enum values or structurally broken
 //     content;
-//   * a missing file is an empty journal; a malformed file, a file that cannot
+//   * a missing file is an empty journal ONLY for a never-loaded fresh
+//     object without an initialization witness (see initializeOrLoad); a
+//     malformed file, a file that cannot
 //     be opened/read, and an existing zero-byte file are load errors and
 //     callers must refuse rollback rather than guess;
 //   * pre-install persist failure (the new document was NOT published by
@@ -48,8 +50,15 @@ enum class JournalHealth {
 class MutationJournal {
 public:
     static constexpr std::uint32_t kSchemaVersion = 1;
+    // Independent version identifier of the initialization witness document;
+    // the journal JSON schema itself is unchanged.
+    static constexpr std::uint32_t kWitnessSchemaVersion = 1;
 
     explicit MutationJournal(std::filesystem::path path);
+
+    // Companion witness path: <journal path>.initialized. Derived
+    // deterministically from the journal path; no extra path plumbing.
+    std::filesystem::path witnessPath() const;
 
     // Loads the journal from disk. Must be called before mutations. The load
     // is snapshot-bound and durability-proven: the exact current document is
@@ -63,7 +72,34 @@ public:
     // false) while records_/nextId_ stay untouched for diagnostics; a
     // successful load re-parses the current disk document and restores
     // Healthy.
+    //
+    // RAW PRIMITIVE (tests/diagnostics and live-object reload only): this
+    // method knows nothing about the initialization witness. Operational
+    // startup MUST use initializeOrLoad(); a daemon facade must never use
+    // load() to bypass the witness on a fresh object.
     bool load(std::string& error);
+
+    // Witness-aware lifecycle entrypoint — the ONLY entrypoint operational
+    // facades (DaemonMutationJournal) may use for initialization. Handles the
+    // persistent (journal, witness) state table:
+    //   J missing + W missing → virgin bootstrap: durable empty journal,
+    //                           then durable witness, then load/prove;
+    //   J exists + W missing  → migration / interrupted bootstrap: prove the
+    //                           journal, create a durable witness, only then
+    //                           operational (journal never rewritten);
+    //   J exists + W valid    → normal load (both proven before usable);
+    //   J exists + W invalid  → fail closed, journal unchanged, no witness
+    //                           repair (a malformed witness is a persistent
+    //                           state anomaly);
+    //   J missing + W valid   → provenance loss: fail closed ("manual
+    //                           provenance recovery is required");
+    //   J missing + W invalid → fail closed (persistent-state anomaly).
+    // For a previously loaded (live) object this delegates to load(): the
+    // witness question was already answered at initialization and a vanished
+    // journal must never re-bootstrap (follow-up 6 semantics).
+    // Any failure poisons the object (Indeterminate, usable() == false) while
+    // records_/nextId_ stay untouched for diagnostics.
+    bool initializeOrLoad(std::string& error);
     bool loaded() const { return loaded_; }
     const std::vector<MutationRecord>& records() const { return records_; }
     JournalHealth health() const { return health_; }
@@ -92,6 +128,14 @@ public:
     static void setLoadAfterCaptureHookForTests(std::function<void()> hook);
 
 private:
+    // Witness-aware initialization of a fresh (never-loaded) object:
+    // implements the persistent (journal, witness) state table.
+    bool initializeFresh(std::string& error);
+    // Virgin bootstrap: durable empty journal, then durable witness, then
+    // load/prove (journal-before-witness ordering keeps a crash between the
+    // two phases recoverable through the migration path).
+    bool bootstrapVirgin(std::string& error);
+
     enum class PersistOutcome {
         // The new document was installed and its durability confirmed.
         Persisted,
@@ -109,6 +153,16 @@ private:
     // loaded_, so the previous in-memory state stays available for
     // diagnostics and recovery while no operational decision may use it.
     bool failLoad(std::string message, std::string& error);
+    // Witness primitives. witnessIsValid(): capture exact regular-file
+    // snapshot, verify the exact versioned content and run the state-bound
+    // durability barrier — a mere filesystem::exists() proves nothing.
+    // createWitness(): crash-safe creation (temp fsync + rename + parent
+    // fsync via AtomicFileWriter), exclusive create, mode 0600, refuses to
+    // replace a foreign existing object; if a concurrent writer created a
+    // valid durable witness first, that counts as success. The witness is
+    // "created" only after confirmed durability (installed != durable).
+    bool witnessIsValid(std::string& error);
+    bool createWitness(std::string& error);
     MutationRecord* find(MutationId id);
 
     std::filesystem::path path_;

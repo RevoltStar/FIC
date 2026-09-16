@@ -342,6 +342,239 @@ bool MutationJournal::failLoad(std::string message, std::string& error) {
     return false;
 }
 
+std::filesystem::path MutationJournal::witnessPath() const {
+    return path_.string() + ".initialized";
+}
+
+bool MutationJournal::witnessIsValid(std::string& error) {
+    // A valid witness requires an exact versioned document captured through
+    // a regular-file descriptor (symlinks and other non-regular objects are
+    // refused) AND a state-bound durability barrier: visible != durable.
+    AtomicTargetState snapshot;
+    std::string captureError;
+    if (!AtomicFileWriter::captureTargetState(witnessPath().string(),
+                                              snapshot, &captureError)) {
+        error = "Initialization witness недоступен/некорректен (fail closed): " +
+                captureError;
+        return false;
+    }
+    json document;
+    try {
+        document = json::parse(snapshot.content);
+    } catch (const json::exception& exception) {
+        error = "Initialization witness повреждён (fail closed): " +
+                std::string(exception.what());
+        return false;
+    }
+    if (!document.is_object() || document.size() != 2 ||
+        document.find("schema_version") == document.end() ||
+        document.find("initialized") == document.end() ||
+        !document["schema_version"].is_number_unsigned() ||
+        document["schema_version"].get<std::uint32_t>() !=
+            kWitnessSchemaVersion ||
+        document["initialized"] != true) {
+        error = "Initialization witness имеет неожиданное содержимое "
+                "(fail closed): " +
+                witnessPath().string();
+        return false;
+    }
+    std::string durabilityError;
+    if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+            witnessPath().string(), snapshot, &durabilityError)) {
+        error = "Durability initialization witness не подтверждена "
+                "(fail closed): " +
+                durabilityError;
+        return false;
+    }
+    return true;
+}
+
+bool MutationJournal::createWitness(std::string& error) {
+    json document;
+    document["schema_version"] = kWitnessSchemaVersion;
+    document["initialized"] = true;
+    AtomicWriteOptions options;
+    // Exclusive create: never silently replace a foreign object occupying
+    // the witness path (a directory, a symlink, a malformed file, or a
+    // concurrently created witness).
+    options.createIfMissing = true;
+    options.rejectSymlink = true;
+    options.exclusiveCreate = true;
+    options.fileMode = 0600;
+    AtomicWriteResult result;
+    if (!AtomicFileWriter::writeWithResult(witnessPath().string(),
+                                           document.dump(2) + "\n", options,
+                                           &error, &result)) {
+        if (!result.installed) {
+            // Not installed: either a race (another process created the
+            // witness between the existence check and the commit) or a real
+            // creation failure. Accept only a valid durable witness.
+            std::string witnessError;
+            if (witnessIsValid(witnessError)) {
+                error.clear();
+                return true;
+            }
+            error = "Не удалось создать initialization witness (fail closed): " +
+                    error + "; " + witnessError;
+            return false;
+        }
+        // installed != durable: the rename published the witness but the
+        // parent directory fsync failed. Finish the durability transparently
+        // against the exact installed state; otherwise fail closed — the
+        // next startup will take the migration path (J exists + W missing).
+        std::string barrierError;
+        if (result.installedTargetState.has_value() &&
+            AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                witnessPath().string(), *result.installedTargetState,
+                &barrierError)) {
+            error.clear();
+            return true;
+        }
+        error = "Initialization witness записан (rename), но durability "
+                "подтвердить не удалось (fail closed): " +
+                barrierError;
+        return false;
+    }
+    return true;
+}
+
+bool MutationJournal::initializeOrLoad(std::string& error) {
+    if (loaded_) {
+        // Live-object reload: the witness question was already answered when
+        // this object was initialized. Delegate to the exact-journal load()
+        // so a vanished journal keeps failing closed and never re-bootstraps
+        // (follow-up 6 semantics).
+        return load(error);
+    }
+    return initializeFresh(error);
+}
+
+bool MutationJournal::initializeFresh(std::string& error) {
+    // Persistent (journal, witness) presence probe.
+    std::error_code journalProbeError;
+    const std::filesystem::file_status journalStatus =
+        std::filesystem::status(path_, journalProbeError);
+    if (journalProbeError &&
+        journalStatus.type() != std::filesystem::file_type::not_found) {
+        return failLoad("Не удалось проверить наличие mutation journal " +
+                            path_.string() + ": " + journalProbeError.message(),
+                        error);
+    }
+    const bool journalMissing =
+        journalStatus.type() == std::filesystem::file_type::not_found ||
+        !std::filesystem::exists(journalStatus);
+
+    std::error_code witnessProbeError;
+    const std::filesystem::file_status witnessStatus =
+        std::filesystem::status(witnessPath(), witnessProbeError);
+    if (witnessProbeError &&
+        witnessStatus.type() != std::filesystem::file_type::not_found) {
+        return failLoad("Не удалось проверить наличие initialization witness " +
+                            witnessPath().string() + ": " +
+                            witnessProbeError.message(),
+                        error);
+    }
+    const bool witnessMissing =
+        witnessStatus.type() == std::filesystem::file_type::not_found ||
+        !std::filesystem::exists(witnessStatus);
+
+    if (journalMissing) {
+        if (witnessMissing) {
+            return bootstrapVirgin(error);
+        }
+        // Witness present (valid or not) while the journal is missing. A
+        // valid witness means the journal lifecycle was initialized before:
+        // its disappearance is provenance loss, never a virgin bootstrap. An
+        // invalid witness is a persistent-state anomaly. Neither may be
+        // healed automatically.
+        std::string witnessError;
+        if (witnessIsValid(witnessError)) {
+            return failLoad(
+                "Mutation journal is missing although its persistent "
+                "initialization witness exists; rollback provenance may have "
+                "been lost; manual provenance recovery is required: " +
+                    path_.string(),
+                error);
+        }
+        return failLoad("Persistent-state anomaly: mutation journal "
+                        "отсутствует, initialization witness некорректен "
+                        "(fail closed): " +
+                            witnessError,
+                        error);
+    }
+
+    // Journal exists: prove it first — the witness must never legitimize a
+    // corrupted provenance document and is created only after the journal
+    // was durably confirmed.
+    if (!load(error)) {
+        return false;
+    }
+    if (witnessMissing) {
+        // Migration / interrupted bootstrap: the journal was proven; now
+        // create the durable witness. The journal document itself is NOT
+        // rewritten.
+        if (!createWitness(error)) {
+            return failLoad("Не удалось создать initialization witness после "
+                            "успешной proof journal (fail closed): " +
+                                error,
+                            error);
+        }
+        error.clear();
+        return true;
+    }
+    std::string witnessError;
+    if (!witnessIsValid(witnessError)) {
+        return failLoad("Persistent-state anomaly: mutation journal корректен, "
+                        "но initialization witness некорректен (fail closed): " +
+                            witnessError,
+                        error);
+    }
+    error.clear();
+    return true;
+}
+
+bool MutationJournal::bootstrapVirgin(std::string& error) {
+    // Virgin bootstrap (or accepted one-time pre-witness ambiguity): create
+    // a real schema-valid empty journal first (journal-before-witness
+    // ordering keeps a crash between the two phases recoverable through the
+    // migration path), then the witness.
+    json document;
+    document["schema_version"] = kSchemaVersion;
+    document["next_id"] = 1;
+    document["records"] = json::array();
+    AtomicWriteOptions options;
+    options.createIfMissing = true;
+    options.rejectSymlink = true;
+    options.fileMode = 0600;
+    AtomicWriteResult result;
+    if (!AtomicFileWriter::writeWithResult(path_.string(),
+                                           document.dump(2) + "\n", options,
+                                           &error, &result)) {
+        std::string barrierError;
+        if (!(result.installed && result.installedTargetState.has_value() &&
+              AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                  path_.string(), *result.installedTargetState,
+                  &barrierError))) {
+            // Not installed: nothing was published and the witness was not
+            // created; the next startup retries the bootstrap. Installed
+            // without confirmed durability: fail closed; the next startup
+            // takes the migration path (J exists + W missing).
+            return failLoad("Не удалось создать пустой mutation journal "
+                            "(fail closed): " +
+                                error,
+                            error);
+        }
+        error.clear();
+    }
+    if (!createWitness(error)) {
+        return failLoad("Не удалось создать initialization witness "
+                        "(fail closed): " +
+                            error,
+                        error);
+    }
+    return load(error);
+}
+
 bool MutationJournal::load(std::string& error) {
     std::error_code probeError;
     const std::filesystem::file_status status =

@@ -244,18 +244,18 @@ journal переводится в `Indeterminate` (unusable), in-memory сост
 
 **Missing journal: bootstrap vs reload**. Отсутствующий файл — валидный
 empty journal ТОЛЬКО при initial bootstrap ещё никогда не загружавшегося
-объекта (`loaded_ == false` и `Healthy`): `records = empty`, `nextId = 1`,
-`loaded = true`, `Healthy`, directory durability отсутствующего файла не
-требуется. Исчезновение ранее известного journal (объект уже был `loaded_`
-или уже `Indeterminate`) НЕ эквивалентно empty journal: такой reload
-завершается ошибкой «mutation journal disappeared during reload/recovery;
-provenance cannot be treated as empty», объект остаётся `Indeterminate`,
-старые in-memory записи сохраняются. Автоматическое восстановление
-удалённого journal из in-memory состояния не выполняется (fail closed).
-Жизненный цикл:
+объекта (`loaded_ == false` и `Healthy`) БЕЗ initialization witness (см.
+ниже): `records = empty`, `nextId = 1`, `loaded = true`, `Healthy`,
+directory durability отсутствующего файла не требуется. Исчезновение ранее
+известного journal (объект уже был `loaded_` или уже `Indeterminate`) НЕ
+эквивалентно empty journal: такой reload завершается ошибкой «mutation
+journal disappeared during reload/recovery; provenance cannot be treated as
+empty», объект остаётся `Indeterminate`, старые in-memory записи
+сохраняются. Автоматическое восстановление удалённого journal из in-memory
+состояния не выполняется (fail closed). Жизненный цикл:
 
 ```text
-fresh + missing                → Healthy empty journal (bootstrap)
+fresh + missing (без witness)  → Healthy empty journal (bootstrap)
 Healthy + successful reload    → Healthy новый snapshot
 Healthy + failed reload        → Indeterminate, старая память сохранена
 Indeterminate + successful
@@ -263,15 +263,68 @@ Indeterminate + successful
 Indeterminate + missing journal→ Indeterminate, fail closed
 ```
 
+**Persistent initialization witness**. Рядом с journal существует
+companion-файл `<journal path>.initialized` (по умолчанию
+`/opt/fic/db/mutation-journal.json.initialized`) — persistent witness того,
+что journal lifecycle был инициализирован на данной установке. Это НЕ
+rollback journal: документ фиксирован и versioned
+(`{"schema_version": 1, "initialized": true}`, независимая версия
+схемы witness, схема самого journal JSON не менялась), без records/hash.
+Witness создается crash-safely (temp fsync → rename → parent fsync через
+`AtomicFileWriter`, exclusive create, mode 0600), строго валидируется
+(regular file, symlink и другие non-regular объекты отвергаются, точное
+versioned содержимое, state-bound durability barrier
+`ensureTargetDurableIfCurrentState`) и никогда не удаляется и не
+переписывается FIC, в том числе при empty records: witness означает
+«journal lifecycle инициализирован», а не «records существуют».
+
+State table инициализации (`MutationJournal::initializeOrLoad`, единственный
+operational entrypoint; сырой `load()` остаётся primitive для тестов и
+live-reload):
+
+```text
+J missing + W missing  → virgin bootstrap: durable empty journal →
+                         durable witness → load/prove (порядок
+                         journal-before-witness: crash между фазами
+                         восстанавливается через migration path)
+J exists + W missing   → migration / interrupted bootstrap: durability-proven
+                         load journal → создать durable witness; сам journal
+                         документ НЕ перезаписывается
+J exists + W valid     → нормальная загрузка (оба proven до usable)
+J exists + W invalid   → fail closed; journal не изменяется, auto-repair
+                         witness запрещён (malformed witness — persistent
+                         state anomaly)
+J missing + W valid    → provenance loss: fail closed НАВСЕГДА, включая
+                         после daemon restart; «manual provenance recovery
+                         is required»
+J missing + W invalid  → fail closed (persistent-state anomaly)
+```
+
+`installed != durable` применим и к witness: rename-ok + fsync-fail при
+создании сначала пытается transparent durability finish по точному
+состоянию; при невозможности — fail closed, а следующий startup попадает в
+migration path (J exists + W missing). Live-объект (уже `loaded_`) при
+reload делегирует сырой `load()`: вопрос witness уже был решён при
+инициализации, исчезнувший journal никогда не ре-бутстрапится (семантика
+fail closed выше).
+
+**Ограничения witness**: удаление внешним actor'ом ОБОИХ файлов (journal и
+witness) неотличимо от virgin install — более сильный trust anchor вне MVP
+scope. Daemon restart сам по себе НЕ является recovery-механизмом: после
+provenance loss ошибка требует ручного восстановления provenance, а не
+перезапуска. Journal и witness — одна logical retention pair; отдельной
+purge-логики пары пока нет (TODO: при появлении purge/retention операций
+удалять/обрабатывать journal и witness атомарно как пару).
+
 **`Indeterminate` блокирует все operational-решения, не только записи**.
 `DaemonMutationJournal::tryGet()` возвращает non-null IFF journal существует
 И `usable()` (loaded + `Healthy`) после всех recovery-действий — никогда
 только потому, что `load()` вернул true. Если открытый singleton стал
 `Indeterminate`, следующий `tryGet()` пытается lazy recovery через
-исправленный durability-proven `load()`; при неудаче (включая случай
-исчезнувшего journal-файла) возвращает `nullptr`
-с ошибкой «Mutation journal is Indeterminate; successful reload or daemon
-restart is required». Так автоматически fail-closed блокируются apply,
+исправленный durability-proven reload; при неудаче (включая случай
+исчезнувшего journal-файла) возвращает `nullptr` с ошибкой «Mutation
+journal is Indeterminate; successful durable reload/recovery of persistent
+journal state is required». Так автоматически fail-closed блокируются apply,
 rollback, disable ownership resolution и любые будущие journal-backed
 consumers (включая read-based решения через `activeRecords()`/`records()` —
 эти методы остаются raw inspection API для tests/debug, но operational

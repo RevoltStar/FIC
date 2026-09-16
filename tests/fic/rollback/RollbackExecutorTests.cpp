@@ -2088,13 +2088,73 @@ void testIndeterminateMissingJournalFailsRollbackClosed() {
     require(report.status != RollbackStatus::NothingToDo &&
                 report.status != RollbackStatus::Success,
             report.message);
-    // A fresh object over the now-missing path still bootstraps as an empty
-    // Healthy journal (bootstrap semantics are preserved for a new process),
-    // but the poisoned singleton must have stayed unusable.
+    // With the persistent initialization witness present, a fresh object over
+    // the now-missing path fails closed too (provenance loss, not a virgin
+    // bootstrap); the poisoned live singleton must have stayed unusable.
     require(journal->health() == JournalHealth::Indeterminate, report.message);
     require(!journal->usable(), report.message);
     require(!journal->records().empty(),
             "the inactive in-memory record must be preserved for diagnostics");
+}
+
+void testProvenanceLossAfterRestartFailsRollbackClosed() {
+    TempJournal file;
+    const std::filesystem::path journalPath = file.tree.root / "journal.json";
+    const PolicyRef policy{"NET", "SshEdit", "ssh_port"};
+
+    // Bootstrap with a real committed SSH provenance record.
+    {
+        JournalOverride overrideGuard(journalPath);
+        std::string error;
+        MutationId id = 0;
+        UndoRestoreSshDirective undo;
+        undo.parameter = "Port";
+        undo.appliedValue = "2222";
+        SshDirectiveOccurrenceMutation occurrence;
+        occurrence.beforeLine = "Port 22";
+        occurrence.afterLine = "Port 2222";
+        undo.occurrences = {occurrence};
+        require(recordPreparedMutation(policy,
+                                       "ssh:/etc/ssh/sshd_config:Port",
+                                       UndoAction{MutationBackend::Ssh, undo},
+                                       id, error),
+                error);
+        require(commitMutation(id, error), error);
+        require(std::filesystem::exists(journalPath), "journal must exist");
+        require(std::filesystem::exists(journalPath.string() +
+                                        ".initialized"),
+                "the bootstrap must create the witness");
+    }
+
+    // Journal deletion + daemon restart (fresh singleton state, fresh
+    // journal object): the witness alone proves the lifecycle was
+    // initialized, so provenance is lost.
+    std::error_code ec;
+    require(std::filesystem::remove(journalPath, ec), ec.message());
+    JournalOverride overrideGuard(journalPath);
+
+    const RollbackExecutorDeps deps;
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        policy, "Port", deps);
+    require(report.status == RollbackStatus::Failed,
+            "provenance loss must fail rollback closed after a restart: " +
+                report.message);
+    require(report.status != RollbackStatus::NothingToDo &&
+                report.status != RollbackStatus::Success,
+            report.message);
+
+    // A new baseline can no longer be recorded either.
+    std::string error;
+    MutationId newId = 0;
+    UndoRestoreSshDirective freshUndo;
+    freshUndo.parameter = "Port";
+    freshUndo.appliedValue = "22";
+    require(!recordPreparedMutation(policy, "ssh:/etc/ssh/sshd_config:Port",
+                                    UndoAction{MutationBackend::Ssh, freshUndo},
+                                    newId, error),
+            "a new baseline must be impossible after provenance loss");
+    require(error.find("provenance may have been lost") != std::string::npos,
+            error);
 }
 
 int main() {
@@ -2190,7 +2250,9 @@ int main() {
         {"indeterminate journal fails rollback closed",
          testIndeterminateJournalFailsRollbackClosed},
         {"indeterminate missing journal fails rollback closed",
-         testIndeterminateMissingJournalFailsRollbackClosed}
+         testIndeterminateMissingJournalFailsRollbackClosed},
+        {"provenance loss after restart fails rollback closed",
+         testProvenanceLossAfterRestartFailsRollbackClosed},
     };
 
     std::size_t failures = 0;

@@ -1138,6 +1138,339 @@ void testDaemonJournalTryGetMissingAfterIndeterminate() {
             "the in-memory provenance must be preserved for diagnostics");
 }
 
+void testFreshBootstrapCreatesJournalAndWitness() {
+    TempFile file;
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    struct OverrideReset {
+        ~OverrideReset() { DaemonMutationJournal::instance().resetOverride(); }
+    } overrideReset;
+
+    std::string error;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->health() == JournalHealth::Healthy, error);
+    require(journal->usable(), error);
+    require(journal->records().empty(), "a fresh bootstrap must be empty");
+    // Both persistent objects must exist after the bootstrap.
+    require(std::filesystem::exists(file.path),
+            "the bootstrap must create the journal file");
+    const std::filesystem::path witnessPath = file.path.string() + ".initialized";
+    require(std::filesystem::exists(witnessPath),
+            "the bootstrap must create the initialization witness");
+    // The witness must be a real versioned document.
+    std::ifstream witnessStream(witnessPath, std::ios::binary);
+    const std::string witnessContent(
+        (std::istreambuf_iterator<char>(witnessStream)),
+        std::istreambuf_iterator<char>());
+    require(witnessContent.find("schema_version") != std::string::npos &&
+                witnessContent.find("initialized") != std::string::npos,
+            "the witness must carry the versioned document: " + witnessContent);
+}
+
+void testRestartAfterBootstrapKeepsProvenance() {
+    TempFile file;
+    std::string error;
+    {
+        DaemonMutationJournal::instance().setOverridePath(file.path);
+        MutationId id = 0;
+        require(recordPreparedMutation(sysctlPolicy(), "vm.swappiness",
+                                       sysctlUndo(), id, error),
+                error);
+        require(commitMutation(id, error), error);
+    }
+    // Simulate a daemon restart: destroy the singleton state and reopen.
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->usable(), error);
+    require(journal->records().size() == 1 &&
+                journal->records().front().status == MutationStatus::Applied,
+            "the restarted daemon must reload the provenance");
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+void testJournalDeletionSurvivesRestart() {
+    TempFile file;
+    std::string error;
+    {
+        DaemonMutationJournal::instance().setOverridePath(file.path);
+        MutationId id = 0;
+        require(recordPreparedMutation(sysctlPolicy(), "vm.swappiness",
+                                       sysctlUndo(), id, error),
+                error);
+        require(commitMutation(id, error), error);
+    }
+    // Delete ONLY the journal; the witness remains.
+    std::error_code ec;
+    require(std::filesystem::remove(file.path, ec), ec.message());
+    // Simulate a daemon restart: the old journal object is destroyed.
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    std::string gateError;
+    require(DaemonMutationJournal::instance().tryGet(gateError) == nullptr,
+            "a missing journal with a valid witness must fail closed after "
+            "a restart");
+    require(gateError.find("provenance may have been lost") !=
+                std::string::npos,
+            "the error must explain the provenance loss: " + gateError);
+    require(gateError.find("manual provenance recovery is required") !=
+                std::string::npos,
+            "a restart is not a recovery mechanism: " + gateError);
+    // The witness must not be deleted or recreated.
+    require(std::filesystem::exists(file.path.string() + ".initialized"),
+            "the witness must survive");
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+void testApplyRefusedAfterProvenanceLossRestart() {
+    TempFile file;
+    std::string error;
+    {
+        DaemonMutationJournal::instance().setOverridePath(file.path);
+        MutationId id = 0;
+        require(recordPreparedMutation(sysctlPolicy(), "vm.swappiness",
+                                       sysctlUndo(), id, error),
+                error);
+        require(commitMutation(id, error), error);
+    }
+    std::error_code ec;
+    require(std::filesystem::remove(file.path, ec), ec.message());
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    MutationId newId = 0;
+    require(!recordPreparedMutation(sysctlPolicy(), "vm.other", sysctlUndo(),
+                                    newId, error),
+            "a new baseline must not be recorded when the journal is "
+            "missing but the witness exists");
+    require(error.find("provenance may have been lost") != std::string::npos,
+            error);
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+// Prepares a pre-witness journal on disk (raw load + mutations) WITHOUT a
+// witness: models an old FIC installation or a crash between the journal
+// creation and the witness creation.
+void preparePreWitnessJournal(const std::filesystem::path& path) {
+    MutationJournal journal(path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    require(std::filesystem::exists(path), "journal must exist on disk");
+    require(!std::filesystem::exists(path.string() + ".initialized"),
+            "witness must not exist yet");
+}
+
+void testInterruptedBootstrapRecovers() {
+    TempFile file;
+    // J exists as a valid empty journal, W missing: crash between the two
+    // bootstrap phases.
+    file.write(R"({"schema_version": 1, "next_id": 1, "records": []})");
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    struct OverrideReset {
+        ~OverrideReset() { DaemonMutationJournal::instance().resetOverride(); }
+    } overrideReset;
+
+    std::string error;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->usable(), error);
+    require(journal->records().empty(), error);
+    require(std::filesystem::exists(file.path.string() + ".initialized"),
+            "the interrupted bootstrap must create the witness");
+}
+
+void testMigrationFromPreWitnessJournal() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    struct OverrideReset {
+        ~OverrideReset() { DaemonMutationJournal::instance().resetOverride(); }
+    } overrideReset;
+
+    std::string error;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->usable(), error);
+    require(journal->records().size() == 1 &&
+                journal->records().front().status == MutationStatus::Applied,
+            "migration must preserve the records exactly");
+    require(std::filesystem::exists(file.path.string() + ".initialized"),
+            "migration must create the witness");
+}
+
+void testWitnessCreationFailureFailsClosed() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    const std::string witnessPath = file.path.string() + ".initialized";
+    // Force the directory fsync of the witness creation to fail permanently.
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&witnessPath](const std::string& targetPath) {
+            return targetPath != witnessPath;
+        });
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    std::string error;
+    require(DaemonMutationJournal::instance().tryGet(error) == nullptr,
+            "a journal without a provable witness must not become operational");
+    require(std::filesystem::exists(file.path),
+            "the journal must stay unchanged");
+    // Retry after the filesystem recovers: migration completes.
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->usable(), error);
+    require(journal->records().size() == 1, error);
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+void testWitnessRenameDurabilityFinish() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    const std::string witnessPath = file.path.string() + ".initialized";
+    // The witness rename succeeds and exactly the first directory fsync
+    // fails: the transparent durability finish must complete the migration.
+    auto remaining = std::make_shared<int>(1);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&witnessPath, remaining](const std::string& targetPath) {
+            if (targetPath != witnessPath) {
+                return true;
+            }
+            if (*remaining > 0) {
+                --*remaining;
+                return false;
+            }
+            return true;
+        });
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    std::string error;
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->usable(), error);
+    require(journal->records().size() == 1, error);
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+void testWitnessRenameDurabilityFailureFailsClosed() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    const std::string witnessPath = file.path.string() + ".initialized";
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&witnessPath](const std::string& targetPath) {
+            return targetPath != witnessPath;
+        });
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    std::string error;
+    require(DaemonMutationJournal::instance().tryGet(error) == nullptr,
+            "an unconfirmable witness durability must deny operational access");
+    require(std::filesystem::exists(witnessPath),
+            "the installed witness may remain on disk (installed != durable)");
+    // The next startup takes the migration path again.
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->usable(), error);
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+void testMalformedWitnessFailsClosed() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    // Malformed witness: a persistent-state anomaly, never auto-repaired.
+    // (TempFile::write targets the journal path, so the witness is written
+    // through its own stream.)
+    const std::filesystem::path witnessPath =
+        file.path.string() + ".initialized";
+    {
+        std::ofstream witnessStream(witnessPath, std::ios::binary | std::ios::trunc);
+        require(witnessStream.is_open(), "could not write the witness");
+        witnessStream << "garbage witness";
+    }
+    const std::string witnessDocument = [&witnessPath] {
+        std::ifstream stream(witnessPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(stream),
+                           std::istreambuf_iterator<char>());
+    }();
+
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    std::string error;
+    require(DaemonMutationJournal::instance().tryGet(error) == nullptr,
+            "a malformed witness must fail closed");
+    require(error.find("anomaly") != std::string::npos ||
+                error.find("некорректен") != std::string::npos,
+            error);
+    std::ifstream witnessStream(witnessPath, std::ios::binary);
+    const std::string witnessAfter(
+        (std::istreambuf_iterator<char>(witnessStream)),
+        std::istreambuf_iterator<char>());
+    require(witnessAfter == witnessDocument,
+            "the witness must stay unchanged (no auto-repair)");
+    // Zero-byte witness is the same anomaly.
+    std::error_code ec;
+    require(std::filesystem::remove(witnessPath, ec), ec.message());
+    {
+        std::ofstream zeroStream(witnessPath, std::ios::binary | std::ios::trunc);
+        require(zeroStream.is_open(), "could not write the zero-byte witness");
+    }
+    require(DaemonMutationJournal::instance().tryGet(error) == nullptr,
+            "a zero-byte witness must fail closed");
+    require(std::filesystem::file_size(witnessPath, ec) == 0 && !ec,
+            "the zero-byte witness must stay unchanged");
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+void testSymlinkWitnessFailsClosed() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    const std::string targetPath = file.path.string() + ".witness-target";
+    std::error_code ec;
+    std::filesystem::create_symlink(file.path, targetPath, ec);
+    require(!ec, ec.message());
+    std::filesystem::create_symlink(targetPath,
+                                    file.path.string() + ".initialized", ec);
+    require(!ec, ec.message());
+
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    std::string error;
+    require(DaemonMutationJournal::instance().tryGet(error) == nullptr,
+            "a symlink witness must fail closed without following it");
+    DaemonMutationJournal::instance().resetOverride();
+}
+
+void testEmptyRecordsKeepWitness() {
+    TempFile file;
+    std::string error;
+    {
+        DaemonMutationJournal::instance().setOverridePath(file.path);
+        MutationId id = 0;
+        require(recordPreparedMutation(sysctlPolicy(), "vm.swappiness",
+                                       sysctlUndo(), id, error),
+                error);
+        require(discardMutation(id, error), error);
+    }
+    // The witness means "journal lifecycle initialized", not "records exist".
+    require(std::filesystem::exists(file.path.string() + ".initialized"),
+            "the witness must survive emptying the journal");
+    // After a restart the journal stays a normal initialized lifecycle state.
+    DaemonMutationJournal::instance().setOverridePath(file.path);
+    MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(journal->usable(), error);
+    require(journal->records().empty(), error);
+    DaemonMutationJournal::instance().resetOverride();
+}
+
 int main() {
     const struct {
         const char* name;
@@ -1190,7 +1523,26 @@ int main() {
         {"healthy malformed reload poisons journal",
          testHealthyMalformedReloadPoisonsJournal},
         {"daemon journal tryGet missing after indeterminate",
-         testDaemonJournalTryGetMissingAfterIndeterminate}
+         testDaemonJournalTryGetMissingAfterIndeterminate},
+        {"fresh bootstrap creates journal and witness",
+         testFreshBootstrapCreatesJournalAndWitness},
+        {"restart after bootstrap keeps provenance",
+         testRestartAfterBootstrapKeepsProvenance},
+        {"journal deletion survives restart",
+         testJournalDeletionSurvivesRestart},
+        {"apply refused after provenance loss restart",
+         testApplyRefusedAfterProvenanceLossRestart},
+        {"interrupted bootstrap recovers", testInterruptedBootstrapRecovers},
+        {"migration from pre-witness journal",
+         testMigrationFromPreWitnessJournal},
+        {"witness creation failure fails closed",
+         testWitnessCreationFailureFailsClosed},
+        {"witness rename durability finish", testWitnessRenameDurabilityFinish},
+        {"witness rename durability failure fails closed",
+         testWitnessRenameDurabilityFailureFailsClosed},
+        {"malformed witness fails closed", testMalformedWitnessFailsClosed},
+        {"symlink witness fails closed", testSymlinkWitnessFailsClosed},
+        {"empty records keep witness", testEmptyRecordsKeepWitness}
     };
 
     std::size_t failures = 0;
