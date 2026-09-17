@@ -47,25 +47,16 @@ json serializeUndoAction(const UndoAction& action) {
             std::get_if<UndoRemoveManagedSetting>(&action.payload)) {
         value["key"] = setting->key;
         value["applied_value"] = setting->appliedValue;
-    } else if (const auto* sshDirective =
-                   std::get_if<UndoRestoreSshDirective>(&action.payload)) {
-        value["parameter"] = sshDirective->parameter;
-        value["applied_value"] = sshDirective->appliedValue;
-        json occurrences = json::array();
-        for (const SshDirectiveOccurrenceMutation& occurrence :
-             sshDirective->occurrences) {
-            json item;
-            // The vector order is the mutation identity; no positional index
-            // is serialized.
-            if (occurrence.beforeLine.has_value()) {
-                item["before"] = *occurrence.beforeLine;
-            } else {
-                item["before"] = nullptr; // FIC inserted the line
-            }
-            item["after"] = occurrence.afterLine;
-            occurrences.push_back(std::move(item));
+    } else if (const auto* sshPolicy =
+                   std::get_if<UndoRemoveSshManagedPolicy>(&action.payload)) {
+        value["policy"] = sshPolicy->policyName;
+        value["directive"] = sshPolicy->directive;
+        value["applied_value"] = sshPolicy->appliedValue;
+        json disabledIds = json::array();
+        for (const std::string& id : sshPolicy->disabledMutationIds) {
+            disabledIds.push_back(id);
         }
-        value["occurrences"] = std::move(occurrences);
+        value["disabled_mutation_ids"] = std::move(disabledIds);
     } else if (const auto* firewallPolicy =
                    std::get_if<UndoRemoveFirewallPolicy>(&action.payload)) {
         value["policy"] = firewallPolicy->policyName;
@@ -98,93 +89,34 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
-    if (actionName == "restore_ssh_directive" &&
+    if (actionName == "remove_ssh_managed_policy" &&
         backend == MutationBackend::Ssh) {
-        // Fail closed on the abandoned intermediate payload format (global
-        // section fingerprint + absolute line indices): it must never be
-        // silently converted to the mutation-local semantics.
-        if (value.contains("fingerprint") || value.contains("reverse_edits")) {
-            error = "restore_ssh_directive undo uses the unsupported legacy "
-                    "payload format (fingerprint/reverse_edits); the record "
-                    "must be resolved manually";
-            return false;
-        }
-        UndoRestoreSshDirective payload;
-        payload.parameter = value.value("parameter", "");
+        // The legacy reverse-mutation SSH payload (restore_ssh_directive) is
+        // intentionally not migrated: such records fail closed as unknown
+        // actions and must be resolved manually.
+        UndoRemoveSshManagedPolicy payload;
+        payload.policyName = value.value("policy", "");
+        payload.directive = value.value("directive", "");
         payload.appliedValue = value.value("applied_value", "");
-        const auto occurrencesIt = value.find("occurrences");
-        if (payload.parameter.empty() ||
-            payload.appliedValue.empty() ||
-            occurrencesIt == value.end() || !occurrencesIt->is_array() ||
-            occurrencesIt->empty()) {
-            error = "restore_ssh_directive undo requires a parameter, an "
-                    "applied value and occurrences";
+        if (payload.policyName.empty() || payload.directive.empty() ||
+            payload.appliedValue.empty()) {
+            error = "remove_ssh_managed_policy undo requires a policy, a "
+                    "directive and an applied value";
             return false;
         }
-        std::size_t position = 0;
-        for (const json& item : *occurrencesIt) {
-            if (!item.is_object()) {
-                error = "ssh occurrence mutation must be an object";
+        const auto disabledIt = value.find("disabled_mutation_ids");
+        if (disabledIt != value.end()) {
+            if (!disabledIt->is_array()) {
+                error = "disabled_mutation_ids must be an array";
                 return false;
             }
-            // The occurrence vector order is the mutation identity. The
-            // redundant positional field of the intermediate development
-            // format is tolerated only when it matches the vector position
-            // exactly (same semantics); anything else is rejected fail
-            // closed instead of being silently re-interpreted.
-            const auto occurrenceIt = item.find("occurrence");
-            if (occurrenceIt != item.end()) {
-                if (!occurrenceIt->is_number_unsigned() ||
-                    occurrenceIt->get<std::size_t>() != position) {
-                    error = "ssh occurrence index does not match the "
-                            "recorded occurrence order";
+            for (const json& item : *disabledIt) {
+                if (!item.is_string() || item.get<std::string>().empty()) {
+                    error = "disabled mutation ids must be non-empty strings";
                     return false;
                 }
+                payload.disabledMutationIds.push_back(item.get<std::string>());
             }
-            SshDirectiveOccurrenceMutation occurrence;
-            const auto beforeIt = item.find("before");
-            if (beforeIt == item.end() ||
-                (!beforeIt->is_string() && !beforeIt->is_null())) {
-                error = "ssh occurrence mutation requires a string or null "
-                        "before line";
-                return false;
-            }
-            if (beforeIt->is_string()) {
-                std::string before = beforeIt->get<std::string>();
-                if (before.empty()) {
-                    error = "ssh occurrence mutation before line must not be "
-                            "empty";
-                    return false;
-                }
-                occurrence.beforeLine = std::move(before);
-            }
-            const auto afterIt = item.find("after");
-            if (afterIt == item.end() || !afterIt->is_string() ||
-                afterIt->get<std::string>().empty()) {
-                error = "ssh occurrence mutation requires a non-empty after line";
-                return false;
-            }
-            occurrence.afterLine = afterIt->get<std::string>();
-            if (occurrence.beforeLine.has_value() &&
-                *occurrence.beforeLine == occurrence.afterLine) {
-                error = "ssh occurrence mutation before and after lines must "
-                        "differ";
-                return false;
-            }
-            // An inserted line is a single-occurrence mutation: the whole
-            // recorded mutation is either one replacement/comment set or one
-            // insertion.
-            if (!occurrence.beforeLine.has_value() &&
-                occurrencesIt->size() != 1) {
-                error = "an inserted ssh directive must be the only recorded "
-                        "occurrence mutation";
-                return false;
-            }
-            // Identical after lines are legal: duplicated directives produce
-            // identical commented lines (e.g. two "#Port 22" duplicates), and
-            // the ordered sequence comparison keeps the payload unambiguous.
-            payload.occurrences.push_back(std::move(occurrence));
-            ++position;
         }
         action.payload = std::move(payload);
         return true;
@@ -329,8 +261,8 @@ std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoRemoveManagedSetting>(action.payload)) {
         return "remove_managed_setting";
     }
-    if (std::holds_alternative<UndoRestoreSshDirective>(action.payload)) {
-        return "restore_ssh_directive";
+    if (std::holds_alternative<UndoRemoveSshManagedPolicy>(action.payload)) {
+        return "remove_ssh_managed_policy";
     }
     if (std::holds_alternative<UndoRemoveFirewallPolicy>(action.payload)) {
         return "remove_firewall_policy";

@@ -529,13 +529,11 @@ void testDaemonJournalFailsClosedOnBrokenFile() {
 // ------------------------------------------------------------------ ssh -----
 
 UndoAction sshUndo() {
-    UndoRestoreSshDirective undo;
-    undo.parameter = "Port";
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
     undo.appliedValue = "2222";
-    SshDirectiveOccurrenceMutation replacement;
-    replacement.beforeLine = "Port 22";
-    replacement.afterLine = "Port 2222";
-    undo.occurrences = {replacement};
+    undo.disabledMutationIds = {"fic-ssh-disable-000001"};
     return UndoAction{MutationBackend::Ssh, std::move(undo)};
 }
 
@@ -565,16 +563,15 @@ void testSshUndoPayloadRoundTrip() {
     const MutationRecord& record = reloaded.records().front();
     require(record.undo.backend == MutationBackend::Ssh,
             "ssh backend must survive reload");
-    const auto* undo = std::get_if<UndoRestoreSshDirective>(&record.undo.payload);
+    const auto* undo =
+        std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);
     require(undo != nullptr, "ssh undo payload must survive reload");
-    require(undo->parameter == "Port" && undo->appliedValue == "2222",
-            "ssh parameter and applied value must survive reload");
-    require(undo->occurrences.size() == 1,
-            "the ssh occurrence mutation must survive reload");
-    require(undo->occurrences[0].beforeLine.has_value() &&
-                *undo->occurrences[0].beforeLine == "Port 22" &&
-                undo->occurrences[0].afterLine == "Port 2222",
-            "the replacement occurrence must survive reload");
+    require(undo->policyName == "ssh_port" && undo->directive == "Port" &&
+                undo->appliedValue == "2222",
+            "ssh policy, directive and applied value must survive reload");
+    require(undo->disabledMutationIds.size() == 1 &&
+                undo->disabledMutationIds[0] == "fic-ssh-disable-000001",
+            "the disabled mutation ids must survive reload");
 }
 
 void requireBrokenSshJournalFailsClosed(const std::string& content,
@@ -601,72 +598,36 @@ void testSshUndoMalformedPayloadsFailClosed() {
     const std::string tail = "}}]}";
 
     requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\"}" + tail,
-        "missing payload fields");
-    // The abandoned intermediate format (fingerprint + absolute line
-    // indices) must be rejected explicitly, never silently converted.
-    requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"fingerprint\":\"0123456789abcdef\",\"reverse_edits\":"
-               "[{\"line\":3,\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" +
+        head + "\"action\":\"remove_ssh_managed_policy\",\"backend\":\"ssh\"}" +
             tail,
-        "legacy payload format");
+        "missing payload fields");
+    // The abandoned reverse-mutation format (restore_ssh_directive) is not
+    // migrated: such records must fail closed as unknown actions.
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
                "\"parameter\":\"Port\",\"applied_value\":\"2222\","
                "\"occurrences\":[]}" + tail,
-        "empty occurrences");
+        "legacy payload format");
     requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"occurrences\":[{\"occurrence\":1,"
-               "\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" + tail,
-        "occurrence index must start at 0");
+        head + "\"action\":\"remove_ssh_managed_policy\",\"backend\":\"ssh\","
+               "\"policy\":\"ssh_port\",\"directive\":\"Port\","
+               "\"applied_value\":\"2222\",\"disabled_mutation_ids\":\"x\"}" +
+            tail,
+        "disabled mutation ids must be an array");
     requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"occurrences\":[{\"occurrence\":0,"
-               "\"before\":\"Port 22\",\"after\":\"Port 2222\"},"
-               "{\"occurrence\":0,\"before\":\"Port 2022\","
-               "\"after\":\"#Port 2022\"}]}" + tail,
-        "non-increasing occurrence indices");
-    requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"occurrences\":[{\"occurrence\":0,"
-               "\"before\":\"Port 22\",\"after\":\"\"}]}" + tail,
-        "empty after line");
-    requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"occurrences\":[{\"occurrence\":0,"
-               "\"before\":\"Port 22\",\"after\":\"Port 22\"}]}" + tail,
-        "before and after lines must differ");
-    requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"occurrences\":[{\"occurrence\":0,\"before\":null,"
-               "\"after\":\"Port 2222\"},{\"occurrence\":1,"
-               "\"before\":\"Port 2022\",\"after\":\"#Port 2022\"}]}" + tail,
-        "inserted occurrence must be the only one");
-    requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"ssh\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"occurrences\":[{\"occurrence\":0,"
-               "\"before\":\"Port 22\",\"after\":\"Port 2222\"},"
-               "{\"occurrence\":1,\"before\":\"Port 2022\","
-               "\"after\":\"Port 2222\"}]}" + tail,
-        "duplicate after lines");
+        head + "\"action\":\"remove_ssh_managed_policy\",\"backend\":\"ssh\","
+               "\"policy\":\"ssh_port\",\"directive\":\"Port\","
+               "\"applied_value\":\"2222\",\"disabled_mutation_ids\":[\"\"]}" +
+            tail,
+        "disabled mutation ids must be non-empty strings");
     requireBrokenSshJournalFailsClosed(
         head + "\"action\":\"remove_managed_setting\",\"backend\":\"ssh\","
                "\"key\":\"Port\",\"applied_value\":\"2222\"}" + tail,
         "inconsistent action and backend");
     requireBrokenSshJournalFailsClosed(
-        head + "\"action\":\"restore_ssh_directive\",\"backend\":\"sudo\","
-               "\"parameter\":\"Port\",\"applied_value\":\"2222\","
-               "\"occurrences\":[{\"occurrence\":0,"
-               "\"before\":\"Port 22\",\"after\":\"Port 2222\"}]}" + tail,
+        head + "\"action\":\"remove_ssh_managed_policy\",\"backend\":\"sudo\","
+               "\"policy\":\"ssh_port\",\"directive\":\"Port\","
+               "\"applied_value\":\"2222\"}" + tail,
         "inconsistent backend");
 }
 

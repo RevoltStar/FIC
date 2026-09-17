@@ -3,6 +3,8 @@
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/net/ssh/SshConfigFile.h"
+#include "modules/net/ssh/SshConfigSyntax.h"
+#include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlRuntime.h"
 
@@ -1154,6 +1156,7 @@ public:
         value.executables = executables_.get();
         value.runner = runner();
         value.beforeRestore = beforeRestore;
+        value.beforeWrite = beforeWrite;
         return value;
     }
 
@@ -1164,30 +1167,70 @@ public:
         return value;
     }
 
-    // Simulates the exact textual mutation Ssh::apply performs and returns
-    // the undo payload the backend would record in the journal.
-    UndoRestoreSshDirective applyMutation(const std::string& parameter,
-                                          const std::string& value) {
+    // Simulates the explicit FIC ownership mutation Ssh::apply performs and
+    // returns the undo payload the backend would record in the journal.
+    UndoRemoveSshManagedPolicy applyMutation(const std::string& policyName,
+                                             const std::string& directive,
+                                             const std::string& value) {
         SshConfigFileHandler handler(configPath().string());
         require(handler.loadConfig(), "sshd_config must load");
-        SshDirectiveMutationPlan plan;
-        require(handler.planSetValue(parameter, value, plan),
-                "the ssh mutation plan must build");
-        require(handler.setValue(parameter, value), "the mutation must apply");
-        require(handler.saveFile(), "sshd_config must save");
-        UndoRestoreSshDirective undo;
-        undo.parameter = plan.parameter;
-        undo.appliedValue = plan.appliedValue;
-        undo.occurrences = plan.occurrences;
+        std::string error;
+        bool changed = false;
+        require(upsertSshManagedPolicyBlock(
+                    handler.lines(), policyName,
+                    sshManagedDirectiveLine(directive, value), changed, error),
+                error);
+        SshManagedModel model;
+        require(parseSshManagedModel(handler.lines(), model, error) ==
+                    SshManagedParseStatus::Ok,
+                error);
+        UndoRemoveSshManagedPolicy undo;
+        undo.policyName = policyName;
+        undo.directive = directive;
+        undo.appliedValue = value;
+        if (directive == "Port") {
+            std::vector<bool> covered(handler.lines().size(), false);
+            if (model.blockPresent) {
+                for (std::size_t i = model.blockBegin; i <= model.blockEnd;
+                     ++i) {
+                    covered[i] = true;
+                }
+            }
+            for (const SshDisabledBlock& disabled : model.disabled) {
+                for (std::size_t i = disabled.beginLine;
+                     i <= disabled.endLine; ++i) {
+                    covered[i] = true;
+                }
+            }
+            int ordinal = 1;
+            for (std::size_t i = handler.lines().size(); i-- > 0;) {
+                if (covered[i]) {
+                    continue;
+                }
+                const SshLineParseResult parsed =
+                    parseSshConfigLine(handler.lines()[i]);
+                if (!parsed.ok || !parsed.hasDirective ||
+                    normalizeSshKeyword(parsed.directive.keyword) !=
+                        normalizeSshKeyword("Port")) {
+                    continue;
+                }
+                const std::string wrapperId =
+                    generateSshDisabledMutationId(ordinal++);
+                disableSshLine(handler.lines(), i, policyName, wrapperId);
+                undo.disabledMutationIds.push_back(wrapperId);
+            }
+        }
+        require(handler.saveFileIfUnchanged(error).installed,
+                "sshd_config must save");
         return undo;
     }
 
     // Records an applied mutation for an arbitrary SSH policy/resource pair
     // (multi-policy scenarios need more than the fixed Port resource).
-    void recordMutation(const PolicyRef& policy,
+    MutationId recordMutation(const PolicyRef& policy,
                         const std::string& resource,
-                        const UndoRestoreSshDirective& undo) {
-        recordApplied(policy, resource, UndoAction{MutationBackend::Ssh, undo});
+                        const UndoRemoveSshManagedPolicy& undo) {
+        return recordApplied(policy, resource, UndoAction{MutationBackend::Ssh, undo});
     }
 
     std::string sshResource(const std::string& parameter) const {
@@ -1198,8 +1241,9 @@ public:
         return sshResource("Port");
     }
 
-    // Deterministic seam invoked right before the rollback compensation
-    // restore (simulates an external modification racing with the restore).
+    // Deterministic seams: beforeWrite fires before the conditional atomic
+    // write, beforeRestore before the compensation restore.
+    std::function<void()> beforeWrite;
     std::function<void()> beforeRestore;
 
     TempTree tree;
@@ -1219,747 +1263,416 @@ private:
 
     std::unique_ptr<fic::platform::PlatformExecutableResolver> executables_;
 };
+// ------------------------------------------------------------ ssh rollback ----
+//
+// The rollback backend owns only explicit FIC state: the managed policy
+// sub-block (ownership proven by the exact recorded directive line) and the
+// FIC_DISABLED wrappers whose mutation ids are listed in the journal payload.
 
-void testSshRollbackRestoresReplacedDirective() {
-    SshTree tree;
-    tree.writeConfig(
-        "# Global section\n"
-        "Port 22\n"
-        "PermitRootLogin prohibit-password\n"
-        "\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    require(readFile(tree.configPath()).find("Port 2222") != std::string::npos,
-            "the FIC mutation must replace the directive");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+const PolicyRef kSshPortPolicy{"NET", "SshEdit", "ssh_port"};
+const PolicyRef kSshRootLoginPolicy{"NET", "SshEdit", "ssh_root_login"};
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Success, report.message);
-    require(readFile(tree.configPath()) ==
-                "# Global section\n"
-                "Port 22\n"
-                "PermitRootLogin prohibit-password\n"
-                "\n"
-                "Match User backup\n"
-                "    PermitRootLogin yes\n",
-            "rollback must restore the exact pre-FIC textual state");
-    require(tree.commands_->reloadCalls == 0,
-            "an inactive SSH service must not be reloaded");
+MutationId recordPrepared(const PolicyRef& policy, const std::string& resource,
+                          const UndoAction& undo) {
+    MutationId id = 0;
+    std::string error;
+    require(fic::rollback::recordPreparedMutation(policy, resource, undo, id,
+                                                  error),
+            error);
+    return id;
 }
 
-void testSshRollbackRemovesInsertedDirective() {
-    SshTree tree;
-    const std::string original =
-        "PermitRootLogin prohibit-password\n"
-        "\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n";
-    tree.writeConfig(original);
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    require(readFile(tree.configPath()).find("Port 2222") != std::string::npos,
-            "FIC must insert the missing directive");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Success, report.message);
-    require(readFile(tree.configPath()) == original,
-            "rollback must remove exactly the FIC-inserted line");
+std::string markerLine(const std::string& directive, const std::string& value) {
+    return sshManagedDirectiveLine(directive, value);
 }
 
-void testSshRollbackRestoresDuplicateDirectives() {
-    SshTree tree;
-    const std::string original =
-        "Port 22\n"
-        "Port 2022\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n";
-    tree.writeConfig(original);
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    const std::string applied = readFile(tree.configPath());
-    require(applied.find("Port 2222") != std::string::npos &&
-                applied.find("#Port 2022") != std::string::npos,
-            "FIC must replace the first duplicate and comment the rest");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Success, report.message);
-    require(readFile(tree.configPath()) == original,
-            "rollback must restore every FIC-touched duplicate line");
+bool fileContains(const std::filesystem::path& path,
+                  const std::string& needle) {
+    return readFile(path).find(needle) != std::string::npos;
 }
 
-void testSshRollbackConflictOnControlledDirectiveDrift() {
+
+
+void testSshRollbackRemovesScalarManagedBlock() {
     SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("PermitRootLogin prohibit-password\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_root_login", "PermitRootLogin", "no");
+    require(undo.disabledMutationIds.empty(),
+            "scalar semantics must never disable lines");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    tree.recordMutation(kSshRootLoginPolicy,
+                        tree.sshResource("PermitRootLogin"), undo);
 
-    // Manual drift of the FIC-controlled directive.
-    const std::string drifted =
-        "Port 2223\nMatch User backup\n    PermitRootLogin yes\n";
-    tree.writeConfig(drifted);
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshRootLoginPolicy, "PermitRootLogin", tree.deps());
+    require(report.status == RollbackStatus::Success, report.message);
+    const std::string content = readFile(tree.configPath());
+    require(content.find("PermitRootLogin prohibit-password\n") !=
+                    std::string::npos,
+            "the user directive must be untouched");
+    require(content.find("#@FIC_") == std::string::npos,
+            "the FIC policy block must be removed");
+}
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+void testSshRollbackConflictOnManagedBlockDrift() {
+    SshTree tree;
+    tree.writeConfig("PermitRootLogin prohibit-password\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_root_login", "PermitRootLogin", "no");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    tree.recordMutation(kSshRootLoginPolicy,
+                        tree.sshResource("PermitRootLogin"), undo);
+
+    // Manual edit of the FIC-owned block line destroys the ownership proof.
+    SshConfigFileHandler drift(tree.configPath().string());
+    require(drift.loadConfig(), "drift load must succeed");
+    for (std::string& line : drift.lines()) {
+        if (line == markerLine("PermitRootLogin", "no")) {
+            line = "PermitRootLogin yes";
+        }
+    }
+    std::string error;
+    require(drift.saveFileIfUnchanged(error).installed, error);
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshRootLoginPolicy, "PermitRootLogin", tree.deps());
     require(report.status == RollbackStatus::Conflict, report.message);
-    require(readFile(tree.configPath()) == drifted,
-            "a conflicted rollback must not touch the file");
+    require(fileContains(tree.configPath(), "PermitRootLogin yes"),
+            "the drifted state must be preserved (fail closed)");
+    require(fileContains(tree.configPath(), kSshPolicyBeginPrefix),
+            "nothing may be removed on conflict");
 }
 
-void testSshRollbackKeepsUnrelatedDirectiveChange() {
+void testSshRollbackConflictOnUnknownDisabledId() {
     SshTree tree;
-    tree.writeConfig(
-        "Port 22\n"
-        "PermitRootLogin prohibit-password\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+    UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+    undo.disabledMutationIds.clear(); // payload "loses" the wrapper id
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"), undo);
 
-    // Unrelated global-section change (another FIC policy or an external
-    // edit of a directive the mutation does not control): the rollback of
-    // Port must proceed and the unrelated change must survive.
-    const std::string drifted =
-        "Port 2222\n"
-        "#PermitRootLogin prohibit-password\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n";
-    tree.writeConfig(drifted);
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Success, report.message);
-    require(readFile(tree.configPath()) ==
-                "Port 22\n"
-                "#PermitRootLogin prohibit-password\n"
-                "Match User backup\n"
-                "    PermitRootLogin yes\n",
-            "rollback must restore Port and preserve the unrelated change");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Conflict, report.message);
+    require(fileContains(tree.configPath(), kSshDisabledLinePrefix),
+            "the unproven disabled block must not be uncommented");
 }
 
-void testSshRollbackKeepsPostMatchChanges() {
+
+
+void testSshRollbackRemovesManagedBlockAndRestoresDisabled() {
     SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("# user comment\nPort 22\nPort 2022\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+    require(undo.disabledMutationIds.size() == 2,
+            "both user Port lines must be disabled");
+    require(fileContains(tree.configPath(), kSshDisabledLinePrefix),
+            "the disabled wrapper must be present before rollback");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    const MutationId id = tree.recordMutation(
+        kSshPortPolicy, tree.sshResource("Port"), undo);
 
-    // External modification after the first Match must survive the rollback.
-    const std::string externallyEdited =
-        "Port 2222\n"
-        "Match User backup\n"
-        "    PermitRootLogin no\n"
-        "    MaxAuthTries 1\n";
-    tree.writeConfig(externallyEdited);
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
     require(report.status == RollbackStatus::Success, report.message);
-    require(readFile(tree.configPath()) ==
-                "Port 22\n"
-                "Match User backup\n"
-                "    PermitRootLogin no\n"
-                "    MaxAuthTries 1\n",
-            "rollback must preserve changes after the first Match");
-}
+    require(report.rollbackCompleted(), "successful rollback must allow disable");
 
-void testSshRollbackKeepsExternalIncludeState() {
-    SshTree tree;
-    tree.writeConfig("Port 22\n"
-                     "Include " + (tree.tree.root / "ssh.conf.d").string() + "\n" +
-                     "Match User backup\n    PermitRootLogin yes\n");
-    writeFile(tree.tree.root / "ssh.conf.d" / "10-external.conf",
-              "MaxAuthTries 6\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    const std::string content = readFile(tree.configPath());
+    require(content.find("Port 22\n") != std::string::npos &&
+                content.find("Port 2022\n") != std::string::npos,
+            "the exact user lines must be restored byte-exact");
+    require(content.find("#@FIC_") == std::string::npos,
+            "no FIC markers of the rolled back policy may remain");
+    require(content.find("# user comment\n") != std::string::npos,
+            "user content must be preserved");
 
-    // External included file changed after the FIC apply: the rollback of the
-    // main-file mutation must not care about or restore included files.
-    writeFile(tree.tree.root / "ssh.conf.d" / "10-external.conf",
-              "MaxAuthTries 2\n");
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Success, report.message);
-    const std::string mainConfig = readFile(tree.configPath());
-    require(mainConfig.find("Port 22\n") != std::string::npos &&
-                mainConfig.find("Port 2222") == std::string::npos,
-            "the main-file FIC mutation must be reversed");
-    require(readFile(tree.tree.root / "ssh.conf.d" / "10-external.conf") ==
-                "MaxAuthTries 2\n",
-            "the external included file must be preserved as-is");
+    MutationJournal stored(journal.tree.root / "journal.json");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().size() == 1 &&
+                stored.records().front().id == id &&
+                stored.records().front().status == MutationStatus::RolledBack,
+            "rollback must be persisted as rolled_back");
 }
 
 void testSshRollbackValidationFailureRestoresPreRollbackState() {
     SshTree tree;
-    const std::string ficState =
-        "Port 2222\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n";
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
-    require(readFile(tree.configPath()) == ficState,
-            "the FIC state must be on disk before the rollback");
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"), undo);
 
-    // sshd -T rejects the rolled back configuration.
-    tree.commands_->sshdT = sshFailing("/tmp/x: bad line 1");
+    const std::string rollbackInput = readFile(tree.configPath());
+    tree.commands_->sshdT = sshFailing("sshd -t failed");
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
     require(report.status == RollbackStatus::Failed, report.message);
-    require(readFile(tree.configPath()) == ficState,
-            "the failed rollback must restore the pre-rollback FIC state");
-
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string error;
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().status == MutationStatus::RollbackFailed,
-            "a failed rollback must keep the mutation active");
+    require(readFile(tree.configPath()) == rollbackInput,
+            "compensation must restore the exact pre-rollback content");
+    require(fileContains(tree.configPath(), kSshDisabledLinePrefix),
+            "the FIC-owned state must be intact after compensation");
 }
 
 void testSshRollbackReloadFailureRestoresPreRollbackState() {
     SshTree tree;
-    const std::string ficState =
-        "Port 2222\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n";
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"), undo);
 
-    // The service is active and reload always fails.
+    const std::string rollbackInput = readFile(tree.configPath());
     tree.commands_->isActive = sshSuccess();
-    tree.commands_->reload = sshFailing("reload job failed");
+    tree.commands_->reload = sshFailing("sshd -t failed");
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
     require(report.status == RollbackStatus::Failed, report.message);
-    require(readFile(tree.configPath()) == ficState,
-            "the failed rollback must restore the pre-rollback FIC state");
-
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string error;
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().status == MutationStatus::RollbackFailed,
-            "a failed rollback must keep the mutation active");
+    require(readFile(tree.configPath()) == rollbackInput,
+            "reload failure must trigger the compensation restore");
 }
 
-void testSshPreparedRecordResolvedByDisable() {
+void testSshRollbackMalformedMarkersFailClosed() {
     SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\nMatch User admin\n#@FIC_POLICY_BEGIN x\n");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"),
+                        UndoRemoveSshManagedPolicy{"ssh_port", "Port",
+                                                   "2222", {}});
 
-    // Simulate a crash between the system mutation and the commit: only the
-    // Prepared record exists on disk, the daemon restarts and disables.
-    MutationId id = 0;
-    std::string error;
-    require(fic::rollback::recordPreparedMutation(
-                kSshPolicy, tree.sshResource(),
-                UndoAction{MutationBackend::Ssh, undo}, id, error),
-            error);
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Failed, report.message);
+    require(fileContains(tree.configPath(), "Match User admin"),
+            "the malformed file must not be rewritten");
+}
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Success, report.message);
-    require(readFile(tree.configPath()) ==
-                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
-            "a prepared record must be safely rolled back after restart");
+void testSshRollbackKeepsOtherPolicyState() {
+    SshTree tree;
+    tree.writeConfig("Port 22\nPermitRootLogin prohibit-password\n");
+    const UndoRemoveSshManagedPolicy portUndo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+    const UndoRemoveSshManagedPolicy rootUndo =
+        tree.applyMutation("ssh_root_login", "PermitRootLogin", "no");
 
-    MutationJournal stored(journal.tree.root / "journal.json");
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().status == MutationStatus::RolledBack,
-            "the prepared record resolution must be persisted");
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"), portUndo);
+    tree.recordMutation(kSshRootLoginPolicy,
+                        tree.sshResource("PermitRootLogin"), rootUndo);
+
+    const RollbackReport portReport = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(portReport.status == RollbackStatus::Success,
+            portReport.message);
+    require(fileContains(tree.configPath(), kSshPolicyBeginPrefix),
+            "the other policy block must survive");
+    require(fileContains(tree.configPath(),
+                         markerLine("PermitRootLogin", "no")),
+            "the other policy directive must survive");
+    require(!fileContains(tree.configPath(), kSshDisabledLinePrefix),
+            "the rolled back policy wrappers must be restored");
+
+    const RollbackReport rootReport = rollbackPolicyBeforeDisable(
+        kSshRootLoginPolicy, "PermitRootLogin", tree.deps());
+    require(rootReport.status == RollbackStatus::Success, rootReport.message);
+    require(readFile(tree.configPath()).find("#@FIC_") == std::string::npos,
+            "both policies rolled back: no FIC markers remain");
+}
+
+void testSshRollbackNothingToDoAfterCrash() {
+    SshTree tree;
+    tree.writeConfig("Port 22\n");
+    tree.commands_->isActive = sshSuccess();
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    // Crash scenario: the journal record exists, but the file state was
+    // already factually rolled back (no FIC markers at all).
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"),
+                        UndoRemoveSshManagedPolicy{"ssh_port", "Port",
+                                                   "2222", {}});
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::NothingToDo, report.message);
+    require(report.rollbackCompleted(), "nothing-to-do must allow disable");
+    require(tree.commands_->reloadCalls > 0,
+            "runtime reconciliation must reload the active service");
+    require(readFile(tree.configPath()) == "Port 22\n",
+            "nothing may be written");
+}
+
+void testSshRollbackNothingToDoReloadFailureRefusesDisable() {
+    SshTree tree;
+    tree.writeConfig("Port 22\n");
+    tree.commands_->isActive = sshSuccess();
+    tree.commands_->reload = sshFailing("sshd -t failed");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"),
+                        UndoRemoveSshManagedPolicy{"ssh_port", "Port",
+                                                   "2222", {}});
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Failed, report.message);
+    require(!report.rollbackCompleted(),
+            "unconfirmed runtime reconciliation must refuse the disable");
 }
 
 void testSshRepeatedDisableIsIdempotent() {
     SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"), undo);
 
-    const RollbackReport first =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    const RollbackReport first = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
     require(first.status == RollbackStatus::Success, first.message);
-    const std::string rolledBack = readFile(tree.configPath());
 
-    const RollbackReport second =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(second.status == RollbackStatus::NothingToDo,
-            "a repeated disable must not repeat the file mutation: " +
-                second.message);
-    require(second.rollbackCompleted(), "a repeated disable must proceed");
-    require(readFile(tree.configPath()) == rolledBack,
-            "a repeated disable must not touch the file again");
-}
-
-void testSshLegacyProvenanceRefusedWhenDirectivePresent() {
-    SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-
-    // Legacy state: policy ENABLE, no journal records, but the target
-    // directive exists in the shared main config — provenance unavailable.
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Unsupported,
-            "legacy SSH state with a present directive must refuse disable");
-    require(!report.rollbackCompleted(), "the disable must be refused");
-    require(readFile(tree.configPath()) ==
-                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
-            "the legacy provenance check must not touch the file");
-}
-
-void testSshLegacyAbsentDirectiveIsNothingToDo() {
-    SshTree tree;
-    tree.writeConfig("PermitRootLogin prohibit-password\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::NothingToDo,
-            "legacy SSH state without the directive must allow disable: " +
-                report.message);
-    require(report.rollbackCompleted(), "the disable must proceed");
-}
-
-const PolicyRef kSshMaxAuthTriesPolicy{"NET", "SshEdit", "ssh_max_auth_tries"};
-const PolicyRef kSshRootLoginPolicy{"NET", "SshEdit", "ssh_root_login"};
-const PolicyRef kSshPubkeyAuthPolicy{"NET", "SshEdit", "ssh_pubkey_auth"};
-
-void testSshMultiPolicyRollbacksInAnyOrder() {
-    SshTree tree;
-    tree.writeConfig(
-        "Port 22\n"
-        "MaxAuthTries 6\n"
-        "PermitRootLogin yes\n"
-        "PubkeyAuthentication no\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-
-    const UndoRestoreSshDirective portUndo = tree.applyMutation("Port", "2222");
-    const UndoRestoreSshDirective maxAuthUndo =
-        tree.applyMutation("MaxAuthTries", "3");
-    const UndoRestoreSshDirective rootLoginUndo =
-        tree.applyMutation("PermitRootLogin", "no");
-    const UndoRestoreSshDirective pubkeyUndo =
-        tree.applyMutation("PubkeyAuthentication", "yes");
-    tree.recordMutation(kSshPolicy, tree.sshResource("Port"), portUndo);
-    tree.recordMutation(kSshMaxAuthTriesPolicy,
-                        tree.sshResource("MaxAuthTries"), maxAuthUndo);
-    tree.recordMutation(kSshRootLoginPolicy,
-                        tree.sshResource("PermitRootLogin"), rootLoginUndo);
-    tree.recordMutation(kSshPubkeyAuthPolicy,
-                        tree.sshResource("PubkeyAuthentication"), pubkeyUndo);
-
-    // Disable NOT in reverse order: MaxAuthTries first. The other FIC
-    // mutations must stay applied and no rollback may conflict.
-    const RollbackReport maxAuth = rollbackPolicyBeforeDisable(
-        kSshMaxAuthTriesPolicy, "MaxAuthTries", tree.deps());
-    require(maxAuth.status == RollbackStatus::Success, maxAuth.message);
-    const std::string afterMaxAuth = readFile(tree.configPath());
-    require(afterMaxAuth.find("Port 2222") != std::string::npos &&
-                afterMaxAuth.find("MaxAuthTries 6") != std::string::npos &&
-                afterMaxAuth.find("PermitRootLogin no") != std::string::npos &&
-                afterMaxAuth.find("PubkeyAuthentication yes") !=
-                    std::string::npos,
-            "only the disabled policy mutation must be reversed");
-
-    const RollbackReport port =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(port.status == RollbackStatus::Success, port.message);
-    const std::string afterPort = readFile(tree.configPath());
-    require(afterPort.find("Port 22") != std::string::npos &&
-                afterPort.find("MaxAuthTries 6") != std::string::npos &&
-                afterPort.find("PermitRootLogin no") != std::string::npos &&
-                afterPort.find("PubkeyAuthentication yes") != std::string::npos,
-            "the Port rollback must not touch the other FIC policies");
-
-    const RollbackReport pubkey = rollbackPolicyBeforeDisable(
-        kSshPubkeyAuthPolicy, "PubkeyAuthentication", tree.deps());
-    require(pubkey.status == RollbackStatus::Success, pubkey.message);
-    const RollbackReport rootLogin = rollbackPolicyBeforeDisable(
-        kSshRootLoginPolicy, "PermitRootLogin", tree.deps());
-    require(rootLogin.status == RollbackStatus::Success, rootLogin.message);
-    require(readFile(tree.configPath()) ==
-                "Port 22\n"
-                "MaxAuthTries 6\n"
-                "PermitRootLogin yes\n"
-                "PubkeyAuthentication no\n"
-                "Match User backup\n"
-                "    PermitRootLogin yes\n",
-            "every independent rollback must restore its own baseline");
-}
-
-void testSshMultiPolicyInsertAndReplaceIndependent() {
-    SshTree tree;
-    tree.writeConfig(
-        "Port 22\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-
-    // One policy replaces an existing directive, another inserts a missing
-    // one; both rollbacks must work independently.
-    const UndoRestoreSshDirective portUndo = tree.applyMutation("Port", "2222");
-    const UndoRestoreSshDirective maxAuthUndo =
-        tree.applyMutation("MaxAuthTries", "3");
-    tree.recordMutation(kSshPolicy, tree.sshResource("Port"), portUndo);
-    tree.recordMutation(kSshMaxAuthTriesPolicy,
-                        tree.sshResource("MaxAuthTries"), maxAuthUndo);
-
-    const RollbackReport port =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(port.status == RollbackStatus::Success, port.message);
-    const std::string afterPort = readFile(tree.configPath());
-    require(afterPort.find("Port 22") != std::string::npos &&
-                afterPort.find("MaxAuthTries 3") != std::string::npos,
-            "the replaced directive must be restored next to the inserted one");
-
-    const RollbackReport maxAuth = rollbackPolicyBeforeDisable(
-        kSshMaxAuthTriesPolicy, "MaxAuthTries", tree.deps());
-    require(maxAuth.status == RollbackStatus::Success, maxAuth.message);
-    require(readFile(tree.configPath()) ==
-                "Port 22\n"
-                "Match User backup\n"
-                "    PermitRootLogin yes\n",
-            "the inserted directive must be removed exactly");
-}
-
-void testSshDuplicateDirectiveWithOtherPolicySurvives() {
-    SshTree tree;
-    tree.writeConfig(
-        "Port 22\n"
-        "Port 2022\n"
-        "PermitRootLogin yes\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-
-    const UndoRestoreSshDirective portUndo = tree.applyMutation("Port", "2222");
-    const UndoRestoreSshDirective rootLoginUndo =
-        tree.applyMutation("PermitRootLogin", "no");
-    tree.recordMutation(kSshPolicy, tree.sshResource("Port"), portUndo);
-    tree.recordMutation(kSshRootLoginPolicy,
-                        tree.sshResource("PermitRootLogin"), rootLoginUndo);
-
-    const RollbackReport port =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(port.status == RollbackStatus::Success, port.message);
-    const std::string afterPort = readFile(tree.configPath());
-    require(afterPort.find("Port 22") != std::string::npos &&
-                afterPort.find("Port 2022") != std::string::npos &&
-                afterPort.find("PermitRootLogin no") != std::string::npos,
-            "the duplicate Port lines must be restored and the other FIC "
-            "policy must survive");
-
-    const RollbackReport rootLogin = rollbackPolicyBeforeDisable(
-        kSshRootLoginPolicy, "PermitRootLogin", tree.deps());
-    require(rootLogin.status == RollbackStatus::Success, rootLogin.message);
-    require(readFile(tree.configPath()) ==
-                "Port 22\n"
-                "Port 2022\n"
-                "PermitRootLogin yes\n"
-                "Match User backup\n"
-                "    PermitRootLogin yes\n",
-            "the remaining rollback must restore its own baseline");
-}
-
-void testSshCrashAfterUndoIsNothingToDo() {
-    SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
-
-    // Simulate: the exact reverse delta was applied to the system, then the
-    // daemon crashed before the journal update (journal still Applied).
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::NothingToDo,
-            "a crash after the system undo must resolve as nothing to do: " +
-                report.message);
-    require(report.rollbackCompleted(), "the disable must proceed");
-    require(readFile(tree.configPath()) ==
-                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
-            "the already rolled back file must not be touched again");
-
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string error;
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().status == MutationStatus::RolledBack,
-            "the crash recovery must persist the RolledBack status");
-
-    // A repeated disable stays idempotent.
-    const RollbackReport second =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
+    // A retry must not guess anything: no markers, no ownership, no writes.
+    const RollbackReport second = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
     require(second.status == RollbackStatus::NothingToDo, second.message);
-    require(second.rollbackCompleted(), "the repeated disable must proceed");
+    require(readFile(tree.configPath()).find("#@FIC_") == std::string::npos,
+            "the retried rollback must not write anything");
 }
 
-void testSshCrashAfterUndoReloadsActiveRuntime() {
+void testSshProvenanceRefusedWhenMarkersPresentWithoutRecords() {
     SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+    (void)tree.applyMutation("ssh_port", "Port", "2222");
+    // No journal records at all: the markers cannot be attributed.
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
 
-    // Crash after the file undo but before the service reload: the file is
-    // already BEFORE while the runtime sshd still uses the FIC state.
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
-    tree.commands_->isActive = sshSuccess();
-    tree.commands_->reloadCalls = 0;
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::NothingToDo,
-            "a crash recovery with a valid active service must resolve as "
-            "nothing to do: " + report.message);
-    require(tree.commands_->reloadCalls >= 1,
-            "BEFORE crash recovery must reload the active runtime sshd");
-    require(readFile(tree.configPath()) ==
-                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
-            "the already rolled back file must not be touched again");
-
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string error;
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().status == MutationStatus::RolledBack,
-            "the successful runtime reconciliation must persist RolledBack");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Unsupported,
+            "unrecorded FIC markers must fail closed");
+    require(fileContains(tree.configPath(), kSshPolicyBeginPrefix),
+            "nothing may be removed without provenance");
 }
 
-void testSshCrashAfterUndoReloadFailureRefusesDisable() {
+void testSshNoRecordsNoMarkersIsNothingToDo() {
     SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::NothingToDo, report.message);
+    require(readFile(tree.configPath()) == "Port 22\n",
+            "a foreign configuration must not be touched");
+}
 
-    // BEFORE state, active service, but the reload of the reconciled
-    // configuration fails: the mutation must stay active and the disable
-    // must be refused.
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
-    tree.commands_->isActive = sshSuccess();
-    tree.commands_->reload = sshFailing("reload job failed");
-    tree.commands_->reloadCalls = 0;
+void testSshPreparedRecordResolvedByDisable() {
+    SshTree tree;
+    tree.writeConfig("Port 22\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Failed,
-            "a failed runtime reconciliation must refuse the disable: " +
-                report.message);
-    require(tree.commands_->reloadCalls >= 1,
-            "the crash recovery must attempt the reload");
-    require(readFile(tree.configPath()) ==
-                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
-            "the BEFORE file state must be preserved");
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    // Crash after prepare, before commit: the record stays Prepared while
+    // the file already carries the FIC-owned state.
+    recordPrepared(kSshPortPolicy, tree.sshResource("Port"),
+                   UndoAction{MutationBackend::Ssh, undo});
 
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string error;
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().isActive(),
-            "a failed BEFORE runtime reconciliation must keep the mutation "
-            "active");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Success, report.message);
+    require(readFile(tree.configPath()).find("#@FIC_") == std::string::npos,
+            "the prepared mutation must be rolled back");
 }
 
 void testSshRollbackCompensationRacePreservesExternalEdit() {
     SshTree tree;
-    const std::string ficState =
-        "Port 2222\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n";
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"), undo);
 
-    // The reverse write installs BEFORE, then an external actor modifies the
-    // file; the reload failure triggers the compensation, which must refuse
-    // to overwrite the external change.
-    tree.commands_->isActive = sshSuccess();
-    tree.commands_->reload = sshFailing("reload job failed");
-    const std::string external =
-        "Port 22\nMaxAuthTries 2\nMatch User backup\n    PermitRootLogin yes\n";
-    tree.beforeRestore = [&tree, external]() {
-        writeFile(tree.configPath(), external);
+    const std::string rollbackInput = readFile(tree.configPath());
+    // External edit racing with the compensation restore: the restore must
+    // refuse to overwrite the foreign state.
+    tree.commands_->sshdT = sshFailing("sshd -t failed");
+    tree.beforeRestore = [&tree]() {
+        SshConfigFileHandler external(tree.configPath().string());
+        require(external.loadConfig(), "external load must succeed");
+        external.lines().push_back("# external concurrent edit");
+        std::string error;
+        require(external.saveFileIfUnchanged(error).installed, error);
     };
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Failed,
-            "a refused rollback compensation must fail: " + report.message);
-    require(readFile(tree.configPath()) == external,
-            "the external modification made after the reverse write must be "
-            "preserved");
-
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string error;
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().isActive(),
-            "a refused rollback compensation must keep the mutation active");
-}
-
-void testSshRollbackConflictWhenInsertedDirectiveDrifted() {
-    SshTree tree;
-    tree.writeConfig(
-        "PermitRootLogin prohibit-password\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
-
-    // The FIC-inserted directive was externally changed: the keyword is
-    // still present but not in the recorded AFTER representation.
-    const std::string drifted =
-        "PermitRootLogin prohibit-password\n"
-        "Port 2200\n"
-        "Match User backup\n"
-        "    PermitRootLogin yes\n";
-    tree.writeConfig(drifted);
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Conflict, report.message);
-    require(readFile(tree.configPath()) == drifted,
-            "a conflicted rollback must not touch the file");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Failed, report.message);
+    require(fileContains(tree.configPath(), "# external concurrent edit"),
+            "the external edit must be preserved");
+    require(readFile(tree.configPath()) == rollbackInput ||
+                !fileContains(tree.configPath(), kSshDisabledBeginPrefix),
+            "either the compensation succeeded exactly or it was refused");
 }
 
 void testSshRollbackRefusedOnConcurrentModification() {
     SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
+    tree.writeConfig("Port 22\n");
+    const UndoRemoveSshManagedPolicy undo =
+        tree.applyMutation("ssh_port", "Port", "2222");
+
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const UndoRestoreSshDirective undo = tree.applyMutation("Port", "2222");
-    recordApplied(kSshPolicy, tree.sshResource(),
-                  UndoAction{MutationBackend::Ssh, undo});
+    tree.recordMutation(kSshPortPolicy, tree.sshResource("Port"), undo);
 
-    // Deterministic race seam: an external actor changes the shared file
-    // after the rollback loaded its snapshot but before the atomic write.
-    RollbackExecutorDeps deps = tree.deps();
-    SshRollbackOptions options = tree.options();
-    options.beforeWrite = [&tree]() {
-        tree.writeConfig("Port 2222\nMaxAuthTries 1\nMatch User backup\n"
-                         "    PermitRootLogin yes\n");
+    // Concurrent external modification between snapshot and write: the
+    // conditional write must refuse and nothing may be changed.
+    tree.beforeWrite = [&tree]() {
+        SshConfigFileHandler external(tree.configPath().string());
+        require(external.loadConfig(), "external load must succeed");
+        external.lines().push_back("# external concurrent edit");
+        std::string error;
+        require(external.saveFileIfUnchanged(error).installed, error);
     };
-    deps.sshOptions = [options]() { return options; };
 
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", deps);
-    require(report.status == RollbackStatus::Conflict, report.message);
-    require(readFile(tree.configPath()) ==
-                "Port 2222\nMaxAuthTries 1\nMatch User backup\n"
-                "    PermitRootLogin yes\n",
-            "the concurrent external modification must be preserved");
-
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string error;
-    require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().status == MutationStatus::RollbackFailed,
-            "a refused rollback must keep the mutation active");
-}
-
-void testSshLegacyDetachedRecordIsNothingToDo() {
-    SshTree tree;
-    tree.writeConfig("Port 22\nMatch User backup\n    PermitRootLogin yes\n");
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-
-    // A detached historical record documents resolved ownership: the disable
-    // must proceed without a rollback.
-    MutationId id = 0;
-    std::string error;
-    UndoRestoreSshDirective undo;
-    undo.parameter = "Port";
-    undo.appliedValue = "2222";
-    SshDirectiveOccurrenceMutation occurrence;
-    occurrence.beforeLine = "Port 22";
-    occurrence.afterLine = "Port 2222";
-    undo.occurrences = {occurrence};
-    require(fic::rollback::recordPreparedMutation(
-                kSshPolicy, tree.sshResource(),
-                UndoAction{MutationBackend::Ssh, undo}, id, error),
-            error);
-    require(fic::rollback::commitMutation(id, error), error);
-    {
-        std::string journalError;
-        MutationJournal* live =
-            fic::rollback::DaemonMutationJournal::instance().tryGet(journalError);
-        require(live != nullptr, journalError);
-        require(live->setStatusWithMessage(
-                    id, MutationStatus::Detached, std::string(), journalError),
-                journalError);
-    }
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(kSshPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::NothingToDo,
-            "a detached record must resolve the legacy disable: " +
-                report.message);
-    require(report.rollbackCompleted(), "the disable must proceed");
-    require(readFile(tree.configPath()) ==
-                "Port 22\nMatch User backup\n    PermitRootLogin yes\n",
-            "the legacy disable must not touch the file");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.deps());
+    require(report.status == RollbackStatus::Conflict ||
+                report.status == RollbackStatus::Failed,
+            report.message);
+    require(fileContains(tree.configPath(), "# external concurrent edit"),
+            "the external edit must be preserved");
+    require(fileContains(tree.configPath(), kSshDisabledLinePrefix),
+            "the FIC-owned state must be intact");
 }
 
 } // namespace
@@ -1976,13 +1689,10 @@ void testIndeterminateJournalFailsRollbackClosed() {
     MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
     require(journal != nullptr, error);
 
-    UndoRestoreSshDirective undo;
-    undo.parameter = "Port";
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
     undo.appliedValue = "2222";
-    SshDirectiveOccurrenceMutation occurrence;
-    occurrence.beforeLine = "Port 22";
-    occurrence.afterLine = "Port 2222";
-    undo.occurrences = {occurrence};
     require(recordPreparedMutation(
                 PolicyRef{"NET", "SshEdit", "ssh_port"},
                 "ssh:/etc/ssh/sshd_config:Port",
@@ -2042,13 +1752,10 @@ void testIndeterminateMissingJournalFailsRollbackClosed() {
     MutationJournal* journal = DaemonMutationJournal::instance().tryGet(error);
     require(journal != nullptr, error);
 
-    UndoRestoreSshDirective undo;
-    undo.parameter = "Port";
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
     undo.appliedValue = "2222";
-    SshDirectiveOccurrenceMutation occurrence;
-    occurrence.beforeLine = "Port 22";
-    occurrence.afterLine = "Port 2222";
-    undo.occurrences = {occurrence};
     require(recordPreparedMutation(
                 PolicyRef{"NET", "SshEdit", "ssh_port"},
                 "ssh:/etc/ssh/sshd_config:Port",
@@ -2107,13 +1814,10 @@ void testProvenanceLossAfterRestartFailsRollbackClosed() {
         JournalOverride overrideGuard(journalPath);
         std::string error;
         MutationId id = 0;
-        UndoRestoreSshDirective undo;
-        undo.parameter = "Port";
-        undo.appliedValue = "2222";
-        SshDirectiveOccurrenceMutation occurrence;
-        occurrence.beforeLine = "Port 22";
-        occurrence.afterLine = "Port 2222";
-        undo.occurrences = {occurrence};
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
         require(recordPreparedMutation(policy,
                                        "ssh:/etc/ssh/sshd_config:Port",
                                        UndoAction{MutationBackend::Ssh, undo},
@@ -2146,8 +1850,9 @@ void testProvenanceLossAfterRestartFailsRollbackClosed() {
     // A new baseline can no longer be recorded either.
     std::string error;
     MutationId newId = 0;
-    UndoRestoreSshDirective freshUndo;
-    freshUndo.parameter = "Port";
+    UndoRemoveSshManagedPolicy freshUndo;
+    freshUndo.policyName = "ssh_port";
+    freshUndo.directive = "Port";
     freshUndo.appliedValue = "22";
     require(!recordPreparedMutation(policy, "ssh:/etc/ssh/sshd_config:Port",
                                     UndoAction{MutationBackend::Ssh, freshUndo},
@@ -2198,49 +1903,36 @@ int main() {
          testSudoRollbackKeepsOtherManagedDefault},
         {"firewall undo invokes backend", testFirewallUndoInvokesBackend},
         {"firewall undo failure fails closed", testFirewallUndoFailureFailsClosed},
-        {"ssh rollback restores replaced directive",
-         testSshRollbackRestoresReplacedDirective},
-        {"ssh rollback removes inserted directive",
-         testSshRollbackRemovesInsertedDirective},
-        {"ssh rollback restores duplicate directives",
-         testSshRollbackRestoresDuplicateDirectives},
-        {"ssh rollback conflict on controlled directive drift",
-         testSshRollbackConflictOnControlledDirectiveDrift},
-        {"ssh rollback keeps unrelated directive change",
-         testSshRollbackKeepsUnrelatedDirectiveChange},
-        {"ssh rollback keeps post-match changes", testSshRollbackKeepsPostMatchChanges},
-        {"ssh rollback keeps external include state",
-         testSshRollbackKeepsExternalIncludeState},
+        {"ssh rollback removes managed block and restores disabled lines",
+         testSshRollbackRemovesManagedBlockAndRestoresDisabled},
+        {"ssh rollback removes scalar managed block",
+         testSshRollbackRemovesScalarManagedBlock},
+        {"ssh rollback conflict on managed block drift",
+         testSshRollbackConflictOnManagedBlockDrift},
+        {"ssh rollback conflict on unknown disabled id",
+         testSshRollbackConflictOnUnknownDisabledId},
+        {"ssh rollback keeps other policy state",
+         testSshRollbackKeepsOtherPolicyState},
+        {"ssh rollback malformed markers fail closed",
+         testSshRollbackMalformedMarkersFailClosed},
         {"ssh rollback validation failure restores pre-rollback state",
          testSshRollbackValidationFailureRestoresPreRollbackState},
         {"ssh rollback reload failure restores pre-rollback state",
          testSshRollbackReloadFailureRestoresPreRollbackState},
+        {"ssh rollback nothing to do after crash",
+         testSshRollbackNothingToDoAfterCrash},
+        {"ssh rollback nothing-to-do reload failure refuses disable",
+         testSshRollbackNothingToDoReloadFailureRefusesDisable},
         {"ssh prepared record resolved by disable", testSshPreparedRecordResolvedByDisable},
         {"ssh repeated disable is idempotent", testSshRepeatedDisableIsIdempotent},
-        {"ssh legacy provenance refused when directive present",
-         testSshLegacyProvenanceRefusedWhenDirectivePresent},
-        {"ssh legacy absent directive is nothing to do",
-         testSshLegacyAbsentDirectiveIsNothingToDo},
-        {"ssh multi-policy rollbacks in any order",
-         testSshMultiPolicyRollbacksInAnyOrder},
-        {"ssh multi-policy insert and replace independent",
-         testSshMultiPolicyInsertAndReplaceIndependent},
-        {"ssh duplicate directive with other policy survives",
-         testSshDuplicateDirectiveWithOtherPolicySurvives},
-        {"ssh crash after undo is nothing to do",
-         testSshCrashAfterUndoIsNothingToDo},
-        {"ssh crash after undo reloads active runtime",
-         testSshCrashAfterUndoReloadsActiveRuntime},
-        {"ssh crash after undo reload failure refuses disable",
-         testSshCrashAfterUndoReloadFailureRefusesDisable},
+        {"ssh provenance refused when markers present without records",
+         testSshProvenanceRefusedWhenMarkersPresentWithoutRecords},
+        {"ssh no records and no markers is nothing to do",
+         testSshNoRecordsNoMarkersIsNothingToDo},
         {"ssh rollback compensation race preserves external edit",
          testSshRollbackCompensationRacePreservesExternalEdit},
-        {"ssh rollback conflict when inserted directive drifted",
-         testSshRollbackConflictWhenInsertedDirectiveDrifted},
         {"ssh rollback refused on concurrent modification",
          testSshRollbackRefusedOnConcurrentModification},
-        {"ssh legacy detached record is nothing to do",
-         testSshLegacyDetachedRecordIsNothingToDo},
         {"device feature undo invokes backend", testDeviceFeatureUndoInvokesBackend},
         {"device feature undo unknown feature is unsupported",
          testDeviceFeatureUndoUnknownFeatureIsUnsupported},

@@ -590,6 +590,8 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
@@ -1019,7 +1021,10 @@ add_executable(ssh_runtime_tests
     fic/modules/net/ssh/SshRuntimeTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
 )
 target_include_directories(ssh_runtime_tests PRIVATE
@@ -1034,6 +1039,8 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp

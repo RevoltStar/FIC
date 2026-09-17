@@ -3,6 +3,7 @@
 
 #include "modules/net/NET.h"
 #include "modules/net/ssh/SshConfigFile.h"
+#include "modules/net/ssh/SshRollback.h"
 #include "modules/net/ssh/SshRuntime.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -40,6 +41,10 @@ public:
     void setBeforeRestoreHook(std::function<void()> hook) {
         beforeRestoreHook_ = std::move(hook);
     }
+
+    // Rollback backend options derived from the platform configuration (used
+    // for in-process undo of the previous owned state on a value change).
+    SshRollbackOptions makeRollbackOptions() const;
 
     // Managed resource identifier for the rollback system: the SSH parameter
     // FIC mutates in the shared main sshd_config.

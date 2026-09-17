@@ -40,36 +40,19 @@ struct UndoRemoveManagedSetting {
     std::string appliedValue; // value/line FIC last applied; drift fingerprint
 };
 
-// One recorded per-occurrence textual mutation of an sshd directive in the
-// shared main sshd_config global section, performed by
-// SshConfigFileHandler::setValue(). The vector order IS the mutation
-// identity: occurrences are stored in the order of the target resource
-// projection (the global-section directives of the keyword, plus the exact
-// AFTER lines FIC wrote for commented-out duplicates). Rollback never relies
-// on absolute file line numbers: the current state is matched against the
-// recorded BEFORE/AFTER representations as whole ordered sequences, so
-// unrelated mutations of other FIC SSH policies (different keywords) do not
-// affect it.
-struct SshDirectiveOccurrenceMutation {
-    std::optional<std::string> beforeLine;  // nullopt -> FIC inserted the line
-    std::string afterLine;                  // line content after the FIC mutation
-};
-
-// Restores only the textual FIC mutation of the shared main sshd_config.
-// The full file is never restored: Match blocks, included files and external
-// edits outside the recorded occurrences are not FIC-owned state.
-// Mutation-local drift model used by the rollback executor. The current
-// target-resource projection (an ordered sequence, see above) is compared
-// as a whole against the recorded sequences:
-//   projection == recorded AFTER  -> the FIC mutation is still applied; undo
-//   projection == recorded BEFORE -> already factually rolled back; NothingToDo
-//   otherwise                     -> drift of the FIC-controlled state; Conflict
-// Identical line texts in different occurrences are allowed; beforeLine of
-// one occurrence may equal afterLine of another without a false Conflict.
-struct UndoRestoreSshDirective {
-    std::string parameter;                      // normalized sshd directive keyword
-    std::string appliedValue;                   // value FIC last applied
-    std::vector<SshDirectiveOccurrenceMutation> occurrences;
+// Explicit FIC ownership payload for SSH rollback. The persistent rollback
+// state lives in the FIC markers of the main sshd_config itself (managed
+// block + disabled-line wrappers); the journal record only carries the
+// policy reference, the exact applied line content (ownership proof against
+// manual edits of the FIC block) and the provenance ids of the disabled
+// blocks FIC created for this mutation. No reverse delta and no historical
+// file content is recorded; old SSH payloads are not migrated.
+struct UndoRemoveSshManagedPolicy {
+    std::string policyName;   // FIC policy name (e.g. ssh_root_login)
+    std::string directive;    // normalized sshd directive keyword
+    std::string appliedValue; // expected content of the managed directive line
+    // mutation ids of the FIC_DISABLED blocks owned by this mutation.
+    std::vector<std::string> disabledMutationIds;
 };
 
 struct UndoRemoveFirewallPolicy {
@@ -82,7 +65,7 @@ struct UndoDisableDeviceFeature {
 
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
-    UndoRestoreSshDirective,
+    UndoRemoveSshManagedPolicy,
     UndoRemoveFirewallPolicy,
     UndoDisableDeviceFeature>;
 

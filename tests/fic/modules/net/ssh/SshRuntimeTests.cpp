@@ -211,18 +211,10 @@ void testConfigFileHandlerUsesSharedSyntaxWithoutRewritingIncludes() {
     require(handler.loadConfig(), "SSH configuration handler must load '=' syntax");
     require(handler.getValue("PermitRootLogin") == "yes",
             "global SSH value using '=' must be visible to the handler");
-    require(handler.setValue("PermitRootLogin", "prohibit-password"),
-            "global SSH value using '=' must be updatable");
-    require(handler.saveFile(), "updated SSH configuration must be saved");
-
-    const std::string content = tree.read("sshd_config");
-    require(content.find("Include=sshd_config.d/01.conf") != std::string::npos &&
-            content.find("Include sshd_config.d/02.conf") != std::string::npos,
-            "updating a policy must preserve repeated unrelated Include directives");
-    require(content.find("PermitRootLogin prohibit-password") != std::string::npos,
-            "the global SSH value must be rewritten");
-    require(content.find("    PermitRootLogin no") != std::string::npos,
-            "a conditional value after Match= must remain unchanged");
+    // Direct global-section rewriting is intentionally refused: every FIC
+    // mutation goes through FIC-managed blocks and the config transaction.
+    require(!handler.setValue("PermitRootLogin", "prohibit-password"),
+            "global SSH value must not be rewritable outside a managed block");
 }
 
 void testEffectiveValuesUseAllSshdOutput() {

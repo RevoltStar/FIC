@@ -5,6 +5,7 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/firewall/FirewallPolicies.h"
 #include "modules/net/ssh/SshConfigFile.h"
+#include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlKey.h"
@@ -204,10 +205,10 @@ MutationRollbackOutcome undoSudoSetting(
     return outcome;
 }
 
-MutationRollbackOutcome undoSshDirective(
+MutationRollbackOutcome undoSshManagedPolicy(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
-    const UndoRestoreSshDirective& undo) {
+    const UndoRemoveSshManagedPolicy& undo) {
     const std::lock_guard<std::mutex> lock(rollbackBackendMutex());
 
     MutationRollbackOutcome outcome;
@@ -226,7 +227,7 @@ MutationRollbackOutcome undoSshDirective(
         return outcome;
     }
 
-    const SshRollbackResult result = undoSshDirectiveMutation(options, undo);
+    const SshRollbackResult result = undoSshManagedPolicyMutation(options, undo);
     outcome.message = result.message;
     if (result.ok) {
         outcome.status = RollbackStatus::Success;
@@ -309,10 +310,10 @@ MutationRollbackOutcome undoMutation(
             return undoSudoSetting(deps, record, *setting);
         }
     }
-    if (const auto* sshDirective =
-            std::get_if<UndoRestoreSshDirective>(&record.undo.payload)) {
+    if (const auto* sshPolicy =
+            std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Ssh) {
-            return undoSshDirective(deps, record, *sshDirective);
+            return undoSshManagedPolicy(deps, record, *sshPolicy);
         }
     }
     if (const auto* firewallPolicy =
@@ -455,9 +456,6 @@ RollbackReport checkUnrecordedOwnership(
         return report;
     }
     if (policy.moduleName == "NET" && policy.submoduleName == "SshEdit") {
-        if (resourceHint.empty()) {
-            return provenanceUnavailable(policy);
-        }
         SshRollbackOptions options = deps.sshOptions
             ? deps.sshOptions()
             : SshRollbackOptions{};
@@ -476,49 +474,29 @@ RollbackReport checkUnrecordedOwnership(
                              options.configPath.string();
             return report;
         }
-        // Only a successfully resolved historical record (RolledBack from a
-        // previous disable, or Detached) proves that the current directive
-        // state is the post-rollback state: FIC no longer owns anything
-        // there. Any other status must fail closed instead of being treated
-        // as proof of resolved ownership.
-        if (journal != nullptr) {
-            const std::string resource =
-                "ssh:" + options.configPath.string() + ":" + resourceHint;
-            for (const MutationRecord& record : journal->records()) {
-                if (record.policy == policy &&
-                    record.undo.backend == MutationBackend::Ssh &&
-                    record.resource == resource) {
-                    if (record.status == MutationStatus::RolledBack ||
-                        record.status == MutationStatus::Detached) {
-                        RollbackReport report;
-                        report.status = RollbackStatus::NothingToDo;
-                        report.message = "SSH-мутация политики уже была "
-                                         "отозвана ранее; FIC не владеет "
-                                         "текущим состоянием";
-                        return report;
-                    }
-                    RollbackReport report;
-                    report.status = RollbackStatus::Failed;
-                    report.message =
-                        "Историческая SSH-мутация политики имеет статус " +
-                        mutationStatusToString(record.status) +
-                        "; FIC-владение не может быть разрешено";
-                    return report;
-                }
-            }
+        // Provenance for SSH lives in the FIC markers of the main
+        // sshd_config itself: a managed policy sub-block or a FIC_DISABLED
+        // wrapper of this policy without an active journal record is
+        // unattributable owned state and must fail closed. Absent markers
+        // prove that FIC owns nothing there.
+        SshManagedModel model;
+        std::string modelError;
+        if (parseSshManagedModel(handler.lines(), model, modelError) !=
+            SshManagedParseStatus::Ok) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "Структура FIC-маркеров sshd_config повреждена: " +
+                             modelError;
+            return report;
         }
-        // Legacy provenance check (fail closed): the main sshd_config is a
-        // shared file. A target directive present in the global section
-        // cannot be attributed without journal provenance — even when its
-        // value matches the policy. Absent directive: FIC owns nothing there.
-        if (handler.isParameterExists(resourceHint)) {
+        if (sshManagedModelHasPolicy(model, policy.policyName) ||
+            sshManagedModelHasDisabledForPolicy(model, policy.policyName)) {
             return provenanceUnavailable(policy);
         }
         RollbackReport report;
         report.status = RollbackStatus::NothingToDo;
-        report.message = "Active mutation records отсутствуют; директива " +
-                         resourceHint +
-                         " в global section sshd_config отсутствует";
+        report.message = "Active mutation records отсутствуют; FIC-маркеры "
+                         "политики в sshd_config отсутствуют";
         return report;
     }
     // FIREWALL and DC: no cheap safe ownership check without the journal.

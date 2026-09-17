@@ -1,11 +1,12 @@
 #include "modules/net/ssh/SshRollback.h"
 
 #include "modules/net/ssh/SshConfigFile.h"
+#include "modules/net/ssh/SshConfigTransaction.h"
+#include "modules/net/ssh/SshManagedBlock.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
-#include <fstream>
-#include <sstream>
+#include <algorithm>
 #include <utility>
 
 namespace {
@@ -16,6 +17,13 @@ SshRuntime makeRuntime(const SshRollbackOptions& options) {
     runtimeOptions.includeBasePath = options.includeBasePath;
     runtimeOptions.serviceUnits = options.serviceUnits;
     return SshRuntime(runtimeOptions, *options.executables, options.runner);
+}
+
+SshConfigTransactionHooks makeHooks(const SshRollbackOptions& options) {
+    SshConfigTransactionHooks hooks;
+    hooks.beforeWrite = options.beforeWrite;
+    hooks.beforeRestore = options.beforeRestore;
+    return hooks;
 }
 
 } // namespace
@@ -40,11 +48,7 @@ SshRestoreOutcome restoreSshConfigContentIfCurrentState(
             path.string(), content, options, &error, &result)) {
         if (result.installed) {
             // The replacement itself succeeded (rename published the target);
-            // only a later durability step (directory fsync) failed. The
-            // restored content is in place in the running system, but it is
-            // NOT confirmed crash-durable: installed != durable. The caller
-            // must finish the durability before treating the compensation as
-            // proven.
+            // only a later durability step (directory fsync) failed.
             outcome.installed = true;
             outcome.durable = false;
             outcome.installedState = result.installedTargetState;
@@ -84,17 +88,13 @@ bool ensureSshConfigDurableIfCurrentState(
     return true;
 }
 
-SshRollbackResult undoSshDirectiveMutation(
+SshRollbackResult undoSshManagedPolicyMutation(
     const SshRollbackOptions& options,
-    const fic::rollback::UndoRestoreSshDirective& undo) {
+    const fic::rollback::UndoRemoveSshManagedPolicy& undo) {
     SshRollbackResult result;
-    // Defensive re-validation: the journal load already enforces this, but the
-    // undo must never run with an incomplete payload.
-    if (options.executables == nullptr ||
-        options.configPath.empty() ||
-        undo.parameter.empty() ||
-        undo.appliedValue.empty() ||
-        undo.occurrences.empty()) {
+    if (options.executables == nullptr || options.configPath.empty() ||
+        undo.policyName.empty() || undo.directive.empty() ||
+        undo.appliedValue.empty()) {
         result.message = "SSH rollback backend настроен неполно или undo payload "
                          "повреждён";
         return result;
@@ -103,248 +103,143 @@ SshRollbackResult undoSshDirectiveMutation(
     SshConfigFileHandler handler(options.configPath.string());
     if (!handler.loadConfig()) {
         result.message = "Не удалось проанализировать " +
-                         options.configPath.string();
+                         options.configPath.string() +
+                         " (в том числе структуру FIC-маркеров)";
         return result;
     }
 
-    // Mutation-local drift detection: classify the current global section
-    // against the recorded BEFORE/AFTER representations of this concrete
-    // mutation. Unrelated changes (other FIC SSH policies, comments, edits of
-    // other directives, Match blocks, includes) do not affect the result.
-    std::vector<std::size_t> afterLineIndices;
-    std::string classifyError;
-    const SshMutationState state = handler.classifyRecordedMutation(
-        undo, afterLineIndices, classifyError);
-    if (state == SshMutationState::Before) {
-        // The file already matches the recorded pre-FIC state: either the
-        // mutation was never applied or a previous undo wrote the file but
-        // crashed before the journal update / service reload. BEFORE means
-        // the persistent undo succeeded, so the runtime sshd must still be
-        // reconciled: validate the current configuration and reload it when
-        // the service is active. Only a fully successful runtime
-        // reconciliation resolves the mutation; a failed validation or a
-        // failed reload leaves the journal active and refuses the rollback.
+    SshManagedModel model;
+    std::string modelError;
+    const SshManagedParseStatus status = parseSshManagedModel(
+        handler.lines(), model, modelError);
+    if (status != SshManagedParseStatus::Ok) {
+        result.conflict = true;
+        result.message = "Структура FIC-маркеров sshd_config повреждена "
+                         "(файл не изменён): " + modelError;
+        return result;
+    }
+
+    const std::string expectedDirectiveLine =
+        sshManagedDirectiveLine(undo.directive, undo.appliedValue);
+    bool blockOwned = false;
+    const bool blockPresent = sshManagedModelHasPolicy(model, undo.policyName);
+    if (blockPresent) {
+        for (const SshManagedPolicyBlock& block : model.policies) {
+            if (block.name == undo.policyName) {
+                blockOwned =
+                    block.directiveLine == expectedDirectiveLine;
+                break;
+            }
+        }
+    }
+    const bool wrappersPresent =
+        sshManagedModelHasDisabledForPolicy(model, undo.policyName);
+
+    if (!blockPresent && !wrappersPresent) {
+        // Nothing FIC-owned remains for this policy: the mutation was never
+        // applied or already factually rolled back (e.g. crash after the
+        // file write but before the journal update). The runtime must still
+        // be reconciled before the journal record is resolved.
         result.nothingToDo = true;
         SshRuntime runtime = makeRuntime(options);
         std::string validationError;
         if (!runtime.validateConfiguration(validationError)) {
             result.nothingToDo = false;
-            result.message = "Состояние директивы " + undo.parameter +
-                             " уже соответствует состоянию до FIC-мутации, но "
-                             "sshd -T не принимает текущую конфигурацию; откат "
-                             "не подтверждён, мутация остаётся активной: " +
+            result.message = "FIC не владеет состоянием политики '" +
+                             undo.policyName +
+                             "', но sshd -T не принимает текущую "
+                             "конфигурацию; откат не подтверждён: " +
                              validationError;
             return result;
         }
-        // Durability barrier bound to the exact loaded snapshot. The BEFORE
-        // state may have been published by a reverse rename whose parent
-        // directory fsync never completed (crash between rename and fsync).
-        // The rollback may only be resolved once this state is confirmed
-        // crash-durable, and the barrier must never fsync a file that an
-        // external writer replaced after the classification: the snapshot
-        // captured at loadConfig() is re-proved against the current path
-        // first; otherwise NothingToDo would claim a resolved rollback based
-        // on ambiguous provenance.
         if (!handler.loadSnapshot().has_value()) {
             result.nothingToDo = false;
-            result.message = "Состояние директивы " + undo.parameter +
-                             " уже соответствует состоянию до FIC-мутации, но "
-                             "in-memory snapshot sshd_config недоступен; "
+            result.message = "in-memory snapshot sshd_config недоступен; "
                              "durability не может быть привязана к "
-                             "classified state; откат не подтверждён, "
-                             "мутация остаётся активной";
+                             "состоянию отката";
             return result;
         }
         std::string barrierError;
-        if (!ensureSshConfigDurableIfCurrentState(
-                options.configPath, *handler.loadSnapshot(), barrierError)) {
+        if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                options.configPath.string(), *handler.loadSnapshot(),
+                &barrierError)) {
             result.nothingToDo = false;
-            result.message = "Состояние директивы " + undo.parameter +
-                             " уже соответствует состоянию до FIC-мутации, но "
-                             "durability classified snapshot sshd_config не "
-                             "подтверждена (crash может потерять rename или "
-                             "файл был заменён); откат не подтверждён, "
-                             "мутация остаётся активной: " + barrierError;
+            result.message = "Durability состояния sshd_config не "
+                             "подтверждена; откат не подтверждён: " +
+                             barrierError;
             return result;
         }
         const SshActivationResult activation = runtime.activateIfRunning();
         if (!activation.ok) {
             result.nothingToDo = false;
-            result.message = "Состояние директивы " + undo.parameter +
-                             " уже соответствует состоянию до FIC-мутации, но "
-                             "перезагрузка SSH-сервиса не удалась; откат не "
-                             "подтверждён, мутация остаётся активной: " +
+            result.message = "Откат уже выполнен в sshd_config, но "
+                             "перезагрузка SSH-сервиса не удалась: " +
                              activation.message;
             return result;
         }
-        result.message = "Состояние директивы " + undo.parameter +
-                         " уже соответствует состоянию до FIC-мутации" +
-                         (activation.reloaded
-                              ? "; SSH-сервис перезагружен (crash recovery)"
-                              : "; SSH-сервис неактивен, перезагрузка не требуется") +
-                         "; откат не требуется";
+        result.message = "FIC не владеет состоянием политики '" +
+                         undo.policyName + "'; откат не требуется";
         return result;
     }
-    if (state == SshMutationState::Conflict) {
-        result.conflict = true;
-        result.message = "Откат SSH-мутации отменён (файл не изменён): " +
-                         classifyError;
-        return result;
-    }
-
-    // In-memory pre-rollback copy (the exact loaded snapshot content) used
-    // for transactional compensation.
-    const std::string preRollbackContent =
-        handler.loadSnapshot().has_value() ? handler.loadSnapshot()->content
-                                           : std::string();
-
-    if (options.beforeWrite) {
-        options.beforeWrite();
-    }
-
-    std::string error;
-    if (!handler.applyRecordedReverseEdits(undo, afterLineIndices, error)) {
-        result.message = "Откат SSH-мутации отменён (файл не изменён): " + error;
-        return result;
-    }
-    const FileHandler::FileSaveOutcome saveOutcome =
-        handler.saveFileIfUnchanged(error);
-    const bool reverseInstalled =
-        saveOutcome.result == FileHandler::FileSaveResult::Installed ||
-        saveOutcome.installed;
-    if (!reverseInstalled) {
-        if (saveOutcome.result == FileHandler::FileSaveResult::RefusedChanged) {
-            // The shared sshd_config changed concurrently after the snapshot
-            // was captured: refuse without overwriting the external change.
+    // Verify provenance of the disabled blocks before changing anything.
+    for (const SshDisabledBlock& disabled : model.disabled) {
+        if (disabled.policy != undo.policyName) {
+            continue;
+        }
+        if (std::find(undo.disabledMutationIds.begin(),
+                      undo.disabledMutationIds.end(),
+                      disabled.mutationId) == undo.disabledMutationIds.end()) {
             result.conflict = true;
-            result.message = "sshd_config изменился во время отката; "
-                             "конкурентная запись отклонена, файл не изменён: " +
-                             error;
-        } else {
-            result.message = "Не удалось записать откат SSH-мутации в " +
-                             options.configPath.string() + ": " + error;
-        }
-        return result;
-    }
-    if (!saveOutcome.installedTargetState.has_value()) {
-        // The reverse write was installed but its exact state is unknown:
-        // fail closed without any compensation guess; the mutation stays
-        // active.
-        result.message = "Не удалось зафиксировать точное состояние "
-                         "sshd_config после записи отката"
-                             + std::string(error.empty() ? "" : (": " + error))
-                             + "; мутация остаётся активной";
-        return result;
-    }
-    const AtomicTargetState& installedState = *saveOutcome.installedTargetState;
-
-    // Post-install durability: a reverse write that succeeded through rename
-    // but failed its parent directory fsync is NOT a durable rollback. The
-    // durability is finished only when the target still is exactly the
-    // installed reverse state; otherwise the mutation stays active fail
-    // closed (a non-durable rename must never be reported as Success).
-    if (!saveOutcome.durabilityConfirmed) {
-        std::string barrierError;
-        if (!ensureSshConfigDurableIfCurrentState(options.configPath,
-                                                  installedState,
-                                                  barrierError)) {
-            result.message = "Запись отката sshd_config опубликована rename, "
-                             "но durability не подтверждена; мутация "
-                             "остаётся активной: " + barrierError;
+            result.message = "FIC_DISABLED блок политики '" + undo.policyName +
+                             "' имеет неизвестный mutation id '" +
+                             disabled.mutationId +
+                             "'; владение не может быть доказано (файл не "
+                             "изменён)";
             return result;
         }
     }
+    if (blockPresent && !blockOwned) {
+        // The managed sub-block exists but its directive line does not match
+        // the recorded applied value: the block was manually edited and FIC
+        // refuses to overwrite user content by guesswork.
+        result.conflict = true;
+        result.message = "Содержимое FIC policy-блока '" + undo.policyName +
+                         "' изменено вручную; владение не может быть "
+                         "доказано (файл не изменён)";
+        return result;
+    }
 
+    // Build the rollback edits in memory: remove the policy sub-block and
+    // restore only the disabled lines this mutation owns. Other policies'
+    // sub-blocks and wrappers are untouched.
+    const SshConfigTransactionHooks hooks = makeHooks(options);
     SshRuntime runtime = makeRuntime(options);
-    const auto runBeforeRestore = [&options]() {
-        if (options.beforeRestore) {
-            options.beforeRestore();
-        }
-    };
-    std::string validationError;
-    if (!runtime.validateConfiguration(validationError)) {
-        // Post-rollback validation failed: restore the pre-rollback (FIC)
-        // state. Do not reload a configuration sshd does not accept. The
-        // restore is conditional on the target still being the exact state
-        // FIC installed through the reverse write; an external modification
-        // made after that write is never overwritten.
-        std::string restoreError;
-        runBeforeRestore();
-        const SshRestoreOutcome restored = restoreSshConfigContentIfCurrentState(
-            options.configPath, preRollbackContent, installedState,
-            restoreError);
-        bool stateRestored = restored.installed;
-        if (stateRestored && !restored.durable) {
-            // The restore rename succeeded but its durability did not: the
-            // compensation is only proven once the restored state is
-            // confirmed crash-durable.
-            stateRestored = ensureSshConfigDurableIfCurrentState(
-                options.configPath, *restored.installedState, restoreError);
-        }
-        if (stateRestored) {
-            result.message = "Откат SSH-мутации записан, но sshd -T не принял "
-                             "результат; состояние до отката восстановлено: " +
-                             validationError;
-        } else {
-            result.message = "Откат SSH-мутации не прошёл валидацию (" +
-                             validationError + "); восстановить состояние до " +
-                             "отката не удалось, мутация остаётся активной: " +
-                             restoreError;
-        }
-        return result;
-    }
 
-    const SshActivationResult activation = runtime.activateIfRunning();
-    if (!activation.ok) {
-        std::string restoreError;
-        runBeforeRestore();
-        const SshRestoreOutcome restored = restoreSshConfigContentIfCurrentState(
-            options.configPath, preRollbackContent, installedState,
-            restoreError);
-        bool stateRestored = restored.installed;
-        if (stateRestored && !restored.durable) {
-            // The compensation must be durably proven before the restored
-            // configuration is activated and the rollback result reported.
-            stateRestored = ensureSshConfigDurableIfCurrentState(
-                options.configPath, *restored.installedState, restoreError);
-        }
-        if (!stateRestored) {
-            result.message = "Перезагрузка SSH-сервиса не удалась (" +
-                             activation.message +
-                             "); восстановить состояние до отката не удалось, "
-                             "мутация остаётся активной: " +
-                             restoreError;
-            return result;
-        }
-        // Reload the restored (pre-rollback) configuration when the service
-        // is active; activateIfRunning is a no-op for an inactive service.
-        std::string restoredValidationError;
-        if (!runtime.validateConfiguration(restoredValidationError)) {
-            result.message = "Перезагрузка SSH-сервиса не удалась (" +
-                             activation.message + "); состояние до отката " +
-                             "восстановлено, но sshd его не принимает: " +
-                             restoredValidationError;
-            return result;
-        }
-        const SshActivationResult restoredActivation = runtime.activateIfRunning();
-        if (!restoredActivation.ok) {
-            result.message = "Перезагрузка SSH-сервиса не удалась (" +
-                             activation.message + "); состояние до отката " +
-                             "восстановлено на диске, но не активировано: " +
-                             restoredActivation.message;
-            return result;
-        }
-        result.message = "Откат SSH-мутации отменён: перезагрузка SSH-сервиса "
-                         "не удалась (" + activation.message +
-                         "); состояние до отката восстановлено и активировано";
-        return result;
-    }
+    SshConfigTransactionResult transaction = runSshConfigTransaction(
+        handler, runtime, hooks,
+        [&handler, &undo, &expectedDirectiveLine](std::string& error) {
+            bool removed = false;
+            if (!removeSshManagedPolicyBlock(handler.lines(), undo.policyName,
+                                             expectedDirectiveLine, removed,
+                                             error)) {
+                return false;
+            }
+            bool restored = false;
+            if (!restoreSshDisabledLines(handler.lines(), undo.policyName,
+                                         undo.disabledMutationIds, restored,
+                                         error)) {
+                return false;
+            }
+            return true;
+        },
+        // Rollback postcondition: the restored configuration must be
+        // accepted by sshd (-t/-T). No policy value is expected here.
+        [](std::string&) { return true; },
+        "FIC-владение политикой '" + undo.policyName +
+            "' в sshd_config отозвано");
 
-    result.ok = true;
-    result.message = "FIC-мутация sshd_config отменена (" + undo.parameter +
-                     "); изменения вне записанной дельты не затронуты" +
-                     (activation.reloaded
-                          ? "; SSH-сервис перезагружен"
-                          : "; SSH-сервис неактивен, перезагрузка не требуется");
+    result.ok = transaction.ok;
+    result.conflict = transaction.conflict;
+    result.message = transaction.message;
     return result;
 }
