@@ -414,10 +414,12 @@ TcbBaselineRollbackReport rollbackTcbTreeToBaseline(
         }
         // Re-open the exact collected object through its pinned parent
         // descriptor (nofollow) and re-verify it is still the same object
-        // type and inode before mutating.
-        const int objectFd = ::openat(rule.parent.get(), rule.name.c_str(),
-                                      O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-        if (objectFd < 0) {
+        // type and inode before mutating. RAII: the descriptor must be
+        // closed on every exit path of this iteration (continue, failure,
+        // success); fromBorrowedDescriptor does not take ownership.
+        UniqueFd objectFd(::openat(rule.parent.get(), rule.name.c_str(),
+                                   O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+        if (objectFd.get() < 0) {
             ++report.failed;
             if (report.firstError.empty()) {
                 report.firstError = rule.path + ": " +
@@ -426,7 +428,7 @@ TcbBaselineRollbackReport rollbackTcbTreeToBaseline(
             continue;
         }
         FileStats current =
-            FileStats::fromBorrowedDescriptor(objectFd, rule.path);
+            FileStats::fromBorrowedDescriptor(objectFd.get(), rule.path);
         if (current.has_error() ||
             S_ISDIR(current.file_type()) !=
                 S_ISDIR(rule.current.file_type())) {

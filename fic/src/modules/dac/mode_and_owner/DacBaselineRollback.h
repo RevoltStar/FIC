@@ -26,15 +26,20 @@ struct DacBaselineRollbackOptions {
 // rollback/RollbackExecutor.h next to MutationRollbackOutcome.
 
 enum class DacBaselineOwnershipVerdict {
-    Owned,      // enforced state is present: FIC owns the current state
+    Owned,      // enforced state is present: the state is eligible for a
+                // legacy platform-baseline transition
     AtBaseline, // every managed object is missing or already at baseline
-    Unproven    // ownership cannot be proven: fail closed
+    Unproven    // state is not eligible for a legacy transition: fail closed
 };
 
-// Fail-safe provenance check for a supported DAC policy without active
-// journal records (legacy apply). FIC ownership is proven by the enforced
-// state being present on at least one non-missing managed object while no
-// object sits in a foreign (neither enforced nor baseline) state.
+// Fail-safe eligibility check for a supported DAC policy without active
+// journal records (legacy apply). The current state is only ELIGIBLE for a
+// legacy platform-baseline transition (compatible with the enforced
+// hardening envelope): the enforced state being present on at least one
+// non-missing managed object while no object sits in a foreign (neither
+// enforced nor baseline) state. This does not historically prove that FIC
+// performed the change; it only proves the state is safe to transition to
+// the platform profile baseline.
 DacBaselineOwnershipVerdict checkDacBaselineOwnership(
     const DacBaselineRollbackOptions& options,
     const std::string& policyName,

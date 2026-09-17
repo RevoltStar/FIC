@@ -1230,6 +1230,52 @@ void testDacBlockingPolicyRollbackUsesProfileBaseline() {
             "blocking files rollback must restore the crontab-style baseline");
 }
 
+void testDacBaselineRollbackConflictOnDirectorySubstitution() {
+    const PolicyRef policy{"DAC", "Mode_and_Owner", "systemcommandlock"};
+    TempTree tree("/tmp/fic-rollback-dac-XXXXXX");
+    const std::filesystem::path managed = tree.root / "managed-dir";
+    std::filesystem::create_directories(managed);
+    require(::chmod(managed.c_str(), 0750) == 0,
+            "could not prepare substituted directory fixture");
+    struct stat before {};
+    require(::stat(managed.c_str(), &before) == 0,
+            "could not stat the substituted directory");
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(policy, "systemcommandlock",
+                  UndoAction{MutationBackend::Dac,
+                             UndoApplyDacPlatformBaseline{
+                                 "systemcommandlock"}});
+
+    const RollbackExecutorDeps deps = dacDeps(managed);
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(report.status == RollbackStatus::Conflict,
+            "directory substitution must conflict during rollback: " +
+                report.message);
+    require(!report.rollbackCompleted(), "conflict must refuse the disable");
+
+    // The unexpected object must remain exactly as it was.
+    struct stat after {};
+    require(::stat(managed.c_str(), &after) == 0,
+            "substituted directory disappeared");
+    require(std::filesystem::is_directory(managed),
+            "managed object is no longer a directory");
+    require((after.st_mode & 07777) == (before.st_mode & 07777),
+            "conflicted rollback must not change the directory mode");
+    require(after.st_uid == before.st_uid && after.st_gid == before.st_gid,
+            "conflicted rollback must not change the directory owner/group");
+
+    // Conflict keeps the provenance active: a later disable retries.
+    std::string journalError;
+    MutationJournal* journalPtr =
+        DaemonMutationJournal::instance().tryGet(journalError);
+    require(journalPtr != nullptr, journalError);
+    require(!journalPtr->activeRecords(policy).empty(),
+            "conflicted rollback must keep the journal record active");
+}
+
 
 void testJournalUpdateFailureFailsClosed() {
     // A successful backend undo with a journal that can no longer be written
@@ -2152,6 +2198,8 @@ int main() {
          testDacUnrecordedAtBaselineIsNothingToDo},
         {"dac blocking policy rollback uses profile baseline",
          testDacBlockingPolicyRollbackUsesProfileBaseline},
+        {"dac baseline rollback conflicts on directory substitution",
+         testDacBaselineRollbackConflictOnDirectorySubstitution},
         {"journal update failure fails closed", testJournalUpdateFailureFailsClosed},
         {"empty journal with sysctl hint and no managed ownership",
          testEmptyJournalWithSysctlHintAndNoManagedOwnership},

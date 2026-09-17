@@ -1165,6 +1165,96 @@ void testPlatformBaselineRollbackProviderTarget(const fs::path& root) {
     require(fileMode(providerTarget) == 0644,
             "provider target baseline was not restored");
 }
+
+int countOpenFds() {
+    int count = 0;
+    for (const auto& entry : fs::directory_iterator("/proc/self/fd")) {
+        (void)entry;
+        ++count;
+    }
+    return count;
+}
+
+void testTcbBaselineRollbackDoesNotLeakDescriptors(const fs::path& root) {
+    const fs::path tcbRoot = root / "tcb-leak";
+    fic::platform::TcbCredentialStorageConfig config{
+        tcbRoot, currentOwner(), currentGroup(), 0710, 0710,
+        currentGroup(), 02710, 02710,
+        {{"shadow", 0640, 0640, true},
+         {"shadow-", 0640, 0640, false},
+         {"shadow.lock", 0600, 0600, false}}};
+
+    fs::create_directory(tcbRoot);
+    require(::chmod(tcbRoot.c_str(), 0710) == 0,
+            "could not set TCB root mode");
+    const fs::path accountDirectory = tcbRoot / currentOwner();
+    fs::create_directory(accountDirectory);
+    require(::chmod(accountDirectory.c_str(), 02710) == 0,
+            "could not set TCB account directory mode");
+    writeFile(accountDirectory / "shadow", "hash", 0640);
+    writeFile(accountDirectory / "shadow-", "hash", 0640);
+    writeFile(accountDirectory / "shadow.lock", "lock", 0600);
+
+    // 100 rollbacks over a 5-object tree: a per-object descriptor leak
+    // would accumulate ~500 file descriptors here.
+    const int before = countOpenFds();
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        const TcbBaselineRollbackReport report =
+            rollbackTcbTreeToBaseline(config);
+        require(report.failed == 0,
+                "TCB baseline rollback failed: " + report.firstError);
+    }
+    const int after = countOpenFds();
+    require(after <= before + 8,
+            "rollbackTcbTreeToBaseline leaks file descriptors: before=" +
+                std::to_string(before) + " after=" + std::to_string(after));
+}
+
+void testPlatformBaselineRejectsDirectorySubstitution(const fs::path& root) {
+    const fs::path managed = root / "managed-substituted-dir";
+    fs::create_directories(managed);
+    require(::chmod(managed.c_str(), 0755) == 0,
+            "could not prepare substituted directory fixture");
+    struct stat before {};
+    require(::stat(managed.c_str(), &before) == 0,
+            "could not stat the substituted directory");
+
+    // A managed path that is not a regular file must fail closed on apply:
+    // enforced FILE metadata must never be applied to a directory.
+    fic::platform::DacPlatformConfig commandConfig;
+    commandConfig.protectedSystemCommands = {
+        {managed, {currentOwner(), currentGroup(), 0750},
+                  {currentOwner(), currentGroup(), 0755}}};
+    DAC_systemcommandlock commandPolicy(commandConfig);
+    require(!commandPolicy.apply(), "apply accepted a substituted directory");
+
+    // The same fail-closed contract for protectedSystemFiles (crontab-style
+    // static rule): apply and the backend rollback path.
+    fic::platform::DacPlatformConfig filesConfig;
+    filesConfig.protectedSystemFiles = {
+        {managed, {currentOwner(), currentGroup(), 0600},
+                  {currentOwner(), currentGroup(), 0644}}};
+    DAC_blocking_user_access_to_system_files filesPolicy(filesConfig);
+    require(!filesPolicy.apply(),
+            "blocking files apply accepted a substituted directory");
+    const fic::rollback::MutationRollbackOutcome rollback =
+        runBaselineRollback(filesConfig,
+                            "blocking_user_access_to_system_files");
+    require(rollback.status == fic::rollback::RollbackStatus::Conflict,
+            "directory substitution must conflict during rollback: " +
+                rollback.message);
+
+    // No mutation of the unexpected object anywhere in the scenario.
+    struct stat after {};
+    require(::stat(managed.c_str(), &after) == 0,
+            "substituted directory disappeared");
+    require(fs::is_directory(managed),
+            "managed object is no longer a directory");
+    require((after.st_mode & 07777) == (before.st_mode & 07777),
+            "the substituted directory mode was modified");
+    require(after.st_uid == before.st_uid && after.st_gid == before.st_gid,
+            "the substituted directory owner/group was modified");
+}
 } // namespace
 
 int main() {
@@ -1194,6 +1284,8 @@ int main() {
     testPlatformBaselineRollbackMissingFile(root);
     testPlatformBaselineRollbackSymlinkFailClosed(root);
     testPlatformBaselineRollbackProviderTarget(root);
+    testTcbBaselineRollbackDoesNotLeakDescriptors(root);
+    testPlatformBaselineRejectsDirectorySubstitution(root);
 
     fs::remove_all(root);
     return 0;

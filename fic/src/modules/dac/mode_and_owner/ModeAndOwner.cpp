@@ -354,7 +354,17 @@ bool ModeAndOwner::apply() {
         }
 
         // Static regular path: the original FileAccessRule expectation is
-        // authoritative and remediation is allowed.
+        // authoritative and remediation is allowed. The rule describes a
+        // regular file: an unexpected object type (directory, device node,
+        // ...) must fail closed before any metadata mutation.
+        if (!currentStats.is_regular_file()) {
+            this->log(
+                "Объект " + currentStats.opened_policy_path().string() +
+                    " имеет неожиданный тип; ожидался обычный файл",
+                logLevel::ERROR);
+            ++counters.failed;
+            continue;
+        }
         applyOpenedRule(filename, expectedStats, std::move(currentStats),
                         false, counters);
     }

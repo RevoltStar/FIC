@@ -122,7 +122,14 @@ ResourceOutcome rollbackFileAccessRule(
         return transitionToBaseline(current, providerTarget->baseline, detail);
     }
 
-    // Static regular path: the rule baseline is authoritative.
+    // Static regular path: the rule baseline is authoritative. The rule
+    // describes a regular file: an unexpected object type (directory,
+    // device node, ...) must fail closed before any metadata mutation.
+    if (!current.is_regular_file()) {
+        detail = "неожиданный тип объекта: " +
+                 current.opened_policy_path().string();
+        return ResourceOutcome::Conflict;
+    }
     return transitionToBaseline(current, rule.baseline, detail);
 }
 

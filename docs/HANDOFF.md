@@ -2,17 +2,22 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `6707452` (follow-up SSH provenance).
-- Рабочее дерево содержит незакоммиченную задачу platform-baseline rollback
-  для DAC hardening-политик (большой diff — требуется review и коммит).
+- Ветка `main`, базовый commit `65165ef` (platform-baseline rollback для
+  DAC hardening-политик).
+- Рабочее дерево содержит незакоммиченный hardening follow-up к `65165ef`
+  (object type safety + fd lifetime, см. Current task).
 
 ## Current task
 
-- **Platform-baseline rollback для DAC hardening-политик**
-  `DAC/Mode_and_Owner/systemcommandlock` и
-  `DAC/Mode_and_Owner/blocking_user_access_to_system_files` (незакоммичено).
-  Исторический pre-FIC rollback для них запрещён: apply → enforced-метаданные
-  platform profile, disable → baseline-метаданные того же профиля.
+- **Hardening follow-up к platform-baseline rollback** (незакоммичено):
+  1) static `FileAccessRule` теперь проверяет `is_regular_file()` ПЕРЕД
+  любыми chown/chmod в apply (`ModeAndOwner::apply`) и rollback
+  (`rollbackFileAccessRule` → `Conflict`); 2) fd leak в
+  `rollbackTcbTreeToBaseline` закрыт через существующий RAII `UniqueFd`;
+  3) `FileStats::move_from` теперь переносит `fileType_` (без этого
+  type-revalidation в TCB rollback сравнивала moved-from мусор); 4)
+  терминология legacy provenance уточнена (eligible, не ownership proof).
+  Контракт apply→enforced / disable→baseline НЕ менялся.
 
 ## Accepted architecture / invariants
 
@@ -92,9 +97,16 @@
   обновлён под новый текст профилей.
 - `docs/rollback.md`: раздел «Platform-baseline rollback (DAC hardening)»,
   Undo action bullet, enrollment, «Расширение».
+- Follow-up (`65165ef`): static type check apply+rollback, `UniqueFd` в
+  `rollbackTcbTreeToBaseline`, `FileStats::move_from` переносит `fileType_`,
+  legacy-терминология в `DacBaselineRollback.h`; тесты `ModeAndOwnerTests`
+  +2 (fd-leak через `/proc/self/fd` 100×5 объектов, directory substitution
+  apply+backend rollback для обеих политик), `RollbackExecutorTests` +1
+  (directory substitution → Conflict, объект нетронут, journal активен).
 
 ## Changed areas
 
+- `fic-common/fic-core/src/fs/FileStats.cpp` (move_from/fileType_)
 - `fic/src/platform/` (PlatformProfile.h, PlatformCompatibility.cpp,
   profiles/*)
 - `fic/src/modules/dac/mode_and_owner/` (ModeAndOwner.*,
@@ -111,8 +123,10 @@
 - Full build `build-check` (ubuntu-24.04): exit 0.
 - Full CTest: 96/96 passed (1 pre-existing skip `command_hash_batch_tests`).
 - Целевые бинарники: `mode_and_owner_tests`, `rollback_executor_tests`
-  (52 PASS, вкл. 6 новых DAC), `mutation_journal_tests`,
-  `platform_profile_tests`, `ssh_apply_rollback_tests` — exit 0.
+  (53 PASS, вкл. 6 DAC из основной задачи + 1 directory-substitution),
+  `mutation_journal_tests`, `platform_profile_tests` — exit 0.
+- fd-тест regression value: с raw `int objectFd` (без RAII) падает с
+  `before=8 after=508` fd; с `UniqueFd` — passes.
 - `bash scripts/run-development-checks.sh fast`: exit 0.
 - `git diff --check`: clean.
 - Sanitizers: ASan/UBSan-профиля в проекте нет — не запускались.

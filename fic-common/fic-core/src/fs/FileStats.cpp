@@ -569,9 +569,11 @@ void FileStats::move_from(FileStats&& other) noexcept {
     state_ = other.state_;
     ownerId_ = other.ownerId_;
     groupId_ = other.groupId_;
+    fileType_ = other.fileType_;
     systemError_ = other.systemError_;
     errorMessage_ = std::move(other.errorMessage_);
     other.descriptor_ = -1;
+    other.fileType_ = 0;
     other.exists = false;
 }
 
