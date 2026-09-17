@@ -1130,7 +1130,8 @@ void testDaemonJournalTryGetMissingAfterIndeterminate() {
     require(gateError.find("Indeterminate") != std::string::npos,
             "the gate must explain that a reload or restart is required: " +
                 gateError);
-    require(gateError.find("disappeared") != std::string::npos,
+    require(gateError.find("missing") != std::string::npos ||
+                gateError.find("disappeared") != std::string::npos,
             "the gate must surface the disappearance error: " + gateError);
     require(journal->health() == JournalHealth::Indeterminate, gateError);
     require(!journal->usable(), gateError);
@@ -1471,6 +1472,308 @@ void testEmptyRecordsKeepWitness() {
     DaemonMutationJournal::instance().resetOverride();
 }
 
+// Models a concurrent FIC instance performing a full legitimate
+// witness-aware bootstrap with one Applied record.
+void concurrentFullBootstrapWithRecord(const std::filesystem::path& path) {
+    MutationJournal other(path);
+    std::string error;
+    require(other.initializeOrLoad(error), error);
+    MutationId id = 0;
+    require(other.prepareMutation(preparedRecord(sysctlPolicy()), id, error),
+            error);
+    require(other.setStatus(id, MutationStatus::Applied, error), error);
+    require(other.lifecycleInitialized(),
+            "the concurrent instance must complete its lifecycle");
+    require(other.records().size() == 1, error);
+}
+
+// Mandatory test A/B: instance A probed J missing / W missing, then a second
+// instance performed a FULL bootstrap (journal with an Applied record + a
+// valid witness). A's exclusive install must conflict, the state table must
+// be re-evaluated, and A must join the created lifecycle WITHOUT replacing
+// the journal.
+void testVirginBootstrapDoesNotOverwriteConcurrentFullBootstrap() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    MutationJournal::setBeforeVirginJournalInstallHookForTests([&file]() {
+        // Clear the hook first: the concurrent instance performs its own
+        // full bootstrap and must not recurse into this seam.
+        MutationJournal::setBeforeVirginJournalInstallHookForTests(nullptr);
+        concurrentFullBootstrapWithRecord(file.path);
+    });
+    struct HookReset {
+        ~HookReset() {
+            MutationJournal::setBeforeVirginJournalInstallHookForTests(
+                nullptr);
+        }
+    } hookReset;
+
+    require(journal.initializeOrLoad(error), error);
+    require(journal.lifecycleInitialized(), error);
+    require(journal.usable(), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::Applied,
+            "instance A must load the concurrent instance's record, never "
+            "replace it with the empty bootstrap document");
+    // The on-disk journal must be the concurrent instance's document.
+    MutationJournal verify(file.path);
+    require(verify.initializeOrLoad(error), error);
+    require(verify.records().size() == 1 &&
+                verify.records().front().status == MutationStatus::Applied,
+            "the persisted journal must still carry the concurrent record");
+}
+
+// Mandatory test A/C: a concurrent instance created a durable journal (with
+// an Applied record) but the witness is still missing (interrupted
+// bootstrap). A must NOT replace the journal and must take the migration
+// flow, preserving the records.
+void testVirginBootstrapDoesNotOverwriteConcurrentJournalOnly() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    std::string journalContentBefore;
+    MutationJournal::setBeforeVirginJournalInstallHookForTests(
+        [&file, &error, &journalContentBefore]() {
+            // Clear the hook first: the concurrent instance performs its own
+            // full bootstrap and must not recurse into this seam.
+            MutationJournal::setBeforeVirginJournalInstallHookForTests(
+                nullptr);
+            {
+                MutationJournal other(file.path);
+                require(other.initializeOrLoad(error), error);
+                MutationId id = 0;
+                require(other.prepareMutation(preparedRecord(sysctlPolicy()),
+                                              id, error),
+                        error);
+                require(other.setStatus(id, MutationStatus::Applied, error),
+                        error);
+            }
+            // Simulate the concurrent instance crashing before the witness.
+            std::error_code ec;
+            std::filesystem::remove(file.path.string() + ".initialized", ec);
+            require(!ec, ec.message());
+            std::ifstream stream(file.path, std::ios::binary);
+            journalContentBefore.assign(
+                std::istreambuf_iterator<char>(stream),
+                std::istreambuf_iterator<char>());
+        });
+    struct HookReset {
+        ~HookReset() {
+            MutationJournal::setBeforeVirginJournalInstallHookForTests(
+                nullptr);
+        }
+    } hookReset;
+
+    require(journal.initializeOrLoad(error), error);
+    require(journal.lifecycleInitialized(), error);
+    require(journal.usable(), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::Applied,
+            "migration must preserve the concurrent instance's records");
+    require(std::filesystem::exists(file.path.string() + ".initialized"),
+            "instance A must complete the interrupted bootstrap by proving "
+            "the witness");
+    std::ifstream stream(file.path, std::ios::binary);
+    const std::string journalContentAfter(
+        (std::istreambuf_iterator<char>(stream)),
+        std::istreambuf_iterator<char>());
+    require(journalContentAfter == journalContentBefore,
+            "the journal content must not be rewritten by the migration");
+}
+
+// Mandatory test D: the journal disappears AFTER the witness was created
+// during virgin bootstrap. The final strict proof must fail closed —
+// critically NOT into an empty Healthy journal.
+void testVirginBootstrapJournalDisappearsAfterWitnessFailsClosed() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    MutationJournal::setBeforeFinalJournalProofHookForTests(
+        [&file]() {
+            std::error_code ec;
+            std::filesystem::remove(file.path, ec);
+            require(!ec, ec.message());
+        });
+    struct HookReset {
+        ~HookReset() {
+            MutationJournal::setBeforeFinalJournalProofHookForTests(nullptr);
+        }
+    } hookReset;
+
+    require(!journal.initializeOrLoad(error),
+            "a missing journal after witness creation must fail closed");
+    require(journal.health() == JournalHealth::Indeterminate, error);
+    require(!journal.usable(), error);
+    require(!journal.lifecycleInitialized(), error);
+    require(std::filesystem::exists(file.path.string() + ".initialized"),
+            "the witness must remain on disk");
+    // Next restart: J missing + W valid → provenance loss, fail closed.
+    MutationJournal restarted(file.path);
+    std::string restartError;
+    require(!restarted.initializeOrLoad(restartError),
+            "the next startup must detect the provenance loss");
+    require(restartError.find("provenance") != std::string::npos,
+            "the restart must report provenance loss: " + restartError);
+}
+
+// Mandatory test E: the journal disappears between the first proof and the
+// final proof of the migration flow. Fail closed; the next restart sees
+// J missing + W valid → provenance loss, fail closed.
+void testMigrationJournalDisappearsBeforeFinalProofFailsClosed() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    MutationJournal journal(file.path);
+    std::string error;
+    MutationJournal::setBeforeFinalJournalProofHookForTests(
+        [&file]() {
+            std::error_code ec;
+            std::filesystem::remove(file.path, ec);
+            require(!ec, ec.message());
+        });
+    struct HookReset {
+        ~HookReset() {
+            MutationJournal::setBeforeFinalJournalProofHookForTests(nullptr);
+        }
+    } hookReset;
+
+    require(!journal.initializeOrLoad(error),
+            "the migration must fail closed when the journal disappears "
+            "before the final proof");
+    require(journal.health() == JournalHealth::Indeterminate, error);
+    require(!journal.usable(), error);
+    require(!journal.lifecycleInitialized(), error);
+    // Next restart: J missing + W valid → provenance loss, fail closed.
+    MutationJournal restarted(file.path);
+    std::string restartError;
+    require(!restarted.initializeOrLoad(restartError),
+            "the next startup must detect the provenance loss");
+    require(restartError.find("provenance") != std::string::npos,
+            "the restart must report provenance loss: " + restartError);
+}
+
+// Mandatory test F: after a failed witness creation the SAME object must
+// retry the witness-aware migration on the next initializeOrLoad() — the
+// raw journal load must not bypass the witness.
+void testSameObjectRetriesWitnessAwareMigrationAfterWitnessFailure() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    const std::string witnessPath = file.path.string() + ".initialized";
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&witnessPath](const std::string& targetPath) {
+            return targetPath != witnessPath;
+        });
+    struct HookReset {
+        ~HookReset() {
+            AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+        }
+    } hookReset;
+
+    MutationJournal journal(file.path);
+    std::string error;
+    require(!journal.initializeOrLoad(error),
+            "witness creation failure must fail closed");
+    require(journal.health() == JournalHealth::Indeterminate, error);
+    require(!journal.usable(), error);
+    require(!journal.lifecycleInitialized(),
+            "the witness-aware lifecycle must NOT be considered initialized");
+    // NOTE: the witness file may already be installed on disk at this point
+    // (rename-ok + fsync-fail leaves it installed but NOT proven durable);
+    // the next initialization must still re-prove/accept it.
+
+    // Filesystem recovers; retry on the SAME object.
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(journal.initializeOrLoad(error), error);
+    require(journal.lifecycleInitialized(),
+            "the retry must complete the witness-aware migration");
+    require(journal.usable(), error);
+    require(journal.health() == JournalHealth::Healthy, error);
+    require(std::filesystem::exists(witnessPath), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::Applied,
+            "the retry must preserve the migrated records");
+}
+
+// Mandatory test G: a malformed witness must fail closed on EVERY
+// initializeOrLoad() on the same object — a raw journal reload must never
+// bypass the persistent-state anomaly.
+void testSameObjectMalformedWitnessNeverBypassed() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    const std::string witnessPath = file.path.string() + ".initialized";
+    {
+        std::ofstream stream(witnessPath, std::ios::binary | std::ios::trunc);
+        stream << "{\"schema_version\":999,\"initialized\":true}\n";
+    }
+    MutationJournal journal(file.path);
+    std::string firstError;
+    require(!journal.initializeOrLoad(firstError),
+            "a malformed witness must fail closed");
+    require(journal.health() == JournalHealth::Indeterminate, firstError);
+    require(!journal.usable(), firstError);
+    require(!journal.lifecycleInitialized(), firstError);
+
+    std::string secondError;
+    require(!journal.initializeOrLoad(secondError),
+            "the same-object retry must re-run the witness-aware state "
+            "table, not a raw reload");
+    require(!journal.usable(), secondError);
+    require(!journal.lifecycleInitialized(), secondError);
+}
+
+// Mandatory test H: after a successful lifecycle, initializeOrLoad() on the
+// same object must fail closed when the journal disappears (follow-up 6/7
+// semantics preserved).
+void testSuccessfulLifecycleThenJournalDeletionFailsClosed() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    require(journal.lifecycleInitialized(), error);
+    require(journal.usable(), error);
+
+    std::error_code ec;
+    require(std::filesystem::remove(file.path, ec), ec.message());
+    require(!journal.initializeOrLoad(error),
+            "the disappeared journal must never become an empty Healthy "
+            "journal");
+    require(journal.health() == JournalHealth::Indeterminate, error);
+    require(!journal.usable(), error);
+}
+
+// Mandatory test I: the migration must not rewrite the journal — the file
+// identity (device/inode) and content must be preserved across witness
+// creation.
+void testMigrationDoesNotRewriteJournalFile() {
+    TempFile file;
+    preparePreWitnessJournal(file.path);
+    AtomicTargetState before;
+    std::string error;
+    require(AtomicFileWriter::captureTargetState(file.path.string(), before,
+                                                 &error),
+            error);
+    std::ifstream stream(file.path, std::ios::binary);
+    const std::string contentBefore((std::istreambuf_iterator<char>(stream)),
+                                    std::istreambuf_iterator<char>());
+
+    MutationJournal journal(file.path);
+    require(journal.initializeOrLoad(error), error);
+    require(journal.lifecycleInitialized(), error);
+
+    AtomicTargetState after;
+    require(AtomicFileWriter::captureTargetState(file.path.string(), after,
+                                                 &error),
+            error);
+    require(before.identity.device == after.identity.device &&
+                before.identity.inode == after.identity.inode,
+            "the migration must keep the same journal file (no rewrite)");
+    std::ifstream afterStream(file.path, std::ios::binary);
+    const std::string contentAfter(
+        (std::istreambuf_iterator<char>(afterStream)),
+        std::istreambuf_iterator<char>());
+    require(contentAfter == contentBefore,
+            "the migration must keep the journal content unchanged");
+}
 int main() {
     const struct {
         const char* name;
@@ -1542,6 +1845,22 @@ int main() {
          testWitnessRenameDurabilityFailureFailsClosed},
         {"malformed witness fails closed", testMalformedWitnessFailsClosed},
         {"symlink witness fails closed", testSymlinkWitnessFailsClosed},
+        {"concurrent full bootstrap journal preserved",
+         testVirginBootstrapDoesNotOverwriteConcurrentFullBootstrap},
+        {"concurrent journal-only bootstrap migrates",
+         testVirginBootstrapDoesNotOverwriteConcurrentJournalOnly},
+        {"virgin bootstrap journal disappears after witness fails closed",
+         testVirginBootstrapJournalDisappearsAfterWitnessFailsClosed},
+        {"migration journal disappears before final proof fails closed",
+         testMigrationJournalDisappearsBeforeFinalProofFailsClosed},
+        {"same-object retry after witness creation failure",
+         testSameObjectRetriesWitnessAwareMigrationAfterWitnessFailure},
+        {"same-object malformed witness never bypassed",
+         testSameObjectMalformedWitnessNeverBypassed},
+        {"successful lifecycle then journal deletion fails closed",
+         testSuccessfulLifecycleThenJournalDeletionFailsClosed},
+        {"migration does not rewrite journal file",
+         testMigrationDoesNotRewriteJournalFile},
         {"empty records keep witness", testEmptyRecordsKeepWitness}
     };
 

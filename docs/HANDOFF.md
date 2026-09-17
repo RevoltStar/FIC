@@ -2,15 +2,14 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `ff48a9c22a829307ec9eecafe326c26a7946b03f`
-  (follow-up №6 к persistent rollback SSH).
+- Ветка `main`, базовый commit `7544a0baaad6ae89787dd579c56a7301efe1c061`
+  (follow-up №7 к persistent rollback SSH).
 
 ## Current task
 
-- Follow-up №7 (infrastructure fix, узкий scope): persistent initialization
-  witness (`<journal path>.initialized`) для различения «virgin bootstrap» vs
-  «journal существовал, но исчез» через рестарт daemon;
-  `J missing + W valid` → fail closed навсегда, включая после restart.
+- Follow-up №8 (infrastructure fix, узкий scope): эксклюзивный virgin
+  bootstrap journal (no-replace), strict `loadExisting()`, final journal
+  proof после witness creation, отдельное lifecycle-состояние.
 
 ## Accepted architecture / invariants
 
@@ -19,80 +18,77 @@
   records_/nextId_/loaded_ не трогаются; исчезновение ранее известного
   journal НЕ эквивалентно empty journal; автореконструкция из in-memory не
   выполняется.
-- **Persistent initialization witness** (`MutationJournal::initializeOrLoad`
-  — единственный operational entrypoint; сырой `load()` — primitive для
-  тестов/live-reload). Witness path детерминированно выводится:
-  `journalPath + ".initialized"` (по умолчанию
-  `/opt/fic/db/mutation-journal.json.initialized`); `setOverridePath`
-  автоматически выводит witness path. Формат: versioned JSON
-  `{"schema_version": 1, "initialized": true}` (`kWitnessSchemaVersion=1`,
-  независимая версия, journal JSON schema kSchemaVersion=1 не менялась).
-  Свойства: crash-safe create (temp fsync → rename → parent fsync,
-  `AtomicFileWriter` exclusiveCreate, mode 0600); strict validation
-  (regular file only, symlinks/non-regular refused, точное содержимое,
-  state-bound durability barrier); никогда не удаляется/не перезаписывается
-  FIC, включая empty records; malformed/unreadable witness → fail closed,
-  без auto-repair.
-- **State table** (fresh object, `initializeFresh`):
-  `J missing + W missing` → virgin bootstrap (durable empty journal →
-  durable witness → load/prove; journal-before-witness порядок);
-  `J exists + W missing` → migration (proven load → durable witness, journal
-  не перезаписывается); `J exists + W valid` → normal; `J exists + W
-  invalid` и `J missing + W invalid` → fail closed (anomaly);
-  `J missing + W valid` → **provenance loss, fail closed навсегда**,
-  ошибка «provenance may have been lost; manual provenance recovery is
-  required» (restart — НЕ recovery). Live-объект (`loaded_`) при
-  `initializeOrLoad` делегирует `load()` — follow-up №6 semantics
-  сохранены.
-- Witness `installed != durable`: rename-ok + fsync-fail → transparent
-  durability finish или fail closed (следующий startup — migration path).
-- **`DaemonMutationJournal::tryGet()` contract**: non-null IFF `usable()`
-  после всех recovery-действий; lazy recovery использует
-  `initializeOrLoad`; ошибка — «successful durable reload/recovery of
-  persistent journal state is required» (упоминание restart как recovery
-  убрано).
-- **Известные ограничения** (задокументированы в docs/rollback.md):
-  удаление внешним actor'ом обоих файлов неотличимо от virgin install (нет
-  stronger trust anchor в MVP); journal+witness — одна logical retention
-  pair, purge-логики пары пока нет (TODO в docs).
-- Централизованный `failLoad()`, `usable() = loaded_ && Healthy`,
-  `ensureTargetDurableIfCurrentState`, tri-state persist, Prepared recovery,
-  undo payload / classification / enrollment — без изменений относительно
-  follow-up №6 (см. docs/rollback.md).
+- **Virgin bootstrap — только no-replace**: пустой journal создаётся
+  `AtomicFileWriter` `exclusiveCreate` (`renameat2(RENAME_NOREPLACE)` /
+  non-replacing fallback). Exclusive-create conflict классифицируется
+  повторным probe пути (не errno-текст): если J появился — bootstrap
+  возвращает `ConflictJournalExists` и `initializeFresh` переоценивает
+  persistent state table (bounded, 3 попытки, далее fail closed). Чужой
+  journal NEVER не считается «нашим пустым» — загружается через обычные
+  строгие правила. Bootstrap code NEVER replaces an existing journal.
+- **`loadExisting()` / `loadImpl(MissingJournalPolicy)`**: одна реализация
+  parser/durability; `load()` = raw primitive (`AllowFreshEmpty`, только
+  тесты/diagnostics/legacy fixtures), `loadExisting()` = strict
+  (`RequireExisting`: missing J — всегда ошибка). Весь witness-aware flow
+  использует только `loadExisting`.
+- **Final proof**: migration (J exists + W missing) = loadExisting J →
+  createWitness → ПОВТОРНЫЙ loadExisting J; virgin bootstrap = exclusive J →
+  witness → loadExisting J. Lifecycle публикуется только после proof обоих
+  объектов. Это НЕ filesystem transaction: известный residual re-proof→fsync
+  TOCTOU остаётся.
+- **`lifecycleInitialized_`** (доступен `lifecycleInitialized()`): true
+  только после полного witness-aware flow на данном объекте; distinct от
+  `loaded_`. Ошибка witness creation/malformed witness НЕ выставляет его;
+  retry `initializeOrLoad()` на том же объекте заново проходит state table
+  (raw reload witness обойти не может). После успешной lifecycle повторный
+  `initializeOrLoad()` = строгий live-reload (`loadExisting`), т.е. missing J
+  после инициализации — всегда fail closed (follow-up №6 semantics). Сырой
+  `load()` lifecycle не завершает и operational-объект не делает.
+- **`DaemonMutationJournal`**: публикует journal только после
+  `initializeOrLoad() && usable() && lifecycleInitialized()`.
+- **Persistent initialization witness** (`journalPath + ".initialized"`,
+  versioned JSON, exclusive create 0600, strict validation) — без изменений
+  относительно follow-up №7; witness-race (чужой валидный durable witness →
+  успех) сохранён и отличается от journal-race (никогда не принимать чужой
+  journal как свой).
+- **State table** (`J/W` presence + validity, provenance loss при
+  `J missing + W valid` — fail closed навсегда, restart — НЕ recovery) —
+  без изменений (docs/rollback.md).
+- **Известные ограничения**: удаление внешним actor'ом обоих файлов
+  неотличимо от virgin install; journal+witness — одна logical retention
+  pair, purge-логики пары нет (TODO в docs); нет cross-process
+  serializability (исправлен только bootstrap-destroy race).
 
 ## Completed
 
-- `MutationJournal`: `witnessPath()`, `witnessIsValid()`, `createWitness()`,
-  `initializeOrLoad()` + `initializeFresh()`/`bootstrapVirgin()`;
-  `kWitnessSchemaVersion`.
-- `DaemonMutationJournal`: initial open и lazy recovery переведены на
-  `initializeOrLoad`; сообщения об ошибках обновлены.
-- Тесты новые (12): fresh bootstrap (оба файла durable, witness document),
-  restart после bootstrap (records reload), journal deletion + restart →
-  tryGet nullptr (P1), apply regression после provenance loss, interrupted
-  bootstrap → recover, migration pre-witness (records сохранены), witness
-  creation fsync failure → fail closed + retry, rename-ok+fsync-fail →
-  transparent finish, тот же permanent → fail closed + retry, malformed
-  witness, zero-byte witness, symlink witness, empty records → witness
-  остаётся; executor: provenance loss после restart → rollback Failed +
-  новый baseline невозможен.
-- docs/rollback.md: witness-секция, state table, ограничения, restart-
-  формулировка; устаревший комментарий executor-теста обновлён.
+- `MutationJournal`: exclusive virgin bootstrap + bounded state-table retry;
+  `loadImpl`/`loadExisting`; final proof в bootstrap и migration;
+  `lifecycleInitialized_` + `initializeExistingJournal`; тестовые seams
+  `setBeforeVirginJournalInstallHookForTests` /
+  `setBeforeFinalJournalProofHookForTests` (copy-before-invoke — hook может
+  переустанавливать slot во время исполнения).
+- `DaemonMutationJournal`: gating на `lifecycleInitialized()`.
+- Тесты новые (8): concurrent full bootstrap (records сохранены, A
+  присоединяется), concurrent J-only → migration без rewrite, J исчезает
+  после witness (bootstrap и migration) + provenance loss на restart,
+  same-object retry после witness failure, same-object malformed witness не
+  обходится, deletion после успешной lifecycle → fail closed, migration не
+  переписывает файл (inode+content).
+- docs/rollback.md: concurrency-кейс, loaded vs lifecycle initialized,
+  обновлённая state table; header-комментарии без «restart as recovery».
 
 ## Changed areas
 
 - `fic/src/rollback/` (`MutationJournal.{h,cpp}`,
-  `DaemonMutationJournal.{h,cpp}`)
-- `tests/fic/rollback/MutationJournalTests.cpp` (45 PASS),
-  `tests/fic/rollback/RollbackExecutorTests.cpp` (53 PASS)
+  `DaemonMutationJournal.cpp`)
+- `tests/fic/rollback/MutationJournalTests.cpp` (53 PASS)
 - `docs/rollback.md`, `docs/HANDOFF.md`
 
 ## Validation
 
-- Targeted: mutation_journal_tests (45 PASS), rollback_executor_tests
-  (53 PASS) — passed.
-- Full CMake build (build-tests, ubuntu-24.04): exit 0.
-- Full CTest: 100% (96/96 passed; 1 pre-existing env-dependent skip:
+- mutation_journal_tests 53 PASS; rollback_executor_tests 53 PASS;
+  ssh_apply_rollback_tests + targeted journal/ssh/apply — passed.
+- Full build (build-tests): exit 0. Full CTest: 96/96 (1 pre-existing skip
   `command_hash_batch_tests`).
 - `git diff --check`: passed.
 
@@ -100,6 +96,5 @@
 
 - Residual TOCTOU между re-proof и fsync — known MVP limitation.
 - Удаление обоих файлов внешним actor'ом — принятое ограничение модели.
-- Native интеграционной проверки с реальным sshd не выполнялось (sandbox).
 - `build-check/` — старый fic-only build; актуальный полный build —
   `build-tests/`.

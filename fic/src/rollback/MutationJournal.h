@@ -41,7 +41,9 @@ namespace fic::rollback {
 //     occupy the path AND the parent directory fsync succeeded (visible !=
 //     proven durable). A failed load durability barrier poisons the journal
 //     (Indeterminate) and it stays unusable for ALL operational decisions
-//     (reads included) until a successful load() or daemon restart.
+//     (reads included) until a successful witness-aware durable recovery
+//     of persistent journal state (initializeOrLoad) — a daemon restart by
+//     itself is NOT a recovery mechanism.
 enum class JournalHealth {
     Healthy,
     Indeterminate
@@ -73,10 +75,14 @@ public:
     // successful load re-parses the current disk document and restores
     // Healthy.
     //
-    // RAW PRIMITIVE (tests/diagnostics and live-object reload only): this
-    // method knows nothing about the initialization witness. Operational
-    // startup MUST use initializeOrLoad(); a daemon facade must never use
-    // load() to bypass the witness on a fresh object.
+    // RAW PRIMITIVE (tests/diagnostics/legacy fixture generation only): this
+    // method knows nothing about the initialization witness and keeps the
+    // legacy bootstrap semantics (a missing file is an empty journal for a
+    // never-loaded fresh object). Production facades MUST use
+    // initializeOrLoad(); a successful raw load() makes the journal document
+    // loaded/Healthy but never completes the witness-aware lifecycle
+    // (lifecycleInitialized() stays false), so it must not be used as an
+    // operational path.
     bool load(std::string& error);
 
     // Witness-aware lifecycle entrypoint — the ONLY entrypoint operational
@@ -108,7 +114,19 @@ public:
     // Healthy. Tests and diagnostics may still use records()/health() for
     // inspection, but daemon facades must gate every journal-backed decision
     // (apply, rollback, ownership resolution, detach) on usable().
+    //
+    // loaded vs lifecycleInitialized (distinct concepts):
+    //   * loaded_ — the journal DOCUMENT was parsed and proven;
+    //   * lifecycleInitialized() — the witness-aware persistent state machine
+    //     (journal + initialization witness, including the final journal
+    //     proof) completed successfully at least once on this object.
+    // Operational access requires the second; a raw load() never provides it.
     bool usable() const { return loaded_ && health_ == JournalHealth::Healthy; }
+    // True only after a fully successful witness-aware initialization on this
+    // object (witness-aware state table completed, both persistent objects
+    // proven). DaemonMutationJournal gates operational access on this in
+    // addition to usable().
+    bool lifecycleInitialized() const { return lifecycleInitialized_; }
 
     // Inserts a new Prepared record, or updates an existing active record for
     // the same (policy, backend, resource) triple. Returns the record id.
@@ -127,14 +145,59 @@ public:
     // never set this hook.
     static void setLoadAfterCaptureHookForTests(std::function<void()> hook);
 
+    // Test-only deterministic seams of the witness-aware initialization:
+    //   * before-virgin-install hook runs in bootstrapVirgin() between the
+    //     persistent state probe (J missing / W missing) and the exclusive
+    //     journal install; it lets a test model a concurrent FIC instance
+    //     creating the journal/witness in that window;
+    //   * before-final-proof hook runs right before the final strict journal
+    //     proof of the initialization transaction (after the witness was
+    //     created/proven in both the virgin-bootstrap and migration flows);
+    //     it lets a test remove/replace the journal exactly in that window.
+    // Production code must never set these hooks.
+    static void setBeforeVirginJournalInstallHookForTests(
+        std::function<void()> hook);
+    static void setBeforeFinalJournalProofHookForTests(
+        std::function<void()> hook);
+
 private:
-    // Witness-aware initialization of a fresh (never-loaded) object:
-    // implements the persistent (journal, witness) state table.
+    // Strict existing-journal load: identical parser/durability flow to
+    // load(), except a missing journal is ALWAYS an error — no bootstrap
+    // semantics. Used everywhere inside the witness-aware initialization
+    // where the journal is required to exist, so a vanished journal can
+    // never be silently accepted as an empty Healthy journal.
+    bool loadExisting(std::string& error);
+    // Single parser/durability implementation behind load()/loadExisting();
+    // the policy only decides how a MISSING journal is classified.
+    enum class MissingJournalPolicy {
+        AllowFreshEmpty, // raw legacy primitive: fresh object, missing J →
+                         // in-memory empty journal (no files written)
+        RequireExisting  // strict: missing J is ALWAYS an error
+    };
+    bool loadImpl(MissingJournalPolicy policy, std::string& error);
+    // Journal-exists branch of the witness-aware state table (migration or
+    // normal startup); on success sets lifecycleInitialized_.
+    bool initializeExistingJournal(bool witnessMissing, std::string& error);
+    // Witness-aware initialization of a fresh (never-initialized) object:
+    // implements the persistent (journal, witness) state table with a
+    // bounded re-evaluation loop (an exclusive-create conflict means another
+    // instance created the journal concurrently — the state table is
+    // re-classified, never the file replaced).
     bool initializeFresh(std::string& error);
-    // Virgin bootstrap: durable empty journal, then durable witness, then
-    // load/prove (journal-before-witness ordering keeps a crash between the
-    // two phases recoverable through the migration path).
-    bool bootstrapVirgin(std::string& error);
+    // Virgin bootstrap result. The exclusive journal install NEVER replaces
+    // an existing target: ConflictJournalExists means the journal appeared
+    // after the probe (another FIC instance won the bootstrap race) and the
+    // caller must re-evaluate the persistent state table.
+    enum class BootstrapOutcome {
+        Installed,
+        ConflictJournalExists,
+        Failed
+    };
+    // Virgin bootstrap: EXCLUSIVE-create durable empty journal, then
+    // durable witness, then strict final journal proof (journal-before-
+    // witness ordering keeps a crash between the two phases recoverable
+    // through the migration path). On success sets lifecycleInitialized_.
+    BootstrapOutcome bootstrapVirgin(std::string& error);
 
     enum class PersistOutcome {
         // The new document was installed and its durability confirmed.
@@ -169,6 +232,12 @@ private:
     std::vector<MutationRecord> records_;
     MutationId nextId_ = 1;
     bool loaded_ = false;
+    // Witness-aware lifecycle state: true only after the full persistent
+    // state machine (journal proof + witness proof + final journal proof)
+    // completed successfully on this object. Distinct from loaded_: a raw
+    // load() (or a migration whose witness creation failed) may leave
+    // loaded_ == true while the lifecycle is NOT initialized.
+    bool lifecycleInitialized_ = false;
     JournalHealth health_ = JournalHealth::Healthy;
 };
 

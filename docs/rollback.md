@@ -283,14 +283,18 @@ operational entrypoint; сырой `load()` остаётся primitive для т
 live-reload):
 
 ```text
-J missing + W missing  → virgin bootstrap: durable empty journal →
-                         durable witness → load/prove (порядок
-                         journal-before-witness: crash между фазами
-                         восстанавливается через migration path)
-J exists + W missing   → migration / interrupted bootstrap: durability-proven
-                         load journal → создать durable witness; сам journal
+J missing + W missing  → virgin bootstrap: EXCLUSIVE-create (no-replace)
+                         durable empty journal → durable witness → strict
+                         final journal proof (порядок journal-before-witness:
+                         crash между фазами восстанавливается через migration
+                         path)
+J exists + W missing   → migration / interrupted bootstrap:
+                         loadExisting/prove journal → создать durable witness
+                         → ПОВТОРНЫЙ строгий final proof journal; сам journal
                          документ НЕ перезаписывается
-J exists + W valid     → нормальная загрузка (оба proven до usable)
+J exists + W valid     → нормальная загрузка: witness proof → loadExisting/
+                         prove journal; lifecycle публикуется только после
+                         proof обоих persistent-объектов
 J exists + W invalid   → fail closed; journal не изменяется, auto-repair
                          witness запрещён (malformed witness — persistent
                          state anomaly)
@@ -300,13 +304,38 @@ J missing + W valid    → provenance loss: fail closed НАВСЕГДА, вкл
 J missing + W invalid  → fail closed (persistent-state anomaly)
 ```
 
-`installed != durable` применим и к witness: rename-ok + fsync-fail при
-создании сначала пытается transparent durability finish по точному
-состоянию; при невозможности — fail closed, а следующий startup попадает в
-migration path (J exists + W missing). Live-объект (уже `loaded_`) при
-reload делегирует сырой `load()`: вопрос witness уже был решён при
-инициализации, исчезнувший journal никогда не ре-бутстрапится (семантика
-fail closed выше).
+Concurrency: пустой virgin journal создаётся ТОЛЬКО через no-replace
+(exclusive create, `renameat2(RENAME_NOREPLACE)` / non-replacing fallback).
+Bootstrap никогда не заменяет journal, появившийся между probe и install:
+если exclusive-create конфликтует (target занят), это классифицируется
+повторным probe пути (не по errno-тексту) как «другой FIC instance выиграл
+bootstrap» и persistent state table переоценивается заново (ограниченное
+число попыток, затем fail closed). Чужой journal никогда не считается
+«нашим пустым»: он загружается и валидируется через обычные строгие правила
+(witness при этом принимает чужой валидный durable witness как успех —
+semantics witness-race и journal-race различны). Это не cross-process
+serializability: generic cross-process CAS у journal updates по-прежнему
+нет; исправлен ровно один race — bootstrap больше не уничтожает
+конкуррентно созданный journal.
+
+`installed != durable` применим и к witness, и к virgin journal: rename-ok +
+fsync-fail при создании сначала пытается transparent durability finish по
+точному состоянию; при невозможности — fail closed, а следующий startup
+попадает в migration path (J exists + W missing).
+
+**Loaded vs lifecycle initialized** — два разных состояния:
+`loaded` = документ journal разобран и доказан;
+`lifecycle initialized` = witness-aware persistent state machine (journal +
+witness + финальный strict proof journal) полностью завершена на данном
+объекте. Сырой `load()` никогда не завершает lifecycle и не делает объект
+operational; после завершённой lifecycle повторный `initializeOrLoad()` —
+строгий live-reload (`loadExisting`): исчезнувший journal после
+инициализации всегда fail closed, никогда — empty bootstrap (семантика
+follow-up 6). Ошибка witness creation на том же объекте оставляет lifecycle
+неинициализированным; retry `initializeOrLoad()` заново проходит
+witness-aware state table, raw reload witness обойти не может.
+`DaemonMutationJournal` публикует operational journal только после
+`initializeOrLoad() && usable() && lifecycleInitialized()`.
 
 **Ограничения witness**: удаление внешним actor'ом ОБОИХ файлов (journal и
 witness) неотличимо от virgin install — более сильный trust anchor вне MVP

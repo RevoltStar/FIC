@@ -36,7 +36,8 @@ MutationJournal* DaemonMutationJournal::open(std::string& error) {
         // usable() after all recovery actions, never merely because
         // load() returned true.
         std::string reloadError;
-        if (journal_->initializeOrLoad(reloadError) && journal_->usable()) {
+        if (journal_->initializeOrLoad(reloadError) && journal_->usable() &&
+            journal_->lifecycleInitialized()) {
             error.clear();
             return journal_.get();
         }
@@ -59,9 +60,11 @@ MutationJournal* DaemonMutationJournal::open(std::string& error) {
     auto journal = std::make_unique<MutationJournal>(std::move(path));
     // Witness-aware initialization: the ONLY operational initialization path
     // (state table journal/witness, including migration and provenance-loss
-    // detection). A journal that is not usable() afterwards must never become
-    // the process-wide operational journal.
-    if (!journal->initializeOrLoad(error) || !journal->usable()) {
+    // detection). The journal is handed out ONLY after a fully completed
+    // witness-aware lifecycle (lifecycleInitialized()) AND a usable() state —
+    // a raw journal load can never make an object operational here.
+    if (!journal->initializeOrLoad(error) || !journal->usable() ||
+        !journal->lifecycleInitialized()) {
         // Fail closed: a broken journal must not silently lose provenance,
         // and a journal that is not usable() after load must never become
         // the process-wide operational journal.

@@ -18,8 +18,20 @@ std::int64_t currentEpochSeconds() {
     return static_cast<std::int64_t>(::time(nullptr));
 }
 
-// Test-only seam storage (see setLoadAfterCaptureHookForTests()).
+// Test-only seam storage (see setLoadAfterCaptureHookForTests(),
+// setBeforeVirginJournalInstallHookForTests() and
+// setBeforeFinalJournalProofHookForTests()).
 std::function<void()>& loadAfterCaptureHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
+std::function<void()>& beforeVirginJournalInstallHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
+std::function<void()>& beforeFinalJournalProofHook() {
     static std::function<void()> hook;
     return hook;
 }
@@ -439,105 +451,161 @@ bool MutationJournal::createWitness(std::string& error) {
 }
 
 bool MutationJournal::initializeOrLoad(std::string& error) {
-    if (loaded_) {
-        // Live-object reload: the witness question was already answered when
-        // this object was initialized. Delegate to the exact-journal load()
-        // so a vanished journal keeps failing closed and never re-bootstraps
-        // (follow-up 6 semantics).
-        return load(error);
+    if (lifecycleInitialized_) {
+        // Completed witness-aware lifecycle: strict live reload. After the
+        // persistent initialization the disappearance of the journal is
+        // NEVER a valid empty bootstrap (follow-up 6/7 semantics) — a raw
+        // reload must not bypass the persistent witness state.
+        return loadExisting(error);
     }
     return initializeFresh(error);
 }
 
 bool MutationJournal::initializeFresh(std::string& error) {
-    // Persistent (journal, witness) presence probe.
-    std::error_code journalProbeError;
-    const std::filesystem::file_status journalStatus =
-        std::filesystem::status(path_, journalProbeError);
-    if (journalProbeError &&
-        journalStatus.type() != std::filesystem::file_type::not_found) {
-        return failLoad("Не удалось проверить наличие mutation journal " +
-                            path_.string() + ": " + journalProbeError.message(),
-                        error);
-    }
-    const bool journalMissing =
-        journalStatus.type() == std::filesystem::file_type::not_found ||
-        !std::filesystem::exists(journalStatus);
-
-    std::error_code witnessProbeError;
-    const std::filesystem::file_status witnessStatus =
-        std::filesystem::status(witnessPath(), witnessProbeError);
-    if (witnessProbeError &&
-        witnessStatus.type() != std::filesystem::file_type::not_found) {
-        return failLoad("Не удалось проверить наличие initialization witness " +
-                            witnessPath().string() + ": " +
-                            witnessProbeError.message(),
-                        error);
-    }
-    const bool witnessMissing =
-        witnessStatus.type() == std::filesystem::file_type::not_found ||
-        !std::filesystem::exists(witnessStatus);
-
-    if (journalMissing) {
-        if (witnessMissing) {
-            return bootstrapVirgin(error);
+    // Bounded witness-aware state table. An exclusive-create conflict means
+    // another FIC instance created the journal concurrently: the state table
+    // is re-classified (the file is NEVER replaced). A hostile writer racing
+    // forever cannot be served forever either — after the bounded number of
+    // passes the initialization fails closed with explicit diagnostics.
+    constexpr int kMaxStateTablePasses = 3;
+    for (int pass = 0; pass < kMaxStateTablePasses; ++pass) {
+        // Persistent (journal, witness) presence probe.
+        std::error_code journalProbeError;
+        const std::filesystem::file_status journalStatus =
+            std::filesystem::status(path_, journalProbeError);
+        if (journalProbeError &&
+            journalStatus.type() != std::filesystem::file_type::not_found) {
+            return failLoad("Не удалось проверить наличие mutation journal " +
+                                path_.string() + ": " +
+                                journalProbeError.message(),
+                            error);
         }
-        // Witness present (valid or not) while the journal is missing. A
-        // valid witness means the journal lifecycle was initialized before:
-        // its disappearance is provenance loss, never a virgin bootstrap. An
-        // invalid witness is a persistent-state anomaly. Neither may be
-        // healed automatically.
-        std::string witnessError;
-        if (witnessIsValid(witnessError)) {
-            return failLoad(
-                "Mutation journal is missing although its persistent "
-                "initialization witness exists; rollback provenance may have "
-                "been lost; manual provenance recovery is required: " +
-                    path_.string(),
-                error);
-        }
-        return failLoad("Persistent-state anomaly: mutation journal "
-                        "отсутствует, initialization witness некорректен "
-                        "(fail closed): " +
-                            witnessError,
-                        error);
-    }
+        const bool journalMissing =
+            journalStatus.type() == std::filesystem::file_type::not_found ||
+            !std::filesystem::exists(journalStatus);
 
-    // Journal exists: prove it first — the witness must never legitimize a
-    // corrupted provenance document and is created only after the journal
-    // was durably confirmed.
-    if (!load(error)) {
-        return false;
+        std::error_code witnessProbeError;
+        const std::filesystem::file_status witnessStatus =
+            std::filesystem::status(witnessPath(), witnessProbeError);
+        if (witnessProbeError &&
+            witnessStatus.type() != std::filesystem::file_type::not_found) {
+            return failLoad("Не удалось проверить наличие initialization "
+                            "witness " +
+                                witnessPath().string() + ": " +
+                                witnessProbeError.message(),
+                            error);
+        }
+        const bool witnessMissing =
+            witnessStatus.type() == std::filesystem::file_type::not_found ||
+            !std::filesystem::exists(witnessStatus);
+
+        if (journalMissing) {
+            if (witnessMissing) {
+                switch (bootstrapVirgin(error)) {
+                    case BootstrapOutcome::Installed:
+                        return true;
+                    case BootstrapOutcome::ConflictJournalExists:
+                        // Another instance created the journal between the
+                        // probe and the exclusive install. Never assume it
+                        // is our empty journal: re-evaluate the persistent
+                        // state table (bounded); the journal will be loaded
+                        // and validated through the normal strict rules.
+                        continue;
+                    case BootstrapOutcome::Failed:
+                        return false;
+                }
+            }
+            // Witness present (valid or not) while the journal is missing. A
+            // valid witness means the journal lifecycle was initialized
+            // before: its disappearance is provenance loss, never a virgin
+            // bootstrap. An invalid witness is a persistent-state anomaly.
+            // Neither may be healed automatically.
+            std::string witnessError;
+            if (witnessIsValid(witnessError)) {
+                return failLoad(
+                    "Mutation journal is missing although its persistent "
+                    "initialization witness exists; rollback provenance may "
+                    "have been lost; manual provenance recovery is required: " +
+                        path_.string(),
+                    error);
+            }
+            return failLoad("Persistent-state anomaly: mutation journal "
+                            "отсутствует, initialization witness некорректен "
+                            "(fail closed): " +
+                                witnessError,
+                            error);
+        }
+        return initializeExistingJournal(witnessMissing, error);
     }
+    return failLoad("Witness-aware initialization не завершилась после "
+                    "ограниченного числа попыток разрешения concurrent "
+                    "bootstrap race (fail closed): " +
+                        path_.string(),
+                    error);
+}
+
+bool MutationJournal::initializeExistingJournal(bool witnessMissing,
+                                                std::string& error) {
+    // Journal exists: strict load only — a vanished journal inside this
+    // transaction must never heal into an empty journal.
     if (witnessMissing) {
-        // Migration / interrupted bootstrap: the journal was proven; now
-        // create the durable witness. The journal document itself is NOT
-        // rewritten.
+        // Migration / interrupted bootstrap:
+        //   loadExisting J → create/prove W → FINAL loadExisting proof J
+        // The lifecycle becomes initialized only after BOTH persistent
+        // objects were proven within the same transaction.
+        if (!loadExisting(error)) {
+            return false;
+        }
         if (!createWitness(error)) {
-            return failLoad("Не удалось создать initialization witness после "
-                            "успешной proof journal (fail closed): " +
+            // lifecycleInitialized_ stays false: the witness-aware
+            // initialization did NOT complete. A retry on this object
+            // re-runs the witness-aware state table (never a raw reload
+            // that would bypass the witness).
+            return failLoad("Не удалось создать initialization witness "
+                            "после успешной proof journal (fail closed): " +
                                 error,
                             error);
         }
+        if (beforeFinalJournalProofHook()) {
+            beforeFinalJournalProofHook()();
+        }
+        // Final re-proof: between the first proof and the witness creation
+        // the journal may have disappeared or been replaced. This is not a
+        // filesystem transaction — the known residual re-proof→fsync TOCTOU
+        // after this point remains.
+        if (!loadExisting(error)) {
+            return false;
+        }
+        lifecycleInitialized_ = true;
         error.clear();
         return true;
     }
     std::string witnessError;
     if (!witnessIsValid(witnessError)) {
-        return failLoad("Persistent-state anomaly: mutation journal корректен, "
-                        "но initialization witness некорректен (fail closed): " +
+        return failLoad("Persistent-state anomaly: mutation journal "
+                        "корректен, но initialization witness некорректен "
+                        "(fail closed): " +
                             witnessError,
                         error);
     }
+    // Normal startup: prove both persistent objects, then publish the
+    // operational lifecycle state.
+    if (!loadExisting(error)) {
+        return false;
+    }
+    lifecycleInitialized_ = true;
     error.clear();
     return true;
 }
 
-bool MutationJournal::bootstrapVirgin(std::string& error) {
-    // Virgin bootstrap (or accepted one-time pre-witness ambiguity): create
-    // a real schema-valid empty journal first (journal-before-witness
-    // ordering keeps a crash between the two phases recoverable through the
-    // migration path), then the witness.
+MutationJournal::BootstrapOutcome MutationJournal::bootstrapVirgin(
+    std::string& error) {
+    // Virgin bootstrap: create a real schema-valid empty journal FIRST with
+    // NO-REPLACE semantics (journal-before-witness ordering keeps a crash
+    // between the two phases recoverable through the migration path).
+    // Invariant: bootstrap code NEVER replaces an existing journal — a
+    // concurrent instance's journal (already carrying provenance records)
+    // must not be destroyable by our empty temp document.
     json document;
     document["schema_version"] = kSchemaVersion;
     document["next_id"] = 1;
@@ -545,37 +613,96 @@ bool MutationJournal::bootstrapVirgin(std::string& error) {
     AtomicWriteOptions options;
     options.createIfMissing = true;
     options.rejectSymlink = true;
+    // Exclusive install: no-replace semantics — the commit fails if any
+    // object occupies the target at commit time.
+    options.exclusiveCreate = true;
     options.fileMode = 0600;
+    // Copy before invoking: the hook may reassign/clear the slot while it
+    // runs; destroying the executing std::function would be UB.
+    if (auto hook = beforeVirginJournalInstallHook()) {
+        hook();
+    }
     AtomicWriteResult result;
     if (!AtomicFileWriter::writeWithResult(path_.string(),
                                            document.dump(2) + "\n", options,
                                            &error, &result)) {
+        if (!result.installed) {
+            // Distinguish "target appeared due to the bootstrap race" from a
+            // real filesystem failure by re-probing the path (never by errno
+            // text).
+            std::error_code probeError;
+            const std::filesystem::file_status status =
+                std::filesystem::status(path_, probeError);
+            if (!probeError && std::filesystem::exists(status)) {
+                // Another instance won the bootstrap race for the journal.
+                // NEVER assume it is our empty journal: re-classify through
+                // the state table (the journal will be loaded and validated
+                // through the normal strict regular-file rules; a symlink or
+                // another non-regular object fails closed there).
+                return BootstrapOutcome::ConflictJournalExists;
+            }
+            // Not installed, target absent: nothing was published and the
+            // witness was not created; the next startup retries the
+            // bootstrap.
+            failLoad("Не удалось создать пустой mutation journal "
+                     "(fail closed): " +
+                         error,
+                     error);
+            return BootstrapOutcome::Failed;
+        }
+        // installed != durable: the rename published the empty journal but
+        // the parent directory fsync failed. Finish the durability
+        // transparently against the exact installed state; otherwise fail
+        // closed — the next startup sees J exists + W missing and takes the
+        // migration path.
         std::string barrierError;
-        if (!(result.installed && result.installedTargetState.has_value() &&
+        if (!(result.installedTargetState.has_value() &&
               AtomicFileWriter::ensureTargetDurableIfCurrentState(
                   path_.string(), *result.installedTargetState,
                   &barrierError))) {
-            // Not installed: nothing was published and the witness was not
-            // created; the next startup retries the bootstrap. Installed
-            // without confirmed durability: fail closed; the next startup
-            // takes the migration path (J exists + W missing).
-            return failLoad("Не удалось создать пустой mutation journal "
-                            "(fail closed): " +
-                                error,
-                            error);
+            failLoad("Пустой mutation journal записан (rename), но durability "
+                     "подтвердить не удалось (fail closed): " +
+                         barrierError,
+                     error);
+            return BootstrapOutcome::Failed;
         }
         error.clear();
     }
     if (!createWitness(error)) {
-        return failLoad("Не удалось создать initialization witness "
-                        "(fail closed): " +
-                            error,
-                        error);
+        failLoad("Не удалось создать initialization witness "
+                 "(fail closed): " +
+                     error,
+                 error);
+        return BootstrapOutcome::Failed;
     }
-    return load(error);
+    // Copy before invoking: the hook may reassign/clear the slot while it
+    // runs; destroying the executing std::function would be UB.
+    if (auto hook = beforeFinalJournalProofHook()) {
+        hook();
+    }
+    // Final strict proof of the freshly created pair: if the journal
+    // disappeared after the witness was created, this fails closed —
+    // critically NOT into an empty Healthy journal.
+    if (!loadExisting(error)) {
+        return BootstrapOutcome::Failed;
+    }
+    lifecycleInitialized_ = true;
+    return BootstrapOutcome::Installed;
 }
 
 bool MutationJournal::load(std::string& error) {
+    // Raw primitive: legacy bootstrap semantics (see the header comment).
+    return loadImpl(MissingJournalPolicy::AllowFreshEmpty, error);
+}
+
+bool MutationJournal::loadExisting(std::string& error) {
+    // Strict primitive: the journal is required to exist — a missing file is
+    // ALWAYS an error here, never an empty bootstrap.
+    return loadImpl(MissingJournalPolicy::RequireExisting, error);
+}
+
+bool MutationJournal::loadImpl(MissingJournalPolicy policy,
+                               std::string& error) {
     std::error_code probeError;
     const std::filesystem::file_status status =
         std::filesystem::status(path_, probeError);
@@ -587,13 +714,15 @@ bool MutationJournal::load(std::string& error) {
     }
     if (status.type() == std::filesystem::file_type::not_found ||
         !std::filesystem::exists(status)) {
-        // A missing journal is an empty journal ONLY during the initial
-        // bootstrap of a never-loaded journal object. The disappearance of a
-        // previously known journal (loaded, or already Indeterminate) does
-        // not prove that the earlier ambiguous provenance safely vanished:
-        // it must fail closed instead of healing into an empty Healthy
-        // journal.
+        // A missing journal is an empty journal ONLY for the raw legacy
+        // primitive (AllowFreshEmpty) during the initial bootstrap of a
+        // never-loaded journal object. The disappearance of a previously
+        // known journal (loaded, or already Indeterminate) — and ANY missing
+        // journal under the strict witness-aware policy — does not prove
+        // that the earlier ambiguous provenance safely vanished: it must
+        // fail closed instead of healing into an empty Healthy journal.
         const bool bootstrapMissing =
+            policy == MissingJournalPolicy::AllowFreshEmpty &&
             !loaded_ && health_ == JournalHealth::Healthy;
         if (bootstrapMissing) {
             records_.clear();
@@ -601,6 +730,13 @@ bool MutationJournal::load(std::string& error) {
             loaded_ = true;
             error.clear();
             return true;
+        }
+        if (policy == MissingJournalPolicy::RequireExisting) {
+            return failLoad("Mutation journal is missing (strict "
+                            "existing-journal load); provenance cannot be "
+                            "treated as empty: " +
+                                path_.string(),
+                            error);
         }
         return failLoad("Mutation journal disappeared during reload/recovery; "
                         "provenance cannot be treated as empty: " +
@@ -974,6 +1110,16 @@ std::vector<MutationRecord> MutationJournal::activeRecords(
 void MutationJournal::setLoadAfterCaptureHookForTests(
     std::function<void()> hook) {
     loadAfterCaptureHook() = std::move(hook);
+}
+
+void MutationJournal::setBeforeVirginJournalInstallHookForTests(
+    std::function<void()> hook) {
+    beforeVirginJournalInstallHook() = std::move(hook);
+}
+
+void MutationJournal::setBeforeFinalJournalProofHookForTests(
+    std::function<void()> hook) {
+    beforeFinalJournalProofHook() = std::move(hook);
 }
 
 } // namespace fic::rollback
