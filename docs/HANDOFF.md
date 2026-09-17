@@ -2,9 +2,9 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `017aab8` («Усложняем проверки при apply/rollback
-  для ssh»). Рабочее дерево содержит ownership-release семантику SSH rollback
-  (незакоммичено).
+- Ветка `main`, базовый commit `393ab36` (ownership-release семантика SSH
+  rollback). Рабочее дерево содержит follow-up: безусловная проверка
+  provenance journal payload в apply (незакоммичено).
 
 ## Current task
 
@@ -25,7 +25,10 @@
   authoritative)**: rollback убирает только существующие доказанные
   FIC-owned артефакты. Journal payload (`disabledMutationIds`) — proof of
   permission, НЕ backup manifest. Провенанс — subset-семантика
-  (`checkSshDisabledProvenance` → `SshDisabledProvenanceCheck::safeToRelease()`):
+  (`checkSshDisabledProvenance` → `SshDisabledProvenanceCheck::safeToRelease()`),
+  проверяется в `analyzeOwnership()` БЕЗУСЛОВНО (malformed payload fail
+  closed даже при полном отсутствии FIC-артефактов — compliance fast-path не
+  должен скрыть corruption):
   каждый существующий wrapper обязан быть доказан payload'ом
   (`unknownIds`/`fileDuplicate`/`payloadMalformed` → Conflict); payload id с
   исчезнувшим wrapper'ом — `releasedIds` (информационно, НЕ ошибка);

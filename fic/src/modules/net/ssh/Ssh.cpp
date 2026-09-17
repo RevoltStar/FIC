@@ -65,23 +65,22 @@ SshOwnershipState analyzeOwnership(const std::vector<std::string>& lines,
             state.wrappersPresent = true;
         }
     }
-    // Ownership-release provenance proof (subset semantics): when any
-    // FIC-owned state of the policy is present, every wrapper that still
-    // exists must be proven by the journal payload. Payload ids whose
-    // wrappers have already disappeared are treated as released and are not
-    // an error. When nothing is owned (no block, no wrappers), the payload
-    // describes state that was never applied or already rolled back /
-    // externally cleaned.
+    // Journal payload provenance is proven unconditionally: a corrupted
+    // payload (duplicate mutation ids) must fail closed even when every
+    // FIC-owned artifact of the policy has already disappeared — neither the
+    // compliance fast-path nor the planner may silently accept a damaged
+    // active record. Ownership-release subset semantics are unchanged:
+    // payload ids whose wrappers no longer exist are treated as already
+    // released (releasedIds) and never make this check fail. Only a
+    // duplicate payload id, a duplicate actual wrapper id or an actual
+    // wrapper absent from the payload is an error.
     state.wrappersValid = true;
-    if (state.blockPresent || state.wrappersPresent) {
-        const SshDisabledProvenanceCheck provenance =
-            checkSshDisabledProvenance(model, undo.policyName,
-                                       undo.disabledMutationIds);
-        if (!provenance.safeToRelease()) {
-            state.wrappersValid = false;
-            state.error =
-                describeSshDisabledProvenance(provenance, undo.policyName);
-        }
+    const SshDisabledProvenanceCheck provenance = checkSshDisabledProvenance(
+        model, undo.policyName, undo.disabledMutationIds);
+    if (!provenance.safeToRelease()) {
+        state.wrappersValid = false;
+        state.error =
+            describeSshDisabledProvenance(provenance, undo.policyName);
     }
     return state;
 }

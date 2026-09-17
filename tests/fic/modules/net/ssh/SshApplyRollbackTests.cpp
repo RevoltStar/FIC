@@ -647,6 +647,101 @@ void testValueChangeAfterExternalCleanupAppliesFromCurrentState() {
             "the new state must be committed");
 }
 
+// Helper-level proof of the subset semantics with no wrappers in the file:
+// well-formed payload ids whose wrappers disappeared are already released
+// (never an error), a duplicate payload id is corruption (always an error),
+// regardless of the presence of FIC-owned artifacts.
+void testProvenanceSubsetSemanticsWithoutWrappers() {
+    const std::vector<std::string> lines = {"Port 2222"}; // no FIC markers
+    SshManagedModel model;
+    std::string error;
+    require(parseSshManagedModel(lines, model, error) ==
+                SshManagedParseStatus::Ok,
+            error);
+
+    const SshDisabledProvenanceCheck released =
+        checkSshDisabledProvenance(model, "ssh_port", {"FIC-a", "FIC-b"});
+    require(released.safeToRelease(),
+            "released wrappers must not fail the provenance check");
+    require(released.releasedIds.size() == 2,
+            "both absent wrapper ids must be reported as released");
+
+    const SshDisabledProvenanceCheck corrupted =
+        checkSshDisabledProvenance(model, "ssh_port", {"FIC-a", "FIC-a"});
+    require(!corrupted.safeToRelease() && corrupted.payloadMalformed,
+            "a duplicate journal payload id must fail the provenance check");
+}
+
+// A corrupted active payload (duplicate wrapper ids) must fail the apply
+// closed even when every FIC-owned artifact has externally disappeared and
+// the effective state is already compliant: the compliance fast-path must
+// never silently accept a damaged active record.
+void testApplyFailsClosedOnCorruptedActivePayloadWithCompliantState() {
+    SshApplyTree tree;
+    tree.writeConfig("Port 2222\n");
+    tree.writePolicyValue("ssh_port", "2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a", "FIC-a"};
+    const MutationId id = recordPreparedSsh(
+        kSshPortPolicy, "ssh:" + tree.configPath().string() + ":Port", undo);
+    std::string commitError;
+    require(commitMutation(id, commitError), commitError);
+
+    auto policy = tree.makePolicy<NET_ssh_port>();
+    require(!policy->apply(),
+            "a corrupted active payload must fail the apply closed even "
+            "when the effective state is compliant");
+    require(readFile(tree.configPath()) == "Port 2222\n",
+            "the file must not be modified");
+
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1,
+            "no new mutation record may be created");
+    require(tree.runtime()->reloadCalls == 0, "no reload may happen");
+}
+
+// The same corrupted active payload with a non-compliant effective state:
+// FIC must not plan a new managed mutation on top of a damaged active
+// record.
+void testApplyFailsClosedOnCorruptedActivePayloadWithNonCompliantState() {
+    SshApplyTree tree;
+    tree.writeConfig("Port 22\n");
+    tree.writePolicyValue("ssh_port", "2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a", "FIC-a"};
+    const MutationId id = recordPreparedSsh(
+        kSshPortPolicy, "ssh:" + tree.configPath().string() + ":Port", undo);
+    std::string commitError;
+    require(commitMutation(id, commitError), commitError);
+
+    auto policy = tree.makePolicy<NET_ssh_port>();
+    require(!policy->apply(),
+            "a corrupted active payload must fail the apply closed even "
+            "when the effective state is not compliant");
+    require(readFile(tree.configPath()) == "Port 22\n",
+            "the file must not be modified");
+    require(readFile(tree.configPath()).find("#@FIC_") == std::string::npos,
+            "no managed block and no wrappers may be created");
+
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1,
+            "no fresh mutation record may be recorded");
+}
+
 void testMatchSectionsArePreserved() {
     SshApplyTree tree;
     const std::string original =
@@ -1323,6 +1418,12 @@ int main() {
          testValueChangeReleasesOnlyRemainingOwnedWrappers},
         {"value change after external cleanup applies from current state",
          testValueChangeAfterExternalCleanupAppliesFromCurrentState},
+        {"provenance subset semantics without wrappers",
+         testProvenanceSubsetSemanticsWithoutWrappers},
+        {"apply fails closed on corrupted active payload with compliant state",
+         testApplyFailsClosedOnCorruptedActivePayloadWithCompliantState},
+        {"apply fails closed on corrupted active payload with non-compliant state",
+         testApplyFailsClosedOnCorruptedActivePayloadWithNonCompliantState},
         {"match sections are preserved", testMatchSectionsArePreserved},
         {"foreign directive inside disabled block is refused",
          testForeignDirectiveInsideDisabledBlockIsRefused},
