@@ -2,62 +2,74 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `7544a0baaad6ae89787dd579c56a7301efe1c061`
-  (follow-up №8+ к persistent rollback SSH; рабочее дерево содержит большой
-  незакоммиченный рефакторинг SSH apply/rollback: managed blocks +
-  `SshConfigTransaction` + CAS-запись).
+- Ветка `main`, базовый commit `f5ba640` («Упрощаем apply/rollback для ssh»).
+  Рабочее дерево содержит hardening-pass по SSH managed blocks (незакоммичен).
 
 ## Current task
 
-- Рефакторинг SSH apply/rollback (managed-block architecture) + ремонт
-  тестовой обвязки `ssh_apply_rollback_tests` до полностью зелёного состояния.
+- Hardening-pass SSH apply/rollback: строгая grammar FIC-маркеров,
+  симметричный провенанс disabled wrappers, orphan-check до compliance
+  fast-path, byte-exact cleanup собственных артефактов.
 
 ## Accepted architecture / invariants
 
 - **Managed blocks / transaction**: все FIC-мутации sshd_config идут через
-  FIC-managed block (BEGIN/END маркеры) + `runSshConfigTransaction`
-  (CAS write по snapshot из `loadConfig`, durability, postcondition, hooks).
-  Прямое глобальное переписывание через `SshConfigFileHandler::setValue`
-  отказано (stub возвращает false) — legacy test обновлён соответственно.
-- **Reload после rollback внутри apply**: при value change откат предыдущего
-  состояния выполняется отдельным handler'ом; после него основной
-  `sshConfig_` обязан сделать `loadConfig()` повторно, иначе CAS-запись
-  нового состояния отклоняется (фикс в `Ssh.cpp`, блок после
-  `activeRecords.clear()`).
+  FIC-managed block + `runSshConfigTransaction` (CAS write, durability,
+  postcondition, hooks). `SshConfigFileHandler::setValue` — осознанный stub.
+- **Строгая grammar (fail closed)**: внутри `FIC_SSH_BLOCK` — только
+  `FIC_POLICY_BEGIN/END` sub-blocks, никаких посторонних/пустых строк; внутри
+  policy sub-block — ровно одна active directive; внутри `FIC_DISABLED` —
+  только один `FIC_DISABLED_LINE`. Нарушение = Malformed → conflict, файл не
+  изменяется. При создании managed block FIC не добавляет separator-строку
+  вне блока (byte-exact rollback).
+- **Симметричный провенанс**: `checkSshDisabledProvenance` (SshManagedBlock)
+  — expected wrapper IDs (journal payload) == actual (файл) как множества,
+  без дубликатов с обеих сторон; используется и в `analyzeOwnership`
+  (apply), и в rollback. Ничего не owned (нет блока и wrappers) — легитимный
+  NothingToDo/ discard prepared путь. Malformed payload → conflict.
+- **Orphan-check до fast-path**: parse модели + проверка orphan-маркеров
+  выполняются в `Ssh::apply()` ДО compliance fast-path; malformed/orphan
+  ownership не проходит через compliant значение.
+- Malformed FIC-маркеры в rollback классифицируются как `Conflict`
+  (`SshConfigFileHandler::lastLoadMarkerMalformed()`), не как Failed.
+- **Mutation ID**: `FIC-<sec>-<nsec>-<pid>-<counter>-<ordinal>` — уникальность
+  при рестарте процесса в ту же секунду.
 - **Journal load lifecycle / virgin bootstrap** (docs/rollback.md —
-  authoritative): см. предыдущие follow-up'ы — без изменений.
+  authoritative): без изменений.
 
 ## Completed
 
-- `SshApplyRollbackTests.cpp`: `PolicyUnderTest` вынесен в namespace scope
-  (разрешён use-before-declaration), `makePolicy()` инлайнен в классе;
-  debug-хелперы `requireApply`/`requireNotApply`; value-change тест создаёт
-  свежую политику после смены конфига (moduleConf кэшируется в ctor);
-  multi-policy тест пишет общий NET.conf вместо двух `writePolicyValue`.
-- `Ssh.cpp`: reload конфига после value-change rollback (см. инвариант).
-- `tests/CMakeLists.txt`: в `ssh_runtime_tests` добавлен `SshRollback.cpp`
-  (нужен после появления вызовов rollback-функций в `SshConfigTransaction`).
-- `SshRuntimeTests.cpp`: legacy-тест прямой записи глобального значения
-  переписан под отказ `setValue` (см. инвариант).
+- `SshManagedBlock.*`: строгий parser (malformed на посторонние строки во
+  всех owned ranges), `checkSshDisabledProvenance`/`describeSshDisabledProvenance`,
+  удалён separator `""` при создании блока, усилен `generateSshDisabledMutationId`.
+- `SshRollback.cpp`: симметричная проверка провенанса до любых изменений;
+  conflict при malformed-маркерах.
+- `Ssh.cpp`: `analyzeOwnership` через общий helper; orphan-check перенесён
+  перед compliance fast-path.
+- `SshConfigFile.*`: флаг `lastLoadMarkerMalformed()`.
+- Тесты: 9 новых regression-тестов (A–J) в `SshApplyRollbackTests.cpp`
+  (итого 24), byte-exact assertions в Match- и rollback-тестах;
+  `RollbackExecutorTests`: malformed markers → Conflict.
 
 ## Changed areas
 
-- `fic/src/modules/net/ssh/` (`Ssh.cpp`, новые `SshConfigTransaction.*`,
-  `SshManagedBlock.*`, `SshRollback.*`, `SshConfigFile.*`)
-- `fic/src/rollback/` (`MutationJournal`, `RollbackExecutor`, `MutationRecord`)
-- `tests/fic/modules/net/ssh/`, `tests/fic/rollback/`, `tests/CMakeLists.txt`
+- `fic/src/modules/net/ssh/` (`Ssh.cpp`, `SshManagedBlock.*`, `SshRollback.cpp`,
+  `SshConfigFile.*`)
+- `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`,
+  `tests/fic/rollback/RollbackExecutorTests.cpp`
 
 ## Validation
 
 - Full build `build-check` (ubuntu-24.04): exit 0.
 - Full CTest: 96/96 passed (1 pre-existing skip `command_hash_batch_tests`).
-- `ssh_apply_rollback_tests`: 15/15 PASS.
-- `bash scripts/run-development-checks.sh fast`: exit 0 (81/81).
+- `ssh_apply_rollback_tests`: 24/24 PASS; `rollback_executor_tests`: 46 PASS;
+  `mutation_journal_tests`: 53 PASS; `ssh_runtime_tests`: exit 0.
+- `bash scripts/run-development-checks.sh fast`: exit 0.
 - `git diff --check`: passed.
+- ASan/UBSan: профиль проектом не предусмотрен — не запускалось.
 
 ## Remaining
 
 - Residual TOCTOU между re-proof и fsync — known MVP limitation.
-- Удаление обоих файлов внешним actor'ом — принятое ограничение модели.
-- Рабочее дерево содержит большой незакоммиченный diff — требуется review
-  и коммит.
+- Рабочее дерево содержит незакоммиченный diff (managed blocks +
+  hardening-pass) — требуется review и коммит.

@@ -278,14 +278,19 @@ public:
         return policy;
     }
 
-    RollbackExecutorDeps rollbackDeps() const {
-        RollbackExecutorDeps value;
+    SshRollbackOptions rollbackOptions() const {
         SshRollbackOptions options;
         options.configPath = configPath();
         options.includeBasePath = tree.root;
         options.serviceUnits = {"ssh.service", "sshd.service"};
         options.executables = executables_.get();
         options.runner = runner();
+        return options;
+    }
+
+    RollbackExecutorDeps rollbackDeps() const {
+        RollbackExecutorDeps value;
+        SshRollbackOptions options = this->rollbackOptions();
         value.sshOptions = [options]() { return options; };
         return value;
     }
@@ -308,6 +313,16 @@ const PolicyRef kSshRootLoginPolicy{"NET", "SshEdit", "ssh_root_login"};
 bool fileContains(const std::filesystem::path& path,
                   const std::string& needle) {
     return readFile(path).find(needle) != std::string::npos;
+}
+
+std::vector<std::string> splitLines(const std::string& content) {
+    std::vector<std::string> lines;
+    std::istringstream stream(content);
+    std::string line;
+    while (std::getline(stream, line)) {
+        lines.push_back(line);
+    }
+    return lines;
 }
 
 bool markerOnlyFile(const std::filesystem::path& path) {
@@ -536,12 +551,98 @@ void testMatchSectionsArePreserved() {
         kSshPortPolicy, "Port", tree.rollbackDeps());
     require(report.status == RollbackStatus::Success, report.message);
     const std::string restored = readFile(tree.configPath());
-    require(restored.find("#@FIC_") == std::string::npos,
-            "the rollback must remove every FIC marker");
-    require(restored.find("Port 22\nMatch User backup") != std::string::npos,
-            "the rollback must restore the user directives");
-    require(restored.find("    PermitRootLogin yes") != std::string::npos,
-            "the rollback must keep the Match section verbatim");
+    require(restored == original,
+            "apply+rollback must restore the original sshd_config "
+            "byte-for-byte, Match section included");
+}
+
+// ---- Strict FIC marker grammar and symmetric provenance regression tests ----
+
+void testForeignDirectiveInsideDisabledBlockIsRefused() {
+    SshApplyTree tree;
+    const std::string content =
+        "Port 22\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-x@\n"
+        "#@FIC_DISABLED_LINE@Port 2022\n"
+        "X11Forwarding no\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-x@\n";
+    tree.writeConfig(content);
+
+    SshManagedModel model;
+    std::string error;
+    require(parseSshManagedModel(splitLines(content), model, error) ==
+                SshManagedParseStatus::Malformed,
+            "a foreign directive inside a FIC_DISABLED block must be malformed");
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(!rollback.ok && rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == content,
+            "the malformed owned range must be left byte-for-byte unchanged");
+}
+
+void testForeignLineInsideManagedBlockIsRefused() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 2222\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "Banner /etc/ssh/banner\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "Port 22\n";
+    tree.writeConfig(content);
+
+    SshManagedModel model;
+    std::string error;
+    require(parseSshManagedModel(splitLines(content), model, error) ==
+                SshManagedParseStatus::Malformed,
+            "a foreign directive inside the FIC managed block must be malformed");
+
+    tree.writePolicyValue("ssh_port", "2222");
+    JournalOverride overrideGuard(tree.journalPath());
+    auto policy = tree.makePolicy<NET_ssh_port>();
+    require(!policy->apply(),
+            "a malformed managed block must fail the apply closed");
+    require(readFile(tree.configPath()) == content,
+            "the malformed managed block must be left unchanged");
+    MutationJournal journal(tree.journalPath());
+    std::string journalError;
+    require(journal.load(journalError), journalError);
+    require(journal.records().empty(),
+            "a refused apply must not record a mutation");
+}
+
+void testOrphanManagedBlockWithCompliantValueFailsClosed() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 2222\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "# user comment\n";
+    tree.writeConfig(content);
+    tree.writePolicyValue("ssh_port", "2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy<NET_ssh_port>();
+    require(!policy->apply(),
+            "orphan FIC markers must fail the apply closed even when the "
+            "effective value is compliant");
+    require(readFile(tree.configPath()) == content,
+            "the orphan FIC state must be left unchanged");
+    MutationJournal journal(tree.journalPath());
+    std::string journalError;
+    require(journal.load(journalError), journalError);
+    require(journal.records().empty(),
+            "orphan FIC markers must not produce a journal record");
+    require(tree.runtime()->reloadCalls == 0,
+            "orphan FIC markers must not trigger a reload");
 }
 
 void testPreparedAfterCrashIsFinishedAndCommitted() {
@@ -763,6 +864,178 @@ void testMultiPolicyIsolationUnderRollback() {
             "the other policy's record must remain applied");
 }
 
+void testRollbackConflictsWhenExpectedWrapperIsMissing() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 2222\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_LINE@Port 22\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-a@\n"
+        "Port 2022\n";
+    tree.writeConfig(content);
+
+    // The journal payload expects wrappers A and B, but only A is present:
+    // a partial owned representation must never be completed or removed.
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a", "FIC-b"};
+
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(!rollback.ok && rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == content,
+            "the managed policy block and wrapper A must stay untouched");
+}
+
+void testRollbackConflictsOnUnknownWrapper() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 2222\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-x@\n"
+        "#@FIC_DISABLED_LINE@Port 22\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-x@\n";
+    tree.writeConfig(content);
+
+    // The payload knows no wrappers, the file has one: the wrapper must not
+    // be uncommented and the block must not be removed.
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(!rollback.ok && rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == content,
+            "the unknown wrapper must be left untouched");
+}
+
+void testRollbackConflictsOnDuplicateWrapperId() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 2222\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_LINE@Port 22\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_LINE@Port 2022\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-a@\n";
+    tree.writeConfig(content);
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a"};
+
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(!rollback.ok && rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == content,
+            "duplicated wrapper ids must be left untouched");
+}
+
+void testRollbackConflictsOnDuplicatePayloadId() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 2222\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_LINE@Port 22\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-a@\n";
+    tree.writeConfig(content);
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a", "FIC-a"};
+
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(!rollback.ok && rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == content,
+            "a corrupted journal payload must be left untouched");
+}
+
+void testApplyRollbackRestoresExactOriginalBytes() {
+    SshApplyTree tree;
+    const std::string original =
+        "# user comment\n"
+        "Port 22\n"
+        "Port 2022\n"
+        "\n"
+        "PermitRootLogin yes\n";
+    tree.writeConfig(original);
+    tree.writePolicyValue("ssh_port", "2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy<NET_ssh_port>();
+    require(policy->apply(), "the apply must succeed");
+    require(readFile(tree.configPath()) != original,
+            "the apply must actually own the configuration");
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.rollbackDeps());
+    require(report.status == RollbackStatus::Success, report.message);
+    require(readFile(tree.configPath()) == original,
+            "apply followed by rollback must restore the original "
+            "sshd_config byte-for-byte");
+}
+
+void testOtherPolicyBlockUntouchedWhenOnePolicyRolledBack() {
+    SshApplyTree tree;
+    tree.writeConfig("Port 22\nPermitRootLogin yes\n");
+    writeFile(tree.tree.root / "config" / "NET.conf",
+              "ssh_port.status=ENABLE\nssh_port.value=2222\n"
+              "ssh_root_login.status=ENABLE\nssh_root_login.value=no\n");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto port = tree.makePolicy<NET_ssh_port>();
+    auto rootLogin = tree.makePolicy<NET_ssh_root_login>();
+    require(port->apply() && rootLogin->apply(), "both policies must apply");
+
+    const std::string bothOwned = readFile(tree.configPath());
+    const std::string rootBlockBegin = "#@FIC_POLICY_BEGIN name=ssh_root_login@";
+    const std::string rootBlockEnd = "#@FIC_POLICY_END name=ssh_root_login@";
+    const std::size_t beginPos = bothOwned.find(rootBlockBegin);
+    const std::size_t endPos = bothOwned.find(rootBlockEnd);
+    require(beginPos != std::string::npos && endPos != std::string::npos &&
+                endPos > beginPos,
+            "the root login sub-block must be present after both applies");
+    const std::string rootBlock = bothOwned.substr(
+        beginPos, endPos + rootBlockEnd.size() - beginPos);
+
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshPortPolicy, "Port", tree.rollbackDeps());
+    require(report.status == RollbackStatus::Success, report.message);
+
+    const std::string after = readFile(tree.configPath());
+    require(after.find(rootBlock) != std::string::npos,
+            "the other policy's sub-block must remain byte-for-byte intact");
+    require(after.find("#@FIC_DISABLED") == std::string::npos,
+            "the rolled back policy's wrappers must be gone");
+    require(after.find("\nPort 22\n") != std::string::npos,
+            "the user Port lines must be restored");
+}
+
 void testSshPoliciesAreRollbackWired() {
     SshApplyTree tree;
     const std::vector<std::pair<std::string, std::string>> expected = {
@@ -842,6 +1115,24 @@ int main() {
         {"value change rolls back previous state and reapplies",
          testValueChangeRollsBackPreviousStateAndReapplies},
         {"match sections are preserved", testMatchSectionsArePreserved},
+        {"foreign directive inside disabled block is refused",
+         testForeignDirectiveInsideDisabledBlockIsRefused},
+        {"foreign line inside managed block is refused",
+         testForeignLineInsideManagedBlockIsRefused},
+        {"orphan managed block with compliant value fails closed",
+         testOrphanManagedBlockWithCompliantValueFailsClosed},
+        {"rollback conflicts when expected wrapper is missing",
+         testRollbackConflictsWhenExpectedWrapperIsMissing},
+        {"rollback conflicts on unknown wrapper",
+         testRollbackConflictsOnUnknownWrapper},
+        {"rollback conflicts on duplicate wrapper id",
+         testRollbackConflictsOnDuplicateWrapperId},
+        {"rollback conflicts on duplicate payload id",
+         testRollbackConflictsOnDuplicatePayloadId},
+        {"apply rollback restores exact original bytes",
+         testApplyRollbackRestoresExactOriginalBytes},
+        {"other policy block untouched when one policy rolled back",
+         testOtherPolicyBlockUntouchedWhenOnePolicyRolledBack},
         {"prepared after crash is finished and committed",
          testPreparedAfterCrashIsFinishedAndCommitted},
         {"stale prepared record on foreign config is discarded",

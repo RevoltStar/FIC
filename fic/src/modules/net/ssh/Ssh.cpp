@@ -60,16 +60,24 @@ SshOwnershipState analyzeOwnership(const std::vector<std::string>& lines,
             break;
         }
     }
-    state.wrappersValid = true;
     for (const SshDisabledBlock& disabled : model.disabled) {
-        if (disabled.policy != undo.policyName) {
-            continue;
+        if (disabled.policy == undo.policyName) {
+            state.wrappersPresent = true;
         }
-        state.wrappersPresent = true;
-        if (std::find(undo.disabledMutationIds.begin(),
-                      undo.disabledMutationIds.end(),
-                      disabled.mutationId) == undo.disabledMutationIds.end()) {
+    }
+    // Symmetric provenance proof: when any FIC-owned state of the policy is
+    // present, the file wrappers and the journal payload must own exactly
+    // the same id set. When nothing is owned (no block, no wrappers), the
+    // payload describes state that was never applied or already rolled back.
+    state.wrappersValid = true;
+    if (state.blockPresent || state.wrappersPresent) {
+        const SshDisabledProvenanceCheck provenance =
+            checkSshDisabledProvenance(model, undo.policyName,
+                                       undo.disabledMutationIds);
+        if (!provenance.ok()) {
             state.wrappersValid = false;
+            state.error =
+                describeSshDisabledProvenance(provenance, undo.policyName);
         }
     }
     return state;
@@ -267,20 +275,23 @@ bool Ssh::apply() {
             return false;
         }
         if (newest.status == fic::rollback::MutationStatus::Prepared &&
-            ownership.wrappersPresent && !ownership.wrappersValid) {
-            this->log("Prepared SSH-мутация не восстановлена: обнаружен "
-                      "FIC_DISABLED блок с неизвестным mutation id",
+            !ownership.wrappersValid) {
+            this->log("Prepared SSH-мутация не восстановлена: провенанс "
+                      "FIC_DISABLED блоков не совпадает с journal payload: " +
+                          ownership.error,
                   logLevel::ERROR);
             return false;
         }
         if (newest.status != fic::rollback::MutationStatus::Prepared &&
             ((ownership.blockPresent && !ownership.blockOwned) ||
-             (ownership.wrappersPresent && !ownership.wrappersValid))) {
+             !ownership.wrappersValid)) {
             // A drift of the FIC-owned state (for example a manually edited
-            // block) must never be silently overwritten.
+            // block or a partially disappeared wrapper set) must never be
+            // silently overwritten.
             this->log("FIC-владение политикой '" + this->policyName +
                           "' не может быть доказано (изменённый FIC-блок или "
-                          "неизвестный DISABLED маркер); применение отклонено",
+                          "несовпадающий провенанс DISABLED маркеров): " +
+                          ownership.error + "; применение отклонено",
                   logLevel::ERROR);
             return false;
         }
@@ -416,21 +427,11 @@ bool Ssh::apply() {
         }
     }
 
-    // Compliance fast-path: a configuration that already satisfies the
-    // policy must not be rewritten (idempotent re-apply).
-    if (isEffectivelyCompliant(runtime, semantics, this->sshParameter,
-                               expectedValue)) {
-        this->log(LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:already_configured]") +
-                      this->sshParameter + " = " + expectedValue,
-                  logLevel::INFO);
-        return true;
-    }
-    // ---- Planning (in-memory, on a copy of the loaded snapshot) ----
-
-    // Ownership sanity when FIC has no active journal record: a stale FIC
-    // policy block or FIC_DISABLED wrapper of this policy must never be
-    // silently reused or overwritten.
+    // Ownership sanity BEFORE the compliance fast-path: a malformed FIC
+    // ownership structure, or a stale/orphan FIC policy block or
+    // FIC_DISABLED wrapper of this policy without an active journal record,
+    // must never be silently accepted just because sshd -T shows a
+    // compliant effective value.
     {
         SshManagedModel model;
         std::string modelError;
@@ -451,6 +452,20 @@ bool Ssh::apply() {
             return false;
         }
     }
+
+    // Compliance fast-path: a configuration that already satisfies the
+    // policy must not be rewritten (idempotent re-apply).
+    if (isEffectivelyCompliant(runtime, semantics, this->sshParameter,
+                               expectedValue)) {
+        this->log(LocalizationManager::getLang(
+                      "[module:NET][submodule:SshEdit][message:already_configured]") +
+                      this->sshParameter + " = " + expectedValue,
+                  logLevel::INFO);
+        return true;
+    }
+    // ---- Planning (in-memory, on a copy of the loaded snapshot) ----
+    // (Ownership sanity — malformed markers and orphan FIC state — has
+    // already been proven before the compliance fast-path.)
 
     std::vector<std::string> planned = this->sshConfig_->lines();
     bool changed = false;

@@ -23,6 +23,11 @@ public:
     // unparsable or marker-malformed files.
     bool loadConfig() override;
 
+    // True when the last loadConfig() failed because the FIC marker
+    // structure is malformed (a fail-closed FIC ownership state; consumers
+    // must classify this as a conflict, not as a transient error).
+    bool lastLoadMarkerMalformed() const { return lastLoadMarkerMalformed_; }
+
     std::string getValue(const std::string& parameter) const override;
     void printConfig() const override;
     bool isParameterExists(const std::string& parameter) const;
@@ -43,6 +48,7 @@ public:
 private:
     bool findFirstMatchLine(std::size_t& line) const;
 
+    bool lastLoadMarkerMalformed_ = false;
     std::unordered_map<std::string, std::string> config_;
     std::unordered_map<std::string, std::string> canonicalNames_;
 };

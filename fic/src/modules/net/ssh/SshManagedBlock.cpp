@@ -8,6 +8,8 @@
 #include <map>
 #include <utility>
 
+#include <unistd.h>
+
 namespace {
 
 bool startsWith(const std::string& text, const char* prefix) {
@@ -291,27 +293,51 @@ SshManagedParseStatus parseSshManagedModel(const std::vector<std::string>& lines
                 return SshManagedParseStatus::Ok;
             }
             if (state.inPolicyBlock) {
-                // Sub-block content: exactly one active directive line.
-                if (!line.empty()) {
-                    const SshLineParseResult parsed = parseSshConfigLine(line);
-                    if (!parsed.ok) {
-                        error = "Не удалось разобрать строку " +
-                                std::to_string(index + 1) + " sshd_config";
-                        return SshManagedParseStatus::Malformed;
-                    }
-                    if (!parsed.hasDirective) {
-                        error = "Строка комментария внутри FIC policy-блока '" +
-                                state.currentPolicy.name + "' не допускается";
-                        return SshManagedParseStatus::Malformed;
-                    }
-                    if (!state.currentPolicy.directiveLine.empty()) {
-                        error = "Несколько директив внутри FIC policy-блока '" +
-                                state.currentPolicy.name + "'";
-                        return SshManagedParseStatus::Malformed;
-                    }
-                    state.currentPolicy.directiveLine = line;
+                // Sub-block content: exactly one active directive line and
+                // nothing else. Comments and blank lines inside the owned
+                // range are foreign content and fail closed.
+                if (line.empty()) {
+                    error = "Пустая строка внутри FIC policy-блока '" +
+                            state.currentPolicy.name + "' не допускается";
+                    return SshManagedParseStatus::Malformed;
                 }
+                const SshLineParseResult parsed = parseSshConfigLine(line);
+                if (!parsed.ok) {
+                    error = "Не удалось разобрать строку " +
+                            std::to_string(index + 1) + " sshd_config";
+                    return SshManagedParseStatus::Malformed;
+                }
+                if (!parsed.hasDirective) {
+                    error = "Строка комментария внутри FIC policy-блока '" +
+                            state.currentPolicy.name + "' не допускается";
+                    return SshManagedParseStatus::Malformed;
+                }
+                if (!state.currentPolicy.directiveLine.empty()) {
+                    error = "Несколько директив внутри FIC policy-блока '" +
+                            state.currentPolicy.name + "'";
+                    return SshManagedParseStatus::Malformed;
+                }
+                state.currentPolicy.directiveLine = line;
                 continue;
+            }
+            if (state.inDisabledBlock) {
+                // Disabled wrapper content: only the single FIC_DISABLED_LINE
+                // marker (handled by parseMarkerLine). Any other line —
+                // directive, comment or blank — is foreign content inside an
+                // owned range and fails closed.
+                error = "Посторонняя строка внутри FIC_DISABLED-блока политики '" +
+                        state.currentDisabled.policy + "' (строка " +
+                        std::to_string(index + 1) + ")";
+                return SshManagedParseStatus::Malformed;
+            }
+            if (state.inManagedBlock) {
+                // Managed block content: only FIC_POLICY sub-blocks (handled
+                // by parseMarkerLine). Any other line — directive, comment or
+                // blank — is foreign content inside an owned range and fails
+                // closed.
+                error = "Посторонняя строка внутри FIC managed-блока (строка " +
+                        std::to_string(index + 1) + ")";
+                return SshManagedParseStatus::Malformed;
             }
             continue;
         }
@@ -328,6 +354,82 @@ SshManagedParseStatus parseSshManagedModel(const std::vector<std::string>& lines
     }
     return SshManagedParseStatus::Ok;
 }
+SshDisabledProvenanceCheck checkSshDisabledProvenance(
+    const SshManagedModel& model,
+    const std::string& policyName,
+    const std::vector<std::string>& expectedMutationIds) {
+    SshDisabledProvenanceCheck result;
+
+    std::vector<std::string> expected = expectedMutationIds;
+    std::sort(expected.begin(), expected.end());
+    if (std::adjacent_find(expected.begin(), expected.end()) !=
+        expected.end()) {
+        result.payloadMalformed = true;
+    }
+
+    std::vector<std::string> actual;
+    for (const SshDisabledBlock& block : model.disabled) {
+        if (block.policy == policyName) {
+            actual.push_back(block.mutationId);
+        }
+    }
+    std::sort(actual.begin(), actual.end());
+    if (std::adjacent_find(actual.begin(), actual.end()) != actual.end()) {
+        result.fileDuplicate = true;
+    }
+
+    for (std::size_t i = 0; i < actual.size(); ++i) {
+        if (i > 0 && actual[i] == actual[i - 1]) {
+            continue; // already reported as fileDuplicate
+        }
+        if (std::find(expected.begin(), expected.end(), actual[i]) ==
+            expected.end()) {
+            result.unknownIds.push_back(actual[i]);
+        }
+    }
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (i > 0 && expected[i] == expected[i - 1]) {
+            continue; // already reported as payloadMalformed
+        }
+        if (std::find(actual.begin(), actual.end(), expected[i]) ==
+            actual.end()) {
+            result.missingIds.push_back(expected[i]);
+        }
+    }
+    return result;
+}
+
+std::string describeSshDisabledProvenance(
+    const SshDisabledProvenanceCheck& check,
+    const std::string& policyName) {
+    if (check.ok()) {
+        return {};
+    }
+    std::string description;
+    if (check.payloadMalformed) {
+        description += "journal payload содержит дублирующийся mutation id; ";
+    }
+    if (check.fileDuplicate) {
+        description += "в файле несколько FIC_DISABLED блоков с одним mutation id; ";
+    }
+    if (!check.unknownIds.empty()) {
+        description += "неизвестные payload'у wrapper id:";
+        for (const std::string& id : check.unknownIds) {
+            description += " '" + id + "'";
+        }
+        description += "; ";
+    }
+    if (!check.missingIds.empty()) {
+        description += "отсутствующие в файле wrapper id:";
+        for (const std::string& id : check.missingIds) {
+            description += " '" + id + "'";
+        }
+        description += "; ";
+    }
+    return "провенанс FIC_DISABLED блоков политики '" + policyName +
+           "' не совпадает с journal payload: " + description;
+}
+
 bool sshManagedModelHasPolicy(const SshManagedModel& model,
                               const std::string& policyName) {
     for (const SshManagedPolicyBlock& block : model.policies) {
@@ -388,7 +490,8 @@ bool upsertSshManagedPolicyBlock(std::vector<std::string>& lines,
         };
         prefix.insert(prefix.end(), blockLines.begin(), blockLines.end());
         prefix.push_back(kSshBlockEnd);
-        prefix.push_back("");
+        // No separator line outside the managed block: FIC must never add
+        // artifacts it cannot remove byte-exact on rollback.
         lines.insert(lines.begin(), prefix.begin(), prefix.end());
         changed = true;
         return true;
@@ -489,7 +592,14 @@ bool restoreSshDisabledLines(std::vector<std::string>& lines,
 
 std::string generateSshDisabledMutationId(int ordinal) {
     static std::atomic<unsigned long long> counter{0};
-    return "FIC-" + std::to_string(::time(nullptr)) + "-" +
-           std::to_string(counter.fetch_add(1)) + "-" +
-           std::to_string(ordinal);
+    // Nanosecond wall-clock time + pid + per-process counter: unique across
+    // rapid daemon restarts within the same second, without external
+    // dependencies.
+    timespec now{};
+    timespec_get(&now, TIME_UTC);
+    return "FIC-" + std::to_string(static_cast<unsigned long long>(now.tv_sec)) +
+           "-" + std::to_string(static_cast<unsigned long long>(now.tv_nsec)) +
+           "-" + std::to_string(static_cast<unsigned long long>(::getpid())) +
+           "-" + std::to_string(counter.fetch_add(1)) +
+           "-" + std::to_string(ordinal);
 }

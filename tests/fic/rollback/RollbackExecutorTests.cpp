@@ -1461,7 +1461,10 @@ void testSshRollbackMalformedMarkersFailClosed() {
 
     const RollbackReport report = rollbackPolicyBeforeDisable(
         kSshPortPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Failed, report.message);
+    // Malformed FIC markers are a drifted FIC ownership state: the rollback
+    // reports a conflict (manual resolution required), not a transient
+    // failure, and never rewrites the file.
+    require(report.status == RollbackStatus::Conflict, report.message);
     require(fileContains(tree.configPath(), "Match User admin"),
             "the malformed file must not be rewritten");
 }

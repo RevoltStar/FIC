@@ -137,8 +137,40 @@ bool restoreSshDisabledLines(std::vector<std::string>& lines,
                              bool& changed,
                              std::string& error);
 
+// Symmetric comparison of the FIC_DISABLED wrapper provenance of one policy:
+// the wrapper mutation ids present in the parsed model and the ids recorded
+// in the journal payload must coincide exactly (as sets, without duplicates
+// on either side). FIC owns the wrappers only as a complete, exact set: a
+// missing id (the owned representation partially disappeared), an unknown id
+// (an unproven wrapper) or a duplicated id means the ownership cannot be
+// proven and every consumer must fail closed.
+struct SshDisabledProvenanceCheck {
+    bool payloadMalformed = false;       // duplicate ids in the journal payload
+    bool fileDuplicate = false;          // duplicate mutation id among the file wrappers
+    std::vector<std::string> unknownIds; // in the file, absent from the payload
+    std::vector<std::string> missingIds; // in the payload, absent from the file
+
+    bool ok() const {
+        return !payloadMalformed && !fileDuplicate && unknownIds.empty() &&
+               missingIds.empty();
+    }
+};
+
+SshDisabledProvenanceCheck checkSshDisabledProvenance(
+    const SshManagedModel& model,
+    const std::string& policyName,
+    const std::vector<std::string>& expectedMutationIds);
+
+// Human-readable description of a failed provenance check (for logs and
+// apply/rollback error messages). Returns an empty string when check.ok().
+std::string describeSshDisabledProvenance(
+    const SshDisabledProvenanceCheck& check,
+    const std::string& policyName);
+
 // Generates a stable, unique disabled-block mutation id (provenance token
-// stored in the journal payload and in the marker itself).
+// stored in the journal payload and in the marker itself). The id is unique
+// across process restarts within the same second: wall-clock time with
+// nanosecond resolution, the process id and a per-process counter.
 std::string generateSshDisabledMutationId(int ordinal);
 
 #endif // SSHMANAGEDBLOCK_H

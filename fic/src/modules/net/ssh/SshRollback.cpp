@@ -102,6 +102,9 @@ SshRollbackResult undoSshManagedPolicyMutation(
 
     SshConfigFileHandler handler(options.configPath.string());
     if (!handler.loadConfig()) {
+        // Malformed FIC markers are a drifted FIC ownership state: classify
+        // as a conflict, never as a transient error.
+        result.conflict = handler.lastLoadMarkerMalformed();
         result.message = "Не удалось проанализировать " +
                          options.configPath.string() +
                          " (в том числе структуру FIC-маркеров)";
@@ -134,6 +137,31 @@ SshRollbackResult undoSshManagedPolicyMutation(
     }
     const bool wrappersPresent =
         sshManagedModelHasDisabledForPolicy(model, undo.policyName);
+
+    // Symmetric wrapper provenance check: the journal payload and the file
+    // must own exactly the same wrapper id set. A corrupted payload is
+    // refused unconditionally; the full comparison is required whenever any
+    // FIC-owned state of the policy remains in the file (the neither-block-
+    // nor-wrapper case below is the already-rolled-back / never-applied
+    // recovery state, where an absent wrapper set is legitimate).
+    const SshDisabledProvenanceCheck provenance = checkSshDisabledProvenance(
+        model, undo.policyName, undo.disabledMutationIds);
+    if (provenance.payloadMalformed) {
+        result.conflict = true;
+        result.message = "Journal payload политики '" + undo.policyName +
+                         "' повреждён (дублирующийся mutation id); владение "
+                         "не может быть доказано (файл не изменён)";
+        return result;
+    }
+    if (blockPresent || wrappersPresent) {
+        if (!provenance.ok()) {
+            result.conflict = true;
+            result.message =
+                describeSshDisabledProvenance(provenance, undo.policyName) +
+                "; владение не может быть доказано (файл не изменён)";
+            return result;
+        }
+    }
 
     if (!blockPresent && !wrappersPresent) {
         // Nothing FIC-owned remains for this policy: the mutation was never
@@ -181,23 +209,9 @@ SshRollbackResult undoSshManagedPolicyMutation(
                          undo.policyName + "'; откат не требуется";
         return result;
     }
-    // Verify provenance of the disabled blocks before changing anything.
-    for (const SshDisabledBlock& disabled : model.disabled) {
-        if (disabled.policy != undo.policyName) {
-            continue;
-        }
-        if (std::find(undo.disabledMutationIds.begin(),
-                      undo.disabledMutationIds.end(),
-                      disabled.mutationId) == undo.disabledMutationIds.end()) {
-            result.conflict = true;
-            result.message = "FIC_DISABLED блок политики '" + undo.policyName +
-                             "' имеет неизвестный mutation id '" +
-                             disabled.mutationId +
-                             "'; владение не может быть доказано (файл не "
-                             "изменён)";
-            return result;
-        }
-    }
+    // Wrapper provenance was already proven symmetrically above (actual ==
+    // expected id sets, no duplicates): the transaction below may restore
+    // every wrapper the payload owns and nothing else.
     if (blockPresent && !blockOwned) {
         // The managed sub-block exists but its directive line does not match
         // the recorded applied value: the block was manually edited and FIC

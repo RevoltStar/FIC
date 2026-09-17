@@ -54,6 +54,7 @@ bool SshConfigFileHandler::findFirstMatchLine(std::size_t& line) const {
 }
 
 bool SshConfigFileHandler::loadConfig() {
+    lastLoadMarkerMalformed_ = false;
     // Single optimistic snapshot: identity, metadata and content are read
     // through the same descriptor, so the parsed representation and the
     // conditional-save precondition always describe the same file state.
@@ -79,6 +80,7 @@ bool SshConfigFileHandler::loadConfig() {
     if (status != SshManagedParseStatus::Ok) {
         std::cerr << "Error: invalid FIC markers in sshd_config: " << modelError
                   << std::endl;
+        lastLoadMarkerMalformed_ = true;
         return false;
     }
 
