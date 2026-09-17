@@ -1,7 +1,10 @@
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
 
+#include "modules/dac/mode_and_owner/policies/DAC_systemcommandlock.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
+
+#include <fic/core/runtime/FicRuntimePaths.h>
 #include "modules/net/ssh/SshConfigFile.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
 #include "modules/net/ssh/SshManagedBlock.h"
@@ -1276,6 +1279,108 @@ void testDacBaselineRollbackConflictOnDirectorySubstitution() {
             "conflicted rollback must keep the journal record active");
 }
 
+// The DAC apply path (journal provenance wrapper) requires initialized FIC
+// runtime paths; redirect them into a test-local tree.
+void initializeDacRuntimePaths(const std::filesystem::path& root) {
+    auto paths = fic::core::FicProductPaths::production();
+    paths.privateBinDir = root / "bin";
+    paths.configDir = root / "config";
+    paths.defaultConfigDir = root / "share/default-config";
+    paths.languageDir = root / "lang";
+    paths.logDir = root / "log";
+    paths.notifyDir = root / "notify";
+    paths.dataDir = root / "data";
+    paths.shareDir = root / "share";
+    paths.imageDir = root / "image";
+    paths.runtimeDir = root / "run";
+    paths.lockStatusFile = root / "lockstatus";
+    paths.commandHashFile = root / "data/commandhash.txt";
+    paths.deviceDatabaseFile = root / "data/devices.db";
+    paths.deviceDatabaseLockFile = root / "log/devices.lock";
+    paths.lockDebugLogFile = root / "log/db-lock.log";
+
+    std::filesystem::create_directories(paths.configDir);
+    std::filesystem::create_directories(paths.logDir);
+    std::filesystem::create_directories(paths.dataDir);
+    std::string error;
+    require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+}
+
+// The provenance wrapper (ModeAndOwner::applyWithBaselineJournalProvenance)
+// must keep its Prepared record after a failed apply that partially mutated
+// the system, and the executor must resolve it once the rollback completes.
+void testDacWrapperPartialApplyResolvesAfterRollback() {
+    const PolicyRef policy{"DAC", "Mode_and_Owner", "systemcommandlock"};
+    TempTree tree("/tmp/fic-rollback-dac-partial-XXXXXX");
+    // The DAC policy base requires initialized runtime paths from its
+    // constructor on.
+    initializeDacRuntimePaths(tree.root);
+    const std::filesystem::path good = tree.root / "a-managed";
+    const std::filesystem::path bad = tree.root / "z-invalid";
+    // Lexicographic processing order: the remediable file is remediated
+    // before the fail-closed directory substitution fails the apply.
+    writeFile(good, "binary");
+    require(::chmod(good.c_str(), 0777) == 0,
+            "could not prepare the drift fixture");
+    std::filesystem::create_directories(bad);
+
+    DacBaselineRollbackOptions options;
+    options.platform.protectedSystemCommands = {
+        {good, {dacOwner(), dacGroup(), 0750}, {dacOwner(), dacGroup(), 0755}},
+        {bad,  {dacOwner(), dacGroup(), 0750}, {dacOwner(), dacGroup(), 0755}}};
+    RollbackExecutorDeps deps;
+    deps.dacOptions = [options]() { return options; };
+
+    DAC_systemcommandlock policyObject(options.platform);
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+
+    // Failed apply with a real partial mutation: Prepared stays active.
+    require(!policyObject.apply(), "partial failure must fail apply");
+    require(dacFileMode(good) == 0750,
+            "the remediable object must be remediated before the failure");
+    std::string journalError;
+    MutationJournal* journalPtr =
+        DaemonMutationJournal::instance().tryGet(journalError);
+    require(journalPtr != nullptr, journalError);
+    const std::vector<MutationRecord> activeRecords =
+        journalPtr->activeRecords(policy);
+    require(activeRecords.size() == 1,
+            "partial mutation must keep exactly one active record");
+    require(activeRecords.front().status == MutationStatus::Prepared,
+            "partial mutation provenance must stay Prepared");
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    // The DAC backend undoes the whole record in one pass: object A reaches
+    // the baseline while B conflicts, so the aggregated undo outcome is
+    // partial and the executor refuses the disable (a per-object Partial
+    // outcome of a single record is reported as Failed, not Success).
+    require(!report.rollbackCompleted(),
+            "rollback with an unfixable object must refuse the disable: " +
+                report.message);
+    require(dacFileMode(good) == 0755,
+            "the mutated object must reach the platform baseline");
+    require(!journalPtr->activeRecords(policy).empty(),
+            "partial rollback must keep the provenance active");
+
+    // Fix the substituted object: the retry completes and resolves the
+    // wrapper's Prepared record.
+    std::filesystem::remove(bad);
+    writeFile(bad, "binary");
+    require(::chmod(bad.c_str(), 0700) == 0,
+            "could not fix the substituted object");
+    const RollbackReport retry =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(retry.status == RollbackStatus::Success, retry.message);
+    require(retry.rollbackCompleted(),
+            "completed rollback must allow the disable");
+    require(dacFileMode(bad) == 0755,
+            "the fixed object must reach the platform baseline");
+    require(journalPtr->activeRecords(policy).empty(),
+            "completed rollback must resolve the journal record");
+}
+
 
 void testJournalUpdateFailureFailsClosed() {
     // A successful backend undo with a journal that can no longer be written
@@ -2200,6 +2305,8 @@ int main() {
          testDacBlockingPolicyRollbackUsesProfileBaseline},
         {"dac baseline rollback conflicts on directory substitution",
          testDacBaselineRollbackConflictOnDirectorySubstitution},
+        {"dac wrapper partial apply resolves after rollback",
+         testDacWrapperPartialApplyResolvesAfterRollback},
         {"journal update failure fails closed", testJournalUpdateFailureFailsClosed},
         {"empty journal with sysctl hint and no managed ownership",
          testEmptyJournalWithSysctlHintAndNoManagedOwnership},

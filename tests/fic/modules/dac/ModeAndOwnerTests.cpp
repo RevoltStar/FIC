@@ -1255,6 +1255,148 @@ void testPlatformBaselineRejectsDirectorySubstitution(const fs::path& root) {
     require(after.st_uid == before.st_uid && after.st_gid == before.st_gid,
             "the substituted directory owner/group was modified");
 }
+
+// ---- Mutation journal lifecycle of the provenance wrapper -----------------
+
+class JournalTempTree {
+public:
+    JournalTempTree(const std::string& pattern) {
+        char* created = ::mkdtemp(const_cast<char*>(pattern.data()));
+        require(created != nullptr, "mkdtemp failed");
+        root = created;
+    }
+
+    ~JournalTempTree() {
+        std::error_code ignored;
+        std::filesystem::permissions(root,
+            std::filesystem::perms::owner_all, ignored);
+        std::filesystem::remove_all(root, ignored);
+    }
+
+    fs::path root;
+};
+
+class TempJournal {
+public:
+    TempJournal()
+        : tree("/tmp/fic-mode-owner-journal-XXXXXX") {
+        fs::create_directories(tree.root);
+    }
+
+    JournalTempTree tree;
+};
+
+// RAII guard for the daemon journal override.
+class JournalOverride {
+public:
+    explicit JournalOverride(fs::path path) {
+        fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+            std::move(path));
+    }
+
+    ~JournalOverride() {
+        fic::rollback::DaemonMutationJournal::instance().resetOverride();
+    }
+};
+
+const fic::rollback::MutationJournal* testJournal() {
+    std::string journalError;
+    auto* journalPtr =
+        fic::rollback::DaemonMutationJournal::instance().tryGet(journalError);
+    require(journalPtr != nullptr, journalError);
+    return journalPtr;
+}
+
+// A: a failed apply that mutated nothing (directory substitution) must
+// discard its Prepared record: no mutation -> no persistent provenance.
+void testFailedNoOpApplyLeavesNoPreparedRecord(const fs::path& root) {
+    const fs::path managed = root / "journal-dir-sub";
+    fs::create_directories(managed);
+    require(::chmod(managed.c_str(), 0755) == 0,
+            "could not prepare substituted directory fixture");
+    struct stat before {};
+    require(::stat(managed.c_str(), &before) == 0,
+            "could not stat the substituted directory");
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemCommands = {
+        {managed, {currentOwner(), currentGroup(), 0750},
+                  {currentOwner(), currentGroup(), 0755}}};
+    DAC_systemcommandlock policy(config);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const PolicyRef policyRef{"DAC", "Mode_and_Owner", "systemcommandlock"};
+
+    require(!policy.apply(), "apply accepted a substituted directory");
+
+    struct stat after {};
+    require(::stat(managed.c_str(), &after) == 0 &&
+                (after.st_mode & 07777) == (before.st_mode & 07777) &&
+                after.st_uid == before.st_uid &&
+                after.st_gid == before.st_gid,
+            "failed no-op apply must not mutate the object");
+    require(testJournal()->activeRecords(policyRef).empty(),
+            "a failed apply without mutation must not leave a Prepared record");
+}
+
+// B: repeated fail-closed apply attempts must not grow the journal.
+void testRepeatedFailedApplyDoesNotGrowJournal(const fs::path& root) {
+    const fs::path managed = root / "journal-dir-repeat";
+    fs::create_directories(managed);
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemCommands = {
+        {managed, {currentOwner(), currentGroup(), 0750},
+                  {currentOwner(), currentGroup(), 0755}}};
+    DAC_systemcommandlock policy(config);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const PolicyRef policyRef{"DAC", "Mode_and_Owner", "systemcommandlock"};
+
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        require(!policy.apply(),
+                "repeated apply accepted a substituted directory");
+    }
+    require(testJournal()->activeRecords(policyRef).empty(),
+            "repeated failed no-op applies must not grow the journal");
+}
+
+// C: a failed apply that DID mutate (A remediated, B fail-closed) must keep
+// exactly one active Prepared record as partial-mutation provenance.
+void testPartialMutationKeepsPreparedRecord(const fs::path& root) {
+    const fs::path good = root / "a-managed";   // lexicographically first
+    const fs::path bad = root / "z-invalid";    // directory substitution
+    writeFile(good, "binary", 0777);
+    fs::create_directories(bad);
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemCommands = {
+        {good, {currentOwner(), currentGroup(), 0750},
+               {currentOwner(), currentGroup(), 0755}},
+        {bad,  {currentOwner(), currentGroup(), 0750},
+               {currentOwner(), currentGroup(), 0755}}};
+    DAC_systemcommandlock policy(config);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    const PolicyRef policyRef{"DAC", "Mode_and_Owner", "systemcommandlock"};
+
+    require(!policy.apply(), "partial failure must fail apply");
+    require(fileMode(good) == 0750,
+            "A must be remediated before the fail-closed B is reached");
+    require(fs::is_directory(bad), "B must stay a fail-closed directory");
+
+    const std::vector<fic::rollback::MutationRecord> records =
+        testJournal()->activeRecords(policyRef);
+    require(records.size() == 1,
+            "partial mutation must keep exactly one active record, got " +
+                std::to_string(records.size()));
+    require(records[0].status == fic::rollback::MutationStatus::Prepared,
+            "partial mutation provenance must stay Prepared, got " +
+                fic::rollback::mutationStatusToString(records[0].status));
+}
 } // namespace
 
 int main() {
@@ -1286,6 +1428,9 @@ int main() {
     testPlatformBaselineRollbackProviderTarget(root);
     testTcbBaselineRollbackDoesNotLeakDescriptors(root);
     testPlatformBaselineRejectsDirectorySubstitution(root);
+    testFailedNoOpApplyLeavesNoPreparedRecord(root);
+    testRepeatedFailedApplyDoesNotGrowJournal(root);
+    testPartialMutationKeepsPreparedRecord(root);
 
     fs::remove_all(root);
     return 0;

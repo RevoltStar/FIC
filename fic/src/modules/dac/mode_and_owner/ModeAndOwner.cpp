@@ -433,31 +433,45 @@ bool ModeAndOwner::applyWithBaselineJournalProvenance() {
     // concrete policy classes; dispatching apply() virtually here would
     // recurse infinitely.
     const bool applied = this->ModeAndOwner::apply();
-    if (applied && !this->lastApplyChangedSystemState()) {
-        // Nothing changed on the system: the record is not FIC-owned
-        // provenance and is discarded.
-        std::string discardError;
-        if (!fic::rollback::discardMutation(mutationId, discardError)) {
-            this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                          discardError,
-                      logLevel::WARN);
+    const bool changed = this->lastApplyChangedSystemState();
+
+    // Lifecycle matrix (docs/rollback.md, "Platform-baseline rollback"):
+    //   success + changed   -> commit (Applied provenance);
+    //   success + unchanged -> discard;
+    //   failure + changed   -> keep Prepared (partial mutation provenance);
+    //   failure + unchanged -> discard: a failed apply that mutated nothing
+    //     (fail-closed checks, compliant objects) must never leave persistent
+    //     provenance behind.
+    if (changed) {
+        if (applied) {
+            std::string commitError;
+            if (!fic::rollback::commitMutation(mutationId, commitError)) {
+                // The mutation already happened: apply must not report success
+                // without reliable provenance. The Prepared record stays active
+                // on disk and remains safely resolvable.
+                this->log("Ошибка фиксации записи mutation journal: " +
+                              commitError,
+                          logLevel::ERROR);
+                return false;
+            }
+            return true;
         }
-        return true;
+        // Failed apply that actually changed system state: the Prepared record
+        // stays active so that disable-time rollback can transition the
+        // already mutated objects to the platform baseline. Note: this is
+        // provenance, not apply-time transactional compensation.
+        return false;
     }
-    if (applied) {
-        std::string commitError;
-        if (!fic::rollback::commitMutation(mutationId, commitError)) {
-            // The mutation already happened: apply must not report success
-            // without reliable provenance. The Prepared record stays active
-            // on disk and remains safely resolvable.
-            this->log("Ошибка фиксации записи mutation journal: " + commitError,
-                      logLevel::ERROR);
-            return false;
-        }
-        return true;
+
+    // No system state changed: the record proves nothing and is discarded.
+    // A journal inconsistency here is fail closed even when apply itself
+    // succeeded, otherwise a stale active Prepared record would persist.
+    std::string discardError;
+    if (!fic::rollback::discardMutation(mutationId, discardError)) {
+        this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                      discardError,
+                  logLevel::ERROR);
+        return false;
     }
-    // Apply failed: the mutation may have partially happened, so the Prepared
-    // record stays active for disable-time rollback resolution. Note: this is
-    // provenance, not apply-time transactional compensation.
-    return false;
+    return applied;
 }

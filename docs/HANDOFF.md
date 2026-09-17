@@ -2,21 +2,19 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `65165ef` (platform-baseline rollback для
-  DAC hardening-политик).
-- Рабочее дерево содержит незакоммиченный hardening follow-up к `65165ef`
-  (object type safety + fd lifetime, см. Current task).
+- Ветка `main`, базовый commit `728262c` (hardening follow-up к
+  platform-baseline rollback: object type safety + fd lifetime).
+- Рабочее дерево содержит незакоммиченный journal-lifecycle follow-up к
+  `728262c` (см. Current task).
 
 ## Current task
 
-- **Hardening follow-up к platform-baseline rollback** (незакоммичено):
-  1) static `FileAccessRule` теперь проверяет `is_regular_file()` ПЕРЕД
-  любыми chown/chmod в apply (`ModeAndOwner::apply`) и rollback
-  (`rollbackFileAccessRule` → `Conflict`); 2) fd leak в
-  `rollbackTcbTreeToBaseline` закрыт через существующий RAII `UniqueFd`;
-  3) `FileStats::move_from` теперь переносит `fileType_` (без этого
-  type-revalidation в TCB rollback сравнивала moved-from мусор); 4)
-  терминология legacy provenance уточнена (eligible, не ownership proof).
+- **Journal lifecycle follow-up к `728262c`** (незакоммичено):
+  `ModeAndOwner::applyWithBaselineJournalProvenance()` больше не оставляет
+  ложный Prepared-record после failed apply без мутации. Матрица:
+  success+changed → commit; success+unchanged → discard; failure+changed →
+  Prepared остаётся (partial provenance); failure+unchanged → discard, return
+  false. Ошибка discard/commit — fail closed (return false, ERROR diagnostic).
   Контракт apply→enforced / disable→baseline НЕ менялся.
 
 ## Accepted architecture / invariants
@@ -40,11 +38,16 @@
   distro-switch в rollback-коде.
 - **Provenance в apply**: обе DAC-политики вызывают
   `ModeAndOwner::applyWithBaselineJournalProvenance()` — Prepared-запись ДО
-  мутации (fail closed при недоступном journal), commit при изменившем
-  состояние успешном apply (`ModeAndOwner::lastApplyChangedSystemState()`),
-  discard при отсутствии изменений; при failed apply Prepared остаётся
-  активным. ВАЖНО: внутри wrapper'а вызов `this->ModeAndOwner::apply()`
-  НЕВИРТУАЛЬНЫЙ — виртуальный вызов даёт бесконечную рекурсию apply↔wrapper.
+  мутации (fail closed при недоступном journal), далее матрица по
+  `ModeAndOwner::lastApplyChangedSystemState()`: success+changed → commit;
+  success+unchanged → discard; failure+changed → Prepared остаётся активным
+  (partial mutation provenance); failure+unchanged → discard (без мутации
+  provenance не существует). Ошибка discard при unchanged тоже fail closed
+  (return false + ERROR), ложный активный Prepared недопустим.
+  `lastApplyFixedCount_` устанавливается на ОБОИХ выходах `ModeAndOwner::apply()`
+  (успех и failure) — changed-флаг корректен при partial failure. ВАЖНО:
+  внутри wrapper'а вызов `this->ModeAndOwner::apply()` НЕВИРТУАЛЬНЫЙ —
+  виртуальный вызов даёт бесконечную рекурсию apply↔wrapper.
 - **Legacy provenance без journal**: ownership доказывается наличием
   enforced-состояния (владение enforced + mode ⊆ enforced) при отсутствии
   объектов в чужом состоянии: доказано → rollback к baseline выполняется;
@@ -103,6 +106,13 @@
   +2 (fd-leak через `/proc/self/fd` 100×5 объектов, directory substitution
   apply+backend rollback для обеих политик), `RollbackExecutorTests` +1
   (directory substitution → Conflict, объект нетронут, journal активен).
+- Journal-lifecycle follow-up (`728262c`): матрица Prepared/commit/discard в
+  `applyWithBaselineJournalProvenance` (failure+unchanged → discard, fail
+  closed при ошибке discard); `ModeAndOwnerTests` +3 (failed no-op apply без
+  Prepared, 10 повторных failed apply без роста journal, partial mutation
+  → ровно 1 активная Prepared), `RollbackExecutorTests` +1 (wrapper partial
+  apply → executor rollback → provenance активна → после починки объекта
+  повторный rollback Success и journal resolve).
 
 ## Changed areas
 
@@ -122,27 +132,28 @@
 
 - Full build `build-check` (ubuntu-24.04): exit 0.
 - Full CTest: 96/96 passed (1 pre-existing skip `command_hash_batch_tests`).
-- Целевые бинарники: `mode_and_owner_tests`, `rollback_executor_tests`
-  (53 PASS, вкл. 6 DAC из основной задачи + 1 directory-substitution),
-  `mutation_journal_tests`, `platform_profile_tests` — exit 0.
-- fd-тест regression value: с raw `int objectFd` (без RAII) падает с
-  `before=8 after=508` fd; с `UniqueFd` — passes.
+- Целевые бинарники: `mode_and_owner_tests` (вкл. 3 новых journal-lifecycle
+  теста), `rollback_executor_tests` (вкл. новый wrapper-partial-apply
+  lifecycle тест), `mutation_journal_tests`, `platform_profile_tests` — exit 0.
+- Regression value: при имитации старой логики (failure → Prepared всегда
+  остаётся) тест `testFailedNoOpApplyLeavesNoPreparedRecord` падает; при
+  имитации always-discard падает partial-тест (Prepared удалён) — матрица
+  покрыта с обеих сторон.
 - `bash scripts/run-development-checks.sh fast`: exit 0.
 - `git diff --check`: clean.
 - Sanitizers: ASan/UBSan-профиля в проекте нет — не запускались.
 
 ## Remaining
 
-- Review и коммит незакоммиченного diff (вся задача platform-baseline).
+- Review и коммит незакоммиченного journal-lifecycle diff (поверх `728262c`).
 - ALT p11: подтвердить `rpm -q --dump cron` (/etc/crontab), coreutils,
   e2fsprogs, net-tools, iproute2 — environment был отрезан Anubis от
   packages.altlinux.org; baseline-комментарии в AltP11Profile.cpp.
 - `/etc/securetty` Debian/Ubuntu больше не поставляется (util-linux) —
   baseline 0600 сохранён по ТЗ; при желании пересмотреть.
-- Partial-failure путь DAC rollback не покрыт unit-тестом (требует
-  симуляции ошибки chown/chmod на одном из объектов; возможен только под
-  root-фикстурой) — семантика реализована (Partial + активная journal
-  запись), но не тестирована.
+- Partial-failure rollback из-за ОШИБКИ chown/chmod (а не type-conflict) всё
+  ещё не покрыт unit-тестом (нужна root-фикстура); type-conflict вариант
+  теперь покрыт (`testDacWrapperPartialApplyResolvesAfterRollback`).
 - Daemon-level integration disable-теста (enable→apply→disable через
   main_function) в репозитории нет; executor-level эквивалент покрыт.
 - Пункт HANDOFF «Результат отката» про legacy-ENABLE install — по-прежнему

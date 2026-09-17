@@ -78,10 +78,12 @@ protected:
     // Crash-safe journal provenance wrapper for platform-baseline rollback
     // (see docs/rollback.md, "Platform-baseline rollback"). Records a
     // Prepared DAC undo before the enforced-state mutation, commits it after
-    // a state-changing successful apply, discards it when apply changed no
-    // system state, and keeps the record active on apply failure so that a
-    // later disable can still resolve provenance. This is persistent
-    // disable-time provenance, NOT apply-time transactional compensation.
+    // a state-changing successful apply, discards it when the attempt did
+    // not change any system state, and keeps the record active after a
+    // failed apply ONLY when the failed attempt actually changed system
+    // state (partial mutation) so that a later disable can still resolve
+    // provenance. This is persistent disable-time provenance, NOT
+    // apply-time transactional compensation.
     bool applyWithBaselineJournalProvenance();
 public:
     explicit ModeAndOwner(
