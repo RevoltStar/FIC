@@ -378,6 +378,7 @@ bool GrubManagedConfig::loadConfig() {
     loaded_ = false;
     config_.clear();
     original_lines_.clear();
+    installed_.reset();
     lastError_.clear();
     if (!validateTopology(managedOptions_, lastError_) ||
         !readSnapshot(true, original_, lastError_)) {
@@ -450,11 +451,19 @@ bool GrubManagedConfig::saveConfig(std::string& error, bool& installed) {
     } else {
         options.exclusiveCreate = true;
     }
-    AtomicWriteResult result;
+    AtomicWriteResult writeResult;
     const bool ok = AtomicFileWriter::writeWithResult(
         managedOptions_.path.string(), canonicalContent(), options,
-        &error, &result);
-    installed = result.installed;
+        &error, &writeResult);
+    installed = writeResult.installed;
+    // Remember the exact state FIC installed (identity, content, mode,
+    // owner, group) as reported by the writer itself. Compensation after a
+    // failed rebuild is proven against THIS snapshot, never against a fresh
+    // re-read of the file: a concurrent external writer must be detected as
+    // drift, not adopted as the expected current state.
+    if (writeResult.installed && writeResult.installedTargetState) {
+        installed_ = *writeResult.installedTargetState;
+    }
     return ok;
 }
 
@@ -470,29 +479,35 @@ bool GrubManagedConfig::snapshotUnchanged(std::string& error) const {
     return true;
 }
 
-bool GrubManagedConfig::restoreOriginal(std::string& error) const {
-    Snapshot current;
-    if (!readSnapshot(true, current, error)) return false;
+bool GrubManagedConfig::restoreOriginal(std::string& error,
+                                        bool& concurrentDrift) const {
+    concurrentDrift = false;
+    if (!installed_) {
+        error = "no FIC-installed managed GRUB state was recorded; "
+            "compensation refused";
+        return false;
+    }
+    // Compensation may only run while the target still IS exactly the state
+    // FIC installed (identity, content, mode, owner, group — not merely the
+    // original or installed inode). An externally mutated, replaced, or
+    // removed file is a concurrent-drift conflict: FIC must neither restore
+    // the original over it nor delete it.
+    std::string matchError;
+    if (!AtomicFileWriter::targetStateMatches(
+            managedOptions_.path.string(), *installed_, &matchError)) {
+        concurrentDrift = true;
+        error = "managed GRUB config is no longer in the state installed by "
+            "FIC (concurrent external modification); compensation refused: " +
+            matchError;
+        return false;
+    }
     if (!original_.exists) {
-        if (!current.exists) return true;
-        struct stat before {};
-        if (::lstat(managedOptions_.path.c_str(), &before) != 0 ||
-            !S_ISREG(before.st_mode) ||
-            before.st_dev != current.state.identity.device ||
-            before.st_ino != current.state.identity.inode) {
-            error = "managed GRUB config changed before compensating removal";
-            return false;
-        }
         if (::unlink(managedOptions_.path.c_str()) != 0) {
             error = "could not remove newly created managed GRUB config: " +
                 std::string(std::strerror(errno));
             return false;
         }
         return syncDirectory(managedOptions_.path.parent_path(), error);
-    }
-    if (!current.exists) {
-        error = "managed GRUB config disappeared before compensation";
-        return false;
     }
     AtomicWriteOptions options;
     options.createIfMissing = false;
@@ -501,7 +516,7 @@ bool GrubManagedConfig::restoreOriginal(std::string& error) const {
     options.fileMode = original_.state.mode;
     options.fileOwner = original_.state.owner;
     options.fileGroup = original_.state.group;
-    options.expectedTargetState = current.state;
+    options.expectedTargetState = *installed_;
     return AtomicFileWriter::write(
         managedOptions_.path.string(), original_.state.content, options, &error);
 }
@@ -523,6 +538,11 @@ bool GrubManagedConfig::verifyOriginal(std::string& error) const {
 
 bool GrubManagedConfig::existedAtLoad() const {
     return original_.exists;
+}
+
+const std::optional<AtomicTargetState>& GrubManagedConfig::installedState()
+    const {
+    return installed_;
 }
 
 const std::string& GrubManagedConfig::lastError() const {

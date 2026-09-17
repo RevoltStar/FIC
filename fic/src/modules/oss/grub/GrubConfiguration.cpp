@@ -568,12 +568,104 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     return result;
 }
 
+bool validateBaseGrubDefaults(const std::filesystem::path& path,
+                              bool enforceOwnership,
+                              std::string& error) {
+    if (!path.is_absolute() || path != path.lexically_normal()) {
+        error = "Базовые GRUB defaults должны задаваться абсолютным "
+            "нормализованным путём: " + path.string();
+        return false;
+    }
+    struct stat status {};
+    if (::lstat(path.c_str(), &status) != 0) {
+        if (errno == ENOENT) {
+            // A missing base defaults file is the safe state: nothing is
+            // sourced by update-grub.
+            return true;
+        }
+        error = "Не удалось проверить базовые GRUB defaults " +
+            path.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    if (S_ISLNK(status.st_mode)) {
+        error = "Базовые GRUB defaults не должны быть symbolic link: " +
+            path.string();
+        return false;
+    }
+    if (!S_ISREG(status.st_mode)) {
+        error = "Базовые GRUB defaults не являются обычным файлом: " +
+            path.string();
+        return false;
+    }
+    if (static_cast<std::uintmax_t>(status.st_size) >
+        kMaximumGrubDefaultsSize) {
+        error = "Базовые GRUB defaults превышают допустимый размер";
+        return false;
+    }
+    if ((status.st_mode & 0022) != 0) {
+        error = "Базовые GRUB defaults доступны на запись группе или всем: " +
+            path.string();
+        return false;
+    }
+    if (enforceOwnership &&
+        (status.st_uid != 0 || status.st_gid != 0)) {
+        error = "Базовые GRUB defaults должны принадлежать root: " +
+            path.string();
+        return false;
+    }
+    for (std::filesystem::path current = path.parent_path(); !current.empty();
+         current = current.parent_path()) {
+        struct stat directoryStatus {};
+        if (::lstat(current.c_str(), &directoryStatus) != 0 ||
+            S_ISLNK(directoryStatus.st_mode) ||
+            !S_ISDIR(directoryStatus.st_mode)) {
+            error = "Каталог базовых GRUB defaults отсутствует или "
+                "небезопасен: " + current.string();
+            return false;
+        }
+        // A group-writable directory in the chain is always unsafe. A
+        // world-writable directory is acceptable only with the sticky bit
+        // (shared-tmp semantics): sticky prevents other users from
+        // replacing or removing entries they do not own, so the validated
+        // base defaults file itself cannot be swapped underneath the check.
+        const bool worldWritable = (directoryStatus.st_mode & 0002) != 0;
+        if ((directoryStatus.st_mode & 0022) != 0 &&
+            !(worldWritable && (directoryStatus.st_mode & S_ISVTX) != 0)) {
+            error = "Каталог базовых GRUB defaults доступен на запись "
+                "группе или всем: " + current.string();
+            return false;
+        }
+        if (enforceOwnership &&
+            (directoryStatus.st_uid != 0 || directoryStatus.st_gid != 0)) {
+            error = "Небезопасные владелец или права каталога базовых "
+                "GRUB defaults: " + current.string();
+            return false;
+        }
+        if (current == current.root_path()) break;
+    }
+    return true;
+}
+
 GrubOperationResult ensureManagedGrubDropInValue(
     const GrubManagedConfigurationOptions& options,
     const std::string& key,
     const std::string& value,
     GrubCommandRunner runner) {
     GrubOperationResult result;
+    // Base defaults are proven safe BEFORE the managed drop-in is loaded,
+    // mutated, or rebuilt — including on the idempotent path, because
+    // update-grub sources /etc/default/grub on every rebuild.
+    if (!options.baseDefaultsPath.empty()) {
+        std::string baseError;
+        if (!validateBaseGrubDefaults(
+                options.baseDefaultsPath, options.enforceOwnership,
+                baseError)) {
+            result.message = "Базовые GRUB defaults небезопасны; managed "
+                "drop-in не изменялся, пересборка не запускалась: " +
+                baseError;
+            return result;
+        }
+    }
     runner = effectiveRunner(std::move(runner));
     GrubManagedConfig configuration({
         options.managedPath, options.enforceOwnership});
@@ -613,11 +705,20 @@ GrubOperationResult ensureManagedGrubDropInValue(
 
     auto restore = [&](const std::string& context) {
         std::string restoreError;
-        if (!configuration.restoreOriginal(restoreError) ||
+        bool concurrentDrift = false;
+        if (!configuration.restoreOriginal(restoreError, concurrentDrift) ||
             !configuration.verifyOriginal(restoreError)) {
             result.diagnostics.push_back(
                 context + ": не удалось восстановить исходный managed GRUB-файл: " +
                 restoreError);
+            if (concurrentDrift) {
+                result.diagnostics.push_back(
+                    "Обнаружено внешнее изменение managed GRUB-файла после "
+                    "записи FIC (concurrent drift): внешнее состояние "
+                    "сохранено, исходное значение НЕ восстанавливалось, "
+                    "файл не удалялся, компенсирующая пересборка не "
+                    "запускалась");
+            }
             return false;
         }
         return true;

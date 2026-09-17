@@ -145,6 +145,7 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.grub.topology = GrubConfigTopology::OwnedDefaultsDropIn;
     profile.grub.managedConfigPath = "/etc/default/grub.d/zzzz-fic.cfg";
+    profile.grub.baseDefaultsPath = "/etc/default/grub";
     profile.grub.rebuildArguments = {};
     profile.dac.protectedSystemFiles = {
         {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}},

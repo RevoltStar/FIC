@@ -36,6 +36,12 @@ struct GrubManagedConfigurationOptions {
     std::filesystem::path rebuildExecutable;
     std::vector<std::string> rebuildArguments;
     bool enforceOwnership = true;
+    // Validate-only base defaults (Debian/Ubuntu: /etc/default/grub).
+    // FIC never edits this file, but update-grub still sources it as root
+    // shell code, so it must be proven safe before the managed drop-in is
+    // mutated or the rebuild runs. Empty when the platform has no base
+    // defaults (ALT shared-file topology).
+    std::filesystem::path baseDefaultsPath;
 };
 
 using GrubCommandRunner = std::function<ProcessResult(
@@ -79,6 +85,17 @@ private:
     bool rollbackAfterRebuildFailure(std::string& error) const;
     void clear();
 };
+
+// Validate-only safety proof for the platform base defaults file (Debian/
+// Ubuntu: /etc/default/grub). Never mutates anything. A missing file is
+// acceptable; an existing file must be a regular non-symlink file of a
+// bounded size without group/world write bits, owned by root when
+// enforceOwnership is set, inside a safe directory chain. Runs before any
+// managed drop-in mutation or GRUB rebuild because update-grub still sources
+// this file as root shell code.
+bool validateBaseGrubDefaults(const std::filesystem::path& path,
+                              bool enforceOwnership,
+                              std::string& error);
 
 GrubOperationResult ensureManagedGrubDropInValue(
     const GrubManagedConfigurationOptions& options,

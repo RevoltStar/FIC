@@ -522,14 +522,16 @@ void testSelectedProfile() {
         require(profile.grub.topology ==
                     fic::platform::GrubConfigTopology::SharedDefaultsFile &&
                     profile.grub.sharedDefaultsPath == "/etc/sysconfig/grub2" &&
-                    profile.grub.managedConfigPath.empty(),
+                    profile.grub.managedConfigPath.empty() &&
+                    profile.grub.baseDefaultsPath.empty(),
                 "ALT GRUB shared-file topology is incorrect");
     } else {
         require(profile.grub.topology ==
                     fic::platform::GrubConfigTopology::OwnedDefaultsDropIn &&
                     profile.grub.sharedDefaultsPath.empty() &&
                     profile.grub.managedConfigPath ==
-                        "/etc/default/grub.d/zzzz-fic.cfg",
+                        "/etc/default/grub.d/zzzz-fic.cfg" &&
+                    profile.grub.baseDefaultsPath == "/etc/default/grub",
                 "Debian-family GRUB owned-drop-in topology is incorrect");
     }
     require(hasRule(profile.dac.protectedSystemFiles,
@@ -1349,6 +1351,25 @@ void testInvalidProfileIsRejected() {
     }
     require(!fic::platform::validatePlatformProfile(profile, error),
             "GRUB topology with both path kinds must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    if (profile.grub.topology ==
+        fic::platform::GrubConfigTopology::OwnedDefaultsDropIn) {
+        profile.grub.baseDefaultsPath.clear();
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "an owned GRUB topology without a base defaults path "
+                "must be rejected");
+
+        profile = fic::platform::makeBuildPlatformProfile();
+        profile.grub.baseDefaultsPath = "etc/default/grub";
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "a relative GRUB base defaults path must be rejected");
+    } else {
+        profile.grub.baseDefaultsPath = "/etc/default/grub";
+        require(!fic::platform::validatePlatformProfile(profile, error),
+                "a shared GRUB topology with a base defaults path "
+                "must be rejected");
+    }
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.sudo.securePathDefault = "/usr/bin::/bin";

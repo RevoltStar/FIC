@@ -211,10 +211,23 @@ bool validateGrubConfig(const GrubPlatformConfig& grub,
             error = "managed GRUB config must be named zzzz-fic.cfg";
             return false;
         }
+        if (grub.baseDefaultsPath.empty()) {
+            error = "owned GRUB topology must declare a validate-only "
+                "base defaults path";
+            return false;
+        }
+        if (!validatePath(
+                grub.baseDefaultsPath, "base GRUB defaults path", error)) {
+            return false;
+        }
         break;
     case GrubConfigTopology::SharedDefaultsFile:
         if (!grub.managedConfigPath.empty()) {
             error = "shared GRUB topology must not define a managed config path";
+            return false;
+        }
+        if (!grub.baseDefaultsPath.empty()) {
+            error = "shared GRUB topology must not define a base defaults path";
             return false;
         }
         if (!validatePath(

@@ -447,7 +447,8 @@ def main():
     require(
         "profile.grub.topology = GrubConfigTopology::SharedDefaultsFile;" in alt_profile
         and 'profile.grub.sharedDefaultsPath = "/etc/sysconfig/grub2";' in alt_profile
-        and "profile.grub.managedConfigPath" not in alt_profile,
+        and "profile.grub.managedConfigPath" not in alt_profile
+        and "profile.grub.baseDefaultsPath" not in alt_profile,
         "ALT p11 GRUB policies do not use the canonical regular defaults file",
     )
     require(
@@ -482,6 +483,8 @@ def main():
             "profile.grub.topology = GrubConfigTopology::OwnedDefaultsDropIn;"
             in profiles[name]
             and 'profile.grub.managedConfigPath = "/etc/default/grub.d/zzzz-fic.cfg";'
+            in profiles[name]
+            and 'profile.grub.baseDefaultsPath = "/etc/default/grub";'
             in profiles[name]
             and "profile.grub.sharedDefaultsPath" not in profiles[name],
             f"{name} GRUB owned drop-in topology is incorrect",

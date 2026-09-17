@@ -396,6 +396,12 @@ struct GrubPlatformConfig {
     std::filesystem::path sharedDefaultsPath;
     std::filesystem::path managedConfigPath;
     std::vector<std::string> rebuildArguments;
+    // Validate-only base defaults (Debian/Ubuntu: /etc/default/grub).
+    // FIC no longer edits this file under the owned drop-in topology, but
+    // update-grub(8) still sources it as root shell code, so every mutation
+    // or rebuild of the managed drop-in must first prove it safe. Must stay
+    // empty for topologies without base defaults (ALT shared file).
+    std::filesystem::path baseDefaultsPath;
 };
 
 enum class ManagedFileProvider {

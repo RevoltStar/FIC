@@ -70,7 +70,8 @@ bool Grub::applyGrubValue(
                 platformConfig_.managedConfigPath,
                 rebuildExecutable,
                 platformConfig_.rebuildArguments,
-                enforceOwnership_},
+                enforceOwnership_,
+                platformConfig_.baseDefaultsPath},
             grubKey,
             actualExpected);
         break;

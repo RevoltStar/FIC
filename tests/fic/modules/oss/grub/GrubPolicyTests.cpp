@@ -8,6 +8,7 @@
 #include <fic/core/runtime/FicRuntimePaths.h>
 
 #include <filesystem>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -120,7 +121,7 @@ public:
         : Grub(
               fic::platform::GrubPlatformConfig{
                   fic::platform::GrubConfigTopology::SharedDefaultsFile,
-                  "/etc/default/grub", {}, {}},
+                  "/etc/default/grub", {}, {}, {}},
               executables) {
         this->policyName = "grub_test_policy";
         this->policyTypeValue =
@@ -167,13 +168,23 @@ GrubConfigurationOptions testOptions(const fs::path& defaults) {
 }
 
 GrubManagedConfigurationOptions managedTestOptions(
-    const fs::path& managed) {
+    const fs::path& managed,
+    const fs::path& baseDefaults = {}) {
     GrubManagedConfigurationOptions options;
     options.managedPath = managed;
     options.rebuildExecutable = "/test/grub-rebuild";
     options.rebuildArguments = {"--output", "/test/grub.cfg"};
     options.enforceOwnership = false;
+    options.baseDefaultsPath = baseDefaults;
     return options;
+}
+
+GrubCommandRunner countingRebuildRunner(size_t& calls) {
+    return [&calls](const std::string&, const std::vector<std::string>&,
+                    const ProcessOptions&) {
+        ++calls;
+        return successfulProcess();
+    };
 }
 
 void testGrubConfigurationEditor(const fs::path& root) {
@@ -576,11 +587,201 @@ void testManagedRebuildFailureCompensation(const fs::path& root) {
     runCase("double-failure", true, false);
 }
 
+void testBaseDefaultsValidation(const fs::path& root) {
+    const std::string managedContent =
+        "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"10\"\n";
+    for (const char* name :
+         {"base-missing", "base-safe", "base-symlink", "base-mode",
+          "base-unsafedir", "base-idempotent"}) {
+        fs::create_directories(root / name / "etc/default/grub.d");
+    }
+
+    // Missing base defaults: owned apply is allowed.
+    {
+        const fs::path base = root / "base-missing/etc/default/grub";
+        const fs::path managed =
+            root / "base-missing/etc/default/grub.d/zzzz-fic.cfg";
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(result.ok && calls == 1 && !fs::exists(base) &&
+                    readFile(managed) == managedContent,
+                "missing base GRUB defaults must not block the owned apply");
+    }
+
+    // Safe regular base defaults: apply allowed, base file untouched.
+    {
+        const fs::path base = root / "base-safe/etc/default/grub";
+        const fs::path managed =
+            root / "base-safe/etc/default/grub.d/zzzz-fic.cfg";
+        writeFile(base, "GRUB_TIMEOUT=3\n");
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(result.ok && calls == 1 &&
+                    readFile(base) == "GRUB_TIMEOUT=3\n" &&
+                    readFile(managed) == managedContent,
+                "safe base GRUB defaults must not block the owned apply");
+    }
+
+    // Symlinked base defaults: fail before any mutation or rebuild.
+    {
+        const fs::path defaultDirectory = root / "base-symlink/etc/default";
+        fs::create_directories(defaultDirectory / "real");
+        const fs::path base = defaultDirectory / "grub";
+        fs::create_symlink(defaultDirectory / "real/other", base);
+        const fs::path managed =
+            root / "base-symlink/etc/default/grub.d/zzzz-fic.cfg";
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(!result.ok && calls == 0 && !fs::exists(managed),
+                "symlinked base GRUB defaults must fail before mutation");
+    }
+
+    // Group/world writable base defaults: fail before any mutation.
+    {
+        const fs::path base = root / "base-mode/etc/default/grub";
+        const fs::path managed =
+            root / "base-mode/etc/default/grub.d/zzzz-fic.cfg";
+        writeFile(base, "GRUB_TIMEOUT=3\n", 0666);
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(!result.ok && calls == 0 && !fs::exists(managed),
+                "group/world writable base GRUB defaults must fail closed");
+    }
+
+    // Unsafe parent directory of the base defaults: fail before mutation.
+    {
+        const fs::path defaultDirectory = root / "base-unsafedir/etc/default";
+        const fs::path base = defaultDirectory / "grub";
+        writeFile(base, "GRUB_TIMEOUT=3\n");
+        require(::chmod(defaultDirectory.c_str(), 0777) == 0,
+                "could not chmod base defaults parent directory");
+        const fs::path managed =
+            root / "base-unsafedir/etc/default/grub.d/zzzz-fic.cfg";
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(::chmod(defaultDirectory.c_str(), 0755) == 0,
+                "could not restore base defaults parent directory mode");
+        require(!result.ok && calls == 0 && !fs::exists(managed),
+                "unsafe base GRUB defaults parent must fail before mutation");
+    }
+
+    // Idempotent managed value with unsafe base defaults: no rebuild,
+    // no managed mutation.
+    {
+        const fs::path base = root / "base-idempotent/etc/default/grub";
+        const fs::path managed =
+            root / "base-idempotent/etc/default/grub.d/zzzz-fic.cfg";
+        writeFile(base, "GRUB_TIMEOUT=3\n", 0666);
+        writeFile(managed, managedContent);
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(!result.ok && calls == 0 &&
+                    readFile(managed) == managedContent,
+                "unsafe base defaults must block even an idempotent apply");
+    }
+}
+
+void testManagedConcurrentDriftCompensation(const fs::path& root) {
+    // Existing managed file changed externally during the failed rebuild:
+    // FIC must keep the external state, refuse to restore the original,
+    // and skip the compensating rebuild.
+    {
+        const fs::path directory =
+            root / "managed-drift-existing/etc/default/grub.d";
+        const fs::path managed = directory / "zzzz-fic.cfg";
+        fs::create_directories(directory);
+        writeFile(
+            managed, "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"5\"\n");
+        const std::string external =
+            "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"20\"\n";
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed), "GRUB_TIMEOUT", "10",
+            [&calls, &managed, external](
+                const std::string&, const std::vector<std::string>&,
+                const ProcessOptions&) {
+                ++calls;
+                if (calls == 1) {
+                    // Privileged external writer mutates the FIC-installed
+                    // file in place right before the rebuild fails.
+                    writeFile(managed, external);
+                    return failedProcess("injected rebuild failure");
+                }
+                return successfulProcess();
+            });
+        require(!result.ok && calls == 1,
+                "concurrent drift must not trigger a compensating rebuild");
+        require(readFile(managed) == external,
+                "external concurrent change was overwritten by compensation");
+        require(std::any_of(
+                    result.diagnostics.begin(),
+                    result.diagnostics.end(),
+                    [](const std::string& diagnostic) {
+                        return diagnostic.find("внешнее изменение") !=
+                                std::string::npos ||
+                            diagnostic.find("concurrent") !=
+                                std::string::npos;
+                    }),
+                "concurrent drift was not diagnosed");
+    }
+
+    // Newly created managed file changed externally during the failed
+    // rebuild: FIC must keep the file and its external content.
+    {
+        const fs::path directory =
+            root / "managed-drift-created/etc/default/grub.d";
+        const fs::path managed = directory / "zzzz-fic.cfg";
+        fs::create_directories(directory);
+        const std::string external =
+            "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"20\"\n";
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed), "GRUB_TIMEOUT", "10",
+            [&calls, &managed, external](
+                const std::string&, const std::vector<std::string>&,
+                const ProcessOptions&) {
+                ++calls;
+                if (calls == 1) {
+                    writeFile(managed, external);
+                    return failedProcess("injected rebuild failure");
+                }
+                return successfulProcess();
+            });
+        require(!result.ok && calls == 1,
+                "concurrent drift on a created file must not run "
+                "a compensating rebuild");
+        require(fs::exists(managed) && readFile(managed) == external,
+                "FIC removed or overwrote an externally mutated created file");
+        require(std::any_of(
+                    result.diagnostics.begin(),
+                    result.diagnostics.end(),
+                    [](const std::string& diagnostic) {
+                        return diagnostic.find("внешнее изменение") !=
+                                std::string::npos ||
+                            diagnostic.find("concurrent") !=
+                                std::string::npos;
+                    }),
+                "concurrent drift on a created file was not diagnosed");
+    }
+}
+
 void testConcretePolicyContracts(
     const fic::platform::PlatformExecutableResolver& executables) {
     const fic::platform::GrubPlatformConfig platform{
         fic::platform::GrubConfigTopology::OwnedDefaultsDropIn,
-        {}, "/etc/default/grub.d/zzzz-fic.cfg", {}};
+        {}, "/etc/default/grub.d/zzzz-fic.cfg", {}, {}};
     OSS_grub_timeout timeout(platform, executables);
     require(timeout.moduleName == "OSS" && timeout.submoduleName == "Grub" &&
                 timeout.policyName == "grub_timeout",
@@ -656,7 +857,7 @@ int main() {
                 "=275239824e00e61b0a220e61a41791c7e9b4bd726f8b0c27077a338f8131c9dc\n");
         ApplyingGrubPolicy applyingPolicy(
             {fic::platform::GrubConfigTopology::SharedDefaultsFile,
-             applyDefaults, {}, {}}, resolver);
+             applyDefaults, {}, {}, {}}, resolver);
         require(!applyingPolicy.apply(),
                 "matching defaults bypassed the mandatory GRUB rebuild");
 
@@ -672,7 +873,7 @@ int main() {
                 "invalid value must fail before Grub hook");
         OSS_grub_cmdline_linux malformedCmdline(
             {fic::platform::GrubConfigTopology::SharedDefaultsFile,
-             applyDefaults, {}, {}}, resolver);
+             applyDefaults, {}, {}, {}}, resolver);
         require(!malformedCmdline.apply(),
                 "malformed stored GRUB value must fail without escaping apply");
 
@@ -685,6 +886,8 @@ int main() {
         testManagedTopologyAndStrictFormat(root);
         testManagedDropInOrdering(root);
         testManagedRebuildFailureCompensation(root);
+        testBaseDefaultsValidation(root);
+        testManagedConcurrentDriftCompensation(root);
         testConcretePolicyContracts(resolver);
     } catch (const std::exception& error) {
         std::cerr << "GrubPolicyTests failed: " << error.what() << '\n';
