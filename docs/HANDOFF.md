@@ -2,14 +2,15 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `f5ba640` («Упрощаем apply/rollback для ssh»).
-  Рабочее дерево содержит hardening-pass по SSH managed blocks (незакоммичен).
+- Ветка `main`, базовый commit `017aab8` («Усложняем проверки при apply/rollback
+  для ssh»). Рабочее дерево содержит ownership-release семантику SSH rollback
+  (незакоммичено).
 
 ## Current task
 
-- Hardening-pass SSH apply/rollback: строгая grammar FIC-маркеров,
-  симметричный провенанс disabled wrappers, orphan-check до compliance
-  fast-path, byte-exact cleanup собственных артефактов.
+- Переход SSH rollback на ownership-release семантику: rollback освобождает
+  текущую FIC-owned область управления, а не реконструирует прошлое состояние
+  файла.
 
 ## Accepted architecture / invariants
 
@@ -17,59 +18,68 @@
   FIC-managed block + `runSshConfigTransaction` (CAS write, durability,
   postcondition, hooks). `SshConfigFileHandler::setValue` — осознанный stub.
 - **Строгая grammar (fail closed)**: внутри `FIC_SSH_BLOCK` — только
-  `FIC_POLICY_BEGIN/END` sub-blocks, никаких посторонних/пустых строк; внутри
-  policy sub-block — ровно одна active directive; внутри `FIC_DISABLED` —
-  только один `FIC_DISABLED_LINE`. Нарушение = Malformed → conflict, файл не
-  изменяется. При создании managed block FIC не добавляет separator-строку
-  вне блока (byte-exact rollback).
-- **Симметричный провенанс**: `checkSshDisabledProvenance` (SshManagedBlock)
-  — expected wrapper IDs (journal payload) == actual (файл) как множества,
-  без дубликатов с обеих сторон; используется и в `analyzeOwnership`
-  (apply), и в rollback. Ничего не owned (нет блока и wrappers) — легитимный
-  NothingToDo/ discard prepared путь. Malformed payload → conflict.
-- **Orphan-check до fast-path**: parse модели + проверка orphan-маркеров
-  выполняются в `Ssh::apply()` ДО compliance fast-path; malformed/orphan
-  ownership не проходит через compliant значение.
-- Malformed FIC-маркеры в rollback классифицируются как `Conflict`
+  `FIC_POLICY_BEGIN/END` sub-blocks; внутри policy sub-block — ровно одна
+  active directive; внутри `FIC_DISABLED` — только один `FIC_DISABLED_LINE`.
+  Нарушение = Malformed → Conflict, файл не изменяется.
+- **Ownership-release rollback (новый контракт, docs/rollback.md —
+  authoritative)**: rollback убирает только существующие доказанные
+  FIC-owned артефакты. Journal payload (`disabledMutationIds`) — proof of
+  permission, НЕ backup manifest. Провенанс — subset-семантика
+  (`checkSshDisabledProvenance` → `SshDisabledProvenanceCheck::safeToRelease()`):
+  каждый существующий wrapper обязан быть доказан payload'ом
+  (`unknownIds`/`fileDuplicate`/`payloadMalformed` → Conflict); payload id с
+  исчезнувшим wrapper'ом — `releasedIds` (информационно, НЕ ошибка);
+  реконструкция отсутствующих wrapper'ов запрещена. Нет блока и wrapper'ов →
+  `NothingToDo` + runtime reconciliation. Ручная правка directive-строки
+  блока (≠ `appliedValue`) → Conflict. Byte-exact restoration — свойство
+  нормального сценария, не общий контракт при внешних изменениях.
+- **Value change**: предыдущее состояние откатывается той же
+  ownership-release семантикой внутри apply; `NothingToDo` старого отката
+  трактуется как «уже освобождено»; новое значение применяется к фактическому
+  текущему конфигу.
+- Malformed FIC-маркеры классифицируются как `Conflict`
   (`SshConfigFileHandler::lastLoadMarkerMalformed()`), не как Failed.
-- **Mutation ID**: `FIC-<sec>-<nsec>-<pid>-<counter>-<ordinal>` — уникальность
-  при рестарте процесса в ту же секунду.
 - **Journal load lifecycle / virgin bootstrap** (docs/rollback.md —
   authoritative): без изменений.
 
 ## Completed
 
-- `SshManagedBlock.*`: строгий parser (malformed на посторонние строки во
-  всех owned ranges), `checkSshDisabledProvenance`/`describeSshDisabledProvenance`,
-  удалён separator `""` при создании блока, усилен `generateSshDisabledMutationId`.
-- `SshRollback.cpp`: симметричная проверка провенанса до любых изменений;
-  conflict при malformed-маркерах.
-- `Ssh.cpp`: `analyzeOwnership` через общий helper; orphan-check перенесён
-  перед compliance fast-path.
-- `SshConfigFile.*`: флаг `lastLoadMarkerMalformed()`.
-- Тесты: 9 новых regression-тестов (A–J) в `SshApplyRollbackTests.cpp`
-  (итого 24), byte-exact assertions в Match- и rollback-тестах;
-  `RollbackExecutorTests`: malformed markers → Conflict.
+- `SshManagedBlock.*`: `SshDisabledProvenanceCheck` переведён с set-equality
+  на subset/ownership-release (`ok()` → `safeToRelease()`, `missingIds` →
+  `releasedIds`, только диагностика).
+- `SshRollback.cpp`: subset-проверка провенанса; комментарии обновлены.
+- `Ssh.cpp`: `analyzeOwnership` через `safeToRelease()`; value-change
+  принимает `nothingToDo` старого rollback как released.
+- `MutationRecord.h`: комментарий `disabledMutationIds` = proof of permission.
+- Тесты `SshApplyRollbackTests.cpp` (29): partial disappearance → Success
+  (A restored, B не реконструируется); total disappearance → NothingToDo;
+  known+unknown wrapper → Conflict; manually modified block → Conflict;
+  value change с частично исчезнувшим wrapper'ом; value change после полной
+  внешней очистки. `RollbackExecutorTests`: malformed markers → Conflict.
+- `docs/rollback.md`: SSH undo bullet переписан под `UndoRemoveSshManagedPolicy`
+  + ownership-release (EN + RU); «Active value changes» и NothingToDo-пассаж
+  обновлены; старое описание `UndoRestoreSshDirective` удалено.
 
 ## Changed areas
 
-- `fic/src/modules/net/ssh/` (`Ssh.cpp`, `SshManagedBlock.*`, `SshRollback.cpp`,
-  `SshConfigFile.*`)
-- `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`,
-  `tests/fic/rollback/RollbackExecutorTests.cpp`
+- `fic/src/modules/net/ssh/` (`Ssh.cpp`, `SshManagedBlock.*`, `SshRollback.*`)
+- `fic/src/rollback/MutationRecord.h` (комментарий)
+- `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`
+- `docs/rollback.md`, `docs/HANDOFF.md`
 
 ## Validation
 
 - Full build `build-check` (ubuntu-24.04): exit 0.
 - Full CTest: 96/96 passed (1 pre-existing skip `command_hash_batch_tests`).
-- `ssh_apply_rollback_tests`: 24/24 PASS; `rollback_executor_tests`: 46 PASS;
-  `mutation_journal_tests`: 53 PASS; `ssh_runtime_tests`: exit 0.
+- `ssh_apply_rollback_tests`: 29 PASS / 0 FAIL; `rollback_executor_tests`,
+  `mutation_journal_tests`, `ssh_runtime_tests`: exit 0.
 - `bash scripts/run-development-checks.sh fast`: exit 0.
 - `git diff --check`: passed.
-- ASan/UBSan: профиль проектом не предусмотрен — не запускалось.
 
 ## Remaining
 
 - Residual TOCTOU между re-proof и fsync — known MVP limitation.
-- Рабочее дерево содержит незакоммиченный diff (managed blocks +
-  hardening-pass) — требуется review и коммит.
+- Раздел «Результат отката» про legacy-ENABLE install (`Unsupported` по
+  присутствию директивы в global section) не пересматривался — написать при
+  следующей задачи по disable-пути.
+- Рабочее дерево содержит незакоммиченный diff — требуется review и коммит.

@@ -116,13 +116,16 @@ verify/validate/barrier/reload/commit/discard оставляет `Prepared` ак
 
 ### Active value changes (SSH, MVP)
 
-Изменение желаемого значения при активной SSH-мутации (`expectedValue !=
-undo.appliedValue`) явно отказывается (fail closed): файл и journal не
-изменяются, rollback baseline сохраняется. Журнал не ретаргетируется без
-полного crash-safe протокола (иначе крэш между rewrite journal и системной
-записью создаёт неоднозначный provenance). Требуемый путь: disable →
-изменить значение → enable. Retarget поддерживается в будущей
-transactional-версии (TODO).
+Изменение желаемого значения при активной SSH-мутации выполняется внутри
+apply по ownership-release семантике: предыдущее owned состояние откатывается
+(снимаются только существующие доказанные wrapper'ы, удаляется существующий
+owned managed block), journal-запись помечается `RolledBack`, файл
+перечитывается, и новое значение применяется к фактическому текущему
+состоянию конфига. Исчезнувшие извне артефакты предыдущей мутации (вплоть
+до `NothingToDo` полного отката) не блокируют смену значения и не
+реконструируются. `Conflict` предыдущего отката (неизвестный или
+дублирующийся wrapper, ручная правка блока, malformed маркеры) отказывает
+apply fail-closed: файл и journal не изменяются.
 
 ### Plan identity preflight (planner → classifier)
 
@@ -418,54 +421,41 @@ I/O), это ошибка загрузки — fail closed. Существующ
 * `UndoRemoveFirewallPolicy{policyName}` — удаление FIC-managed правила и
   обычная firewall reconciliation. Snapshot всего nftables ruleset не
   выполняется.
-* `UndoRestoreSshDirective{parameter, appliedValue, occurrences}` — SSH: откат
-  точной текстовой мутации FIC в global section (от начала файла до первого
-  `Match`) shared-файла `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu,
-  `/etc/openssh/sshd_config` ALT). Main `sshd_config` **не считается
-  FIC-owned**: full-file snapshot не хранится и не восстанавливается,
-  `Match` blocks и included-файлы не трогаются. Resource identity — это
-  конкретная recorded-мутация директивы (target directive mutation), а не
-  whole global section. Каждый элемент `occurrences` описывает одну мутацию
-  вхождения директивы: `beforeLine` — исходная строка (`null` для строк,
-  вставленных FIC — при rollback они удаляются), `afterLine` — строка после
-  мутации FIC. Позиция вхождения не хранится отдельно: порядок вектора
-  `occurrences` полностью выражает identity (mutation-local ordered
-  representation). Дубликаты директив, заменённые/закомментированные FIC,
-  восстанавливаются полностью; одинаковые `afterLine` (например несколько
-  закомментированных `#Port 22`) допустимы.
-  Drift detection — **mutation-local ordered projection** (whole-global
-  fingerprint и независимый per-occurrence подсчёт строк не используются):
-  строится упорядоченная проекция target resource (active-директивы keyword
-  плюс строки, точно совпадающие с recorded BEFORE/AFTER строками), которая
-  сравнивается целиком с recorded AFTER- и BEFORE-последовательностями:
-  * проекция == AFTER-последовательность → FIC-мутация применена → откат;
-  * проекция == BEFORE-последовательность → persistent undo уже применён
-    (в т.ч. crash после file-undo, но до reload/journal update) → runtime
-    reconciliation: валидация `sshd -T` и reload активного сервиса; только
-    после успеха — `NothingToDo`, journal → `RolledBack`, disable разрешён.
-    Провал валидации или reload оставляет запись активной и отказывает в
-    disable;
-  * ни то, ни другое (в т.ч. structural drift: число вхождений keyword не
-    соответствует записанной мутации) → `Conflict` без записи в файл.
-  Внешнее изменение другой директивы (в т.ч. сделанное другой FIC SSH
-  политикой — у каждой политики свой keyword/resource) не блокирует откат и
-  не восстанавливается; изменение после первого `Match` и во внешних include
-  этому тоже не мешает. Абсолютные номера строк не являются идентификатором
-  мутации: проекция заново строится по recorded AFTER/BEFORE-представлениям.
-  Повторный apply при существующей активной записи работает через existing
-  undo, а не generic apply: текущие вхождения сопоставляются с записанными
-  слотами; owned drifted slot (active-директива того же keyword) ремонтируется
-  до recorded AFTER при сохранении исходного BEFORE baseline; любые новые /
-  untracked вхождения keyword дают **fail closed** — файл и journal не
-  изменяются, никакая мутация не выполняется без предварительно записанного
-  undo provenance. Effective-compliant состояние не присваивается FIC: если
-  директива уже в AFTER-состоянии, файл не пишется, journal не меняется.
-  После reverse-записи обязательны валидация `sshd -T` и reload активного
-  сервиса; при провале восстанавливается pre-rollback содержимое **только при
-  условии, что текущий файл — это точное FIC-installed state** reverse-записи
-  (identity, metadata, content, полученные от rename, а не свежий snapshot):
-  иначе восстановление отказывает, внешнее изменение сохраняется, запись
-  остаётся активной, возвращается `Failed`.
+* `UndoRemoveSshManagedPolicy{policyName, directive, appliedValue,
+  disabledMutationIds}` — SSH: ownership-release rollback FIC-managed
+  артефактов в main `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu,
+  `/etc/openssh/sshd_config` ALT). Все FIC-мутации выражены явными маркерами
+  в самом конфиге: один top-level FIC managed block (в global section) с
+  sub-block'ами политик и `FIC_DISABLED` wrapper'ы вокруг отключённых строк
+  (multi-value директивы, например `Port`). Persistent rollback state живёт
+  в маркерах; journal хранит только policy reference, точную applied-строку
+  (ownership proof против ручных правок блока) и mutation id созданных
+  wrapper'ов. Main `sshd_config` **не считается FIC-owned**: `Match` blocks,
+  included-файлы и строки вне FIC-артефактов никогда не изменяются;
+  full-file snapshot не хранится и не восстанавливается.
+
+  **Ownership-release semantics**: SSH rollback does not reconstruct a
+  historical pre-FIC configuration. It releases all currently existing
+  artifacts that can be proven to be owned by the mutation: managed
+  overrides are removed and existing `FIC_DISABLED` wrappers are unwrapped.
+  Owned artifacts that disappeared externally are treated as already
+  released and are not reconstructed from the journal. Unknown, duplicated,
+  malformed or manually modified existing artifacts cause a conflict.
+
+  По-русски: rollback освобождает текущую FIC-owned область управления, а не
+  реконструирует прошлое состояние файла. Провенанс wrapper'ов —
+  subset-семантика: каждый фактически существующий wrapper политики обязан
+  быть доказан journal payload'ом; неизвестный id, дубликат id в файле или
+  дубликат id в payload — `Conflict` (файл не изменяется, даже доказанные
+  wrapper'ы не разворачиваются). Payload id, чей wrapper уже исчез извне,
+  трактуется как уже освобождённый (`releasedIds`) и не является ошибкой
+  rollback. Полное отсутствие FIC-артефактов мутации (нет блока и
+  wrapper'ов) — `NothingToDo` с runtime reconciliation (`sshd -T` + reload
+  активного сервиса). Ручная правка directive-строки managed sub-block'а
+  (несовпадение с `appliedValue`) и любая malformed-структура маркеров —
+  `Conflict`. Rollback выполняется общей conditional-транзакцией
+  (conditional atomic write, durability, валидация `sshd -t/-T`, reload,
+  compensation restore при провале).
   Все записи и откаты shared `sshd_config` выполняются через optimistic
   conditional write (`AtomicWriteOptions::expectedTargetState`): атомарный
   snapshot (inode, metadata, content) захватывается при чтении, и запись
@@ -508,8 +498,10 @@ I/O), это ошибка загрузки — fail closed. Существующ
 `Success / NothingToDo / Conflict / Unsupported / Failed / Partial`.
 `NothingToDo` означает, что активные записи не требуют отката: для SYSCTL
 и SUDO — FIC-owned запись нет в managed-артефакте (внешнее состояние никогда
-не трогается); для SSH — текущее состояние директивы совпадает с recorded
-BEFORE (мутация уже фактически отменена, в т.ч. crash-recovery), либо
+не трогается); для SSH — у мутации не осталось ни одного существующего
+FIC-owned артефакта (нет managed sub-block'а политики и `FIC_DISABLED`
+wrapper'ов: внешняя очистка, предыдущий rollback + crash и т.п.); rollback
+при этом всё равно выполняет runtime reconciliation (`sshd -T` + reload), либо
 политика ранее уже была успешно отработана: resolved-запись (`RolledBack`
 или `Detached`) в journal документирует, что FIC не владеет текущим
 состоянием; историческая запись любого другого статуса fail-closed. Это

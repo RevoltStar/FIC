@@ -65,16 +65,19 @@ SshOwnershipState analyzeOwnership(const std::vector<std::string>& lines,
             state.wrappersPresent = true;
         }
     }
-    // Symmetric provenance proof: when any FIC-owned state of the policy is
-    // present, the file wrappers and the journal payload must own exactly
-    // the same id set. When nothing is owned (no block, no wrappers), the
-    // payload describes state that was never applied or already rolled back.
+    // Ownership-release provenance proof (subset semantics): when any
+    // FIC-owned state of the policy is present, every wrapper that still
+    // exists must be proven by the journal payload. Payload ids whose
+    // wrappers have already disappeared are treated as released and are not
+    // an error. When nothing is owned (no block, no wrappers), the payload
+    // describes state that was never applied or already rolled back /
+    // externally cleaned.
     state.wrappersValid = true;
     if (state.blockPresent || state.wrappersPresent) {
         const SshDisabledProvenanceCheck provenance =
             checkSshDisabledProvenance(model, undo.policyName,
                                        undo.disabledMutationIds);
-        if (!provenance.ok()) {
+        if (!provenance.safeToRelease()) {
             state.wrappersValid = false;
             state.error =
                 describeSshDisabledProvenance(provenance, undo.policyName);
@@ -276,8 +279,9 @@ bool Ssh::apply() {
         }
         if (newest.status == fic::rollback::MutationStatus::Prepared &&
             !ownership.wrappersValid) {
-            this->log("Prepared SSH-мутация не восстановлена: провенанс "
-                      "FIC_DISABLED блоков не совпадает с journal payload: " +
+            this->log("Prepared SSH-мутация не восстановлена: владение "
+                      "существующими FIC_DISABLED блоками не доказано "
+                      "journal payload'ом: " +
                           ownership.error,
                   logLevel::ERROR);
             return false;
@@ -286,8 +290,10 @@ bool Ssh::apply() {
             ((ownership.blockPresent && !ownership.blockOwned) ||
              !ownership.wrappersValid)) {
             // A drift of the FIC-owned state (for example a manually edited
-            // block or a partially disappeared wrapper set) must never be
-            // silently overwritten.
+            // block or an unproven wrapper id) must never be silently
+            // overwritten. Wrappers that merely disappeared externally are
+            // not a drift: ownership-release semantics treats them as
+            // already released.
             this->log("FIC-владение политикой '" + this->policyName +
                           "' не может быть доказано (изменённый FIC-блок или "
                           "несовпадающий провенанс DISABLED маркеров): " +
@@ -395,7 +401,12 @@ bool Ssh::apply() {
                 }
                 const SshRollbackResult rollback = undoSshManagedPolicyMutation(
                     rollbackOptions, *recordPayload);
-                if (!rollback.ok) {
+                // Ownership-release semantics: NothingToDo means every
+                // previously owned artifact is already gone (external edit,
+                // earlier rollback + crash, ...) — the old state counts as
+                // released, and the new value must be applied to the actual
+                // current configuration, not to a reconstructed one.
+                if (!rollback.ok && !rollback.nothingToDo) {
                     this->log("Не удалось откатить предыдущее состояние "
                               "политики '" + this->policyName + "': " +
                                   rollback.message,

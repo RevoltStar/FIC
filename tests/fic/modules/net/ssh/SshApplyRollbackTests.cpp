@@ -527,6 +527,126 @@ void testValueChangeRollsBackPreviousStateAndReapplies() {
             "the new payload must own the fresh wrappers");
 }
 
+// Partial disappearance plus a value change: the old rollback releases only
+// the remaining owned artifacts, and the new value is applied to the actual
+// current configuration. The historically disappeared line is never
+// reconstructed.
+void testValueChangeReleasesOnlyRemainingOwnedWrappers() {
+    SshApplyTree tree;
+    tree.writeConfig("Port 22\nPort 2022\n");
+    tree.writePolicyValue("ssh_port", "2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy<NET_ssh_port>();
+    require(policy->apply(), "the initial apply must succeed");
+
+    // Externally remove the second wrapper entirely (its disabled line goes
+    // away with it); the managed block and the first wrapper stay.
+    const std::string owned = readFile(tree.configPath());
+    std::string releasedId;
+    {
+        SshConfigFileHandler handler(tree.configPath().string());
+        require(handler.loadConfig(), "load must succeed");
+        SshManagedModel model;
+        std::string error;
+        require(parseSshManagedModel(handler.lines(), model, error) ==
+                    SshManagedParseStatus::Ok,
+                error);
+        require(model.disabled.size() == 2, "two wrappers after the apply");
+        releasedId = model.disabled.back().mutationId;
+    }
+    {
+        std::vector<std::string> kept;
+        bool skipping = false;
+        for (const std::string& line : splitLines(owned)) {
+            if (!skipping && line.rfind(kSshDisabledBeginPrefix, 0) == 0 &&
+                line.find("mutation=" + releasedId) != std::string::npos) {
+                skipping = true;
+                continue;
+            }
+            if (skipping) {
+                if (line.rfind(kSshDisabledEndPrefix, 0) == 0) {
+                    skipping = false;
+                }
+                continue;
+            }
+            kept.push_back(line);
+        }
+        std::string joined;
+        for (const std::string& line : kept) {
+            joined += line;
+            joined += '\n';
+        }
+        tree.writeConfig(joined);
+    }
+
+    tree.writePolicyValue("ssh_port", "2323");
+    auto changedPolicy = tree.makePolicy<NET_ssh_port>();
+    require(changedPolicy->apply(), "the value change must succeed");
+
+    const std::string content = readFile(tree.configPath());
+    require(content.find("Port 2323") != std::string::npos,
+            "the managed block must carry the new value");
+    require(content.find("Port 2222") == std::string::npos,
+            "the previous applied value must be gone");
+    require(content.find("#@FIC_DISABLED_LINE@Port 22") != std::string::npos,
+            "the surviving conflicting line must be wrapped again");
+    require(content.find("Port 2022") == std::string::npos,
+            "the externally removed historical line must not be reconstructed");
+
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 2,
+            "the rolled-back and the new record must be kept");
+    require(journal.records().front().status == MutationStatus::RolledBack,
+            "the previous owned state must be marked rolled back");
+    const auto* undo = std::get_if<UndoRemoveSshManagedPolicy>(
+        &journal.records().back().undo.payload);
+    require(undo != nullptr && undo->appliedValue == "2323" &&
+                undo->disabledMutationIds.size() == 1,
+            "the new payload must own only the fresh wrapper");
+}
+
+// Full external cleanup plus a value change: the previous mutation is
+// NothingToDo (already released), the old record is resolved, and the new
+// value is applied to the actual current configuration.
+void testValueChangeAfterExternalCleanupAppliesFromCurrentState() {
+    SshApplyTree tree;
+    tree.writeConfig("Port 22\nPort 2022\n");
+    tree.writePolicyValue("ssh_port", "2222");
+    JournalOverride overrideGuard(tree.journalPath());
+
+    auto policy = tree.makePolicy<NET_ssh_port>();
+    require(policy->apply(), "the initial apply must succeed");
+
+    // Externally strip every FIC marker: FIC no longer owns anything.
+    tree.writeConfig("Port 22\nPort 2022\n");
+
+    tree.writePolicyValue("ssh_port", "2323");
+    auto changedPolicy = tree.makePolicy<NET_ssh_port>();
+    require(changedPolicy->apply(),
+            "the value change must succeed from the current actual state");
+
+    const std::string content = readFile(tree.configPath());
+    require(content.find("Port 2323") != std::string::npos,
+            "the managed block must carry the new value");
+    require(content.find("#@FIC_DISABLED_LINE@Port 22") != std::string::npos &&
+                content.find("#@FIC_DISABLED_LINE@Port 2022") !=
+                    std::string::npos,
+            "the current conflicting lines must be wrapped again");
+
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 2,
+            "the rolled-back and the new record must be kept");
+    require(journal.records().front().status == MutationStatus::RolledBack,
+            "the externally released mutation must be marked rolled back");
+    require(journal.records().back().status == MutationStatus::Applied,
+            "the new state must be committed");
+}
+
 void testMatchSectionsArePreserved() {
     SshApplyTree tree;
     const std::string original =
@@ -864,7 +984,10 @@ void testMultiPolicyIsolationUnderRollback() {
             "the other policy's record must remain applied");
 }
 
-void testRollbackConflictsWhenExpectedWrapperIsMissing() {
+// Ownership-release semantics: the journal payload expects wrappers A and B,
+// but wrapper B has already disappeared externally. Only A must be restored;
+// B is treated as already released and is never reconstructed.
+void testRollbackReleasesPartiallyDisappearedWrappers() {
     SshApplyTree tree;
     const std::string content =
         "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
@@ -878,8 +1001,6 @@ void testRollbackConflictsWhenExpectedWrapperIsMissing() {
         "Port 2022\n";
     tree.writeConfig(content);
 
-    // The journal payload expects wrappers A and B, but only A is present:
-    // a partial owned representation must never be completed or removed.
     UndoRemoveSshManagedPolicy undo;
     undo.policyName = "ssh_port";
     undo.directive = "Port";
@@ -888,9 +1009,10 @@ void testRollbackConflictsWhenExpectedWrapperIsMissing() {
 
     const SshRollbackResult rollback =
         undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
-    require(!rollback.ok && rollback.conflict, rollback.message);
-    require(readFile(tree.configPath()) == content,
-            "the managed policy block and wrapper A must stay untouched");
+    require(rollback.ok && !rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == "Port 22\nPort 2022\n",
+            "wrapper A must be restored, the managed block removed, and "
+            "wrapper B must not be reconstructed");
 }
 
 void testRollbackConflictsOnUnknownWrapper() {
@@ -973,6 +1095,89 @@ void testRollbackConflictsOnDuplicatePayloadId() {
     require(!rollback.ok && rollback.conflict, rollback.message);
     require(readFile(tree.configPath()) == content,
             "a corrupted journal payload must be left untouched");
+}
+
+// Ownership-release semantics: every FIC-owned artifact of the mutation has
+// disappeared externally. Nothing is left to release; the journal payload is
+// not a backup manifest, so nothing is reconstructed and the rollback is
+// NothingToDo with runtime reconciliation.
+void testRollbackNothingToDoWhenAllOwnedArtifactsGone() {
+    SshApplyTree tree;
+    tree.writeConfig("Port 22\nPort 2022\n");
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a", "FIC-b"};
+
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(rollback.nothingToDo && !rollback.conflict && !rollback.ok,
+            rollback.message);
+    require(readFile(tree.configPath()) == "Port 22\nPort 2022\n",
+            "the file must not be modified by a NothingToDo rollback");
+}
+
+// A payload-proven wrapper and an unproven wrapper coexist: even the proven
+// wrapper must not be restored — no transaction may start on an unproven
+// owned artifact.
+void testRollbackConflictsOnKnownAndUnknownWrapper() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 2222\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_LINE@Port 22\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-x@\n"
+        "#@FIC_DISABLED_LINE@Port 2022\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-x@\n";
+    tree.writeConfig(content);
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a"};
+
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(!rollback.ok && rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == content,
+            "neither the proven nor the unknown wrapper may be touched");
+}
+
+// The managed sub-block exists but its directive line differs from the
+// recorded applied value: the block was manually edited and FIC refuses to
+// remove or rewrite it by guesswork.
+void testRollbackConflictsOnManuallyModifiedBlock() {
+    SshApplyTree tree;
+    const std::string content =
+        "#@FIC_SSH_BLOCK_BEGIN version=1@\n"
+        "#@FIC_POLICY_BEGIN name=ssh_port@\n"
+        "Port 3333\n"
+        "#@FIC_POLICY_END name=ssh_port@\n"
+        "#@FIC_SSH_BLOCK_END@\n"
+        "#@FIC_DISABLED_BEGIN policy=ssh_port mutation=FIC-a@\n"
+        "#@FIC_DISABLED_LINE@Port 22\n"
+        "#@FIC_DISABLED_END policy=ssh_port mutation=FIC-a@\n";
+    tree.writeConfig(content);
+
+    UndoRemoveSshManagedPolicy undo;
+    undo.policyName = "ssh_port";
+    undo.directive = "Port";
+    undo.appliedValue = "2222";
+    undo.disabledMutationIds = {"FIC-a"};
+
+    const SshRollbackResult rollback =
+        undoSshManagedPolicyMutation(tree.rollbackOptions(), undo);
+    require(!rollback.ok && rollback.conflict, rollback.message);
+    require(readFile(tree.configPath()) == content,
+            "the manually modified block must be left untouched");
 }
 
 void testApplyRollbackRestoresExactOriginalBytes() {
@@ -1114,6 +1319,10 @@ int main() {
         {"repeated apply is idempotent", testRepeatedApplyIsIdempotent},
         {"value change rolls back previous state and reapplies",
          testValueChangeRollsBackPreviousStateAndReapplies},
+        {"value change releases only remaining owned wrappers",
+         testValueChangeReleasesOnlyRemainingOwnedWrappers},
+        {"value change after external cleanup applies from current state",
+         testValueChangeAfterExternalCleanupAppliesFromCurrentState},
         {"match sections are preserved", testMatchSectionsArePreserved},
         {"foreign directive inside disabled block is refused",
          testForeignDirectiveInsideDisabledBlockIsRefused},
@@ -1121,8 +1330,14 @@ int main() {
          testForeignLineInsideManagedBlockIsRefused},
         {"orphan managed block with compliant value fails closed",
          testOrphanManagedBlockWithCompliantValueFailsClosed},
-        {"rollback conflicts when expected wrapper is missing",
-         testRollbackConflictsWhenExpectedWrapperIsMissing},
+        {"rollback releases partially disappeared wrappers",
+         testRollbackReleasesPartiallyDisappearedWrappers},
+        {"rollback nothing to do when all owned artifacts are gone",
+         testRollbackNothingToDoWhenAllOwnedArtifactsGone},
+        {"rollback conflicts on known and unknown wrapper",
+         testRollbackConflictsOnKnownAndUnknownWrapper},
+        {"rollback conflicts on manually modified block",
+         testRollbackConflictsOnManuallyModifiedBlock},
         {"rollback conflicts on unknown wrapper",
          testRollbackConflictsOnUnknownWrapper},
         {"rollback conflicts on duplicate wrapper id",

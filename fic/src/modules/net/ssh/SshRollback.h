@@ -33,17 +33,22 @@ struct SshRollbackResult {
     std::string message;
 };
 
-// Rolls back one SSH policy mutation under the explicit FIC ownership model:
-// removes the managed sub-block of the policy (ownership proven by the
-// markers AND the exact recorded directive line) and restores the exact
-// original lines of the FIC_DISABLED blocks whose mutation ids are listed in
-// the journal payload. Everything FIC does not explicitly own — user lines,
-// other policies' blocks, Match sections, included files — is never touched.
-// Crash-resilient: a partially performed disable (block already removed,
-// wrappers still present) is completed; a disable of an already absent
-// mutation is NothingToDo with runtime reconciliation. Uses the shared
-// conditional transaction (conditional atomic write, durability, sshd -t/-T
-// validation, reload, compensation restore on failure).
+// Rolls back one SSH policy mutation under the explicit FIC ownership model
+// (ownership-release semantics): removes the managed sub-block of the policy
+// (ownership proven by the markers AND the exact recorded directive line)
+// and restores the exact original lines of the FIC_DISABLED blocks of the
+// policy that still exist and whose mutation ids are proven by the journal
+// payload. The payload is an ownership proof, not a backup manifest: owned
+// artifacts that disappeared externally are treated as already released and
+// are never reconstructed. Everything FIC does not explicitly own — user
+// lines, other policies' blocks, Match sections, included files — is never
+// touched. Crash-resilient: a partially performed disable (block already
+// removed, wrappers still present) is completed; a mutation whose owned
+// artifacts are all gone is NothingToDo with runtime reconciliation.
+// Unknown, duplicated or manually modified existing FIC-owned artifacts are
+// a Conflict: the file is never changed. Uses the shared conditional
+// transaction (conditional atomic write, durability, sshd -t/-T validation,
+// reload, compensation restore on failure).
 SshRollbackResult undoSshManagedPolicyMutation(
     const SshRollbackOptions& options,
     const fic::rollback::UndoRemoveSshManagedPolicy& undo);

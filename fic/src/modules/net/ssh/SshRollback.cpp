@@ -138,12 +138,14 @@ SshRollbackResult undoSshManagedPolicyMutation(
     const bool wrappersPresent =
         sshManagedModelHasDisabledForPolicy(model, undo.policyName);
 
-    // Symmetric wrapper provenance check: the journal payload and the file
-    // must own exactly the same wrapper id set. A corrupted payload is
-    // refused unconditionally; the full comparison is required whenever any
+    // Ownership-release provenance check (subset semantics): every wrapper
+    // that still exists in the file must be proven by the journal payload;
+    // payload ids whose wrappers have already disappeared are treated as
+    // released and are not an error. A corrupted payload is refused
+    // unconditionally; the existing-wrapper proof is required whenever any
     // FIC-owned state of the policy remains in the file (the neither-block-
-    // nor-wrapper case below is the already-rolled-back / never-applied
-    // recovery state, where an absent wrapper set is legitimate).
+    // nor-wrapper case below is the already-rolled-back / never-applied /
+    // externally cleaned recovery state).
     const SshDisabledProvenanceCheck provenance = checkSshDisabledProvenance(
         model, undo.policyName, undo.disabledMutationIds);
     if (provenance.payloadMalformed) {
@@ -154,7 +156,7 @@ SshRollbackResult undoSshManagedPolicyMutation(
         return result;
     }
     if (blockPresent || wrappersPresent) {
-        if (!provenance.ok()) {
+        if (!provenance.safeToRelease()) {
             result.conflict = true;
             result.message =
                 describeSshDisabledProvenance(provenance, undo.policyName) +
@@ -209,9 +211,10 @@ SshRollbackResult undoSshManagedPolicyMutation(
                          undo.policyName + "'; откат не требуется";
         return result;
     }
-    // Wrapper provenance was already proven symmetrically above (actual ==
-    // expected id sets, no duplicates): the transaction below may restore
-    // every wrapper the payload owns and nothing else.
+    // Wrapper provenance was already proven above (subset semantics: every
+    // existing wrapper id is in the payload; payload ids whose wrappers have
+    // disappeared are already released): the transaction below may restore
+    // exactly the wrappers that still exist and nothing else.
     if (blockPresent && !blockOwned) {
         // The managed sub-block exists but its directive line does not match
         // the recorded applied value: the block was manually edited and FIC

@@ -393,7 +393,11 @@ SshDisabledProvenanceCheck checkSshDisabledProvenance(
         }
         if (std::find(actual.begin(), actual.end(), expected[i]) ==
             actual.end()) {
-            result.missingIds.push_back(expected[i]);
+            // The wrapper created by this mutation is already gone (external
+            // edit, earlier rollback + crash, ...). Ownership-release
+            // semantics: it is treated as already released, never
+            // reconstructed and never reported as an error.
+            result.releasedIds.push_back(expected[i]);
         }
     }
     return result;
@@ -402,7 +406,7 @@ SshDisabledProvenanceCheck checkSshDisabledProvenance(
 std::string describeSshDisabledProvenance(
     const SshDisabledProvenanceCheck& check,
     const std::string& policyName) {
-    if (check.ok()) {
+    if (check.safeToRelease()) {
         return {};
     }
     std::string description;
@@ -419,15 +423,8 @@ std::string describeSshDisabledProvenance(
         }
         description += "; ";
     }
-    if (!check.missingIds.empty()) {
-        description += "отсутствующие в файле wrapper id:";
-        for (const std::string& id : check.missingIds) {
-            description += " '" + id + "'";
-        }
-        description += "; ";
-    }
-    return "провенанс FIC_DISABLED блоков политики '" + policyName +
-           "' не совпадает с journal payload: " + description;
+    return "владение существующими FIC_DISABLED блоками политики '" +
+           policyName + "' не доказано journal payload'ом: " + description;
 }
 
 bool sshManagedModelHasPolicy(const SshManagedModel& model,

@@ -51,7 +51,11 @@ struct UndoRemoveSshManagedPolicy {
     std::string policyName;   // FIC policy name (e.g. ssh_root_login)
     std::string directive;    // normalized sshd directive keyword
     std::string appliedValue; // expected content of the managed directive line
-    // mutation ids of the FIC_DISABLED blocks owned by this mutation.
+    // mutation ids of the FIC_DISABLED blocks created by this mutation. The
+    // payload is a proof of permission (rollback may unwrap the wrappers
+    // that still exist), NOT a backup manifest: wrappers that disappeared
+    // externally are treated as already released and are never
+    // reconstructed.
     std::vector<std::string> disabledMutationIds;
 };
 

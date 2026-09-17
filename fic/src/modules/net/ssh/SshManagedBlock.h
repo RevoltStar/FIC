@@ -137,22 +137,25 @@ bool restoreSshDisabledLines(std::vector<std::string>& lines,
                              bool& changed,
                              std::string& error);
 
-// Symmetric comparison of the FIC_DISABLED wrapper provenance of one policy:
-// the wrapper mutation ids present in the parsed model and the ids recorded
-// in the journal payload must coincide exactly (as sets, without duplicates
-// on either side). FIC owns the wrappers only as a complete, exact set: a
-// missing id (the owned representation partially disappeared), an unknown id
-// (an unproven wrapper) or a duplicated id means the ownership cannot be
-// proven and every consumer must fail closed.
+// Ownership-release provenance check of the FIC_DISABLED wrappers of one
+// policy (subset semantics). The journal payload is a proof of permission,
+// NOT a backup manifest: every wrapper that still exists in the file must be
+// proven by the payload, but payload ids whose wrappers have already
+// disappeared externally are treated as already released. Missing wrappers
+// are never reconstructed and never make the check fail.
 struct SshDisabledProvenanceCheck {
-    bool payloadMalformed = false;       // duplicate ids in the journal payload
-    bool fileDuplicate = false;          // duplicate mutation id among the file wrappers
-    std::vector<std::string> unknownIds; // in the file, absent from the payload
-    std::vector<std::string> missingIds; // in the payload, absent from the file
+    bool payloadMalformed = false; // duplicate ids in the journal payload
+    bool fileDuplicate = false;    // duplicate mutation id among the file wrappers
+    std::vector<std::string> unknownIds; // actual ids absent from the payload
+    std::vector<std::string> releasedIds; // payload ids whose wrappers no longer
+                                          // exist (informational, never an error)
 
-    bool ok() const {
-        return !payloadMalformed && !fileDuplicate && unknownIds.empty() &&
-               missingIds.empty();
+    // True when the currently existing FIC-owned wrappers can be safely
+    // released: the payload is well-formed and every existing wrapper is
+    // proven by it. Wrappers that disappeared externally (releasedIds) do
+    // not affect the result: ownership-release rollback ignores them.
+    bool safeToRelease() const {
+        return !payloadMalformed && !fileDuplicate && unknownIds.empty();
     }
 };
 
@@ -162,7 +165,8 @@ SshDisabledProvenanceCheck checkSshDisabledProvenance(
     const std::vector<std::string>& expectedMutationIds);
 
 // Human-readable description of a failed provenance check (for logs and
-// apply/rollback error messages). Returns an empty string when check.ok().
+// apply/rollback error messages). Returns an empty string when
+// check.safeToRelease().
 std::string describeSshDisabledProvenance(
     const SshDisabledProvenanceCheck& check,
     const std::string& policyName);
