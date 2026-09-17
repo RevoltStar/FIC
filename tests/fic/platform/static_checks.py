@@ -469,8 +469,9 @@ def main():
         ("/etc/grub.cfg", "/boot/grub/grub.cfg", "0600"),
     ):
         pattern = (
-            rf'\{{"{re.escape(path)}", "root", "root", {mode},\s*'
-            rf'\{{\s*"{re.escape(target)}"\s*\}}\}}'
+            rf'\{{"{re.escape(path)}", \{{"root", "root", {mode}\}}, '
+            rf'\{{"root", "root", {mode}\}}, \{{'
+            rf'\s*"{re.escape(target)}"\s*\}}\}}'
         )
         require(
             re.search(pattern, alt_profile) is not None,
@@ -495,7 +496,8 @@ def main():
             f"{name} update-grub candidates are incorrect",
         )
         require(
-            '"/etc/resolv.conf", "root", "root", 0644, {' in profiles[name]
+            '{"/etc/resolv.conf", {"root", "root", 0644}, '
+            '{"root", "root", 0644}, {}, {' in profiles[name]
             and '"/run/systemd/resolve/stub-resolv.conf"' in profiles[name]
             and '"/run/systemd/resolve/resolv.conf"' in profiles[name]
             and '"/usr/lib/systemd/resolv.conf"' in profiles[name],

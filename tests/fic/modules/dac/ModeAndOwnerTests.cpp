@@ -1,7 +1,10 @@
 #include "modules/dac/mode_and_owner/ModeAndOwner.h"
+#include "modules/dac/mode_and_owner/DacBaselineRollback.h"
 #include "modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.h"
 #include "modules/dac/mode_and_owner/policies/DAC_custom_mode_and_owner.h"
 #include "modules/dac/mode_and_owner/policies/DAC_systemcommandlock.h"
+#include "rollback/DaemonMutationJournal.h"
+#include "rollback/RollbackExecutor.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/logging/Logger.h>
@@ -124,6 +127,11 @@ void initializeRuntimePaths(const fs::path& root,
 
     std::string error;
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+
+    // Deterministic mutation journal location for the DAC platform-baseline
+    // provenance recorded by the built-in policies' apply().
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+        root / "data" / "mutation-journal.json");
 }
 
 class TestModeAndOwner final : public ModeAndOwner {
@@ -140,9 +148,14 @@ public:
                  std::vector<fs::path> allowedTargets = {},
                  std::vector<fic::platform::ProviderManagedFileTarget>
                      providerTargets = {}) {
-        addExpectedRule(
-            path, owner, group, mode, std::move(allowedTargets),
-            std::move(providerTargets));
+        fic::platform::FileAccessRule rule;
+        rule.path = path;
+        rule.enforced = {owner, group, mode};
+        rule.baseline = {owner, group, mode};
+        rule.allowedFinalSymlinkTargets = std::move(allowedTargets);
+        rule.providerManagedFinalSymlinkTargets =
+            std::move(providerTargets);
+        addExpectedRule(rule);
     }
 
     std::string expectedOwner(const fs::path& path) const {
@@ -275,11 +288,11 @@ void testTcbCredentialTopology(const fs::path& root) {
     fic::platform::DacPlatformConfig config;
     config.tcbCredentialStorage =
         fic::platform::TcbCredentialStorageConfig{
-            tcbRoot, currentOwner(), currentGroup(), 0710,
-            currentGroup(), 02710,
-            {{"shadow", 0640, true},
-             {"shadow-", 0640, false},
-             {"shadow.lock", 0600, false}}};
+            tcbRoot, currentOwner(), currentGroup(), 0710, 0710,
+            currentGroup(), 02710, 02710,
+            {{"shadow", 0640, 0640, true},
+             {"shadow-", 0640, 0640, false},
+             {"shadow.lock", 0600, 0600, false}}};
     FileAccessRulesPolicyTypeValue restrictionInfo(
         {}, config.tcbCredentialStorage);
     const std::string displayed = restrictionInfo.getPolicyRestrictionInfo();
@@ -439,7 +452,8 @@ void testProfileDrivenFinalSymlinks(const fs::path& root) {
     fs::create_symlink(absoluteTarget, absoluteLink);
     fic::platform::DacPlatformConfig profiledRules;
     profiledRules.protectedSystemFiles.push_back(
-        {absoluteLink, owner, group, 0600, {absoluteTarget}});
+        {absoluteLink, {owner, group, 0600}, {owner, group, 0600},
+            {absoluteTarget}});
     DAC_blocking_user_access_to_system_files absolutePolicy(profiledRules);
     require(absolutePolicy.apply(), "allowed absolute symlink failed");
     require(fileMode(absoluteTarget) == 0600,
@@ -494,7 +508,8 @@ void testProfileDrivenFinalSymlinks(const fs::path& root) {
     fs::create_symlink(missingTarget, missingLink);
     fic::platform::DacPlatformConfig missingProfileRule;
     missingProfileRule.protectedSystemFiles.push_back(
-        {missingLink, owner, group, 0644, {missingTarget}});
+        {missingLink, {owner, group, 0644}, {owner, group, 0644},
+            {missingTarget}});
     DAC_blocking_user_access_to_system_files ignoredMissingPolicy(
         missingProfileRule);
     require(ignoredMissingPolicy.apply(),
@@ -507,7 +522,8 @@ void testProfileDrivenFinalSymlinks(const fs::path& root) {
 
     FileAccessRulesPolicyTypeValue restrictionInfo({
         {regular, owner, group, 0600},
-        {absoluteLink, owner, group, 0600, {absoluteTarget}}
+        {absoluteLink, {owner, group, 0600}, {owner, group, 0600},
+            {absoluteTarget}}
     });
     const std::string displayed = restrictionInfo.getPolicyRestrictionInfo();
     require(displayed.find(absoluteTarget.string()) != std::string::npos,
@@ -544,8 +560,10 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
             ::geteuid() == 0 ? "root" : currentGroup();
         fs::create_symlink(target, link);
         fic::platform::DacPlatformConfig config;
-        config.protectedSystemFiles = {{link, "root", "root", 0644, {}, {
-            {target, provider, targetOwner, targetGroup, 0644}
+        config.protectedSystemFiles = {
+            {link, {"root", "root", 0644}, {"root", "root", 0644}, {}, {
+            {target, provider, {targetOwner, targetGroup, 0644},
+             {targetOwner, targetGroup, 0644}}
         }}};
         DAC_blocking_user_access_to_system_files policy(config);
         require(policy.apply(),
@@ -557,9 +575,9 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
     const fs::path staticFile = root / "static-resolv.conf";
     writeFile(staticFile, "static", 0666);
     fic::platform::DacPlatformConfig staticConfig;
-    staticConfig.protectedSystemFiles = {{
-        staticFile, owner, group, 0644
-    }};
+    staticConfig.protectedSystemFiles = {
+        {staticFile, {owner, group, 0644}, {owner, group, 0644}}
+    };
     DAC_blocking_user_access_to_system_files staticPolicy(staticConfig);
     require(staticPolicy.apply(), "static resolver file remediation failed");
     require(fileMode(staticFile) == 0644,
@@ -570,10 +588,11 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
     writeFile(invalidTarget, "invalid", 0666);
     fs::create_symlink(invalidTarget, invalidLink);
     fic::platform::DacPlatformConfig invalidConfig;
-    invalidConfig.protectedSystemFiles = {{
-        invalidLink, "root", "root", 0644, {},
-        {{invalidTarget, Provider::NetworkManager, "root", "root", 0644}}
-    }};
+    invalidConfig.protectedSystemFiles = {
+        {invalidLink, {"root", "root", 0644}, {"root", "root", 0644}, {},
+        {{invalidTarget, Provider::NetworkManager,
+          {"root", "root", 0644}, {"root", "root", 0644}}}}
+    };
     DAC_blocking_user_access_to_system_files invalidPolicy(invalidConfig);
     require(!invalidPolicy.apply(),
             "provider-managed target with excessive mode was accepted");
@@ -585,10 +604,11 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
     writeFile(arbitraryTarget, "evil", 0644);
     fs::create_symlink(arbitraryTarget, arbitraryLink);
     fic::platform::DacPlatformConfig arbitraryConfig;
-    arbitraryConfig.protectedSystemFiles = {{
-        arbitraryLink, "root", "root", 0644, {},
-        {{invalidTarget, Provider::NetworkManager, "root", "root", 0644}}
-    }};
+    arbitraryConfig.protectedSystemFiles = {
+        {arbitraryLink, {"root", "root", 0644}, {"root", "root", 0644}, {},
+        {{invalidTarget, Provider::NetworkManager,
+          {"root", "root", 0644}, {"root", "root", 0644}}}}
+    };
     DAC_blocking_user_access_to_system_files arbitraryPolicy(arbitraryConfig);
     require(!arbitraryPolicy.apply(), "arbitrary resolver target was accepted");
     require(fileMode(arbitraryTarget) == 0644,
@@ -607,11 +627,11 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
                 "could not alter provider target owner");
         fs::create_symlink(ownerTarget, ownerLink);
         fic::platform::DacPlatformConfig ownerConfig;
-        ownerConfig.protectedSystemFiles = {{
-            ownerLink, "root", "root", 0644, {},
+        ownerConfig.protectedSystemFiles = {
+            {ownerLink, {"root", "root", 0644}, {"root", "root", 0644}, {},
             {{ownerTarget, Provider::NetworkManager,
-              "root", "root", 0644}}
-        }};
+              {"root", "root", 0644}, {"root", "root", 0644}}}}
+        };
         DAC_blocking_user_access_to_system_files ownerPolicy(ownerConfig);
         require(!ownerPolicy.apply(),
                 "provider-managed target with wrong owner was accepted");
@@ -658,12 +678,14 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
         writeFile(modeTarget, "mode", 0644);
         fs::create_symlink(modeTarget, modeLink);
         fic::platform::DacPlatformConfig modeConfig;
-        modeConfig.protectedSystemFiles = {{
-            modeLink, currentOwner(), currentGroup(), 0600, {}, {
+        modeConfig.protectedSystemFiles = {
+            {modeLink, {currentOwner(), currentGroup(), 0600},
+             {currentOwner(), currentGroup(), 0600}, {}, {
                 {modeTarget, Provider::SystemdResolved,
-                 currentOwner(), currentGroup(), 0644}
-            }
-        }};
+                 {currentOwner(), currentGroup(), 0644},
+                 {currentOwner(), currentGroup(), 0644}}
+            }}
+        };
         DAC_blocking_user_access_to_system_files modePolicy(modeConfig);
         require(modePolicy.apply(),
                 "a provider target compliant with its own target-specific "
@@ -692,10 +714,12 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
             fic::platform::DacPlatformConfig contractConfig;
             // Rule expectation (root:root) intentionally differs from the
             // target contract (systemd-resolve:systemd-resolve).
-            contractConfig.protectedSystemFiles = {{
-                contractLink, "root", "root", 0644, {}, {
+            contractConfig.protectedSystemFiles = {
+                {contractLink, {"root", "root", 0644},
+                 {"root", "root", 0644}, {}, {
                     {contractTarget, Provider::SystemdResolved,
-                     "systemd-resolve", "systemd-resolve", 0644}
+                     {"systemd-resolve", "systemd-resolve", 0644},
+                     {"systemd-resolve", "systemd-resolve", 0644}}
                 }}};
             DAC_blocking_user_access_to_system_files contractPolicy(
                 contractConfig);
@@ -714,10 +738,12 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
                     "could not set the wrong-group fixture owner");
             fs::create_symlink(wrongGroupTarget, wrongGroupLink);
             fic::platform::DacPlatformConfig wrongGroupConfig;
-            wrongGroupConfig.protectedSystemFiles = {{
-                wrongGroupLink, "root", "root", 0644, {}, {
+            wrongGroupConfig.protectedSystemFiles = {
+                {wrongGroupLink, {"root", "root", 0644},
+                 {"root", "root", 0644}, {}, {
                     {wrongGroupTarget, Provider::SystemdResolved,
-                     "systemd-resolve", "root", 0644}
+                     {"systemd-resolve", "root", 0644},
+                     {"systemd-resolve", "root", 0644}}
                 }}};
             DAC_blocking_user_access_to_system_files wrongGroupPolicy(
                 wrongGroupConfig);
@@ -737,10 +763,11 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
                     "could not set the stricter fixture owner");
             fs::create_symlink(stricterTarget, stricterLink);
             fic::platform::DacPlatformConfig stricterConfig;
-            stricterConfig.protectedSystemFiles = {{
-                stricterLink, "root", "root", 0644, {}, {
+            stricterConfig.protectedSystemFiles = {
+                {stricterLink, {"root", "root", 0644},
+                 {"root", "root", 0644}, {}, {
                     {stricterTarget, Provider::SystemdResolved,
-                     "root", "root", 0644}
+                     {"root", "root", 0644}, {"root", "root", 0644}}
                 }}};
             DAC_blocking_user_access_to_system_files stricterPolicy(
                 stricterConfig);
@@ -758,10 +785,11 @@ void testProviderManagedFinalSymlinks(const fs::path& root) {
                     "could not set the directory fixture owner");
             fs::create_symlink(directoryTarget, directoryLink);
             fic::platform::DacPlatformConfig directoryConfig;
-            directoryConfig.protectedSystemFiles = {{
-                directoryLink, "root", "root", 0644, {}, {
+            directoryConfig.protectedSystemFiles = {
+                {directoryLink, {"root", "root", 0644},
+                 {"root", "root", 0644}, {}, {
                     {directoryTarget, Provider::SystemdResolved,
-                     "root", "root", 0644}
+                     {"root", "root", 0644}, {"root", "root", 0644}}
                 }}};
             DAC_blocking_user_access_to_system_files directoryPolicy(
                 directoryConfig);
@@ -978,6 +1006,165 @@ void testChownFailureReturnsFalse(const fs::path& root) {
     }
     require(syscallCauseLogged, "fchown system cause was not logged");
 }
+// ---- Platform-baseline rollback (systemcommandlock / blocking files) ----
+
+fic::rollback::MutationRollbackOutcome runBaselineRollback(
+    const fic::platform::DacPlatformConfig& config,
+    const std::string& policyName) {
+    fic::rollback::DacBaselineRollbackOptions options;
+    options.platform = config;
+    const fic::rollback::UndoApplyDacPlatformBaseline undo{policyName};
+    fic::rollback::MutationRecord record;
+    record.policy = {"DAC", "Mode_and_Owner", policyName};
+    record.resource = policyName;
+    record.undo = fic::rollback::UndoAction{
+        fic::rollback::MutationBackend::Dac, undo};
+    return fic::rollback::undoDacBaselineMutation(options, record, undo);
+}
+
+void testPlatformBaselineCommandLifecycle(const fs::path& root) {
+    const fs::path df = root / "baseline-cmd";
+    writeFile(df, "binary", 0777);
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemCommands = {
+        {df, {currentOwner(), currentGroup(), 0750},
+             {currentOwner(), currentGroup(), 0755}}};
+
+    // A/C: apply uses enforced metadata only: 0777 -> 0750, never 0755.
+    DAC_systemcommandlock policy(config);
+    require(policy.apply(), "platform-baseline command apply failed");
+    require(fileMode(df) == 0750,
+            "apply must transition to the enforced mode 0750");
+
+    // B/C: rollback transitions to the platform baseline: 0750 -> 0755.
+    const fic::rollback::MutationRollbackOutcome rollback =
+        runBaselineRollback(config, "systemcommandlock");
+    require(rollback.status == fic::rollback::RollbackStatus::Success,
+            rollback.message);
+    require(fileMode(df) == 0755,
+            "rollback must transition to the baseline mode 0755, got " +
+                std::to_string(fileMode(df)));
+    require(fileMode(df) != 0777,
+            "rollback must never reconstruct the pre-FIC mode 0777");
+}
+
+void testPlatformBaselineRollbackAfterAdminChange(const fs::path& root) {
+    const fs::path cmd = root / "baseline-admin";
+    writeFile(cmd, "binary", 0755);
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemCommands = {
+        {cmd, {currentOwner(), currentGroup(), 0750},
+             {currentOwner(), currentGroup(), 0755}}};
+
+    DAC_systemcommandlock policy(config);
+    require(policy.apply(), "apply before admin drift failed");
+    require(fileMode(cmd) == 0750, "enforced mode was not applied");
+
+    // D: an administrator tightening the mode after apply is NOT a conflict:
+    // disable transitions the object to the platform baseline.
+    require(::chmod(cmd.c_str(), 0700) == 0, "could not simulate admin drift");
+    const fic::rollback::MutationRollbackOutcome rollback =
+        runBaselineRollback(config, "systemcommandlock");
+    require(rollback.status == fic::rollback::RollbackStatus::Success,
+            rollback.message);
+    require(fileMode(cmd) == 0755,
+            "rollback after admin drift must land on baseline 0755");
+}
+
+void testPlatformBaselineRollbackIsIdempotent(const fs::path& root) {
+    const fs::path cmd = root / "baseline-idempotent";
+    writeFile(cmd, "binary", 0755);
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemCommands = {
+        {cmd, {currentOwner(), currentGroup(), 0750},
+             {currentOwner(), currentGroup(), 0755}}};
+
+    // E: baseline -> baseline is an explicit no-op.
+    const fic::rollback::MutationRollbackOutcome first =
+        runBaselineRollback(config, "systemcommandlock");
+    require(first.status == fic::rollback::RollbackStatus::NothingToDo,
+            first.message);
+    require(fileMode(cmd) == 0755, "no-op rollback must not change the mode");
+
+    DAC_systemcommandlock policy(config);
+    require(policy.apply(), "apply before idempotent rollback failed");
+    const fic::rollback::MutationRollbackOutcome second =
+        runBaselineRollback(config, "systemcommandlock");
+    require(second.status == fic::rollback::RollbackStatus::Success,
+            second.message);
+    const fic::rollback::MutationRollbackOutcome third =
+        runBaselineRollback(config, "systemcommandlock");
+    require(third.status == fic::rollback::RollbackStatus::NothingToDo,
+            "repeated rollback must be idempotent: " + third.message);
+    require(fileMode(cmd) == 0755,
+            "repeated rollback must keep the baseline mode");
+}
+
+void testPlatformBaselineRollbackMissingFile(const fs::path& root) {
+    const fs::path missing = root / "baseline-missing";
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemCommands = {
+        {missing, {currentOwner(), currentGroup(), 0750},
+                  {currentOwner(), currentGroup(), 0755}}};
+
+    // F: rollback must not create a missing object just to restore baseline.
+    const fic::rollback::MutationRollbackOutcome rollback =
+        runBaselineRollback(config, "systemcommandlock");
+    require(rollback.status == fic::rollback::RollbackStatus::NothingToDo,
+            rollback.message);
+    require(!fs::exists(missing),
+            "rollback must not create a missing managed object");
+}
+
+void testPlatformBaselineRollbackSymlinkFailClosed(const fs::path& root) {
+    const fs::path evilTarget = root / "baseline-evil-target";
+    writeFile(evilTarget, "evil", 0644);
+    const fs::path link = root / "baseline-cmd-link";
+    fs::create_symlink(evilTarget, link);
+
+    fic::platform::DacPlatformConfig config;
+    // The rule has an allowlist that does NOT contain the substituted target.
+    config.protectedSystemCommands = {
+        {link, {currentOwner(), currentGroup(), 0750},
+               {currentOwner(), currentGroup(), 0755}, {}}};
+
+    // G: unsafe pathname resolution must fail closed before any mutation.
+    const fic::rollback::MutationRollbackOutcome rollback =
+        runBaselineRollback(config, "systemcommandlock");
+    require(rollback.status == fic::rollback::RollbackStatus::Conflict,
+            "substituted path must conflict: " + rollback.message);
+    require(fileMode(evilTarget) == 0644,
+            "fail-closed rollback must not chmod the substituted object");
+}
+
+void testPlatformBaselineRollbackProviderTarget(const fs::path& root) {
+    const fs::path providerTarget = root / "baseline-resolv-target";
+    writeFile(providerTarget, "provider", 0666);
+    const fs::path link = root / "baseline-resolv-link";
+    fs::create_symlink(providerTarget, link);
+
+    fic::platform::DacPlatformConfig config;
+    config.protectedSystemFiles = {
+        {link, {currentOwner(), currentGroup(), 0644},
+               {currentOwner(), currentGroup(), 0644}, {}, {
+            {providerTarget,
+             fic::platform::ManagedFileProvider::NetworkManager,
+             {currentOwner(), currentGroup(), 0644},
+             {currentOwner(), currentGroup(), 0644}}
+        }}};
+
+    // H: baseline applies only to the proven provider-managed final target.
+    const fic::rollback::MutationRollbackOutcome rollback =
+        runBaselineRollback(config, "blocking_user_access_to_system_files");
+    require(rollback.status == fic::rollback::RollbackStatus::Success,
+            rollback.message);
+    require(fileMode(providerTarget) == 0644,
+            "provider target baseline was not restored");
+}
 } // namespace
 
 int main() {
@@ -1001,6 +1188,12 @@ int main() {
     testChownThenRestoresSpecialBits(root);
     testUnknownIdentitiesAndDiagnostics(root);
     testChownFailureReturnsFalse(root);
+    testPlatformBaselineCommandLifecycle(root);
+    testPlatformBaselineRollbackAfterAdminChange(root);
+    testPlatformBaselineRollbackIsIdempotent(root);
+    testPlatformBaselineRollbackMissingFile(root);
+    testPlatformBaselineRollbackSymlinkFailClosed(root);
+    testPlatformBaselineRollbackProviderTarget(root);
 
     fs::remove_all(root);
     return 0;

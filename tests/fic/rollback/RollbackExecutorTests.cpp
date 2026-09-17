@@ -19,6 +19,9 @@
 #include <vector>
 
 #include <sys/stat.h>
+#include <grp.h>
+#include <pwd.h>
+#include <unistd.h>
 
 namespace {
 
@@ -1030,6 +1033,204 @@ void testDeviceFeatureUndoUnknownFeatureIsUnsupported() {
 }
 
 
+// ------------------------------------------------------------------ dac ----
+
+// Writes a file with the given mode (owner/group = test user, like the
+// ModeAndOwner tests, so the suite runs unprivileged).
+void writeDacFile(const std::filesystem::path& path, mode_t mode) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    require(stream.is_open(), "could not create " + path.string());
+    stream << "data";
+    stream.close();
+    require(stream.good(), "could not write " + path.string());
+    require(::chmod(path.c_str(), mode) == 0,
+            "could not chmod " + path.string());
+}
+
+mode_t dacFileMode(const std::filesystem::path& path) {
+    struct stat info {};
+    require(::stat(path.c_str(), &info) == 0,
+            "could not stat " + path.string());
+    return info.st_mode & 07777;
+}
+
+std::string dacOwner() {
+    const struct passwd* owner = ::getpwuid(::geteuid());
+    require(owner != nullptr, "could not resolve test owner");
+    return owner->pw_name;
+}
+
+std::string dacGroup() {
+    const struct group* group = ::getgrgid(::getegid());
+    require(group != nullptr, "could not resolve test group");
+    return group->gr_name;
+}
+
+RollbackExecutorDeps dacDeps(const std::filesystem::path& managedFile) {
+    DacBaselineRollbackOptions options;
+    options.platform.protectedSystemCommands = {
+        {managedFile,
+         {dacOwner(), dacGroup(), 0750},
+         {dacOwner(), dacGroup(), 0755}}};
+    RollbackExecutorDeps deps;
+    deps.dacOptions = [options]() { return options; };
+    return deps;
+}
+
+void testDacBaselineRollbackTransitionsToBaseline() {
+    const PolicyRef policy{"DAC", "Mode_and_Owner", "systemcommandlock"};
+    TempTree tree("/tmp/fic-rollback-dac-XXXXXX");
+    const std::filesystem::path managed = tree.root / "managed-binary";
+    // Simulates the post-apply state with an admin drift afterwards.
+    writeDacFile(managed, 0700);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(policy, "systemcommandlock",
+                  UndoAction{MutationBackend::Dac,
+                             UndoApplyDacPlatformBaseline{
+                                 "systemcommandlock"}});
+
+    const RollbackExecutorDeps deps = dacDeps(managed);
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(report.status == RollbackStatus::Success, report.message);
+    require(dacFileMode(managed) == 0755,
+            "disable rollback must transition to the platform baseline");
+    std::string journalError;
+    MutationJournal* journalPtr =
+        DaemonMutationJournal::instance().tryGet(journalError);
+    require(journalPtr != nullptr, journalError);
+    require(journalPtr->activeRecords(policy).empty(),
+            "a completed baseline rollback must resolve the journal record");
+}
+
+void testDacBaselineRollbackIsIdempotent() {
+    const PolicyRef policy{"DAC", "Mode_and_Owner", "systemcommandlock"};
+    TempTree tree("/tmp/fic-rollback-dac-XXXXXX");
+    const std::filesystem::path managed = tree.root / "managed-binary";
+    writeDacFile(managed, 0750);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(policy, "systemcommandlock",
+                  UndoAction{MutationBackend::Dac,
+                             UndoApplyDacPlatformBaseline{
+                                 "systemcommandlock"}});
+
+    const RollbackExecutorDeps deps = dacDeps(managed);
+    const RollbackReport first =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(first.status == RollbackStatus::Success, first.message);
+    require(dacFileMode(managed) == 0755, first.message);
+
+    // A repeated disable (baseline -> baseline) must stay a no-op: the
+    // executor reports NothingToDo explicitly, which still completes the
+    // disable (rollbackCompleted()).
+    recordApplied(policy, "systemcommandlock",
+                  UndoAction{MutationBackend::Dac,
+                             UndoApplyDacPlatformBaseline{
+                                 "systemcommandlock"}});
+    const RollbackReport second =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(second.status == RollbackStatus::NothingToDo, second.message);
+    require(second.rollbackCompleted(),
+            "idempotent no-op rollback must allow the disable");
+    require(dacFileMode(managed) == 0755,
+            "repeated rollback must keep the baseline mode");
+}
+
+void testDacUnrecordedLegacyProvenanceRollsBackEnforcedState() {
+    const PolicyRef policy{"DAC", "Mode_and_Owner", "systemcommandlock"};
+    TempTree tree("/tmp/fic-rollback-dac-XXXXXX");
+    const std::filesystem::path managed = tree.root / "managed-binary";
+    // Enforced state without any journal record (legacy apply).
+    writeDacFile(managed, 0750);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+
+    const RollbackExecutorDeps deps = dacDeps(managed);
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(report.status == RollbackStatus::Success,
+            "proven enforced state must roll back to baseline: " +
+                report.message);
+    require(dacFileMode(managed) == 0755,
+            "legacy proven rollback must land on the platform baseline");
+}
+
+void testDacUnrecordedForeignStateRefusesDisable() {
+    const PolicyRef policy{"DAC", "Mode_and_Owner", "systemcommandlock"};
+    TempTree tree("/tmp/fic-rollback-dac-XXXXXX");
+    const std::filesystem::path managed = tree.root / "managed-binary";
+    // Neither the enforced (0750) nor the baseline (0755) state.
+    writeDacFile(managed, 0777);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+
+    const RollbackExecutorDeps deps = dacDeps(managed);
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(report.status == RollbackStatus::Unsupported,
+            "foreign state without provenance must refuse disable: " +
+                report.message);
+    require(!report.rollbackCompleted(), "disable must be refused");
+    require(dacFileMode(managed) == 0777,
+            "refused rollback must not touch the foreign state");
+}
+
+void testDacUnrecordedAtBaselineIsNothingToDo() {
+    const PolicyRef policy{"DAC", "Mode_and_Owner", "systemcommandlock"};
+    TempTree tree("/tmp/fic-rollback-dac-XXXXXX");
+    const std::filesystem::path managed = tree.root / "managed-binary";
+    writeDacFile(managed, 0755);
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+
+    const RollbackExecutorDeps deps = dacDeps(managed);
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(report.status == RollbackStatus::NothingToDo,
+            "baseline state without provenance is nothing to do: " +
+                report.message);
+    require(dacFileMode(managed) == 0755,
+            "nothing-to-do rollback must not change the mode");
+}
+
+void testDacBlockingPolicyRollbackUsesProfileBaseline() {
+    const PolicyRef policy{
+        "DAC", "Mode_and_Owner", "blocking_user_access_to_system_files"};
+    TempTree tree("/tmp/fic-rollback-dac-XXXXXX");
+    const std::filesystem::path managed = tree.root / "system-file";
+    writeDacFile(managed, 0600);
+
+    DacBaselineRollbackOptions options;
+    options.platform.protectedSystemFiles = {
+        {managed,
+         {dacOwner(), dacGroup(), 0600},
+         {dacOwner(), dacGroup(), 0644}}};
+    RollbackExecutorDeps deps;
+    deps.dacOptions = [options]() { return options; };
+
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(policy, "blocking_user_access_to_system_files",
+                  UndoAction{MutationBackend::Dac,
+                             UndoApplyDacPlatformBaseline{
+                                 "blocking_user_access_to_system_files"}});
+
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, "", deps);
+    require(report.status == RollbackStatus::Success, report.message);
+    require(dacFileMode(managed) == 0644,
+            "blocking files rollback must restore the crontab-style baseline");
+}
+
+
 void testJournalUpdateFailureFailsClosed() {
     // A successful backend undo with a journal that can no longer be written
     // must still fail closed: provenance must reflect the actual state.
@@ -1939,6 +2140,18 @@ int main() {
         {"device feature undo invokes backend", testDeviceFeatureUndoInvokesBackend},
         {"device feature undo unknown feature is unsupported",
          testDeviceFeatureUndoUnknownFeatureIsUnsupported},
+        {"dac baseline rollback transitions to baseline",
+         testDacBaselineRollbackTransitionsToBaseline},
+        {"dac baseline rollback is idempotent",
+         testDacBaselineRollbackIsIdempotent},
+        {"dac unrecorded legacy provenance rolls back enforced state",
+         testDacUnrecordedLegacyProvenanceRollsBackEnforcedState},
+        {"dac unrecorded foreign state refuses disable",
+         testDacUnrecordedForeignStateRefusesDisable},
+        {"dac unrecorded at baseline is nothing to do",
+         testDacUnrecordedAtBaselineIsNothingToDo},
+        {"dac blocking policy rollback uses profile baseline",
+         testDacBlockingPolicyRollbackUsesProfileBaseline},
         {"journal update failure fails closed", testJournalUpdateFailureFailsClosed},
         {"empty journal with sysctl hint and no managed ownership",
          testEmptyJournalWithSysctlHintAndNoManagedOwnership},

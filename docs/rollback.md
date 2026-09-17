@@ -49,6 +49,9 @@ Policy → backend → MutationRecord → persistent MutationJournal
 * `fic/src/modules/net/ssh/SshRollback.{h,cpp}` — SSH undo: применение reverse
   delta главного `sshd_config`, валидация `sshd -T`, reload сервиса,
   transactional restore.
+* `fic/src/modules/dac/mode_and_owner/DacBaselineRollback.{h,cpp}` — DAC
+  platform-baseline undo: переход управляемых объектов к baseline-метаданным
+  platform profile (см. «Platform-baseline rollback»).
 * `tests/fic/rollback/` — тесты journal и executor.
 
 ## Жизненный цикл мутации
@@ -470,6 +473,70 @@ I/O), это ошибка загрузки — fail closed. Существующ
 * `UndoDisableDeviceFeature{feature}` — отключение category-level desired
   state DC и пересборка `99-fic-devices.rules` через device daemon;
   per-device пользовательские правила не затрагиваются.
+* `UndoApplyDacPlatformBaseline{policyName}` — DAC hardening-политики
+  (`systemcommandlock`, `blocking_user_access_to_system_files`):
+  platform-baseline rollback (см. следующий раздел). Payload несёт только
+  policy identity — доказательство того, что последнее изменившее состояние
+  apply выполнил FIC; пред-FIC owner/group/mode не хранятся никогда.
+
+## Platform-baseline rollback (DAC hardening)
+
+DAC hardening policies `systemcommandlock` and
+`blocking_user_access_to_system_files` do not restore historical pre-FIC
+metadata. While enabled they enforce the security metadata declared by the
+platform profile (`FileAccessRule::enforced`); on disable they transition
+managed objects to the platform's declared baseline metadata
+(`FileAccessRule::baseline`, provider target `baseline`, TCB baseline
+fields). По-русски: откат DAC hardening-политик не восстанавливает
+исторические права, существовавшие до FIC. При включённой политике
+применяется enforced-состояние, при отключении — штатное baseline-состояние,
+определённое platform profile для конкретного дистрибутива
+(`/etc/crontab` 0600 → 0644 на Debian/Ubuntu; command binaries
+0750 → 0755; ALT TCB остаётся ALT-native baseline == enforced).
+
+Ключевые свойства модели:
+
+* **Источник истины — `PlatformProfile`.** Все различия дистрибутивов живут
+  только в профилях; rollback backend (`DacBaselineRollback`) получает
+  готовый `DacPlatformConfig` через `RollbackExecutorDeps::dacOptions` и не
+  содержит switch'ей по distro id.
+* **Отличие от ownership-release SSH** (см. `UndoRemoveSshManagedPolicy`):
+  SSH rollback удаляет только доказанные FIC-артефакты и никогда не
+  реконструирует исчезнувшие; DAC rollback — это **переход к platform
+  baseline** каждого управляемого объекта, выполняемый по полной
+  evidence-based проверке текущего объекта. Изменение режима администратором
+  после apply (0750 → 0700) — ожидаемый сценарий, а не `Conflict`:
+  disable вернёт объект к baseline (0700 → 0755).
+* **Отличие от conditional historical restore (SYSCTL/SUDO)**: SYSCTL/SUDO
+  удаляют только FIC-owned запись и не трогают внешнее состояние; DAC
+  rollback изменяет metadata объекта независимо от того, находился ли он в
+  enforced-состоянии, — но только если объект безопасно идентифицирован.
+* **Отличие от apply-time compensation**: journal-запись DAC — это
+  persistent disable-time provenance (fact of FIC-owned mutation), а не
+  snapshot для отмены незавершённой транзакции apply. Pre-attempt metadata
+  нигде не хранится.
+* **Fail-closed object safety.** Разрешение пути, allowlist final symlink,
+  provider-target validation, тип объекта и `fstat`-postcondition — те же
+  гарантии, что при apply. Небезопасный объект (подменённый symlink вне
+  allowlist, неожиданный тип, неизвестный provider target) — `Conflict` до
+  любой мутации.
+* **Missing files**: `MissingFilePolicy::Ignore` semantics — отсутствующий
+  объект не создаётся ради baseline (`/etc/securetty`, `/etc/hosts.allow`
+  и т.п.); «nothing to restore for this resource», остальные ресурсы
+  продолжают обрабатываться.
+* **Partial failure**: один объект с ошибкой при успешных остальных —
+  `Partial`; journal-запись остаётся активной (`RollbackFailed`), повторный
+  disable повторяет rollback. Так как `baseline → baseline` — no-op,
+  повторный rollback идемпотентен и завершается `Success`/`NothingToDo`.
+* **Provenance.** Apply записывает `Prepared` `UndoApplyDacPlatformBaseline`
+  до мутации (fail closed при недоступном journal), commit после изменившего
+  состояние успешного apply, discard когда состояние не изменилось (запись —
+  только доказательство реально выполненной FIC-мутации). Для legacy-apply
+  без journal-записей ownership доказывается наличием enforced-состояния
+  (владение enforced + mode не слабее enforced) при отсутствии объектов в
+  «чужом» состоянии (ни enforced, ни baseline): доказано — rollback
+  выполняется; всё в baseline — `NothingToDo`; чужое/небезопасное —
+  `Unsupported` (disable запрещён).
 
 ## Enrollment и результаты
 
@@ -479,6 +546,10 @@ I/O), это ошибка загрузки — fail closed. Существующ
   * все `SYSCTL` policies;
   * `DAC/SudoEdit` managed Defaults (`sudo_env_reset`, `sudo_passwd_tries`,
     `sudo_securepath`, `sudo_timeout`);
+  * `DAC/Mode_and_Owner` hardening-политики (`systemcommandlock`,
+    `blocking_user_access_to_system_files` — platform-baseline rollback,
+    см. одноимённый раздел); остальные `Mode_and_Owner` политики
+    (`custom_mode_and_owner` и др.) остаются `NotEnrolled`;
   * `NET/SshEdit` (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
     `ssh_pubkey_auth`);
   * `FIREWALL/HostFiltering` (`block_ftp`, `block_rdp`, `custom_rules`);
@@ -518,7 +589,7 @@ target-директивы в global section без journal-записей озн
 
 ## Расширение
 
-Новые backend'ы (PAM, GRUB, fstab, DAC и т.д.) подключаются добавлением
+Новые backend'ы (PAM, GRUB, fstab и т.д.) подключаются добавлением
 payload'а в `UndoAction`, ветки в `RollbackExecutor` и записи мутации в
 момент фактического изменения ресурса — без изменений в `Policy` и без
 новых виртуальных методов.

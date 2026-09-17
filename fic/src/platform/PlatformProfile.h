@@ -404,28 +404,50 @@ enum class ManagedFileProvider {
     Resolvconf
 };
 
+// DAC metadata declared by the platform profile for one managed file.
+// `enforced` is the state FIC applies while the policy is ENABLE;
+// `baseline` is the platform-defined штатное state of the distribution that
+// policy disable restores. Baseline is NOT a pre-FIC snapshot of arbitrary
+// host state: it is the packaged/default state declared by the profile.
+struct FileMetadata {
+    std::string owner;
+    std::string group;
+    mode_t permissions = 0;
+};
+
 struct ProviderManagedFileTarget {
     std::filesystem::path path;
     ManagedFileProvider provider;
-    // Provider target DAC contract in the same mode semantics as the owning
-    // FileAccessRule: exact owner/group and maximum-allowed permissions.
-    std::string owner;
-    std::string group;
-    unsigned int permissions = 0;
+    // Provider target DAC contract in the same metadata semantics as the
+    // owning FileAccessRule. Provider-owned final targets are validate-only
+    // during enforcement; on platform-baseline rollback they are transitioned
+    // to `baseline`. Provider-shipped metadata is the штатное provider state,
+    // so every current profile target declares enforced == baseline, but the
+    // structural distinction stays explicit in the contract.
+    FileMetadata enforced;
+    FileMetadata baseline;
 };
 
 struct FileAccessRule {
     std::filesystem::path path;
-    std::string owner;
-    std::string group;
-    unsigned int permissions = 0;
+
+    // State applied by ENABLE (hardening).
+    FileMetadata enforced;
+    // State restored by DISABLE (distro baseline), never a pre-FIC snapshot.
+    FileMetadata baseline;
+
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
     std::vector<ProviderManagedFileTarget> providerManagedFinalSymlinkTargets;
 };
 
 struct TcbCredentialFileRule {
     std::string name;
+    // Enforced permission set while the policy is enabled.
     unsigned int permissions = 0;
+    // Platform baseline permission set restored on policy disable. ALT TCB
+    // metadata is the native ALT state, so current profiles declare
+    // baseline == enforced, but the distinction stays explicit.
+    unsigned int baselinePermissions = 0;
     bool required = false;
 };
 
@@ -433,9 +455,15 @@ struct TcbCredentialStorageConfig {
     std::filesystem::path rootPath;
     std::string rootOwner;
     std::string rootGroup;
+    // Enforced root-directory metadata.
     unsigned int rootPermissions = 0;
+    // Platform baseline root-directory metadata.
+    unsigned int rootBaselinePermissions = 0;
     std::string entryGroup;
+    // Enforced per-account entry directory permissions.
     unsigned int entryDirectoryPermissions = 0;
+    // Platform baseline per-account entry directory permissions.
+    unsigned int entryDirectoryBaselinePermissions = 0;
     std::vector<TcbCredentialFileRule> files;
 };
 

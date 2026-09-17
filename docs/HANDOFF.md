@@ -2,87 +2,134 @@
 
 ## Current base
 
-- Ветка `main`, базовый commit `393ab36` (ownership-release семантика SSH
-  rollback). Рабочее дерево содержит follow-up: безусловная проверка
-  provenance journal payload в apply (незакоммичено).
+- Ветка `main`, базовый commit `6707452` (follow-up SSH provenance).
+- Рабочее дерево содержит незакоммиченную задачу platform-baseline rollback
+  для DAC hardening-политик (большой diff — требуется review и коммит).
 
 ## Current task
 
-- Переход SSH rollback на ownership-release семантику: rollback освобождает
-  текущую FIC-owned область управления, а не реконструирует прошлое состояние
-  файла.
+- **Platform-baseline rollback для DAC hardening-политик**
+  `DAC/Mode_and_Owner/systemcommandlock` и
+  `DAC/Mode_and_Owner/blocking_user_access_to_system_files` (незакоммичено).
+  Исторический pre-FIC rollback для них запрещён: apply → enforced-метаданные
+  platform profile, disable → baseline-метаданные того же профиля.
 
 ## Accepted architecture / invariants
 
-- **Managed blocks / transaction**: все FIC-мутации sshd_config идут через
-  FIC-managed block + `runSshConfigTransaction` (CAS write, durability,
-  postcondition, hooks). `SshConfigFileHandler::setValue` — осознанный stub.
-- **Строгая grammar (fail closed)**: внутри `FIC_SSH_BLOCK` — только
-  `FIC_POLICY_BEGIN/END` sub-blocks; внутри policy sub-block — ровно одна
-  active directive; внутри `FIC_DISABLED` — только один `FIC_DISABLED_LINE`.
-  Нарушение = Malformed → Conflict, файл не изменяется.
-- **Ownership-release rollback (новый контракт, docs/rollback.md —
-  authoritative)**: rollback убирает только существующие доказанные
-  FIC-owned артефакты. Journal payload (`disabledMutationIds`) — proof of
-  permission, НЕ backup manifest. Провенанс — subset-семантика
-  (`checkSshDisabledProvenance` → `SshDisabledProvenanceCheck::safeToRelease()`),
-  проверяется в `analyzeOwnership()` БЕЗУСЛОВНО (malformed payload fail
-  closed даже при полном отсутствии FIC-артефактов — compliance fast-path не
-  должен скрыть corruption):
-  каждый существующий wrapper обязан быть доказан payload'ом
-  (`unknownIds`/`fileDuplicate`/`payloadMalformed` → Conflict); payload id с
-  исчезнувшим wrapper'ом — `releasedIds` (информационно, НЕ ошибка);
-  реконструкция отсутствующих wrapper'ов запрещена. Нет блока и wrapper'ов →
-  `NothingToDo` + runtime reconciliation. Ручная правка directive-строки
-  блока (≠ `appliedValue`) → Conflict. Byte-exact restoration — свойство
-  нормального сценария, не общий контракт при внешних изменениях.
-- **Value change**: предыдущее состояние откатывается той же
-  ownership-release семантикой внутри apply; `NothingToDo` старого отката
-  трактуется как «уже освобождено»; новое значение применяется к фактическому
-  текущему конфигу.
-- Malformed FIC-маркеры классифицируются как `Conflict`
-  (`SshConfigFileHandler::lastLoadMarkerMalformed()`), не как Failed.
-- **Journal load lifecycle / virgin bootstrap** (docs/rollback.md —
-  authoritative): без изменений.
+- **Модель platform profile** (`PlatformProfile.h`): `FileMetadata{owner,
+  group, mode_t permissions}`; `FileAccessRule{path, enforced, baseline,
+  allowedFinalSymlinkTargets, providerManagedFinalSymlinkTargets}`;
+  `ProviderManagedFileTarget{path, provider, enforced, baseline}` (все
+  текущие targets: enforced == baseline — штатное provider state);
+  `TcbCredentialFileRule{name, permissions, baselinePermissions, required}`;
+  `TcbCredentialStorageConfig` получил `rootBaselinePermissions` и
+  `entryDirectoryBaselinePermissions`. Baseline — platform-defined штатное
+  состояние дистрибутива, НЕ pre-FIC snapshot; имена original/previous/old
+  запрещены.
+- **Platform-baseline rollback** (docs/rollback.md, раздел «Platform-baseline
+  rollback (DAC hardening)» — authoritative): apply → enforced; disable →
+  baseline. Journal payload `UndoApplyDacPlatformBaseline{policyName}`
+  (backend `Dac`, journal action `apply_dac_platform_baseline`) несёт ТОЛЬКО
+  policy identity; pre-FIC metadata не хранятся. Источник истины baseline —
+  `PlatformProfile` (через `RollbackExecutorDeps::dacOptions`), никаких
+  distro-switch в rollback-коде.
+- **Provenance в apply**: обе DAC-политики вызывают
+  `ModeAndOwner::applyWithBaselineJournalProvenance()` — Prepared-запись ДО
+  мутации (fail closed при недоступном journal), commit при изменившем
+  состояние успешном apply (`ModeAndOwner::lastApplyChangedSystemState()`),
+  discard при отсутствии изменений; при failed apply Prepared остаётся
+  активным. ВАЖНО: внутри wrapper'а вызов `this->ModeAndOwner::apply()`
+  НЕВИРТУАЛЬНЫЙ — виртуальный вызов даёт бесконечную рекурсию apply↔wrapper.
+- **Legacy provenance без journal**: ownership доказывается наличием
+  enforced-состояния (владение enforced + mode ⊆ enforced) при отсутствии
+  объектов в чужом состоянии: доказано → rollback к baseline выполняется;
+  всё в baseline → NothingToDo; чужое/небезопасное → Unsupported (disable
+  запрещён). `dacLegacyBaselineRollback` в RollbackExecutor.cpp.
+- **Fail-closed object safety** (apply и rollback): `FileStats::openPolicyPath`
+  (symlink allowlists + provider targets), тип объекта, `fstat`-postcondition.
+  Небезопасный объект → Conflict до мутации. Missing → Ignore, объекты не
+  создаются. Partial failure → `RollbackStatus::Partial`, journal остаётся
+  активным, повторный disable повторяет rollback (baseline→baseline no-op
+  идемпотентен).
+- **Enrollment**: DAC/Mode_and_Owner whitelist — только эти две политики
+  Supported; `custom_mode_and_owner` и прочие Mode_and_Owner — NotEnrolled
+  (legacy disable). `custom_mode_and_owner` не тронут (4-arg
+  `addExpectedRule` overload: enforced == baseline).
+- **GUI/UI**: `FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo`
+  показывает только enforced; baseline — implementation detail.
+- **SSH ownership-release** и все остальные rollback backends не изменены.
 
 ## Completed
 
-- `SshManagedBlock.*`: `SshDisabledProvenanceCheck` переведён с set-equality
-  на subset/ownership-release (`ok()` → `safeToRelease()`, `missingIds` →
-  `releasedIds`, только диагностика).
-- `SshRollback.cpp`: subset-проверка провенанса; комментарии обновлены.
-- `Ssh.cpp`: `analyzeOwnership` через `safeToRelease()`; value-change
-  принимает `nothingToDo` старого rollback как released.
-- `MutationRecord.h`: комментарий `disabledMutationIds` = proof of permission.
-- Тесты `SshApplyRollbackTests.cpp` (29): partial disappearance → Success
-  (A restored, B не реконструируется); total disappearance → NothingToDo;
-  known+unknown wrapper → Conflict; manually modified block → Conflict;
-  value change с частично исчезнувшим wrapper'ом; value change после полной
-  внешней очистки. `RollbackExecutorTests`: malformed markers → Conflict.
-- `docs/rollback.md`: SSH undo bullet переписан под `UndoRemoveSshManagedPolicy`
-  + ownership-release (EN + RU); «Active value changes» и NothingToDo-пассаж
-  обновлены; старое описание `UndoRestoreSshDirective` удалено.
+- Модель: `FileMetadata` + enforced/baseline в `FileAccessRule`,
+  `ProviderManagedFileTarget`, TCB-структурах; валидация
+  `PlatformCompatibility` (non-empty owner/group + валидный mode для
+  enforced и baseline, provider targets, TCB baseline-поля).
+- Профили Debian 12/13, Ubuntu 24.04/26.04, ALT p11 переведены на
+  enforced/baseline. Ключевые значения: commands enforced 0750 / baseline
+  0755 root:root; `/etc/crontab` enforced 0600 / baseline 0644
+  (Debian/Ubuntu, проверено по пакетам `cron-daemon-common` 3.0pl1-162 и
+  -197 из deb.debian.org); `/etc/shadow` Debian/Ubuntu root:shadow 0640
+  (shadowconfig), ALT root:root 0400; sudoers 0440 (postinst sudo);
+  `/usr/sbin/ip`→`/usr/bin/ip` и `/usr/bin/df`→`/usr/bin/gnudf`
+  symlink-исключения сохранены. ALT `/etc/crontab` baseline оставлен 0600
+  (RPM-verification заблокирована: packages.altlinux.org/rdb.altlinux.org за
+  Anubis; в profile комментарий — перепроверить `rpm -q --dump cron`).
+- Новый backend `DacBaselineRollback.{h,cpp}`: `undoDacBaselineMutation`
+  (static files + provider targets + TCB через
+  `rollbackTcbTreeToBaseline`), `checkDacBaselineOwnership` (legacy).
+  TCB-сборка рефакторена в общие `collectTcbTree`/`tcbTopologyUnchanged`
+  (DAC_blocking...cpp), apply и rollback используют одну collection.
+- `MutationBackend::Dac` + `UndoApplyDacPlatformBaseline` + journal
+  serialize/deserialize; `RollbackExecutor`: dispatch, enrollment whitelist,
+  legacy-path, `deps.dacOptions` в `productionRollbackDeps`.
+- Тесты: `ModeAndOwnerTests` +6 (A–H: apply enforced, rollback baseline,
+  0777→0750→0755, admin-drift, idempotent, missing, symlink fail-closed,
+  provider target) + journal override; `RollbackExecutorTests` +6 DAC
+  (baseline transition + journal resolve, idempotent повтор, legacy
+  provenance ×3, blocking 0600→0644); `PlatformProfileTests` обновлены под
+  enforced/baseline + provider/TCB baseline-проверки; `static_checks.py`
+  обновлён под новый текст профилей.
+- `docs/rollback.md`: раздел «Platform-baseline rollback (DAC hardening)»,
+  Undo action bullet, enrollment, «Расширение».
 
 ## Changed areas
 
-- `fic/src/modules/net/ssh/` (`Ssh.cpp`, `SshManagedBlock.*`, `SshRollback.*`)
-- `fic/src/rollback/MutationRecord.h` (комментарий)
-- `tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp`
+- `fic/src/platform/` (PlatformProfile.h, PlatformCompatibility.cpp,
+  profiles/*)
+- `fic/src/modules/dac/mode_and_owner/` (ModeAndOwner.*,
+  DacBaselineRollback.* [новый], policies/DAC_systemcommandlock.cpp,
+  policies/DAC_blocking_user_access_to_system_files.*)
+- `fic/src/rollback/` (MutationRecord.h, MutationJournal.cpp,
+  RollbackExecutor.*)
+- `tests/` (ModeAndOwnerTests, RollbackExecutorTests,
+  PlatformProfileTests, static_checks.py, CMakeLists.txt)
 - `docs/rollback.md`, `docs/HANDOFF.md`
 
 ## Validation
 
 - Full build `build-check` (ubuntu-24.04): exit 0.
 - Full CTest: 96/96 passed (1 pre-existing skip `command_hash_batch_tests`).
-- `ssh_apply_rollback_tests`: 29 PASS / 0 FAIL; `rollback_executor_tests`,
-  `mutation_journal_tests`, `ssh_runtime_tests`: exit 0.
+- Целевые бинарники: `mode_and_owner_tests`, `rollback_executor_tests`
+  (52 PASS, вкл. 6 новых DAC), `mutation_journal_tests`,
+  `platform_profile_tests`, `ssh_apply_rollback_tests` — exit 0.
 - `bash scripts/run-development-checks.sh fast`: exit 0.
-- `git diff --check`: passed.
+- `git diff --check`: clean.
+- Sanitizers: ASan/UBSan-профиля в проекте нет — не запускались.
 
 ## Remaining
 
-- Residual TOCTOU между re-proof и fsync — known MVP limitation.
-- Раздел «Результат отката» про legacy-ENABLE install (`Unsupported` по
-  присутствию директивы в global section) не пересматривался — написать при
-  следующей задачи по disable-пути.
-- Рабочее дерево содержит незакоммиченный diff — требуется review и коммит.
+- Review и коммит незакоммиченного diff (вся задача platform-baseline).
+- ALT p11: подтвердить `rpm -q --dump cron` (/etc/crontab), coreutils,
+  e2fsprogs, net-tools, iproute2 — environment был отрезан Anubis от
+  packages.altlinux.org; baseline-комментарии в AltP11Profile.cpp.
+- `/etc/securetty` Debian/Ubuntu больше не поставляется (util-linux) —
+  baseline 0600 сохранён по ТЗ; при желании пересмотреть.
+- Partial-failure путь DAC rollback не покрыт unit-тестом (требует
+  симуляции ошибки chown/chmod на одном из объектов; возможен только под
+  root-фикстурой) — семантика реализована (Partial + активная journal
+  запись), но не тестирована.
+- Daemon-level integration disable-теста (enable→apply→disable через
+  main_function) в репозитории нет; executor-level эквивалент покрыт.
+- Пункт HANDOFF «Результат отката» про legacy-ENABLE install — по-прежнему
+  открыт (см. предыдущую сессию).

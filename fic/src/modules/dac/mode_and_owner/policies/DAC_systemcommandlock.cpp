@@ -12,13 +12,7 @@ DAC_systemcommandlock::DAC_systemcommandlock(
           ModeEnforcement::MaximumAllowed) {
     for (const fic::platform::FileAccessRule& rule :
          platformConfig.protectedSystemCommands) {
-        this->ModeAndOwner::addExpectedRule(
-            rule.path,
-            rule.owner,
-            rule.group,
-            static_cast<mode_t>(rule.permissions),
-            rule.allowedFinalSymlinkTargets,
-            rule.providerManagedFinalSymlinkTargets);
+        this->ModeAndOwner::addExpectedRule(rule);
     }
     this->policyName = "systemcommandlock";
     this->policyTypeValue = std::make_unique<FileAccessRulesPolicyTypeValue>(
@@ -26,5 +20,8 @@ DAC_systemcommandlock::DAC_systemcommandlock(
 }
 
 bool DAC_systemcommandlock::apply(){
-    return this->ModeAndOwner::apply();
+    // ENABLE applies the enforced hardening state only; disable-time
+    // rollback transitions to the platform profile baseline (never to the
+    // pre-FIC state) and is driven by the recorded journal provenance.
+    return this->ModeAndOwner::applyWithBaselineJournalProvenance();
 }

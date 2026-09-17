@@ -538,14 +538,17 @@ add_executable(mode_and_owner_tests
     fic/modules/dac/ModeAndOwnerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_custom_mode_and_owner.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
 )
 target_include_directories(mode_and_owner_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(mode_and_owner_tests PRIVATE fic-core fic-policy)
+target_link_libraries(mode_and_owner_tests PRIVATE fic-core fic-policy Threads::Threads)
 add_test(NAME mode_and_owner_tests COMMAND mode_and_owner_tests)
 
 add_executable(trusted_file_reader_tests
@@ -581,6 +584,11 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
@@ -1051,6 +1059,11 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp

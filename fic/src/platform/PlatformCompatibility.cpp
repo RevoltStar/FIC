@@ -804,17 +804,21 @@ bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
         return false;
     }
     std::set<std::filesystem::path> uniquePaths;
+    // Validates one FileMetadata set: non-empty owner/group and a valid
+    // mode_t permission set (special bits setuid/setgid/sticky preserved).
+    const auto validateMetadata = [](const FileMetadata& metadata) {
+        return !metadata.owner.empty() && !metadata.group.empty() &&
+               metadata.permissions != 0 &&
+               (metadata.permissions & ~07777U) == 0;
+    };
     for (const FileAccessRule& rule : rules) {
         if (!validatePath(rule.path, label + " path", error)) {
             return false;
         }
-        if (rule.owner.empty() || rule.group.empty()) {
-            error = label + " owner and group must not be empty: " +
+        if (!validateMetadata(rule.enforced) || !validateMetadata(rule.baseline)) {
+            error = label + " enforced and baseline metadata must declare a " +
+                    "non-empty owner, group and valid mode: " +
                     rule.path.string();
-            return false;
-        }
-        if (rule.permissions == 0 || (rule.permissions & ~07777U) != 0) {
-            error = label + " permissions are invalid: " + rule.path.string();
             return false;
         }
         if (!uniquePaths.insert(rule.path).second) {
@@ -844,16 +848,11 @@ bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
                     "absolute normalized path: " + target.path.string();
                 return false;
             }
-            if (target.owner.empty() || target.group.empty()) {
+            if (!validateMetadata(target.enforced) ||
+                !validateMetadata(target.baseline)) {
                 error = label +
-                    " provider-managed target owner and group must not be "
-                    "empty: " + target.path.string();
-                return false;
-            }
-            if (target.permissions == 0 ||
-                    (target.permissions & ~07777U) != 0) {
-                error = label +
-                    " provider-managed target permissions are invalid: " +
+                    " provider-managed target enforced and baseline metadata "
+                    "must declare a non-empty owner, group and valid mode: " +
                     target.path.string();
                 return false;
             }
@@ -923,8 +922,12 @@ bool validateTcbCredentialStorage(
     if (config.rootOwner.empty() || config.rootGroup.empty() ||
         config.entryGroup.empty() || config.rootPermissions == 0 ||
         (config.rootPermissions & ~07777U) != 0 ||
+        config.rootBaselinePermissions == 0 ||
+        (config.rootBaselinePermissions & ~07777U) != 0 ||
         config.entryDirectoryPermissions == 0 ||
         (config.entryDirectoryPermissions & ~07777U) != 0 ||
+        config.entryDirectoryBaselinePermissions == 0 ||
+        (config.entryDirectoryBaselinePermissions & ~07777U) != 0 ||
         config.files.empty()) {
         error = "invalid TCB credential storage metadata";
         return false;
@@ -935,6 +938,8 @@ bool validateTcbCredentialStorage(
         if (file.name.empty() || file.name == "." || file.name == ".." ||
             file.name.find('/') != std::string::npos ||
             file.permissions == 0 || (file.permissions & ~07777U) != 0 ||
+            file.baselinePermissions == 0 ||
+            (file.baselinePermissions & ~07777U) != 0 ||
             !names.insert(file.name).second) {
             error = "invalid TCB credential file metadata";
             return false;

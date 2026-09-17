@@ -1,5 +1,7 @@
 #include "modules/dac/mode_and_owner/ModeAndOwner.h"
 
+#include "rollback/DaemonMutationJournal.h"
+
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
@@ -40,10 +42,13 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
     result << LocalizationManager::getLang(
         "[module:DAC][message:platform_access_rules]");
     for (const fic::platform::FileAccessRule& rule : rules_) {
+        // The user-facing restriction info describes the ENFORCED state
+        // (what the policy applies); the platform baseline is a rollback
+        // implementation detail and is not part of the policy value.
         result << "\n" << rule.path.string() << " "
-               << rule.owner << ":" << rule.group << " "
+               << rule.enforced.owner << ":" << rule.enforced.group << " "
                << std::setfill('0') << std::setw(4) << std::oct
-               << rule.permissions << std::dec;
+               << rule.enforced.permissions << std::dec;
         if (!rule.allowedFinalSymlinkTargets.empty()) {
             result << " (final symlink -> ";
             for (std::size_t index = 0;
@@ -59,9 +64,10 @@ std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
              rule.providerManagedFinalSymlinkTargets) {
             result << "\n  provider-managed final symlink ->";
             result << "\n    " << target.path.string() << " "
-                   << target.owner << ":" << target.group << " "
+                   << target.enforced.owner << ":" << target.enforced.group
+                   << " "
                    << std::setfill('0') << std::setw(4) << std::oct
-                   << target.permissions << std::dec
+                   << target.enforced.permissions << std::dec
                    << " (provider=" << providerName(target.provider)
                    << ", validate only)";
         }
@@ -98,19 +104,28 @@ ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy,
 }
 
 void ModeAndOwner::addExpectedRule(
+    const fic::platform::FileAccessRule& rule) {
+    // Apply always uses the ENFORCED metadata; the baseline metadata is
+    // consumed only by the platform-baseline rollback backend.
+    expected.insert_or_assign(
+        rule.path.string(),
+        ModeAndOwnerExpectation{
+            FileStats(rule.enforced.owner, rule.enforced.group,
+                      rule.enforced.permissions),
+            rule.allowedFinalSymlinkTargets,
+            rule.providerManagedFinalSymlinkTargets});
+}
+
+void ModeAndOwner::addExpectedRule(
     const std::filesystem::path& path,
     const std::string& owner,
     const std::string& group,
-    mode_t permissions,
-    std::vector<std::filesystem::path> allowedFinalSymlinkTargets,
-    std::vector<fic::platform::ProviderManagedFileTarget>
-        providerManagedFinalSymlinkTargets) {
-    expected.insert_or_assign(
-        path.string(),
-        ModeAndOwnerExpectation{
-            FileStats(owner, group, permissions),
-            std::move(allowedFinalSymlinkTargets),
-            std::move(providerManagedFinalSymlinkTargets)});
+    mode_t permissions) {
+    fic::platform::FileAccessRule rule;
+    rule.path = path;
+    rule.enforced = {owner, group, permissions};
+    rule.baseline = {owner, group, permissions};
+    this->addExpectedRule(rule);
 }
 
 void ModeAndOwner::applyOpenedRule(
@@ -271,6 +286,7 @@ void ModeAndOwner::applyAdditionalRules(ApplyCounters&) {
 bool ModeAndOwner::apply() {
     this->log("Запуск функции Mode_And_Owner::apply", logLevel::TRACE);
     ApplyCounters counters;
+    this->lastApplyFixedCount_ = 0;
 
     for (const auto& [filename, expectation] : expected) {
         const FileStats& expectedStats = expectation.stats;
@@ -318,9 +334,9 @@ bool ModeAndOwner::apply() {
             // mode of the provider-managed file may legally differ from the
             // static FileAccessRule expectation.
             const FileStats providerExpectation(
-                providerTarget->owner,
-                providerTarget->group,
-                static_cast<mode_t>(providerTarget->permissions));
+                providerTarget->enforced.owner,
+                providerTarget->enforced.group,
+                providerTarget->enforced.permissions);
             if (!currentStats.is_regular_file()) {
                 this->log(
                     "Provider-managed target " +
@@ -356,6 +372,7 @@ bool ModeAndOwner::apply() {
               logLevel::DEBUG);
 
     if (counters.failed == 0) {
+        this->lastApplyFixedCount_ = counters.fixed;
         if (counters.fixed != 0) {
             this->notify(
                 "Были обнаружены отклонения от эталона при применении политики " +
@@ -377,5 +394,60 @@ bool ModeAndOwner::apply() {
     this->log("ВНИМАНИЕ: Не все отклонения удалось исправить (Проблемных файлов: " +
                   std::to_string(counters.failed) + ")",
               logLevel::ERROR);
+    this->lastApplyFixedCount_ = counters.fixed;
+    return false;
+}
+
+bool ModeAndOwner::applyWithBaselineJournalProvenance() {
+    // Platform-baseline disable provenance (see docs/rollback.md,
+    // "Platform-baseline rollback"): the journal record proves only that FIC
+    // performed a state-changing apply of this policy. No pre-FIC metadata is
+    // recorded; the rollback target is the platform profile baseline.
+    const fic::rollback::UndoAction undo{
+        fic::rollback::MutationBackend::Dac,
+        fic::rollback::UndoApplyDacPlatformBaseline{this->policyName}};
+    fic::rollback::MutationId mutationId = 0;
+    std::string journalError;
+    if (!fic::rollback::recordPreparedMutation(
+            this->policyRef(), this->policyName, undo, mutationId,
+            journalError)) {
+        // Fail closed: without provenance a later disable could not prove
+        // that the enforced state is FIC-owned.
+        this->log("Не удалось подготовить запись mutation journal: " +
+                      journalError,
+                  logLevel::ERROR);
+        return false;
+    }
+
+    // Non-virtual call: the wrapper is the public apply() entry point of the
+    // concrete policy classes; dispatching apply() virtually here would
+    // recurse infinitely.
+    const bool applied = this->ModeAndOwner::apply();
+    if (applied && !this->lastApplyChangedSystemState()) {
+        // Nothing changed on the system: the record is not FIC-owned
+        // provenance and is discarded.
+        std::string discardError;
+        if (!fic::rollback::discardMutation(mutationId, discardError)) {
+            this->log("Ошибка удаления подготовленной записи mutation journal: " +
+                          discardError,
+                      logLevel::WARN);
+        }
+        return true;
+    }
+    if (applied) {
+        std::string commitError;
+        if (!fic::rollback::commitMutation(mutationId, commitError)) {
+            // The mutation already happened: apply must not report success
+            // without reliable provenance. The Prepared record stays active
+            // on disk and remains safely resolvable.
+            this->log("Ошибка фиксации записи mutation journal: " + commitError,
+                      logLevel::ERROR);
+            return false;
+        }
+        return true;
+    }
+    // Apply failed: the mutation may have partially happened, so the Prepared
+    // record stays active for disable-time rollback resolution. Note: this is
+    // provenance, not apply-time transactional compensation.
     return false;
 }

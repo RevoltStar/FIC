@@ -1,6 +1,7 @@
 #ifndef FIC_ROLLBACK_ROLLBACK_EXECUTOR_H
 #define FIC_ROLLBACK_ROLLBACK_EXECUTOR_H
 
+#include "modules/dac/mode_and_owner/DacBaselineRollback.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/sysctl/SysctlConfiguration.h"
@@ -32,6 +33,18 @@ struct MutationRollbackOutcome {
     std::string message;
 };
 
+// Executes one UndoApplyDacPlatformBaseline mutation (implemented in
+// modules/dac/mode_and_owner/DacBaselineRollback.cpp): transitions every
+// managed object of the policy to its platform baseline. Path resolution,
+// symlink allowlists, provider-target checks and object type validation are
+// fail closed exactly as during apply; missing objects follow
+// MissingFilePolicy::Ignore semantics and are never created. Partial success
+// is reported as RollbackStatus::Partial.
+MutationRollbackOutcome undoDacBaselineMutation(
+    const DacBaselineRollbackOptions& options,
+    const MutationRecord& record,
+    const UndoApplyDacPlatformBaseline& undo);
+
 struct RollbackReport {
     RollbackStatus status = RollbackStatus::NothingToDo;
     std::string message;
@@ -61,6 +74,9 @@ struct RollbackExecutorDeps {
     // SSH backend configuration: shared main sshd_config, service units and
     // the executable resolver used for sshd -T validation and service reload.
     std::function<SshRollbackOptions()> sshOptions;
+    // DAC platform-baseline backend configuration: the platform profile DAC
+    // config is the single source of truth for the baseline metadata.
+    std::function<DacBaselineRollbackOptions()> dacOptions;
     // FIREWALL undo: reconcile the nftables state without the given policy.
     std::function<bool(const std::string& policyName, std::string& error)> undoFirewallPolicy;
     // DC undo: disable one category feature via the device daemon.

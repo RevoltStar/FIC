@@ -550,19 +550,21 @@ void testSelectedProfile() {
     const ManagedTarget systemdResolvedRuntime = {
         "/run/systemd/resolve/stub-resolv.conf",
         ManagedProvider::SystemdResolved,
-        "systemd-resolve", "systemd-resolve", 0644};
+        {"systemd-resolve", "systemd-resolve", 0644},
+        {"systemd-resolve", "systemd-resolve", 0644}};
     const ManagedTarget systemdResolvedUplink = {
         "/run/systemd/resolve/resolv.conf",
         ManagedProvider::SystemdResolved,
-        "systemd-resolve", "systemd-resolve", 0644};
+        {"systemd-resolve", "systemd-resolve", 0644},
+        {"systemd-resolve", "systemd-resolve", 0644}};
     const ManagedTarget systemdResolvedStatic = {
         "/usr/lib/systemd/resolv.conf",
         ManagedProvider::SystemdResolved,
-        "root", "root", 0644};
+        {"root", "root", 0644}, {"root", "root", 0644}};
     const ManagedTarget networkManagerRuntime = {
         "/run/NetworkManager/resolv.conf",
         ManagedProvider::NetworkManager,
-        "root", "root", 0644};
+        {"root", "root", 0644}, {"root", "root", 0644}};
     std::vector<ManagedTarget> resolverTargets = {
         systemdResolvedRuntime,
         systemdResolvedUplink,
@@ -575,7 +577,7 @@ void testSelectedProfile() {
     } else if (profile.id == "debian-12" || profile.id == "debian-13") {
         resolverTargets.push_back({
             "/run/resolvconf/resolv.conf", ManagedProvider::Resolvconf,
-            "root", "root", 0644});
+            {"root", "root", 0644}, {"root", "root", 0644}});
     }
     require(resolvConfRule.allowedFinalSymlinkTargets.empty(),
             "provider-managed resolv.conf targets must not be remediate aliases");
@@ -588,9 +590,14 @@ void testSelectedProfile() {
                 [](const auto& actual, const auto& expected) {
                     return actual.path == expected.path &&
                         actual.provider == expected.provider &&
-                        actual.owner == expected.owner &&
-                        actual.group == expected.group &&
-                        actual.permissions == expected.permissions;
+                        actual.enforced.owner == expected.enforced.owner &&
+                        actual.enforced.group == expected.enforced.group &&
+                        actual.enforced.permissions ==
+                            expected.enforced.permissions &&
+                        actual.baseline.owner == expected.baseline.owner &&
+                        actual.baseline.group == expected.baseline.group &&
+                        actual.baseline.permissions ==
+                            expected.baseline.permissions;
                 }),
             "resolv.conf provider target contracts are incorrect");
     require(std::none_of(
@@ -633,26 +640,35 @@ void testSelectedProfile() {
                 "ALT p11 must protect /etc/securetty");
         const auto& shadowRule = findRule(
             profile.dac.protectedSystemFiles, "/etc/shadow");
-        require(shadowRule.owner == "root" && shadowRule.group == "root" &&
-                    shadowRule.permissions == 0400,
+        require(shadowRule.enforced.owner == "root" &&
+                    shadowRule.enforced.group == "root" &&
+                    shadowRule.enforced.permissions == 0400 &&
+                    shadowRule.baseline.owner == "root" &&
+                    shadowRule.baseline.group == "root" &&
+                    shadowRule.baseline.permissions == 0400,
                 "ALT p11 compatibility shadow metadata is incorrect");
         require(profile.dac.tcbCredentialStorage.has_value(),
                 "ALT p11 must describe TCB credential storage");
         const auto& tcb = *profile.dac.tcbCredentialStorage;
         require(tcb.rootPath == "/etc/tcb" && tcb.rootOwner == "root" &&
                     tcb.rootGroup == "shadow" && tcb.rootPermissions == 0710 &&
+                    tcb.rootBaselinePermissions == 0710 &&
                     tcb.entryGroup == "auth" &&
-                    tcb.entryDirectoryPermissions == 02710,
+                    tcb.entryDirectoryPermissions == 02710 &&
+                    tcb.entryDirectoryBaselinePermissions == 02710,
                 "ALT p11 TCB directory metadata is incorrect");
         require(tcb.files.size() == 3 &&
                     tcb.files[0].name == "shadow" &&
                     tcb.files[0].permissions == 0640 &&
+                    tcb.files[0].baselinePermissions == 0640 &&
                     tcb.files[0].required &&
                     tcb.files[1].name == "shadow-" &&
                     tcb.files[1].permissions == 0640 &&
+                    tcb.files[1].baselinePermissions == 0640 &&
                     !tcb.files[1].required &&
                     tcb.files[2].name == "shadow.lock" &&
                     tcb.files[2].permissions == 0600 &&
+                    tcb.files[2].baselinePermissions == 0600 &&
                     !tcb.files[2].required,
                 "ALT p11 TCB credential file metadata is incorrect");
         require(findRule(
@@ -1080,16 +1096,25 @@ void testInvalidProfileIsRejected() {
         };
 
     withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().owner.clear();
+        rule.providerManagedFinalSymlinkTargets.front().enforced.owner.clear();
     });
     withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().group.clear();
+        rule.providerManagedFinalSymlinkTargets.front().enforced.group.clear();
     });
     withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().permissions = 0;
+        rule.providerManagedFinalSymlinkTargets.front().enforced.permissions =
+            0;
     });
     withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().permissions = 010000;
+        rule.providerManagedFinalSymlinkTargets.front().enforced.permissions =
+            010000;
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().baseline.owner.clear();
+    });
+    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
+        rule.providerManagedFinalSymlinkTargets.front().baseline.permissions =
+            0;
     });
     withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
         rule.providerManagedFinalSymlinkTargets.push_back(
@@ -1341,23 +1366,28 @@ void testInvalidProfileIsRejected() {
             "a GRUB generator argument containing a newline must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.protectedSystemFiles.front().permissions = 0;
+    profile.dac.protectedSystemFiles.front().enforced.permissions = 0;
     require(!fic::platform::validatePlatformProfile(profile, error),
-            "invalid DAC permissions must be rejected");
+            "invalid DAC enforced permissions must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.dac.protectedSystemFiles.front().baseline.owner.clear();
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "empty DAC baseline owner must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.dac.tcbCredentialStorage =
         fic::platform::TcbCredentialStorageConfig{
-            "etc/tcb", "root", "shadow", 0710, "auth", 02710,
-            {{"shadow", 0640, true}}};
+            "etc/tcb", "root", "shadow", 0710, 0710, "auth", 02710, 02710,
+            {{"shadow", 0640, 0640, true}}};
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative TCB credential root must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     profile.dac.tcbCredentialStorage =
         fic::platform::TcbCredentialStorageConfig{
-            "/etc/tcb", "root", "shadow", 0710, "auth", 02710,
-            {{"shadow", 0640, true}, {"shadow", 0600, false}}};
+            "/etc/tcb", "root", "shadow", 0710, 0710, "auth", 02710, 02710,
+            {{"shadow", 0640, 0640, true}, {"shadow", 0600, 0600, false}}};
     require(!fic::platform::validatePlatformProfile(profile, error),
             "duplicate TCB credential file metadata must be rejected");
 

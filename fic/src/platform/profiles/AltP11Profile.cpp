@@ -192,43 +192,60 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.sharedDefaultsPath = "/etc/sysconfig/grub2";
     profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};
     profile.dac.protectedSystemFiles = {
-        {"/etc/bashrc", "root", "root", 0644},
-        {"/etc/crontab", "root", "root", 0600},
-        {"/etc/fstab", "root", "root", 0644},
-        {"/etc/hostname", "root", "root", 0644},
-        {"/etc/hosts", "root", "root", 0644},
-        {"/etc/hosts.allow", "root", "root", 0644},
-        {"/etc/hosts.deny", "root", "root", 0644},
-        {"/etc/group", "root", "root", 0644},
-        {"/etc/resolv.conf", "root", "root", 0644, {}, {
+        {"/etc/bashrc", {"root", "root", 0644}, {"root", "root", 0644}},
+        // NOTE (baseline verification): the ALT p11 RPM metadata could not be
+        // queried from this environment (packages.altlinux.org and
+        // rdb.altlinux.org are bot-gated). ALT vixie-cron historically ships
+        // /etc/crontab as 0600 root:root, so the baseline deliberately stays
+        // 0600 instead of copying the Debian 0644. Re-verify with
+        // `rpm -q --dump cron` before ever changing this value.
+        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0600}},
+        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, {}, {
+            // Provider metadata is the штатное provider state: baseline ==
+            // enforced for every provider-managed final target.
             {"/run/NetworkManager/resolv.conf",
              ManagedFileProvider::NetworkManager,
-             "root", "root", 0644}
+             {"root", "root", 0644}, {"root", "root", 0644}}
         }},
-        {"/etc/sysctl.conf", "root", "root", 0644, {
+        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, {
             "/etc/sysctl.d/99-sysctl.conf"
         }},
-        {"/etc/logrotate.conf", "root", "root", 0644},
-        {"/etc/inittab", "root", "root", 0644},
-        {"/etc/passwd", "root", "root", 0644},
-        {"/etc/shadow", "root", "root", 0400},
-        {"/etc/grub.cfg", "root", "root", 0600, {
+        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/inittab", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}},
+        // ALT native shadow state: root:root 0400 (ALT shadow topology, not
+        // the Debian root:shadow 0640).
+        {"/etc/shadow", {"root", "root", 0400}, {"root", "root", 0400}},
+        {"/etc/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, {
             "/boot/grub/grub.cfg"
         }},
-        {"/etc/securetty", "root", "root", 0600}
+        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}}
     };
     profile.dac.protectedSystemFiles.push_back(
-        {profile.sudo.mainConfigPath, "root", "root", 0440});
+        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}});
+    // ALT p11 TCB storage is the native ALT credential topology (not the
+    // Debian /etc/shadow model): the profile values are simultaneously the
+    // hardening state and the ALT-native baseline, declared explicitly.
     profile.dac.tcbCredentialStorage = TcbCredentialStorageConfig{
-        "/etc/tcb", "root", "shadow", 0710, "auth", 02710,
-        {{"shadow", 0640, true},
-         {"shadow-", 0640, false},
-         {"shadow.lock", 0600, false}}};
+        "/etc/tcb", "root", "shadow", 0710, 0710, "auth", 02710, 02710,
+        {{"shadow", 0640, 0640, true},
+         {"shadow-", 0640, 0640, false},
+         {"shadow.lock", 0600, 0600, false}}};
+    // Packaged executable metadata is root:root 0755 (RPM %defattr defaults
+    // for coreutils, e2fsprogs, net-tools, iproute2); FIC hardens to 0750 and
+    // restores the packaged 0755 on disable. ALT keeps its own topology:
+    // /bin/df and /sbin/ip are not merged-/usr paths.
     profile.dac.protectedSystemCommands = {
-        {"/bin/df", "root", "root", 0750},
-        {"/usr/bin/chattr", "root", "root", 0750},
-        {"/usr/sbin/arp", "root", "root", 0750},
-        {"/sbin/ip", "root", "root", 0750}
+        {"/bin/df", {"root", "root", 0750}, {"root", "root", 0755}},
+        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}},
+        {"/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}}
     };
     return profile;
 }

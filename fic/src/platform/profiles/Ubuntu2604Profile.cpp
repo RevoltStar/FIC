@@ -153,52 +153,63 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.managedConfigPath = "/etc/default/grub.d/zzzz-fic.cfg";
     profile.grub.rebuildArguments = {};
     profile.dac.protectedSystemFiles = {
-        {"/etc/bash.bashrc", "root", "root", 0644},
-        {"/etc/crontab", "root", "root", 0600},
-        {"/etc/fstab", "root", "root", 0644},
-        {"/etc/hostname", "root", "root", 0644},
-        {"/etc/hosts", "root", "root", 0644},
-        {"/etc/hosts.allow", "root", "root", 0644},
-        {"/etc/hosts.deny", "root", "root", 0644},
-        {"/etc/group", "root", "root", 0644},
-        {"/etc/resolv.conf", "root", "root", 0644, {}, {
+        {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}},
+        // Ubuntu ships /etc/crontab as 0644 root:root (cron-daemon-common
+        // package archive). FIC hardens it to 0600 and restores the packaged
+        // 0644 on disable.
+        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}},
+        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, {}, {
+            // Provider metadata is the штатное provider state: baseline ==
+            // enforced for every provider-managed final target.
             {"/run/systemd/resolve/stub-resolv.conf",
              ManagedFileProvider::SystemdResolved,
-             "systemd-resolve", "systemd-resolve", 0644},
+             {"systemd-resolve", "systemd-resolve", 0644},
+             {"systemd-resolve", "systemd-resolve", 0644}},
             {"/run/systemd/resolve/resolv.conf",
              ManagedFileProvider::SystemdResolved,
-             "systemd-resolve", "systemd-resolve", 0644},
+             {"systemd-resolve", "systemd-resolve", 0644},
+             {"systemd-resolve", "systemd-resolve", 0644}},
             {"/usr/lib/systemd/resolv.conf",
              ManagedFileProvider::SystemdResolved,
-             "root", "root", 0644},
+             {"root", "root", 0644}, {"root", "root", 0644}},
             {"/run/NetworkManager/resolv.conf",
              ManagedFileProvider::NetworkManager,
-             "root", "root", 0644}
+             {"root", "root", 0644}, {"root", "root", 0644}}
         }},
-        {"/etc/sysctl.conf", "root", "root", 0644},
-        {"/etc/logrotate.conf", "root", "root", 0644},
-        {"/etc/passwd", "root", "root", 0644},
-        {"/etc/shadow", "root", "shadow", 0640},
-        {"/boot/grub/grub.cfg", "root", "root", 0600},
-        {"/etc/securetty", "root", "root", 0600}
+        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}},
+        // shadowconfig on (passwd package postinst) provisions
+        // /etc/shadow as root:shadow 0640 on Debian/Ubuntu.
+        {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}},
+        {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}},
+        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}}
     };
     profile.dac.protectedSystemFiles.push_back(
-        {profile.sudo.mainConfigPath, "root", "root", 0440});
+        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}});
+    // Packaged executable metadata is root:root 0755 (coreutils, e2fsprogs,
+    // net-tools, iproute2 archives); FIC hardens to 0750 and restores the
+    // packaged 0755 on disable. The gnudf and /usr/bin/ip symlink exceptions
+    // are Ubuntu 26.04 packaging topology.
     profile.dac.protectedSystemCommands = {
         {
             "/usr/bin/df",
-            "root",
-            "root",
-            0750,
+            {"root", "root", 0750},
+            {"root", "root", 0755},
             {"/usr/bin/gnudf"}
         },
-        {"/usr/bin/chattr", "root", "root", 0750},
-        {"/usr/sbin/arp", "root", "root", 0750},
+        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}},
         {
             "/usr/sbin/ip",
-            "root",
-            "root",
-            0750,
+            {"root", "root", 0750},
+            {"root", "root", 0755},
             {"/usr/bin/ip"}
         }
     };

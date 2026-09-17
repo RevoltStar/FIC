@@ -57,6 +57,15 @@ bool isSupportedSshPolicy(const std::string& policyName) {
            policyName == "ssh_pubkey_auth";
 }
 
+// Explicit whitelist: the platform-baseline rollback is implemented only for
+// the two DAC hardening policies backed by the platform profile. Other
+// Mode_and_Owner policies (e.g. custom_mode_and_owner) keep legacy disable
+// behavior and must never become rollback-supported implicitly.
+bool isSupportedDacModeAndOwnerPolicy(const std::string& policyName) {
+    return policyName == "systemcommandlock" ||
+           policyName == "blocking_user_access_to_system_files";
+}
+
 MutationRollbackOutcome outcomeFromOperation(
     MutationId id,
     const std::string& resource,
@@ -324,6 +333,15 @@ MutationRollbackOutcome undoMutation(
             std::get_if<UndoDisableDeviceFeature>(&record.undo.payload)) {
         return undoDeviceFeature(deps, record, *feature);
     }
+    if (const auto* dacBaseline =
+            std::get_if<UndoApplyDacPlatformBaseline>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Dac) {
+            const DacBaselineRollbackOptions options = deps.dacOptions
+                ? deps.dacOptions()
+                : DacBaselineRollbackOptions{};
+            return undoDacBaselineMutation(options, record, *dacBaseline);
+        }
+    }
     MutationRollbackOutcome outcome;
     outcome.id = record.id;
     outcome.resource = record.resource;
@@ -338,6 +356,50 @@ RollbackReport provenanceUnavailable(const PolicyRef& policy) {
     report.message = "Rollback provenance unavailable for legacy-applied policy " +
                      formatPolicyRef(policy) +
                      ". Automatic rollback is not possible.";
+    return report;
+}
+
+// DAC platform-baseline policies without active journal records
+// (legacy-applied): FIC ownership is proven by the enforced state being
+// present (see DacBaselineRollback.h). Unlike SYSCTL/SUDO legacy provenance,
+// a proven legacy DAC state CAN be rolled back: the rollback target is the
+// platform baseline transition, not a recorded reverse delta.
+RollbackReport dacLegacyBaselineRollback(
+    const PolicyRef& policy,
+    const RollbackExecutorDeps& deps) {
+    RollbackReport report;
+    const DacBaselineRollbackOptions options = deps.dacOptions
+        ? deps.dacOptions()
+        : DacBaselineRollbackOptions{};
+    std::string error;
+    const DacBaselineOwnershipVerdict verdict =
+        checkDacBaselineOwnership(options, policy.policyName, error);
+    if (verdict == DacBaselineOwnershipVerdict::Unproven) {
+        RollbackReport failed;
+        failed.status = RollbackStatus::Unsupported;
+        failed.message =
+            "Rollback provenance unavailable for legacy-applied policy " +
+            formatPolicyRef(policy) + ": " + error;
+        return failed;
+    }
+    if (verdict == DacBaselineOwnershipVerdict::AtBaseline) {
+        report.status = RollbackStatus::NothingToDo;
+        report.message = "Все управляемые объекты уже в platform baseline; "
+                         "FIC не владеет изменениями этой политики";
+        return report;
+    }
+    MutationRecord synthetic;
+    synthetic.policy = policy;
+    synthetic.resource = policy.policyName;
+    synthetic.undo = UndoAction{
+        MutationBackend::Dac,
+        UndoApplyDacPlatformBaseline{policy.policyName}};
+    const MutationRollbackOutcome outcome = undoDacBaselineMutation(
+        options, synthetic,
+        std::get<UndoApplyDacPlatformBaseline>(synthetic.undo.payload));
+    report.outcomes.push_back(outcome);
+    report.status = outcome.status;
+    report.message = outcome.message;
     return report;
 }
 
@@ -358,6 +420,12 @@ std::string rollbackStatusToString(RollbackStatus status) {
 RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
     if (policy.moduleName == "SYSCTL") {
         return RollbackEnrollment::Supported;
+    }
+    if (policy.moduleName == "DAC" &&
+        policy.submoduleName == "Mode_and_Owner") {
+        return isSupportedDacModeAndOwnerPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::NotEnrolled;
     }
     if (policy.moduleName == "DAC" && policy.submoduleName == "SudoEdit") {
         if (policy.policyName == "sudo_require_authentication") {
@@ -539,6 +607,11 @@ RollbackReport rollbackPolicyBeforeDisable(
 
     const std::vector<MutationRecord> active = journal->activeRecords(policy);
     if (active.empty()) {
+        if (policy.moduleName == "DAC" &&
+            policy.submoduleName == "Mode_and_Owner" &&
+            isSupportedDacModeAndOwnerPolicy(policy.policyName)) {
+            return dacLegacyBaselineRollback(policy, deps);
+        }
         return checkUnrecordedOwnership(policy, resourceHint, deps, journal);
     }
 
@@ -644,6 +717,15 @@ RollbackExecutorDeps productionRollbackDeps(
         options.includeBasePath = sshConfig.includeBasePath;
         options.serviceUnits = sshConfig.serviceUnits;
         options.executables = &executables;
+        return options;
+    };
+
+    // DAC platform-baseline rollback: the platform profile is the source of
+    // truth for the baseline metadata; no distro switches in the backend.
+    const fic::platform::DacPlatformConfig dacConfig = platform.dac;
+    deps.dacOptions = [dacConfig]() {
+        DacBaselineRollbackOptions options;
+        options.platform = dacConfig;
         return options;
     };
 
