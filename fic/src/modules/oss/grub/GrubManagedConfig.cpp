@@ -102,25 +102,6 @@ bool sameRestoredState(const AtomicTargetState& left,
         left.owner == right.owner && left.group == right.group;
 }
 
-bool syncDirectory(const std::filesystem::path& directory,
-                   std::string& error) {
-    const int descriptor = ::open(
-        directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-    if (descriptor < 0) {
-        error = "could not open GRUB config directory " + directory.string() +
-            ": " + std::strerror(errno);
-        return false;
-    }
-    const bool synced = ::fsync(descriptor) == 0;
-    const int savedErrno = errno;
-    ::close(descriptor);
-    if (!synced) {
-        error = "could not fsync GRUB config directory " + directory.string() +
-            ": " + std::strerror(savedErrno);
-    }
-    return synced;
-}
-
 FileHandlerOptions fileOptions(bool enforceOwnership) {
     FileHandlerOptions options;
     options.writeOptions.createIfMissing = true;
@@ -429,6 +410,14 @@ void GrubManagedConfig::canonicalize() {
     }
 }
 
+std::string GrubManagedConfig::canonicalEmptyContent() {
+    // Byte-exact canonicalContent() of an empty configuration:
+    // canonicalize() emits the header line followed by one blank line, and
+    // canonicalContent() terminates every line with '\n'. Both this method
+    // and canonicalContent() must change together.
+    return std::string(kManagedHeader) + "\n\n";
+}
+
 std::string GrubManagedConfig::canonicalContent() const {
     std::string content;
     for (const std::string& line : original_lines_) {
@@ -502,12 +491,39 @@ bool GrubManagedConfig::restoreOriginal(std::string& error,
         return false;
     }
     if (!original_.exists) {
-        if (::unlink(managedOptions_.path.c_str()) != 0) {
-            error = "could not remove newly created managed GRUB config: " +
-                std::string(std::strerror(errno));
+        // The drop-in did not exist before the apply. Physical absence is
+        // NEVER restored by removing the path: a check-then-unlink may
+        // delete a concurrent external replacement (TOCTOU on the ownership
+        // proof). The neutral compensated state is the canonical header-only
+        // FIC-owned artifact, written through a CAS against the exact
+        // installed state: an external writer that raced in between fails
+        // the CAS, its bytes are never overwritten or removed. The policy
+        // key is provably absent afterwards, so for the apply caller this
+        // compensation releases the ownership (Compensated).
+        AtomicWriteOptions compensationOptions;
+        compensationOptions.createIfMissing = false;
+        compensationOptions.rejectSymlink = true;
+        compensationOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+        compensationOptions.fileMode = 0644;
+        if (managedOptions_.enforceOwnership) {
+            compensationOptions.fileOwner = 0;
+            compensationOptions.fileGroup = 0;
+        }
+        compensationOptions.expectedTargetState = *installed_;
+        AtomicWriteResult writeResult;
+        std::string writeError;
+        if (!AtomicFileWriter::writeWithResult(
+                managedOptions_.path.string(), canonicalEmptyContent(),
+                compensationOptions, &writeError, &writeResult) ||
+            !writeResult.installedTargetState ||
+            !AtomicFileWriter::targetStateMatches(
+                managedOptions_.path.string(),
+                *writeResult.installedTargetState, &writeError)) {
+            error = "could not compensate a newly created managed GRUB "
+                    "config with the canonical empty drop-in: " + writeError;
             return false;
         }
-        return syncDirectory(managedOptions_.path.parent_path(), error);
+        return true;
     }
     AtomicWriteOptions options;
     options.createIfMissing = false;
@@ -524,13 +540,28 @@ bool GrubManagedConfig::restoreOriginal(std::string& error,
 bool GrubManagedConfig::verifyOriginal(std::string& error) const {
     Snapshot current;
     if (!readSnapshot(true, current, error)) return false;
-    if (current.exists != original_.exists) {
-        error = "original managed GRUB file presence was not restored";
-        return false;
+    if (original_.exists) {
+        if (!current.exists) {
+            error = "original managed GRUB file presence was not restored";
+            return false;
+        }
+        if (!sameRestoredState(current.state, original_.state)) {
+            error = "original managed GRUB file content or metadata was not restored";
+            return false;
+        }
+        return true;
     }
-    if (current.exists &&
-        !sameRestoredState(current.state, original_.state)) {
-        error = "original managed GRUB file content or metadata was not restored";
+    // Neutral compensation of an initially missing drop-in: the released
+    // state is proven by the policy key being absent. Both the canonical
+    // header-only artifact and (after an external removal) physical absence
+    // prove the absence of the key; any other content is a fail-closed
+    // compensation defect, not a released state.
+    if (!current.exists) {
+        return true;
+    }
+    if (current.state.content != canonicalEmptyContent()) {
+        error = "compensated managed GRUB drop-in is not the canonical "
+                "empty FIC artifact";
         return false;
     }
     return true;

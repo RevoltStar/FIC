@@ -30,6 +30,13 @@ public:
     // target still IS exactly the state FIC installed (see installedState()):
     // external drift is reported as a conflict (concurrentDrift = true) and
     // never silently overwritten or removed.
+    //
+    // A drop-in that did NOT exist before the apply is NEVER compensated by
+    // removing the file (check-then-unlink is race-prone and may delete a
+    // concurrent replacement). The neutral compensated state is the
+    // canonical header-only FIC-owned artifact (canonicalEmptyContent())
+    // written through a CAS against the installed state: the policy key is
+    // provably absent afterwards, which is all ownership-release requires.
     bool restoreOriginal(std::string& error, bool& concurrentDrift) const;
     bool verifyOriginal(std::string& error) const;
 
@@ -45,6 +52,11 @@ public:
     // the AtomicWriteResult of saveConfig(), not from a post-write re-read:
     // it is the install snapshot compensation is proven against.
     const std::optional<AtomicTargetState>& installedState() const;
+    // Byte-exact canonical representation of an empty FIC-owned managed
+    // drop-in: the header line followed by one blank line. Identical to
+    // canonicalContent() of an empty configuration and used as the neutral
+    // compensated state when the drop-in did not exist before the apply.
+    static std::string canonicalEmptyContent();
     const std::string& lastError() const;
 
 private:

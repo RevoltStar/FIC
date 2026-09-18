@@ -598,6 +598,40 @@ Apply записывает в journal `Prepared`-запись ТОЛЬКО пр�
   сохраняет stable ownership-доказательство; header-only файл инертен для
   update-grub. Отсутствующий артефакт (внешне удалённый) по-прежнему
   легитимное освобождённое состояние (`NothingToDo` после пересборки);
+* компенсация initially-missing Debian drop-in — физическое отсутствие
+  drop-in НИКОГДА не восстанавливается через unlink: check-then-unlink
+  race-prone и может удалить конкурентную внешнюю замену пути (TOCTOU
+  поверх проверки ownership). Если FIC создал `zzzz-fic.cfg` из
+  отсутствующего состояния, а apply требует компенсации, нейтральное
+  безопасное состояние — канонический header-only FIC-owned drop-in,
+  записанный атомарной CAS-записью против ТОЧНОГО FIC-installed
+  состояния (внешний писатель, вклинившийся между записью apply и
+  компенсацией, детерминированно проваливает CAS — его байты не
+  перезаписываются и не удаляются; фиксируется concurrent drift,
+  `Indeterminate`, `Prepared` остаётся активным). После успешной
+  компенсации ключ политики доказанно отсутствует, поэтому для apply
+  caller'а это `Compensated`, и `Prepared` discard'ится;
+* post-rebuild proof apply — успешная пересборка grub.cfg сама по себе НЕ
+  доказывает, что managed-источник всё ещё содержит ожидаемое значение:
+  внешний писатель может изменить источник, ПОКА выполняется пересборка.
+  После КАЖДОЙ успешной пересборки выполняется свежая (fresh) проверка
+  текущего on-disk managed-источника
+  (`proveExpectedGrubManagedValue`: топология валидна/безопасна, ключ
+  существует, значение совпадает) — никогда не reuse pre-rebuild
+  snapshot'а. Changed apply (FIC уже выполнил мутацию источника):
+  mismatch/missing/malformed/unsafe → apply false,
+  `sourceState = Indeterminate`, `Prepared` остаётся активным,
+  компенсация НЕ запускается (drift-источник может быть внешней мутацией,
+  которая никогда не перезаписывается) — recovery классифицирует
+  состояние при следующем apply. Idempotent apply (FIC источник в этой
+  операции не менял): mismatch → apply false, `sourceState = Unchanged`,
+  никакая journal-запись не создаётся и не разрешается. `Prepared` →
+  `Applied` коммитится только при успешном post-rebuild proof;
+  idempotent apply сообщает успех только при доказанных И pre-rebuild, И
+  post-rebuild состояниях. Generated `grub.cfg` в качестве proof не
+  используется — проверяется только FIC-owned source (drop-in / managed
+  block); validated rebuild inputs остаются отдельной проверкой
+  «безопасно ли запускать пересборку» и её не заменяют;
 * typed probe managed-пути — отсутствие артефакта (ENOENT) — легитимное
   освобождённое состояние, но symlink/каталог/FIFO и другой не-regular
   артефакт, занимающий managed-путь, — это `Conflict` fail closed без

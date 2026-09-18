@@ -804,10 +804,20 @@ void testManagedRebuildFailureCompensation(const fs::path& root) {
             });
         require(!result.ok && calls == 2,
                 "managed rebuild failure did not run compensation rebuild");
+        // Compensation is proven in BOTH cases: an existing pre-apply
+        // drop-in is restored exactly; a newly created drop-in is NEVER
+        // unlinked — it is compensated with the canonical header-only
+        // FIC-owned artifact, which proves the policy key is absent.
+        require(fs::exists(managed),
+                "managed drop-in disappeared after compensation");
         require(initiallyExists
-                    ? fs::exists(managed) && readFile(managed) == original
-                    : !fs::exists(managed),
+                    ? readFile(managed) == original
+                    : readFile(managed) ==
+                          GrubManagedConfig::canonicalEmptyContent(),
                 "managed source was not restored after rebuild failure");
+        require(result.sourceState ==
+                    GrubSourceMutationState::Compensated,
+                "proven compensation was not reported as Compensated");
         require(compensationSucceeds || !result.diagnostics.empty(),
                 "compensating rebuild failure was not diagnosed");
     };
@@ -1057,8 +1067,10 @@ void testManagedConcurrentDriftCompensation(const fs::path& root) {
                 "concurrent drift was not diagnosed");
     }
 
-    // Newly created managed file changed externally during the failed
-    // rebuild: FIC must keep the file and its external content.
+    // Newly created managed file replaced externally (new inode) during the
+    // failed rebuild: FIC must keep the external state, refuse to restore
+    // or remove anything, and skip the compensating rebuild. This is the
+    // TOCTOU case the old check-then-unlink compensation would have lost.
     {
         const fs::path directory =
             root / "managed-drift-created/etc/default/grub.d";
@@ -1074,7 +1086,12 @@ void testManagedConcurrentDriftCompensation(const fs::path& root) {
                 const ProcessOptions&) {
                 ++calls;
                 if (calls == 1) {
-                    writeFile(managed, external);
+                    // Privileged external writer REPLACES the FIC-created
+                    // file with a new inode right before the rebuild fails.
+                    const fs::path replacement =
+                        fs::path(managed.string() + ".external");
+                    writeFile(replacement, external);
+                    fs::rename(replacement, managed);
                     return failedProcess("injected rebuild failure");
                 }
                 return successfulProcess();
@@ -1082,6 +1099,9 @@ void testManagedConcurrentDriftCompensation(const fs::path& root) {
         require(!result.ok && calls == 1,
                 "concurrent drift on a created file must not run "
                 "a compensating rebuild");
+        require(result.sourceState ==
+                    GrubSourceMutationState::Indeterminate,
+                "concurrent drift on a created file must be Indeterminate");
         require(fs::exists(managed) && readFile(managed) == external,
                 "FIC removed or overwrote an externally mutated created file");
         require(std::any_of(

@@ -50,6 +50,35 @@ std::string processFailure(const ProcessResult& result) {
     return "неизвестная ошибка пересборки GRUB";
 }
 
+// ALT topology adapter for the shared post-rebuild proof: proves the FIC
+// managed block of the shared defaults against the expected value from a
+// FRESH inspection of the current on-disk source.
+GrubManagedValueProof proveSharedBlockValue(
+    const std::filesystem::path& sharedPath,
+    bool enforceOwnership,
+    const std::string& key,
+    const std::string& expectedValue,
+    std::string& error) {
+    GrubManagedConfigurationOptions options;
+    options.sharedDefaultsPath = sharedPath;
+    options.enforceOwnership = enforceOwnership;
+    return proveExpectedGrubManagedValue(options, key, expectedValue, error);
+}
+
+const char* grubProofFailureKind(GrubManagedValueProof proof) {
+    switch (proof) {
+    case GrubManagedValueProof::Missing:
+        return "ключ отсутствует";
+    case GrubManagedValueProof::Drift:
+        return "значение изменено вне FIC";
+    case GrubManagedValueProof::Invalid:
+        return "источник некорректен или небезопасен";
+    case GrubManagedValueProof::Matches:
+        break;
+    }
+    return "неизвестный результат проверки";
+}
+
 } // namespace
 
 void setGrubSharedPreWriteHookForTests(std::function<void()> hook) {
@@ -432,6 +461,23 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
             result.sourceState = GrubSourceMutationState::Unchanged;
             return result;
         }
+        // Post-rebuild proof: a successful rebuild does NOT prove that the
+        // managed source still contains the desired value — an external
+        // writer may mutate it while the rebuild runs. The idempotent apply
+        // may report success only after a fresh post-rebuild proof; on
+        // failure there is no FIC source mutation in this operation, the
+        // external state stays untouched and no journal record is created.
+        const GrubManagedValueProof proof = proveSharedBlockValue(
+            options_.defaultsPath, options_.enforceOwnership, key, value,
+            proofError);
+        if (proof != GrubManagedValueProof::Matches) {
+            result.message =
+                "FIC managed block в " + options_.defaultsPath.string() +
+                " не подтвердился после пересборки (" +
+                grubProofFailureKind(proof) + "): " + proofError;
+            result.sourceState = GrubSourceMutationState::Unchanged;
+            return result;
+        }
         result.ok = true;
         result.changed = false;
         result.sourceState = GrubSourceMutationState::Unchanged;
@@ -495,6 +541,28 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
                 return rebuild(rebuildError);
             },
             result);
+    }
+
+    // Post-rebuild proof: the rebuild succeeding does not prove that the
+    // managed source still carries the freshly installed value — an
+    // external writer may mutate the source while the rebuild runs. The
+    // Prepared record must NOT be committed unless the expected value is
+    // still proven from a fresh inspection. No compensation runs here: the
+    // drifted source may be an external mutation that must never be
+    // overwritten; the Prepared record stays active and recovery resolves
+    // the state on the next apply.
+    std::string proofError;
+    const GrubManagedValueProof proof = proveSharedBlockValue(
+        options_.defaultsPath, options_.enforceOwnership, key, value,
+        proofError);
+    if (proof != GrubManagedValueProof::Matches) {
+        result.ok = false;
+        result.sourceState = GrubSourceMutationState::Indeterminate;
+        result.message =
+            "FIC managed block в " + options_.defaultsPath.string() +
+            " не подтвердился после пересборки (" +
+            grubProofFailureKind(proof) + "): " + proofError;
+        return result;
     }
 
     result.ok = true;
@@ -638,6 +706,34 @@ GrubManagedJournalState classifyGrubManagedJournalState(
     return inspected.value == appliedValue
         ? GrubManagedJournalState::After
         : GrubManagedJournalState::Drift;
+}
+
+GrubManagedValueProof proveExpectedGrubManagedValue(
+    const GrubManagedConfigurationOptions& options,
+    const std::string& key,
+    const std::string& expectedValue,
+    std::string& error) {
+    error.clear();
+    // FRESH observation of the current on-disk managed source — never a
+    // pre-write or pre-rebuild snapshot: an external writer may have mutated
+    // the source while the rebuild ran. inspectGrubManagedValue proves both
+    // source validity/safety (typed topology probe + strict parse) and the
+    // key/value pair.
+    const GrubValueObservation observed =
+        inspectGrubManagedValue(options, key);
+    if (!observed.valid) {
+        error = observed.error;
+        return GrubManagedValueProof::Invalid;
+    }
+    if (!observed.found) {
+        return GrubManagedValueProof::Missing;
+    }
+    if (observed.value != expectedValue) {
+        error = "recorded/expected value '" + expectedValue +
+            "', actual value '" + observed.value + "'";
+        return GrubManagedValueProof::Drift;
+    }
+    return GrubManagedValueProof::Matches;
 }
 
 bool validateGrubSourceFile(const std::filesystem::path& path,
@@ -858,6 +954,23 @@ GrubOperationResult ensureManagedGrubDropInValue(
             result.message = rebuildError;
             return result;
         }
+        // Post-rebuild proof: a successful rebuild does NOT prove that the
+        // managed drop-in still contains the desired value — an external
+        // writer may mutate it while the rebuild runs. The idempotent apply
+        // may report success only after a fresh post-rebuild proof; FIC did
+        // not mutate the source in this operation, so no journal record is
+        // affected and the external state stays untouched.
+        std::string proofError;
+        const GrubManagedValueProof proof = proveExpectedGrubManagedValue(
+            options, key, value, proofError);
+        if (proof != GrubManagedValueProof::Matches) {
+            result.message =
+                "Managed GRUB-конфигурация в " +
+                options.managedPath.string() +
+                " не подтвердилась после пересборки (" +
+                grubProofFailureKind(proof) + "): " + proofError;
+            return result;
+        }
         result.ok = true;
         result.message =
             "Persistent-значение GRUB соответствует политике; grub.cfg пересобран";
@@ -956,6 +1069,27 @@ GrubOperationResult ensureManagedGrubDropInValue(
                     compensationError);
             }
         }
+        return result;
+    }
+
+    // Post-rebuild proof: the rebuild succeeding does not prove that the
+    // managed drop-in still contains the freshly installed value — an
+    // external writer may mutate it while the rebuild runs. The Prepared
+    // record must NOT be committed unless the expected value is still
+    // proven from a fresh inspection. No compensation runs here: the
+    // drifted source may be an external mutation that must never be
+    // overwritten; the Prepared record stays active and recovery resolves
+    // the state on the next apply.
+    std::string proofError;
+    const GrubManagedValueProof proof = proveExpectedGrubManagedValue(
+        options, key, value, proofError);
+    if (proof != GrubManagedValueProof::Matches) {
+        result.ok = false;
+        result.sourceState = GrubSourceMutationState::Indeterminate;
+        result.message =
+            "Managed GRUB-конфигурация в " + options.managedPath.string() +
+            " не подтвердилась после пересборки (" +
+            grubProofFailureKind(proof) + "): " + proofError;
         return result;
     }
 

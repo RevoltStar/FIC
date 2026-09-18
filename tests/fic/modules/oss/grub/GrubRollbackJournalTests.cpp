@@ -1,6 +1,7 @@
 #include "modules/oss/grub/Grub.h"
 #include "modules/oss/grub/GrubConfiguration.h"
 #include "modules/oss/grub/GrubManagedBlock.h"
+#include "modules/oss/grub/GrubManagedConfig.h"
 #include "modules/oss/grub/GrubRollback.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "rollback/DaemonMutationJournal.h"
@@ -1274,6 +1275,275 @@ void testUnsafeManagedArtifactsAreNotMissing(
     }
 }
 
+// F: post-rebuild proof of the NORMAL apply (changed and idempotent, both
+// topologies) and the neutral compensation of an initially missing Debian
+// drop-in. A successful rebuild never proves managed-state compliance: the
+// fake update-grub scripts below mutate the managed source DURING the
+// rebuild, deterministically, without timing races.
+
+// T1: Debian initially-missing apply + failed rebuild — the compensation
+// leaves the canonical header-only FIC-owned drop-in (physical absence is
+// never restored by unlink), the proven compensation reports Compensated
+// and the Prepared record is discarded.
+void testDebianInitiallyMissingCompensationRetainsDropIn(
+    const fs::path& root) {
+    const fs::path testCase = root / "deb-created-compensation";
+    prepareDebianTopology(testCase);
+    const fs::path managed = dropInPath(testCase);
+    const fs::path failScript = root / "bin/update-grub-deb-fail";
+    seedRebuildExecutable(root, failScript, "#!/bin/sh\nexit 1\n");
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(failScript);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(
+        debianConfig(managed, testCase / "etc/default/grub"), resolver,
+        "GRUB_TIMEOUT", "grub_test_policy");
+    require(!policy.apply(),
+            "initially-missing Debian apply must fail on the injected "
+            "rebuild failure");
+    require(fs::exists(managed) &&
+                readFile(managed) ==
+                    GrubManagedConfig::canonicalEmptyContent(),
+            "compensation must retain the canonical header-only FIC "
+            "drop-in instead of the physical absence");
+    require(activeCount(policy.ref()) == 0,
+            "proven compensation must discard the Prepared record");
+}
+
+// T2: Debian initially-missing apply, the failing rebuild concurrently
+// REPLACES the FIC-created drop-in with a new inode — the compensation
+// must not remove or overwrite the external state, the source is
+// Indeterminate and the Prepared record stays active.
+void testDebianInitiallyMissingCompensationConcurrentReplacement(
+    const fs::path& root) {
+    const fs::path testCase = root / "deb-created-replacement";
+    prepareDebianTopology(testCase);
+    const fs::path managed = dropInPath(testCase);
+    const std::string external =
+        "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"5\"\n";
+    const fs::path replaceScript = root / "bin/update-grub-deb-replace";
+    seedRebuildExecutable(
+        root, replaceScript,
+        "#!/bin/sh\ncat > " + managed.string() +
+            ".external <<'FIC_EOF'\n" + external +
+            "FIC_EOF\nmv " + managed.string() + ".external " +
+            managed.string() + "\nexit 1\n");
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(replaceScript);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(
+        debianConfig(managed, testCase / "etc/default/grub"), resolver,
+        "GRUB_TIMEOUT", "grub_test_policy");
+    require(!policy.apply(),
+            "apply must fail when the created drop-in is concurrently "
+            "replaced before compensation");
+    require(readFile(managed) == external,
+            "the external replacement must be preserved byte-exact");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->activeRecords(policy.ref());
+    require(records.size() == 1 &&
+                records[0].status == rollback::MutationStatus::Prepared,
+            "unproven compensation must keep the Prepared record active");
+    const auto* undo = std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+        &records[0].undo.payload);
+    require(undo != nullptr && undo->key == "GRUB_TIMEOUT" &&
+                undo->appliedValue == "0",
+            "the Prepared payload must stay key + desired appliedValue");
+}
+
+// T3: ALT changed apply — the rebuild script rewrites the FIC block to
+// another value DURING the rebuild; the fresh post-rebuild proof must fail
+// the apply, keep the Prepared record active and preserve the external
+// state without any compensation overwrite.
+void testAltChangedApplyDriftDuringRebuild(const fs::path& root) {
+    const fs::path testCase = root / "alt-apply-drift";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    const std::string drifted = foreign + "\n" +
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"5\"\n"
+        "# FIC_GRUB_BLOCK_END\n";
+    const fs::path driftScript = root / "bin/update-grub-alt-apply-drift";
+    seedRebuildExecutable(
+        root, driftScript,
+        "#!/bin/sh\ncat > " + shared.string() + " <<'FIC_EOF'\n" +
+            drifted + "FIC_EOF\nexit 0\n");
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(driftScript);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    require(!policy.apply(),
+            "ALT changed apply must fail when the FIC block drifts during "
+            "the rebuild");
+    require(readFile(shared) == drifted,
+            "the drifted external state must be preserved unchanged");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->activeRecords(policy.ref());
+    require(records.size() == 1 &&
+                records[0].status == rollback::MutationStatus::Prepared,
+            "post-rebuild drift must keep the Prepared record active");
+    const auto* undo = std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+        &records[0].undo.payload);
+    require(undo != nullptr && undo->key == "GRUB_TIMEOUT" &&
+                undo->appliedValue == "0",
+            "the Prepared payload must keep the desired appliedValue");
+}
+
+// T4: Debian changed apply — the rebuild script rewrites the managed
+// drop-in DURING the rebuild, valid FIC-owned content with another value
+// and malformed content alike; both must fail closed, keep the Prepared
+// record active and preserve the external bytes.
+void testDebianChangedApplyDriftDuringRebuild(const fs::path& root) {
+    // Valid FIC-owned drop-in with another value.
+    {
+        const fs::path testCase = root / "deb-apply-drift";
+        prepareDebianTopology(testCase);
+        const fs::path managed = dropInPath(testCase);
+        const std::string drifted =
+            "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"5\"\n";
+        const fs::path driftScript =
+            root / "bin/update-grub-deb-apply-drift";
+        seedRebuildExecutable(
+            root, driftScript,
+            "#!/bin/sh\ncat > " + managed.string() + " <<'FIC_EOF'\n" +
+                drifted + "FIC_EOF\nexit 0\n");
+        JournalOverride journalOverride(
+            testCase / "data" / "mutation-journal.json");
+        const auto resolver = makeResolver(driftScript);
+        setPolicyConfig(root, {{"grub_test_policy", "0"}});
+        JournalGrubPolicy policy(
+            debianConfig(managed, testCase / "etc/default/grub"), resolver,
+            "GRUB_TIMEOUT", "grub_test_policy");
+        require(!policy.apply(),
+                "Debian changed apply must fail when the drop-in drifts "
+                "during the rebuild");
+        require(readFile(managed) == drifted,
+                "the drifted external state must be preserved unchanged");
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->activeRecords(policy.ref());
+        require(records.size() == 1 &&
+                    records[0].status == rollback::MutationStatus::Prepared,
+                "post-rebuild drift must keep the Prepared record active");
+        const auto* undo =
+            std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+                &records[0].undo.payload);
+        require(undo != nullptr && undo->key == "GRUB_TIMEOUT" &&
+                    undo->appliedValue == "0",
+                "the Prepared payload must keep the desired appliedValue");
+    }
+    // Malformed drop-in written during the rebuild.
+    {
+        const fs::path testCase = root / "deb-apply-drift-malformed";
+        prepareDebianTopology(testCase);
+        const fs::path managed = dropInPath(testCase);
+        const std::string malformed =
+            "GRUB_TIMEOUT=\"5\nthis is not a config\n";
+        const fs::path driftScript =
+            root / "bin/update-grub-deb-apply-drift-malformed";
+        seedRebuildExecutable(
+            root, driftScript,
+            "#!/bin/sh\ncat > " + managed.string() + " <<'FIC_EOF'\n" +
+                malformed + "FIC_EOF\nexit 0\n");
+        JournalOverride journalOverride(
+            testCase / "data" / "mutation-journal.json");
+        const auto resolver = makeResolver(driftScript);
+        setPolicyConfig(root, {{"grub_test_policy", "0"}});
+        JournalGrubPolicy policy(
+            debianConfig(managed, testCase / "etc/default/grub"), resolver,
+            "GRUB_TIMEOUT", "grub_test_policy");
+        require(!policy.apply(),
+                "Debian changed apply must fail when the drop-in becomes "
+                "malformed during the rebuild");
+        require(readFile(managed) == malformed,
+                "the malformed external state must be preserved unchanged");
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->activeRecords(policy.ref());
+        require(records.size() == 1 &&
+                    records[0].status == rollback::MutationStatus::Prepared,
+                "post-rebuild invalid source must keep the Prepared record "
+                "active");
+    }
+}
+
+// T5: ALT idempotent apply — the rebuild script rewrites the already
+// compliant FIC block DURING the rebuild; the fresh post-rebuild proof
+// must fail the apply without creating any journal record.
+void testAltIdempotentDriftDuringRebuild(const fs::path& root) {
+    const fs::path testCase = root / "alt-idempotent-drift";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    const std::string initial =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n";
+    writeFile(shared, initial);
+    const std::string drifted =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"5\"\n"
+        "# FIC_GRUB_BLOCK_END\n";
+    const fs::path driftScript =
+        root / "bin/update-grub-alt-idempotent-drift";
+    seedRebuildExecutable(
+        root, driftScript,
+        "#!/bin/sh\ncat > " + shared.string() + " <<'FIC_EOF'\n" +
+            drifted + "FIC_EOF\nexit 0\n");
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(driftScript);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    require(!policy.apply(),
+            "ALT idempotent apply must fail when the block drifts during "
+            "the rebuild");
+    require(readFile(shared) == drifted,
+            "the drifted external state must be preserved unchanged");
+    require(activeCount(policy.ref()) == 0,
+            "idempotent drift must not create a journal record");
+}
+
+// T6: Debian idempotent apply — the rebuild script rewrites the already
+// compliant drop-in DURING the rebuild; the fresh post-rebuild proof must
+// fail the apply without creating a Prepared record.
+void testDebianIdempotentDriftDuringRebuild(const fs::path& root) {
+    const fs::path testCase = root / "deb-idempotent-drift";
+    prepareDebianTopology(testCase);
+    const fs::path managed = dropInPath(testCase);
+    const std::string initial =
+        "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"0\"\n";
+    writeFile(managed, initial);
+    const std::string drifted =
+        "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"5\"\n";
+    const fs::path driftScript =
+        root / "bin/update-grub-deb-idempotent-drift";
+    seedRebuildExecutable(
+        root, driftScript,
+        "#!/bin/sh\ncat > " + managed.string() + " <<'FIC_EOF'\n" +
+            drifted + "FIC_EOF\nexit 0\n");
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(driftScript);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(
+        debianConfig(managed, testCase / "etc/default/grub"), resolver,
+        "GRUB_TIMEOUT", "grub_test_policy");
+    require(!policy.apply(),
+            "Debian idempotent apply must fail when the drop-in drifts "
+            "during the rebuild");
+    require(readFile(managed) == drifted,
+            "the drifted external state must be preserved unchanged");
+    require(activeCount(policy.ref()) == 0,
+            "idempotent drift must not create a journal record");
+}
+
 // E: post-rebuild re-proof (fail closed): a mandatory reconciliation
 // rebuild that itself corrupts the managed source must leave the journal
 // record active and fail the apply — for both ALT and Debian topologies.
@@ -1410,6 +1680,12 @@ int main() {
         testAltRollbackStaleReadCasRace(root, rebuildExecutable);
         testAltIdempotentApplyStaleSnapshot(root, rebuildExecutable);
         testUnsafeManagedArtifactsAreNotMissing(root, rebuildExecutable);
+        testDebianInitiallyMissingCompensationRetainsDropIn(root);
+        testDebianInitiallyMissingCompensationConcurrentReplacement(root);
+        testAltChangedApplyDriftDuringRebuild(root);
+        testDebianChangedApplyDriftDuringRebuild(root);
+        testAltIdempotentDriftDuringRebuild(root);
+        testDebianIdempotentDriftDuringRebuild(root);
         testReconciliationDriftAfterRebuild(root);
     } catch (const std::exception& exception) {
         std::cerr << "GrubRollbackJournalTests failed: " << exception.what()

@@ -142,6 +142,35 @@ GrubManagedJournalState classifyGrubManagedJournalState(
     const std::string& appliedValue,
     GrubValueObservation* observation = nullptr);
 
+// Typed outcome of a FRESH managed-source proof of the expected policy
+// value. Always derived from a new inspection of the CURRENT on-disk
+// source — never from a pre-write or pre-rebuild snapshot:
+//   Matches — the managed source is valid/safe, the key exists and equals
+//             the expected value;
+//   Missing — the managed source is valid, but the key is absent;
+//   Drift   — the managed source is valid, but the key holds another value
+//             (external mutation);
+//   Invalid — the managed source is unreadable, unsafe or a malformed FIC
+//             artifact (fail closed).
+enum class GrubManagedValueProof {
+    Matches,
+    Missing,
+    Drift,
+    Invalid
+};
+
+// Proves that the FIC-owned managed GRUB source under the platform topology
+// still contains key == expectedValue in a valid/safe source. Used as the
+// post-rebuild proof after EVERY GRUB rebuild that follows a source
+// mutation (changed apply) and before EVERY idempotent apply success: a
+// successful rebuild alone never proves managed-state compliance, because
+// an external writer may mutate the source while the rebuild runs.
+GrubManagedValueProof proveExpectedGrubManagedValue(
+    const GrubManagedConfigurationOptions& options,
+    const std::string& key,
+    const std::string& expectedValue,
+    std::string& error);
+
 // Validate-only safety proof of EVERY input update-grub sources or reads,
 // under the platform topology. Must be called immediately before EVERY GRUB
 // rebuild (normal apply, journal reconciliation, prepared recovery,

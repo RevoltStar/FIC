@@ -4,15 +4,6 @@
 
 namespace {
 
-std::string trimCopy(const std::string& value) {
-    const auto first = value.find_first_not_of(" \t");
-    if (first == std::string::npos) {
-        return {};
-    }
-    const auto last = value.find_last_not_of(" \t");
-    return value.substr(first, last - first + 1);
-}
-
 // Strips CR/LF line endings and trailing spaces/tabs (never leading ones:
 // marker grammar requires the marker at the start of the line).
 std::string lineContent(const std::string& physicalLine) {
