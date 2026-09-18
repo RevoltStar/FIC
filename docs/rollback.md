@@ -668,7 +668,20 @@ Apply записывает в journal `Prepared`-запись ТОЛЬКО пр�
     требует) БЕЗ промежуточного durable promotion в `Applied`, затем
     старая запись напрямую разрешается в `RolledBack` из текущего
     активного статуса. При провале release — fail closed, запись
-    остаётся в предыдущем активном статусе.
+    остаётся в предыдущем активном статусе;
+* GRUB journal identity consistency — логическая идентичность GRUB
+  mutation записи определяется (policy, backend, resource), а НЕ undo
+  payload: `MutationRecord.resource == UndoRemoveGrubManagedSetting.key`.
+  Payload обязан соглашаться с identity: несогласованность отвергается
+  на load (journal fail closed), `prepareMutation()` отказывается
+  persist/refresh такую запись. Repair-reuse ищет reusable record
+  ТОЛЬКО по exact (policy, backend=Grub, resource) — wrong-resource
+  записи не переиспользуются по payload key; `appliedValue` должен
+  совпадать с desired значением repair. Malformed exact-resource запись
+  — это НЕ «no record»: fail closed без fresh-record fallback и без
+  source mutation. Более одной одновременно active записи одного
+  identity — fail closed на load; historical resolved записи
+  (`RolledBack` / `Detached`) того же identity допустимы и сохраняются.
 * ALT EOF placement и post-rebuild proof — после КАЖДОЙ успешной
   пересборки `proveExpectedGrubManagedValue()` для ALT возвращает
   `Matches` только при: source valid/safe, FIC block valid, ключ

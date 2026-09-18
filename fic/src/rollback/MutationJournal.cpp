@@ -247,6 +247,20 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
     if (!deserializeUndoAction(*undoIt, record.undo, error)) {
         return false;
     }
+    // Cross-field consistency: for GRUB the record identity carries the
+    // managed key. record.resource MUST equal UndoRemoveGrubManagedSetting
+    // .key — a disagreement means malformed provenance, which must never
+    // reach apply-time repair reuse (fail closed at load, not at apply).
+    if (record.undo.backend == MutationBackend::Grub) {
+        const auto* grub =
+            std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload);
+        if (grub == nullptr || grub->key != record.resource) {
+            error = "GRUB journal resource does not match undo key: "
+                    "resource '" +
+                record.resource + "'";
+            return false;
+        }
+    }
 
     MutationStatus status;
     if (!mutationStatusFromString(value.value("status", ""), status)) {
@@ -834,6 +848,33 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
             }
         }
     }
+    // At most one ACTIVE record may exist for one logical mutation identity
+    // (policy, backend, resource): prepareMutation() idempotent refresh and
+    // all repair reuse paths rely on this invariant for unambiguous
+    // provenance. Two simultaneously active records for one identity mean
+    // ambiguous provenance — fail closed at load. Historical resolved
+    // records (RolledBack / Detached) NEVER conflict with an active record:
+    // mutation history must be preserved.
+    for (std::size_t outer = 0; outer < parsed.size(); ++outer) {
+        if (!parsed[outer].isActive()) {
+            continue;
+        }
+        for (std::size_t inner = outer + 1; inner < parsed.size(); ++inner) {
+            if (!parsed[inner].isActive()) {
+                continue;
+            }
+            if (parsed[outer].policy == parsed[inner].policy &&
+                parsed[outer].undo.backend == parsed[inner].undo.backend &&
+                parsed[outer].resource == parsed[inner].resource) {
+                return failLoad(
+                    "Mutation journal содержит несколько активных записей "
+                    "одного logical mutation identity (policy, backend, "
+                    "resource): '" +
+                        parsed[outer].resource + "' (fail closed)",
+                    error);
+            }
+        }
+    }
 
     // The parsed document is proven, but readable != durable: the visible
     // file may still be the result of a rename whose parent directory fsync
@@ -936,6 +977,21 @@ bool MutationJournal::prepareMutation(MutationRecord record,
     if (record.resource.empty()) {
         error = "Mutation record требует resource";
         return false;
+    }
+    // Record consistency before ANY refresh/insert: for GRUB the logical
+    // identity carries the managed key, so the payload MUST agree with it
+    // (record.resource == undo.key). A malformed record is never silently
+    // refreshed or persisted — fail closed. Other backends keep their
+    // existing semantics unchanged.
+    if (record.undo.backend == MutationBackend::Grub) {
+        const auto* grub =
+            std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload);
+        if (grub == nullptr || grub->key != record.resource) {
+            error = "GRUB mutation record требует undo key == resource ('" +
+                record.resource + "'): "
+                "payload не согласован с identity (fail closed)";
+            return false;
+        }
     }
 
     // Idempotency: an active record for the same (policy, backend, resource)

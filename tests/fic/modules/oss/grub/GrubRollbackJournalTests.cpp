@@ -2491,6 +2491,64 @@ void testIneffectiveValueChangeReleasesOwnershipWithoutPromotion(
             "the new record must fingerprint the new applied value");
 }
 
+// Wrong-resource provenance is never reused by payload key: a GRUB active
+// record for a DIFFERENT journal resource (consistent payload, key
+// GRUB_DISABLE_RECOVERY) does not become the repair Prepared record for a
+// GRUB_TIMEOUT apply. The apply falls back to a fresh Prepared record for
+// its own resource; the foreign-resource record is only touched by the
+// normal stale-recovery path (its payload is never rewritten).
+void testWrongResourceRecordIsNotReusedByPayloadKey(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const fs::path testCase = root / "alt-wrong-resource-not-reused";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    rollback::MutationId foreignId = 0;
+    std::string error;
+    rollback::MutationRecord foreign = preparedGrubRecord(
+        policy.ref(), "GRUB_DISABLE_RECOVERY",
+        rollback::UndoRemoveGrubManagedSetting{"GRUB_DISABLE_RECOVERY",
+                                               "true"});
+    require(testJournal()->prepareMutation(foreign, foreignId, error), error);
+    require(testJournal()->setStatus(
+                foreignId, rollback::MutationStatus::Applied, error),
+            error);
+    writeFile(shared, "GRUB_TIMEOUT=5\n");
+    require(policy.apply(),
+            "apply must fall back to a fresh record instead of reusing a "
+            "wrong-resource record");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 2,
+            "a fresh record must be created for the applied resource");
+    bool freshTimeoutApplied = false;
+    for (const rollback::MutationRecord& record : records) {
+        const auto* undo = std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &record.undo.payload);
+        require(undo != nullptr, "grub payload must survive");
+        if (record.id == foreignId) {
+            // The foreign-resource record may only be resolved by the
+            // normal stale-recovery path; its payload must never be
+            // rewritten to serve a different resource.
+            require(record.resource == "GRUB_DISABLE_RECOVERY" &&
+                        undo->key == "GRUB_DISABLE_RECOVERY" &&
+                        undo->appliedValue == "true",
+                    "the wrong-resource record payload must stay untouched");
+        } else {
+            require(record.resource == "GRUB_TIMEOUT" &&
+                        record.status == rollback::MutationStatus::Applied,
+                    "the fresh record for GRUB_TIMEOUT must end Applied");
+            freshTimeoutApplied = true;
+        }
+    }
+    require(freshTimeoutApplied,
+            "exactly one new Applied record for GRUB_TIMEOUT must exist");
+}
+
 int main() {
     try {
         const fs::path root = fs::temp_directory_path() /
@@ -2555,6 +2613,7 @@ int main() {
             root, rebuildExecutable);
         testIneffectiveValueChangeReleasesOwnershipWithoutPromotion(
             root, rebuildExecutable);
+        testWrongResourceRecordIsNotReusedByPayloadKey(root, rebuildExecutable);
     } catch (const std::exception& exception) {
         std::cerr << "GrubRollbackJournalTests failed: " << exception.what()
                   << std::endl;

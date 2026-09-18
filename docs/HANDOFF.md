@@ -2,8 +2,8 @@
 
 ## Current base
 
-- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №5» (этот
-  коммит; предыдущий — `c9aedad` «Hardering-изменения для GRUB №4»).
+- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №6» (этот
+  коммит; предыдущий — `8e70089` «Hardering-изменения для GRUB №5»).
 - Рабочее дерево чистое; вспомогательные build-каталоги (`build-check`,
   `build-grub`, `build-sanitizers`, …) ignored.
 
@@ -46,6 +46,22 @@
      удаляется никогда.
   5. Docs: `docs/rollback.md` — Fresh vs Reused матрица, transient
      context/crash semantics, Ineffective reconciliation без promotion.
+  6. **№6 — GRUB journal identity consistency (fail closed)**:
+     логическая идентичность GRUB mutation записи —
+     (policy, backend, resource), а НЕ undo payload;
+     `MutationRecord.resource == UndoRemoveGrubManagedSetting.key`
+     обязательна. Loader отвергает (journal unusable):
+     `resource != undo.key` (в любом направлении) и две одновременно
+     active записи одного identity; historical resolved записи того же
+     identity допустимы. `prepareMutation()` отказывается
+     persist/refresh GRUB-запись с payload, не согласующимися с
+     resource (idempotency-семантика для согласованных записей не
+     изменена). `findReusableGrubRecord()` — typed exact-match
+     (`None`/`Found`/`Invalid`): reusable record ищется ТОЛЬКО по exact
+     (policy, backend=Grub, resource); payload валидируется против
+     identity + desired value; >1 exact active record или malformed
+     payload → fail closed БЕЗ fresh fallback (malformed exact-resource
+     запись — не «no record»). №5 repair lifecycle не изменён.
 
 ## Accepted architecture / invariants
 
@@ -84,11 +100,26 @@
   `testIneffectiveValueChangeReleasesOwnershipWithoutPromotion`
   (old → RolledBack без промежуточного Applied; одна Applied для нового
   значения). Все существующие тесты №4 и раньше остались зелёными.
+- №6: loader-тесты в `MutationJournalTests.cpp` — T1/T2
+  `testGrubResourcePayloadMismatchFailsClosed` (resource/undo.key
+  mismatch в обоих направлениях → load fail closed),
+  `testDuplicateActiveLogicalIdentityFailsClosed` (Applied+Prepared
+  одного identity → fail closed), `testResolvedHistoryWithActiveRecordLoads`
+  (RolledBack+Applied одного identity → load успешен, история
+  сохранена). GRUB-level: `testWrongResourceRecordIsNotReusedByPayloadKey`
+  в `GrubRollbackJournalTests.cpp` (запись чужого resource не
+  переиспользуется по payload key; fresh fallback; payload чужой записи
+  не переписывается). Malformed exact-resource состояние в памяти через
+  public API невоспроизводимо после hardening (loader + prepareMutation
+  его отвергают) — helper `Invalid`-ветка покрывается loader-тестами как
+  defense-in-depth.
 
 ## Changed areas
 
 - `fic/src/modules/oss/grub/{Grub.cpp, GrubRollback.h}`,
+  `fic/src/rollback/MutationJournal.cpp`,
   `tests/fic/modules/oss/grub/GrubRollbackJournalTests.cpp`,
+  `tests/fic/rollback/MutationJournalTests.cpp`,
   `docs/rollback.md`, `docs/HANDOFF.md`.
 
 ## Validation

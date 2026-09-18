@@ -714,6 +714,91 @@ void testGrubUndoMalformedPayloadsFailClosed() {
         "inconsistent backend");
 }
 
+// Journal record/document builders for cross-field consistency tests.
+std::string grubJournalRecord(std::uint64_t id, const std::string& resource,
+                              const std::string& key,
+                              const std::string& appliedValue,
+                              const std::string& status) {
+    return "{\"id\":" + std::to_string(id) +
+           ",\"policy\":{\"module\":\"OSS\",\"submodule\":\"Grub\","
+           "\"policy\":\"grub_test_policy\"},\"resource\":\"" + resource +
+           "\",\"backend\":\"grub\",\"status\":\"" + status +
+           "\",\"created_at_epoch\":1,\"updated_at_epoch\":1,\"error\":\"\","
+           "\"undo\":{\"action\":\"remove_grub_managed_setting\","
+           "\"backend\":\"grub\",\"key\":\"" + key +
+           "\",\"applied_value\":\"" + appliedValue + "\"}}";
+}
+
+std::string grubJournalDocument(const std::vector<std::string>& records,
+                                std::uint64_t nextId) {
+    std::string result = "{\"schema_version\":1,\"next_id\":" +
+        std::to_string(nextId) + ",\"records\":[";
+    for (std::size_t index = 0; index < records.size(); ++index) {
+        if (index != 0) {
+            result += ",";
+        }
+        result += records[index];
+    }
+    result += "]}";
+    return result;
+}
+
+// Cross-field consistency: for GRUB the logical mutation identity carries
+// the managed key, so record.resource MUST equal the undo payload key. A
+// disagreement is malformed provenance and must fail closed at LOAD — it
+// must never survive to apply-time repair reuse (T1/T2).
+void testGrubResourcePayloadMismatchFailsClosed() {
+    // T1: identity says GRUB_TIMEOUT, payload claims GRUB_DISABLE_RECOVERY.
+    requireBrokenGrubJournalFailsClosed(
+        grubJournalDocument(
+            {grubJournalRecord(1, "GRUB_TIMEOUT", "GRUB_DISABLE_RECOVERY",
+                               "true", "applied")},
+            2),
+        "resource GRUB_TIMEOUT with undo key GRUB_DISABLE_RECOVERY");
+    // T2: the reverse mismatch.
+    requireBrokenGrubJournalFailsClosed(
+        grubJournalDocument(
+            {grubJournalRecord(1, "GRUB_DISABLE_RECOVERY", "GRUB_TIMEOUT",
+                               "0", "applied")},
+            2),
+        "resource GRUB_DISABLE_RECOVERY with undo key GRUB_TIMEOUT");
+}
+
+// Duplicate ACTIVE logical records: at most one active record may exist
+// for one (policy, backend, resource). Two simultaneously active records
+// are ambiguous provenance — load must fail closed.
+void testDuplicateActiveLogicalIdentityFailsClosed() {
+    requireBrokenGrubJournalFailsClosed(
+        grubJournalDocument(
+            {grubJournalRecord(10, "GRUB_TIMEOUT", "GRUB_TIMEOUT", "0",
+                               "applied"),
+             grubJournalRecord(11, "GRUB_TIMEOUT", "GRUB_TIMEOUT", "0",
+                               "prepared")},
+            12),
+        "two simultaneously active records for one logical identity");
+}
+
+// Positive counterpart: historical RESOLVED records (RolledBack) never
+// conflict with an active record of the same logical identity — mutation
+// history must be preserved on load.
+void testResolvedHistoryWithActiveRecordLoads() {
+    TempFile file;
+    file.write(grubJournalDocument(
+        {grubJournalRecord(10, "GRUB_TIMEOUT", "GRUB_TIMEOUT", "expected",
+                           "rolled_back"),
+         grubJournalRecord(11, "GRUB_TIMEOUT", "GRUB_TIMEOUT", "0",
+                           "applied")},
+        12));
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 2,
+            "mutation history must be preserved on load");
+    require(journal.records()[0].status == MutationStatus::RolledBack &&
+                journal.records()[1].status == MutationStatus::Applied,
+            "the active record must remain resolvable after load");
+}
+
 } // namespace
 
 // Arms a deterministic directory fsync hook for the journal path: the first
@@ -1859,6 +1944,12 @@ int main() {
         {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
         {"grub undo payload round trip", testGrubUndoPayloadRoundTrip},
         {"grub undo malformed payloads fail closed", testGrubUndoMalformedPayloadsFailClosed},
+        {"grub resource/payload mismatch fails closed",
+         testGrubResourcePayloadMismatchFailsClosed},
+        {"duplicate active logical identity fails closed",
+         testDuplicateActiveLogicalIdentityFailsClosed},
+        {"resolved history with active record loads",
+         testResolvedHistoryWithActiveRecordLoads},
         {"daemon journal override and helpers", testDaemonJournalOverrideAndHelpers},
         {"daemon journal fails closed on broken file", testDaemonJournalFailsClosedOnBrokenFile},
         {"load durability barrier failure and retry", testLoadDurabilityBarrierFailureAndRetry},

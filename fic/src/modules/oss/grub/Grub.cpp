@@ -327,28 +327,66 @@ struct GrubMutationPreparation {
     std::string previousError;
 };
 
-// The active GRUB record that may be reused as the repair Prepared record
-// for (policy, backend=Grub, resource=key): payload must be
-// UndoRemoveGrubManagedSetting with the matching key. At most one such
-// active record exists (MutationJournal invariant: one active record per
-// logical mutation resource).
-std::optional<fic::rollback::MutationRecord> findReusableGrubRecord(
+// GRUB MUTATION IDENTITY COMES FROM (policy, backend, resource), NOT FROM
+// THE UNDO PAYLOAD. The undo payload must agree with that identity.
+//
+// Exact-match search result for a reusable GRUB repair record:
+//   None    — no active record for (policy, backend=Grub, resource=key):
+//             a fresh Prepared MAY be created;
+//   Found   — exactly one exact active record found; the payload agrees
+//             with the record identity (resource == undo.key == key);
+//   Invalid — malformed or ambiguous exact-resource provenance: more than
+//             one exact active record, or a payload that disagrees with
+//             the record identity. A malformed exact-resource record is
+//             NOT "no record": it is a fail-closed condition, never a
+//             fresh-record fallback. A GRUB record for a DIFFERENT
+//             resource is simply not matched here (wrong-resource records
+//             are never reused by payload key).
+enum class GrubReusableRecordState {
+    None,
+    Found,
+    Invalid
+};
+
+struct GrubReusableRecord {
+    GrubReusableRecordState state = GrubReusableRecordState::None;
+    // Meaningful only for Found.
+    fic::rollback::MutationRecord record;
+};
+
+GrubReusableRecord findReusableGrubRecord(
     fic::rollback::MutationJournal& journal,
     const PolicyRef& policyRef,
     const std::string& key) {
+    GrubReusableRecord result;
     for (const fic::rollback::MutationRecord& record :
          journal.activeRecords(policyRef)) {
-        if (record.undo.backend != fic::rollback::MutationBackend::Grub) {
+        if (record.undo.backend != fic::rollback::MutationBackend::Grub ||
+            record.resource != key) {
             continue;
         }
-        const auto* undo = std::get_if<
-            fic::rollback::UndoRemoveGrubManagedSetting>(
-            &record.undo.payload);
-        if (undo != nullptr && undo->key == key) {
-            return record;
+        if (result.state != GrubReusableRecordState::None) {
+            // Ambiguous provenance: never pick "the first" record.
+            result.state = GrubReusableRecordState::Invalid;
+            result.record = fic::rollback::MutationRecord{};
+            return result;
         }
+        result.state = GrubReusableRecordState::Found;
+        result.record = record;
     }
-    return std::nullopt;
+    if (result.state != GrubReusableRecordState::Found) {
+        return result;
+    }
+    // The payload must strictly agree with the exact-match identity.
+    const auto* undo = std::get_if<
+        fic::rollback::UndoRemoveGrubManagedSetting>(
+        &result.record.undo.payload);
+    if (undo == nullptr || undo->key != result.record.resource ||
+        undo->key != key) {
+        result.state = GrubReusableRecordState::Invalid;
+        result.record = fic::rollback::MutationRecord{};
+    }
+    return result;
 }
 
 // Prepares the journaled mutation BEFORE the source mutation. When no
@@ -375,9 +413,18 @@ bool prepareGrubMutation(
             : journalError;
         return false; // fail closed: no journal — no mutation
     }
-    const std::optional<fic::rollback::MutationRecord> existing =
+    const GrubReusableRecord existing =
         findReusableGrubRecord(*journal, policyRef, key);
-    if (!existing.has_value()) {
+    if (existing.state == GrubReusableRecordState::Invalid) {
+        // A malformed exact-resource active record is NOT "no record":
+        // fail closed, no fresh-record fallback, no source mutation.
+        error = "Malformed GRUB journal provenance для resource '" + key +
+            "': exact-resource запись не согласована с identity (policy, "
+            "backend, resource) или неоднозначна; repair отклонён "
+            "(fail closed)";
+        return false;
+    }
+    if (existing.state == GrubReusableRecordState::None) {
         const fic::rollback::UndoAction undo{
             fic::rollback::MutationBackend::Grub,
             fic::rollback::UndoRemoveGrubManagedSetting{key, actualExpected}};
@@ -387,18 +434,17 @@ bool prepareGrubMutation(
     }
     const auto* undo = std::get_if<
         fic::rollback::UndoRemoveGrubManagedSetting>(
-        &existing->undo.payload);
-    if (undo == nullptr || undo->key != key ||
-        undo->appliedValue != actualExpected) {
+        &existing.record.undo.payload);
+    if (undo->appliedValue != actualExpected) {
         error = "Active GRUB journal запись " +
-            std::to_string(existing->id) +
-            " имеет неожиданный undo payload; repair отклонён (fail closed)";
+            std::to_string(existing.record.id) +
+            " имеет unexpected applied value; repair отклонён (fail closed)";
         return false;
     }
-    preparation.id = existing->id;
+    preparation.id = existing.record.id;
     preparation.origin = GrubPreparedRecordOrigin::ReusedActive;
-    preparation.previousStatus = existing->status;
-    preparation.previousError = existing->error;
+    preparation.previousStatus = existing.record.status;
+    preparation.previousError = existing.record.error;
     // Durable transient transition: previousStatus → Prepared. The payload
     // is untouched; the captured pre-repair logical state is restored by
     // restoreGrubMutationAfterNoopOrCompensation() when the repair proves
