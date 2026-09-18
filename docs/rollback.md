@@ -552,13 +552,19 @@ platform profile (не journal):
 * Debian/Ubuntu — FIC-owned drop-in
   `/etc/default/grub.d/zzzz-fic.cfg` (canonical format: header
   `# Managed by FIC. Do not edit.`, ключи в фиксированном порядке;
-  опустевший файл удаляется целиком);
+  опустевший файл НЕ удаляется — остаётся канонический header-only
+  артефакт, см. ниже);
 * ALT — FIC managed block в EOF общего `/etc/sysconfig/grub2`
   (маркеры `# FIC_GRUB_BLOCK_BEGIN version=1` / `END`, whitelist ключей
   `GRUB_CMDLINE_LINUX`, `GRUB_DISABLE_RECOVERY`, `GRUB_TIMEOUT`,
   canonical order, строгий fail-closed парсинг: дубликаты/вложенные/чужие
   FIC-подобные маркеры, неизвестные ключи, malformed quotes,
-  `$`/backticks — `Conflict`, файл не изменяется).
+  `$`/backticks — `Conflict`, файл не изменяется). Грамматика тела
+  блока канонически строгая: принимается ТОЧНО форма `KEY="value"`,
+  которую рендерит FIC (canonical re-encode equality), любые отклонения
+  — пробелы вокруг `=`, ведущие/завершающие пробелы, инлайн-комментарии,
+  нецитированный RHS — fail closed; допустимое значение всегда
+  воспроизводится рендером байт-в-байт (render→parse→render round trip).
 
 Apply записывает в journal `Prepared`-запись ТОЛЬКО при реальном изменении
 источника (`UndoRemoveGrubManagedSetting{key, appliedValue}`) и после
@@ -574,8 +580,24 @@ Apply записывает в journal `Prepared`-запись ТОЛЬКО пр�
   пересборка) входные данные заново проверяются: существующие base
   defaults (Debian) и shared defaults (ALT) должны быть обычными
   несимлинковыми файлами без group/world-writable битов и с безопасной
-  цепочкой каталогов; отсутствие base/shared допустимо. Нарушение —
+  цепочкой каталогов; отсутствие base/shared допустимо. Для Debian
+  дополнительно проверяется ТОПОЛОГИЯ `/etc/default/grub.d`: каталог и
+  вся цепочка предков должны быть безопасными, каждый чужой `*.cfg` —
+  обычным несимлинковым файлом без group/world-writable битов, и ни
+  один чужой drop-in не должен сортироваться после `zzzz-fic.cfg`
+  (update-grub подключает drop-in'ы в лексикографическом порядке, более
+  поздний файл молча переопределил бы FIC-значения); отсутствие самого
+  `zzzz-fic.cfg` легитимно. Нарушение —
   fail closed: пересборка не запускается, journal-запись не разрешается;
+* canonical empty drop-in — удаление последнего FIC-owned ключа в
+  Debian-топологии НЕ unlink'ает артефакт: вместо этого атомарно
+  сохраняется канонический header-only `zzzz-fic.cfg` (только строка
+  `# Managed by FIC. Do not edit.`). Это устраняет race между удалением
+  файла и будущим пересозданием, исключает corner-case'ы компенсации при
+  concurrent drift (артефакт всегда остаётся обычным файлом, owned FIC) и
+  сохраняет stable ownership-доказательство; header-only файл инертен для
+  update-grub. Отсутствующий артефакт (внешне удалённый) по-прежнему
+  легитимное освобождённое состояние (`NothingToDo` после пересборки);
 * typed probe managed-пути — отсутствие артефакта (ENOENT) — легитимное
   освобождённое состояние, но symlink/каталог/FIFO и другой не-regular
   артефакт, занимающий managed-путь, — это `Conflict` fail closed без
@@ -609,7 +631,8 @@ Rollback семантика (обе топологии):
   `NothingToDo` (инвариант crash-after-source-rollback);
 * ключ присутствует с другим значением — `Conflict`, источник не
   изменяется, пересборка не запускается;
-* key == appliedValue — ключ удаляется (опустевший артефакт удаляется),
+* key == appliedValue — ключ удаляется (опустевший артефакт остаётся как
+  канонический header-only `zzzz-fic.cfg`, без unlink),
   удаление публикуется атомарной CAS-записью против захваченного
   pre-rollback состояния и доказывается после записи; только ПОСЛЕ
   успешной пересборки rollback считается успешным;

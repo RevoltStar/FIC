@@ -250,6 +250,14 @@ void testGrubManagedBlockParser() {
         {"shell expression", begin + "GRUB_TIMEOUT=$(reboot)\n" + end},
         {"comment inside block", begin + "# note\n" + end},
         {"empty line inside block", begin + "\n" + end},
+        {"whitespace around equals",
+             begin + "GRUB_TIMEOUT = \"0\"\n" + end},
+        {"leading whitespace in block",
+             begin + "  GRUB_TIMEOUT=\"0\"\n" + end},
+        {"trailing whitespace after value",
+             begin + "GRUB_TIMEOUT=\"0\"  \n" + end},
+        {"inline comment after value",
+             begin + "GRUB_TIMEOUT=\"0\" # note\n" + end},
         {"foreign FIC-like malformed marker",
              "#FIC_GRUB_BLOCK_BEGIN version=1\n"},
         {"foreign FIC-like END", "x # FIC_GRUB_BLOCK_END\n"},
@@ -278,6 +286,33 @@ void testGrubManagedBlockParser() {
             removeGrubManagedBlockValue(set.content, "GRUB_TIMEOUT");
         require(remove.ok && remove.content == "GRUB_TIMEOUT=5\n",
                 "last key removal must drop the whole block byte-exact");
+    }
+    // Canonical round trip: the rendered block reparses to the same entries
+    // and a canonical rewrite stays byte-stable (strict grammar accepts
+    // exactly what FIC renders).
+    {
+        const GrubBlockMutationResult set = setGrubManagedBlockValue(
+            "FOO=bar\n", "GRUB_CMDLINE_LINUX", "quiet \"x\" $y `z` \\q");
+        require(set.ok, "escaped canonical set failed");
+        const GrubBlockParseResult parse = parseGrubManagedBlock(set.content);
+        require(parse.ok && parse.view.present &&
+                    parse.view.entries.size() == 1 &&
+                    parse.view.entries[0].first == "GRUB_CMDLINE_LINUX" &&
+                    parse.view.entries[0].second ==
+                        "quiet \"x\" $y `z` \\q",
+                "escaped value did not survive render->parse round trip");
+        const GrubBlockMutationResult set2 =
+            setGrubManagedBlockValue(set.content, "GRUB_TIMEOUT", "0");
+        require(set2.ok, "second canonical set failed");
+        const GrubBlockParseResult parse2 =
+            parseGrubManagedBlock(set2.content);
+        require(parse2.ok && parse2.view.entries.size() == 2 &&
+                    parse2.view.entries[1].first == "GRUB_TIMEOUT",
+                "canonical rewrite must stay parseable");
+        const GrubBlockMutationResult set3 = setGrubManagedBlockValue(
+            set2.content, "GRUB_TIMEOUT", "0");
+        require(set3.ok && set3.content == set2.content,
+                "idempotent canonical set must be byte-stable");
     }
     // Byte-exact foreign round trips around the FIC-owned boundary separator:
     // foreign content without a trailing newline gains exactly one FIC-owned
@@ -885,6 +920,97 @@ void testBaseDefaultsValidation(const fs::path& root) {
                     readFile(managed) == managedContent,
                 "unsafe base defaults must block even an idempotent apply");
     }
+
+    // Fix #1 regression: the whole grub.d topology is proven before the
+    // rebuild — a foreign *.cfg sorted after zzzz-fic.cfg would override FIC
+    // values in update-grub's lexicographic sourcing order.
+    {
+        const fs::path directory = root / "base-topology/etc/default/grub.d";
+        fs::create_directories(directory);
+        const fs::path base = root / "base-topology/etc/default/grub";
+        const fs::path managed = directory / "zzzz-fic.cfg";
+        writeFile(base, "GRUB_TIMEOUT=3\n");
+        writeFile(directory / "zzzzz-late.cfg", "GRUB_TIMEOUT=99\n");
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(!result.ok && calls == 0 && !fs::exists(managed),
+                "a late foreign drop-in must block the owned apply rebuild");
+    }
+
+    // A symlinked foreign drop-in in grub.d must fail the rebuild inputs.
+    {
+        const fs::path directory = root / "base-topo-link/etc/default/grub.d";
+        fs::create_directories(directory);
+        const fs::path base = root / "base-topo-link/etc/default/grub";
+        const fs::path managed = directory / "zzzz-fic.cfg";
+        writeFile(base, "GRUB_TIMEOUT=3\n");
+        writeFile(root / "base-topo-link/target.cfg", "GRUB_DEFAULT=0\n");
+        fs::create_symlink(root / "base-topo-link/target.cfg",
+                           directory / "40-foreign.cfg");
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(!result.ok && calls == 0 && !fs::exists(managed),
+                "a symlinked foreign drop-in must fail the rebuild inputs");
+    }
+
+    // A missing FIC drop-in stays legitimate: only the directory chain and
+    // foreign drop-ins are proven; the owned apply then creates the artifact.
+    {
+        const fs::path directory = root / "base-topo-missing/etc/default/grub.d";
+        fs::create_directories(directory);
+        const fs::path base = root / "base-topo-missing/etc/default/grub";
+        writeFile(directory / "10-vendor.cfg", "GRUB_DEFAULT=0\n");
+        const fs::path managed = directory / "zzzz-fic.cfg";
+        writeFile(base, "GRUB_TIMEOUT=3\n");
+        size_t calls = 0;
+        const GrubOperationResult result = ensureManagedGrubDropInValue(
+            managedTestOptions(managed, base), "GRUB_TIMEOUT", "10",
+            countingRebuildRunner(calls));
+        require(result.ok && calls == 1 &&
+                    readFile(managed) == managedContent,
+                "a missing managed drop-in must not block the owned apply");
+    }
+}
+
+// Fix #4 regression: the ALT idempotent apply must re-prove the loaded
+// snapshot before the mandatory rebuild; a concurrent external replacement
+// after load() fails closed with the external bytes preserved.
+void testAltIdempotentReproofRace(const fs::path& root) {
+    const fs::path directory = root / "alt-reproof/etc/sysconfig";
+    fs::create_directories(directory);
+    const fs::path defaults = directory / "grub2";
+    writeFile(
+        defaults,
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"10\"\n"
+        "# FIC_GRUB_BLOCK_END\n");
+    const std::string external = "EXTERNAL=1\n";
+    setGrubPostLoadMutationHookForTests(
+        [&defaults, &external](const std::string&) {
+            writeFile(defaults, external);
+        });
+    std::size_t rebuildCalls = 0;
+    const GrubCommandRunner runner =
+        [&rebuildCalls](const std::string&, const std::vector<std::string>&,
+                        const ProcessOptions&) {
+            ++rebuildCalls;
+            return successfulProcess();
+        };
+    GrubConfiguration configuration(testOptions(defaults), runner);
+    std::string error;
+    require(configuration.load(error), error);
+    const GrubOperationResult result =
+        configuration.ensureManagedValue("GRUB_TIMEOUT", "10");
+    require(!result.ok && rebuildCalls == 0,
+            "a stale idempotent ALT snapshot must fail before the rebuild");
+    require(readFile(defaults) == external,
+            "external bytes must survive the failed idempotent apply");
 }
 
 void testManagedConcurrentDriftCompensation(const fs::path& root) {
@@ -1097,6 +1223,7 @@ int main() {
         testManagedDropInOrdering(root);
         testManagedRebuildFailureCompensation(root);
         testBaseDefaultsValidation(root);
+        testAltIdempotentReproofRace(root);
         testManagedConcurrentDriftCompensation(root);
         testConcretePolicyContracts(resolver);
     } catch (const std::exception& error) {

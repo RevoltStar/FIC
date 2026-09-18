@@ -231,6 +231,15 @@ private:
 void setGrubSharedPreWriteHookForTests(std::function<void()> hook);
 void fireGrubSharedPreWriteHookForTests();
 
+// Test-only deterministic seam for post-load external mutation coverage: when
+// set, the hook receives the currently loaded shared-defaults path and runs
+// immediately before the idempotent-apply ownership re-proof, simulating an
+// external writer racing between load() and the re-proof. Fired at most once
+// per set value (self-clearing). Production code must never set or invoke it.
+void setGrubPostLoadMutationHookForTests(
+    std::function<void(const std::string&)> hook);
+void fireGrubPostLoadMutationHookForTests(const std::string& path);
+
 // Validate-only safety proof for the platform base defaults file (Debian/
 // Ubuntu: /etc/default/grub). Never mutates anything. A missing file is
 // acceptable; an existing file must be a regular non-symlink file of a

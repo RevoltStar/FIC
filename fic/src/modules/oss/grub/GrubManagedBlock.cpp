@@ -26,6 +26,16 @@ std::string lineContent(const std::string& physicalLine) {
     return line;
 }
 
+// Strips only the physical CR/LF line boundary: canonical-strict grammar
+// of the block body must see any trailing whitespace and fail closed.
+std::string physicalLineContent(const std::string& physicalLine) {
+    std::string line = physicalLine;
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+    }
+    return line;
+}
+
 std::vector<std::string> physicalLines(const std::string& content) {
     std::vector<std::string> lines;
     size_t start = 0;
@@ -47,6 +57,10 @@ bool mentionsMarkerKeyword(const std::string& line) {
 }
 
 // Parses one canonical block body line: KEY="value" with a whitelisted key.
+// Grammar is canonical-strict: the line must be EXACTLY the serialization
+// format FIC renders — no whitespace around '=', no leading/trailing
+// whitespace, no inline comments, no unquoted RHS. Anything deviating from
+// the canonical form is fail-closed (the block was edited externally).
 bool parseBlockAssignment(const std::string& line,
                           std::pair<std::string, std::string>& entry,
                           std::string& error) {
@@ -56,19 +70,23 @@ bool parseBlockAssignment(const std::string& line,
                 "canonical assignment: " + line;
         return false;
     }
-    const std::string key = trimCopy(line.substr(0, equals));
-    if (trimCopy(line.substr(0, equals)) != key) {
-        error = "недопустимые пробелы вокруг имени ключа внутри FIC GRUB "
-                "managed block: " + line;
-        return false;
-    }
+    // Canonical key: no leading/trailing whitespace allowed.
+    const std::string key = line.substr(0, equals);
     if (!isGrubManagedKey(key)) {
         error = "недопустимый ключ внутри FIC GRUB managed block: " + key;
         return false;
     }
-    const std::string literal = trimCopy(line.substr(equals + 1));
+    // Canonical RHS: starts immediately after '=' and must be exactly
+    // key + "=" + encodeGrubManagedValue(decoded) — no surrounding
+    // whitespace, no inline comments after the closing quote.
+    const std::string literal = line.substr(equals + 1);
     std::string value;
     if (!decodeGrubManagedValue(literal, value, error)) {
+        return false;
+    }
+    if (line != key + "=" + encodeGrubManagedValue(value)) {
+        error = "неканоническое присваивание внутри FIC GRUB managed block: " +
+            line;
         return false;
     }
     entry = {key, std::move(value)};
@@ -181,7 +199,10 @@ GrubBlockParseResult parseGrubManagedBlock(const std::string& content) {
     if (beginIndex != std::string::npos) {
         result.view.present = true;
         for (std::size_t index = beginIndex + 1; index < endIndex; ++index) {
-            const std::string line = trimCopy(lineContent(lines[index]));
+            // Canonical-strict: the block body line is passed with only the
+            // physical CR/LF boundary stripped; parseBlockAssignment
+            // rejects any leading/trailing whitespace itself.
+            const std::string line = physicalLineContent(lines[index]);
             if (line.empty()) {
                 result.error = "пустая строка внутри FIC GRUB managed block";
                 return result;

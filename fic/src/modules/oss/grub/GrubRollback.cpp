@@ -85,90 +85,17 @@ GrubRollbackResult nothingToDoAfterRebuild(
     return result;
 }
 
-bool regularFileExists(const std::filesystem::path& path) {
-    return probeGrubTargetFile(path).kind == GrubTargetKind::Regular;
-}
-
-// Removes the FIC-owned drop-in after its last setting is gone: safe unlink
-// of a regular non-symlink file plus a parent directory durability barrier.
-bool removeOwnedManagedFile(const std::filesystem::path& path,
-                            std::string& error) {
-    struct stat status {};
-    if (::lstat(path.c_str(), &status) != 0) {
-        error = "Не удалось проверить managed drop-in " + path.string() +
-            ": " + std::strerror(errno);
-        return false;
-    }
-    if (S_ISLNK(status.st_mode) || !S_ISREG(status.st_mode)) {
-        error = "Managed drop-in " + path.string() +
-            " не является обычным файлом; удаление отклонено";
-        return false;
-    }
-    if (::unlink(path.c_str()) != 0) {
-        error = "Не удалось удалить managed drop-in " + path.string() +
-            ": " + std::strerror(errno);
-        return false;
-    }
-    const int descriptor = ::open(
-        path.parent_path().c_str(),
-        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-    if (descriptor < 0) {
-        error = "Не удалось открыть каталог " + path.parent_path().string() +
-            " после удаления managed drop-in: " + std::strerror(errno);
-        return false;
-    }
-    const bool synced = ::fsync(descriptor) == 0;
-    const int savedErrno = errno;
-    ::close(descriptor);
-    if (!synced) {
-        error = "Не удалось подтвердить durability удаления " + path.string() +
-            ": " + std::strerror(savedErrno);
-        return false;
-    }
-    return true;
-}
-
 
 // Conditional compensation after a failed rebuild: restore the exact
 // pre-rollback managed state only while the target still IS the state FIC
-// installed (or is still absent after the empty-artifact removal).
+// installed (the canonical header-only empty drop-in is never unlinked, so
+// there is no artifact-removal case to compensate). When the installed state
+// is not proven (unwritten artifact), compensation is impossible.
 void compensateOwnedDropInAfterRebuildFailure(
     const std::filesystem::path& managedPath,
     const AtomicTargetState& before,
-    bool artifactRemoved,
     const std::optional<AtomicTargetState>& installedState,
     GrubRollbackResult& result) {
-    if (artifactRemoved) {
-        struct stat status {};
-        if (::lstat(managedPath.c_str(), &status) == 0) {
-            result.diagnostics.push_back(
-                "Managed drop-in появился после удаления (concurrent "
-                "drift): внешнее состояние сохранено, компенсация не "
-                "выполнялась");
-            return;
-        }
-        AtomicWriteOptions writeOptions;
-        writeOptions.createIfMissing = true;
-        writeOptions.exclusiveCreate = true;
-        writeOptions.rejectSymlink = true;
-        writeOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
-        writeOptions.fileMode = before.mode;
-        writeOptions.fileOwner = before.owner;
-        writeOptions.fileGroup = before.group;
-        std::string compensationError;
-        if (!AtomicFileWriter::write(
-                managedPath.string(), before.content, writeOptions,
-                &compensationError)) {
-            result.diagnostics.push_back(
-                "Не удалось компенсирующе восстановить managed drop-in: " +
-                compensationError);
-            return;
-        }
-        result.diagnostics.push_back(
-            "Managed drop-in восстановлен в pre-rollback состоянии; journal "
-            "остаётся активным");
-        return;
-    }
     if (!installedState) {
         result.diagnostics.push_back(
             "Не удалось компенсирующе восстановить managed drop-in: "
@@ -289,23 +216,18 @@ GrubRollbackResult undoOwnedDropIn(
         return failed("Managed drop-in изменился сразу после записи: " + error);
     }
 
-    const bool emptyNow = configuration.entries().empty();
-    if (emptyNow) {
-        // Do not leave a meaningless header-only artifact behind.
-        std::string removeError;
-        if (!removeOwnedManagedFile(managedPath, removeError)) {
-            return failed("Managed drop-in стал пустым, но не был удалён: " +
-                          removeError);
-        }
-    }
+    // The canonical empty drop-in (header-only zzzz-fic.cfg) is intentionally
+    // RETAINED: a last-key removal never unlinks the FIC-owned artifact.
+    // Keeping a stable canonical file removes the unlink/recreate race and
+    // the concurrent-drift compensation corner cases; the header-only file
+    // is inert for update-grub and stays FIC-owned for future applies.
 
     if (!rebuildGrub(options, rebuildExecutable, error)) {
         GrubRollbackResult result;
         result.message = "FIC-owned значение удалено, но обязательная "
             "пересборка grub.cfg завершилась ошибкой: " + error;
         compensateOwnedDropInAfterRebuildFailure(
-            managedPath, before, emptyNow,
-            configuration.installedState(), result);
+            managedPath, before, configuration.installedState(), result);
         std::string compensationRebuildError;
         if (!rebuildGrub(options, rebuildExecutable, compensationRebuildError)) {
             result.diagnostics.push_back(

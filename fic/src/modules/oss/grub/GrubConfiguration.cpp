@@ -64,6 +64,27 @@ void fireGrubSharedPreWriteHookForTests() {
     }
 }
 
+// Deterministic TOCTOU seam for tests: the hook receives the currently
+// loaded snapshot path and replaces the file on disk. Cleared after firing,
+// production never installs it.
+static std::function<void(const std::string&)>& grubPostLoadMutationHook() {
+    static std::function<void(const std::string&)> hook;
+    return hook;
+}
+
+void setGrubPostLoadMutationHookForTests(
+    std::function<void(const std::string&)> hook) {
+    grubPostLoadMutationHook() = std::move(hook);
+}
+
+void fireGrubPostLoadMutationHookForTests(const std::string& path) {
+    std::function<void(const std::string&)> hook;
+    std::swap(hook, grubPostLoadMutationHook());
+    if (hook) {
+        hook(path);
+    }
+}
+
 std::mutex& grubBackendMutex() {
     static std::mutex mutex;
     return mutex;
@@ -388,6 +409,24 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     if (alreadySet) {
         // Idempotent path: no source mutation, but the rebuild is still
         // mandatory because grub.cfg is a derived artifact.
+        //
+        // Re-prove FIC ownership of the shared file against the SAME snapshot
+        // the block was parsed from before publishing anything derived from
+        // it: if an external writer replaced the file after load(), the
+        // snapshot is stale and the rebuild must not consume FIC-owned data
+        // (fail closed, external bytes preserved).
+        std::string proofError;
+        // Deterministic test seam: simulates an external writer racing
+        // between load() and this re-proof (production never sets the hook).
+        fireGrubPostLoadMutationHookForTests(
+            options_.defaultsPath.string());
+        if (!AtomicFileWriter::targetStateMatches(
+                options_.defaultsPath.string(), loadedState_, &proofError)) {
+            result.message =
+                "FIC managed block в " + options_.defaultsPath.string() +
+                " изменился внешне после загрузки: " + proofError;
+            return result;
+        }
         if (!rebuild(error)) {
             result.message = error;
             result.sourceState = GrubSourceMutationState::Unchanged;
@@ -647,15 +686,36 @@ bool validateGrubSourceFile(const std::filesystem::path& path,
     return validateGrubDefaultsDirectoryChain(path, enforceOwnership, error);
 }
 
+bool validateGrubDropInTopology(
+    const GrubManagedConfigurationOptions& options, std::string& error) {
+    if (options.managedPath.empty()) {
+        error = "Managed GRUB drop-in путь не задан";
+        return false;
+    }
+    // Delegates to GrubManagedConfig::validateTopology: safe directory chain,
+    // every foreign *.cfg a regular non-symlink safe file, none sorted after
+    // zzzz-fic.cfg (update-grub sources drop-ins in lexicographic order).
+    // The FIC-managed zzzz-fic.cfg itself MAY be absent: a missing managed
+    // artifact is a legitimate released state.
+    return GrubManagedConfig::validateTopology(
+        {options.managedPath, options.enforceOwnership}, error);
+}
+
 bool validateGrubRebuildInputs(const GrubManagedConfigurationOptions& options,
                                std::string& error) {
     // Topology-aware: every platform input the rebuild command reads or
     // sources is proven safe right before the rebuild. Debian/Ubuntu
-    // validates the base defaults; ALT validates the shared defaults file.
-    if (!options.baseDefaultsPath.empty() &&
-        !validateBaseGrubDefaults(
-            options.baseDefaultsPath, options.enforceOwnership, error)) {
-        return false;
+    // validates the base defaults AND the whole /etc/default/grub.d/*.cfg
+    // topology the rebuild sources; ALT validates the shared defaults file.
+    if (!options.baseDefaultsPath.empty()) {
+        if (!validateBaseGrubDefaults(
+                options.baseDefaultsPath, options.enforceOwnership, error)) {
+            return false;
+        }
+        if (!options.managedPath.empty() &&
+            !validateGrubDropInTopology(options, error)) {
+            return false;
+        }
     }
     if (!options.sharedDefaultsPath.empty() &&
         !validateGrubSourceFile(

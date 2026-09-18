@@ -596,6 +596,38 @@ void testAltRollbackConflict(const fs::path& root,
 // (release done) but the record is still Applied -> recovery through
 // apply() must be release-only + a single rebuild, and the record must be
 // resolved as RolledBack.
+// Fix #4 regression: the ALT idempotent apply path must re-prove the loaded
+// snapshot (targetStateMatches) before the mandatory rebuild; an external
+// writer racing after load() must fail the apply closed with the external
+// bytes preserved and no journal record.
+void testAltIdempotentApplyStaleSnapshot(const fs::path& root,
+                                         const fs::path& rebuildExecutable) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalOverride journalOverride(
+        root / "alt-idempotent-race" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-idempotent-race/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    require(policy.apply(), "initial apply must succeed");
+    require(activeCount(policy.ref()) == 1,
+            "the applied mutation must stay active for the idempotent case");
+    const std::string external = "EXTERNAL=1\n";
+    setGrubPostLoadMutationHookForTests(
+        [&shared, &external](const std::string&) {
+            writeFile(shared, external);
+        });
+    require(!policy.apply(),
+            "idempotent apply after external replacement must fail closed");
+    require(readFile(shared) == external,
+            "the external write must survive the failed idempotent apply "
+            "byte-exact");
+    require(activeCount(policy.ref()) == 1,
+            "the idempotent ownership proof must not resolve the record");
+}
+
 void testAltCrashAfterSourceRollback(const fs::path& root,
                                      const fs::path& rebuildExecutable) {
     JournalOverride journalOverride(
@@ -754,7 +786,8 @@ void testDebianRollbackLifecycle(const fs::path& root,
     const fs::path baseTemplate = root / "deb-base/grub";
     writeFile(baseTemplate, "GRUB_TIMEOUT=5\n");
 
-    // Success: the last FIC key is removed and the artifact deleted.
+    // Success: the last FIC key is removed and the canonical header-only
+    // empty drop-in is retained (no unlink race).
     {
         JournalOverride journalOverride(
             root / "deb-rollback-success" / "data" / "mutation-journal.json");
@@ -784,8 +817,11 @@ void testDebianRollbackLifecycle(const fs::path& root,
             rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
         require(outcome.ok,
                 "Debian rollback of the last FIC key must succeed");
-        require(!fs::exists(managed),
-                "the empty managed drop-in must be removed");
+        require(fs::exists(managed),
+                "the canonical empty drop-in must be retained");
+        require(readFile(managed) == "# Managed by FIC. Do not edit.\n\n",
+                "the retained empty drop-in must be the canonical header-only "
+                "form");
         require(rebuilds == 1,
                 "Debian rollback must run exactly one mandatory rebuild");
     }
@@ -1372,6 +1408,7 @@ int main() {
         testDebianReconciliationUnsafeBaseDefaults(root, rebuildExecutable);
         testAltApplyStaleReadCasRace(root, rebuildExecutable);
         testAltRollbackStaleReadCasRace(root, rebuildExecutable);
+        testAltIdempotentApplyStaleSnapshot(root, rebuildExecutable);
         testUnsafeManagedArtifactsAreNotMissing(root, rebuildExecutable);
         testReconciliationDriftAfterRebuild(root);
     } catch (const std::exception& exception) {
