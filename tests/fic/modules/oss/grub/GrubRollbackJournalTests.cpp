@@ -1993,6 +1993,504 @@ void testDebianInitiallyMissingCompensationPendingRebuild(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Provenance-safe repair lifecycle: a repair operation must never destroy
+// pre-existing active provenance. Fresh Prepared and reused active
+// provenance are different lifecycle cases.
+
+// T1: existing Applied + same-value non-EOF repair SUCCEEDS — the SAME
+// record id is reused (Applied → Prepared → Applied), never duplicated
+// and never discarded; the foreign tail survives before the relocated
+// block.
+void testExistingAppliedSameValueRepairSucceeds(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const fs::path testCase = root / "alt-repair-applied-success";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    writeFile(shared, "GRUB_TIMEOUT=5\n");
+    rollback::MutationId appliedId = 0;
+    {
+        JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        require(policy.apply(), "initial apply must succeed");
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->activeRecords(policy.ref());
+        require(records.size() == 1 &&
+                    records[0].status == rollback::MutationStatus::Applied,
+                "initial apply must leave exactly one Applied record");
+        appliedId = records[0].id;
+    }
+    const std::string nonEof =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n"
+        "GRUB_TIMEOUT=5\n";
+    writeFile(shared, nonEof);
+    {
+        JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        setGrubSharedPreWriteHookForTests([&policy, appliedId]() {
+            const std::vector<rollback::MutationRecord> records =
+                testJournal()->activeRecords(policy.ref());
+            require(records.size() == 1 && records[0].id == appliedId &&
+                        records[0].status ==
+                            rollback::MutationStatus::Prepared,
+                    "the repair must reuse the SAME active record as "
+                    "Prepared before the relocation write");
+        });
+        struct ClearHook {
+            ~ClearHook() { setGrubSharedPreWriteHookForTests({}); }
+        } clearHook;
+        require(policy.apply(),
+                "same-value repair of a non-EOF owned block must succeed");
+    }
+    require(
+        readFile(shared) ==
+            "GRUB_TIMEOUT=5\n"
+            "\n"
+            "GRUB_TIMEOUT=5\n"
+            "\n"
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"0\"\n"
+            "# FIC_GRUB_BLOCK_END\n",
+        "the relocation must preserve the foreign bytes in order and "
+        "place the block at EOF");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 1 && records[0].id == appliedId &&
+                records[0].status == rollback::MutationStatus::Applied,
+            "the SAME MutationId must survive Applied → Prepared → "
+            "Applied with no second record");
+    const auto* undo = std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+        &records[0].undo.payload);
+    require(undo != nullptr && undo->key == "GRUB_TIMEOUT" &&
+                undo->appliedValue == "0",
+            "the reused record payload must stay intact");
+}
+
+// T2: existing Applied + relocation pre-write CAS failure — the existing
+// provenance must NOT be deleted: the record is restored to Applied and
+// the racing external bytes survive byte-exact.
+void testExistingAppliedRelocationCasFailureRestoresProvenance(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const fs::path testCase = root / "alt-repair-cas-failure";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    writeFile(shared, "GRUB_TIMEOUT=5\n");
+    rollback::MutationId appliedId = 0;
+    {
+        JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        require(policy.apply(), "initial apply must succeed");
+        appliedId = testJournal()->activeRecords(policy.ref())[0].id;
+    }
+    const std::string nonEof =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n"
+        "GRUB_TIMEOUT=5\n";
+    writeFile(shared, nonEof);
+    const std::string external = nonEof + "EXTERNAL=1\n";
+    {
+        JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        setGrubSharedPreWriteHookForTests(
+            [&shared, &external] { writeFile(shared, external); });
+        struct ClearHook {
+            ~ClearHook() { setGrubSharedPreWriteHookForTests({}); }
+        } clearHook;
+        require(!policy.apply(),
+                "the CAS-race repair must fail the apply");
+    }
+    require(readFile(shared) == external,
+            "the racing external write must survive byte-exact");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 1 && records[0].id == appliedId &&
+                records[0].status == rollback::MutationStatus::Applied,
+            "a failed relocation must restore the pre-repair Applied "
+            "record, never discard it");
+}
+
+// T3 (main regression): existing Applied + relocation installed + primary
+// rebuild failure + SUCCESSFUL full compensation — the record must be
+// restored to Applied, never discarded (previously the provenance was
+// lost by the generic discard path).
+void testExistingAppliedFullCompensationRestoresApplied(
+    const fs::path& root) {
+    const fs::path testCase = root / "alt-repair-compensated";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const fs::path okScript = root / "bin/update-grub-repair-ok";
+    seedRebuildExecutable(root, okScript, "#!/bin/sh\nexit 0\n");
+    // Stateful rebuild script: invocation 2 (the primary rebuild after the
+    // relocation write) fails; the reconciliation rebuild (1) and the
+    // compensating rebuild (3) succeed.
+    const fs::path repairScript = root / "bin/update-grub-repair-comp";
+    const fs::path counter = testCase / "rebuild-count";
+    seedRebuildExecutable(
+        root, repairScript,
+        "#!/bin/sh\n"
+        "C=\"" + counter.string() + "\"\n"
+        "N=$(cat \"$C\" 2>/dev/null || echo 0)\n"
+        "N=$((N+1))\n"
+        "echo \"$N\" > \"$C\"\n"
+        "[ \"$N\" -ne 2 ]\n");
+    const auto okResolver = makeResolver(okScript);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    writeFile(shared, "GRUB_TIMEOUT=5\n");
+    rollback::MutationId appliedId = 0;
+    {
+        JournalGrubPolicy policy(altConfig(shared), okResolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        require(policy.apply(), "initial apply must succeed");
+        appliedId = testJournal()->activeRecords(policy.ref())[0].id;
+    }
+    const std::string nonEof =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n"
+        "GRUB_TIMEOUT=5\n";
+    writeFile(shared, nonEof);
+    const auto repairResolver = makeResolver(repairScript);
+    {
+        JournalGrubPolicy policy(altConfig(shared), repairResolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        require(!policy.apply(),
+                "primary rebuild failure must fail the repair");
+    }
+    require(readFile(shared) == nonEof,
+            "full compensation must restore the exact pre-repair "
+            "non-EOF source");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 1 && records[0].id == appliedId &&
+                records[0].status == rollback::MutationStatus::Applied,
+            "a fully compensated repair must restore the pre-repair "
+            "Applied record instead of discarding it");
+}
+
+// T4: previous Prepared survives a fully compensated repair — restored to
+// Prepared, not promoted and not discarded.
+void testExistingPreparedSurvivesCompensatedRepair(const fs::path& root) {
+    const fs::path testCase = root / "alt-repair-prepared-compensated";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const fs::path okScript = root / "bin/update-grub-prepared-ok";
+    seedRebuildExecutable(root, okScript, "#!/bin/sh\nexit 0\n");
+    const fs::path repairScript = root / "bin/update-grub-prepared-comp";
+    const fs::path counter = testCase / "rebuild-count";
+    seedRebuildExecutable(
+        root, repairScript,
+        "#!/bin/sh\n"
+        "C=\"" + counter.string() + "\"\n"
+        "N=$(cat \"$C\" 2>/dev/null || echo 0)\n"
+        "N=$((N+1))\n"
+        "echo \"$N\" > \"$C\"\n"
+        "[ \"$N\" -ne 2 ]\n");
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    const auto repairResolver = makeResolver(repairScript);
+    JournalGrubPolicy policy(altConfig(shared), repairResolver,
+                             "GRUB_TIMEOUT", "grub_test_policy");
+    rollback::MutationId id = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+        policy.ref(), "GRUB_TIMEOUT",
+        rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "0"});
+    require(testJournal()->prepareMutation(prepared, id, error), error);
+    const std::string nonEof =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n"
+        "GRUB_TIMEOUT=5\n";
+    writeFile(shared, nonEof);
+    require(!policy.apply(),
+            "the compensated repair must fail the apply");
+    require(readFile(shared) == nonEof,
+            "full compensation must restore the exact pre-repair source");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 1 && records[0].id == id &&
+                records[0].status == rollback::MutationStatus::Prepared,
+            "previous Prepared must survive a fully compensated repair");
+}
+
+// T5: previous RollbackFailed survives a fully compensated repair — the
+// pre-repair status AND the previous error message are restored.
+void testExistingRollbackFailedSurvivesCompensatedRepair(
+    const fs::path& root) {
+    const fs::path testCase = root / "alt-repair-rollbackfailed";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const fs::path repairScript = root / "bin/update-grub-rbfail-comp";
+    const fs::path counter = testCase / "rebuild-count";
+    seedRebuildExecutable(
+        root, repairScript,
+        "#!/bin/sh\n"
+        "C=\"" + counter.string() + "\"\n"
+        "N=$(cat \"$C\" 2>/dev/null || echo 0)\n"
+        "N=$((N+1))\n"
+        "echo \"$N\" > \"$C\"\n"
+        "[ \"$N\" -ne 2 ]\n");
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    const auto repairResolver = makeResolver(repairScript);
+    JournalGrubPolicy policy(altConfig(shared), repairResolver,
+                             "GRUB_TIMEOUT", "grub_test_policy");
+    rollback::MutationId id = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+        policy.ref(), "GRUB_TIMEOUT",
+        rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "0"});
+    require(testJournal()->prepareMutation(prepared, id, error), error);
+    const std::string previousError = "rollback failed earlier";
+    require(testJournal()->setStatusWithMessage(
+                id, rollback::MutationStatus::RollbackFailed, previousError,
+                error),
+            error);
+    const std::string nonEof =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n"
+        "GRUB_TIMEOUT=5\n";
+    writeFile(shared, nonEof);
+    require(!policy.apply(),
+            "the compensated repair must fail the apply");
+    require(readFile(shared) == nonEof,
+            "full compensation must restore the exact pre-repair source");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 1 && records[0].id == id &&
+                records[0].status ==
+                    rollback::MutationStatus::RollbackFailed &&
+                records[0].error == previousError,
+            "previous RollbackFailed must be restored with its error "
+            "message after a fully compensated repair");
+}
+
+// T6: pending repair (CompensatedPendingRebuild) must stay Prepared — NOT
+// restored to the old Applied status and not discarded; the retry
+// recovery finishes with exactly one Applied record for the SAME id.
+void testExistingAppliedPendingRepairStaysPrepared(const fs::path& root) {
+    const fs::path testCase = root / "alt-repair-pending";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const fs::path okScript = root / "bin/update-grub-pending-ok";
+    seedRebuildExecutable(root, okScript, "#!/bin/sh\nexit 0\n");
+    // Invocation 1 (the reconciliation rebuild) succeeds; invocations 2
+    // (the primary rebuild after relocation) and 3 (the compensating
+    // rebuild) fail → CompensatedPendingRebuild.
+    const fs::path repairScript = root / "bin/update-grub-pending-fail";
+    const fs::path counter = testCase / "rebuild-count";
+    seedRebuildExecutable(
+        root, repairScript,
+        "#!/bin/sh\n"
+        "C=\"" + counter.string() + "\"\n"
+        "N=$(cat \"$C\" 2>/dev/null || echo 0)\n"
+        "N=$((N+1))\n"
+        "echo \"$N\" > \"$C\"\n"
+        "[ \"$N\" -lt 2 ]\n");
+    const auto okResolver = makeResolver(okScript);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    writeFile(shared, "GRUB_TIMEOUT=5\n");
+    rollback::MutationId appliedId = 0;
+    {
+        JournalGrubPolicy policy(altConfig(shared), okResolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        require(policy.apply(), "initial apply must succeed");
+        appliedId = testJournal()->activeRecords(policy.ref())[0].id;
+    }
+    const std::string nonEof =
+        "GRUB_TIMEOUT=5\n"
+        "\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n"
+        "GRUB_TIMEOUT=5\n";
+    writeFile(shared, nonEof);
+    const auto repairResolver = makeResolver(repairScript);
+    {
+        JournalGrubPolicy policy(altConfig(shared), repairResolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        require(!policy.apply(), "the pending repair must fail the apply");
+    }
+    require(readFile(shared) == nonEof,
+            "the source compensation must restore the pre-repair source");
+    {
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->records();
+        require(records.size() == 1 && records[0].id == appliedId &&
+                    records[0].status ==
+                        rollback::MutationStatus::Prepared,
+                "CompensatedPendingRebuild must keep the reused record "
+                "Prepared (recovery is still required)");
+    }
+    {
+        JournalGrubPolicy policy(altConfig(shared), okResolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        require(policy.apply(), "the recovery retry must succeed");
+    }
+    require(
+        readFile(shared) ==
+            "GRUB_TIMEOUT=5\n"
+            "\n"
+            "GRUB_TIMEOUT=5\n"
+            "\n"
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"0\"\n"
+            "# FIC_GRUB_BLOCK_END\n",
+        "the recovery retry must complete the relocation to EOF");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 1 && records[0].id == appliedId &&
+                records[0].status == rollback::MutationStatus::Applied,
+            "the retry must finish with exactly one Applied record for "
+            "the same logical provenance");
+}
+
+// T7: Ineffective Prepared is NOT promoted to Applied by the
+// reconciliation — the record must still be Prepared immediately before
+// the relocation write; only the successful repair (relocation + rebuild
+// + fresh EOF proof) commits Applied.
+void testIneffectivePreparedNotPromotedBeforeRelocation(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const fs::path testCase = root / "alt-repair-no-promotion";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    rollback::MutationId id = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+        policy.ref(), "GRUB_TIMEOUT",
+        rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "0"});
+    require(testJournal()->prepareMutation(prepared, id, error), error);
+    writeFile(shared,
+              "GRUB_TIMEOUT=5\n"
+              "\n"
+              "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+              "GRUB_TIMEOUT=\"0\"\n"
+              "# FIC_GRUB_BLOCK_END\n"
+              "GRUB_TIMEOUT=5\n");
+    setGrubSharedPreWriteHookForTests([&policy, id]() {
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->activeRecords(policy.ref());
+        require(records.size() == 1 && records[0].id == id &&
+                    records[0].status ==
+                        rollback::MutationStatus::Prepared,
+                "Ineffective Prepared must NOT be promoted to Applied "
+                "before the relocation write");
+    });
+    struct ClearHook {
+        ~ClearHook() { setGrubSharedPreWriteHookForTests({}); }
+    } clearHook;
+    require(policy.apply(), "the effective repair must succeed");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 1 && records[0].id == id &&
+                records[0].status == rollback::MutationStatus::Applied,
+            "the repair must commit Applied on the SAME record after the "
+            "fresh EOF proof");
+}
+
+// T8: Ineffective + value change releases the old ownership WITHOUT an
+// intermediate durable Applied promotion, then the fresh value mutation
+// leaves exactly one active Applied record for the new value.
+void testIneffectiveValueChangeReleasesOwnershipWithoutPromotion(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const fs::path testCase = root / "alt-repair-value-change";
+    const fs::path shared = testCase / "etc/sysconfig/grub2";
+    JournalOverride journalOverride(
+        testCase / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    rollback::MutationId oldId = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+        policy.ref(), "GRUB_TIMEOUT",
+        rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "0"});
+    require(testJournal()->prepareMutation(prepared, oldId, error), error);
+    writeFile(shared,
+              "GRUB_TIMEOUT=5\n"
+              "\n"
+              "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+              "GRUB_TIMEOUT=\"0\"\n"
+              "# FIC_GRUB_BLOCK_END\n"
+              "GRUB_TIMEOUT=5\n");
+    setPolicyConfig(root, {{"grub_test_policy", "5"}});
+    JournalGrubPolicy changed(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                              "grub_test_policy");
+    require(changed.apply(),
+            "Ineffective + value change must release the old ownership "
+            "and apply the new value");
+    require(readFile(shared) ==
+                "GRUB_TIMEOUT=5\n"
+                "\n"
+                "GRUB_TIMEOUT=5\n"
+                "\n"
+                "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                "GRUB_TIMEOUT=\"5\"\n"
+                "# FIC_GRUB_BLOCK_END\n",
+            "the old block must be released and the new value installed "
+            "at EOF");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->records();
+    require(records.size() == 2,
+            "the old record must be resolved, not rewritten");
+    const rollback::MutationRecord* oldRecord = nullptr;
+    const rollback::MutationRecord* activeApplied = nullptr;
+    for (const rollback::MutationRecord& record : records) {
+        if (record.id == oldId) {
+            oldRecord = &record;
+        } else if (record.status == rollback::MutationStatus::Applied) {
+            activeApplied = &record;
+        }
+    }
+    require(oldRecord != nullptr &&
+                oldRecord->status == rollback::MutationStatus::RolledBack,
+            "the old record must go straight to RolledBack without an "
+            "intermediate durable Applied promotion");
+    const auto* oldUndo =
+        std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &oldRecord->undo.payload);
+    require(oldUndo != nullptr && oldUndo->appliedValue == "0",
+            "the old record payload must stay untouched");
+    require(activeApplied != nullptr &&
+                activeApplied->id != oldId &&
+                testJournal()->activeRecords(prepared.policy).size() == 1,
+            "exactly one active Applied record must remain for the new "
+            "value");
+    const auto* newUndo =
+        std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &activeApplied->undo.payload);
+    require(newUndo != nullptr && newUndo->appliedValue == "5",
+            "the new record must fingerprint the new applied value");
+}
+
 int main() {
     try {
         const fs::path root = fs::temp_directory_path() /
@@ -2046,6 +2544,17 @@ int main() {
         testDebianDoubleRebuildFailureKeepsPrepared(root);
         testAltDoubleRebuildFailureKeepsPrepared(root);
         testDebianInitiallyMissingCompensationPendingRebuild(root);
+        testExistingAppliedSameValueRepairSucceeds(root, rebuildExecutable);
+        testExistingAppliedRelocationCasFailureRestoresProvenance(
+            root, rebuildExecutable);
+        testExistingAppliedFullCompensationRestoresApplied(root);
+        testExistingPreparedSurvivesCompensatedRepair(root);
+        testExistingRollbackFailedSurvivesCompensatedRepair(root);
+        testExistingAppliedPendingRepairStaysPrepared(root);
+        testIneffectivePreparedNotPromotedBeforeRelocation(
+            root, rebuildExecutable);
+        testIneffectiveValueChangeReleasesOwnershipWithoutPromotion(
+            root, rebuildExecutable);
     } catch (const std::exception& exception) {
         std::cerr << "GrubRollbackJournalTests failed: " << exception.what()
                   << std::endl;

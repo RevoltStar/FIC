@@ -614,22 +614,61 @@ Apply записывает в journal `Prepared`-запись ТОЛЬКО пр�
   если компенсирующая пересборка провалилась (или была не запущена из-за
   провала `validateGrubRebuildInputs()` перед ней), фиксируется typed
   `GrubSourceMutationState::CompensatedPendingRebuild`, а не
-  `Compensated`. Journal lifecycle matrix:
-  - failure + `Unchanged` → Prepared discard;
+  `Compensated`. Journal lifecycle matrix различает ДВА происхождения
+  Prepared-записи — FRESH PREPARED AND REUSED ACTIVE PROVENANCE ARE NOT
+  THE SAME THING:
+  - Fresh Prepared — до операции активной provenance не было, запись
+    создана именно для этой операции;
+  - Reused active provenance — до repair уже существовала активная
+    запись (`Applied` / `Prepared` / `RollbackFailed`) того же
+    logical mutation resource; repair ВРЕМЕННО переводит её в
+    `Prepared` (тот же `MutationId`, payload не переписывается),
+    запоминая pre-repair status и error только в памяти текущей
+    операции. Вторая активная запись для того же resource никогда не
+    создаётся. Матрица:
+  - failure + `Unchanged` → Fresh: Prepared discard; Reused: восстановить
+    pre-repair status и error (restore durable, payload не меняется,
+    timestamps могут обновиться);
   - failure + `Compensated` (source восстановлен И компенсирующая
-    пересборка успешна) → Prepared discard;
+    пересборка успешна) → Fresh: Prepared discard; Reused: восстановить
+    pre-repair status и error;
   - failure + `CompensatedPendingRebuild` (source восстановлен,
     компенсирующая пересборка провалилась) → Prepared ОСТАЁТСЯ
-    активным;
+    активным (recovery всё ещё требуется; pre-repair status НЕ
+    восстанавливается);
   - failure + `Installed` / `Indeterminate` → Prepared остаётся
     активным;
-  - success + `Installed` → Prepared commit Applied;
-  - success + `Unchanged` → лишний Prepared discard (defensive).
-  Семантика одинакова для обеих топологий и обеих компенсационных
-  topology Debian (существовавший drop-in / канонический header-only
-  retained drop-in). Source после этого доказанно BEFORE; повторно
-  возвращать source в Applied-состояние FIC не пытается — recovery уже
-  умеет безопасно завершить reconciliation;
+  - success + `Installed` → Prepared commit Applied (тот же
+    `MutationId` для Reused);
+  - success + `Unchanged` (defensive) → Fresh: discard; Reused:
+    восстановить pre-repair status.
+  Любая ошибка journal-коммита/discard/restore — fail closed
+  (apply == false). Restore предыдущего состояния выполняется ТОЛЬКО
+  внутри доказанно завершённой операции (система не изменена или полная
+  компенсация удалась); transient previousStatus в persistent journal не
+  пишется — крэш после перехода в `Prepared` оставляет обычную активную
+  `Prepared`-запись, которую существующая recovery-модель уже умеет
+  обрабатывать. Семантика одинакова для обеих топологий и обеих
+  компенсационных topology Debian (существовавший drop-in / канонический
+  header-only retained drop-in). Source после этого доказанно BEFORE;
+  повторно возвращать source в Applied-состояние FIC не пытается —
+  recovery уже умеет безопасно завершить reconciliation;
+* Ineffective reconciliation не выполняет promotion — `Ineffective`
+  доказывает OWNERSHIP, но НЕ Applied-compliance (блок смещён с EOF).
+  После обязательной reconciliation-пересборки и свежей пост-классификации
+  `Ineffective`:
+  - тот же desired value → активная запись сохраняется БЕЗ перехода
+    (`Prepared`/`RollbackFailed` НЕ promovятся в `Applied`,
+    `Applied` НЕ трогается); управление возвращается обычному apply,
+    который увидит non-compliant source, переиспользует запись как
+    repair-Prepared, выполнит journaled relocation в EOF и закоммитит
+    `Applied` только после свежего post-rebuild EOF proof;
+  - value change → старое FIC-owned значение освобождается через
+    `undoGrubManagedSetting()` (rollback ownership-release EOF не
+    требует) БЕЗ промежуточного durable promotion в `Applied`, затем
+    старая запись напрямую разрешается в `RolledBack` из текущего
+    активного статуса. При провале release — fail closed, запись
+    остаётся в предыдущем активном статусе.
 * ALT EOF placement и post-rebuild proof — после КАЖДОЙ успешной
   пересборки `proveExpectedGrubManagedValue()` для ALT возвращает
   `Matches` только при: source valid/safe, FIC block valid, ключ

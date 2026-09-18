@@ -200,16 +200,50 @@ bool finishGrubJournalReconciliation(
     }
 
     if (state == GrubManagedJournalState::Ineffective) {
-        // Ownership of the recorded value is proven, but the ALT block is
-        // displaced from EOF (foreign content after the END marker): the
-        // record is resolved by ownership (like AFTER), and the effective
-        // EOF placement is re-established by the journaled apply/mutation
-        // that follows this reconciliation — never by an invisible rewrite.
+        // INEFFECTIVE proves OWNERSHIP, never Applied-compliance: the
+        // recorded value is still FIC-owned, but the ALT block is displaced
+        // from EOF. The record must NOT be promoted to Applied here — only
+        // a journaled relocation followed by a successful rebuild and a
+        // fresh EOF placement proof may commit Applied.
+        if (matchesDesiredValue) {
+            // Preserve the current active provenance untouched and return
+            // to the normal apply: it will see a non-compliant source
+            // (needsChange), reuse this record as its repair Prepared,
+            // perform the journaled relocation to EOF and finish the
+            // lifecycle (Applied) only after the fresh post-rebuild proof.
+            diagnostics.push_back(
+                "FIC managed block содержит записанное значение '" +
+                undo.key + "', но смещён с EOF (foreign content после "
+                "END-маркера): journal запись " +
+                std::to_string(record.id) +
+                " сохраняется без promotion в Applied, эффективное "
+                "размещение восстановит следующий journaled apply");
+            return true;
+        }
+        // Value change: release the old FIC-owned value WITHOUT promoting
+        // the record to Applied (rollback ownership release does not
+        // require EOF placement), then resolve the old record as RolledBack
+        // directly from its current active status.
+        const GrubRollbackResult release = undoGrubManagedSetting(
+            rollbackOptions, undo);
+        if (!release.ok) {
+            error = "Не удалось освободить предыдущее FIC-owned значение '" +
+                undo.key + "': " + release.message;
+            return false;
+        }
+        std::string resolveError;
+        if (!journal->setStatus(
+                record.id, fic::rollback::MutationStatus::RolledBack,
+                resolveError)) {
+            error = "Ошибка разрешения освобождённой GRUB journal записи: " +
+                resolveError;
+            return false;
+        }
         diagnostics.push_back(
-            "FIC managed block содержит записанное значение '" +
-            undo.key + "', но смещён с EOF (foreign content после "
-            "END-маркера); ownership разрешается, эффективное размещение "
-            "восстановит следующий apply");
+            "Предыдущее FIC-owned значение '" + undo.key +
+            "' освобождено перед новым apply (без промежуточного "
+            "promotion в Applied)");
+        return true;
     }
 
     // AFTER: the source mutation is installed — commit Prepared (or a
@@ -258,6 +292,148 @@ bool finishGrubJournalReconciliation(
 }
 
 } // namespace
+
+namespace {
+
+// FRESH PREPARED AND REUSED ACTIVE PROVENANCE ARE NOT THE SAME THING.
+//
+// Repair provenance context: distinguishes a Prepared record that was
+// created FRESH for this operation from an existing active ownership
+// record (Applied / Prepared / RollbackFailed) that this operation
+// temporarily reuses as its Prepared repair record (the same MutationId
+// survives the whole repair — no second active record for the same
+// logical mutation resource is ever created).
+//
+// A REPAIR OPERATION MUST NEVER DESTROY PRE-EXISTING ACTIVE PROVENANCE:
+// after a no-op failure (Unchanged) or a fully compensated failure
+// (Compensated: source restored AND compensating rebuild succeeded) a
+// fresh Prepared may be discarded, but a reused record must be restored
+// to its pre-repair logical state. The transient context lives only in
+// memory for the duration of the current operation — the persistent
+// journal carries no extra repair fields; a crash after the durable
+// previousStatus → Prepared transition leaves the ordinary active
+// Prepared record that the existing recovery model already handles.
+enum class GrubPreparedRecordOrigin {
+    Fresh,
+    ReusedActive
+};
+
+struct GrubMutationPreparation {
+    fic::rollback::MutationId id = 0;
+    GrubPreparedRecordOrigin origin = GrubPreparedRecordOrigin::Fresh;
+    // Meaningful only for ReusedActive.
+    fic::rollback::MutationStatus previousStatus =
+        fic::rollback::MutationStatus::Prepared;
+    std::string previousError;
+};
+
+// The active GRUB record that may be reused as the repair Prepared record
+// for (policy, backend=Grub, resource=key): payload must be
+// UndoRemoveGrubManagedSetting with the matching key. At most one such
+// active record exists (MutationJournal invariant: one active record per
+// logical mutation resource).
+std::optional<fic::rollback::MutationRecord> findReusableGrubRecord(
+    fic::rollback::MutationJournal& journal,
+    const PolicyRef& policyRef,
+    const std::string& key) {
+    for (const fic::rollback::MutationRecord& record :
+         journal.activeRecords(policyRef)) {
+        if (record.undo.backend != fic::rollback::MutationBackend::Grub) {
+            continue;
+        }
+        const auto* undo = std::get_if<
+            fic::rollback::UndoRemoveGrubManagedSetting>(
+            &record.undo.payload);
+        if (undo != nullptr && undo->key == key) {
+            return record;
+        }
+    }
+    return std::nullopt;
+}
+
+// Prepares the journaled mutation BEFORE the source mutation. When no
+// active provenance exists, a fresh Prepared record is created. When an
+// active ownership record already exists (Applied / Prepared /
+// RollbackFailed), it is NOT duplicated and NOT discarded: its pre-repair
+// status and error are captured transiently and the record is durably
+// transitioned to Prepared. The undo payload is never rewritten — for a
+// same-value repair the existing payload already carries the correct
+// key + appliedValue. An active record with an unexpected payload fails
+// closed.
+bool prepareGrubMutation(
+    const PolicyRef& policyRef,
+    const std::string& key,
+    const std::string& actualExpected,
+    GrubMutationPreparation& preparation,
+    std::string& error) {
+    std::string journalError;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(
+        journalError);
+    if (journal == nullptr) {
+        error = journalError.empty()
+            ? "Mutation journal недоступен: runtime paths не инициализированы"
+            : journalError;
+        return false; // fail closed: no journal — no mutation
+    }
+    const std::optional<fic::rollback::MutationRecord> existing =
+        findReusableGrubRecord(*journal, policyRef, key);
+    if (!existing.has_value()) {
+        const fic::rollback::UndoAction undo{
+            fic::rollback::MutationBackend::Grub,
+            fic::rollback::UndoRemoveGrubManagedSetting{key, actualExpected}};
+        preparation = GrubMutationPreparation{};
+        return fic::rollback::recordPreparedMutation(
+            policyRef, key, undo, preparation.id, error);
+    }
+    const auto* undo = std::get_if<
+        fic::rollback::UndoRemoveGrubManagedSetting>(
+        &existing->undo.payload);
+    if (undo == nullptr || undo->key != key ||
+        undo->appliedValue != actualExpected) {
+        error = "Active GRUB journal запись " +
+            std::to_string(existing->id) +
+            " имеет неожиданный undo payload; repair отклонён (fail closed)";
+        return false;
+    }
+    preparation.id = existing->id;
+    preparation.origin = GrubPreparedRecordOrigin::ReusedActive;
+    preparation.previousStatus = existing->status;
+    preparation.previousError = existing->error;
+    // Durable transient transition: previousStatus → Prepared. The payload
+    // is untouched; the captured pre-repair logical state is restored by
+    // restoreGrubMutationAfterNoopOrCompensation() when the repair proves
+    // that the system was not mutated or was fully compensated.
+    return journal->setStatus(
+        preparation.id, fic::rollback::MutationStatus::Prepared, error);
+}
+
+// Restores the pre-repair journal state of a REUSED active ownership
+// record after the repair proved that the system was NOT mutated
+// (Unchanged) or was fully compensated (Compensated). The previous status
+// and error message are restored durably; the payload is untouched;
+// timestamps may naturally advance. Only a provably finished operation may
+// restore: any Installed / Indeterminate /
+// CompensatedPendingRebuild outcome keeps the durable Prepared status
+// instead (recovery still required).
+bool restoreGrubMutationAfterNoopOrCompensation(
+    const GrubMutationPreparation& preparation,
+    std::string& error) {
+    std::string journalError;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(
+        journalError);
+    if (journal == nullptr) {
+        error = journalError.empty()
+            ? "Mutation journal недоступен: runtime paths не инициализированы"
+            : journalError;
+        return false;
+    }
+    return journal->setStatusWithMessage(
+        preparation.id, preparation.previousStatus,
+        preparation.previousError, error);
+}
+
+} // namespace
+
 Grub::Grub(
     fic::platform::GrubPlatformConfig platformConfig,
     const fic::platform::PlatformExecutableResolver& executables,
@@ -350,16 +526,13 @@ bool Grub::applyGrubValue(
     // and must never happen without a Prepared record.
     const bool needsChange =
         !grubManagedValueCompliant(observed, actualExpected);
-    fic::rollback::MutationId mutationId = 0;
+    GrubMutationPreparation preparation;
     bool mutationPrepared = false;
     if (needsChange) {
         std::string journalError;
-        const fic::rollback::UndoAction undo{
-            fic::rollback::MutationBackend::Grub,
-            fic::rollback::UndoRemoveGrubManagedSetting{
-                grubKey, actualExpected}};
-        if (!fic::rollback::recordPreparedMutation(
-                this->policyRef(), grubKey, undo, mutationId, journalError)) {
+        if (!prepareGrubMutation(
+                this->policyRef(), grubKey, actualExpected, preparation,
+                journalError)) {
             this->log("Не удалось подготовить запись mutation journal: " +
                           journalError,
                       logLevel::ERROR);
@@ -399,26 +572,48 @@ bool Grub::applyGrubValue(
     }
 
     // Journal lifecycle matrix (docs/rollback.md, GRUB backend):
-    //   failure + Unchanged/Compensated source -> discard Prepared
-    //     (Compensated means source restored AND compensating rebuild
-    //     succeeded: the full transaction is reconciled);
+    //   failure + Unchanged/Compensated source ->
+    //     FRESH Prepared: discard (the transaction never installed or was
+    //       fully compensated: Compensated means source restored AND
+    //       compensating rebuild succeeded);
+    //     REUSED active provenance: restore the pre-repair status and
+    //       error — a repair operation must never destroy pre-existing
+    //       active ownership provenance;
     //   failure + CompensatedPendingRebuild    -> keep Prepared active
     //     (source restored, but the derived grub.cfg state is unresolved);
     //   failure + Installed/Indeterminate      -> keep Prepared active;
     //   success + Installed                    -> commit Applied;
-    //   success + Unchanged                    -> discard the unnecessary
-    //                                             Prepared (defensive).
-    // Any journal commit/discard failure is fail closed (apply == false).
-    if (!operation.ok) {
+    //   success + Unchanged (defensive)        -> discard a fresh Prepared
+    //     / restore a reused record, never discard reused provenance.
+    // Any journal commit/discard/restore failure is fail closed
+    // (apply == false).
+    const auto settleNoopOrCompensated = [&]() -> bool {
         std::string journalError;
+        if (preparation.origin == GrubPreparedRecordOrigin::ReusedActive) {
+            if (restoreGrubMutationAfterNoopOrCompensation(
+                    preparation, journalError)) {
+                return true;
+            }
+            this->log("Ошибка восстановления предыдущего состояния записи "
+                      "mutation journal: " + journalError,
+                      logLevel::ERROR);
+            return false;
+        }
+        if (fic::rollback::discardMutation(preparation.id, journalError)) {
+            return true;
+        }
+        this->log("Ошибка удаления подготовленной записи mutation "
+                  "journal: " + journalError,
+                  logLevel::ERROR);
+        return false;
+    };
+    if (!operation.ok) {
         if (mutationPrepared &&
             (operation.sourceState == GrubSourceMutationState::Unchanged ||
              operation.sourceState == GrubSourceMutationState::Compensated)) {
-            if (!fic::rollback::discardMutation(mutationId, journalError)) {
-                this->log("Ошибка удаления подготовленной записи mutation "
-                          "journal: " + journalError,
-                          logLevel::ERROR);
-            }
+            // The apply already fails here; a failed settlement leaves the
+            // active record in place for recovery (fail closed).
+            settleNoopOrCompensated();
         }
         this->log(operation.message, logLevel::ERROR);
         return false;
@@ -428,7 +623,7 @@ bool Grub::applyGrubValue(
     if (mutationPrepared) {
         std::string journalError;
         if (operation.sourceState == GrubSourceMutationState::Installed) {
-            if (!fic::rollback::commitMutation(mutationId, journalError)) {
+            if (!fic::rollback::commitMutation(preparation.id, journalError)) {
                 // The source mutation already happened: apply must not
                 // report success without reliable provenance. The Prepared
                 // record stays active and remains resolvable.
@@ -437,13 +632,8 @@ bool Grub::applyGrubValue(
                           logLevel::ERROR);
                 return false;
             }
-        } else {
-            if (!fic::rollback::discardMutation(mutationId, journalError)) {
-                this->log("Ошибка удаления подготовленной записи mutation "
-                          "journal: " + journalError,
-                          logLevel::ERROR);
-                return false;
-            }
+        } else if (!settleNoopOrCompensated()) {
+            return false;
         }
     }
 

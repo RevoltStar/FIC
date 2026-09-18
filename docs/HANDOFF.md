@@ -2,104 +2,103 @@
 
 ## Current base
 
-- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №4» (этот
-  коммит; предыдущий — `3d04f57` «Hardering-изменения для GRUB №3»).
+- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №5» (этот
+  коммит; предыдущий — `c9aedad` «Hardering-изменения для GRUB №4»).
 - Рабочее дерево чистое; вспомогательные build-каталоги (`build-check`,
-  `build-grub`) ignored.
+  `build-grub`, `build-sanitizers`, …) ignored.
 
 ## Current task
 
-- **GRUB hardening follow-up №4** — ALT EOF placement как часть
-  compliance proof + incomplete-compensation provenance. Завершено.
-  1. **ALT ownership vs compliance** — parser (`GrubManagedBlockView`)
-     сообщает типизированное размещение `GrubManagedBlockPlacement`
-     (`Absent`/`AtEof`/`NotAtEof`): `AtEof` = нет foreign физических
-     строк после END-маркера. Валидный блок с foreign tail остаётся
-     parse-valid (ownership proof), но НЕ compliance. Инспекция несёт
-     `GrubValueObservation::managedLayerEffective` (Debian — всегда
-     true); typed proof `GrubManagedValueProof::Ineffective`;
-     journal-классификация `GrubManagedJournalState::Ineffective`;
-     единый predicate `grubManagedValueCompliant()`. ALT same-value блок
-     NotAtEof → `needsChange = true` → Prepared ДО relocation →
-     существующий rewrite-mechanism (`setGrubManagedBlockValue`)
-     сохраняет foreign байты и ставит блок в EOF → post-rebuild proof
-     требует EOF. Rollback ownership-release EOF НЕ требует (валидный
-     non-EOF блок удаляем, foreign tail byte-exact). `Ineffective`
-     journal-запись разрешается по ownership как `After`; effective
-     placement восстанавливает следующий journaled apply.
-  2. **CompensatedPendingRebuild** — новый
-     `GrubSourceMutationState::CompensatedPendingRebuild`: source
-     восстановлен, но компенсирующая пересборка провалилась (или не
-     запущена из-за провала `validateGrubRebuildInputs`) → компенсация
-     НЕПОЛНА, Prepared остаётся активным (ALT
-     `compensateAfterRebuildFailure` + обе Debian compensation-ветки
-     `ensureManagedGrubDropInValue`, включая initially-missing →
-     canonical header-only). `Compensated` теперь означает: source
-     восстановлен И компенсирующая пересборка успешна → Prepared
-     discard. Recovery path без изменений: classify BEFORE →
-     обязательная пересборка → discard stale Prepared → fresh apply.
-  3. Docs: `docs/rollback.md` — раздел GRUB дополнен инвариантами ALT
-     ownership/compliance, needsChange/relocation, lifecycle matrix с
-     `CompensatedPendingRebuild`, post-rebuild EOF proof.
+- **GRUB hardening follow-up №5** — provenance-safe repair lifecycle.
+  Завершено. Главный инвариант: REPAIR OPERATION MUST NEVER DESTROY
+  PRE-EXISTING ACTIVE PROVENANCE.
+  1. **Fresh vs Reused Prepared** — новый GRUB-local transient repair
+     context (`GrubPreparedRecordOrigin::{Fresh, ReusedActive}`,
+     `GrubMutationPreparation`, `prepareGrubMutation()`,
+     `restoreGrubMutationAfterNoopOrCompensation()` в `Grub.cpp`).
+     Перед мутацией: если есть активная GRUB-запись (Applied/Prepared/
+     RollbackFailed, payload `UndoRemoveGrubManagedSetting`, key совпадает,
+     appliedValue == desired — иначе fail closed), она ВРЕМЕННО и durably
+     переводится в `Prepared` (тот же MutationId, payload не переписывается),
+     pre-repair status/error хранятся только в памяти операции. Вторая
+     активная запись для того же resource никогда не создаётся.
+  2. **Lifecycle matrix** — failure + `Unchanged`/`Compensated`:
+     Fresh → discard; Reused → durable restore pre-repair status+error
+     (restore только внутри доказанно завершённой операции). failure +
+     `CompensatedPendingRebuild`/`Installed`/`Indeterminate` → Prepared
+     остаётся. success + `Installed` → Applied (тот же id). success +
+     `Unchanged` (defensive) → Fresh discard / Reused restore. Ошибки
+     journal-операций — fail closed. Persistent journal никаких
+     repair-полей не получает; крэш после → Prepared остаётся обычной
+     активной записью (существующая recovery-модель).
+  3. **Ineffective reconciliation без promotion** — `Ineffective`
+     (ownership proven, EOF compliance unproven) после обязательной
+     reconciliation-пересборки: same desired → активная запись
+     сохраняется без перехода (Prepared/RollbackFailed НЕ promovятся в
+     Applied, Applied не трогается), управление возвращается apply,
+     который выполнит journaled relocation и закоммитит Applied только
+     после свежего EOF proof; value change → old ownership release через
+     `undoGrubManagedSetting()` БЕЗ промежуточного Applied, старая запись
+     напрямую → `RolledBack`.
+  4. **`GrubRollback.h`** — topology-specific wording: Debian last-key →
+     canonical header-only `zzzz-fic.cfg` retained; ALT last-key →
+     пустой FIC block удаляется целиком, сам `/etc/sysconfig/grub2` не
+     удаляется никогда.
+  5. Docs: `docs/rollback.md` — Fresh vs Reused матрица, transient
+     context/crash semantics, Ineffective reconciliation без promotion.
 
 ## Accepted architecture / invariants
 
-- ALT OWNERSHIP И ALT COMPLIANCE — РАЗНЫЕ доказательства: ownership =
-  валидный блок с записанным key/value; compliance = то же + блок в EOF
-  (shell last assignment wins). Валидный блок с foreign tail — не
-  malformed (иначе apply не смог бы безопасно relocat'ить свой блок).
-- Prepared → Applied требует: expected value + valid managed source +
-  EOF placement (ALT) + успешный rebuild + свежий post-rebuild proof.
-- Same-value relocation блока из середины файла в EOF — РЕАЛЬНАЯ
-  журналируемая мутация; невидимых source-мутаций нет.
-- Source restore без успешной компенсирующей пересборки — не полная
-  компенсация и не discard provenance. Повторно возвращать source в
-  Applied-состояние после неудачной компенсирующей пересборки НЕ
-  требуется — recovery завершает reconciliation.
-- FIC NEVER REMOVES A GRUB MANAGED PATH USING CHECK-THEN-UNLINK;
-  canonical header-only Debian drop-in retained; single-snapshot CAS;
-  ownership-release без previous-value restore и snapshots; validated
-  rebuild inputs перед каждой пересборкой; обязательная пересборка при
-  каждом rollback, включая NothingToDo.
+- FRESH PREPARED AND REUSED ACTIVE PROVENANCE ARE NOT THE SAME THING:
+  failed/fully-compensated repair может discard только Fresh Prepared;
+  Reused восстанавливает pre-repair логическое состояние.
+- INEFFECTIVE PROVES OWNERSHIP, NOT COMPLIANCE; Prepared → Applied для
+  ALT только после relocation + успешного rebuild + свежего EOF proof.
+- Same MutationId безопасно переживает Applied → Prepared → Applied
+  repair; параллельные активные GRUB-записи одного resource запрещены
+  (MutationJournal invariant сохранён).
+- ALT OWNERSHIP vs COMPLIANCE, CompensatedPendingRebuild,
+  canonical Debian drop-in, no check-then-unlink, single-snapshot CAS,
+  ownership-release rollback — без изменений (follow-up №4).
 - Авторитетное описание: `docs/rollback.md`, раздел
   «GRUB rollback (OSS/Grub)».
 
 ## Completed
 
-- Пункты 1–3 выше. Тесты: T1
-  `testAltSameValueNotEofRelocation` (Prepared-before-relocation через
-  pre-write seam), T2b `testAltChangedForeignTailDuringRebuild`, T3b
-  `testAltIdempotentForeignTailDuringRebuild`, T4
-  `testAltRollbackNonEofOwnedBlock`, T5+T7
-  `testDebianDoubleRebuildFailureKeepsPrepared` (double failure →
-  Prepared активен → retry recovery → ровно одна Applied), T6+T8
-  `testAltDoubleRebuildFailureKeepsPrepared`, T9
-  `testDebianInitiallyMissingCompensationPendingRebuild` (canonical
-  empty компенсация + failed compensating rebuild → Prepared → recovery
-  OK). Backend-level: `testAltDoubleRebuildFailurePendingRebuild`,
-  `testAltPlacementComplianceSemantics` (inspect/proof/classify),
-  parser placement-ассерты, `testManagedRebuildFailureCompensation`
-  + case `created-double-failure`. Обновлён
-  `testDebianInitiallyMissingCompensationRetainsDropIn`: failed
-  compensating rebuild теперь держит Prepared (старое expectation
-  discard закрепляло неполную компенсацию).
+- Пункты 1–5 выше. Регрессионные тесты T1–T8 в
+  `tests/fic/modules/oss/grub/GrubRollbackJournalTests.cpp`:
+  T1 `testExistingAppliedSameValueRepairSucceeds` (Applied → Prepared →
+  Applied, тот же id, ровно одна запись, foreign tail сохранён),
+  T2 `testExistingAppliedRelocationCasFailureRestoresProvenance`
+  (CAS-race → restore Applied, внешние байты byte-exact),
+  T3 `testExistingAppliedFullCompensationRestoresApplied` (главный
+  regression: full compensation восстанавливает Applied вместо
+  discard; stateful rebuild-скрипт: reconciliation ok, primary fail,
+  compensating ok), T4 `testExistingPreparedSurvivesCompensatedRepair`,
+  T5 `testExistingRollbackFailedSurvivesCompensatedRepair` (с
+  восстановлением previous error), T6
+  `testExistingAppliedPendingRepairStaysPrepared` (PendingRebuild держит
+  Prepared; retry → одна Applied), T7
+  `testIneffectivePreparedNotPromotedBeforeRelocation` (перед
+  relocation write статус == Prepared), T8
+  `testIneffectiveValueChangeReleasesOwnershipWithoutPromotion`
+  (old → RolledBack без промежуточного Applied; одна Applied для нового
+  значения). Все существующие тесты №4 и раньше остались зелёными.
 
 ## Changed areas
 
-- `fic/src/modules/oss/grub/{GrubConfiguration.h/cpp, Grub.cpp,
-  GrubManagedBlock.h/cpp, GrubRollback.h}`,
-  `tests/fic/modules/oss/grub/{GrubPolicyTests.cpp,
-  GrubRollbackJournalTests.cpp}`, `docs/rollback.md`, `docs/HANDOFF.md`.
+- `fic/src/modules/oss/grub/{Grub.cpp, GrubRollback.h}`,
+  `tests/fic/modules/oss/grub/GrubRollbackJournalTests.cpp`,
+  `docs/rollback.md`, `docs/HANDOFF.md`.
 
 ## Validation
 
-- Targeted: `grub_policy_tests` PASS, `grub_rollback_journal_tests`
-  PASS, `mutation_journal_tests` PASS, `rollback_executor_tests` PASS,
-  `ssh_apply_rollback_tests` PASS, `platform_profile_tests` PASS.
+- Targeted: `grub_policy_tests`, `grub_rollback_journal_tests`,
+  `mutation_journal_tests`, `rollback_executor_tests`,
+  `ssh_apply_rollback_tests`, `platform_profile_tests` — все PASS.
 - Full build (`cmake --build build-grub -j4`, full tree): OK, 0 errors,
   0 warnings.
-- Full CTest: **97/97 — 100% passed, 0 failed**; 1 pre-existing skip
-  (`command_hash_batch_tests`, not-run).
+- Full CTest: **97/97 — 100% passed, 0 failed**.
 - `git diff --check`: clean.
 - Sanitizer build не выполнялся — не заявлять как выполненный.
 

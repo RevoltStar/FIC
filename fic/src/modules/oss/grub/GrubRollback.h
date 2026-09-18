@@ -47,10 +47,14 @@ struct GrubRollbackResult {
 //     NothingToDo (crash-after-source-rollback invariant);
 //   * managed key present with another value — Conflict, the source is
 //     never touched;
-//   * key == appliedValue — the key is removed (an empty managed artifact
-//     is removed entirely), the removal is written through an atomic CAS
-//     write against the captured pre-rollback state, proven after the
-//     write, and only after a SUCCESSFUL rebuild the rollback succeeds;
+//   * key == appliedValue — the key is removed, the removal is written
+//     through an atomic CAS write against the captured pre-rollback state,
+//     proven after the write, and only after a SUCCESSFUL rebuild the
+//     rollback succeeds. Topology-specific removal of the LAST key:
+//       Debian/Ubuntu — the canonical header-only FIC-owned zzzz-fic.cfg
+//         artifact is RETAINED (never unlinked);
+//       ALT — the empty FIC managed block is removed entirely, while the
+//         shared /etc/sysconfig/grub2 file itself is never removed;
 //   * rebuild failure — conditional compensation restores the exact
 //     pre-rollback FIC-owned state (allowed only while the target still IS
 //     the rollback-installed state); on concurrent external drift the
