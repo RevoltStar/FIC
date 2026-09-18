@@ -14,8 +14,16 @@
 // (never derived from error message matching):
 //   Unchanged     — FIC did not modify the managed source;
 //   Installed     — FIC installed new source state (rename published);
-//   Compensated   — FIC-installed state was conditionally rolled back and
-//                   the pre-apply state is proven restored;
+//   Compensated   — FIC-installed state was conditionally rolled back, the
+//                   pre-apply state is proven restored AND the compensating
+//                   rebuild succeeded: the full transaction (source +
+//                   derived grub.cfg) is reconciled;
+//   CompensatedPendingRebuild — the source was proven restored but the
+//                   compensating rebuild FAILED (or was not run): the
+//                   derived grub.cfg state is unresolved, the transaction is
+//                   NOT fully compensated — the Prepared journal record must
+//                   stay active so the next recovery performs the mandatory
+//                   reconciliation rebuild;
 //   Indeterminate — the source may still contain the FIC mutation
 //                   (installed but not durable, or concurrent drift after
 //                   install): the Prepared journal record must stay active.
@@ -23,6 +31,7 @@ enum class GrubSourceMutationState {
     Unchanged,
     Installed,
     Compensated,
+    CompensatedPendingRebuild,
     Indeterminate
 };
 
@@ -30,10 +39,31 @@ struct GrubValueObservation {
     bool found = false;
     bool valid = true;
     std::string value;
+    // ALT shared-block topology only: whether the FIC managed block is the
+    // FINAL override layer at EOF (no foreign physical lines after the END
+    // marker). A valid block displaced from EOF still proves ownership, but
+    // shell last-assignment-wins semantics make it ineffective — foreign
+    // assignments after the block win. Always true for the Debian managed
+    // drop-in topology (placement is not applicable there).
+    bool managedLayerEffective = true;
     std::filesystem::path source;
     size_t line = 0;
     std::string error;
 };
+
+// Effective compliance proof of a GRUB managed value under the platform
+// topology. Ownership (a valid managed artifact containing the key/value
+// pair) is NOT sufficient for ALT: the managed block must also be the
+// effective override layer at EOF. Debian drop-in compliance is
+// topology-placement only. This is the single needsChange/compliance
+// predicate — callers must not re-derive it from raw value comparison.
+inline bool grubManagedValueCompliant(
+    const GrubValueObservation& observation,
+    const std::string& expectedValue) {
+    return observation.valid && observation.found &&
+        observation.value == expectedValue &&
+        observation.managedLayerEffective;
+}
 
 struct GrubOperationResult {
     bool ok = false;
@@ -118,20 +148,27 @@ GrubTargetProbe probeGrubTargetFile(const std::filesystem::path& path);
 // Single classifier of an active GRUB journal record against the CURRENT
 // managed source state (both topologies). Used before AND after the
 // mandatory rebuild:
-//   Before  — the managed value is absent: the mutation never installed or
-//             was fully compensated;
-//   After   — the managed value is present and equals the recorded
-//             appliedValue;
-//   Drift   — the managed value is present with another value: never
-//             rewritten, never overwritten, the journal record is not
-//             resolved;
-//   Invalid — the managed source could not be classified (unreadable,
-//             unsafe or malformed FIC artifact): fail closed.
+//   Before      — the managed value is absent: the mutation never installed
+//                 or was fully compensated;
+//   After       — the managed value is present, equals the recorded
+//                 appliedValue AND the managed layer is the effective
+//                 override (ALT block at EOF);
+//   Ineffective — the managed value is present and equals the recorded
+//                 appliedValue, but the ALT block is displaced from EOF
+//                 (foreign content after the END marker): ownership is
+//                 still proven, effective compliance is not; the record is
+//                 never classified as Before;
+//   Drift       — the managed value is present with another value: never
+//                 rewritten, never overwritten, the journal record is not
+//                 resolved;
+//   Invalid     — the managed source could not be classified (unreadable,
+//                 unsafe or malformed FIC artifact): fail closed.
 // The underlying inspection is returned through the optional out-parameter
 // so callers can reuse it for diagnostics.
 enum class GrubManagedJournalState {
     Before,
     After,
+    Ineffective,
     Drift,
     Invalid
 };
@@ -145,17 +182,22 @@ GrubManagedJournalState classifyGrubManagedJournalState(
 // Typed outcome of a FRESH managed-source proof of the expected policy
 // value. Always derived from a new inspection of the CURRENT on-disk
 // source — never from a pre-write or pre-rebuild snapshot:
-//   Matches — the managed source is valid/safe, the key exists and equals
-//             the expected value;
-//   Missing — the managed source is valid, but the key is absent;
-//   Drift   — the managed source is valid, but the key holds another value
-//             (external mutation);
-//   Invalid — the managed source is unreadable, unsafe or a malformed FIC
-//             artifact (fail closed).
+//   Matches     — the managed source is valid/safe, the key exists, equals
+//                 the expected value AND the managed layer is the effective
+//                 override (ALT block at EOF);
+//   Missing     — the managed source is valid, but the key is absent;
+//   Drift       — the managed source is valid, but the key holds another
+//                 value (external mutation);
+//   Ineffective — the key holds the expected value, but the ALT managed
+//                 block is displaced from EOF (foreign content after the
+//                 END marker): the value is owned but not effective;
+//   Invalid     — the managed source is unreadable, unsafe or a malformed
+//                 FIC artifact (fail closed).
 enum class GrubManagedValueProof {
     Matches,
     Missing,
     Drift,
+    Ineffective,
     Invalid
 };
 

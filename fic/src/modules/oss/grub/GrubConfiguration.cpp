@@ -71,6 +71,9 @@ const char* grubProofFailureKind(GrubManagedValueProof proof) {
         return "ключ отсутствует";
     case GrubManagedValueProof::Drift:
         return "значение изменено вне FIC";
+    case GrubManagedValueProof::Ineffective:
+        return "FIC managed block не является последним override-слоем "
+               "(после END-маркера есть foreign content)";
     case GrubManagedValueProof::Invalid:
         return "источник некорректен или небезопасен";
     case GrubManagedValueProof::Matches:
@@ -372,9 +375,17 @@ GrubOperationResult compensateAfterRebuildFailure(
             " восстановлено после ошибки пересборки");
         std::string compensationRebuildError;
         if (!rebuildFn(compensationRebuildError)) {
+            // Source restored, but the derived grub.cfg state is
+            // unresolved: the transaction is NOT fully compensated. The
+            // Prepared provenance must stay active so the next recovery
+            // performs the mandatory reconciliation rebuild.
+            result.sourceState =
+                GrubSourceMutationState::CompensatedPendingRebuild;
             result.diagnostics.push_back(
                 "Компенсирующая пересборка завершилась ошибкой: " +
-                compensationRebuildError);
+                compensationRebuildError +
+                "; компенсация неполна, journal-провенанс остаётся "
+                "активным");
         }
         return result;
     }
@@ -421,12 +432,20 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
             ": " + parse.error;
         return result;
     }
-    bool alreadySet = false;
+    bool keyMatches = false;
     for (const GrubBlockEntries::value_type& entry : parse.view.entries) {
         if (entry.first == key && entry.second == value) {
-            alreadySet = true;
+            keyMatches = true;
         }
     }
+    // Effective compliance: the same value is idempotent ONLY when the
+    // proven block is the final override layer at EOF. A valid block
+    // displaced from EOF (foreign content after the END marker) is owned
+    // but INEFFECTIVE (shell last-assignment-wins): it must be relocated
+    // through the changed path below — a real journaled mutation, never an
+    // invisible source rewrite.
+    const bool alreadySet = keyMatches &&
+        parse.view.placement == GrubManagedBlockPlacement::AtEof;
 
     // SINGLE-SNAPSHOT transaction: the authoritative CAS precondition and the
     // compensation source are the SAME snapshot the block was parsed from
@@ -703,9 +722,15 @@ GrubManagedJournalState classifyGrubManagedJournalState(
     if (!inspected.found) {
         return GrubManagedJournalState::Before;
     }
-    return inspected.value == appliedValue
+    if (inspected.value != appliedValue) {
+        return GrubManagedJournalState::Drift;
+    }
+    // Ownership proven, but the ALT block displaced from EOF is not the
+    // effective override layer: a distinct state, never Before (the FIC
+    // mutation IS in the source) and never After (compliance unproven).
+    return inspected.managedLayerEffective
         ? GrubManagedJournalState::After
-        : GrubManagedJournalState::Drift;
+        : GrubManagedJournalState::Ineffective;
 }
 
 GrubManagedValueProof proveExpectedGrubManagedValue(
@@ -732,6 +757,12 @@ GrubManagedValueProof proveExpectedGrubManagedValue(
         error = "recorded/expected value '" + expectedValue +
             "', actual value '" + observed.value + "'";
         return GrubManagedValueProof::Drift;
+    }
+    if (!observed.managedLayerEffective) {
+        error = "FIC managed block содержит ожидаемое значение, но смещён "
+                "с EOF: после END-маркера есть foreign content, значение "
+                "не является действующим override";
+        return GrubManagedValueProof::Ineffective;
     }
     return GrubManagedValueProof::Matches;
 }
@@ -886,6 +917,8 @@ GrubValueObservation inspectGrubManagedValue(
             observation.error = parse.error;
             return observation;
         }
+        observation.managedLayerEffective =
+            parse.view.placement == GrubManagedBlockPlacement::AtEof;
         for (const GrubBlockEntries::value_type& entry : parse.view.entries) {
             if (entry.first == key) {
                 observation.found = true;
@@ -1043,10 +1076,16 @@ GrubOperationResult ensureManagedGrubDropInValue(
                 !runGrubRebuild(
                     options.rebuildExecutable, options.rebuildArguments,
                     runner, compensationError)) {
+                // Source restored/released, but the derived grub.cfg state
+                // is unresolved: the Prepared provenance must stay active.
+                result.sourceState =
+                    GrubSourceMutationState::CompensatedPendingRebuild;
                 result.diagnostics.push_back(
                     "Исходный managed GRUB-файл восстановлен, но "
                     "компенсирующая пересборка завершилась ошибкой: " +
-                    compensationError);
+                    compensationError +
+                    "; компенсация неполна, journal-провенанс остаётся "
+                    "активным");
             }
         }
         return result;
@@ -1063,10 +1102,16 @@ GrubOperationResult ensureManagedGrubDropInValue(
                 !runGrubRebuild(
                     options.rebuildExecutable, options.rebuildArguments,
                     runner, compensationError)) {
+                // Source restored/released, but the derived grub.cfg state
+                // is unresolved: the Prepared provenance must stay active.
+                result.sourceState =
+                    GrubSourceMutationState::CompensatedPendingRebuild;
                 result.diagnostics.push_back(
                     "Исходный managed GRUB-файл восстановлен, но "
                     "компенсирующая пересборка завершилась ошибкой: " +
-                    compensationError);
+                    compensationError +
+                    "; компенсация неполна, journal-провенанс остаётся "
+                    "активным");
             }
         }
         return result;

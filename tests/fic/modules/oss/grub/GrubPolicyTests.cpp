@@ -203,6 +203,9 @@ void testGrubManagedBlockParser() {
             "GRUB_TIMEOUT=5\n# comment\n");
         require(parse.ok && !parse.view.present,
                 "foreign content must not be reported as a FIC block");
+        require(parse.view.placement ==
+                    GrubManagedBlockPlacement::Absent,
+                "missing block must be reported as Absent");
     }
     // Valid one-key block.
     {
@@ -217,6 +220,39 @@ void testGrubManagedBlockParser() {
                     parse.view.entries[0].first == "GRUB_TIMEOUT" &&
                     parse.view.entries[0].second == "0",
                 "valid one-key FIC block was not parsed");
+        require(parse.view.placement ==
+                    GrubManagedBlockPlacement::AtEof,
+                "block without foreign tail must be reported as AtEof");
+    }
+    // A valid block with a foreign tail stays PARSE-VALID: it is an
+    // ownership proof, only its effective placement degrades to NotAtEof.
+    {
+        const std::string content =
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"0\"\n"
+            "# FIC_GRUB_BLOCK_END\n"
+            "GRUB_TIMEOUT=5\n";
+        const GrubBlockParseResult parse = parseGrubManagedBlock(content);
+        require(parse.ok && parse.view.present &&
+                    parse.view.entries.size() == 1 &&
+                    parse.view.entries[0].second == "0",
+                "valid block with a foreign tail must stay parse-valid");
+        require(parse.view.placement ==
+                    GrubManagedBlockPlacement::NotAtEof,
+                "block with a foreign tail must be reported as NotAtEof");
+    }
+    // Ambiguous placement is never AtEof: even a lone blank line after the
+    // END marker (let alone a foreign assignment after it) makes the block
+    // NotAtEof.
+    {
+        const GrubBlockParseResult parse = parseGrubManagedBlock(
+            std::string(kGrubBlockBeginMarker) +
+            "\nGRUB_TIMEOUT=\"0\"\n" + kGrubBlockEndMarker +
+            "\n\nGRUB_TIMEOUT=5\n");
+        require(parse.ok && parse.view.present &&
+                    parse.view.placement ==
+                        GrubManagedBlockPlacement::NotAtEof,
+                "blank line plus foreign assignment must be NotAtEof");
     }
     // Valid multi-key block in any order -> canonical view.
     {
@@ -559,6 +595,106 @@ void testRebuildFailureCompensates(const fs::path& root) {
     require(readFile(defaults) == original,
             "shared defaults file was not restored after rebuild failure");
 }
+
+// ALT double rebuild failure: the source is proven restored (compensation
+// succeeded) but the COMPENSATING rebuild failed too — the derived grub.cfg
+// state is unresolved, so the outcome is the typed
+// CompensatedPendingRebuild, never a fully Compensated transaction.
+void testAltDoubleRebuildFailurePendingRebuild(const fs::path& root) {
+    const fs::path defaults = root / "alt-pending/etc/sysconfig/grub2";
+    const std::string original =
+        "GRUB_TIMEOUT=5\n"
+        "# admin tail\n";
+    writeFile(defaults, original);
+
+    size_t calls = 0;
+    const GrubCommandRunner runner =
+        [&calls](const std::string&, const std::vector<std::string>&,
+                 const ProcessOptions&) {
+            ++calls;
+            return failedProcess("injected rebuild failure");
+        };
+    GrubConfiguration configuration(testOptions(defaults), runner);
+    std::string error;
+    require(configuration.load(error), error);
+    const GrubOperationResult result =
+        configuration.ensureManagedValue("GRUB_TIMEOUT", "10");
+    require(!result.ok, "double rebuild failure must fail the apply");
+    require(result.sourceState ==
+                GrubSourceMutationState::CompensatedPendingRebuild,
+            "source restored + failed compensating rebuild must be "
+            "CompensatedPendingRebuild");
+    require(calls == 2,
+            "compensating rebuild must be attempted exactly once");
+    require(readFile(defaults) == original,
+            "double failure must still restore the source byte-exact");
+    require(!result.diagnostics.empty(),
+            "incomplete compensation must be diagnosed");
+}
+
+// ALT ownership vs compliance: a valid block with the recorded value but a
+// foreign tail after the END marker is proven OWNERSHIP (inspect finds the
+// value, rollback may release it) but NOT compliance (proof != Matches,
+// journal classification Ineffective, grubManagedValueCompliant false).
+void testAltPlacementComplianceSemantics(const fs::path& root) {
+    const fs::path shared = root / "placement/etc/sysconfig/grub2";
+    GrubManagedConfigurationOptions options;
+    options.sharedDefaultsPath = shared;
+    options.rebuildExecutable = "/test/grub-rebuild";
+    options.enforceOwnership = false;
+
+    const std::string blockOnly =
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"0\"\n"
+        "# FIC_GRUB_BLOCK_END\n";
+    // Compliant state: block at EOF.
+    writeFile(shared, blockOnly);
+    const GrubValueObservation compliant =
+        inspectGrubManagedValue(options, "GRUB_TIMEOUT");
+    require(compliant.valid && compliant.found &&
+                compliant.value == "0" && compliant.managedLayerEffective,
+            "EOF block must be observed as the effective layer");
+    require(grubManagedValueCompliant(compliant, "0"),
+            "EOF block with the expected value must be compliant");
+    std::string proofError;
+    require(proveExpectedGrubManagedValue(
+                options, "GRUB_TIMEOUT", "0", proofError) ==
+                GrubManagedValueProof::Matches,
+            proofError.empty() ? "EOF block proof failed" : proofError);
+    require(classifyGrubManagedJournalState(
+                options, "GRUB_TIMEOUT", "0") ==
+                GrubManagedJournalState::After,
+            "EOF block must classify as After");
+
+    // Same valid block + foreign tail: ownership proven, compliance lost.
+    const std::string displaced = blockOnly + "GRUB_TIMEOUT=5\n";
+    writeFile(shared, displaced);
+    const GrubValueObservation ineffective =
+        inspectGrubManagedValue(options, "GRUB_TIMEOUT");
+    require(ineffective.valid && ineffective.found &&
+                ineffective.value == "0",
+            "displaced valid block must still prove ownership");
+    require(!ineffective.managedLayerEffective,
+            "foreign tail must mark the managed layer ineffective");
+    require(!grubManagedValueCompliant(ineffective, "0"),
+            "displaced block must not be compliant");
+    proofError.clear();
+    require(proveExpectedGrubManagedValue(
+                options, "GRUB_TIMEOUT", "0", proofError) ==
+                GrubManagedValueProof::Ineffective,
+            "displaced block proof must be Ineffective: " + proofError);
+    require(classifyGrubManagedJournalState(
+                options, "GRUB_TIMEOUT", "0") ==
+                GrubManagedJournalState::Ineffective,
+            "displaced block must classify as Ineffective");
+    // A different recorded value is a value mismatch first: Drift takes
+    // precedence over the placement defect (the recorded key is NOT owned
+    // with that value).
+    require(classifyGrubManagedJournalState(
+                options, "GRUB_TIMEOUT", "5") ==
+                GrubManagedJournalState::Drift,
+            "recorded value mismatch must classify as Drift");
+}
 void testUnsafeInputAndPathsFailClosed(const fs::path& root) {
     const fs::path defaults = root / "unsafe/etc/default/grub";
     writeFile(defaults, "GRUB_TIMEOUT=5\n");
@@ -815,15 +951,24 @@ void testManagedRebuildFailureCompensation(const fs::path& root) {
                     : readFile(managed) ==
                           GrubManagedConfig::canonicalEmptyContent(),
                 "managed source was not restored after rebuild failure");
-        require(result.sourceState ==
-                    GrubSourceMutationState::Compensated,
-                "proven compensation was not reported as Compensated");
+        // Full compensation (source restored AND compensating rebuild
+        // succeeded) is Compensated; a failed compensating rebuild leaves
+        // the derived grub.cfg state unresolved — CompensatedPendingRebuild,
+        // for BOTH compensation topologies (existing drop-in and the
+        // canonical header-only initially-missing compensation alike).
+        require(
+            result.sourceState ==
+                (compensationSucceeds
+                     ? GrubSourceMutationState::Compensated
+                     : GrubSourceMutationState::CompensatedPendingRebuild),
+            "unexpected source state after rebuild failure compensation");
         require(compensationSucceeds || !result.diagnostics.empty(),
                 "compensating rebuild failure was not diagnosed");
     };
     runCase("existing", true, true);
     runCase("created", false, true);
     runCase("double-failure", true, false);
+    runCase("created-double-failure", false, false);
 }
 
 void testBaseDefaultsValidation(const fs::path& root) {
@@ -1236,6 +1381,8 @@ int main() {
         testAltForeignPreservationAndRelocation(root);
         testAmbiguousAndDynamicAssignmentsFailClosed(root);
         testRebuildFailureCompensates(root);
+        testAltDoubleRebuildFailurePendingRebuild(root);
+        testAltPlacementComplianceSemantics(root);
         testUnsafeInputAndPathsFailClosed(root);
         testAltSharedTopologyStaysShared(root);
         testManagedDropInEditingAndIdempotence(root);

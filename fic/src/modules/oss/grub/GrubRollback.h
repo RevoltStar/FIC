@@ -33,9 +33,13 @@ struct GrubRollbackResult {
 // removes ONLY the FIC-owned managed setting identified by the journal
 // payload (key + appliedValue drift fingerprint) from the FIC-owned
 // artifact of the current topology — the Debian/Ubuntu owned drop-in
-// zzzz-fic.cfg or the FIC managed block at the EOF of the ALT shared
-// defaults — and then rebuilds grub.cfg. No previous foreign value is ever
-// restored and no whole-file snapshot is stored or used.
+// zzzz-fic.cfg or the FIC managed block of the ALT shared defaults — and
+// then rebuilds grub.cfg. ALT EOF placement is an APPLY-compliance
+// requirement only: rollback ownership release requires a valid FIC block
+// containing the recorded value, NOT the block being at EOF (a displaced
+// block with a foreign tail is still proven FIC-owned and is removable;
+// the foreign tail is preserved byte-exact). No previous foreign value is
+// ever restored and no whole-file snapshot is stored or used.
 //
 // Semantics shared by both topologies:
 //   * managed key missing (or the whole FIC artifact is gone) — the

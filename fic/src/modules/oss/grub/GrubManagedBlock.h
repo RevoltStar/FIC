@@ -48,8 +48,23 @@ inline size_t grubManagedKeyOrder(const std::string& key) {
 // key/value pairs kept in canonical render order.
 using GrubBlockEntries = std::vector<std::pair<std::string, std::string>>;
 
+// Typed placement of the FIC managed block inside the shared defaults file.
+// The block is COMPLIANT as an effective override ONLY at EOF: shell
+// assignment semantics make the last assignment win, so foreign assignments
+// after the END marker defeat the FIC values. A NotAtEof block is still a
+// VALID FIC-owned artifact (ownership proof); only the effective compliance
+// proof additionally requires AtEof. Apply relocates a proven NotAtEof
+// block to EOF through a journaled mutation.
+enum class GrubManagedBlockPlacement {
+    Absent,
+    AtEof,
+    NotAtEof
+};
+
 struct GrubManagedBlockView {
     bool present = false;
+    GrubManagedBlockPlacement placement =
+        GrubManagedBlockPlacement::Absent;
     GrubBlockEntries entries;
 };
 

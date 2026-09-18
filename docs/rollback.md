@@ -565,6 +565,13 @@ platform profile (не journal):
   — пробелы вокруг `=`, ведущие/завершающие пробелы, инлайн-комментарии,
   нецитированный RHS — fail closed; допустимое значение всегда
   воспроизводится рендером байт-в-байт (render→parse→render round trip).
+  Парсер сообщает типизированное размещение блока
+  (`GrubManagedBlockPlacement`: `Absent` / `AtEof` / `NotAtEof`):
+  `AtEof` означает, что после END-маркера нет НИКАКИХ foreign физически
+  строк (canonical renderer их никогда не создаёт); валидный блок с
+  foreign tail (присваивание, комментарий, даже пустая строка после END)
+  остаётся PARSE-VALID (`NotAtEof`) — это proof OWNERSHIP, но не
+  compliance (см. инвариант ALT EOF placement ниже).
 
 Apply записывает в journal `Prepared`-запись ТОЛЬКО при реальном изменении
 источника (`UndoRemoveGrubManagedSetting{key, appliedValue}`) и после
@@ -574,6 +581,63 @@ Apply записывает в journal `Prepared`-запись ТОЛЬКО пр�
 через `VerifiedProcessExecutor` (пустой environment, таймаут).
 
 Дополнительные инварианты apply/rollback (обе топологии):
+
+* ALT ownership vs compliance — для ALT-топологии «EXPECTED VALUE EXISTS
+  INSIDE THE FIC BLOCK» НЕ достаточно. FIC block является действующим
+  (effective) override-слоем ТОЛЬКО в EOF: shell-семантика last
+  assignment wins означает, что foreign присваивание после END-маркера
+  побеждает значение FIC. Различаются два доказательства:
+  - ownership proof — валидный FIC block содержит записанный key/value
+    (размещение не требуется): достаточно для rollback
+    ownership-release и для классификации journal-записи как владения;
+  - compliance/effective proof — валидный FIC block содержит ожидаемое
+    значение И блок находится в EOF. Инспекция возвращает
+    `managedLayerEffective`, typed proof различает `Matches` и
+    `Ineffective` (значение принадлежит FIC, но блок смещён с EOF),
+    journal-классификация различает `After` и `Ineffective`. Валидный
+    блок с foreign tail НЕ считается malformed — следующий apply
+    докажет собственный блок, сохранит foreign байты и relocat'ит блок
+    в EOF через JOURNALED-мутацию;
+* needsChange/compliance predicate — решение о необходимости изменения
+  (`Grub::applyGrubValue`) принимается ТОЛЬКО через единый
+  `grubManagedValueCompliant()` (valid && found && value == expected &&
+  managedLayerEffective), никогда через raw value-сравнение. Для ALT
+  same-value блок NotAtEof → `needsChange = true`: `Prepared`
+  создаётся ДО relocation, relocation идёт через существующий
+  rewrite-mechanism (`setGrubManagedBlockValue`), который удаляет
+  доказанный блок с прежней позиции, сохраняет foreign байты
+  byte-exact и размещает canonical блок в EOF; для Debian
+  `needsChange = missing OR value mismatch`;
+* компенсация неполна без успешной компенсирующей пересборки — GRUB
+  транзакция состоит из persistent source state И derived grub.cfg
+  state. Успешный source restore сам по себе НЕ полная компенсация:
+  если компенсирующая пересборка провалилась (или была не запущена из-за
+  провала `validateGrubRebuildInputs()` перед ней), фиксируется typed
+  `GrubSourceMutationState::CompensatedPendingRebuild`, а не
+  `Compensated`. Journal lifecycle matrix:
+  - failure + `Unchanged` → Prepared discard;
+  - failure + `Compensated` (source восстановлен И компенсирующая
+    пересборка успешна) → Prepared discard;
+  - failure + `CompensatedPendingRebuild` (source восстановлен,
+    компенсирующая пересборка провалилась) → Prepared ОСТАЁТСЯ
+    активным;
+  - failure + `Installed` / `Indeterminate` → Prepared остаётся
+    активным;
+  - success + `Installed` → Prepared commit Applied;
+  - success + `Unchanged` → лишний Prepared discard (defensive).
+  Семантика одинакова для обеих топологий и обеих компенсационных
+  topology Debian (существовавший drop-in / канонический header-only
+  retained drop-in). Source после этого доказанно BEFORE; повторно
+  возвращать source в Applied-состояние FIC не пытается — recovery уже
+  умеет безопасно завершить reconciliation;
+* ALT EOF placement и post-rebuild proof — после КАЖДОЙ успешной
+  пересборки `proveExpectedGrubManagedValue()` для ALT возвращает
+  `Matches` только при: source valid/safe, FIC block valid, ключ
+  существует, значение совпадает И блок в EOF. Если во время пересборки
+  внешний писатель дописал foreign присваивание после FIC блока — proof
+  `Ineffective`: changed apply → false, `Indeterminate`, Prepared
+  активен; idempotent apply → false, `Unchanged`, journal-запись не
+  создаётся;
 
 * validated rebuild inputs — ПЕРЕД каждой пересборкой grub.cfg (apply,
   idempotent apply, все rollback-варианты, обязательная reconciliation
@@ -643,11 +707,14 @@ Apply записывает в journal `Prepared`-запись ТОЛЬКО пр�
   публикуется, внешние байты сохраняются byte-exact, apply/rollback
   завершается ошибкой, `Prepared`-запись discard'ится;
 * journal reconciliation перед каждым apply классифицирует активную GRUB
-  запись (Before/After/Drift/Invalid) по текущему состоянию managed
-  источника, затем выполняет обязательную пересборку и ПОСЛЕ неё
+  запись (Before/After/Ineffective/Drift/Invalid) по текущему состоянию
+  managed источника, затем выполняет обязательную пересборку и ПОСЛЕ неё
   повторно доказывает классификацию. Drift/Invalid после пересборки —
   fail closed: journal-запись остаётся активной, новый `Prepared` не
-  создаётся;
+  создаётся. `Ineffective` (записанное значение принадлежит FIC, но ALT
+  блок смещён с EOF) разрешается по ownership как `After` — effective
+  EOF placement восстанавливает следующий journaled apply, никогда не
+  invisible-rewrite;
 * ALT EOF-сепаратор — перевод строки между foreign-байтами и FIC block'ом
   при размещении блока в EOF является FIC-owned сериализацией: он всегда
   добавляется для непустого foreign-содержимого (в том числе уже
@@ -669,7 +736,10 @@ Rollback семантика (обе топологии):
   канонический header-only `zzzz-fic.cfg`, без unlink),
   удаление публикуется атомарной CAS-записью против захваченного
   pre-rollback состояния и доказывается после записи; только ПОСЛЕ
-  успешной пересборки rollback считается успешным;
+  успешной пересборки rollback считается успешным. EOF placement для
+  ownership-release НЕ требуется: валидный блок, смещённый с EOF
+  (foreign tail после END), остаётся доказанным FIC-owned — удаляется
+  только ключ/блок, foreign tail сохраняется byte-exact;
 * ошибка пересборки — conditional compensation восстанавливает точное
   pre-rollback FIC-owned состояние (только пока цель всё ещё является
   rollback-installed состоянием; при внешнем drift компенсация запрещена),

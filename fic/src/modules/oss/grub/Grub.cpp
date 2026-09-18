@@ -108,6 +108,11 @@ bool reconcileGrubJournal(
             return false;
         case GrubManagedJournalState::Before:
         case GrubManagedJournalState::After:
+        case GrubManagedJournalState::Ineffective:
+            // Ineffective: the recorded value is still FIC-owned, but the
+            // ALT block is displaced from EOF. Ownership reconciliation
+            // proceeds like After; effective compliance is re-established
+            // by the journaled apply that follows this reconciliation.
             break;
         }
         return finishGrubJournalReconciliation(
@@ -192,6 +197,19 @@ bool finishGrubJournalReconciliation(
             "Stale GRUB journal запись разрешена: managed значение '" +
             undo.key + "' отсутствует, grub.cfg пересобран");
         return true;
+    }
+
+    if (state == GrubManagedJournalState::Ineffective) {
+        // Ownership of the recorded value is proven, but the ALT block is
+        // displaced from EOF (foreign content after the END marker): the
+        // record is resolved by ownership (like AFTER), and the effective
+        // EOF placement is re-established by the journaled apply/mutation
+        // that follows this reconciliation — never by an invisible rewrite.
+        diagnostics.push_back(
+            "FIC managed block содержит записанное значение '" +
+            undo.key + "', но смещён с EOF (foreign content после "
+            "END-маркера); ownership разрешается, эффективное размещение "
+            "восстановит следующий apply");
     }
 
     // AFTER: the source mutation is installed — commit Prepared (or a
@@ -326,10 +344,12 @@ bool Grub::applyGrubValue(
     }
 
     // Prepared is recorded BEFORE the source mutation and ONLY when the
-    // source actually needs a change; a compliant source creates no new
-    // journal record.
+    // source is not EFFECTIVELY compliant; a compliant source creates no
+    // new journal record. For ALT this includes a valid same-value block
+    // displaced from EOF: relocating it to EOF is a real system mutation
+    // and must never happen without a Prepared record.
     const bool needsChange =
-        !observed.found || observed.value != actualExpected;
+        !grubManagedValueCompliant(observed, actualExpected);
     fic::rollback::MutationId mutationId = 0;
     bool mutationPrepared = false;
     if (needsChange) {
@@ -379,7 +399,11 @@ bool Grub::applyGrubValue(
     }
 
     // Journal lifecycle matrix (docs/rollback.md, GRUB backend):
-    //   failure + Unchanged/Compensated source -> discard Prepared;
+    //   failure + Unchanged/Compensated source -> discard Prepared
+    //     (Compensated means source restored AND compensating rebuild
+    //     succeeded: the full transaction is reconciled);
+    //   failure + CompensatedPendingRebuild    -> keep Prepared active
+    //     (source restored, but the derived grub.cfg state is unresolved);
     //   failure + Installed/Indeterminate      -> keep Prepared active;
     //   success + Installed                    -> commit Applied;
     //   success + Unchanged                    -> discard the unnecessary

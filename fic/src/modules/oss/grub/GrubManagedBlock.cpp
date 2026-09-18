@@ -189,6 +189,14 @@ GrubBlockParseResult parseGrubManagedBlock(const std::string& content) {
     GrubBlockEntries entries;
     if (beginIndex != std::string::npos) {
         result.view.present = true;
+        // Typed placement: AtEof means NO foreign physical lines after the
+        // END marker line (the canonical renderer never emits any). Any
+        // trailing byte — a foreign assignment, a comment, even a blank
+        // line — makes the block NotAtEof: the last shell assignment may
+        // then come from foreign content, so the block is no longer the
+        // effective override layer. This is placement information only:
+        // a valid block with a foreign tail stays parse-valid (ownership
+        // is provable; the next apply relocates it to EOF).
         for (std::size_t index = beginIndex + 1; index < endIndex; ++index) {
             // Canonical-strict: the block body line is passed with only the
             // physical CR/LF boundary stripped; parseBlockAssignment
@@ -226,6 +234,9 @@ GrubBlockParseResult parseGrubManagedBlock(const std::string& content) {
                 return grubManagedKeyOrder(left.first) <
                     grubManagedKeyOrder(right.first);
             });
+        result.view.placement = (endIndex + 1 == lines.size())
+            ? GrubManagedBlockPlacement::AtEof
+            : GrubManagedBlockPlacement::NotAtEof;
     }
 
     result.ok = true;
