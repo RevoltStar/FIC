@@ -249,15 +249,24 @@ void testEnrollmentMatrix() {
                 RollbackEnrollment::Unsupported,
             "unknown future SSH policy must not be auto-enrolled");
     require(rollbackEnrollment({"OSS", "Grub", "grub_timeout"}) ==
-                RollbackEnrollment::NotEnrolled,
-            "modules outside the rollback system keep legacy disable behavior");
+                RollbackEnrollment::Supported,
+            "whitelisted GRUB policies are rollback-supported");
+    require(rollbackEnrollment({"OSS", "Grub", "grub_cmdline_linux"}) ==
+                RollbackEnrollment::Supported,
+            "grub_cmdline_linux must be enrolled");
+    require(rollbackEnrollment({"OSS", "Grub", "grub_disable_recovery"}) ==
+                RollbackEnrollment::Supported,
+            "grub_disable_recovery must be enrolled");
+    require(rollbackEnrollment({"OSS", "Grub", "grub_future_policy"}) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future GRUB policies must not be auto-enrolled");
 }
 
 void testNotEnrolledPolicyKeepsLegacyDisable() {
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
     const RollbackReport report = rollbackPolicyBeforeDisable(
-        {"OSS", "Grub", "grub_timeout"}, "", RollbackExecutorDeps{});
+        {"TCB", "Unknown", "legacy_policy"}, "", RollbackExecutorDeps{});
     require(report.status == RollbackStatus::Success,
             "not enrolled policy must allow legacy disable");
     require(report.rollbackCompleted(), "legacy disable must not be refused");

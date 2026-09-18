@@ -66,6 +66,15 @@ bool isSupportedDacModeAndOwnerPolicy(const std::string& policyName) {
            policyName == "blocking_user_access_to_system_files";
 }
 
+// Explicit whitelist of the currently existing GRUB policies: a new GRUB
+// policy must be explicitly enrolled together with its journal integration
+// and undo action — never implicitly.
+bool isSupportedGrubPolicy(const std::string& policyName) {
+    return policyName == "grub_timeout" ||
+           policyName == "grub_cmdline_linux" ||
+           policyName == "grub_disable_recovery";
+}
+
 MutationRollbackOutcome outcomeFromOperation(
     MutationId id,
     const std::string& resource,
@@ -214,6 +223,41 @@ MutationRollbackOutcome undoSudoSetting(
     return outcome;
 }
 
+// GRUB ownership-release undo: dispatches to the topology-specific backend
+// (owned drop-in vs ALT EOF managed block) through the SHARED GRUB backend
+// mutex — the same lock the apply path holds. No distro switches here.
+MutationRollbackOutcome undoGrubSetting(
+    const RollbackExecutorDeps& deps,
+    const MutationRecord& record,
+    const UndoRemoveGrubManagedSetting& undo) {
+    const std::lock_guard<std::mutex> lock(grubBackendMutex());
+
+    MutationRollbackOutcome outcome;
+    outcome.id = record.id;
+    outcome.resource = record.resource;
+    if (!deps.grubOptions) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "GRUB rollback backend не настроен";
+        return outcome;
+    }
+    const GrubRollbackResult result =
+        undoGrubManagedSetting(deps.grubOptions(), undo);
+    if (result.ok) {
+        outcome.status = RollbackStatus::Success;
+    } else if (result.nothingToDo) {
+        outcome.status = RollbackStatus::NothingToDo;
+    } else if (result.conflict) {
+        outcome.status = RollbackStatus::Conflict;
+    } else {
+        outcome.status = RollbackStatus::Failed;
+    }
+    outcome.message = result.message;
+    for (const std::string& diagnostic : result.diagnostics) {
+        outcome.message += ". " + diagnostic;
+    }
+    return outcome;
+}
+
 MutationRollbackOutcome undoSshManagedPolicy(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
@@ -323,6 +367,12 @@ MutationRollbackOutcome undoMutation(
             std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Ssh) {
             return undoSshManagedPolicy(deps, record, *sshPolicy);
+        }
+    }
+    if (const auto* grubSetting =
+            std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Grub) {
+            return undoGrubSetting(deps, record, *grubSetting);
         }
     }
     if (const auto* firewallPolicy =
@@ -452,6 +502,13 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
+    if (policy.moduleName == "OSS" && policy.submoduleName == "Grub") {
+        // Explicit whitelist: a new GRUB policy needs its own journal
+        // integration and undo payload before it becomes rollback-supported.
+        return isSupportedGrubPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "DC" && policy.submoduleName == "DeviceControl") {
         return isDcCategoryFeature(policy.policyName)
             ? RollbackEnrollment::Supported
@@ -565,6 +622,43 @@ RollbackReport checkUnrecordedOwnership(
         report.status = RollbackStatus::NothingToDo;
         report.message = "Active mutation records отсутствуют; FIC-маркеры "
                          "политики в sshd_config отсутствуют";
+        return report;
+    }
+    if (policy.moduleName == "OSS" && policy.submoduleName == "Grub") {
+        if (resourceHint.empty()) {
+            return provenanceUnavailable(policy);
+        }
+        if (!deps.grubOptions) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "GRUB rollback backend не настроен";
+            return report;
+        }
+        GrubRollbackOptions options = deps.grubOptions();
+        GrubManagedConfigurationOptions inspectOptions;
+        inspectOptions.managedPath = options.platform.managedConfigPath;
+        inspectOptions.sharedDefaultsPath = options.platform.sharedDefaultsPath;
+        inspectOptions.baseDefaultsPath = options.platform.baseDefaultsPath;
+        inspectOptions.enforceOwnership = options.enforceOwnership;
+        // The journal payload carries the GRUB key as the resource hint; a
+        // FIC-owned managed value without an active record is
+        // unattributable owned state and must fail closed.
+        const GrubValueObservation managed =
+            inspectGrubManagedValue(inspectOptions, resourceHint);
+        if (!managed.valid) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "Не удалось проанализировать FIC managed GRUB "
+                             "артефакт: " + managed.error;
+            return report;
+        }
+        if (managed.found) {
+            return provenanceUnavailable(policy);
+        }
+        RollbackReport report;
+        report.status = RollbackStatus::NothingToDo;
+        report.message = "Active mutation records отсутствуют; FIC managed "
+                         "GRUB значение '" + resourceHint + "' отсутствует";
         return report;
     }
     // FIREWALL and DC: no cheap safe ownership check without the journal.
@@ -717,6 +811,17 @@ RollbackExecutorDeps productionRollbackDeps(
         options.includeBasePath = sshConfig.includeBasePath;
         options.serviceUnits = sshConfig.serviceUnits;
         options.executables = &executables;
+        return options;
+    };
+
+    // GRUB ownership-release rollback: the CURRENT platform topology (owned
+    // drop-in vs ALT EOF managed block) decides where the FIC setting lives.
+    const fic::platform::GrubPlatformConfig grubConfig = platform.grub;
+    deps.grubOptions = [grubConfig, &executables]() {
+        GrubRollbackOptions options;
+        options.platform = grubConfig;
+        options.executables = &executables;
+        options.enforceOwnership = true;
         return options;
     };
 

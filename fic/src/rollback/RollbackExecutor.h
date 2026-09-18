@@ -4,6 +4,7 @@
 #include "modules/dac/mode_and_owner/DacBaselineRollback.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/net/ssh/SshRollback.h"
+#include "modules/oss/grub/GrubRollback.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -74,6 +75,9 @@ struct RollbackExecutorDeps {
     // SSH backend configuration: shared main sshd_config, service units and
     // the executable resolver used for sshd -T validation and service reload.
     std::function<SshRollbackOptions()> sshOptions;
+    // GRUB backend configuration: the platform profile GRUB topology is the
+    // single source of truth for the managed artifact location.
+    std::function<GrubRollbackOptions()> grubOptions;
     // DAC platform-baseline backend configuration: the platform profile DAC
     // config is the single source of truth for the baseline metadata.
     std::function<DacBaselineRollbackOptions()> dacOptions;

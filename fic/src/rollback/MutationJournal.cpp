@@ -1,6 +1,7 @@
 #include "rollback/MutationJournal.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <modules/oss/grub/GrubManagedBlock.h>
 
 #include <nlohmann/json.hpp>
 
@@ -66,6 +67,10 @@ json serializeUndoAction(const UndoAction& action) {
     } else if (const auto* dacBaseline =
                    std::get_if<UndoApplyDacPlatformBaseline>(&action.payload)) {
         value["policy"] = dacBaseline->policyName;
+    } else if (const auto* grubSetting =
+                   std::get_if<UndoRemoveGrubManagedSetting>(&action.payload)) {
+        value["key"] = grubSetting->key;
+        value["applied_value"] = grubSetting->appliedValue;
     }
     return value;
 }
@@ -155,6 +160,30 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         payload.policyName = value.value("policy", "");
         if (payload.policyName.empty()) {
             error = "apply_dac_platform_baseline undo requires a policy";
+            return false;
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
+    if (actionName == "remove_grub_managed_setting" &&
+        backend == MutationBackend::Grub) {
+        UndoRemoveGrubManagedSetting payload;
+        payload.key = value.value("key", "");
+        payload.appliedValue = value.value("applied_value", "");
+        if (payload.key.empty() || payload.appliedValue.empty()) {
+            error = "remove_grub_managed_setting undo requires a key and an "
+                    "applied value";
+            return false;
+        }
+        if (!isGrubManagedKey(payload.key)) {
+            error = "remove_grub_managed_setting undo requires a FIC "
+                    "supported GRUB key, got: " + payload.key;
+            return false;
+        }
+        if (payload.appliedValue.find_first_of("\r\n") != std::string::npos ||
+            payload.appliedValue.find('\0') != std::string::npos) {
+            error = "remove_grub_managed_setting undo applied value must not "
+                    "contain CR, LF or NUL";
             return false;
         }
         action.payload = std::move(payload);
@@ -262,6 +291,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Firewall: return "firewall";
     case MutationBackend::DeviceControl: return "device_control";
     case MutationBackend::Dac: return "dac";
+    case MutationBackend::Grub: return "grub";
     }
     return "unknown";
 }
@@ -273,6 +303,7 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "firewall") { backend = MutationBackend::Firewall; return true; }
     if (value == "device_control") { backend = MutationBackend::DeviceControl; return true; }
     if (value == "dac") { backend = MutationBackend::Dac; return true; }
+    if (value == "grub") { backend = MutationBackend::Grub; return true; }
     return false;
 }
 
@@ -291,6 +322,9 @@ std::string undoActionTypeName(const UndoAction& action) {
     }
     if (std::holds_alternative<UndoApplyDacPlatformBaseline>(action.payload)) {
         return "apply_dac_platform_baseline";
+    }
+    if (std::holds_alternative<UndoRemoveGrubManagedSetting>(action.payload)) {
+        return "remove_grub_managed_setting";
     }
     return "unknown";
 }

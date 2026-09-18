@@ -3,9 +3,12 @@
 #include "modules/oss/grub/policies/OSS_grub_disable_recovery.h"
 #include "modules/oss/grub/policies/OSS_grub_timeout.h"
 #include "modules/oss/grub/GrubConfiguration.h"
+#include "modules/oss/grub/GrubManagedBlock.h"
 #include "modules/oss/grub/GrubManagedConfig.h"
 
+#include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <rollback/DaemonMutationJournal.h>
 
 #include <filesystem>
 #include <algorithm>
@@ -86,6 +89,11 @@ void initializeRuntimePaths(const fs::path& root) {
 
     std::string error;
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+
+    // Deterministic mutation journal location for the GRUB apply journaling
+    // performed by the built-in policies' apply().
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+        root / "data" / "mutation-journal.json");
 }
 
 fic::platform::PlatformExecutableResolver makeResolver(
@@ -187,13 +195,97 @@ GrubCommandRunner countingRebuildRunner(size_t& calls) {
     };
 }
 
+// Pure parser tests of the strict FIC managed block grammar (fail closed).
+void testGrubManagedBlockParser() {
+    // No block: not present, content unchanged.
+    {
+        const GrubBlockParseResult parse = parseGrubManagedBlock(
+            "GRUB_TIMEOUT=5\n# comment\n");
+        require(parse.ok && !parse.view.present,
+                "foreign content must not be reported as a FIC block");
+    }
+    // Valid one-key block.
+    {
+        const std::string content =
+            "GRUB_TIMEOUT=5\n"
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"0\"\n"
+            "# FIC_GRUB_BLOCK_END\n";
+        const GrubBlockParseResult parse = parseGrubManagedBlock(content);
+        require(parse.ok && parse.view.present &&
+                    parse.view.entries.size() == 1 &&
+                    parse.view.entries[0].first == "GRUB_TIMEOUT" &&
+                    parse.view.entries[0].second == "0",
+                "valid one-key FIC block was not parsed");
+    }
+    // Valid multi-key block in any order -> canonical view.
+    {
+        const std::string content =
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"0\"\n"
+            "GRUB_DISABLE_RECOVERY=\"true\"\n"
+            "GRUB_CMDLINE_LINUX=\"quiet\"\n"
+            "# FIC_GRUB_BLOCK_END\n";
+        const GrubBlockParseResult parse = parseGrubManagedBlock(content);
+        require(parse.ok && parse.view.entries.size() == 3 &&
+                    parse.view.entries[0].first == "GRUB_CMDLINE_LINUX" &&
+                    parse.view.entries[1].first == "GRUB_DISABLE_RECOVERY",
+                "FIC block entries are not canonicalized");
+    }
+    // Malformed cases: all fail closed.
+    const std::string begin = std::string(kGrubBlockBeginMarker) + "\n";
+    const std::string end = std::string(kGrubBlockEndMarker) + "\n";
+    struct MalformedCase { const char* name; std::string content; };
+    const std::vector<MalformedCase> malformed = {
+        {"duplicate block",
+         begin + "GRUB_TIMEOUT=\"0\"\n" + end +
+             "foreign\n" + begin + "GRUB_TIMEOUT=\"1\"\n" + end},
+        {"missing END", begin + "GRUB_TIMEOUT=\"0\"\n"},
+        {"missing BEGIN", "foreign\n" + end},
+        {"nested BEGIN", begin + begin + end},
+        {"unknown key", begin + "GRUB_DEFAULT=\"0\"\n" + end},
+        {"duplicate key",
+         begin + "GRUB_TIMEOUT=\"0\"\nGRUB_TIMEOUT=\"1\"\n" + end},
+        {"malformed quoted value", begin + "GRUB_TIMEOUT=0\n" + end},
+        {"shell expression", begin + "GRUB_TIMEOUT=$(reboot)\n" + end},
+        {"comment inside block", begin + "# note\n" + end},
+        {"empty line inside block", begin + "\n" + end},
+        {"foreign FIC-like malformed marker",
+             "#FIC_GRUB_BLOCK_BEGIN version=1\n"},
+        {"foreign FIC-like END", "x # FIC_GRUB_BLOCK_END\n"},
+    };
+    for (const MalformedCase& testCase : malformed) {
+        const GrubBlockParseResult parse =
+            parseGrubManagedBlock(testCase.content);
+        require(!parse.ok,
+                std::string("malformed block must fail closed: ") +
+                testCase.name);
+    }
+    // set/remove round trip.
+    {
+        const GrubBlockMutationResult set = setGrubManagedBlockValue(
+            "GRUB_TIMEOUT=5\n", "GRUB_TIMEOUT", "0");
+        require(set.ok,
+                "managed block set failed");
+        require(set.content ==
+                    "GRUB_TIMEOUT=5\n"
+                    "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                    "GRUB_TIMEOUT=\"0\"\n"
+                    "# FIC_GRUB_BLOCK_END\n",
+                "managed block was not rendered canonically at EOF");
+        const GrubBlockMutationResult remove =
+            removeGrubManagedBlockValue(set.content, "GRUB_TIMEOUT");
+        require(remove.ok && remove.content == "GRUB_TIMEOUT=5\n",
+                "last key removal must drop the whole block byte-exact");
+    }
+}
+
+// ALT shared defaults editor: the FIC EOF managed block model.
 void testGrubConfigurationEditor(const fs::path& root) {
-    const fs::path defaults = root / "editor/etc/default/grub";
+    const fs::path defaults = root / "editor/etc/sysconfig/grub2";
     writeFile(
         defaults,
-        "# GRUB boot loader configuration\n"
-        "GRUB_DEFAULT=0\n"
-        "GRUB_TIMEOUT=5 # menu delay\n"
+        "GRUB_TIMEOUT=5\n"
         "GRUB_CMDLINE_LINUX=\"quiet splash\"\n");
 
     size_t rebuildCalls = 0;
@@ -204,9 +296,6 @@ void testGrubConfigurationEditor(const fs::path& root) {
             ++rebuildCalls;
             require(executable == "/test/grub-rebuild",
                     "wrong rebuild executable");
-            require(arguments == std::vector<std::string>{
-                        "--output", "/test/grub.cfg"},
-                    "wrong rebuild arguments");
             require(options.clearEnvironment,
                     "GRUB rebuild must clear the environment");
             return successfulProcess();
@@ -215,62 +304,107 @@ void testGrubConfigurationEditor(const fs::path& root) {
     GrubConfiguration configuration(testOptions(defaults), runner);
     std::string error;
     require(configuration.load(error), error);
-    const GrubValueObservation cmdline =
-        configuration.inspect("GRUB_CMDLINE_LINUX");
-    require(cmdline.valid && cmdline.found &&
-                cmdline.value == "quiet splash",
-            "quoted GRUB command line was not decoded");
 
     const GrubOperationResult changed =
         configuration.ensureManagedValue("GRUB_TIMEOUT", "10");
     require(changed.ok && changed.changed, changed.message);
     require(rebuildCalls == 1, "changed value must rebuild once");
     require(
-        readFile(defaults).find("GRUB_TIMEOUT=\"10\" # menu delay") !=
-            std::string::npos,
-        "managed value was not safely quoted or comment was lost");
+        readFile(defaults) ==
+            "GRUB_TIMEOUT=5\n"
+            "GRUB_CMDLINE_LINUX=\"quiet splash\"\n"
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"10\"\n"
+            "# FIC_GRUB_BLOCK_END\n",
+        "ALT apply must append a canonical FIC block and keep foreign bytes");
 
+    // Idempotent apply: no source change, but rebuild still happens.
     GrubConfiguration verification(testOptions(defaults), runner);
     require(verification.load(error), error);
     const GrubOperationResult unchanged =
         verification.ensureManagedValue("GRUB_TIMEOUT", "10");
     require(unchanged.ok && !unchanged.changed, unchanged.message);
     require(rebuildCalls == 2,
-            "matching defaults must still rebuild a possibly stale grub.cfg");
+            "matching managed value must still rebuild a stale grub.cfg");
 
-    GrubConfiguration cmdlineUpdate(testOptions(defaults), runner);
-    require(cmdlineUpdate.load(error), error);
-    const GrubOperationResult cmdlineChanged =
-        cmdlineUpdate.ensureManagedValue(
-            "GRUB_CMDLINE_LINUX", "quiet audit=1 $literal");
-    require(cmdlineChanged.ok && cmdlineChanged.changed,
-            cmdlineChanged.message);
+    // Value update rewrites only the managed block.
+    GrubConfiguration update(testOptions(defaults), runner);
+    require(update.load(error), error);
+    const GrubOperationResult updated =
+        update.ensureManagedValue("GRUB_CMDLINE_LINUX", "quiet audit=1");
+    require(updated.ok && updated.changed, updated.message);
     const std::string content = readFile(defaults);
     require(
-        content.find(
-            "GRUB_CMDLINE_LINUX=\"quiet audit=1 \\$literal\"") !=
-            std::string::npos,
-        "command line was not emitted as a literal shell value");
+        content.find("GRUB_CMDLINE_LINUX=\"quiet audit=1\"") !=
+                std::string::npos &&
+            content.find("foreign") == std::string::npos,
+        "managed block update failed");
+    const GrubBlockParseResult parse = parseGrubManagedBlock(content);
+    require(parse.ok && parse.view.entries.size() == 2,
+            "FIC block must keep both managed keys");
+}
 
-    GrubConfiguration append(testOptions(defaults), runner);
-    require(append.load(error), error);
-    const GrubOperationResult appended =
-        append.ensureManagedValue("GRUB_DISABLE_RECOVERY", "true");
-    require(appended.ok && appended.changed, appended.message);
-    GrubConfiguration finalVerification(testOptions(defaults), runner);
-    require(finalVerification.load(error), error);
-    const GrubValueObservation recovery =
-        finalVerification.inspect("GRUB_DISABLE_RECOVERY");
-    require(recovery.valid && recovery.found && recovery.value == "true",
-            "missing GRUB assignment was not appended");
+// Foreign bytes survive apply, update and rollback byte-exact; a block that
+// is no longer at EOF is relocated to EOF without moving foreign lines.
+void testAltForeignPreservationAndRelocation(const fs::path& root) {
+    const std::string foreign =
+        "# custom admin comment\n"
+        "\n"
+        "GRUB_TIMEOUT=5\n"
+        "FOO='strange value'\n"
+        "\n"
+        "if test -n \"$SOMETHING\"; then\n"
+        "    BAR=baz\n"
+        "fi\n";
+    const fs::path defaults = root / "foreign/etc/sysconfig/grub2";
+    writeFile(defaults, foreign);
+
+    const GrubCommandRunner runner =
+        [](const std::string&, const std::vector<std::string>&,
+           const ProcessOptions&) { return successfulProcess(); };
+    GrubConfiguration configuration(testOptions(defaults), runner);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.ensureManagedValue("GRUB_TIMEOUT", "0").ok,
+            "foreign preservation apply failed");
+    require(readFile(defaults).substr(0, foreign.size()) == foreign,
+            "foreign bytes were not preserved byte-exact after apply");
+    require(
+        readFile(defaults).find(kGrubBlockBeginMarker) > foreign.size() - 1,
+        "FIC block must be at EOF");
+
+    // Relocation: foreign content appended after the block.
+    const fs::path relocated = root / "foreign-relocated/etc/sysconfig/grub2";
+    writeFile(
+        relocated,
+        "foreign A\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=\"5\"\n"
+        "# FIC_GRUB_BLOCK_END\n"
+        "foreign B\n");
+    GrubConfiguration relocatedConfiguration(testOptions(relocated), runner);
+    require(relocatedConfiguration.load(error), error);
+    require(relocatedConfiguration.ensureManagedValue("GRUB_TIMEOUT", "0").ok,
+            "block relocation apply failed");
+    const std::string relocatedContent = readFile(relocated);
+    require(relocatedContent ==
+                "foreign A\n"
+                "foreign B\n"
+                "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                "GRUB_TIMEOUT=\"0\"\n"
+                "# FIC_GRUB_BLOCK_END\n",
+            "block relocation must keep foreign order byte-exact and place "
+            "the block at EOF");
 }
 
 void testAmbiguousAndDynamicAssignmentsFailClosed(const fs::path& root) {
-    const fs::path defaults = root / "ambiguous/etc/default/grub";
-    const std::string duplicate =
+    const fs::path defaults = root / "ambiguous/etc/sysconfig/grub2";
+    // Foreign duplicate assignments are NOT an ownership conflict anymore:
+    // the final FIC block override wins.
+    const std::string duplicates =
         "GRUB_TIMEOUT=5\n"
         "GRUB_TIMEOUT=10\n";
-    writeFile(defaults, duplicate);
+    writeFile(defaults, duplicates);
     size_t calls = 0;
     const GrubCommandRunner runner =
         [&calls](const std::string&, const std::vector<std::string>&,
@@ -282,31 +416,32 @@ void testAmbiguousAndDynamicAssignmentsFailClosed(const fs::path& root) {
     GrubConfiguration duplicateConfiguration(testOptions(defaults), runner);
     std::string error;
     require(duplicateConfiguration.load(error), error);
-    const GrubValueObservation observation =
-        duplicateConfiguration.inspect("GRUB_TIMEOUT");
-    require(!observation.valid &&
-                observation.error.find("повторное определение") !=
-                    std::string::npos,
-            "duplicate target assignment must be ambiguous");
-    require(
-        !duplicateConfiguration.ensureManagedValue("GRUB_TIMEOUT", "15").ok,
-        "ambiguous target assignment must fail before write");
-    require(readFile(defaults) == duplicate && calls == 0,
-            "ambiguous configuration was modified or rebuilt");
+    require(duplicateConfiguration.ensureManagedValue("GRUB_TIMEOUT", "15").ok,
+            "foreign duplicate assignments must not block the FIC block");
+    require(calls == 1, "apply must rebuild exactly once");
 
-    writeFile(defaults, "GRUB_CMDLINE_LINUX=\"quiet $dynamic\"\n");
-    GrubConfiguration dynamicConfiguration(testOptions(defaults), runner);
-    require(dynamicConfiguration.load(error), error);
-    require(
-        !dynamicConfiguration.ensureManagedValue(
-             "GRUB_CMDLINE_LINUX", "quiet").ok,
-        "dynamic shell expression must fail closed");
-    require(calls == 0, "dynamic expression must fail before rebuild");
+    // A malformed FIC block is a fail-closed conflict: no write, no rebuild.
+    const std::string malformedBlock =
+        "GRUB_TIMEOUT=5\n"
+        "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+        "GRUB_TIMEOUT=$(reboot)\n";
+    writeFile(defaults, malformedBlock);
+    calls = 0;
+    GrubConfiguration malformedConfiguration(testOptions(defaults), runner);
+    require(malformedConfiguration.load(error), error);
+    const GrubOperationResult malformedResult =
+        malformedConfiguration.ensureManagedValue("GRUB_TIMEOUT", "15");
+    require(!malformedResult.ok,
+            "malformed FIC block must fail closed");
+    require(calls == 0 && readFile(defaults) == malformedBlock,
+            "malformed FIC block changed the file or ran a rebuild");
 }
 
 void testRebuildFailureCompensates(const fs::path& root) {
-    const fs::path defaults = root / "rollback/etc/default/grub";
-    const std::string original = "GRUB_TIMEOUT=5\n";
+    const fs::path defaults = root / "rollback/etc/sysconfig/grub2";
+    const std::string original =
+        "GRUB_TIMEOUT=5\n"
+        "# admin tail\n";
     writeFile(defaults, original);
 
     size_t calls = 0;
@@ -324,12 +459,13 @@ void testRebuildFailureCompensates(const fs::path& root) {
     const GrubOperationResult result =
         configuration.ensureManagedValue("GRUB_TIMEOUT", "10");
     require(!result.ok, "failed rebuild must fail policy application");
+    require(result.sourceState == GrubSourceMutationState::Compensated,
+            "proven compensation must be reported as Compensated");
     require(calls == 2,
             "failed rebuild must regenerate grub.cfg after restoring defaults");
     require(readFile(defaults) == original,
-            "defaults file was not restored after rebuild failure");
+            "shared defaults file was not restored after rebuild failure");
 }
-
 void testUnsafeInputAndPathsFailClosed(const fs::path& root) {
     const fs::path defaults = root / "unsafe/etc/default/grub";
     writeFile(defaults, "GRUB_TIMEOUT=5\n");
@@ -848,8 +984,9 @@ int main() {
         require(policy.called && policy.observedValue == "expected",
                 "Grub hook did not receive configured value");
 
-        const fs::path applyDefaults = root / "apply/etc/default/grub";
-        writeFile(applyDefaults, "GRUB_TEST_VALUE=expected\n");
+        const fs::path applyDefaults = root / "apply/etc/sysconfig/grub2";
+        const std::string foreignApply = "GRUB_TEST_VALUE=expected\n";
+        writeFile(applyDefaults, foreignApply);
         writeFile(fakeExecutable, "#!/bin/sh\nexit 1\n", 0755);
         writeFile(
             root / "data/commandhash.txt",
@@ -858,8 +995,21 @@ int main() {
         ApplyingGrubPolicy applyingPolicy(
             {fic::platform::GrubConfigTopology::SharedDefaultsFile,
              applyDefaults, {}, {}, {}}, resolver);
+        // ALT apply with a failing rebuild: the installed FIC block is
+        // conditionally compensated, the Prepared provenance is discarded
+        // (failure + Compensated -> no journal record).
         require(!applyingPolicy.apply(),
-                "matching defaults bypassed the mandatory GRUB rebuild");
+                "failing rebuild must fail the GRUB policy apply");
+        require(readFile(applyDefaults) == foreignApply,
+                "failed ALT apply must restore the foreign file byte-exact");
+        {
+            std::string journalError;
+            auto* journal = fic::rollback::DaemonMutationJournal::instance()
+                                .tryGet(journalError);
+            require(journal != nullptr, journalError);
+            require(journal->records().empty(),
+                "failed compensated ALT apply must not leave journal records");
+        }
 
         writeFile(
             root / "config/OSS.conf",
@@ -877,7 +1027,9 @@ int main() {
         require(!malformedCmdline.apply(),
                 "malformed stored GRUB value must fail without escaping apply");
 
+        testGrubManagedBlockParser();
         testGrubConfigurationEditor(root);
+        testAltForeignPreservationAndRelocation(root);
         testAmbiguousAndDynamicAssignmentsFailClosed(root);
         testRebuildFailureCompensates(root);
         testUnsafeInputAndPathsFailClosed(root);

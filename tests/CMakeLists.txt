@@ -603,6 +603,11 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
 )
 target_include_directories(rollback_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -620,10 +625,14 @@ add_executable(grub_policy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/Grub.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_timeout.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_cmdline_linux.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_disable_recovery.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
 )
 target_include_directories(grub_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -635,6 +644,31 @@ target_link_libraries(grub_policy_tests PRIVATE
     Threads::Threads
 )
 add_test(NAME grub_policy_tests COMMAND grub_policy_tests)
+
+add_executable(grub_rollback_journal_tests
+    fic/modules/oss/grub/GrubRollbackJournalTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/Grub.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_timeout.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_cmdline_linux.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_disable_recovery.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+)
+target_include_directories(grub_rollback_journal_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(grub_rollback_journal_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME grub_rollback_journal_tests COMMAND grub_rollback_journal_tests)
 
 add_executable(pam_configuration_tests
     fic/modules/identity_access/pam/PamConfigurationTests.cpp
@@ -1065,6 +1099,10 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp

@@ -473,6 +473,10 @@ I/O), это ошибка загрузки — fail closed. Существующ
 * `UndoDisableDeviceFeature{feature}` — отключение category-level desired
   state DC и пересборка `99-fic-devices.rules` через device daemon;
   per-device пользовательские правила не затрагиваются.
+* `UndoRemoveGrubManagedSetting{key, appliedValue}` — GRUB
+  ownership-release rollback (см. раздел «GRUB rollback (OSS/Grub)»);
+  payload доказывает только FIC-владение (key, appliedValue), топология
+  хранения берётся из текущего platform profile и в journal не пишется.
 * `UndoApplyDacPlatformBaseline{policyName}` — DAC hardening-политики
   (`systemcommandlock`, `blocking_user_access_to_system_files`):
   platform-baseline rollback (см. следующий раздел). Payload несёт только
@@ -538,6 +542,47 @@ fields). По-русски: откат DAC hardening-политик не вос�
   выполняется; всё в baseline — `NothingToDo`; чужое/небезопасное —
   `Unsupported` (disable запрещён).
 
+## GRUB rollback (OSS/Grub)
+
+GRUB-политики используют ownership-release модель: FIC владеет только
+своим managed-артефактом, никаких previous-value restore и full-file
+snapshot не существует. Расположение артефакта определяется ТЕКУЩИМ
+platform profile (не journal):
+
+* Debian/Ubuntu — FIC-owned drop-in
+  `/etc/default/grub.d/zzzz-fic.cfg` (canonical format: header
+  `# Managed by FIC. Do not edit.`, ключи в фиксированном порядке;
+  опустевший файл удаляется целиком);
+* ALT — FIC managed block в EOF общего `/etc/sysconfig/grub2`
+  (маркеры `# FIC_GRUB_BLOCK_BEGIN version=1` / `END`, whitelist ключей
+  `GRUB_CMDLINE_LINUX`, `GRUB_DISABLE_RECOVERY`, `GRUB_TIMEOUT`,
+  canonical order, строгий fail-closed парсинг: дубликаты/вложенные/чужие
+  FIC-подобные маркеры, неизвестные ключи, malformed quotes,
+  `$`/backticks — `Conflict`, файл не изменяется).
+
+Apply записывает в journal `Prepared`-запись ТОЛЬКО при реальном изменении
+источника (`UndoRemoveGrubManagedSetting{key, appliedValue}`) и после
+успешной записи коммитит `Applied`. Внешнее изменение FIC-managed значения
+(drift) делает apply fail-closed. Любая мутация и откат выполняются под
+общей `grubBackendMutex()`; обязательная пересборка grub.cfg выполняется
+через `VerifiedProcessExecutor` (пустой environment, таймаут).
+
+Rollback семантика (обе топологии):
+
+* ключ отсутствует или весь артефакт удалён — владение уже освобождено:
+  обязательная пересборка grub.cfg всё равно выполняется, затем
+  `NothingToDo` (инвариант crash-after-source-rollback);
+* ключ присутствует с другим значением — `Conflict`, источник не
+  изменяется, пересборка не запускается;
+* key == appliedValue — ключ удаляется (опустевший артефакт удаляется),
+  удаление публикуется атомарной CAS-записью против захваченного
+  pre-rollback состояния и доказывается после записи; только ПОСЛЕ
+  успешной пересборки rollback считается успешным;
+* ошибка пересборки — conditional compensation восстанавливает точное
+  pre-rollback FIC-owned состояние (только пока цель всё ещё является
+  rollback-installed состоянием; при внешнем drift компенсация запрещена),
+  выполняется компенсирующая пересборка, journal-запись остаётся активной.
+
 ## Enrollment и результаты
 
 `rollbackEnrollment(PolicyRef)` возвращает:
@@ -555,6 +600,9 @@ fields). По-русски: откат DAC hardening-политик не вос�
   * `FIREWALL/HostFiltering` (`block_ftp`, `block_rdp`, `custom_rules`);
   * `DC/DeviceControl` category features (`block_usb_storage`,
     `block_printers_scanners`, `block_optical_drives`);
+  * `OSS/Grub` (`grub_timeout`, `grub_cmdline_linux`,
+    `grub_disable_recovery` — явный whitelist, см. раздел
+    «GRUB rollback (OSS/Grub)»);
 * `Unsupported` — модуль в системе rollback, но автоматический откат не
   реализован: `sudo_require_authentication` (чужие NOPASSWD/PASSWD specs),
   `exclusive_firewall_control` (уничтожает внешнее состояние), DC
@@ -569,7 +617,9 @@ fields). По-русски: откат DAC hardening-политик не вос�
 `Success / NothingToDo / Conflict / Unsupported / Failed / Partial`.
 `NothingToDo` означает, что активные записи не требуют отката: для SYSCTL
 и SUDO — FIC-owned запись нет в managed-артефакте (внешнее состояние никогда
-не трогается); для SSH — у мутации не осталось ни одного существующего
+не трогается); для GRUB — FIC-owned ключ уже отсутствует в managed-артефакте
+текущей топологии, но обязательная пересборка grub.cfg всё равно выполняется;
+для SSH — у мутации не осталось ни одного существующего
 FIC-owned артефакта (нет managed sub-block'а политики и `FIC_DISABLED`
 wrapper'ов: внешняя очистка, предыдущий rollback + crash и т.п.); rollback
 при этом всё равно выполняет runtime reconciliation (`sshd -T` + reload), либо
@@ -589,7 +639,7 @@ target-директивы в global section без journal-записей озн
 
 ## Расширение
 
-Новые backend'ы (PAM, GRUB, fstab и т.д.) подключаются добавлением
+Новые backend'ы (PAM, fstab и т.д.) подключаются добавлением
 payload'а в `UndoAction`, ветки в `RollbackExecutor` и записи мутации в
 момент фактического изменения ресурса — без изменений в `Policy` и без
 новых виртуальных методов.

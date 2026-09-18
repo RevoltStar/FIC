@@ -631,6 +631,89 @@ void testSshUndoMalformedPayloadsFailClosed() {
         "inconsistent backend");
 }
 
+void testGrubUndoPayloadRoundTrip() {
+    TempFile file;
+    MutationId id = 0;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+        MutationRecord record;
+        record.policy = PolicyRef{"OSS", "Grub", "grub_test_policy"};
+        record.resource = "GRUB_TIMEOUT";
+        record.undo = UndoAction{
+            MutationBackend::Grub,
+            UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"}};
+        require(journal.prepareMutation(record, id, error), error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    MutationJournal reloaded(file.path);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1,
+            "grub record must survive reload");
+    const MutationRecord& record = reloaded.records().front();
+    require(record.undo.backend == MutationBackend::Grub,
+            "grub backend must survive reload");
+    const auto* undo =
+        std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload);
+    require(undo != nullptr, "grub undo payload must survive reload");
+    require(undo->key == "GRUB_TIMEOUT" && undo->appliedValue == "expected",
+            "grub key and applied value must survive reload");
+}
+
+void requireBrokenGrubJournalFailsClosed(const std::string& content,
+                                         const std::string& description) {
+    TempFile file;
+    file.write(content);
+    MutationJournal journal(file.path);
+    std::string error;
+    require(!journal.load(error),
+            "malformed grub journal must fail closed: " + description);
+    require(!error.empty(), "grub journal failure must report an error");
+}
+
+std::string grubJournalHead() {
+    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+           "\"policy\":{\"module\":\"OSS\",\"submodule\":\"Grub\","
+           "\"policy\":\"grub_test_policy\"},\"resource\":\"GRUB_TIMEOUT\","
+           "\"backend\":\"grub\",\"status\":\"applied\",\"created_at_epoch\":1,"
+           "\"updated_at_epoch\":1,\"error\":\"\",\"undo\":{";
+}
+
+void testGrubUndoMalformedPayloadsFailClosed() {
+    const std::string head = grubJournalHead();
+    const std::string tail = "}}]}";
+
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\"}" +
+            tail,
+        "missing payload fields");
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
+               "\"key\":\"GRUB_TEST_VALUE\",\"applied_value\":\"expected\"}" +
+            tail,
+        "unknown managed key");
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
+               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":\"\"}" +
+            tail,
+        "empty applied value");
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
+               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":\"ex\\npected\"}" +
+            tail,
+        "applied value with newline");
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_managed_setting\",\"backend\":\"grub\","
+               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":\"expected\"}" + tail,
+        "inconsistent action and backend");
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"sudo\","
+               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":\"expected\"}" + tail,
+        "inconsistent backend");
+}
+
 } // namespace
 
 // Arms a deterministic directory fsync hook for the journal path: the first
@@ -1774,6 +1857,8 @@ int main() {
         {"status and backend string round trip", testStatusAndBackendStringRoundTrip},
         {"ssh undo payload round trip", testSshUndoPayloadRoundTrip},
         {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
+        {"grub undo payload round trip", testGrubUndoPayloadRoundTrip},
+        {"grub undo malformed payloads fail closed", testGrubUndoMalformedPayloadsFailClosed},
         {"daemon journal override and helpers", testDaemonJournalOverrideAndHelpers},
         {"daemon journal fails closed on broken file", testDaemonJournalFailsClosedOnBrokenFile},
         {"load durability barrier failure and retry", testLoadDurabilityBarrierFailureAndRetry},

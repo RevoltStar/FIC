@@ -31,7 +31,8 @@ enum class MutationBackend {
     Ssh,
     Firewall,
     DeviceControl,
-    Dac
+    Dac,
+    Grub
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -39,6 +40,17 @@ enum class MutationBackend {
 struct UndoRemoveManagedSetting {
     std::string key;          // managed key (canonical sysctl key, sudoers Defaults key)
     std::string appliedValue; // value/line FIC last applied; drift fingerprint
+};
+
+// GRUB ownership-release payload. The record proves ONLY that FIC owns the
+// managed setting (key, appliedValue); the storage location (Debian/Ubuntu
+// owned drop-in vs ALT shared-defaults EOF managed block) is derived from
+// the CURRENT platform profile at rollback time and is never journaled. No
+// previous foreign value, no whole-file snapshot: rollback releases the FIC
+// override, it never reconstructs pre-FIC state.
+struct UndoRemoveGrubManagedSetting {
+    std::string key;          // FIC-supported GRUB key (GRUB_TIMEOUT, ...)
+    std::string appliedValue; // value FIC last applied; drift fingerprint
 };
 
 // Explicit FIC ownership payload for SSH rollback. The persistent rollback
@@ -85,7 +97,8 @@ using UndoPayload = std::variant<
     UndoRemoveSshManagedPolicy,
     UndoRemoveFirewallPolicy,
     UndoDisableDeviceFeature,
-    UndoApplyDacPlatformBaseline>;
+    UndoApplyDacPlatformBaseline,
+    UndoRemoveGrubManagedSetting>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

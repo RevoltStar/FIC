@@ -1,0 +1,1043 @@
+#include "modules/oss/grub/Grub.h"
+#include "modules/oss/grub/GrubConfiguration.h"
+#include "modules/oss/grub/GrubManagedBlock.h"
+#include "modules/oss/grub/GrubRollback.h"
+#include "platform/PlatformExecutableResolver.h"
+#include "rollback/DaemonMutationJournal.h"
+#include "rollback/MutationJournal.h"
+
+#include <fic/core/integrity/CommandHashStore.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <sys/stat.h>
+#include <unistd.h>
+
+namespace {
+
+namespace fs = std::filesystem;
+namespace rollback = fic::rollback;
+
+void require(bool condition, const std::string& message) {
+    if (!condition) {
+        throw std::runtime_error(message);
+    }
+}
+
+void writeFile(const fs::path& path,
+               const std::string& content,
+               mode_t mode = 0644) {
+    fs::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    require(output.is_open(), "could not write " + path.string());
+    output << content;
+    output.close();
+    require(::chmod(path.c_str(), mode) == 0,
+            "could not chmod " + path.string());
+}
+
+std::string readFile(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    require(input.is_open(), "could not read " + path.string());
+    return std::string(
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>());
+}
+
+void initializeRuntimePaths(const fs::path& root) {
+    auto paths = fic::core::FicProductPaths::production();
+    paths.privateBinDir = root / "bin";
+    paths.configDir = root / "config";
+    paths.languageDir = root / "lang";
+    paths.logDir = root / "log";
+    paths.notifyDir = root / "notify";
+    paths.dataDir = root / "data";
+    paths.shareDir = root / "share";
+    paths.imageDir = root / "image";
+    paths.runtimeDir = root / "run";
+    paths.lockStatusFile = root / "lockstatus";
+    paths.commandHashFile = root / "data/commandhash.txt";
+    paths.deviceDatabaseFile = root / "data/devices.db";
+    paths.deviceDatabaseLockFile = root / "log/devices.lock";
+    paths.lockDebugLogFile = root / "log/db-lock.log";
+
+    fs::create_directories(paths.configDir);
+    fs::create_directories(paths.logDir);
+    fs::create_directories(paths.dataDir);
+    writeFile(
+        paths.configDir / "AUDIT.conf",
+        "_schema_version=1\n"
+        "log_level.status=ENABLE\n"
+        "log_level.value=ERROR\n");
+
+    std::string error;
+    require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+    rollback::DaemonMutationJournal::instance().setOverridePath(
+        root / "data" / "mutation-journal.json");
+}
+
+class JournalOverride {
+public:
+    explicit JournalOverride(fs::path path)
+        : path_(std::move(path)) {
+        fs::create_directories(path_.parent_path());
+        rollback::DaemonMutationJournal::instance().setOverridePath(path_);
+    }
+
+    ~JournalOverride() {
+        rollback::DaemonMutationJournal::instance().resetOverride();
+    }
+
+private:
+    fs::path path_;
+};
+
+rollback::MutationJournal* testJournal() {
+    std::string error;
+    auto* journal = rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    return journal;
+}
+
+fic::platform::PlatformExecutableResolver makeResolver(
+    const fs::path& executable) {
+    fic::platform::PlatformExecutables executables;
+    executables.entries.push_back(
+        {fic::platform::ExecutableId::UpdateGrub, {executable}});
+    fic::platform::PlatformExecutableResolverOptions options;
+    options.enforceTrustedOwnership = false;
+    return fic::platform::PlatformExecutableResolver(
+        std::move(executables), options);
+}
+
+ProcessResult successfulProcess() {
+    ProcessResult result;
+    result.started = true;
+    result.exitCode = 0;
+    return result;
+}
+
+ProcessResult failedProcess(const std::string& error = "injected failure") {
+    ProcessResult result;
+    result.started = true;
+    result.exitCode = 1;
+    result.standardError = error;
+    return result;
+}
+
+GrubCommandRunner countingRebuildRunner(std::size_t& calls) {
+    return [&calls](const std::string&, const std::vector<std::string>&,
+                    const ProcessOptions&) {
+        ++calls;
+        return successfulProcess();
+    };
+}
+
+void setPolicyConfig(const fs::path& root,
+                     const std::vector<std::pair<std::string, std::string>>&
+                         policies) {
+    std::string content = "_schema_version=1\n";
+    for (const auto& policy : policies) {
+        content += policy.first + ".status=ENABLE\n";
+        content += policy.first + ".value=" + policy.second + "\n";
+    }
+    writeFile(root / "config/OSS.conf", content);
+}
+
+fic::platform::GrubPlatformConfig altConfig(const fs::path& shared) {
+    fic::platform::GrubPlatformConfig config;
+    config.topology =
+        fic::platform::GrubConfigTopology::SharedDefaultsFile;
+    config.sharedDefaultsPath = shared;
+    config.rebuildArguments = {"-o", "/etc/grub.cfg"};
+    return config;
+}
+
+fic::platform::GrubPlatformConfig debianConfig(const fs::path& managed,
+                                               const fs::path& base) {
+    fic::platform::GrubPlatformConfig config;
+    config.topology =
+        fic::platform::GrubConfigTopology::OwnedDefaultsDropIn;
+    config.managedConfigPath = managed;
+    config.baseDefaultsPath = base;
+    return config;
+}
+
+class JournalGrubPolicy final : public Grub {
+public:
+    JournalGrubPolicy(
+        fic::platform::GrubPlatformConfig platformConfig,
+        const fic::platform::PlatformExecutableResolver& executables,
+        std::string key,
+        std::string policyName)
+        : Grub(std::move(platformConfig), executables, false),
+          key_(std::move(key)) {
+        this->policyName = std::move(policyName);
+        this->policyTypeValue =
+            std::make_unique<PossibleListPolicyTypeValue>(
+                std::vector<std::string>{"expected", "0", "5", "quiet"});
+    }
+
+    PolicyRef ref() const { return this->policyRef(); }
+
+private:
+    std::string key_;
+
+    bool applyGrub(const std::string& expectedValue) override {
+        return this->applyGrubValue(key_, expectedValue);
+    }
+};
+
+rollback::UndoAction grubUndo(const std::string& key,
+                              const std::string& appliedValue) {
+    return rollback::UndoAction{
+        rollback::MutationBackend::Grub,
+        rollback::UndoRemoveGrubManagedSetting{key, appliedValue}};
+}
+
+rollback::MutationRecord preparedGrubRecord(
+    const PolicyRef& policy,
+    const std::string& key,
+    const rollback::UndoRemoveGrubManagedSetting& undo) {
+    rollback::MutationRecord record;
+    record.policy = policy;
+    record.resource = key;
+    record.undo = rollback::UndoAction{
+        rollback::MutationBackend::Grub, undo};
+    return record;
+}
+
+std::size_t activeCount(const PolicyRef& policy) {
+    return testJournal()->activeRecords(policy).size();
+}
+
+GrubRollbackOptions rollbackOptions(
+    fic::platform::GrubPlatformConfig platform,
+    const fic::platform::PlatformExecutableResolver& executables,
+    GrubCommandRunner runner = {}) {
+    GrubRollbackOptions options;
+    options.platform = std::move(platform);
+    options.executables = &executables;
+    options.enforceOwnership = false;
+    options.runner = std::move(runner);
+    return options;
+}
+
+// Debian managed drop-in location helpers: the grub.d directory must exist
+// and be safe before GrubManagedConfig accepts the topology.
+fs::path dropInDirectory(const fs::path& testCase) {
+    return testCase / "etc/default/grub.d";
+}
+
+fs::path dropInPath(const fs::path& testCase) {
+    return dropInDirectory(testCase) / "zzzz-fic.cfg";
+}
+
+void prepareDebianTopology(const fs::path& testCase,
+                           const std::string& baseContent = "GRUB_TIMEOUT=5\n") {
+    fs::create_directories(dropInDirectory(testCase));
+    writeFile(testCase / "etc/default/grub", baseContent);
+}
+
+// ALT apply + journal lifecycle: Prepared -> Applied, idempotent apply
+// without a new record, drift fail closed.
+void testAltApplyJournalLifecycle(const fs::path& root,
+                                  const fs::path& rebuildExecutable) {
+    JournalOverride journalOverride(
+        root / "alt-lifecycle" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-lifecycle/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+
+    require(policy.apply(), "ALT apply with journal must succeed");
+    require(activeCount(policy.ref()) == 1,
+            "changed source must create exactly one journal record");
+    const std::vector<rollback::MutationRecord> appliedRecords =
+        testJournal()->activeRecords(policy.ref());
+    const rollback::MutationRecord& record = appliedRecords[0];
+    require(record.status == rollback::MutationStatus::Applied &&
+                record.resource == "GRUB_TIMEOUT",
+            "applied ALT mutation must be journaled as Applied");
+    const auto* undo =
+        std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &record.undo.payload);
+    require(undo != nullptr && undo->key == "GRUB_TIMEOUT" &&
+                undo->appliedValue == "expected" &&
+                record.undo.backend == rollback::MutationBackend::Grub,
+            "GRUB undo payload must carry key + appliedValue only");
+    require(readFile(shared) ==
+                foreign +
+                    "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                    "GRUB_TIMEOUT=\"expected\"\n"
+                    "# FIC_GRUB_BLOCK_END\n",
+            "ALT apply must append the FIC block to the foreign bytes");
+
+    // Repeated compliant apply: no new records, no source change.
+    JournalGrubPolicy repeat(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    require(repeat.apply(), "repeated ALT apply must succeed");
+    require(activeCount(policy.ref()) == 1,
+            "repeated compliant apply must not create new journal records");
+    require(readFile(shared).substr(0, foreign.size()) == foreign,
+            "foreign bytes must stay byte-exact across applies");
+
+    // Drift: the managed value changed externally -> fail closed.
+    writeFile(
+        shared,
+        foreign +
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"5\"\n"
+            "# FIC_GRUB_BLOCK_END\n");
+    JournalGrubPolicy drift(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                            "grub_test_policy");
+    require(!drift.apply(),
+            "external managed value drift must fail the apply");
+    require(activeCount(policy.ref()) == 1,
+            "drift must not resolve the journal record");
+}
+
+// ALT value change: the old FIC ownership is released through the SAME
+// backend operation used by rollback, the old record resolved, then the new
+// value applied with a fresh record.
+void testAltValueChange(const fs::path& root,
+                        const fs::path& rebuildExecutable) {
+    JournalOverride journalOverride(
+        root / "alt-value-change" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-value-change/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    require(policy.apply(), "initial ALT apply must succeed");
+
+    setPolicyConfig(root, {{"grub_test_policy", "0"}});
+    JournalGrubPolicy changed(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                              "grub_test_policy");
+    require(changed.apply(), "ALT value change apply must succeed");
+    require(readFile(shared) ==
+                foreign +
+                    "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                    "GRUB_TIMEOUT=\"0\"\n"
+                    "# FIC_GRUB_BLOCK_END\n",
+            "value change must rewrite the managed block to the new value");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->activeRecords(policy.ref());
+    require(records.size() == 1 &&
+                records[0].status == rollback::MutationStatus::Applied,
+            "value change must leave exactly one active Applied record");
+    const auto* undo =
+        std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &records[0].undo.payload);
+    require(undo != nullptr && undo->appliedValue == "0",
+            "the active record must fingerprint the NEW applied value");
+    require(testJournal()->records().size() == 2,
+            "the OLD applied record must be resolved, not rewritten");
+}
+
+// Prepared crash recovery (ALT topology), case A: Prepared + source AFTER
+// -> rebuild + commit Applied.
+void testAltPreparedRecoveryAfter(const fs::path& root,
+                                  const fs::path& rebuildExecutable) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalOverride journalOverride(
+        root / "alt-recovery-a" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-recovery-a/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    rollback::MutationId id = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+    writeFile(
+        shared,
+        foreign +
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"expected\"\n"
+            "# FIC_GRUB_BLOCK_END\n");
+    require(policy.apply(), "Prepared AFTER recovery apply must succeed");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->activeRecords(policy.ref());
+    const rollback::MutationRecord& record = records[0];
+    require(record.status == rollback::MutationStatus::Applied,
+            "Prepared AFTER must be committed to Applied");
+}
+
+// Prepared crash recovery (ALT topology), case B: Prepared + source BEFORE
+// (block gone) -> rebuild + discard, then the regular apply installs the
+// value with a fresh record.
+void testAltPreparedRecoveryBefore(const fs::path& root,
+                                   const fs::path& rebuildExecutable) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalOverride journalOverride(
+        root / "alt-recovery-b" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-recovery-b/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    rollback::MutationId id = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+    require(policy.apply(), "Prepared BEFORE recovery apply must succeed");
+    require(readFile(shared).find(kGrubBlockBeginMarker) !=
+                std::string::npos,
+            "regular apply must install the managed block");
+    require(activeCount(policy.ref()) == 1 &&
+                testJournal()->activeRecords(policy.ref())[0].status ==
+                    rollback::MutationStatus::Applied,
+            "stale Prepared must be discarded and replaced by the new "
+            "Applied record");
+}
+
+// Prepared crash recovery (ALT topology), case C: Prepared + source DRIFT
+// -> fail closed, the record stays active.
+void testAltPreparedRecoveryDrift(const fs::path& root,
+                                  const fs::path& rebuildExecutable) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalOverride journalOverride(
+        root / "alt-recovery-c" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-recovery-c/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    rollback::MutationId id = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+    writeFile(
+        shared,
+        foreign +
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"manual\"\n"
+            "# FIC_GRUB_BLOCK_END\n");
+    require(!policy.apply(), "Prepared DRIFT must fail closed");
+    require(activeCount(policy.ref()) == 1,
+            "Prepared DRIFT must keep the record active");
+}
+
+// ALT rollback lifecycle via RollbackExecutor: success, missing key ->
+// NothingToDo with a mandatory rebuild, concurrent drift -> Conflict with
+// the source untouched, crash-after-source-rollback -> one rebuild, and
+// multiple policies coexisting in one block.
+void testAltRollbackLifecycle(const fs::path& root,
+                              const fs::path& rebuildExecutable) {
+    const auto resolver = makeResolver(rebuildExecutable);
+
+    // Success: Applied record + matching source -> release + rebuild.
+    {
+        JournalOverride journalOverride(
+            root / "alt-rollback-success" / "data" / "mutation-journal.json");
+        const fs::path shared =
+            root / "alt-rollback-success/etc/sysconfig/grub2";
+        const std::string foreign = "GRUB_DISABLE_RECOVERY=false\n";
+        writeFile(shared, foreign);
+        JournalGrubPolicy policy(altConfig(shared), resolver,
+                                 "GRUB_DISABLE_RECOVERY",
+                                 "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_DISABLE_RECOVERY",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_DISABLE_RECOVERY", "true"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        writeFile(shared,
+                  foreign +
+                      "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                      "GRUB_DISABLE_RECOVERY=\"true\"\n"
+                      "# FIC_GRUB_BLOCK_END\n");
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(altConfig(shared), resolver,
+                                countingRebuildRunner(
+                                    rebuilds));
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_DISABLE_RECOVERY", "true"});
+        require(outcome.ok,
+            "ALT rollback of the last FIC key must succeed");
+        require(readFile(shared) == foreign,
+                "rollback must release FIC ownership byte-exactly");
+        require(rebuilds == 1,
+                "ALT rollback must run exactly one mandatory rebuild");
+    }
+
+    // Missing key: no FIC block at all -> mandatory rebuild + NothingToDo.
+    {
+        JournalOverride journalOverride(
+            root / "alt-rollback-missing" / "data" / "mutation-journal.json");
+        const fs::path shared =
+            root / "alt-rollback-missing/etc/sysconfig/grub2";
+        writeFile(shared, "GRUB_TIMEOUT=5\n");
+        JournalGrubPolicy policy(altConfig(shared), resolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(
+            altConfig(shared), resolver, countingRebuildRunner(rebuilds));
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(outcome.nothingToDo,
+                "already-released ALT key must report NothingToDo");
+        require(rebuilds == 1,
+                "NothingToDo must still run the mandatory rebuild");
+    }
+}
+
+// ALT rollback after external release / drift: a block without the key is
+// NothingToDo (with a mandatory rebuild, foreign bytes untouched); a block
+// holding another value under the same key is a fail-closed Conflict.
+void testAltRollbackConflict(const fs::path& root,
+                             const fs::path& rebuildExecutable) {
+    JournalOverride journalOverride(
+        root / "alt-rollback-conflict" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-rollback-conflict/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    rollback::MutationId id = 0;
+    std::string error;
+    rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+
+    // Concurrent release: the key left the FIC block, another policy's key
+    // stayed, a foreign assignment reappeared outside the block.
+    writeFile(shared,
+              foreign +
+                  "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                  "GRUB_DISABLE_RECOVERY=\"true\"\n"
+                  "# FIC_GRUB_BLOCK_END\n"
+                  "GRUB_TIMEOUT=2\n");
+    const std::string drifted = readFile(shared);
+    std::size_t rebuilds = 0;
+    auto options = rollbackOptions(altConfig(shared), resolver,
+                                   countingRebuildRunner(rebuilds));
+    const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+    require(outcome.nothingToDo,
+            "externally released key must report NothingToDo");
+    require(readFile(shared) == drifted,
+            "NothingToDo must leave the source file untouched");
+    require(rebuilds == 1,
+            "NothingToDo must still run the mandatory rebuild");
+
+    // Value drift inside the block: fail-closed Conflict.
+    writeFile(shared,
+              foreign +
+                  "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                  "GRUB_TIMEOUT=\"manual\"\n"
+                  "# FIC_GRUB_BLOCK_END\n");
+    const std::string conflicted = readFile(shared);
+    std::size_t conflictRebuilds = 0;
+    auto conflictOptions =
+        rollbackOptions(altConfig(shared), resolver,
+                        countingRebuildRunner(conflictRebuilds));
+    const auto conflictOutcome =
+        undoGrubManagedSetting(
+            conflictOptions,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+    require(conflictOutcome.conflict,
+            "value drift inside the FIC block must report Conflict");
+    require(readFile(shared) == conflicted,
+            "Conflict must leave the source file untouched");
+    require(conflictRebuilds == 0, "Conflict must not rebuild");
+}
+
+
+// ALT crash-after-source-rollback: the managed value was already removed
+// (release done) but the record is still Applied -> recovery through
+// apply() must be release-only + a single rebuild, and the record must be
+// resolved as RolledBack.
+void testAltCrashAfterSourceRollback(const fs::path& root,
+                                     const fs::path& rebuildExecutable) {
+    JournalOverride journalOverride(
+        root / "alt-crash-after-rollback" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared =
+        root / "alt-crash-after-rollback/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    require(policy.apply(), "initial apply must succeed");
+    // Simulate a crash after the source release but before record resolution.
+    writeFile(shared, foreign);
+    std::size_t rebuilds = 0;
+    auto options = rollbackOptions(altConfig(shared), resolver,
+                                   countingRebuildRunner(rebuilds));
+    const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+    require(outcome.nothingToDo,
+            "completed source release must report NothingToDo");
+    require(rebuilds == 1,
+            "crash recovery must run exactly one rebuild");
+}
+
+
+// Debian apply + journal lifecycle: drop-in creation is journaled as
+// Applied; idempotent apply adds no records.
+void testDebianApplyJournalLifecycle(const fs::path& root,
+                                     const fs::path& rebuildExecutable) {
+    JournalOverride journalOverride(
+        root / "deb-lifecycle" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path testCase = root / "deb-lifecycle";
+    const fs::path managed = dropInPath(testCase);
+    prepareDebianTopology(testCase);
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalGrubPolicy policy(debianConfig(managed, testCase / "etc/default/grub"), resolver,
+                             "GRUB_TIMEOUT", "grub_test_policy");
+    require(policy.apply(), "Debian apply with journal must succeed");
+    require(activeCount(policy.ref()) == 1,
+            "Debian drop-in creation must create one journal record");
+    const std::vector<rollback::MutationRecord> records =
+        testJournal()->activeRecords(policy.ref());
+    const rollback::MutationRecord& record = records[0];
+    require(record.status == rollback::MutationStatus::Applied &&
+                record.resource == "GRUB_TIMEOUT",
+            "Debian apply must be journaled as Applied");
+    require(readFile(managed) ==
+                "# Managed by FIC. Do not edit.\n\n"
+                "GRUB_TIMEOUT=\"expected\"\n",
+            "Debian drop-in must use the canonical managed format");
+
+    JournalGrubPolicy repeat(debianConfig(managed, testCase / "etc/default/grub"), resolver,
+                             "GRUB_TIMEOUT", "grub_test_policy");
+    require(repeat.apply(), "repeated Debian apply must succeed");
+    require(activeCount(policy.ref()) == 1,
+            "repeated compliant Debian apply must not create records");
+    require(readFile(managed) ==
+                "# Managed by FIC. Do not edit.\n\n"
+                "GRUB_TIMEOUT=\"expected\"\n",
+            "repeated apply must keep the canonical drop-in content");
+}
+
+// Debian prepared crash recovery: AFTER commits, missing drop-in (BEFORE)
+// reconciles and discards, value drift fails closed.
+void testDebianPreparedRecovery(const fs::path& root,
+                                const fs::path& rebuildExecutable) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    const auto resolver = makeResolver(rebuildExecutable);
+    const std::string expectedDropIn =
+        "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"expected\"\n";
+
+    // A: Prepared + drop-in AFTER -> rebuild + commit Applied.
+    {
+        JournalOverride journalOverride(
+            root / "deb-recovery-a" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-recovery-a";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        writeFile(managed, expectedDropIn);
+        JournalGrubPolicy policy(debianConfig(managed, testCase / "etc/default/grub"), resolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        require(policy.apply(), "Debian Prepared AFTER must recover");
+        require(testJournal()->activeRecords(policy.ref())[0].status ==
+                    rollback::MutationStatus::Applied,
+                "Debian Prepared AFTER must be committed to Applied");
+    }
+
+    // B: Prepared + missing drop-in (BEFORE) -> discard + fresh install.
+    {
+        JournalOverride journalOverride(
+            root / "deb-recovery-b" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-recovery-b";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        JournalGrubPolicy policy(debianConfig(managed, testCase / "etc/default/grub"), resolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        require(policy.apply(), "Debian Prepared BEFORE must recover");
+        require(readFile(managed) == expectedDropIn,
+                "regular apply must install the managed drop-in");
+        require(activeCount(policy.ref()) == 1 &&
+                    testJournal()->activeRecords(policy.ref())[0].status ==
+                        rollback::MutationStatus::Applied,
+                "stale Prepared must be discarded and replaced");
+    }
+
+    // C: Prepared + external value drift -> fail closed.
+    {
+        JournalOverride journalOverride(
+            root / "deb-recovery-c" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-recovery-c";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        writeFile(managed,
+                  "# Managed by FIC. Do not edit.\n\n"
+                  "GRUB_TIMEOUT=\"manual\"\n");
+        JournalGrubPolicy policy(debianConfig(managed, testCase / "etc/default/grub"), resolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        require(!policy.apply(), "Debian Prepared DRIFT must fail closed");
+        require(activeCount(policy.ref()) == 1,
+                "Debian Prepared DRIFT must keep the record active");
+    }
+}
+
+
+// Debian rollback lifecycle via GrubRollback: success with drop-in removal,
+// multi-key coexistence, missing drop-in -> NothingToDo with rebuild,
+// value drift -> Conflict with the source untouched.
+void testDebianRollbackLifecycle(const fs::path& root,
+                                 const fs::path& rebuildExecutable) {
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path baseTemplate = root / "deb-base/grub";
+    writeFile(baseTemplate, "GRUB_TIMEOUT=5\n");
+
+    // Success: the last FIC key is removed and the artifact deleted.
+    {
+        JournalOverride journalOverride(
+            root / "deb-rollback-success" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-rollback-success";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        writeFile(managed,
+                  "# Managed by FIC. Do not edit.\n\n"
+                  "GRUB_TIMEOUT=\"expected\"\n");
+        JournalGrubPolicy policy(debianConfig(managed, baseTemplate),
+                                 resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(debianConfig(managed, baseTemplate),
+                                       resolver,
+                                       countingRebuildRunner(rebuilds));
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(outcome.ok,
+                "Debian rollback of the last FIC key must succeed");
+        require(!fs::exists(managed),
+                "the empty managed drop-in must be removed");
+        require(rebuilds == 1,
+                "Debian rollback must run exactly one mandatory rebuild");
+    }
+
+    // Multi-key: rolling back one key keeps the other policy's entry.
+    {
+        JournalOverride journalOverride(
+            root / "deb-rollback-multi" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-rollback-multi";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        writeFile(managed,
+                  "# Managed by FIC. Do not edit.\n\n"
+                  "GRUB_DISABLE_RECOVERY=\"true\"\n"
+                  "GRUB_TIMEOUT=\"expected\"\n");
+        JournalGrubPolicy policy(debianConfig(managed, baseTemplate),
+                                 resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        auto options = rollbackOptions(debianConfig(managed, baseTemplate),
+                                       resolver);
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(outcome.ok,
+                "Debian rollback of one key among several must succeed");
+        require(readFile(managed) ==
+                    "# Managed by FIC. Do not edit.\n\n"
+                    "GRUB_DISABLE_RECOVERY=\"true\"\n",
+                "the other policy's entry must stay in the drop-in");
+    }
+}
+
+
+// Debian rollback: missing artifact -> NothingToDo with a mandatory
+// rebuild; value drift -> Conflict with no rebuild and no source change.
+void testDebianRollbackNothingToDoAndConflict(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path baseTemplate = root / "deb-base/grub";
+
+    // Missing drop-in -> NothingToDo + rebuild.
+    {
+        JournalOverride journalOverride(
+            root / "deb-rollback-missing" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-rollback-missing";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        JournalGrubPolicy policy(debianConfig(managed, baseTemplate),
+                                 resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(debianConfig(managed, baseTemplate),
+                                       resolver,
+                                       countingRebuildRunner(rebuilds));
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(outcome.nothingToDo,
+                "missing Debian drop-in must report NothingToDo");
+        require(rebuilds == 1,
+                "NothingToDo must still run the mandatory rebuild");
+    }
+
+    // Value drift -> Conflict, source untouched, no rebuild.
+    {
+        JournalOverride journalOverride(
+            root / "deb-rollback-conflict" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-rollback-conflict";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        writeFile(managed,
+                  "# Managed by FIC. Do not edit.\n\n"
+                  "GRUB_TIMEOUT=\"manual\"\n");
+        JournalGrubPolicy policy(debianConfig(managed, baseTemplate),
+                                 resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(debianConfig(managed, baseTemplate),
+                                       resolver,
+                                       countingRebuildRunner(rebuilds));
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(outcome.conflict,
+                "Debian value drift must report Conflict");
+        require(readFile(managed) ==
+                    "# Managed by FIC. Do not edit.\n\n"
+                    "GRUB_TIMEOUT=\"manual\"\n",
+                "Conflict must leave the drop-in untouched");
+        require(rebuilds == 0, "Conflict must not rebuild");
+    }
+}
+
+
+// Rebuild failure during rollback: the source is compensated back to the
+// pre-rollback FIC-owned state, a compensation rebuild is attempted, and
+// the failure is reported (journal stays active via the executor).
+void testRollbackRebuildFailureCompensation(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path baseTemplate = root / "deb-base/grub";
+
+    // ALT topology: block restored byte-exactly after failed rebuild.
+    {
+        JournalOverride journalOverride(
+            root / "alt-rebuild-failure" / "data" / "mutation-journal.json");
+        const fs::path shared =
+            root / "alt-rebuild-failure/etc/sysconfig/grub2";
+        const std::string foreign = "GRUB_TIMEOUT=5\n";
+        const std::string owned = foreign +
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"expected\"\n"
+            "# FIC_GRUB_BLOCK_END\n";
+        writeFile(shared, owned);
+        JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        std::size_t rebuilds = 0;
+        GrubCommandRunner failingRunner =
+            [&rebuilds](const std::string&, const std::vector<std::string>&,
+                        const ProcessOptions&) {
+                ++rebuilds;
+                return failedProcess();
+            };
+        auto options =
+            rollbackOptions(altConfig(shared), resolver, failingRunner);
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require((!outcome.ok && !outcome.conflict && !outcome.nothingToDo),
+                "failed ALT rebuild must report Failure");
+        require(readFile(shared) == owned,
+                "ALT compensation must restore the pre-rollback FIC block");
+        require(rebuilds == 2,
+                "ALT rollback must attempt the compensation rebuild");
+    }
+
+    // Debian topology: drop-in restored after failed rebuild.
+    {
+        JournalOverride journalOverride(
+            root / "deb-rebuild-failure" / "data" / "mutation-journal.json");
+        const fs::path testCase = root / "deb-rebuild-failure";
+            const fs::path managed = dropInPath(testCase);
+            prepareDebianTopology(testCase);
+        const std::string owned =
+            "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"expected\"\n";
+        writeFile(managed, owned);
+        JournalGrubPolicy policy(debianConfig(managed, baseTemplate),
+                                 resolver, "GRUB_TIMEOUT",
+                                 "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error),
+                error);
+        std::size_t rebuilds = 0;
+        GrubCommandRunner failingRunner =
+            [&rebuilds](const std::string&, const std::vector<std::string>&,
+                        const ProcessOptions&) {
+                ++rebuilds;
+                return failedProcess();
+            };
+        auto options =
+            rollbackOptions(debianConfig(managed, baseTemplate), resolver,
+                            failingRunner);
+        const auto outcome =
+            undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+        require((!outcome.ok && !outcome.conflict && !outcome.nothingToDo),
+                "failed Debian rebuild must report Failure");
+        require(readFile(managed) == owned,
+                "Debian compensation must restore the managed drop-in");
+        require(rebuilds == 2,
+                "Debian rollback must attempt the compensation rebuild");
+    }
+}
+
+
+} // namespace
+
+int main() {
+    try {
+        const fs::path root = fs::temp_directory_path() /
+            "fic-grub-rollback-journal-tests";
+        fs::remove_all(root);
+        fs::create_directories(root);
+
+        const fs::path rebuildExecutable = root / "bin/update-grub";
+        writeFile(rebuildExecutable, "#!/bin/sh\nexit 0\n", 0755);
+
+        initializeRuntimePaths(root);
+
+        // Pre-seed the command hash store with the sha256 of the fake
+        // rebuild script ("#!/bin/sh\nexit 0\n") so that the
+        // VerifiedProcessExecutor fallback accepts it without chown.
+        writeFile(
+            root / "data/commandhash.txt",
+            rebuildExecutable.string() +
+                "=306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf"
+                "717cb\n");
+
+        testAltApplyJournalLifecycle(root, rebuildExecutable);
+        testAltValueChange(root, rebuildExecutable);
+        testAltPreparedRecoveryAfter(root, rebuildExecutable);
+        testAltPreparedRecoveryBefore(root, rebuildExecutable);
+        testAltPreparedRecoveryDrift(root, rebuildExecutable);
+        testAltRollbackLifecycle(root, rebuildExecutable);
+        testAltRollbackConflict(root, rebuildExecutable);
+        testAltCrashAfterSourceRollback(root, rebuildExecutable);
+        testDebianApplyJournalLifecycle(root, rebuildExecutable);
+        testDebianPreparedRecovery(root, rebuildExecutable);
+        testDebianRollbackLifecycle(root, rebuildExecutable);
+        testDebianRollbackNothingToDoAndConflict(root, rebuildExecutable);
+        testRollbackRebuildFailureCompensation(root, rebuildExecutable);
+    } catch (const std::exception& exception) {
+        std::cerr << "GrubRollbackJournalTests failed: " << exception.what()
+                  << std::endl;
+        return 1;
+    }
+    std::cout << "GrubRollbackJournalTests passed" << std::endl;
+    return 0;
+}
+
