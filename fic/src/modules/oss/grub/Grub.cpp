@@ -89,24 +89,26 @@ bool reconcileGrubJournal(
             continue;
         }
 
-        const GrubValueObservation observed =
-            inspectGrubManagedValue(options, key);
-        if (!observed.valid) {
+        // Single classification of the recorded appliedValue against the
+        // CURRENT managed source state.
+        GrubValueObservation observed;
+        const GrubManagedJournalState state = classifyGrubManagedJournalState(
+            options, key, undo->appliedValue, &observed);
+        switch (state) {
+        case GrubManagedJournalState::Invalid:
             error = "Не удалось классифицировать managed source GRUB для "
                     "recovery: " + observed.error;
             return false;
-        }
-
-        const bool after = observed.found &&
-            observed.value == undo->appliedValue;
-        const bool before = !observed.found;
-        if (!after && !before) {
+        case GrubManagedJournalState::Drift:
             // DRIFT: the managed value was changed externally — never
             // rewritten, never overwritten.
             error = "Managed GRUB значение '" + key +
                 "' изменено вне FIC (journal: '" + undo->appliedValue +
                 "', фактическое: '" + observed.value + "'); apply отклонён";
             return false;
+        case GrubManagedJournalState::Before:
+        case GrubManagedJournalState::After:
+            break;
         }
         return finishGrubJournalReconciliation(
             journal, record, *undo, options, rollbackOptions,
@@ -131,6 +133,15 @@ bool finishGrubJournalReconciliation(
     bool matchesDesiredValue,
     std::vector<std::string>& diagnostics,
     std::string& error) {
+    // P0 invariant: the mandatory rebuild runs only on currently validated
+    // inputs, re-proven immediately before it.
+    std::string validateError;
+    if (!validateGrubRebuildInputs(options, validateError)) {
+        error = "Входные данные пересборки GRUB не прошли проверку "
+                "безопасности; journal запись не разрешалась, пересборка "
+                "не запускалась: " + validateError;
+        return false;
+    }
     // Mandatory rebuild before any journal transition: the derived grub.cfg
     // must be proven current for both AFTER and BEFORE classifications.
     std::string rebuildError;
@@ -142,9 +153,28 @@ bool finishGrubJournalReconciliation(
         return false;
     }
 
-    const bool sourceInstalled =
-        inspectGrubManagedValue(options, undo.key).found;
-    if (!sourceInstalled) {
+    // Full post-rebuild re-proof: the journal record may be resolved only
+    // from a fresh classification of the recorded appliedValue AFTER the
+    // rebuild. DRIFT or an unclassifiable source fail closed: no resolution,
+    // no commit, no new Prepared.
+    GrubValueObservation observed;
+    const GrubManagedJournalState state = classifyGrubManagedJournalState(
+        options, undo.key, undo.appliedValue, &observed);
+    if (state == GrubManagedJournalState::Invalid) {
+        error = "Не удалось повторно классифицировать managed source GRUB "
+                "после пересборки; journal запись остаётся активной: " +
+            observed.error;
+        return false;
+    }
+    if (state == GrubManagedJournalState::Drift) {
+        error = "Managed GRUB значение '" + undo.key +
+            "' изменено вне FIC после пересборки (journal: '" +
+            undo.appliedValue + "', фактическое: '" + observed.value +
+            "'); journal запись не разрешалась";
+        return false;
+    }
+
+    if (state == GrubManagedJournalState::Before) {
         // BEFORE: the mutation never installed or was fully compensated.
         std::string resolveError;
         const bool resolved = record.status ==

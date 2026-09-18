@@ -35,6 +35,22 @@ bool resolveRebuildExecutable(const GrubRollbackOptions& options,
 bool rebuildGrub(const GrubRollbackOptions& options,
                  const std::filesystem::path& rebuildExecutable,
                  std::string& error) {
+    // P0 invariant: EVERY rollback rebuild runs only on currently validated
+    // inputs — the base/shared defaults are re-proven immediately before the
+    // rebuild command is spawned, for the mandatory rebuild, the
+    // NothingToDo rebuild, the post-removal rebuild and the compensating
+    // rebuild alike. A failed validation never runs the rebuild and never
+    // resolves the journal record.
+    GrubManagedConfigurationOptions managed;
+    managed.managedPath = options.platform.managedConfigPath;
+    managed.baseDefaultsPath = options.platform.baseDefaultsPath;
+    managed.sharedDefaultsPath = options.platform.sharedDefaultsPath;
+    managed.enforceOwnership = options.enforceOwnership;
+    if (!validateGrubRebuildInputs(managed, error)) {
+        error = "Входные данные пересборки GRUB не прошли проверку "
+                "безопасности, пересборка не запускалась: " + error;
+        return false;
+    }
     return runGrubRebuild(
         rebuildExecutable,
         options.platform.rebuildArguments,
@@ -70,8 +86,7 @@ GrubRollbackResult nothingToDoAfterRebuild(
 }
 
 bool regularFileExists(const std::filesystem::path& path) {
-    struct stat status {};
-    return ::lstat(path.c_str(), &status) == 0 && S_ISREG(status.st_mode);
+    return probeGrubTargetFile(path).kind == GrubTargetKind::Regular;
 }
 
 // Removes the FIC-owned drop-in after its last setting is gone: safe unlink
@@ -197,11 +212,28 @@ GrubRollbackResult undoOwnedDropIn(
         }
     }
 
-    if (!regularFileExists(managedPath)) {
+    // Typed probe: Missing (ENOENT) is a legitimate released state, but an
+    // unsafe artifact occupying the path (symlink, directory, FIFO, ...) is
+    // NEVER "already released" — it is a fail-closed conflict without any
+    // rebuild, and a non-ENOENT lstat error fails closed as well.
+    const GrubTargetProbe probe = probeGrubTargetFile(managedPath);
+    if (probe.kind == GrubTargetKind::Missing) {
         return nothingToDoAfterRebuild(
             options, rebuildExecutable,
             "Managed drop-in " + managedPath.string() + " отсутствует; "
             "внешние артефакты не создавались");
+    }
+    if (probe.kind == GrubTargetKind::Unsafe) {
+        GrubRollbackResult result;
+        result.conflict = true;
+        result.message = "Managed drop-in " + managedPath.string() +
+            " не является обычным несимлинковым файлом; откат отклонён, "
+            "файл не изменялся, пересборка не запускалась: " + probe.error;
+        return result;
+    }
+    if (probe.kind == GrubTargetKind::Error) {
+        return failed("Не удалось классифицировать managed drop-in: " +
+                      probe.error);
     }
 
     GrubManagedConfig configuration({managedPath, options.enforceOwnership});
@@ -213,6 +245,20 @@ GrubRollbackResult undoOwnedDropIn(
             configuration.lastError();
         return result;
     }
+
+    // SINGLE-SNAPSHOT: the pre-rollback state is the exact snapshot captured
+    // by loadConfig() — the same state the CAS write below is proven
+    // against. A fresh re-read must never substitute for it.
+    AtomicTargetState before;
+    if (!configuration.originalStateAtLoad(before)) {
+        // The artifact vanished between the probe and the load: ownership is
+        // already released.
+        return nothingToDoAfterRebuild(
+            options, rebuildExecutable,
+            "Managed drop-in " + managedPath.string() +
+            " отсутствует; внешние артефакты не создавались");
+    }
+    std::string error;
 
     if (!configuration.isParameterExists(undo.key)) {
         return nothingToDoAfterRebuild(
@@ -226,14 +272,6 @@ GrubRollbackResult undoOwnedDropIn(
             "' не соответствует записанному applied value (внешнее "
             "изменение FIC-owned артефакта); откат отклонён";
         return result;
-    }
-
-    AtomicTargetState before;
-    std::string error;
-    if (!AtomicFileWriter::captureTargetState(
-            managedPath.string(), before, &error)) {
-        return failed("Не удалось зафиксировать состояние managed drop-in: " +
-                      error);
     }
 
     if (!configuration.removeValue(undo.key)) {
@@ -291,11 +329,27 @@ GrubRollbackResult undoSharedBlock(
     const std::filesystem::path sharedPath =
         options.platform.sharedDefaultsPath;
 
-    if (!regularFileExists(sharedPath)) {
+    // Typed probe: Missing (ENOENT) is a legitimate released state; an
+    // unsafe artifact occupying the path is a fail-closed conflict without
+    // any rebuild; other lstat errors fail closed as well.
+    const GrubTargetProbe probe = probeGrubTargetFile(sharedPath);
+    if (probe.kind == GrubTargetKind::Missing) {
         return nothingToDoAfterRebuild(
             options, rebuildExecutable,
             "Shared GRUB defaults " + sharedPath.string() +
                 " отсутствуют; FIC block не восстанавливался");
+    }
+    if (probe.kind == GrubTargetKind::Unsafe) {
+        GrubRollbackResult result;
+        result.conflict = true;
+        result.message = "Shared GRUB defaults " + sharedPath.string() +
+            " не являются обычным несимлинковым файлом; откат отклонён, "
+            "файл не изменялся, пересборка не запускалась: " + probe.error;
+        return result;
+    }
+    if (probe.kind == GrubTargetKind::Error) {
+        return failed("Не удалось классифицировать shared GRUB defaults: " +
+                      probe.error);
     }
 
     GrubConfiguration configuration({sharedPath, {}, {},
@@ -305,12 +359,10 @@ GrubRollbackResult undoSharedBlock(
         return failed("Не удалось загрузить shared GRUB defaults: " + error);
     }
 
-    AtomicTargetState before;
-    if (!AtomicFileWriter::captureTargetState(
-            sharedPath.string(), before, &error)) {
-        return failed("Не удалось зафиксировать состояние shared GRUB "
-                      "defaults: " + error);
-    }
+    // SINGLE-SNAPSHOT: the pre-rollback state is the exact snapshot captured
+    // by load() — the same snapshot the FIC block was parsed from and the
+    // same state the CAS write below is proven against.
+    const AtomicTargetState& before = configuration.loadedState();
 
     // Strict ownership proof: a malformed or ambiguous FIC block is a
     // fail-closed conflict, the file is never touched.
@@ -361,6 +413,9 @@ GrubRollbackResult undoSharedBlock(
     writeOptions.createIfMissing = false;
     writeOptions.rejectSymlink = true;
     writeOptions.expectedTargetState = before;
+    // Deterministic test seam: an external writer racing between the FIC
+    // snapshot and this CAS write (production never sets the hook).
+    fireGrubSharedPreWriteHookForTests();
     AtomicWriteResult writeResult;
     if (!AtomicFileWriter::writeWithResult(
             sharedPath.string(), removal.content, writeOptions,

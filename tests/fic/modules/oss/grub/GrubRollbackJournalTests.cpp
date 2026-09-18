@@ -10,7 +10,9 @@
 #include <fic/core/runtime/FicRuntimePaths.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -279,7 +281,7 @@ void testAltApplyJournalLifecycle(const fs::path& root,
                 record.undo.backend == rollback::MutationBackend::Grub,
             "GRUB undo payload must carry key + appliedValue only");
     require(readFile(shared) ==
-                foreign +
+                foreign + "\n" +
                     "# FIC_GRUB_BLOCK_BEGIN version=1\n"
                     "GRUB_TIMEOUT=\"expected\"\n"
                     "# FIC_GRUB_BLOCK_END\n",
@@ -330,7 +332,7 @@ void testAltValueChange(const fs::path& root,
                               "grub_test_policy");
     require(changed.apply(), "ALT value change apply must succeed");
     require(readFile(shared) ==
-                foreign +
+                foreign + "\n" +
                     "# FIC_GRUB_BLOCK_BEGIN version=1\n"
                     "GRUB_TIMEOUT=\"0\"\n"
                     "# FIC_GRUB_BLOCK_END\n",
@@ -473,7 +475,7 @@ void testAltRollbackLifecycle(const fs::path& root,
         require(testJournal()->prepareMutation(prepared, id, error),
                 error);
         writeFile(shared,
-                  foreign +
+                  foreign + "\n" +
                       "# FIC_GRUB_BLOCK_BEGIN version=1\n"
                       "GRUB_DISABLE_RECOVERY=\"true\"\n"
                       "# FIC_GRUB_BLOCK_END\n");
@@ -995,6 +997,341 @@ void testRollbackRebuildFailureCompensation(
     }
 }
 
+// Writes a custom rebuild script and seeds its sha256 into the command
+// hash store (the store file is plain text; saveHash() cannot be used in
+// the unit-test environment because of its root-ownership requirements).
+void seedRebuildExecutable(const fs::path& root,
+                           const fs::path& script,
+                           const std::string& content) {
+    writeFile(script, content, 0755);
+    const fs::path digestFile = root / "data/last-digest.txt";
+    const std::string command =
+        "sha256sum " + script.string() + " > " + digestFile.string();
+    require(std::system(command.c_str()) == 0,
+            "sha256sum must be available for the GRUB journal tests");
+    const std::string digestLine = readFile(digestFile);
+    require(digestLine.size() >= 64 && digestLine[64] == ' ',
+            "unexpected sha256sum output for " + script.string());
+    std::ofstream hashFile(root / "data/commandhash.txt",
+                           std::ios::binary | std::ios::app);
+    require(hashFile.is_open(), "could not append to commandhash.txt");
+    hashFile << script.string() << "=" << digestLine.substr(0, 64) << "\n";
+}
+
+// A: journal reconciliation with UNSAFE base defaults (P0): the mandatory
+// rebuild never runs, the journal record is not resolved and the managed
+// source is untouched — for a symlinked base defaults file and for a
+// group/world-writable base defaults file.
+void testDebianReconciliationUnsafeBaseDefaults(
+    const fs::path& root, const fs::path&) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    const fs::path marker = root / "rebuild-marker.log";
+    const fs::path markerScript = root / "bin/update-grub-marker";
+    seedRebuildExecutable(
+        root, markerScript,
+        "#!/bin/sh\necho called >> " + marker.string() + "\nexit 0\n");
+    const auto markerResolver = makeResolver(markerScript);
+
+    const auto runCase = [&](const fs::path& testCase,
+                             const std::function<void(const fs::path&)>&
+                                 prepareBase,
+                             const std::string& description) {
+        JournalOverride journalOverride(
+            testCase / "data" / "mutation-journal.json");
+        fs::create_directories(dropInDirectory(testCase));
+        prepareBase(testCase);
+        const fs::path managed = dropInPath(testCase);
+        const std::string owned =
+            "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"expected\"\n";
+        writeFile(managed, owned);
+        JournalGrubPolicy policy(
+            debianConfig(managed, testCase / "etc/default/grub"),
+            markerResolver, "GRUB_TIMEOUT", "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT",
+                                                   "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error), error);
+
+        require(!policy.apply(),
+                description + " must fail the reconciliation apply");
+        require(!fs::exists(marker),
+                description + " must not run the mandatory rebuild");
+        require(activeCount(policy.ref()) == 1,
+                description + " must not resolve the journal record");
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->activeRecords(policy.ref());
+        require(records[0].status == rollback::MutationStatus::Prepared,
+                description + " must leave the record Prepared");
+        require(readFile(managed) == owned,
+                description + " must not touch the managed source");
+    };
+
+    runCase(
+        root / "deb-reconcile-symlink-base",
+        [](const fs::path& testCase) {
+            writeFile(testCase / "base-target", "GRUB_TIMEOUT=5\n");
+            fs::create_symlink(testCase / "base-target",
+                               testCase / "etc/default/grub");
+        },
+        "a symlinked base defaults file");
+    runCase(
+        root / "deb-reconcile-writable-base",
+        [](const fs::path& testCase) {
+            writeFile(testCase / "etc/default/grub", "GRUB_TIMEOUT=5\n",
+                      0666);
+        },
+        "a group/world-writable base defaults file");
+}
+
+// B: ALT apply stale-read race (single-snapshot CAS): an external writer
+// racing between the FIC snapshot and the atomic CAS write must fail the
+// apply, keep the external bytes byte-exact and leave the journal empty.
+void testAltApplyStaleReadCasRace(const fs::path& root,
+                                  const fs::path& rebuildExecutable) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+    JournalOverride journalOverride(
+        root / "alt-apply-race" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-apply-race/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared, foreign);
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_TIMEOUT",
+                             "grub_test_policy");
+    const std::string external = "EXTERNAL=1\n";
+    setGrubSharedPreWriteHookForTests(
+        [&shared, &external] { writeFile(shared, external); });
+    require(!policy.apply(), "stale-read CAS race must fail the ALT apply");
+    require(readFile(shared) == external,
+            "the external write must survive the failed apply byte-exact");
+    require(activeCount(policy.ref()) == 0,
+            "a failed CAS apply must discard the Prepared record");
+}
+
+// C: ALT rollback stale-read race: an external writer racing between the
+// rollback snapshot and the CAS removal write must fail the rollback
+// without a rebuild, leaving the external bytes byte-exact.
+void testAltRollbackStaleReadCasRace(const fs::path& root,
+                                     const fs::path& rebuildExecutable) {
+    JournalOverride journalOverride(
+        root / "alt-rollback-race" / "data" / "mutation-journal.json");
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "alt-rollback-race/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_TIMEOUT=5\n";
+    writeFile(shared,
+              foreign + "\n" +
+                  "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                  "GRUB_TIMEOUT=\"expected\"\n"
+                  "# FIC_GRUB_BLOCK_END\n");
+    std::size_t rebuilds = 0;
+    auto options = rollbackOptions(altConfig(shared), resolver,
+                                   countingRebuildRunner(rebuilds));
+    const std::string external = "EXTERNAL=2\n";
+    setGrubSharedPreWriteHookForTests(
+        [&shared, &external] { writeFile(shared, external); });
+    const auto outcome = undoGrubManagedSetting(
+        options,
+        rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT", "expected"});
+    require((!outcome.ok && !outcome.conflict && !outcome.nothingToDo),
+            "stale-read CAS race must fail the ALT rollback");
+    require(readFile(shared) == external,
+            "the external write must survive the failed rollback byte-exact");
+    require(rebuilds == 0, "a failed CAS rollback must not rebuild");
+}
+
+// D: unsafe managed artifacts (a symlink or a directory occupying the
+// managed path) must NOT be treated as Missing/NothingToDo: fail closed as
+// a conflict, never rebuild, never touch the foreign artifact.
+void testUnsafeManagedArtifactsAreNotMissing(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const auto resolver = makeResolver(rebuildExecutable);
+
+    // ALT: symlink occupying the shared defaults path.
+    {
+        const fs::path testCase = root / "alt-unsafe-link";
+        const fs::path shared = testCase / "etc/sysconfig/grub2";
+        fs::create_directories(shared.parent_path());
+        writeFile(testCase / "foreign-target", "GRUB_TIMEOUT=5\n");
+        fs::create_symlink(testCase / "foreign-target", shared);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(altConfig(shared), resolver,
+                                       countingRebuildRunner(rebuilds));
+        const auto outcome = undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT",
+                                                   "expected"});
+        require(outcome.conflict,
+                "a symlinked ALT shared file must NOT be NothingToDo");
+        require(rebuilds == 0, "an unsafe ALT artifact must not rebuild");
+        require(fs::is_symlink(shared),
+                "an unsafe ALT artifact must not be replaced");
+    }
+
+    // ALT: directory occupying the shared defaults path.
+    {
+        const fs::path testCase = root / "alt-unsafe-directory";
+        const fs::path shared = testCase / "etc/sysconfig/grub2";
+        fs::create_directories(shared);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(altConfig(shared), resolver,
+                                       countingRebuildRunner(rebuilds));
+        const auto outcome = undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT",
+                                                   "expected"});
+        require(outcome.conflict,
+                "a directory ALT shared path must NOT be NothingToDo");
+        require(rebuilds == 0,
+                "a directory ALT shared path must not rebuild");
+        require(fs::is_directory(shared) && !fs::is_symlink(shared),
+                "a directory occupying the ALT path must not be replaced");
+    }
+
+    // Debian: symlink occupying the managed drop-in path.
+    {
+        const fs::path testCase = root / "deb-unsafe-link";
+        JournalOverride journalOverride(
+            testCase / "data" / "mutation-journal.json");
+        fs::create_directories(dropInDirectory(testCase));
+        const fs::path managed = dropInPath(testCase);
+        writeFile(testCase / "foreign-target", "GRUB_TIMEOUT=5\n");
+        fs::create_symlink(testCase / "foreign-target", managed);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(
+            debianConfig(managed, testCase / "etc/default/grub"), resolver,
+            countingRebuildRunner(rebuilds));
+        const auto outcome = undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT",
+                                                   "expected"});
+        require(outcome.conflict,
+                "a symlinked Debian drop-in must NOT be NothingToDo");
+        require(rebuilds == 0, "an unsafe Debian drop-in must not rebuild");
+        require(fs::is_symlink(managed),
+                "an unsafe Debian drop-in must not be replaced");
+    }
+
+    // Debian: directory occupying the managed drop-in path.
+    {
+        const fs::path testCase = root / "deb-unsafe-directory";
+        JournalOverride journalOverride(
+            testCase / "data" / "mutation-journal.json");
+        fs::create_directories(dropInPath(testCase));
+        const fs::path managed = dropInPath(testCase);
+        std::size_t rebuilds = 0;
+        auto options = rollbackOptions(
+            debianConfig(managed, testCase / "etc/default/grub"), resolver,
+            countingRebuildRunner(rebuilds));
+        const auto outcome = undoGrubManagedSetting(
+            options,
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT",
+                                                   "expected"});
+        require(outcome.conflict,
+                "a directory Debian drop-in path must NOT be NothingToDo");
+        require(rebuilds == 0,
+                "a directory Debian drop-in path must not rebuild");
+        require(fs::is_directory(managed) && !fs::is_symlink(managed),
+                "a directory occupying the drop-in path must not be "
+                "replaced");
+    }
+}
+
+// E: post-rebuild re-proof (fail closed): a mandatory reconciliation
+// rebuild that itself corrupts the managed source must leave the journal
+// record active and fail the apply — for both ALT and Debian topologies.
+void testReconciliationDriftAfterRebuild(const fs::path& root) {
+    setPolicyConfig(root, {{"grub_test_policy", "expected"}});
+
+    // ALT: the fake update-grub rewrites the FIC block value to "manual".
+    {
+        const fs::path testCase = root / "alt-rebuild-drift";
+        const fs::path shared = testCase / "etc/sysconfig/grub2";
+        const std::string driftedContent =
+            "GRUB_TIMEOUT=5\n"
+            "\n"
+            "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+            "GRUB_TIMEOUT=\"manual\"\n"
+            "# FIC_GRUB_BLOCK_END\n";
+        writeFile(shared,
+                  "GRUB_TIMEOUT=5\n"
+                  "\n"
+                  "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                  "GRUB_TIMEOUT=\"expected\"\n"
+                  "# FIC_GRUB_BLOCK_END\n");
+        const fs::path driftScript = root / "bin/update-grub-alt-drift";
+        seedRebuildExecutable(
+            root, driftScript,
+            "#!/bin/sh\ncat > " + shared.string() + " <<'FIC_EOF'\n" +
+                driftedContent + "FIC_EOF\nexit 0\n");
+        JournalOverride journalOverride(
+            testCase / "data" / "mutation-journal.json");
+        const auto resolver = makeResolver(driftScript);
+        JournalGrubPolicy policy(altConfig(shared), resolver,
+                                 "GRUB_TIMEOUT", "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT",
+                                                   "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error), error);
+
+        require(!policy.apply(),
+                "ALT rebuild drift must fail the reconciliation apply");
+        require(readFile(shared) == driftedContent,
+                "ALT rebuild drift must prove the rebuild ran");
+        require(activeCount(policy.ref()) == 1,
+                "ALT rebuild drift must keep the journal record active");
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->activeRecords(policy.ref());
+        require(records[0].status == rollback::MutationStatus::Prepared,
+                "ALT rebuild drift must not commit the record");
+    }
+
+    // Debian: the fake update-grub rewrites the managed drop-in value.
+    {
+        const fs::path testCase = root / "deb-rebuild-drift";
+        prepareDebianTopology(testCase);
+        const fs::path managed = dropInPath(testCase);
+        const std::string driftedContent =
+            "# Managed by FIC. Do not edit.\n\nGRUB_TIMEOUT=\"manual\"\n";
+        writeFile(managed,
+                  "# Managed by FIC. Do not edit.\n\n"
+                  "GRUB_TIMEOUT=\"expected\"\n");
+        const fs::path driftScript = root / "bin/update-grub-deb-drift";
+        seedRebuildExecutable(
+            root, driftScript,
+            "#!/bin/sh\ncat > " + managed.string() + " <<'FIC_EOF'\n" +
+                driftedContent + "FIC_EOF\nexit 0\n");
+        JournalOverride journalOverride(
+            testCase / "data" / "mutation-journal.json");
+        const auto resolver = makeResolver(driftScript);
+        JournalGrubPolicy policy(
+            debianConfig(managed, testCase / "etc/default/grub"), resolver,
+            "GRUB_TIMEOUT", "grub_test_policy");
+        rollback::MutationId id = 0;
+        std::string error;
+        rollback::MutationRecord prepared = preparedGrubRecord(
+            policy.ref(), "GRUB_TIMEOUT",
+            rollback::UndoRemoveGrubManagedSetting{"GRUB_TIMEOUT",
+                                                   "expected"});
+        require(testJournal()->prepareMutation(prepared, id, error), error);
+
+        require(!policy.apply(),
+                "Debian rebuild drift must fail the reconciliation apply");
+        require(readFile(managed) == driftedContent,
+                "Debian rebuild drift must prove the rebuild ran");
+        require(activeCount(policy.ref()) == 1,
+                "Debian rebuild drift must keep the journal record active");
+        const std::vector<rollback::MutationRecord> records =
+            testJournal()->activeRecords(policy.ref());
+        require(records[0].status == rollback::MutationStatus::Prepared,
+                "Debian rebuild drift must not commit the record");
+    }
+}
+
 
 } // namespace
 
@@ -1032,6 +1369,11 @@ int main() {
         testDebianRollbackLifecycle(root, rebuildExecutable);
         testDebianRollbackNothingToDoAndConflict(root, rebuildExecutable);
         testRollbackRebuildFailureCompensation(root, rebuildExecutable);
+        testDebianReconciliationUnsafeBaseDefaults(root, rebuildExecutable);
+        testAltApplyStaleReadCasRace(root, rebuildExecutable);
+        testAltRollbackStaleReadCasRace(root, rebuildExecutable);
+        testUnsafeManagedArtifactsAreNotMissing(root, rebuildExecutable);
+        testReconciliationDriftAfterRebuild(root);
     } catch (const std::exception& exception) {
         std::cerr << "GrubRollbackJournalTests failed: " << exception.what()
                   << std::endl;

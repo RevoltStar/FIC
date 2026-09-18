@@ -8,9 +8,9 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
-#include <fstream>
+#include <fcntl.h>
+#include <functional>
 #include <mutex>
-#include <sstream>
 #include <utility>
 
 #include <sys/stat.h>
@@ -20,22 +20,11 @@ namespace {
 
 constexpr std::uintmax_t kMaximumGrubDefaultsSize = 1024U * 1024U;
 
-bool readFile(const std::filesystem::path& path,
-              std::string& content,
-              std::string& error) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream.is_open()) {
-        error = "Не удалось открыть файл GRUB: " + path.string();
-        return false;
-    }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    if (!stream.good() && !stream.eof()) {
-        error = "Не удалось прочитать файл GRUB: " + path.string();
-        return false;
-    }
-    content = buffer.str();
-    return true;
+// Test-only deterministic seam (see GrubConfiguration.h). Never set in
+// production.
+std::function<void()>& grubSharedPreWriteHook() {
+    static std::function<void()> hook;
+    return hook;
 }
 
 std::string processFailure(const ProcessResult& result) {
@@ -62,6 +51,18 @@ std::string processFailure(const ProcessResult& result) {
 }
 
 } // namespace
+
+void setGrubSharedPreWriteHookForTests(std::function<void()> hook) {
+    grubSharedPreWriteHook() = std::move(hook);
+}
+
+void fireGrubSharedPreWriteHookForTests() {
+    std::function<void()> hook;
+    std::swap(hook, grubSharedPreWriteHook());
+    if (hook) {
+        hook();
+    }
+}
 
 std::mutex& grubBackendMutex() {
     static std::mutex mutex;
@@ -172,7 +173,7 @@ bool GrubConfiguration::checkFileSafety(std::string& error) const {
     return true;
 }
 
-bool GrubConfiguration::readDocument(std::string& error) {
+bool GrubConfiguration::readSnapshot(std::string& error) {
     if (!options_.defaultsPath.is_absolute() ||
         options_.defaultsPath != options_.defaultsPath.lexically_normal()) {
         error = "Путь GRUB-конфигурации должен быть абсолютным и нормализованным";
@@ -181,19 +182,106 @@ bool GrubConfiguration::readDocument(std::string& error) {
     if (!checkFileSafety(error)) {
         return false;
     }
-    return readFile(options_.defaultsPath, document_, error);
-}
-
-bool GrubConfiguration::load(std::string& error) {
-    document_.clear();
-    if (!readDocument(error)) {
-        document_.clear();
+    // Single authoritative snapshot: safe open (no symlink traversal, no
+    // FIFO blocking), bounded read, then an identity/metadata re-proof of
+    // BOTH the open descriptor and the path before the snapshot is accepted.
+    const int descriptor = ::open(
+        options_.defaultsPath.c_str(),
+        O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (descriptor < 0) {
+        error = "Не удалось открыть файл GRUB: " +
+            options_.defaultsPath.string() + ": " + std::strerror(errno);
         return false;
     }
+    struct stat status {};
+    if (::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode)) {
+        const int savedErrno = errno;
+        ::close(descriptor);
+        error = "Файл GRUB не является читаемым обычным файлом: " +
+            options_.defaultsPath.string();
+        if (savedErrno != 0) {
+            error += ": " + std::string(std::strerror(savedErrno));
+        }
+        return false;
+    }
+    if (static_cast<std::uintmax_t>(status.st_size) >
+        kMaximumGrubDefaultsSize) {
+        ::close(descriptor);
+        error = "GRUB-конфигурация превышает допустимый размер";
+        return false;
+    }
+    std::string content;
+    char buffer[8192];
+    while (true) {
+        const ssize_t count = ::read(descriptor, buffer, sizeof(buffer));
+        if (count == 0) break;
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            const int savedErrno = errno;
+            ::close(descriptor);
+            error = "Не удалось прочитать файл GRUB: " +
+                options_.defaultsPath.string() + ": " +
+                std::strerror(savedErrno);
+            return false;
+        }
+        content.append(buffer, static_cast<std::size_t>(count));
+        if (content.size() > kMaximumGrubDefaultsSize) {
+            ::close(descriptor);
+            error = "GRUB-конфигурация превышает допустимый размер";
+            return false;
+        }
+    }
+    struct stat finalStatus {};
+    struct stat pathStatus {};
+    const bool finalStatOk = ::fstat(descriptor, &finalStatus) == 0;
+    const bool pathStatOk = ::lstat(options_.defaultsPath.c_str(), &pathStatus) == 0;
+    if (!finalStatOk || !pathStatOk ||
+        finalStatus.st_dev != status.st_dev ||
+        finalStatus.st_ino != status.st_ino ||
+        finalStatus.st_size != static_cast<off_t>(content.size()) ||
+        pathStatus.st_dev != status.st_dev ||
+        pathStatus.st_ino != status.st_ino ||
+        (pathStatus.st_mode & S_IFMT) != S_IFREG) {
+        ::close(descriptor);
+        error = "Файл GRUB изменился, пока он читался: " +
+            options_.defaultsPath.string();
+        return false;
+    }
+    if (::close(descriptor) != 0) {
+        error = "Не удалось закрыть файл GRUB: " +
+            options_.defaultsPath.string();
+        return false;
+    }
+    loadedState_ = AtomicTargetState{
+        {status.st_dev, status.st_ino},
+        std::move(content),
+        static_cast<mode_t>(status.st_mode & 07777),
+        status.st_uid,
+        status.st_gid};
     return true;
 }
 
-bool GrubConfiguration::rebuild(std::string& error) const {
+bool GrubConfiguration::load(std::string& error) {
+    loaded_ = false;
+    loadedState_ = AtomicTargetState{};
+    if (!readSnapshot(error)) {
+        loadedState_ = AtomicTargetState{};
+        return false;
+    }
+    loaded_ = true;
+    return true;
+}
+
+bool GrubConfiguration::rebuild(std::string& error) {
+    // The rebuild sources the CURRENT on-disk inputs as root: they must be
+    // re-proven immediately before every rebuild, never inherited from an
+    // earlier validation.
+    if (!validateGrubSourceFile(
+            options_.defaultsPath, options_.enforceOwnership, error)) {
+        error = "Входные данные пересборки GRUB не прошли проверку "
+                "безопасности, пересборка не запускалась: " + error;
+        return false;
+    }
     return runGrubRebuild(
         options_.rebuildExecutable, options_.rebuildArguments,
         runner_, error);
@@ -259,6 +347,10 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     const std::string& key,
     const std::string& value) {
     GrubOperationResult result;
+    if (!loaded_) {
+        result.message = "GRUB-конфигурация не была загружена";
+        return result;
+    }
     if (!isGrubManagedKey(key)) {
         result.message = "Недопустимый ключ FIC GRUB managed block: " + key;
         return result;
@@ -270,8 +362,10 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     }
 
     // Ownership proof first: a malformed FIC block is a fail-closed conflict,
-    // the file is never touched in that case.
-    const GrubBlockParseResult parse = parseGrubManagedBlock(document_);
+    // the file is never touched in that case. Parsing reads the SAME
+    // authoritative snapshot that the CAS precondition below is built from.
+    const GrubBlockParseResult parse =
+        parseGrubManagedBlock(loadedState_.content);
     if (!parse.ok) {
         result.message = "FIC managed block в " + options_.defaultsPath.string() +
             ": " + parse.error;
@@ -284,17 +378,12 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
         }
     }
 
-    // Transaction snapshot for the CAS write and the conditional
-    // compensation. The snapshot is captured BEFORE anything is computed as
-    // "installed"; it is never re-derived after a failure.
-    AtomicTargetState before;
+    // SINGLE-SNAPSHOT transaction: the authoritative CAS precondition and the
+    // compensation source are the SAME snapshot the block was parsed from
+    // (captured by load()). It is never re-derived after a failure, and an
+    // external writer racing after the load can only fail the CAS below.
+    const AtomicTargetState& before = loadedState_;
     std::string error;
-    if (!AtomicFileWriter::captureTargetState(
-            options_.defaultsPath.string(), before, &error)) {
-        result.message = "Не удалось зафиксировать состояние " +
-            options_.defaultsPath.string() + ": " + error;
-        return result;
-    }
 
     if (alreadySet) {
         // Idempotent path: no source mutation, but the rebuild is still
@@ -314,7 +403,7 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     }
 
     const GrubBlockMutationResult mutation =
-        setGrubManagedBlockValue(document_, key, value);
+        setGrubManagedBlockValue(loadedState_.content, key, value);
     if (!mutation.ok) {
         result.message = mutation.error;
         return result;
@@ -324,6 +413,9 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     writeOptions.createIfMissing = false;
     writeOptions.rejectSymlink = true;
     writeOptions.expectedTargetState = before;
+    // Deterministic test seam: an external writer racing between the FIC
+    // snapshot and this CAS write (production never sets the hook).
+    fireGrubSharedPreWriteHookForTests();
     AtomicWriteResult writeResult;
     if (!AtomicFileWriter::writeWithResult(
             options_.defaultsPath.string(), mutation.content, writeOptions,
@@ -377,6 +469,46 @@ GrubOperationResult GrubConfiguration::ensureManagedValue(
     return result;
 }
 
+namespace {
+
+// Shared directory-chain proof for GRUB defaults files: every ancestor must
+// exist as a real directory without symlink components, must not be
+// group/world-writable (a world-writable directory is acceptable only with
+// the sticky bit — shared-tmp semantics), and under enforceOwnership must be
+// owned by root:root.
+bool validateGrubDefaultsDirectoryChain(const std::filesystem::path& path,
+                                        bool enforceOwnership,
+                                        std::string& error) {
+    for (std::filesystem::path current = path.parent_path(); !current.empty();
+         current = current.parent_path()) {
+        struct stat directoryStatus {};
+        if (::lstat(current.c_str(), &directoryStatus) != 0 ||
+            S_ISLNK(directoryStatus.st_mode) ||
+            !S_ISDIR(directoryStatus.st_mode)) {
+            error = "Каталог GRUB defaults отсутствует или небезопасен: " +
+                current.string();
+            return false;
+        }
+        const bool worldWritable = (directoryStatus.st_mode & 0002) != 0;
+        if ((directoryStatus.st_mode & 0022) != 0 &&
+            !(worldWritable && (directoryStatus.st_mode & S_ISVTX) != 0)) {
+            error = "Каталог GRUB defaults доступен на записи группе или "
+                    "всем: " + current.string();
+            return false;
+        }
+        if (enforceOwnership &&
+            (directoryStatus.st_uid != 0 || directoryStatus.st_gid != 0)) {
+            error = "Небезопасные владелец или права каталога GRUB defaults: " +
+                current.string();
+            return false;
+        }
+        if (current == current.root_path()) break;
+    }
+    return true;
+}
+
+} // namespace
+
 bool validateBaseGrubDefaults(const std::filesystem::path& path,
                               bool enforceOwnership,
                               std::string& error) {
@@ -422,35 +554,113 @@ bool validateBaseGrubDefaults(const std::filesystem::path& path,
             path.string();
         return false;
     }
-    for (std::filesystem::path current = path.parent_path(); !current.empty();
-         current = current.parent_path()) {
-        struct stat directoryStatus {};
-        if (::lstat(current.c_str(), &directoryStatus) != 0 ||
-            S_ISLNK(directoryStatus.st_mode) ||
-            !S_ISDIR(directoryStatus.st_mode)) {
-            error = "Каталог базовых GRUB defaults отсутствует или "
-                "небезопасен: " + current.string();
-            return false;
+    return validateGrubDefaultsDirectoryChain(path, enforceOwnership, error);
+}
+
+GrubTargetProbe probeGrubTargetFile(const std::filesystem::path& path) {
+    GrubTargetProbe probe;
+    struct stat status {};
+    if (::lstat(path.c_str(), &status) != 0) {
+        if (errno == ENOENT) {
+            probe.kind = GrubTargetKind::Missing;
+            return probe;
         }
-        // A group-writable directory in the chain is always unsafe. A
-        // world-writable directory is acceptable only with the sticky bit
-        // (shared-tmp semantics): sticky prevents other users from
-        // replacing or removing entries they do not own, so the validated
-        // base defaults file itself cannot be swapped underneath the check.
-        const bool worldWritable = (directoryStatus.st_mode & 0002) != 0;
-        if ((directoryStatus.st_mode & 0022) != 0 &&
-            !(worldWritable && (directoryStatus.st_mode & S_ISVTX) != 0)) {
-            error = "Каталог базовых GRUB defaults доступен на запись "
-                "группе или всем: " + current.string();
-            return false;
+        probe.kind = GrubTargetKind::Error;
+        probe.error = "Не удалось проверить " + path.string() + ": " +
+            std::strerror(errno);
+        return probe;
+    }
+    if (S_ISLNK(status.st_mode) || !S_ISREG(status.st_mode)) {
+        probe.kind = GrubTargetKind::Unsafe;
+        probe.error = path.string() +
+            " занимает путь, но не является обычным несимлинковым файлом";
+        return probe;
+    }
+    probe.kind = GrubTargetKind::Regular;
+    return probe;
+}
+
+GrubManagedJournalState classifyGrubManagedJournalState(
+    const GrubManagedConfigurationOptions& options,
+    const std::string& key,
+    const std::string& appliedValue,
+    GrubValueObservation* observation) {
+    const GrubValueObservation inspected =
+        inspectGrubManagedValue(options, key);
+    if (observation) {
+        *observation = inspected;
+    }
+    if (!inspected.valid) {
+        return GrubManagedJournalState::Invalid;
+    }
+    if (!inspected.found) {
+        return GrubManagedJournalState::Before;
+    }
+    return inspected.value == appliedValue
+        ? GrubManagedJournalState::After
+        : GrubManagedJournalState::Drift;
+}
+
+bool validateGrubSourceFile(const std::filesystem::path& path,
+                            bool enforceOwnership,
+                            std::string& error) {
+    if (!path.is_absolute() || path != path.lexically_normal()) {
+        error = "Путь shared GRUB defaults должен быть абсолютным и "
+            "нормализованным: " + path.string();
+        return false;
+    }
+    struct stat status {};
+    if (::lstat(path.c_str(), &status) != 0) {
+        if (errno == ENOENT) {
+            // A missing shared defaults file sources nothing unsafe.
+            return true;
         }
-        if (enforceOwnership &&
-            (directoryStatus.st_uid != 0 || directoryStatus.st_gid != 0)) {
-            error = "Небезопасные владелец или права каталога базовых "
-                "GRUB defaults: " + current.string();
-            return false;
-        }
-        if (current == current.root_path()) break;
+        error = "Не удалось проверить shared GRUB defaults " +
+            path.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    if (S_ISLNK(status.st_mode)) {
+        error = "Shared GRUB defaults не должны быть symbolic link: " +
+            path.string();
+        return false;
+    }
+    if (!S_ISREG(status.st_mode)) {
+        error = "Shared GRUB defaults не являются обычным файлом: " +
+            path.string();
+        return false;
+    }
+    if (static_cast<std::uintmax_t>(status.st_size) >
+        kMaximumGrubDefaultsSize) {
+        error = "Shared GRUB defaults превышают допустимый размер";
+        return false;
+    }
+    if ((status.st_mode & 0022) != 0) {
+        error = "Shared GRUB defaults доступны на запись группе или всем: " +
+            path.string();
+        return false;
+    }
+    if (enforceOwnership && status.st_uid != 0) {
+        error = "Shared GRUB defaults должны принадлежать root: " +
+            path.string();
+        return false;
+    }
+    return validateGrubDefaultsDirectoryChain(path, enforceOwnership, error);
+}
+
+bool validateGrubRebuildInputs(const GrubManagedConfigurationOptions& options,
+                               std::string& error) {
+    // Topology-aware: every platform input the rebuild command reads or
+    // sources is proven safe right before the rebuild. Debian/Ubuntu
+    // validates the base defaults; ALT validates the shared defaults file.
+    if (!options.baseDefaultsPath.empty() &&
+        !validateBaseGrubDefaults(
+            options.baseDefaultsPath, options.enforceOwnership, error)) {
+        return false;
+    }
+    if (!options.sharedDefaultsPath.empty() &&
+        !validateGrubSourceFile(
+            options.sharedDefaultsPath, options.enforceOwnership, error)) {
+        return false;
     }
     return true;
 }
@@ -574,6 +784,14 @@ GrubOperationResult ensureManagedGrubDropInValue(
                 "пересборкой: " + rebuildError;
             return result;
         }
+        // P0 invariant: rebuild inputs are re-proven immediately before EVERY
+        // rebuild, never inherited from the entry validation above.
+        if (!validateGrubRebuildInputs(options, rebuildError)) {
+            result.message = "Входные данные пересборки GRUB не прошли "
+                "проверку безопасности, пересборка не запускалась: " +
+                rebuildError;
+            return result;
+        }
         if (!runGrubRebuild(
                 options.rebuildExecutable, options.rebuildArguments,
                 runner, rebuildError)) {
@@ -639,6 +857,28 @@ GrubOperationResult ensureManagedGrubDropInValue(
         return result;
     }
 
+    // P0 invariant: rebuild inputs are re-proven immediately before EVERY
+    // rebuild, including the post-write rebuild and the compensating rebuild
+    // after a failed one.
+    if (!validateGrubRebuildInputs(options, error)) {
+        result.message = "Входные данные пересборки GRUB не прошли проверку "
+            "безопасности, пересборка не запускалась: " + error;
+        if (restore("Ошибка проверки входных данных пересборки GRUB") &&
+            result.sourceState == GrubSourceMutationState::Compensated) {
+            std::string compensationError;
+            if (!validateGrubRebuildInputs(options, compensationError) ||
+                !runGrubRebuild(
+                    options.rebuildExecutable, options.rebuildArguments,
+                    runner, compensationError)) {
+                result.diagnostics.push_back(
+                    "Исходный managed GRUB-файл восстановлен, но "
+                    "компенсирующая пересборка завершилась ошибкой: " +
+                    compensationError);
+            }
+        }
+        return result;
+    }
+
     if (!runGrubRebuild(
             options.rebuildExecutable, options.rebuildArguments,
             runner, error)) {
@@ -646,7 +886,8 @@ GrubOperationResult ensureManagedGrubDropInValue(
         if (restore("Ошибка пересборки GRUB") &&
             result.sourceState == GrubSourceMutationState::Compensated) {
             std::string compensationError;
-            if (!runGrubRebuild(
+            if (!validateGrubRebuildInputs(options, compensationError) ||
+                !runGrubRebuild(
                     options.rebuildExecutable, options.rebuildArguments,
                     runner, compensationError)) {
                 result.diagnostics.push_back(

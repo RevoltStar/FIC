@@ -224,26 +224,48 @@ GrubBlockParseResult parseGrubManagedBlock(const std::string& content) {
 namespace {
 
 // Foreign bytes = everything except the proven block, in the original order.
+// The newline immediately before a BEGIN marker that sits at EOF is the
+// FIC-owned serialization separator (assembleAtEof always appends exactly one
+// for a non-empty foreign area), so it is stripped on decode. This makes
+// foreign bytes survive apply -> rewrite -> removal byte-exact, including
+// foreign content that does not end with a newline. When the block is NOT at
+// EOF (foreign bytes were appended after it), the separator position is no
+// longer identifiable, so nothing is stripped and foreign bytes are kept
+// verbatim.
 std::string foreignBytes(const std::vector<std::string>& lines,
                          std::size_t beginIndex,
                          std::size_t endIndex) {
-    std::string foreign;
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        if (beginIndex != std::string::npos && index >= beginIndex &&
-            index <= endIndex) {
-            continue;
+    if (beginIndex == std::string::npos) {
+        std::string whole;
+        for (const std::string& line : lines) {
+            whole += line;
         }
-        foreign += lines[index];
+        return whole;
     }
-    return foreign;
+    std::string before;
+    for (std::size_t index = 0; index < beginIndex; ++index) {
+        before += lines[index];
+    }
+    const bool blockAtEof = endIndex + 1 == lines.size();
+    if (blockAtEof && !before.empty() && before.back() == '\n') {
+        before.pop_back();
+    }
+    std::string after;
+    for (std::size_t index = endIndex + 1; index < lines.size(); ++index) {
+        after += lines[index];
+    }
+    return before + after;
 }
 
-// Joins foreign bytes with the block at EOF using minimal boundary
-// normalization: the block must start at the beginning of a line.
+// Joins foreign bytes with the block at EOF. The newline separating the
+// foreign area from the block is FIC-owned serialization: it is ALWAYS
+// appended for a non-empty foreign area (even when the foreign content
+// already ends with a newline), so the exact pre-apply foreign bytes are
+// recoverable on decode by stripping exactly that one separator newline.
 std::string assembleAtEof(const std::string& foreign,
                           const std::string& block) {
     std::string content = foreign;
-    if (!content.empty() && content.back() != '\n') {
+    if (!content.empty()) {
         content.push_back('\n');
     }
     content += block;

@@ -80,8 +80,11 @@ struct GrubBlockMutationResult {
 };
 
 // Sets/updates one managed key. The managed block is (re)placed at EOF; all
-// foreign bytes are preserved byte-exact except the minimal boundary
-// normalization (a missing newline before the block). A block that is not at
+// foreign bytes are preserved byte-exact. The newline separating a non-empty
+// foreign area from the block is FIC-owned serialization and is always
+// appended (exactly one), which makes the pre-apply foreign bytes recoverable
+// byte-exact on removal — including foreign content without a trailing
+// newline. A block that is not at
 // EOF (foreign content appended after it) is relocated to EOF: the exact
 // proven block content is removed, foreign bytes keep their order, and the
 // canonical block is appended.
@@ -91,7 +94,9 @@ GrubBlockMutationResult setGrubManagedBlockValue(
     const std::string& value);
 
 // Removes one managed key. An empty remaining block is removed entirely
-// (no empty BEGIN/END artifact); foreign content is preserved byte-exact.
+// (no empty BEGIN/END artifact); foreign content is preserved byte-exact:
+// the FIC-owned separator newline before the removed block is dropped with
+// it, so foreign bytes without a trailing newline are restored exactly.
 // A missing key is a no-op success.
 GrubBlockMutationResult removeGrubManagedBlockValue(
     const std::string& content,

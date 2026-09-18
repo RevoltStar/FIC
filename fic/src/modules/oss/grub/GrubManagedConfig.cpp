@@ -220,7 +220,7 @@ bool GrubManagedConfig::readSnapshot(
     snapshot = {};
     const std::filesystem::path& path = managedOptions_.path;
     const int descriptor = ::open(
-        path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (descriptor < 0) {
         if (allowMissing && errno == ENOENT) return true;
         error = "could not open managed GRUB config " + path.string() +
@@ -538,6 +538,14 @@ bool GrubManagedConfig::verifyOriginal(std::string& error) const {
 
 bool GrubManagedConfig::existedAtLoad() const {
     return original_.exists;
+}
+
+bool GrubManagedConfig::originalStateAtLoad(AtomicTargetState& stateOut) const {
+    if (!original_.exists) {
+        return false;
+    }
+    stateOut = original_.state;
+    return true;
 }
 
 const std::optional<AtomicTargetState>& GrubManagedConfig::installedState()

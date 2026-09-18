@@ -34,6 +34,12 @@ public:
     bool verifyOriginal(std::string& error) const;
 
     bool existedAtLoad() const;
+    // True when loadConfig() captured an existing regular file; stateOut
+    // receives the EXACT snapshot loaded at that time (identity, content,
+    // mode, owner, group). This is the single authoritative pre-mutation
+    // state: CAS writes use it as their precondition and compensation uses it
+    // as its content source — no fresh re-read may ever substitute for it.
+    bool originalStateAtLoad(AtomicTargetState& stateOut) const;
     // Exact post-write state FIC installed through its last atomic
     // create/replace (identity, content, mode, owner, group). Captured from
     // the AtomicWriteResult of saveConfig(), not from a post-write re-read:

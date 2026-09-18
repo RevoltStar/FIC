@@ -269,6 +269,7 @@ void testGrubManagedBlockParser() {
                 "managed block set failed");
         require(set.content ==
                     "GRUB_TIMEOUT=5\n"
+                    "\n"
                     "# FIC_GRUB_BLOCK_BEGIN version=1\n"
                     "GRUB_TIMEOUT=\"0\"\n"
                     "# FIC_GRUB_BLOCK_END\n",
@@ -277,6 +278,42 @@ void testGrubManagedBlockParser() {
             removeGrubManagedBlockValue(set.content, "GRUB_TIMEOUT");
         require(remove.ok && remove.content == "GRUB_TIMEOUT=5\n",
                 "last key removal must drop the whole block byte-exact");
+    }
+    // Byte-exact foreign round trips around the FIC-owned boundary separator:
+    // foreign content without a trailing newline gains exactly one FIC-owned
+    // separator newline and is restored byte-exact on removal; a foreign
+    // trailing newline survives apply and removal unchanged.
+    {
+        const GrubBlockMutationResult set = setGrubManagedBlockValue(
+            "FOO=bar", "GRUB_TIMEOUT", "0");
+        require(set.ok, "no-final-newline managed block set failed");
+        require(set.content ==
+                    "FOO=bar\n"
+                    "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                    "GRUB_TIMEOUT=\"0\"\n"
+                    "# FIC_GRUB_BLOCK_END\n",
+                "no-final-newline foreign content must gain exactly the "
+                "FIC-owned separator newline");
+        const GrubBlockMutationResult remove =
+            removeGrubManagedBlockValue(set.content, "GRUB_TIMEOUT");
+        require(remove.ok && remove.content == "FOO=bar",
+                "removal must restore foreign EOF bytes byte-exact");
+    }
+    {
+        const GrubBlockMutationResult set = setGrubManagedBlockValue(
+            "FOO=bar\n", "GRUB_TIMEOUT", "0");
+        require(set.ok, "trailing-newline managed block set failed");
+        require(set.content ==
+                    "FOO=bar\n"
+                    "\n"
+                    "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                    "GRUB_TIMEOUT=\"0\"\n"
+                    "# FIC_GRUB_BLOCK_END\n",
+                "foreign trailing newline must be preserved");
+        const GrubBlockMutationResult remove =
+            removeGrubManagedBlockValue(set.content, "GRUB_TIMEOUT");
+        require(remove.ok && remove.content == "FOO=bar\n",
+                "removal must preserve the foreign trailing newline");
     }
 }
 
@@ -313,6 +350,7 @@ void testGrubConfigurationEditor(const fs::path& root) {
         readFile(defaults) ==
             "GRUB_TIMEOUT=5\n"
             "GRUB_CMDLINE_LINUX=\"quiet splash\"\n"
+            "\n"
             "# FIC_GRUB_BLOCK_BEGIN version=1\n"
             "GRUB_TIMEOUT=\"10\"\n"
             "# FIC_GRUB_BLOCK_END\n",
@@ -390,11 +428,31 @@ void testAltForeignPreservationAndRelocation(const fs::path& root) {
     require(relocatedContent ==
                 "foreign A\n"
                 "foreign B\n"
+                // FIC-owned serialization separator: the byte-exact foreign
+                // area is recoverable by stripping exactly this newline.
+                "\n"
                 "# FIC_GRUB_BLOCK_BEGIN version=1\n"
                 "GRUB_TIMEOUT=\"0\"\n"
                 "# FIC_GRUB_BLOCK_END\n",
             "block relocation must keep foreign order byte-exact and place "
             "the block at EOF");
+
+    // Byte-exact removal round trip: foreign content without a trailing
+    // newline is restored exactly after the last FIC key is removed — the
+    // boundary newline introduced by FIC is FIC-owned serialization.
+    const fs::path noNewline = root / "foreign-no-newline/etc/sysconfig/grub2";
+    const std::string noNewlineForeign = "GRUB_TIMEOUT=5\nFOO=bar";
+    writeFile(noNewline, noNewlineForeign);
+    GrubConfiguration noNewlineConfiguration(testOptions(noNewline), runner);
+    require(noNewlineConfiguration.load(error), error);
+    require(
+        noNewlineConfiguration.ensureManagedValue("GRUB_TIMEOUT", "0").ok,
+        "no-final-newline apply failed");
+    const GrubBlockMutationResult removal = removeGrubManagedBlockValue(
+        readFile(noNewline), "GRUB_TIMEOUT");
+    require(removal.ok && removal.content == noNewlineForeign,
+            "no-final-newline foreign bytes must survive apply and removal "
+            "byte-exact");
 }
 
 void testAmbiguousAndDynamicAssignmentsFailClosed(const fs::path& root) {

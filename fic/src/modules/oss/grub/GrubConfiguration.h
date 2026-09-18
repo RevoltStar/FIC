@@ -95,6 +95,75 @@ GrubValueObservation inspectGrubManagedValue(
     const GrubManagedConfigurationOptions& options,
     const std::string& key);
 
+// Typed observation of a GRUB-managed target file. Replaces the old boolean
+// "regular file exists" probe: a missing artifact (ENOENT) is a legitimate
+// Missing state; anything that occupies the path but is not a regular
+// non-symlink file (directory, symlink, FIFO, socket, device) is Unsafe and
+// must fail closed; any other lstat failure is Error. Both are distinct from
+// Missing — an unsafe artifact must NEVER be reported as "already released".
+enum class GrubTargetKind {
+    Missing,
+    Regular,
+    Unsafe,
+    Error
+};
+
+struct GrubTargetProbe {
+    GrubTargetKind kind = GrubTargetKind::Error;
+    std::string error;
+};
+
+GrubTargetProbe probeGrubTargetFile(const std::filesystem::path& path);
+
+// Single classifier of an active GRUB journal record against the CURRENT
+// managed source state (both topologies). Used before AND after the
+// mandatory rebuild:
+//   Before  — the managed value is absent: the mutation never installed or
+//             was fully compensated;
+//   After   — the managed value is present and equals the recorded
+//             appliedValue;
+//   Drift   — the managed value is present with another value: never
+//             rewritten, never overwritten, the journal record is not
+//             resolved;
+//   Invalid — the managed source could not be classified (unreadable,
+//             unsafe or malformed FIC artifact): fail closed.
+// The underlying inspection is returned through the optional out-parameter
+// so callers can reuse it for diagnostics.
+enum class GrubManagedJournalState {
+    Before,
+    After,
+    Drift,
+    Invalid
+};
+
+GrubManagedJournalState classifyGrubManagedJournalState(
+    const GrubManagedConfigurationOptions& options,
+    const std::string& key,
+    const std::string& appliedValue,
+    GrubValueObservation* observation = nullptr);
+
+// Validate-only safety proof of EVERY input update-grub sources or reads,
+// under the platform topology. Must be called immediately before EVERY GRUB
+// rebuild (normal apply, journal reconciliation, prepared recovery,
+// NothingToDo rollback, post-rollback, compensating rebuild, value-change
+// release) because the rebuild executes the rebuild command as root with the
+// current on-disk inputs:
+//   * Debian/Ubuntu (baseDefaultsPath set): validateBaseGrubDefaults —
+//     a missing base file is acceptable, an existing one must be safe;
+//   * ALT (sharedDefaultsPath set): validateGrubSourceFile — a missing
+//     shared file is acceptable for a rebuild, an existing one must be a
+//     regular non-symlink file of a bounded size without group/world write
+//     bits, owned by root when enforceOwnership is set, inside a safe
+//     directory chain.
+bool validateGrubRebuildInputs(const GrubManagedConfigurationOptions& options,
+                               std::string& error);
+
+// Validate-only safety proof of the ALT shared GRUB defaults file. Missing is
+// acceptable (nothing unsafe is sourced); an existing file must be safe.
+bool validateGrubSourceFile(const std::filesystem::path& path,
+                            bool enforceOwnership,
+                            std::string& error);
+
 // Conditional compensation shared by ALT apply and ALT rollback: replaces
 // the file content ONLY while the target still IS exactly the expected
 // FIC-installed state (identity, metadata, content). Refuses symlinks,
@@ -114,17 +183,29 @@ GrubCompensationOutcome restoreGrubFileIfCurrentState(
 
 // Safe editor for the FIC-owned EOF managed block of the ALT shared GRUB
 // defaults file (/etc/sysconfig/grub2). Foreign bytes are preserved
-// byte-exact; the FIC managed block is always (re)placed at EOF. Uses an
-// atomic CAS write (captured expected target state) with post-write proof
-// and a conditional compensation of the exact pre-apply state after a
-// failed rebuild.
+// byte-exact; the FIC managed block is always (re)placed at EOF.
+//
+// SINGLE-SNAPSHOT model: load() captures ONE authoritative snapshot of the
+// target (safe open, bounded read, identity re-proof — see readSnapshot()).
+// Parsing, mutation rendering, the CAS precondition
+// (AtomicWriteOptions::expectedTargetState) and the compensation
+// pre-apply state are all derived from that same snapshot, so an external
+// writer racing between the load and the write can only fail the CAS —
+// its bytes are never adopted as FIC's own expected state and never
+// overwritten. Uses an atomic CAS write with post-write proof and a
+// conditional compensation of the exact pre-apply state after a failed
+// rebuild.
 class GrubConfiguration {
 public:
     explicit GrubConfiguration(GrubConfigurationOptions options = {},
                                GrubCommandRunner runner = {});
 
     bool load(std::string& error);
-    const std::string& content() const { return document_; }
+    const std::string& content() const { return loadedState_.content; }
+    // The authoritative snapshot captured by load(): identity, metadata and
+    // exact content. It is the CAS precondition and the compensation source.
+    const AtomicTargetState& loadedState() const { return loadedState_; }
+    bool loaded() const { return loaded_; }
     const std::filesystem::path& path() const { return options_.defaultsPath; }
 
     GrubOperationResult ensureManagedValue(const std::string& key,
@@ -133,12 +214,22 @@ public:
 private:
     GrubConfigurationOptions options_;
     GrubCommandRunner runner_;
-    std::string document_;
+    AtomicTargetState loadedState_;
+    bool loaded_ = false;
 
     bool checkFileSafety(std::string& error) const;
-    bool readDocument(std::string& error);
-    bool rebuild(std::string& error) const;
+    bool readSnapshot(std::string& error);
+    bool rebuild(std::string& error);
 };
+
+// Test-only deterministic seam for stale-read race coverage: when set, the
+// hook is invoked exactly once immediately before the CAS write of the ALT
+// shared-defaults mutation paths (apply and rollback), after the snapshot
+// was captured and the mutation was rendered. It simulates an external
+// writer racing between the FIC snapshot and the atomic replacement.
+// Production code must never set or invoke it.
+void setGrubSharedPreWriteHookForTests(std::function<void()> hook);
+void fireGrubSharedPreWriteHookForTests();
 
 // Validate-only safety proof for the platform base defaults file (Debian/
 // Ubuntu: /etc/default/grub). Never mutates anything. A missing file is
