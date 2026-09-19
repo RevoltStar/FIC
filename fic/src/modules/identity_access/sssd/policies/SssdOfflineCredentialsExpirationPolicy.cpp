@@ -131,8 +131,24 @@ ReconciliationOutcome reconcileSssdJournal(
             return ReconciliationOutcome::Failed;
         }
         if (!observed.optionPresent) {
-            // Ownership already released (crash window after release):
-            // resolve the stale record and continue fresh.
+            // Source ownership was already released (crash after release, or
+            // a previous rollback attempt that completed the source undo).
+            // A record whose before-state is already proven (release
+            // completed) is stale and resolvable; a record whose postconditions
+            // were NOT proven yet (RollbackFailed with pending runtime
+            // reconciliation) stays fail closed and must be finished by the
+            // rollback executor, never silently by apply.
+            if (record.status == fic::rollback::MutationStatus::RollbackFailed) {
+                policy.log(
+                    "Активная SSSD mutation в состоянии RollbackFailed "
+                    "требует завершения rollback (runtime-реконсиляция "
+                    "не подтверждена): apply отклонён (fail closed)",
+                    logLevel::ERROR);
+                ok = false;
+                return ReconciliationOutcome::Failed;
+            }
+            // Ownership already released (crash window): resolve the stale
+            // record and continue fresh.
             std::string resolveError;
             if (!journal->setStatus(
                     record.id, MutationStatus::RolledBack, resolveError)) {
@@ -157,6 +173,60 @@ ReconciliationOutcome reconcileSssdJournal(
         if (activeValue == undo->appliedValue) {
             // Same-value re-apply: keep the single active record, no new
             // provenance and no persistent mutation.
+            if (record.status == MutationStatus::RollbackFailed) {
+                // RollbackFailed semantics do not allow a silent apply
+                // repair of the same value: the interrupted rollback must
+                // be finished first (retry the policy disable).
+                policy.log(
+                    "Активная SSSD mutation в состоянии RollbackFailed не "
+                    "может быть тихо исправлена apply (fail closed)",
+                    logLevel::ERROR);
+                ok = false;
+                return ReconciliationOutcome::Failed;
+            }
+            if (record.status == MutationStatus::Prepared) {
+                // Crash recovery: the drop-in is freshly proven AFTER
+                // (checks above) while the interrupted apply may still owe
+                // its runtime reconciliation. Complete the recovery
+                // operation — mandatory runtime reconciliation even though
+                // the persistent write is not needed — and commit the SAME
+                // mutation id as Applied. No new record is created.
+                std::string runtimeError;
+                if (!reconcileSssdRuntime(rollbackOptions, runtimeError)) {
+                    policy.log(
+                        "Не удалось завершить recovery-реконсиляцию SSSD: " +
+                            runtimeError,
+                        logLevel::ERROR);
+                    ok = false;
+                    return ReconciliationOutcome::Failed;
+                }
+                // Fresh persistent AFTER re-proof after the restart.
+                SssdManagedSnippetObservation reproof;
+                std::string reproofError;
+                if (!configuration.inspectManagedSnippet(
+                        kSection, kOption, reproof, reproofError) ||
+                    !reproof.optionPresent ||
+                    reproof.optionValue != undo->appliedValue ||
+                    !reproof.laterConflictingSnippets.empty()) {
+                    policy.log(
+                        "Recovery-постусловие SSSD не подтверждено (fail "
+                        "closed)",
+                        logLevel::ERROR);
+                    ok = false;
+                    return ReconciliationOutcome::Failed;
+                }
+                std::string commitError;
+                if (!journal->setStatus(
+                        record.id, MutationStatus::Applied, commitError)) {
+                    policy.log(
+                        "Ошибка фиксации SSSD recovery записи: " +
+                            commitError,
+                        logLevel::ERROR);
+                    ok = false;
+                    return ReconciliationOutcome::Failed;
+                }
+            }
+            // Applied: the proven AFTER state is already idempotent.
             return ReconciliationOutcome::Reused;
         }
         // Active value change: ownership-safe release of the old mutation
@@ -353,15 +423,18 @@ bool SssdOfflineCredentialsExpirationPolicy::applyFreshManagedValue(
     }
 
     std::string executionError;
-    if (!fic::identity::executePreparedFileChange(
-            std::move(prepared.change), executionError)) {
-        // The transaction already attempted full compensation (persistent
-        // rollback + runtime restore). When the compensation completed, the
-        // fresh Prepared record can be discarded; a failed/indeterminate
+    const auto execution = fic::identity::executePreparedFileChangeDetailed(
+        std::move(prepared.change));
+    if (execution.status !=
+        fic::identity::PreparedChangeExecutionStatus::Committed) {
+        executionError = execution.error;
+        // The transaction already attempted full compensation. Only a
+        // fully compensated failure (typed result, no recovery errors)
+        // may discard the fresh Prepared record; a failed/indeterminate
         // compensation keeps the record active for recovery (existing
         // journal invariants).
-        if (mutationPrepared &&
-            executionError.find("recovery error") == std::string::npos) {
+        if (mutationPrepared && execution.status ==
+                fic::identity::PreparedChangeExecutionStatus::Compensated) {
             std::string discardError;
             journal->discard(mutationId, discardError);
         }

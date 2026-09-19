@@ -54,9 +54,38 @@ std::unique_ptr<PreparedConfigurationChange> makePreparedFileChange(
     std::string candidate,
     ConfigurationContentVerifier verifier);
 
+// Typed execution outcome of a single prepared change through the
+// transaction layer. Callers that must make lifecycle decisions (for
+// example whether a fresh Prepared journal record may be discarded) MUST
+// use this typed result instead of parsing diagnostic error strings.
+enum class PreparedChangeExecutionStatus {
+    // The change was committed and verified: the system carries the new
+    // state.
+    Committed,
+    // The change failed and the transaction completed the full
+    // compensation (persistent rollback + runtime restoration verified):
+    // no system change remains.
+    Compensated,
+    // The change failed and the compensation failed or is indeterminate:
+    // the system may carry a partial or full new state. Callers must keep
+    // provenance active for recovery.
+    CompensationFailed
+};
+
+struct PreparedChangeExecutionResult {
+    PreparedChangeExecutionStatus status =
+        PreparedChangeExecutionStatus::CompensationFailed;
+    std::string error;
+};
+
+// Convenience wrapper: true on Committed, otherwise fills error from the
+// typed result (including recovery errors, if any).
 bool executePreparedFileChange(
     std::unique_ptr<PreparedConfigurationChange> change,
     std::string& error);
+
+PreparedChangeExecutionResult executePreparedFileChangeDetailed(
+    std::unique_ptr<PreparedConfigurationChange> change);
 
 } // namespace fic::identity
 

@@ -23,9 +23,18 @@ struct SssdRollbackOptions {
 struct SssdRollbackResult {
     bool ok = false;
     bool conflict = false;    // FIC-owned state drifted; nothing was written
-    bool nothingToDo = false; // ownership already released
+    bool nothingToDo = false; // the source undo was already completed
     std::string message;
 };
+
+// Restarts the ACTIVE SSSD service unit (if any) and verifies it comes back
+// active. Inactive units are skipped: FIC never activates SSSD on its own.
+// This is a mandatory postcondition of every active SSSD rollback lifecycle
+// — including retries where the FIC-owned source state was already released
+// by a previous (failed) rollback attempt.
+bool reconcileSssdRuntime(
+    const SssdRollbackOptions& options,
+    std::string& error);
 
 // Rolls back one SSSD policy mutation under the ownership-release model:
 // removes ONLY the FIC-owned managed setting identified by the journal
@@ -36,15 +45,19 @@ struct SssdRollbackResult {
 // foreign value becomes effective naturally.
 //
 // Classification against the CURRENT FIC-owned drop-in:
-//   * the target option is absent — ownership already released:
-//     NothingToDo (the foreign topology is not restarted);
 //   * the drop-in is unsafe/malformed or the option carries another
 //     value — drift: Conflict, the file is never touched;
 //   * the option equals appliedValue — the option line is removed through
 //     an atomic CAS write; a drop-in that becomes semantically empty is
-//     removed entirely (CAS-verified unlink). Afterwards the SSSD topology
-//     is re-read, an active SSSD service is restarted and verified, and
-//     only then the rollback succeeds.
+//     removed entirely (proof-bound rename-away removal). Afterwards the
+//     runtime reconciliation below runs;
+//   * the option is absent — the source undo was already completed by a
+//     previous attempt; runtime reconciliation is still MANDATORY:
+//     an active journal record means the rollback operation must finish
+//     all of its postconditions (restart of an active SSSD + verification)
+//     before the rollback may report Success/NothingToDo. A failed
+//     reconciliation is RollbackFailed and the next retry re-attempts it;
+//     the removed FIC drop-in is never re-created for a retry.
 SssdRollbackResult undoSssdManagedSetting(
     const SssdRollbackOptions& options,
     const fic::rollback::UndoRemoveSssdManagedSetting& undo);

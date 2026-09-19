@@ -1,6 +1,9 @@
 #include "modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.h"
 #include "modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
 
+#include "modules/identity_access/composite/ConfigurationTransaction.h"
+#include "modules/identity_access/shared/configuration/PreparedFileChange.h"
+#include "modules/identity_access/sssd/SssdConfiguration.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/MutationRecord.h"
 #include "rollback/RollbackExecutor.h"
@@ -9,6 +12,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -214,6 +218,530 @@ ProcessResult okResult() {
     result.started = true;
     result.exitCode = 0;
     return result;
+}
+
+fs::path sssdDropInPath(const fs::path& main) {
+    return main.parent_path() / (main.stem().string() + "-conf.d/zzzz-fic.conf");
+}
+
+void testSssdRollbackRetryCompletesRuntimeReconciliation(
+    const fs::path& root) {
+    // Regression: rollback #1 removes the FIC option but the SSSD restart
+    // fails -> RollbackFailed stays active. Rollback #2 finds the option
+    // absent, MUST still run the mandatory runtime reconciliation and only
+    // then complete the lifecycle (record RolledBack).
+    const fs::path main = root / "system/sssd-retry-runtime.conf";
+    const std::string original =
+        "[pam]\noffline_credentials_expiration = 7\n";
+    writeFile(main, original, 0600);
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    int restartCalls = 0;
+    bool failNextRestart = false;
+    auto runner = [&](const std::string&,
+                      const std::vector<std::string>& arguments,
+                      const ProcessOptions&) {
+        if (!arguments.empty() && arguments.front() == "restart") {
+            ++restartCalls;
+            if (failNextRestart) {
+                failNextRestart = false;
+                ProcessResult failure;
+                failure.started = true;
+                failure.exitCode = 1;
+                failure.standardError = "simulated restart failure";
+                return failure;
+            }
+        }
+        return okResult();
+    };
+    JournalOverride journalGuard(root / "journals/sssd-retry-runtime.json");
+    SssdOfflineCredentialsExpirationPolicy policy(
+        sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+    require(policy.apply(), "SSSD apply failed");
+    // Rollback #1: source removal succeeds, restart fails.
+    failNextRestart = true;
+    const auto first = fic::rollback::rollbackPolicyBeforeDisable(
+        kSssdPolicyRef, kSssdResource,
+        sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
+    require(!first.rollbackCompleted(),
+            "a failed runtime reconciliation must not complete the rollback");
+    require(first.status == fic::rollback::RollbackStatus::Failed,
+            "restart failure must be RollbackFailed, got: " + first.message);
+    require(activeRecordCount(kSssdPolicyRef) == 1,
+            "the record must stay active after the failed reconciliation");
+    require(!fs::exists(sssdDropInPath(main)),
+            "the FIC option/drop-in must be removed by the first attempt");
+    const int restartsAfterFirst = restartCalls;
+    require(restartsAfterFirst >= 1,
+            "the first rollback must have attempted a restart");
+    const auto second = fic::rollback::rollbackPolicyBeforeDisable(
+        kSssdPolicyRef, kSssdResource,
+        sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
+    require(second.rollbackCompleted(),
+            "the retry must complete the rollback: " + second.message);
+    require(activeRecordCount(kSssdPolicyRef) == 0,
+            "the record must be RolledBack after the retry");
+    require(restartCalls > restartsAfterFirst,
+            "the retry MUST re-run the runtime reconciliation (restart)");
+    require(readFile(main) == original,
+            "the foreign sssd.conf must remain untouched");
+}
+
+void testSssdPreparedCrashRecoveryCompletesApplied(const fs::path& root) {
+    // Regression: Prepared persisted + drop-in installed + crash BEFORE the
+    // runtime reconciliation and BEFORE Applied. A daemon-style journal
+    // reopen + same-value apply must run the mandatory runtime
+    // reconciliation, re-prove the AFTER state and promote the SAME
+    // MutationId Prepared -> Applied; exactly one active record remains.
+    const fs::path main = root / "system/sssd-prepared-recovery.conf";
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    int restartCalls = 0;
+    auto runner = [&restartCalls](const std::string&,
+                                  const std::vector<std::string>& arguments,
+                                  const ProcessOptions&) {
+        if (!arguments.empty() && arguments.front() == "restart") {
+            ++restartCalls;
+        }
+        return okResult();
+    };
+    const fs::path journalPath = root / "journals/sssd-prepared-recovery.json";
+    JournalOverride journalGuard(journalPath);
+    // Simulate the crash window: drop-in installed, Prepared record
+    // persisted, runtime reconciliation and Applied never happened.
+    fic::identity::sssd::SssdConfiguration configuration(
+        sssdOptions(main, root));
+    auto prepared = configuration.prepareManagedSnippetValue(
+        "pam", "offline_credentials_expiration", "30");
+    require(prepared.ok(), "drop-in install must prepare");
+    std::string error;
+    require(fic::identity::executePreparedFileChange(
+                std::move(prepared.change), error),
+            error);
+    fic::rollback::MutationId id = 0;
+    require(fic::rollback::recordPreparedMutation(
+                kSssdPolicyRef, kSssdResource,
+                fic::rollback::UndoAction{
+                    fic::rollback::MutationBackend::Sssd,
+                    fic::rollback::UndoRemoveSssdManagedSetting{
+                        "pam", "offline_credentials_expiration", "30"}},
+                id, error),
+            error);
+    const auto& recordBefore = singleActiveRecord(kSssdPolicyRef);
+    require(recordBefore.status == fic::rollback::MutationStatus::Prepared,
+            "the crash-window record must be Prepared");
+    const auto idBefore = recordBefore.id;
+    {
+        // Daemon-style reopen: a second override forces initializeOrLoad.
+        JournalOverride reopenGuard(journalPath);
+        setPolicyValues(root, "30", "7200");
+        SssdOfflineCredentialsExpirationPolicy recoveryPolicy(
+            sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+        require(recoveryPolicy.apply(), "the recovery apply must succeed");
+        require(restartCalls >= 1,
+                "the recovery MUST run the mandatory runtime reconciliation "
+                "(restart) even though the persistent write is a no-op");
+        const auto& record = singleActiveRecord(kSssdPolicyRef);
+        require(record.id == idBefore,
+                "recovery must reuse the SAME MutationId");
+        require(record.status == fic::rollback::MutationStatus::Applied,
+                "the SAME record must become Applied");
+        require(readFile(sssdDropInPath(main)).find(
+                    "offline_credentials_expiration = 30") !=
+                std::string::npos,
+                "the FIC drop-in must still carry the applied value");
+        require(activeRecordCount(kSssdPolicyRef) == 1,
+                "exactly one active record after recovery");
+    }
+}
+
+void testSssdForeignReplacementBetweenProofAndRemovalSurvives(
+    const fs::path& root) {
+    // Regression (TOCTOU): FIC proves zzzz-fic.conf, then a foreign actor
+    // atomically replaces it BEFORE the removal step. The removal must fail
+    // closed and the foreign replacement must survive byte-exact.
+    const fs::path main = root / "system/sssd-race-removal.conf";
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    auto runner = [](const std::string&,
+                     const std::vector<std::string>&,
+                     const ProcessOptions&) { return okResult(); };
+    JournalOverride journalGuard(root / "journals/sssd-race-removal.json");
+    {
+        SssdOfflineCredentialsExpirationPolicy policy(
+            sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+        require(policy.apply(), "SSSD apply failed");
+    }
+    const std::string foreignReplacement =
+        "# foreign replacement\n[pam]\n"
+        "offline_credentials_expiration = 55\n";
+    const fs::path staged =
+        sssdDropInPath(main).string() + ".foreign-staged";
+    {
+        std::ofstream output(staged, std::ios::binary | std::ios::trunc);
+        require(output.is_open(), "could not stage the foreign file");
+        output << foreignReplacement;
+    }
+    ::chmod(staged.c_str(), 0600);
+    fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(
+        [&main, staged]() {
+            ::rename(staged.c_str(), sssdDropInPath(main).c_str());
+        });
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        kSssdPolicyRef, kSssdResource,
+        sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
+    fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
+    require(!report.rollbackCompleted(),
+            "a foreign replacement must fail the removal closed");
+    require(report.status == fic::rollback::RollbackStatus::Failed ||
+                report.status == fic::rollback::RollbackStatus::Conflict,
+            "the foreign replacement must be refused");
+    require(readFile(sssdDropInPath(main)) == foreignReplacement,
+            "the foreign replacement must survive byte-exact");
+    require(activeRecordCount(kSssdPolicyRef) == 1,
+            "the record must stay active after the failed removal");
+}
+
+// Wrapper that fails verifyPersistent() so the transaction executes the
+// full compensation path (persistent rollback) of the inner change.
+class VerifyFailingChange
+    : public fic::identity::PreparedConfigurationChange {
+public:
+    explicit VerifyFailingChange(
+        std::unique_ptr<fic::identity::PreparedConfigurationChange> inner)
+        : inner_(std::move(inner)) {}
+    std::string id() const override { return inner_->id(); }
+    bool needsCommit() const noexcept override { return inner_->needsCommit(); }
+    bool needsActivation() const noexcept override { return false; }
+    fic::identity::ConfigurationStepResult commitPersistent() override {
+        return inner_->commitPersistent();
+    }
+    fic::identity::ConfigurationStepResult verifyPersistent() override {
+        return fic::identity::ConfigurationStepResult::failure(
+            "simulated verification failure");
+    }
+    fic::identity::ConfigurationStepResult activate() override {
+        return fic::identity::ConfigurationStepResult::success(false);
+    }
+    fic::identity::ConfigurationStepResult verifyEffective() override {
+        return fic::identity::ConfigurationStepResult::success(false);
+    }
+    fic::identity::ConfigurationStepResult rollbackPersistent() override {
+        return inner_->rollbackPersistent();
+    }
+    fic::identity::ConfigurationStepResult restoreRuntimeAfterRollback()
+        override {
+        return fic::identity::ConfigurationStepResult::success(false);
+    }
+    fic::identity::ConfigurationStepResult verifyRollback() override {
+        return inner_->verifyRollback();
+    }
+
+private:
+    std::unique_ptr<fic::identity::PreparedConfigurationChange> inner_;
+};
+
+void testSssdCompensationRecreateOnlyOnProvenMissing(const fs::path& root) {
+    // Regression: the removal committed, then verification failed and the
+    // compensation ran against the PROVEN-MISSING target: the original
+    // content must be exclusively recreated byte-exact.
+    const fs::path main = root / "system/sssd-compensation-missing.conf";
+    const std::string dropInContent =
+        "# FIC managed configuration\n[pam]\n"
+        "offline_credentials_expiration = 30\n";
+    const fs::path dropIn = sssdDropInPath(main);
+    fs::create_directories(dropIn.parent_path());
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    writeFile(dropIn, dropInContent, 0600);
+    fic::identity::sssd::SssdConfiguration configuration(
+        sssdOptions(main, root));
+    auto prepared = configuration.prepareManagedSnippetRemoval(
+        "pam", "offline_credentials_expiration");
+    require(prepared.ok(), "removal must prepare");
+    std::string error;
+    require(!fic::identity::executePreparedFileChange(
+                std::make_unique<VerifyFailingChange>(
+                    std::move(prepared.change)),
+                error),
+            "the simulated verification failure must fail the transaction");
+    require(fs::exists(dropIn),
+            "the compensation must recreate the drop-in");
+    require(readFile(dropIn) == dropInContent,
+            "the recreated content must be byte-exact");
+}
+
+void testSssdCompensationNeverOverwritesForeignFile(const fs::path& root) {
+    // Regression: after the removal committed, a foreign actor created a NEW
+    // file at the drop-in path. The compensation must refuse to overwrite
+    // it; the foreign content must survive byte-exact.
+    const fs::path main = root / "system/sssd-compensation-foreign.conf";
+    const std::string foreignContent =
+        "# foreign new file\n[pam]\n"
+        "offline_credentials_expiration = 88\n";
+    const fs::path dropIn = sssdDropInPath(main);
+    fs::create_directories(dropIn.parent_path());
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    writeFile(dropIn,
+              "# FIC managed configuration\n[pam]\n"
+              "offline_credentials_expiration = 30\n",
+              0600);
+    fic::identity::sssd::SssdConfiguration configuration(
+        sssdOptions(main, root));
+    auto prepared = configuration.prepareManagedSnippetRemoval(
+        "pam", "offline_credentials_expiration");
+    require(prepared.ok(), "removal must prepare");
+    // A foreign file appears in the commit->compensation window.
+    class ForeignHook final : public VerifyFailingChange {
+    public:
+        ForeignHook(
+            std::unique_ptr<fic::identity::PreparedConfigurationChange> inner,
+            fs::path path)
+            : VerifyFailingChange(std::move(inner)), path_(std::move(path)) {}
+        void setForeign(const std::string* content) { content_ = content; }
+        fic::identity::ConfigurationStepResult verifyPersistent() override {
+            // Model the foreign creation exactly after the commit.
+            writeFile(path_, *content_, 0600);
+            return VerifyFailingChange::verifyPersistent();
+        }
+
+    private:
+        fs::path path_;
+        const std::string* content_ = nullptr;
+    };
+    auto failing = std::make_unique<ForeignHook>(
+        std::move(prepared.change), dropIn);
+    failing->setForeign(&foreignContent);
+    std::string error;
+    require(!fic::identity::executePreparedFileChange(
+                std::move(failing), error),
+            "the transaction must fail");
+    require(fs::exists(dropIn), "the foreign file must still exist");
+    require(readFile(dropIn) == foreignContent,
+            "the foreign content must survive byte-exact");
+}
+
+void testSssdCompensationRefusesUnsafeTarget(const fs::path& root) {
+    // Regression: a foreign SYMLINK occupies the drop-in path after the
+    // removal commit. The compensation must fail closed and leave the
+    // symlink untouched.
+    const fs::path main = root / "system/sssd-compensation-symlink.conf";
+    const fs::path dropIn = sssdDropInPath(main);
+    fs::create_directories(dropIn.parent_path());
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    writeFile(dropIn,
+              "# FIC managed configuration\n[pam]\n"
+              "offline_credentials_expiration = 30\n",
+              0600);
+    fic::identity::sssd::SssdConfiguration configuration(
+        sssdOptions(main, root));
+    auto prepared = configuration.prepareManagedSnippetRemoval(
+        "pam", "offline_credentials_expiration");
+    require(prepared.ok(), "removal must prepare");
+    class SymlinkHook final : public VerifyFailingChange {
+    public:
+        SymlinkHook(
+            std::unique_ptr<fic::identity::PreparedConfigurationChange> inner,
+            fs::path path)
+            : VerifyFailingChange(std::move(inner)), path_(std::move(path)) {}
+        fic::identity::ConfigurationStepResult verifyPersistent() override {
+            const fs::path target = path_.string() + ".foreign-target";
+            writeFile(target, "foreign target\n", 0600);
+            require(::symlink(target.c_str(), path_.c_str()) == 0,
+                    "could not create the foreign symlink");
+            return VerifyFailingChange::verifyPersistent();
+        }
+
+    private:
+        fs::path path_;
+    };
+    std::string error;
+    require(!fic::identity::executePreparedFileChange(
+                std::make_unique<SymlinkHook>(std::move(prepared.change),
+                                              dropIn),
+                error),
+            "the transaction must fail");
+    require(fs::is_symlink(fs::symlink_status(dropIn)),
+            "the foreign symlink must survive untouched");
+}
+
+void testKerberosNoActiveRecordIsNothingToDo(const fs::path& root) {
+    // Regression: a legitimate no-op apply (foreign value already equals the
+    // desired value) creates NO journal record; the disable must then be
+    // NothingToDo (allowed) and the file must stay byte-for-byte unchanged.
+    const fs::path main = root / "system/krb5-noop.conf";
+    const std::string original = "[libdefaults]\nticket_lifetime = 36000s\n";
+    writeFile(main, original, 0644);
+    JournalOverride journalGuard(root / "journals/kerberos-noop.json");
+    setPolicyValues(root, "30", "36000");
+    {
+        KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
+        require(policy.apply(), "the no-op Kerberos apply must succeed");
+    }
+    require(activeRecordCount(kKerberosPolicyRef) == 0,
+            "a no-op apply must not create a journal record");
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        kKerberosPolicyRef, kKerberosResource,
+        kerberosExecutorDeps(kerberosOptions(main, root)));
+    require(report.status == fic::rollback::RollbackStatus::NothingToDo,
+            "no active record means FIC owns nothing: NothingToDo, got: " +
+                report.message);
+    require(report.rollbackCompleted(),
+            "the disable must be allowed without active records");
+    require(readFile(main) == original,
+            "the foreign Kerberos profile must stay byte-for-byte unchanged");
+}
+
+void testKerberosRetryAfterCompletedRollbackIsNothingToDo(
+    const fs::path& root) {
+    // Regression: rollback completed and the journal record is RolledBack,
+    // but the crash happened BEFORE the policy status update. The repeated
+    // disable must be NothingToDo (allowed) and the restored 8h must stay
+    // byte-exact.
+    const fs::path main = root / "system/krb5-retry.conf";
+    const std::string original = "[libdefaults]\nticket_lifetime = 8h\n";
+    writeFile(main, original, 0644);
+    JournalOverride journalGuard(root / "journals/kerberos-retry.json");
+    setPolicyValues(root, "30", "36000");
+    {
+        KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
+        require(policy.apply(), "Kerberos apply failed");
+    }
+    const auto first = fic::rollback::rollbackPolicyBeforeDisable(
+        kKerberosPolicyRef, kKerberosResource,
+        kerberosExecutorDeps(kerberosOptions(main, root)));
+    require(first.rollbackCompleted(), "the first rollback must succeed");
+    require(readFile(main) == original, "the 8h line must be restored");
+    const auto second = fic::rollback::rollbackPolicyBeforeDisable(
+        kKerberosPolicyRef, kKerberosResource,
+        kerberosExecutorDeps(kerberosOptions(main, root)));
+    require(second.status == fic::rollback::RollbackStatus::NothingToDo,
+            "the repeated disable must be NothingToDo, got: " +
+                second.message);
+    require(second.rollbackCompleted(),
+            "the repeated disable must be allowed");
+    require(readFile(main) == original,
+            "the 8h value must be preserved byte-exact");
+}
+
+void testKerberosPreparedCrashRecoveryCompletesApplied(const fs::path& root) {
+    // Regression: Prepared journal + krb5.conf already carries the applied
+    // value + crash before the journal commit. A daemon-style journal reopen
+    // + same-value apply must perform the full fresh graph proof and promote
+    // the SAME MutationId Prepared -> Applied.
+    const fs::path main = root / "system/krb5-prepared-recovery.conf";
+    writeFile(main, "[libdefaults]\nticket_lifetime = 36000s\n", 0644);
+    const fs::path journalPath =
+        root / "journals/kerberos-prepared-recovery.json";
+    JournalOverride journalGuard(journalPath);
+    setPolicyValues(root, "30", "36000");
+    fic::rollback::MutationId id = 0;
+    std::string error;
+    require(fic::rollback::recordPreparedMutation(
+                kKerberosPolicyRef, kKerberosResource,
+                fic::rollback::UndoAction{
+                    fic::rollback::MutationBackend::Kerberos,
+                    fic::rollback::UndoRestoreKerberosScalar{
+                        "libdefaults", "ticket_lifetime", "36000s",
+                        fic::rollback::KerberosBeforeKind::Missing, "",
+                        false}},
+                id, error),
+            error);
+    const auto& recordBefore = singleActiveRecord(kKerberosPolicyRef);
+    require(recordBefore.status == fic::rollback::MutationStatus::Prepared,
+            "the crash-window record must be Prepared");
+    const auto idBefore = recordBefore.id;
+    {
+        JournalOverride reopenGuard(journalPath);
+        setPolicyValues(root, "30", "36000");
+        KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
+        require(policy.apply(), "the recovery apply must succeed");
+        const auto& record = singleActiveRecord(kKerberosPolicyRef);
+        require(record.id == idBefore,
+                "recovery must reuse the SAME MutationId");
+        require(record.status == fic::rollback::MutationStatus::Applied,
+                "the SAME record must become Applied");
+        require(readFile(main) == "[libdefaults]\nticket_lifetime = 36000s\n",
+                "the profile must keep the applied value");
+        require(activeRecordCount(kKerberosPolicyRef) == 1,
+                "exactly one active record after recovery");
+    }
+}
+
+void testKerberosAppliedSameValueStaysApplied(const fs::path& root) {
+    // Regression: a same-value re-apply under an Applied record keeps the
+    // existing idempotency (no status transition, no duplicate provenance).
+    const fs::path main = root / "system/krb5-applied-same.conf";
+    writeFile(main, "[libdefaults]\nticket_lifetime = 8h\n", 0644);
+    JournalOverride journalGuard(root / "journals/kerberos-applied-same.json");
+    setPolicyValues(root, "30", "36000");
+    KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
+    require(policy.apply(), "the first apply must succeed");
+    const auto& record = singleActiveRecord(kKerberosPolicyRef);
+    require(record.status == fic::rollback::MutationStatus::Applied,
+            "the first apply must commit Applied");
+    const auto id = record.id;
+    require(policy.apply(), "the same-value re-apply must succeed");
+    const auto& recordAfter = singleActiveRecord(kKerberosPolicyRef);
+    require(recordAfter.id == id,
+            "the same-value re-apply must not create new provenance");
+    require(recordAfter.status == fic::rollback::MutationStatus::Applied,
+            "the Applied record must stay Applied");
+}
+
+void testKerberosRollbackFailedIsNotPromoted(const fs::path& root) {
+    // Regression: a RollbackFailed record is never silently promoted to
+    // Applied. A same-value apply must fail closed and keep the record
+    // exactly as it is.
+    const fs::path main = root / "system/krb5-rollback-failed.conf";
+    writeFile(main, "[libdefaults]\nticket_lifetime = 36000s\n", 0644);
+    const fs::path journalPath = root / "journals/kerberos-rf.json";
+    JournalOverride journalGuard(journalPath);
+    setPolicyValues(root, "30", "36000");
+    fic::rollback::MutationId id = 0;
+    std::string error;
+    require(fic::rollback::recordPreparedMutation(
+                kKerberosPolicyRef, kKerberosResource,
+                fic::rollback::UndoAction{
+                    fic::rollback::MutationBackend::Kerberos,
+                    fic::rollback::UndoRestoreKerberosScalar{
+                        "libdefaults", "ticket_lifetime", "36000s",
+                        fic::rollback::KerberosBeforeKind::Present,
+                        "ticket_lifetime = 8h", true}},
+                id, error),
+            error);
+    require(fic::rollback::commitMutation(id, error), error);
+    {
+        auto* journal =
+            fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+        require(journal != nullptr, "journal must be usable");
+        require(journal->setStatus(
+                    id, fic::rollback::MutationStatus::RollbackFailed, error),
+                error);
+    }
+    const auto& record = singleActiveRecord(kKerberosPolicyRef);
+    require(record.status == fic::rollback::MutationStatus::RollbackFailed,
+            "the record must be RollbackFailed");
+    require(record.id == id, "the record id must match");
+    {
+        JournalOverride reopenGuard(journalPath);
+        setPolicyValues(root, "30", "36000");
+        KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
+        require(!policy.apply(),
+                "a same-value apply must fail closed on RollbackFailed");
+        const auto& recordAfter = singleActiveRecord(kKerberosPolicyRef);
+        require(recordAfter.id == id,
+                "the RollbackFailed record must stay the same record");
+        require(recordAfter.status ==
+                    fic::rollback::MutationStatus::RollbackFailed,
+                "the record must stay RollbackFailed (never promoted)");
+        require(readFile(main) == "[libdefaults]\nticket_lifetime = 36000s\n",
+                "the failed apply must not mutate the file");
+    }
 }
 
 void testSssdPolicyRestartsActiveService(const fs::path& root) {
@@ -816,6 +1344,12 @@ int main() {
         testSssdPolicyRestartsActiveService(root);
         testSssdPolicyRollsBackAfterRestartFailure(root);
         testSssdCrashWindowPreparedRemainsRecoverable(root);
+        testSssdRollbackRetryCompletesRuntimeReconciliation(root);
+        testSssdPreparedCrashRecoveryCompletesApplied(root);
+        testSssdForeignReplacementBetweenProofAndRemovalSurvives(root);
+        testSssdCompensationRecreateOnlyOnProvenMissing(root);
+        testSssdCompensationNeverOverwritesForeignFile(root);
+        testSssdCompensationRefusesUnsafeTarget(root);
         testSssdDisableRollsBackManagedSetting(root);
         testSssdOriginalTargetMissingRollback(root);
         testSssdDoesNotStartInactiveService(root);
@@ -824,6 +1358,11 @@ int main() {
         testSssdActiveValueChangeKeepsSingleRecord(root);
         testSssdRestartLikeJournalReloadKeepsRollback(root);
         testKerberosTicketLifetimePolicy(root);
+        testKerberosNoActiveRecordIsNothingToDo(root);
+        testKerberosRetryAfterCompletedRollbackIsNothingToDo(root);
+        testKerberosPreparedCrashRecoveryCompletesApplied(root);
+        testKerberosAppliedSameValueStaysApplied(root);
+        testKerberosRollbackFailedIsNotPromoted(root);
         testKerberosMissingTargetRollback(root);
         testKerberosCreatedSectionRemoved(root);
         testKerberosDriftConflict(root);

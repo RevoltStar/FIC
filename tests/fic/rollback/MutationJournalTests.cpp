@@ -2161,6 +2161,23 @@ void testSssdUndoMalformedPayloadsFailClosed() {
     requireBrokenIdentityJournalFailsClosed(
         head + action + option + "\"applied_value\":null}" + tail,
         "null applied value");
+    // STRUCTURAL: section/option must be JSON strings (a non-string must
+    // fail closed with a loader error, never an uncaught JSON type error).
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":5,\"option\":\"offline_credentials_expiration\","
+            "\"applied_value\":\"30\"}" + tail,
+        "non-string section");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":null,\"option\":\"offline_credentials_expiration\","
+            "\"applied_value\":\"30\"}" + tail,
+        "null section");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":\"pam\",\"option\":[],"
+            "\"applied_value\":\"30\"}" + tail,
+        "non-string option");
     // Invalid section/option syntax.
     requireBrokenIdentityJournalFailsClosed(
         head + action + "\"section\":\"[pam\",\"option\":\"offline_"
@@ -2223,6 +2240,26 @@ void testKerberosUndoMalformedPayloadsFailClosed() {
             "\"before_kind\":5,\"before_raw_line\":\"\","
             "\"section_existed_before\":false}" + tail,
         "non-string before_kind");
+    // STRUCTURAL: section/relation must be JSON strings (a non-string must
+    // fail closed with a loader error, never an uncaught JSON type error).
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":5,\"relation\":\"ticket_lifetime\","
+            "\"applied_value\":\"36000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "non-string section");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":null,\"relation\":\"ticket_lifetime\","
+            "\"applied_value\":\"36000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "null section");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":\"libdefaults\",\"relation\":{},"
+            "\"applied_value\":\"36000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "non-string relation");
     // Missing required fields.
     requireBrokenIdentityJournalFailsClosed(
         head + action + section +

@@ -787,45 +787,18 @@ RollbackReport checkUnrecordedOwnership(
     }
     if (policy.moduleName == "IDENTITY_ACCESS" &&
         policy.submoduleName == "KERBEROS") {
-        if (resourceHint.empty()) {
-            return provenanceUnavailable(policy);
-        }
-        if (!deps.kerberosOptions) {
-            RollbackReport report;
-            report.status = RollbackStatus::Failed;
-            report.message = "Kerberos rollback backend не настроен";
-            return report;
-        }
-        KerberosRollbackOptions options = deps.kerberosOptions();
-        const auto separator = resourceHint.find('/');
-        if (separator == std::string::npos) {
-            return provenanceUnavailable(policy);
-        }
-        const std::string section = resourceHint.substr(0, separator);
-        const std::string relation = resourceHint.substr(separator + 1);
-        fic::identity::kerberos::KerberosConfiguration configuration(
-            options.configuration);
-        fic::identity::kerberos::KerberosRootScalarObservation observed;
-        std::string error;
-        if (!configuration.inspectRootScalar(
-                section, relation, observed, error)) {
-            RollbackReport report;
-            report.status = RollbackStatus::Failed;
-            report.message =
-                "Не удалось проанализировать Kerberos профиль: " + error;
-            return report;
-        }
-        // A root/external definition of the target without an active
-        // journal record is indistinguishable from a foreign (or
-        // legacy-FIC) value: fail closed instead of guessing.
-        if (observed.relationInRoot || observed.externallyDefined) {
-            return provenanceUnavailable(policy);
-        }
+        // Kerberos ownership exists ONLY through an active journal record:
+        // without one, FIC owns no ticket_lifetime mutation. A root/external
+        // definition of the target is never implicit FIC provenance (a
+        // legitimate no-op apply records nothing, and a completed rollback
+        // resolves its record before the policy status update) — so there is
+        // nothing to inspect and nothing to guess. No foreign Kerberos file
+        // is parsed here.
         RollbackReport report;
         report.status = RollbackStatus::NothingToDo;
-        report.message = "Active mutation records отсутствуют; target "
-                         "relation '" +
-            resourceHint + "' в Kerberos профиле отсутствует";
+        report.message = "Active mutation records отсутствуют; без активной "
+                         "записи journal FIC не владеет изменениями Kerberos "
+                         "(foreign relation не является provenance FIC)";
         return report;
     }
     // FIREWALL and DC: no cheap safe ownership check without the journal.

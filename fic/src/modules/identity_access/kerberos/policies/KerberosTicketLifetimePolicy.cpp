@@ -171,6 +171,39 @@ KerberosTicketLifetimePolicy::reconcileKerberosJournal(
         if (profileValue == undo->appliedValue) {
             // Same-value re-apply: keep the single active record, no new
             // provenance and no persistent mutation.
+            if (record.status ==
+                fic::rollback::MutationStatus::RollbackFailed) {
+                // RollbackFailed semantics do not allow a silent apply
+                // repair of the same value: the interrupted rollback must
+                // be finished first (retry the policy disable).
+                this->log(
+                    "Активная Kerberos mutation в состоянии RollbackFailed "
+                    "не может быть тихо исправлена apply (fail closed)",
+                    logLevel::ERROR);
+                ok = false;
+                return ReconciliationOutcome::Failed;
+            }
+            if (record.status ==
+                fic::rollback::MutationStatus::Prepared) {
+                // Crash recovery: the checks above are a FRESH full-graph
+                // AFTER proof (no external include, no duplicate, relation
+                // exactly in the expected root topology with value ==
+                // undo.appliedValue == desired). Promote the SAME mutation
+                // id Prepared → Applied; no new record is created.
+                std::string commitError;
+                if (!journal->setStatus(
+                        record.id,
+                        fic::rollback::MutationStatus::Applied,
+                        commitError)) {
+                    this->log(
+                        "Ошибка фиксации Kerberos recovery записи: " +
+                            commitError,
+                        logLevel::ERROR);
+                    ok = false;
+                    return ReconciliationOutcome::Failed;
+                }
+            }
+            // Applied: the proven AFTER state is already idempotent.
             return ReconciliationOutcome::Reused;
         }
         // Active value change: ownership-safe release of the old mutation
@@ -310,21 +343,22 @@ bool KerberosTicketLifetimePolicy::applyFreshMutation(
             logLevel::ERROR);
         return false;
     }
-    std::string executionError;
-    if (!fic::identity::executePreparedFileChange(
-            std::move(prepared.change), executionError)) {
-        // The transaction already attempted full compensation. When the
-        // compensation completed, the fresh Prepared record can be
-        // discarded; a failed/indeterminate compensation keeps the record
-        // active for recovery.
-        if (mutationPrepared &&
-            executionError.find("recovery error") == std::string::npos) {
+    const auto execution = fic::identity::executePreparedFileChangeDetailed(
+        std::move(prepared.change));
+    if (execution.status !=
+        fic::identity::PreparedChangeExecutionStatus::Committed) {
+        // The transaction already attempted full compensation. Only a
+        // fully compensated failure (typed result, no recovery errors)
+        // may discard the fresh Prepared record; a failed/indeterminate
+        // compensation keeps the record active for recovery.
+        if (mutationPrepared && execution.status ==
+                fic::identity::PreparedChangeExecutionStatus::Compensated) {
             std::string discardError;
             journal->discard(mutationId, discardError);
         }
         this->log(
             "Could not apply Kerberos policy " + this->policyName + ": " +
-                executionError,
+                execution.error,
             logLevel::ERROR);
         return false;
     }

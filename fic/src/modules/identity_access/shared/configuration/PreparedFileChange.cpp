@@ -384,19 +384,35 @@ std::unique_ptr<PreparedConfigurationChange> makePreparedFileChange(
         std::move(verifier));
 }
 
+PreparedChangeExecutionResult executePreparedFileChangeDetailed(
+    std::unique_ptr<PreparedConfigurationChange> change) {
+    PreparedChangeExecutionResult result;
+    std::vector<std::unique_ptr<PreparedConfigurationChange>> changes;
+    changes.push_back(std::move(change));
+    const auto transaction =
+        ConfigurationTransaction::execute(std::move(changes));
+    if (transaction.ok) {
+        result.status = PreparedChangeExecutionStatus::Committed;
+        return result;
+    }
+    result.error = transaction.error;
+    for (const auto& recoveryError : transaction.recoveryErrors) {
+        result.error += "; recovery error: " + recoveryError;
+    }
+    result.status = transaction.recoveryErrors.empty()
+        ? PreparedChangeExecutionStatus::Compensated
+        : PreparedChangeExecutionStatus::CompensationFailed;
+    return result;
+}
+
 bool executePreparedFileChange(
     std::unique_ptr<PreparedConfigurationChange> change,
     std::string& error) {
-    std::vector<std::unique_ptr<PreparedConfigurationChange>> changes;
-    changes.push_back(std::move(change));
-    const auto result = ConfigurationTransaction::execute(std::move(changes));
-    if (result.ok) {
+    const auto result = executePreparedFileChangeDetailed(std::move(change));
+    if (result.status == PreparedChangeExecutionStatus::Committed) {
         return true;
     }
     error = result.error;
-    for (const auto& recoveryError : result.recoveryErrors) {
-        error += "; recovery error: " + recoveryError;
-    }
     return false;
 }
 

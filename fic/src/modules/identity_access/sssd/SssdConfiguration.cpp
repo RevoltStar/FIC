@@ -3,13 +3,17 @@
 #include <fic/core/fs/AtomicFileWriter.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
+#include <cstring>
+#include <functional>
 #include <memory>
 #include <set>
 #include <sstream>
 #include <utility>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -445,38 +449,276 @@ AtomicWriteOptions managedSnippetWriteOptions(
     return result;
 }
 
-// CAS-verified unlink of the FIC-owned drop-in: the exact expected state is
-// re-proved immediately before unlink, so any concurrent external
-// replacement is never deleted.
+// Test-only deterministic seam between the removal proof and the atomic
+// rename-away removal step: it lets a test atomically replace the drop-in
+// with a foreign file exactly in the race window that the proof-bound
+// removal must detect. Production code must never set the hook.
+std::function<void()>& removalRaceHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
+// Captures the exact current target state through a single O_NOFOLLOW
+// descriptor: identity (dev, ino), metadata and exact content. Refuses
+// symlinks and non-regular files. The captured identity is the removal
+// proof: only this exact inode may ever be removed.
+bool captureRemovalProof(const SecureConfigurationFileOptions& options,
+                         ConfigurationFileSnapshot& snapshot,
+                         dev_t& device,
+                         ino_t& inode,
+                         std::string& error) {
+    int descriptor = ::open(
+        options.path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (descriptor < 0) {
+        if (errno == ENOENT) {
+            error = "managed SSSD drop-in disappeared before removal: " +
+                options.path.string();
+        } else {
+            error = "could not open managed SSSD drop-in for removal (" +
+                options.path.string() + "): " + std::strerror(errno);
+        }
+        return false;
+    }
+    struct stat status {};
+    if (::fstat(descriptor, &status) != 0) {
+        error = "could not inspect managed SSSD drop-in " +
+            options.path.string() + ": " + std::strerror(errno);
+        ::close(descriptor);
+        return false;
+    }
+    if (S_ISLNK(status.st_mode) || !S_ISREG(status.st_mode)) {
+        error = "refusing to remove a non-regular managed SSSD drop-in: " +
+            options.path.string();
+        ::close(descriptor);
+        return false;
+    }
+    std::string content;
+    content.reserve(static_cast<std::size_t>(status.st_size));
+    std::vector<char> buffer(16384);
+    while (true) {
+        const ssize_t count =
+            ::read(descriptor, buffer.data(), buffer.size());
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            error = "could not read managed SSSD drop-in " +
+                options.path.string() + ": " + std::strerror(errno);
+            ::close(descriptor);
+            return false;
+        }
+        if (count == 0) {
+            break;
+        }
+        if (content.size() + static_cast<std::size_t>(count) >
+            options.maximumBytes) {
+            error = "managed SSSD drop-in exceeds size limit: " +
+                options.path.string();
+            ::close(descriptor);
+            return false;
+        }
+        content.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    ::close(descriptor);
+    snapshot.content = std::move(content);
+    snapshot.owner = status.st_uid;
+    snapshot.group = status.st_gid;
+    snapshot.mode = status.st_mode & 07777;
+    device = status.st_dev;
+    inode = status.st_ino;
+    return true;
+}
+
+// State classification of the compensation target. A read failure must
+// NEVER be interpreted as "the file is already gone": only a proven ENOENT
+// classifies as Missing, everything else fails closed without writing.
+enum class CompensationReadState {
+    Missing,            // proven ENOENT on the target path
+    Unreadable,         // unsafe object (symlink/non-regular) or a regular
+                        // file that cannot be read securely
+    ReadableForCompare, // readable: compare with the expected snapshot
+    OtherError          // any other failure
+};
+
+CompensationReadState classifyForCompensation(
+    const SecureConfigurationFileOptions& options,
+    ConfigurationFileSnapshot& snapshot,
+    std::string& error) {
+    std::string dirError;
+    if (!verifySecureConfigurationDirectory(
+            options.path.parent_path(), options, dirError)) {
+        error = dirError;
+        return CompensationReadState::OtherError;
+    }
+    struct stat status {};
+    if (::lstat(options.path.c_str(), &status) != 0) {
+        if (errno == ENOENT) {
+            error.clear();
+            return CompensationReadState::Missing;
+        }
+        error = "could not inspect managed SSSD drop-in " +
+            options.path.string() + ": " + std::strerror(errno);
+        return CompensationReadState::OtherError;
+    }
+    if (S_ISLNK(status.st_mode) || !S_ISREG(status.st_mode)) {
+        error = "refusing to touch an unsafe managed SSSD drop-in object: " +
+            options.path.string();
+        return CompensationReadState::Unreadable;
+    }
+    std::string readError;
+    if (!readSecureConfigurationFile(options, snapshot, readError)) {
+        // A proven ENOENT inside the secure read (the file vanished between
+        // lstat and open) is still a proven Missing; anything else is
+        // unreadable and must never be overwritten.
+        if (errno == ENOENT) {
+            return CompensationReadState::Missing;
+        }
+        error = readError;
+        return CompensationReadState::Unreadable;
+    }
+    return CompensationReadState::ReadableForCompare;
+}
+
+// Exclusive-create compensation write of the original content: creates the
+// file ONLY when the target path is genuinely free (O_EXCL) and enforces
+// the exact FIC metadata. A foreign object appearing between the Missing
+// proof and the create fails closed instead of being replaced.
+bool exclusiveCreateOriginal(
+    const SecureConfigurationFileOptions& options,
+    const std::string& content,
+    std::string& error) {
+    std::string dirError;
+    if (!verifySecureConfigurationDirectory(
+            options.path.parent_path(), options, dirError)) {
+        error = dirError;
+        return false;
+    }
+    int descriptor = ::open(
+        options.path.c_str(),
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        options.exactMode.value_or(0600));
+    if (descriptor < 0) {
+        if (errno == EEXIST) {
+            error = "managed SSSD drop-in path was re-created externally "
+                    "before the exclusive compensation create: " +
+                options.path.string();
+            return false;
+        }
+        error = "could not exclusively create managed SSSD drop-in " +
+            options.path.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    std::size_t written = 0;
+    while (written < content.size()) {
+        const ssize_t count = ::write(
+            descriptor, content.data() + written, content.size() - written);
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            error = "could not write managed SSSD drop-in " +
+                options.path.string() + ": " + std::strerror(errno);
+            ::close(descriptor);
+            return false;
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    if (::fsync(descriptor) != 0) {
+        error = "could not fsync managed SSSD drop-in " +
+            options.path.string() + ": " + std::strerror(errno);
+        ::close(descriptor);
+        return false;
+    }
+    if (::close(descriptor) != 0) {
+        error = "could not close managed SSSD drop-in " +
+            options.path.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    if (options.expectedOwner.has_value() ||
+        options.expectedGroup.has_value()) {
+        const uid_t owner = options.expectedOwner.value_or(static_cast<uid_t>(-1));
+        const gid_t group = options.expectedGroup.value_or(static_cast<gid_t>(-1));
+        if (::chown(options.path.c_str(), owner, group) != 0) {
+            error = "could not set metadata of managed SSSD drop-in " +
+                options.path.string() + ": " + std::strerror(errno);
+            return false;
+        }
+    }
+    if (options.exactMode.has_value() &&
+        ::chmod(options.path.c_str(), *options.exactMode) != 0) {
+        error = "could not set mode of managed SSSD drop-in " +
+            options.path.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    return true;
+}
+
+// Proof-bound removal of the FIC-owned drop-in: only the EXACT target
+// state that was proven owned may ever be removed. The proof is captured
+// through a single descriptor (identity, metadata, exact content). The
+// removal is NOT unlink-by-path: the file is atomically renamed away to a
+// private name and the moved-away object is re-proved against the captured
+// identity. If a foreign actor replaced the target between the proof and
+// the rename, the foreign object is restored byte-exact at the original
+// path and the removal fails closed: FIC never deletes a pathname whose
+// proven state was already replaced.
 ConfigurationStepResult removeManagedSnippetFile(
     const SecureConfigurationFileOptions& options,
     const ConfigurationFileSnapshot& expected) {
-    struct stat status {};
-    if (::lstat(options.path.c_str(), &status) != 0) {
-        return ConfigurationStepResult::failure(
-            "managed SSSD drop-in disappeared before removal: " +
-            options.path.string());
-    }
-    if (S_ISLNK(status.st_mode) || !S_ISREG(status.st_mode)) {
-        return ConfigurationStepResult::failure(
-            "refusing to remove a non-regular managed SSSD drop-in: " +
-            options.path.string());
-    }
-    ConfigurationFileSnapshot current;
+    ConfigurationFileSnapshot proven;
+    dev_t device = 0;
+    ino_t inode = 0;
     std::string error;
-    if (!readSecureConfigurationFile(options, current, error)) {
+    if (!captureRemovalProof(options, proven, device, inode, error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
-    if (!snapshotsEqualSnapshots(current, expected)) {
+    if (!snapshotsEqualSnapshots(proven, expected)) {
         return ConfigurationStepResult::failure(
             "refusing to remove an externally modified managed SSSD "
             "drop-in: " +
             options.path.string());
     }
-    if (::unlink(options.path.c_str()) != 0) {
+    if (auto hook = removalRaceHook()) {
+        // Deterministic test seam: model a foreign atomic replacement
+        // exactly in the window between the proof and the removal step.
+        hook();
+    }
+    // Atomically move the CURRENT directory entry away. Whatever occupies
+    // the path at rename time is moved; the identity re-proof below
+    // decides whether it was the proven inode or a foreign replacement.
+    static std::atomic<unsigned long long> removalSequence;
+    const std::string privateTarget = options.path.string() +
+        ".fic-removing-" + std::to_string(::getpid()) + "-" +
+        std::to_string(removalSequence.fetch_add(1));
+    if (::rename(options.path.c_str(), privateTarget.c_str()) != 0) {
         return ConfigurationStepResult::failure(
             "could not remove managed SSSD drop-in: " +
             options.path.string());
+    }
+    struct stat moved {};
+    if (::lstat(privateTarget.c_str(), &moved) != 0 ||
+        moved.st_dev != device || moved.st_ino != inode) {
+        // The moved-away object is NOT the proven inode: a foreign
+        // replacement occupied the path at rename time. Restore it
+        // byte-exact at the original path and fail closed: the foreign
+        // replacement must survive.
+        std::string restoreNote;
+        if (::rename(privateTarget.c_str(), options.path.c_str()) != 0) {
+            restoreNote = " (foreign object left staged at " + privateTarget +
+                ": " + std::strerror(errno) + ")";
+        }
+        return ConfigurationStepResult::failure(
+            "refusing to remove a foreign replacement of the managed SSSD "
+            "drop-in" + restoreNote + ": " + options.path.string());
+    }
+    // The proven inode was moved away: the exact proven target state is
+    // removed. Delete the now-private FIC-owned object.
+    if (::unlink(privateTarget.c_str()) != 0) {
+        // The snippet path itself is already free; a leftover private
+        // object is a cleanup failure, not a removal failure.
+        return ConfigurationStepResult::failure(
+            "could not delete the staged managed SSSD drop-in " +
+            privateTarget + ": " + std::strerror(errno));
     }
     return ConfigurationStepResult::success(true);
 }
@@ -590,8 +832,25 @@ ConfigurationStepResult ManagedSnippetChange::rollbackPersistent() {
     std::string error;
     ConfigurationFileSnapshot current;
     if (mode_ == Mode::RemoveFile) {
-        if (readSecureConfigurationFile(options_, current, error)) {
+        // Compensation of the removal. Recreating the original content is
+        // allowed ONLY when the target is PROVEN missing (ENOENT); an
+        // unreadable, unsafe or changed file must never be overwritten —
+        // the provenance stays active and the recovery is retried later.
+        const CompensationReadState state = classifyForCompensation(
+            options_, current, error);
+        if (state == CompensationReadState::Missing) {
+            // Exclusive create / no-replace semantics: a foreign object
+            // appearing between the Missing proof and the create fails
+            // closed instead of being replaced.
+            if (!exclusiveCreateOriginal(
+                    options_, original_.content, error)) {
+                return ConfigurationStepResult::failure(std::move(error));
+            }
+            return ConfigurationStepResult::success(true);
+        }
+        if (state == CompensationReadState::ReadableForCompare) {
             if (snapshotsEqualSnapshots(current, original_)) {
+                // The removal was already compensated: idempotent no-op.
                 return ConfigurationStepResult::success(false);
             }
             return ConfigurationStepResult::failure(
@@ -599,23 +858,8 @@ ConfigurationStepResult ManagedSnippetChange::rollbackPersistent() {
                 "change: " +
                 options_.path.string());
         }
-        // The file was removed by this change: re-create the exact
-        // pre-removal content through an atomic exclusive write.
-        AtomicWriteOptions writeOptions;
-        writeOptions.createIfMissing = true;
-        writeOptions.rejectSymlink = true;
-        writeOptions.metadataPolicy = FileMetadataPolicy::EnforceProvided;
-        writeOptions.fileMode = options_.exactMode;
-        writeOptions.fileOwner = options_.expectedOwner;
-        writeOptions.fileGroup = options_.expectedGroup;
-        if (!AtomicFileWriter::write(
-                options_.path.string(),
-                original_.content,
-                writeOptions,
-                &error)) {
-            return ConfigurationStepResult::failure(std::move(error));
-        }
-        return ConfigurationStepResult::success(true);
+        // Unsafe / Unreadable / OtherError: fail closed, write nothing.
+        return ConfigurationStepResult::failure(error);
     }
     if (!readSecureConfigurationFile(options_, current, error)) {
         return ConfigurationStepResult::failure(std::move(error));
@@ -682,6 +926,15 @@ ConfigurationStepResult ManagedSnippetChange::verifyRollback() {
             options_.path.string());
     }
     return ConfigurationStepResult::success(false);
+}
+
+void setManagedSnippetRemovalRaceHookForTests(
+    std::function<void()> hook) {
+    if (hook) {
+        removalRaceHook() = std::move(hook);
+    } else {
+        removalRaceHook() = nullptr;
+    }
 }
 
 SssdConfiguration::SssdConfiguration(SssdConfigurationOptions options)

@@ -5,11 +5,15 @@
 #include "modules/identity_access/composite/ConfigurationParticipant.h"
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace fic::identity::sssd {
+
+void setManagedSnippetRemovalRaceHookForTests(
+    std::function<void()> hook);
 
 struct SssdConfigurationOptions {
     SecureConfigurationFileOptions mainFile;
@@ -96,6 +100,14 @@ public:
         const std::string& section,
         const std::string& option,
         const std::string& value) const;
+
+    // Test-only deterministic seam: injects an external atomic replacement
+    // of the FIC-owned drop-in exactly between the removal proof and the
+    // rename-away removal step. Production code must never call this.
+    static void setRemovalRaceHookForTests(
+        std::function<void()> hook) {
+        setManagedSnippetRemovalRaceHookForTests(std::move(hook));
+    }
 
     ConfigurationPreparationResult prepareSetValues(
         const std::vector<SssdSetting>& settings) const;

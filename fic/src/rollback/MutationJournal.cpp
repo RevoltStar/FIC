@@ -327,8 +327,24 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
     if (actionName == "remove_sssd_managed_setting" &&
         backend == MutationBackend::Sssd) {
         UndoRemoveSssdManagedSetting payload;
-        payload.section = value.value("section", "");
-        payload.option = value.value("option", "");
+        // Fail-closed STRUCTURAL parsing: section/option MUST be present and
+        // MUST be JSON strings. A non-string must never escape as an
+        // uncaught JSON type error; semantic constraints (section/option
+        // syntax) stay in validateSssdUndoPayload below.
+        const auto sectionIt = value.find("section");
+        if (sectionIt == value.end() || !sectionIt->is_string()) {
+            error = "remove_sssd_managed_setting undo requires a string "
+                    "section";
+            return false;
+        }
+        payload.section = sectionIt->get<std::string>();
+        const auto optionIt = value.find("option");
+        if (optionIt == value.end() || !optionIt->is_string()) {
+            error = "remove_sssd_managed_setting undo requires a string "
+                    "option";
+            return false;
+        }
+        payload.option = optionIt->get<std::string>();
         // Structural parsing: applied_value MUST be present and a JSON
         // string (missing/non-string/null is malformed provenance).
         const auto appliedIt = value.find("applied_value");
@@ -347,8 +363,21 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
     if (actionName == "restore_kerberos_scalar" &&
         backend == MutationBackend::Kerberos) {
         UndoRestoreKerberosScalar payload;
-        payload.section = value.value("section", "");
-        payload.relation = value.value("relation", "");
+        // Fail-closed STRUCTURAL parsing of the required string fields (see
+        // the SSSD branch above): semantic constraints stay in
+        // validateKerberosUndoPayload.
+        const auto sectionIt = value.find("section");
+        if (sectionIt == value.end() || !sectionIt->is_string()) {
+            error = "restore_kerberos_scalar undo requires a string section";
+            return false;
+        }
+        payload.section = sectionIt->get<std::string>();
+        const auto relationIt = value.find("relation");
+        if (relationIt == value.end() || !relationIt->is_string()) {
+            error = "restore_kerberos_scalar undo requires a string relation";
+            return false;
+        }
+        payload.relation = relationIt->get<std::string>();
         const auto appliedIt = value.find("applied_value");
         if (appliedIt == value.end() || !appliedIt->is_string()) {
             error = "restore_kerberos_scalar undo requires a string "

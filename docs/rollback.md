@@ -846,15 +846,71 @@ SSSD restart verification → Applied`):
 **Rollback** (`ownership-release`):
 
 * `AFTER` (option в FIC drop-in, value == appliedValue): удалить только
-  target option; семантически пустой drop-in удаляется целиком
-  (CAS-verified unlink); foreign `sssd.conf` и чужие snippets не меняются;
-  топология перечитывается, активный SSSD перезапускается и проверяется;
-  прежнее foreign значение становится effective естественно (без хранения
-  его в journal);
-* `BEFORE` (option уже отсутствует) — `NothingToDo`, запись завершается как
-  успешно откатанная;
+  target option; семантически пустой drop-in удаляется целиком; foreign
+  `sssd.conf` и чужие snippets не меняются; прежнее foreign значение
+  становится effective естественно (без хранения его в journal);
+* `BEFORE` (option уже отсутствует) — source undo считается уже выполненным
+  ПРЕДЫДУЩЕЙ попыткой отката, но это НЕ завершает rollback: runtime-
+  реконсиляция обязательна (перезапуск активного SSSD + верификация), и
+  только затем запись завершается как успешно откатанная. Неудачный
+  рестарт оставляет запись в `RollbackFailed`, повторный disable повторяет
+  runtime-реконсиляцию (удалённый FIC drop-in не восстанавливается);
 * `DRIFT` (значение отличается / drop-in malformed/unsafe) — `Conflict`,
   ничего не менять.
+
+**Инвариант rollback-lifecycle.** Source ownership release и runtime
+реконсиляция — один жизненный цикл отката: отсутствие FIC option само по
+себе не означает завершённый rollback. Активная journal-запись означает,
+что операция отката обязана завершить ВСЕ свои постусловия.
+
+**Proof-bound removal (анти-TOCTOU).** Удаление пустого FIC drop-in — не
+`unlink(path)`: точное состояние цели доказывается через O_NOFOLLOW-
+дескриптор (identity, metadata, содержимое), затем текущий directory entry
+атомарно переименовывается в приватное имя, и удалённый объект повторно
+доказывается против captured identity (dev/ino). Если между proof и rename
+файл был атомарно заменён внешним актором, иностранная замена
+восстанавливается byte-exact на исходный путь, удаление завершается
+ошибкой, чужой файл переживает. FIC никогда не удаляет pathname,
+доказанное состояние которого уже заменено.
+
+**Компенсация удаления** (rollback `Mode::RemoveFile` в транзакции):
+recreate исходного содержимого разрешён ТОЛЬКО при доказанном ENOENT
+(классификация Missing/Unreadable/Changed/Other, провал secure-read никогда
+не трактуется как «файл уже удалён»); recreate — exclusive create
+(O_EXCL, no-replace): чужой объект, появившийся между proof и созданием,
+fail closed, никогда не перезаписывается. Unsafe (symlink/non-regular) и
+unreadable цели — fail closed, provenance остаётся активной.
+
+**Prepared → Applied recovery (SSSD и Kerberos).** Активная запись может
+перейти `Prepared → Applied` ТОЛЬКО после свежего AFTER/postcondition
+proof'а (crash между системной мутацией и коммитом journal):
+
+* SSSD: drop-in свежо доказан как AFTER (option == undo.appliedValue ==
+  желаемое значение, без конфликтующих later snippets) при same-value
+  apply → обязательная runtime-реконсиляция (restart активного SSSD,
+  даже если persistent write — no-op), свежий повторный proof persistent
+  AFTER, затем тот же `MutationId` становится `Applied`. Новая запись не
+  создаётся; для уже `Applied` same-value reapply сохраняется существующая
+  идемпотентность;
+* Kerberos: fresh full-graph AFTER proof (relation ровно в ожидаемой root
+  топологии, нет внешнего include-определения, нет дубликата, текущее
+  значение == undo.appliedValue == желаемое) при same-value apply → тот же
+  `MutationId` становится `Applied`; новая запись не создаётся;
+* `RollbackFailed` НИКОГДА не promoted в `Applied` автоматически: семантика
+  прерванного rollback не позволяет тихий apply-repair — same-value apply
+  fail closed, а завершение rollback выполняется retry'ем disable через
+  обычный executor lifecycle.
+
+**Journal lifecycle решения используют только typed results** (например
+`executePreparedFileChangeDetailed()` со статусами
+`Committed/Compensated/CompensationFailed`): diagnostic error strings
+никогда не являются источником lifecycle-решений. Все обязательные
+string/boolean поля payload SSSD/Kerberos (`section`, `option`, `relation`,
+`applied_value`, `before_kind`, `before_raw_line`,
+`section_existed_before`) разбираются loader'ом структурно fail-closed
+(`find()` + `is_string()`/`is_boolean()`): non-string JSON значение — это
+normal false-возврат без исключений; semantic validators остаются
+отдельными.
 
 ## Kerberos rollback (IDENTITY_ACCESS/KERBEROS)
 
@@ -892,6 +948,15 @@ reparse full profile graph → effective verification → Applied`):
   (`sectionExistedBefore == false`), section header удаляется только когда
   структурно доказано, что он теперь пуст;
 * текущее состояние уже совпадает с recorded before-state — `NothingToDo`.
+
+**Инвариант владения.** Для Kerberos ownership существует ТОЛЬКО при
+активной journal-записи. Без активной записи FIC не владеет никакими
+изменениями `ticket_lifetime`: повторный disable (в т.ч. после
+завершённого rollback перед обновлением policy status) и disable после
+легитимного no-op apply завершаются `NothingToDo` — disable разрешён.
+Foreign relation / root-определение без активной записи НИКОГДА не
+трактуется как неявная provenance FIC; legacy-FIC владение не
+восстанавливается (migration out of scope).
 
 ## Enrollment и результаты
 
