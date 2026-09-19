@@ -478,6 +478,111 @@ void testSssdForeignReplacementBetweenProofAndRemovalSurvives(
             "the record must stay active after the failed removal");
 }
 
+void testSssdDoubleReplacementPreservesBothForeignObjects(
+    const fs::path& root) {
+    const fs::path main = root / "system/sssd-double-replacement.conf";
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    auto runner = [](const std::string&,
+                     const std::vector<std::string>&,
+                     const ProcessOptions&) { return okResult(); };
+    JournalOverride guard(root / "journals/sssd-double-replacement.json");
+    setPolicyValues(root, "30", "7200");
+    SssdOfflineCredentialsExpirationPolicy policy(
+        sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+    require(policy.apply(), "initial SSSD apply must succeed");
+    const fs::path dropIn = sssdDropInPath(main);
+    const std::string b = "[pam]\noffline_credentials_expiration = 40\n";
+    const std::string c = "[pam]\noffline_credentials_expiration = 50\n";
+    fs::path staged;
+    fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(
+        [&]() {
+            const fs::path replacement = dropIn.string() + ".replacement";
+            writeFile(replacement, b, 0600);
+            require(::rename(replacement.c_str(), dropIn.c_str()) == 0,
+                    "could not install foreign B");
+        });
+    fic::identity::sssd::setManagedSnippetStagedRaceHookForTests(
+        [&](const fs::path& privatePath) {
+            staged = privatePath;
+            writeFile(dropIn, c, 0600);
+        });
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        kSssdPolicyRef, kSssdResource,
+        sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
+    fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
+    fic::identity::sssd::setManagedSnippetStagedRaceHookForTests(nullptr);
+    require(!report.rollbackCompleted(), "double replacement must fail closed");
+    require(readFile(dropIn) == c, "foreign C must not be overwritten by B");
+    require(!staged.empty() && readFile(staged) == b,
+            "foreign B must remain staged byte-exact");
+    require(activeRecordCount(kSssdPolicyRef) == 1,
+            "double replacement must retain provenance");
+}
+
+void testSssdStagingCollisionDoesNotReplaceObject(const fs::path& root) {
+    const fs::path main = root / "system/sssd-staging-collision.conf";
+    const fs::path dropIn = sssdDropInPath(main);
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    const std::string owned =
+        "# FIC managed configuration\n[pam]\n"
+        "offline_credentials_expiration = 30\n";
+    writeFile(dropIn, owned, 0600);
+    fic::identity::sssd::SssdConfiguration configuration(
+        sssdOptions(main, root));
+    auto prepared = configuration.prepareManagedSnippetRemoval(
+        "pam", "offline_credentials_expiration");
+    require(prepared.ok(), "collision removal must prepare");
+    fs::path occupied;
+    const std::string foreign = "foreign staging object\n";
+    fic::identity::sssd::setManagedSnippetBeforeStageHookForTests(
+        [&](const fs::path& privatePath) {
+            occupied = privatePath;
+            writeFile(privatePath, foreign, 0600);
+        });
+    const auto result = prepared.change->commitPersistent();
+    fic::identity::sssd::setManagedSnippetBeforeStageHookForTests(nullptr);
+    require(!result.ok, "occupied private target must fail closed");
+    require(readFile(dropIn) == owned,
+            "staging collision must leave the owned source untouched");
+    require(!occupied.empty() && readFile(occupied) == foreign,
+            "staging collision must not replace the foreign object");
+}
+
+void testSssdReusedDriftAfterProofSurvives(const fs::path& root) {
+    const fs::path main = root / "system/sssd-reused-drift.conf";
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    const fs::path dropIn = sssdDropInPath(main);
+    const std::string foreign =
+        "# foreign edit\n[pam]\noffline_credentials_expiration = 40\n";
+    bool inject = false;
+    auto runner = [&](const std::string&,
+                      const std::vector<std::string>& arguments,
+                      const ProcessOptions&) {
+        if (inject && !arguments.empty() && arguments.front() == "restart") {
+            inject = false;
+            writeFile(dropIn, foreign, 0600);
+        }
+        return okResult();
+    };
+    JournalOverride guard(root / "journals/sssd-reused-drift.json");
+    setPolicyValues(root, "30", "7200");
+    SssdOfflineCredentialsExpirationPolicy policy(
+        sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+    require(policy.apply(), "initial SSSD apply must succeed");
+    inject = true;
+    require(!policy.apply(), "post-proof drift must fail reused apply closed");
+    require(readFile(dropIn) == foreign,
+            "reused apply must not restore 30 over foreign 40");
+    require(activeRecordCount(kSssdPolicyRef) == 1,
+            "drift must retain active provenance");
+}
+
 // Wrapper that fails verifyPersistent() so the transaction executes the
 // full compensation path (persistent rollback) of the inner change.
 class VerifyFailingChange
@@ -852,6 +957,59 @@ void testKerberosAppliedSameValueStaysApplied(const fs::path& root) {
             "the same-value re-apply must not create new provenance");
     require(recordAfter.status == fic::rollback::MutationStatus::Applied,
             "the Applied record must stay Applied");
+}
+
+void testKerberosReusedDriftAfterProofSurvives(const fs::path& root) {
+    const fs::path main = root / "system/krb5-reused-drift.conf";
+    writeFile(main, "[libdefaults]\nticket_lifetime = 8h\n", 0644);
+    JournalOverride guard(root / "journals/krb5-reused-drift.json");
+    setPolicyValues(root, "30", "36000");
+    KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
+    require(policy.apply(), "initial Kerberos apply must succeed");
+    const std::string foreign =
+        "[libdefaults]\nticket_lifetime = 40h\n";
+    KerberosTicketLifetimePolicy::setReusedProofHookForTests(
+        [&]() { writeFile(main, foreign, 0644); });
+    const bool applied = policy.apply();
+    KerberosTicketLifetimePolicy::setReusedProofHookForTests(nullptr);
+    require(!applied, "post-proof drift must fail reused apply closed");
+    require(readFile(main) == foreign,
+            "reused apply must not overwrite foreign Kerberos edit");
+    require(activeRecordCount(kKerberosPolicyRef) == 1,
+            "drift must retain Kerberos provenance");
+}
+
+void testKerberosPreparedPromotionCannotOverwriteDrift(
+    const fs::path& root) {
+    const fs::path main = root / "system/krb5-prepared-reused-drift.conf";
+    writeFile(main, "[libdefaults]\nticket_lifetime = 36000s\n", 0644);
+    JournalOverride guard(root / "journals/krb5-prepared-reused-drift.json");
+    fic::rollback::MutationId id = 0;
+    std::string error;
+    require(fic::rollback::recordPreparedMutation(
+                kKerberosPolicyRef, kKerberosResource,
+                fic::rollback::UndoAction{
+                    fic::rollback::MutationBackend::Kerberos,
+                    fic::rollback::UndoRestoreKerberosScalar{
+                        "libdefaults", "ticket_lifetime", "36000s",
+                        fic::rollback::KerberosBeforeKind::Present,
+                        "ticket_lifetime = 8h", true}},
+                id, error), error);
+    setPolicyValues(root, "30", "36000");
+    const std::string foreign =
+        "[libdefaults]\nticket_lifetime = 40h\n";
+    KerberosTicketLifetimePolicy::setReusedProofHookForTests(
+        [&]() { writeFile(main, foreign, 0644); });
+    KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
+    const bool applied = policy.apply();
+    KerberosTicketLifetimePolicy::setReusedProofHookForTests(nullptr);
+    require(!applied, "post-promotion drift must fail apply closed");
+    require(readFile(main) == foreign,
+            "Prepared promotion must not authorize a second writer");
+    const auto& record = singleActiveRecord(kKerberosPolicyRef);
+    require(record.id == id &&
+                record.status == fic::rollback::MutationStatus::Applied,
+            "Prepared should be promoted only by its first AFTER proof");
 }
 
 void testKerberosRollbackFailedIsNotPromoted(const fs::path& root) {
@@ -1509,6 +1667,9 @@ int main() {
         testSssdPreparedCrashRecoveryCompletesApplied(root);
         testSssdApplyAbsentSourceReconcilesRuntime(root);
         testSssdForeignReplacementBetweenProofAndRemovalSurvives(root);
+        testSssdDoubleReplacementPreservesBothForeignObjects(root);
+        testSssdStagingCollisionDoesNotReplaceObject(root);
+        testSssdReusedDriftAfterProofSurvives(root);
         testSssdCompensationRecreateOnlyOnProvenMissing(root);
         testSssdRemovalAndCompensationDurability(root);
         testSssdRemovalFsyncFailureKeepsJournalActive(root);
@@ -1526,6 +1687,8 @@ int main() {
         testKerberosRetryAfterCompletedRollbackIsNothingToDo(root);
         testKerberosPreparedCrashRecoveryCompletesApplied(root);
         testKerberosAppliedSameValueStaysApplied(root);
+        testKerberosReusedDriftAfterProofSurvives(root);
+        testKerberosPreparedPromotionCannotOverwriteDrift(root);
         testKerberosRollbackFailedIsNotPromoted(root);
         testKerberosMissingTargetRollback(root);
         testKerberosCreatedSectionRemoved(root);

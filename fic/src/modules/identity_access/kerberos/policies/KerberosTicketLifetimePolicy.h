@@ -4,6 +4,8 @@
 #include "modules/identity_access/kerberos/KerberosPolicy.h"
 #include "modules/identity_access/kerberos/KerberosRollback.h"
 
+#include <functional>
+
 namespace fic::rollback {
 class MutationJournal;
 }
@@ -13,6 +15,8 @@ public:
     KerberosTicketLifetimePolicy();
     explicit KerberosTicketLifetimePolicy(
         fic::identity::kerberos::KerberosConfigurationOptions options);
+
+    static void setReusedProofHookForTests(std::function<void()> hook);
 
 private:
     bool applyKerberos(

@@ -2,14 +2,13 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `372475300d467b3bae823c6d5dd27fd1c103a0f7`.
+- Ветка `main`, HEAD `f845fc0290ffe5008259eb3b3348e561686d687e`.
 - Рабочее дерево содержит незакоммиченные изменения текущей задачи.
 
 ## Current task
 
-- SSSD rollback: устранение durability gaps у удаления drop-in и его
-  компенсационного восстановления, descriptor-based metadata, обязательная
-  runtime-реконсиляция при active journal record + source absent в apply.
+- SSSD/Kerberos rollback follow-up: убрать persistent writer из same-value
+  `Reused` пути и закрыть no-replace race у SSSD proof-bound removal.
 
 ## Accepted architecture / invariants
 
@@ -20,6 +19,10 @@
   `fsync` родительского каталога. Неудачный барьер — не обычный success.
 - FIC-owned SSSD drop-in и structured Kerberos edit остаются без изменений
   архитектуры; package/purge не затронуты.
+- `Reused` означает повторную read-only проверку source, без setter/writer;
+  SSSD при этом по-прежнему реконсилирует runtime.
+- SSSD rename-away и восстановление staged foreign объекта не заменяют
+  уже существующий target; без `RENAME_NOREPLACE` операция fail closed.
 
 ## Completed
 
@@ -30,6 +33,12 @@
   независимо от active record status и только после него закрывает запись.
 - Добавлены regression tests для directory fsync failure и apply-recovery
   `Prepared`/`Applied`/`RollbackFailed`.
+- SSSD и Kerberos `Reused` теперь не заходят в persistent writer; drift после
+  первого proof остаётся нетронутым и завершает apply ошибкой.
+- SSSD staging/restore переведены на `RENAME_NOREPLACE`; B+C race и
+  занятый staging path сохраняют foreign объекты.
+- Новые regression tests покрывают оба drift-after-proof пути (в том числе
+  Kerberos `Prepared → Applied`), staging collision и B→C race.
 
 ## Changed areas
 
@@ -37,6 +46,7 @@
 - `fic/src/modules/identity_access/sssd/{SssdConfiguration.cpp,policies/SssdOfflineCredentialsExpirationPolicy.cpp}`;
 - `tests/fic/modules/identity_access/IdentityConcretePoliciesTests.cpp`;
 - `docs/rollback.md`, `docs/HANDOFF.md`.
+- `fic/src/modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.{h,cpp}`.
 
 ## Validation
 
@@ -44,13 +54,12 @@
   -DFIC_TARGET_PLATFORM=ubuntu-24.04` — PASS.
 - `identity_concrete_policies_tests` build и CTest — PASS после всех правок.
 - Full build — PASS.
-- Full CTest в sandbox: 95/97; два integration-теста упали из-за запрета
-  Unix-socket bind / недоверенного test-root. Полный повтор вне sandbox:
-  97/97 PASS, `command_hash_batch_tests` — штатный skip.
+- Full CTest вне sandbox: 97/97 PASS, `command_hash_batch_tests` —
+  штатный skip. В sandbox ранее два integration-теста падали из-за
+  Unix-socket bind / недоверенного test-root.
 - `git diff --check` — PASS.
 - Старый `build-fix` read-only; используем `/tmp/fic-sssd-rollback-build`.
 
 ## Remaining
 
-- Сверить итоговый diff перед завершением.
 - Native privileged SSSD runtime не запускался (только tests с fake runner).

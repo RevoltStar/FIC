@@ -20,6 +20,11 @@ std::string managedResource() {
     return std::string(kSection) + "/" + kRelation;
 }
 
+std::function<void()>& reusedProofHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
 } // namespace
 
 KerberosTicketLifetimePolicy::KerberosTicketLifetimePolicy()
@@ -64,10 +69,18 @@ bool KerberosTicketLifetimePolicy::applyKerberos(
             return false;
         }
         if (outcome == ReconciliationOutcome::Reused) {
+            if (auto hook = reusedProofHook()) {
+                hook();
+            }
             return reapplyExistingRelation(configuration, profileValue);
         }
     }
     return applyFreshMutation(configuration, profileValue, journal, policyRef);
+}
+
+void KerberosTicketLifetimePolicy::setReusedProofHookForTests(
+    std::function<void()> hook) {
+    reusedProofHook() = std::move(hook);
 }
 
 KerberosTicketLifetimePolicy::ReconciliationOutcome
@@ -238,22 +251,14 @@ KerberosTicketLifetimePolicy::reconcileKerberosJournal(
 bool KerberosTicketLifetimePolicy::reapplyExistingRelation(
     fic::identity::kerberos::KerberosConfiguration& configuration,
     const std::string& profileValue) {
-    // The root relation already carries exactly the desired value under the
-    // single active record: re-run the standard CAS structured edit as a
-    // no-op without creating new provenance, then re-verify effectiveness
-    // through the full graph.
+    // Reused provenance authorizes read-only verification, not another
+    // structured write: foreign drift after the first proof must survive.
     std::string error;
-    if (!configuration.setScalar(kSection, kRelation, profileValue, error)) {
-        this->log(
-            "Could not apply Kerberos policy " + this->policyName + ": " +
-                error,
-            logLevel::ERROR);
-        return false;
-    }
-    std::optional<std::string> observed;
-    if (!configuration.tryGetScalarValue(
+    fic::identity::kerberos::KerberosRootScalarObservation observed;
+    if (!configuration.inspectRootScalar(
             kSection, kRelation, observed, error) ||
-        observed != profileValue) {
+        observed.externallyDefined || observed.duplicateInRoot ||
+        !observed.relationInRoot || observed.value != profileValue) {
         this->log(
             "Kerberos policy postcondition failed for " + this->policyName +
                 ": " + (error.empty() ? "unexpected effective value" : error),

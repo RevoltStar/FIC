@@ -14,6 +14,10 @@ namespace fic::identity::sssd {
 
 void setManagedSnippetRemovalRaceHookForTests(
     std::function<void()> hook);
+void setManagedSnippetBeforeStageHookForTests(
+    std::function<void(const std::filesystem::path&)> hook);
+void setManagedSnippetStagedRaceHookForTests(
+    std::function<void(const std::filesystem::path&)> hook);
 
 struct SssdConfigurationOptions {
     SecureConfigurationFileOptions mainFile;

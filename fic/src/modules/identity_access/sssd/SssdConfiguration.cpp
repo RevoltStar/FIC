@@ -14,7 +14,9 @@
 #include <utility>
 
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 namespace fic::identity::sssd {
@@ -458,6 +460,32 @@ std::function<void()>& removalRaceHook() {
     return hook;
 }
 
+std::function<void(const std::filesystem::path&)>& stagedRaceHook() {
+    static std::function<void(const std::filesystem::path&)> hook;
+    return hook;
+}
+
+std::function<void(const std::filesystem::path&)>& beforeStageHook() {
+    static std::function<void(const std::filesystem::path&)> hook;
+    return hook;
+}
+
+// A link/unlink fallback is unsafe here: unlinking the source after link
+// could remove a replacement that arrived in the meantime. Unsupported
+// renameat2 therefore fails closed.
+bool renameNoReplace(const std::filesystem::path& source,
+                     const std::filesystem::path& target) {
+#ifdef SYS_renameat2
+    return ::syscall(SYS_renameat2, AT_FDCWD, source.c_str(),
+                     AT_FDCWD, target.c_str(), RENAME_NOREPLACE) == 0;
+#else
+    (void)source;
+    (void)target;
+    errno = ENOSYS;
+    return false;
+#endif
+}
+
 // Captures the exact current target state through a single O_NOFOLLOW
 // descriptor: identity (dev, ino), metadata and exact content. Refuses
 // symlinks and non-regular files. The captured identity is the removal
@@ -693,20 +721,26 @@ ConfigurationStepResult removeManagedSnippetFile(
     const std::string privateTarget = options.path.string() +
         ".fic-removing-" + std::to_string(::getpid()) + "-" +
         std::to_string(removalSequence.fetch_add(1));
-    if (::rename(options.path.c_str(), privateTarget.c_str()) != 0) {
+    if (auto hook = beforeStageHook()) {
+        hook(privateTarget);
+    }
+    if (!renameNoReplace(options.path, privateTarget)) {
         return ConfigurationStepResult::failure(
-            "could not remove managed SSSD drop-in: " +
-            options.path.string());
+            "could not stage managed SSSD drop-in without replacement: " +
+            options.path.string() + ": " + std::strerror(errno));
+    }
+    if (auto hook = stagedRaceHook()) {
+        hook(privateTarget);
     }
     struct stat moved {};
     if (::lstat(privateTarget.c_str(), &moved) != 0 ||
         moved.st_dev != device || moved.st_ino != inode) {
         // The moved-away object is NOT the proven inode: a foreign
-        // replacement occupied the path at rename time. Restore it
-        // byte-exact at the original path and fail closed: the foreign
-        // replacement must survive.
+        // replacement occupied the path at rename time. Restore it only
+        // when the original path is still free; a third version must never
+        // be overwritten. Otherwise leave the foreign object staged.
         std::string restoreNote;
-        if (::rename(privateTarget.c_str(), options.path.c_str()) != 0) {
+        if (!renameNoReplace(privateTarget, options.path)) {
             restoreNote = " (foreign object left staged at " + privateTarget +
                 ": " + std::strerror(errno) + ")";
         }
@@ -961,6 +995,16 @@ void setManagedSnippetRemovalRaceHookForTests(
     } else {
         removalRaceHook() = nullptr;
     }
+}
+
+void setManagedSnippetStagedRaceHookForTests(
+    std::function<void(const std::filesystem::path&)> hook) {
+    stagedRaceHook() = std::move(hook);
+}
+
+void setManagedSnippetBeforeStageHookForTests(
+    std::function<void(const std::filesystem::path&)> hook) {
+    beforeStageHook() = std::move(hook);
 }
 
 SssdConfiguration::SssdConfiguration(SssdConfigurationOptions options)

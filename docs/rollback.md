@@ -872,9 +872,11 @@ SSSD restart verification → Applied`):
 атомарно переименовывается в приватное имя, и удалённый объект повторно
 доказывается против captured identity (dev/ino). Если между proof и rename
 файл был атомарно заменён внешним актором, иностранная замена
-восстанавливается byte-exact на исходный путь, удаление завершается
-ошибкой, чужой файл переживает. FIC никогда не удаляет pathname,
-доказанное состояние которого уже заменено.
+восстанавливается byte-exact на исходный путь только если он свободен;
+если там уже появилась третья версия, staged объект сохраняется отдельно,
+а новая версия не перезаписывается. Оба переноса используют
+`RENAME_NOREPLACE`: занятый private target также не перезаписывается.
+Если атомарный no-replace rename недоступен, удаление fail closed.
 
 Удаление считается durable только после `fsync` родительского каталога
 после rename-away и unlink. Компенсационное exclusive recreate выставляет
@@ -897,14 +899,16 @@ proof'а (crash между системной мутацией и коммито
 * SSSD: drop-in свежо доказан как AFTER (option == undo.appliedValue ==
   желаемое значение, без конфликтующих later snippets) при same-value
   apply → обязательная runtime-реконсиляция (restart активного SSSD,
-  даже если persistent write — no-op), свежий повторный proof persistent
+  без повторного persistent writer), свежий повторный proof persistent
   AFTER, затем тот же `MutationId` становится `Applied`. Новая запись не
-  создаётся; для уже `Applied` same-value reapply сохраняется существующая
-  идемпотентность;
+  создаётся; для уже `Applied` same-value reapply также не пишет source,
+  а повторно проверяет его после runtime-реконсиляции;
 * Kerberos: fresh full-graph AFTER proof (relation ровно в ожидаемой root
   топологии, нет внешнего include-определения, нет дубликата, текущее
   значение == undo.appliedValue == желаемое) при same-value apply → тот же
   `MutationId` становится `Applied`; новая запись не создаётся;
+  дальнейший same-value путь только повторно читает полный graph, но не
+  вызывает structured setter;
 * `RollbackFailed` НИКОГДА не promoted в `Applied` автоматически: семантика
   прерванного rollback не позволяет тихий apply-repair — same-value apply
   fail closed, а завершение rollback выполняется retry'ем disable через

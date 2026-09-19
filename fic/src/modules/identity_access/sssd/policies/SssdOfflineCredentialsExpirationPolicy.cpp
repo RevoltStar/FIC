@@ -290,34 +290,27 @@ bool SssdOfflineCredentialsExpirationPolicy::applySssd(
 bool SssdOfflineCredentialsExpirationPolicy::reapplyExistingManagedValue(
     fic::identity::sssd::SssdConfiguration& configuration,
     const std::string& expectedValue) {
-    // The FIC-owned drop-in already carries exactly the desired value under
-    // the single active record: no new provenance is created and the
-    // persistent mutation is a no-op; runtime effectiveness (restart of an
-    // active SSSD + verification) is re-enforced.
-    auto prepared = configuration.prepareManagedSnippetValue(
-        kSection, kOption, expectedValue);
-    if (!prepared.ok()) {
+    // Reused provenance never authorizes another persistent writer. The
+    // source may drift after reconciliation's proof; re-check it after the
+    // mandatory runtime restart instead of restoring the old value.
+    std::string error;
+    if (!reconcileSssdRuntime(rollbackOptions_, error)) {
         this->log(
-            "SSSD policy preflight failed for " + this->policyName + ": " +
-                prepared.error,
+            "Could not reconcile SSSD runtime for " + this->policyName +
+                ": " + error,
             logLevel::ERROR);
         return false;
     }
-    prepared = runtime_.attach(std::move(prepared.change));
-    if (!prepared.ok()) {
-        this->log(
-            "SSSD runtime preflight failed for " + this->policyName + ": " +
-                prepared.error,
-            logLevel::ERROR);
-        return false;
-    }
-    std::string executionError;
-    if (!fic::identity::executePreparedFileChange(
-            std::move(prepared.change), executionError)) {
-        this->log(
-            "Could not apply SSSD policy " + this->policyName + ": " +
-                executionError,
-            logLevel::ERROR);
+    fic::identity::sssd::SssdManagedSnippetObservation observed;
+    using DropInState = fic::identity::sssd::
+        SssdManagedSnippetObservation::DropInState;
+    if (!configuration.inspectManagedSnippet(
+            kSection, kOption, observed, error) ||
+        observed.dropInState != DropInState::Ok ||
+        !observed.optionPresent || observed.optionValue != expectedValue ||
+        !observed.laterConflictingSnippets.empty()) {
+        this->log("SSSD reused value changed before runtime verification "
+                  "(fail closed): " + error, logLevel::ERROR);
         return false;
     }
     this->log(
