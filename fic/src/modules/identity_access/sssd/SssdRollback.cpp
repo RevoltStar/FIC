@@ -158,6 +158,19 @@ SssdRollbackResult undoSssdManagedSetting(
         }
         effectiveAfterRelease = released.effectiveValue;
     } else {
+        bool staged = false;
+        if (!fic::identity::sssd::hasManagedSnippetStagingArtifacts(
+                options.configuration, staged, error)) {
+            result.message = "Не удалось проверить staged SSSD drop-in: " +
+                error;
+            return result;
+        }
+        if (staged) {
+            result.conflict = true;
+            result.message = "SSSD source отсутствует, но release не доказан: " +
+                error;
+            return result;
+        }
         // Source ownership is already released (e.g. a previous rollback
         // attempt removed the option but failed before the runtime
         // reconciliation completed). The option absence proves the source

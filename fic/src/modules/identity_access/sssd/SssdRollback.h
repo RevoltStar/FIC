@@ -51,8 +51,9 @@ bool reconcileSssdRuntime(
 //     an atomic CAS write; a drop-in that becomes semantically empty is
 //     removed entirely (proof-bound rename-away removal). Afterwards the
 //     runtime reconciliation below runs;
-//   * the option is absent — the source undo was already completed by a
-//     previous attempt; runtime reconciliation is still MANDATORY:
+//   * the option is absent — first rule out staged removal artifacts for
+//     the exact managed path; otherwise the source undo was completed by a
+//     previous attempt. Runtime reconciliation is still MANDATORY:
 //     an active journal record means the rollback operation must finish
 //     all of its postconditions (restart of an active SSSD + verification)
 //     before the rollback may report Success/NothingToDo. A failed

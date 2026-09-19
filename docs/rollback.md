@@ -850,7 +850,11 @@ SSSD restart verification → Applied`):
   `sssd.conf` и чужие snippets не меняются; прежнее foreign значение
   становится effective естественно (без хранения его в journal);
 * `BEFORE` (option уже отсутствует) — source undo считается уже выполненным
-  ПРЕДЫДУЩЕЙ попыткой отката, но это НЕ завершает rollback: runtime-
+  ПРЕДЫДУЩЕЙ попыткой отката только при отсутствии staged artifacts для
+  точного managed path (`zzzz-fic.conf.fic-removing-*`). Если такой artifact
+  есть либо каталог нельзя надёжно проверить, apply/disable fail closed,
+  journal остаётся активным: foreign replacement мог остаться в staging
+  после power loss. Иначе это НЕ завершает rollback: runtime-
   реконсиляция обязательна (перезапуск активного SSSD + верификация), и
   только затем запись завершается как успешно откатанная. Неудачный
   рестарт оставляет запись в `RollbackFailed`, повторный disable повторяет

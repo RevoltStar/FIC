@@ -407,6 +407,14 @@ void testSssdApplyAbsentSourceReconcilesRuntime(const fs::path& root) {
             return okResult();
         };
         setPolicyValues(root, "30", "7200");
+        // A staging-shaped artifact for a different managed basename must
+        // not block release of this exact FIC-owned path.
+        if (index == 0) {
+            writeFile(
+                sssdDropInPath(main).parent_path() /
+                    "other.conf.fic-removing-1-1",
+                "unrelated staging object\n", 0600);
+        }
         SssdOfflineCredentialsExpirationPolicy policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(!policy.apply(), "runtime failure must fail apply closed");
@@ -550,10 +558,17 @@ void testSssdForeignRestoreFsyncFailureKeepsProvenance(
     const fs::path systemctl = root / "bin/systemctl";
     writeFile(systemctl, "test executable\n", 0755);
     auto resolver = makeResolver(systemctl);
-    auto runner = [](const std::string&,
-                     const std::vector<std::string>&,
-                     const ProcessOptions&) { return okResult(); };
-    JournalOverride guard(root / "journals/sssd-restore-fsync.json");
+    int restarts = 0;
+    auto runner = [&](const std::string&,
+                      const std::vector<std::string>& arguments,
+                      const ProcessOptions&) {
+        if (!arguments.empty() && arguments.front() == "restart") {
+            ++restarts;
+        }
+        return okResult();
+    };
+    const fs::path journalPath = root / "journals/sssd-restore-fsync.json";
+    JournalOverride guard(journalPath);
     setPolicyValues(root, "30", "7200");
     SssdOfflineCredentialsExpirationPolicy policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
@@ -568,6 +583,9 @@ void testSssdForeignRestoreFsyncFailureKeepsProvenance(
             require(::rename(replacement.c_str(), dropIn.c_str()) == 0,
                     "could not install foreign replacement");
         });
+    fs::path staged;
+    fic::identity::sssd::setManagedSnippetStagedRaceHookForTests(
+        [&](const fs::path& privatePath) { staged = privatePath; });
     AtomicFileWriter::setDirectoryFsyncHookForTests(
         [&](const std::string& path) { return path != dropIn.string(); });
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
@@ -575,6 +593,7 @@ void testSssdForeignRestoreFsyncFailureKeepsProvenance(
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
     fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
+    fic::identity::sssd::setManagedSnippetStagedRaceHookForTests(nullptr);
     require(!report.rollbackCompleted(),
             "failed restore fsync must not complete rollback");
     require(report.message.find("directory state indeterminate") !=
@@ -584,6 +603,36 @@ void testSssdForeignRestoreFsyncFailureKeepsProvenance(
             "foreign replacement must remain untouched");
     require(activeRecordCount(kSssdPolicyRef) == 1,
             "failed restore fsync must retain provenance");
+
+    // Model the admissible post-crash directory state: the unconfirmed
+    // restore is lost, while B remains under the ignored staging name.
+    require(!staged.empty() && !fs::exists(staged),
+            "successful restore must have consumed the staging path");
+    writeFile(staged, foreign, 0600);
+    require(fs::remove(dropIn), "could not model absent source after crash");
+    const int restartsBeforeRetry = restarts;
+    {
+        JournalOverride reopen(journalPath);
+        SssdOfflineCredentialsExpirationPolicy recoveryPolicy(
+            sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+        require(!recoveryPolicy.apply(),
+                "apply must not treat staged B as completed release");
+        const auto retry = fic::rollback::rollbackPolicyBeforeDisable(
+            kSssdPolicyRef, kSssdResource,
+            sssdExecutorDeps(sssdRollbackOptions(
+                main, root, resolver, runner)));
+        require(!retry.rollbackCompleted(),
+                "disable must not close staged-B provenance");
+        require(retry.message.find("staged removal artifact") !=
+                    std::string::npos,
+                "disable must report the exact staged-source conflict");
+        require(activeRecordCount(kSssdPolicyRef) == 1,
+                "journal reopen must retain active provenance");
+    }
+    require(restarts == restartsBeforeRetry,
+            "staged B must be detected before runtime reconciliation");
+    require(readFile(staged) == foreign && !fs::exists(dropIn),
+            "retry must not forget or mutate staged foreign B");
 }
 
 void testSssdStagingCollisionDoesNotReplaceObject(const fs::path& root) {

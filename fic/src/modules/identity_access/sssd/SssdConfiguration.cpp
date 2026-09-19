@@ -13,6 +13,7 @@
 #include <sstream>
 #include <utility>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <sys/stat.h>
@@ -1018,6 +1019,59 @@ void setManagedSnippetBeforeStageHookForTests(
 
 SssdConfiguration::SssdConfiguration(SssdConfigurationOptions options)
     : options_(std::move(options)) {
+}
+
+bool hasManagedSnippetStagingArtifacts(
+    const SssdConfigurationOptions& options,
+    bool& found,
+    std::string& error) {
+    found = false;
+    const auto directory = options.managedSnippetFile.parent_path();
+    if (!verifySecureConfigurationDirectory(
+            directory, options.mainFile, error)) {
+        return false;
+    }
+    const int descriptor = ::open(
+        directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (descriptor < 0) {
+        error = "could not open managed SSSD drop-in directory: " +
+            directory.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    DIR* stream = ::fdopendir(descriptor);
+    if (stream == nullptr) {
+        error = "could not enumerate managed SSSD drop-in directory: " +
+            directory.string() + ": " + std::strerror(errno);
+        ::close(descriptor);
+        return false;
+    }
+    const std::string prefix =
+        options.managedSnippetFile.filename().string() + ".fic-removing-";
+    errno = 0;
+    while (const dirent* entry = ::readdir(stream)) {
+        const std::string name(entry->d_name);
+        if (name.compare(0, prefix.size(), prefix) == 0) {
+            found = true;
+            break;
+        }
+        errno = 0;
+    }
+    const int readError = errno;
+    if (::closedir(stream) != 0) {
+        error = "could not close managed SSSD drop-in directory: " +
+            directory.string() + ": " + std::strerror(errno);
+        return false;
+    }
+    if (!found && readError != 0) {
+        error = "could not enumerate managed SSSD drop-in directory: " +
+            directory.string() + ": " + std::strerror(readError);
+        return false;
+    }
+    if (found) {
+        error = "managed SSSD drop-in has staged removal artifact (" +
+            prefix + "*) in " + directory.string();
+    }
+    return true;
 }
 
 bool SssdConfiguration::tryGetEffectiveValue(

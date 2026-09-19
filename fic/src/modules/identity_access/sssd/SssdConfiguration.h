@@ -30,6 +30,14 @@ struct SssdConfigurationOptions {
     static SssdConfigurationOptions production();
 };
 
+// Fail-closed guard for active rollback provenance with an absent source.
+// A staged object may be a foreign replacement stranded by an interrupted
+// proof-bound removal, and must not be mistaken for completed release.
+bool hasManagedSnippetStagingArtifacts(
+    const SssdConfigurationOptions& options,
+    bool& found,
+    std::string& error);
+
 struct SssdSetting {
     std::string section;
     std::string option;
