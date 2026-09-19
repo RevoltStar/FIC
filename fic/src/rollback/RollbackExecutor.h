@@ -3,6 +3,8 @@
 
 #include "modules/dac/mode_and_owner/DacBaselineRollback.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/identity_access/kerberos/KerberosRollback.h"
+#include "modules/identity_access/sssd/SssdRollback.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/oss/grub/GrubRollback.h"
 #include "modules/sysctl/SysctlConfiguration.h"
@@ -78,6 +80,12 @@ struct RollbackExecutorDeps {
     // GRUB backend configuration: the platform profile GRUB topology is the
     // single source of truth for the managed artifact location.
     std::function<GrubRollbackOptions()> grubOptions;
+    // SSSD backend configuration: the FIC-owned drop-in location and the
+    // snippet topology come from the current SssdConfigurationOptions.
+    std::function<SssdRollbackOptions()> sssdOptions;
+    // Kerberos backend configuration: the root krb5.conf location comes from
+    // the current KerberosConfigurationOptions.
+    std::function<KerberosRollbackOptions()> kerberosOptions;
     // DAC platform-baseline backend configuration: the platform profile DAC
     // config is the single source of truth for the baseline metadata.
     std::function<DacBaselineRollbackOptions()> dacOptions;

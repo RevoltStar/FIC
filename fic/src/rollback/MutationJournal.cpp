@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <ctime>
 #include <functional>
 #include <system_error>
@@ -71,6 +73,22 @@ json serializeUndoAction(const UndoAction& action) {
                    std::get_if<UndoRemoveGrubManagedSetting>(&action.payload)) {
         value["key"] = grubSetting->key;
         value["applied_value"] = grubSetting->appliedValue;
+    } else if (const auto* sssdSetting = std::get_if<
+                   UndoRemoveSssdManagedSetting>(&action.payload)) {
+        value["section"] = sssdSetting->section;
+        value["option"] = sssdSetting->option;
+        value["applied_value"] = sssdSetting->appliedValue;
+    } else if (const auto* kerberosScalar = std::get_if<
+                   UndoRestoreKerberosScalar>(&action.payload)) {
+        value["section"] = kerberosScalar->section;
+        value["relation"] = kerberosScalar->relation;
+        value["applied_value"] = kerberosScalar->appliedValue;
+        value["before_kind"] = kerberosScalar->beforeKind ==
+                KerberosBeforeKind::Present
+            ? "present"
+            : "missing";
+        value["before_raw_line"] = kerberosScalar->beforeRawLine;
+        value["section_existed_before"] = kerberosScalar->sectionExistedBefore;
     }
     return value;
 }
@@ -98,6 +116,95 @@ bool validateGrubUndoPayload(const UndoRemoveGrubManagedSetting& payload,
         payload.appliedValue.find('\0') != std::string::npos) {
         error = "remove_grub_managed_setting undo applied value must not "
                 "contain CR, LF or NUL";
+        return false;
+    }
+    return true;
+}
+
+// Shared SSSD undo-payload validation. Used by BOTH the write path
+// (MutationJournal::prepareMutation) and the read path
+// (deserializeUndoAction) so that the writer can never persist a record
+// the loader would reject. Section/option follow the SSSD configuration
+// syntax rules; the applied value must be free of CR, LF and NUL.
+bool validateSssdUndoPayload(const UndoRemoveSssdManagedSetting& payload,
+                             std::string& error) {
+    if (payload.section.empty() ||
+        payload.section.find_first_of("[]\r\n") != std::string::npos) {
+        error = "remove_sssd_managed_setting undo requires a valid SSSD "
+                "section";
+        return false;
+    }
+    const auto validOptionCharacter = [](unsigned char character) {
+        return std::isalnum(character) != 0 || character == '_' ||
+            character == '-';
+    };
+    if (payload.option.empty() ||
+        !std::all_of(payload.option.begin(), payload.option.end(),
+                     validOptionCharacter)) {
+        error = "remove_sssd_managed_setting undo requires a valid SSSD "
+                "option name";
+        return false;
+    }
+    if (payload.appliedValue.find_first_of("\r\n") != std::string::npos ||
+        payload.appliedValue.find('\0') != std::string::npos) {
+        error = "remove_sssd_managed_setting undo applied value must not "
+                "contain CR, LF or NUL";
+        return false;
+    }
+    return true;
+}
+
+bool validKerberosSectionName(const std::string& section) {
+    return !section.empty() &&
+        section.find_first_of("[]*#;\r\n") == std::string::npos;
+}
+
+bool validKerberosRelationName(const std::string& relation) {
+    return !relation.empty() &&
+        relation.find_first_of("=*#;[]\r\n{} \t") == std::string::npos;
+}
+
+bool lineFreeOfControlCharacters(const std::string& line) {
+    return line.find_first_of("\r\n") == std::string::npos &&
+        line.find('\0') == std::string::npos;
+}
+
+// Shared Kerberos undo-payload validation (write + read parity). The exact
+// raw before line is required for Present and forbidden for Missing; the
+// sectionExistedBefore flag must agree with the before kind.
+bool validateKerberosUndoPayload(const UndoRestoreKerberosScalar& payload,
+                                 std::string& error) {
+    if (!validKerberosSectionName(payload.section)) {
+        error = "restore_kerberos_scalar undo requires a valid Kerberos "
+                "section";
+        return false;
+    }
+    if (!validKerberosRelationName(payload.relation)) {
+        error = "restore_kerberos_scalar undo requires a valid Kerberos "
+                "relation name";
+        return false;
+    }
+    if (payload.appliedValue.empty() ||
+        !lineFreeOfControlCharacters(payload.appliedValue)) {
+        error = "restore_kerberos_scalar undo requires a non-empty applied "
+                "value without CR, LF or NUL";
+        return false;
+    }
+    if (payload.beforeKind == KerberosBeforeKind::Present) {
+        if (payload.beforeRawLine.empty() ||
+            !lineFreeOfControlCharacters(payload.beforeRawLine)) {
+            error = "restore_kerberos_scalar undo requires a non-empty raw "
+                    "before line without CR, LF or NUL";
+            return false;
+        }
+        if (!payload.sectionExistedBefore) {
+            error = "restore_kerberos_scalar undo with a present relation "
+                    "requires sectionExistedBefore";
+            return false;
+        }
+    } else if (!payload.beforeRawLine.empty()) {
+        error = "restore_kerberos_scalar undo with a missing relation must "
+                "not carry a raw before line";
         return false;
     }
     return true;
@@ -217,6 +324,74 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
+    if (actionName == "remove_sssd_managed_setting" &&
+        backend == MutationBackend::Sssd) {
+        UndoRemoveSssdManagedSetting payload;
+        payload.section = value.value("section", "");
+        payload.option = value.value("option", "");
+        // Structural parsing: applied_value MUST be present and a JSON
+        // string (missing/non-string/null is malformed provenance).
+        const auto appliedIt = value.find("applied_value");
+        if (appliedIt == value.end() || !appliedIt->is_string()) {
+            error = "remove_sssd_managed_setting undo requires a string "
+                    "applied_value";
+            return false;
+        }
+        payload.appliedValue = appliedIt->get<std::string>();
+        if (!validateSssdUndoPayload(payload, error)) {
+            return false;
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
+    if (actionName == "restore_kerberos_scalar" &&
+        backend == MutationBackend::Kerberos) {
+        UndoRestoreKerberosScalar payload;
+        payload.section = value.value("section", "");
+        payload.relation = value.value("relation", "");
+        const auto appliedIt = value.find("applied_value");
+        if (appliedIt == value.end() || !appliedIt->is_string()) {
+            error = "restore_kerberos_scalar undo requires a string "
+                    "applied_value";
+            return false;
+        }
+        payload.appliedValue = appliedIt->get<std::string>();
+        const auto beforeKindIt = value.find("before_kind");
+        if (beforeKindIt == value.end() || !beforeKindIt->is_string()) {
+            error = "restore_kerberos_scalar undo requires a string "
+                    "before_kind";
+            return false;
+        }
+        if (*beforeKindIt == "present") {
+            payload.beforeKind = KerberosBeforeKind::Present;
+        } else if (*beforeKindIt == "missing") {
+            payload.beforeKind = KerberosBeforeKind::Missing;
+        } else {
+            error = "restore_kerberos_scalar undo has unknown before_kind: " +
+                beforeKindIt->get<std::string>();
+            return false;
+        }
+        const auto rawLineIt = value.find("before_raw_line");
+        if (rawLineIt == value.end() || !rawLineIt->is_string()) {
+            error = "restore_kerberos_scalar undo requires a string "
+                    "before_raw_line";
+            return false;
+        }
+        payload.beforeRawLine = rawLineIt->get<std::string>();
+        const auto sectionExistedIt = value.find("section_existed_before");
+        if (sectionExistedIt == value.end() ||
+            !sectionExistedIt->is_boolean()) {
+            error = "restore_kerberos_scalar undo requires a boolean "
+                    "section_existed_before";
+            return false;
+        }
+        payload.sectionExistedBefore = sectionExistedIt->get<bool>();
+        if (!validateKerberosUndoPayload(payload, error)) {
+            return false;
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
     error = "unknown or inconsistent undo action: " + actionName +
             " for backend " + backendName;
     return false;
@@ -289,6 +464,28 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
             return false;
         }
     }
+    if (record.undo.backend == MutationBackend::Sssd) {
+        const auto* sssd =
+            std::get_if<UndoRemoveSssdManagedSetting>(&record.undo.payload);
+        if (sssd == nullptr ||
+            sssd->section + "/" + sssd->option != record.resource) {
+            error = "SSSD journal resource does not match undo "
+                    "section/option: resource '" +
+                record.resource + "'";
+            return false;
+        }
+    }
+    if (record.undo.backend == MutationBackend::Kerberos) {
+        const auto* kerberos =
+            std::get_if<UndoRestoreKerberosScalar>(&record.undo.payload);
+        if (kerberos == nullptr ||
+            kerberos->section + "/" + kerberos->relation != record.resource) {
+            error = "Kerberos journal resource does not match undo "
+                    "section/relation: resource '" +
+                record.resource + "'";
+            return false;
+        }
+    }
 
     MutationStatus status;
     if (!mutationStatusFromString(value.value("status", ""), status)) {
@@ -334,6 +531,8 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::DeviceControl: return "device_control";
     case MutationBackend::Dac: return "dac";
     case MutationBackend::Grub: return "grub";
+    case MutationBackend::Sssd: return "sssd";
+    case MutationBackend::Kerberos: return "kerberos";
     }
     return "unknown";
 }
@@ -346,6 +545,8 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "device_control") { backend = MutationBackend::DeviceControl; return true; }
     if (value == "dac") { backend = MutationBackend::Dac; return true; }
     if (value == "grub") { backend = MutationBackend::Grub; return true; }
+    if (value == "sssd") { backend = MutationBackend::Sssd; return true; }
+    if (value == "kerberos") { backend = MutationBackend::Kerberos; return true; }
     return false;
 }
 
@@ -367,6 +568,12 @@ std::string undoActionTypeName(const UndoAction& action) {
     }
     if (std::holds_alternative<UndoRemoveGrubManagedSetting>(action.payload)) {
         return "remove_grub_managed_setting";
+    }
+    if (std::holds_alternative<UndoRemoveSssdManagedSetting>(action.payload)) {
+        return "remove_sssd_managed_setting";
+    }
+    if (std::holds_alternative<UndoRestoreKerberosScalar>(action.payload)) {
+        return "restore_kerberos_scalar";
     }
     return "unknown";
 }
@@ -1024,6 +1231,40 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             return false;
         }
         if (!validateGrubUndoPayload(*grub, error)) {
+            return false;
+        }
+    }
+    if (record.undo.backend == MutationBackend::Sssd) {
+        const auto* sssd =
+            std::get_if<UndoRemoveSssdManagedSetting>(&record.undo.payload);
+        const std::string expectedResource =
+            sssd == nullptr ? std::string() : sssd->section + "/" + sssd->option;
+        if (sssd == nullptr || expectedResource != record.resource) {
+            error = "SSSD mutation record требует resource "
+                    "'<section>/<option>', согласованный с undo payload ('" +
+                record.resource + "'): payload не согласован с identity "
+                "(fail closed)";
+            return false;
+        }
+        if (!validateSssdUndoPayload(*sssd, error)) {
+            return false;
+        }
+    }
+    if (record.undo.backend == MutationBackend::Kerberos) {
+        const auto* kerberos =
+            std::get_if<UndoRestoreKerberosScalar>(&record.undo.payload);
+        const std::string expectedResource =
+            kerberos == nullptr
+                ? std::string()
+                : kerberos->section + "/" + kerberos->relation;
+        if (kerberos == nullptr || expectedResource != record.resource) {
+            error = "Kerberos mutation record требует resource "
+                    "'<section>/<relation>', согласованный с undo payload ('" +
+                record.resource + "'): payload не согласован с identity "
+                "(fail closed)";
+            return false;
+        }
+        if (!validateKerberosUndoPayload(*kerberos, error)) {
             return false;
         }
     }

@@ -260,6 +260,27 @@ void testEnrollmentMatrix() {
     require(rollbackEnrollment({"OSS", "Grub", "grub_future_policy"}) ==
                 RollbackEnrollment::Unsupported,
             "unknown future GRUB policies must not be auto-enrolled");
+    require(rollbackEnrollment({"IDENTITY_ACCESS", "SSSD",
+                                "sssd_offline_credentials_expiration"}) ==
+                RollbackEnrollment::Supported,
+            "sssd_offline_credentials_expiration must be enrolled");
+    require(rollbackEnrollment(
+                {"IDENTITY_ACCESS", "SSSD", "sssd_future_policy"}) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future SSSD policies must not be auto-enrolled");
+    require(rollbackEnrollment({"IDENTITY_ACCESS", "KERBEROS",
+                                "kerberos_ticket_lifetime"}) ==
+                RollbackEnrollment::Supported,
+            "kerberos_ticket_lifetime must be enrolled");
+    require(rollbackEnrollment(
+                {"IDENTITY_ACCESS", "KERBEROS", "kerberos_future_policy"}) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future Kerberos policies must not be auto-enrolled");
+    require(rollbackEnrollment(
+                {"IDENTITY_ACCESS", "Pam", "pam_future_policy"}) ==
+                RollbackEnrollment::NotEnrolled,
+            "other IDENTITY_ACCESS submodules stay outside the rollback "
+            "system");
 }
 
 void testNotEnrolledPolicyKeepsLegacyDisable() {
@@ -2226,12 +2247,207 @@ void testProvenanceLossAfterRestartFailsRollbackClosed() {
             error);
 }
 
+// ----------------------------------------------------- sssd / kerberos ------
+
+const PolicyRef kSssdPolicy{
+    "IDENTITY_ACCESS", "SSSD", "sssd_offline_credentials_expiration"};
+const PolicyRef kKerberosPolicy{
+    "IDENTITY_ACCESS", "KERBEROS", "kerberos_ticket_lifetime"};
+
+class IdentityConfigTree {
+public:
+    IdentityConfigTree()
+        : tree("/tmp/fic-rollback-identity-XXXXXX") {
+        std::filesystem::create_directories(sssdConfd());
+        std::filesystem::create_directories(tree.root / "bin");
+        writeFile(tree.root / "bin/systemctl", "test executable\n");
+        ::chmod((tree.root / "bin/systemctl").c_str(), 0755);
+    }
+
+    std::filesystem::path sssdMain() const {
+        return tree.root / "etc/sssd/sssd.conf";
+    }
+    std::filesystem::path sssdConfd() const {
+        return tree.root / "etc/sssd/conf.d";
+    }
+    std::filesystem::path sssdDropIn() const {
+        return sssdConfd() / "zzzz-fic.conf";
+    }
+    std::filesystem::path krb5Main() const {
+        return tree.root / "etc/krb5.conf";
+    }
+
+    const fic::platform::PlatformExecutableResolver& resolver() const {
+        if (!resolver_) {
+            fic::platform::PlatformExecutables executables;
+            executables.entries.push_back(
+                {fic::platform::ExecutableId::Systemctl,
+                 {tree.root / "bin/systemctl"}});
+            fic::platform::PlatformExecutableResolverOptions options;
+            options.enforceTrustedOwnership = false;
+            resolver_ = std::make_unique<fic::platform::PlatformExecutableResolver>(
+                std::move(executables), options);
+        }
+        return *resolver_;
+    }
+
+    SssdRollbackOptions sssdOptions() const {
+        SssdRollbackOptions options;
+        options.configuration.mainFile.path = sssdMain();
+        options.configuration.mainFile.expectedOwner = ::geteuid();
+        options.configuration.mainFile.expectedGroup = ::getegid();
+        options.configuration.mainFile.exactMode = 0600;
+        options.configuration.mainFile.forbiddenMode = 0022;
+        options.configuration.snippetDirectories = {sssdConfd()};
+        options.configuration.managedSnippetFile = sssdDropIn();
+        options.executables = &resolver();
+        options.runner = [](const std::string&,
+                            const std::vector<std::string>&,
+                            const ProcessOptions&) {
+            ProcessResult result;
+            result.started = true;
+            result.exitCode = 0;
+            return result;
+        };
+        return options;
+    }
+
+    KerberosRollbackOptions kerberosOptions() const {
+        KerberosRollbackOptions options;
+        options.configuration.mainFile.path = krb5Main();
+        options.configuration.mainFile.expectedOwner = ::geteuid();
+        options.configuration.mainFile.expectedGroup = ::getegid();
+        options.configuration.mainFile.forbiddenMode = 0022;
+        return options;
+    }
+
+    RollbackExecutorDeps sssdDeps() const {
+        RollbackExecutorDeps deps;
+        SssdRollbackOptions options = sssdOptions();
+        deps.sssdOptions = [options]() { return options; };
+        return deps;
+    }
+
+    RollbackExecutorDeps kerberosDeps() const {
+        RollbackExecutorDeps deps;
+        KerberosRollbackOptions options = kerberosOptions();
+        deps.kerberosOptions = [options]() { return options; };
+        return deps;
+    }
+
+    TempTree tree;
+    mutable std::unique_ptr<fic::platform::PlatformExecutableResolver> resolver_;
+};
+
+void testSssdExecutorRollbackRemovesManagedSetting() {
+    IdentityConfigTree env;
+    writeFile(env.sssdMain(), "[pam]\noffline_credentials_expiration = 7\n");
+    ::chmod(env.sssdMain().c_str(), 0600);
+    writeFile(env.sssdDropIn(),
+              "# FIC managed configuration\n[pam]\n"
+              "offline_credentials_expiration = 30\n");
+    ::chmod(env.sssdDropIn().c_str(), 0600);
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kSssdPolicy, "pam/offline_credentials_expiration",
+                  UndoAction{MutationBackend::Sssd,
+                             UndoRemoveSssdManagedSetting{
+                                 "pam", "offline_credentials_expiration",
+                                 "30"}});
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSssdPolicy, "pam/offline_credentials_expiration", env.sssdDeps());
+    require(report.status == RollbackStatus::Success,
+            "sssd executor rollback must succeed: " + report.message);
+    require(!std::filesystem::exists(env.sssdDropIn()),
+            "the semantically empty FIC drop-in must be removed");
+    require(readFile(env.sssdMain()) ==
+                "[pam]\noffline_credentials_expiration = 7\n",
+            "the foreign sssd.conf must remain byte-for-byte unchanged");
+}
+
+void testSssdExecutorDriftConflictRefusesDisable() {
+    IdentityConfigTree env;
+    writeFile(env.sssdMain(), "[pam]\noffline_credentials_expiration = 7\n");
+    ::chmod(env.sssdMain().c_str(), 0600);
+    writeFile(env.sssdDropIn(),
+              "# FIC managed configuration\n[pam]\n"
+              "offline_credentials_expiration = 40\n");
+    ::chmod(env.sssdDropIn().c_str(), 0600);
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kSssdPolicy, "pam/offline_credentials_expiration",
+                  UndoAction{MutationBackend::Sssd,
+                             UndoRemoveSssdManagedSetting{
+                                 "pam", "offline_credentials_expiration",
+                                 "30"}});
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSssdPolicy, "pam/offline_credentials_expiration", env.sssdDeps());
+    require(report.status == RollbackStatus::Conflict,
+            "sssd executor drift must Conflict");
+    require(!report.rollbackCompleted(),
+            "a Conflict must refuse the policy disable");
+    require(readFile(env.sssdDropIn()).find(
+                "offline_credentials_expiration = 40") !=
+                std::string::npos,
+            "the drifted drop-in must never be overwritten");
+}
+
+void testKerberosExecutorRollbackRestoresExactLine() {
+    IdentityConfigTree env;
+    writeFile(env.krb5Main(), "[libdefaults]\n    ticket_lifetime = 36000s\n");
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kKerberosPolicy, "libdefaults/ticket_lifetime",
+                  UndoAction{MutationBackend::Kerberos,
+                             UndoRestoreKerberosScalar{
+                                 "libdefaults", "ticket_lifetime", "36000s",
+                                 KerberosBeforeKind::Present,
+                                 "    ticket_lifetime = 8h", true}});
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kKerberosPolicy, "libdefaults/ticket_lifetime", env.kerberosDeps());
+    require(report.status == RollbackStatus::Success,
+            "kerberos executor rollback must succeed: " + report.message);
+    require(readFile(env.krb5Main()) ==
+                "[libdefaults]\n    ticket_lifetime = 8h\n",
+            "the exact original raw line must be restored");
+}
+
+void testKerberosExecutorDriftConflictRefusesDisable() {
+    IdentityConfigTree env;
+    writeFile(env.krb5Main(), "[libdefaults]\nticket_lifetime = 2h\n");
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    recordApplied(kKerberosPolicy, "libdefaults/ticket_lifetime",
+                  UndoAction{MutationBackend::Kerberos,
+                             UndoRestoreKerberosScalar{
+                                 "libdefaults", "ticket_lifetime", "36000s",
+                                 KerberosBeforeKind::Present,
+                                 "ticket_lifetime = 8h", true}});
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kKerberosPolicy, "libdefaults/ticket_lifetime", env.kerberosDeps());
+    require(report.status == RollbackStatus::Conflict,
+            "kerberos executor drift must Conflict");
+    require(!report.rollbackCompleted(),
+            "a Conflict must refuse the policy disable");
+    require(readFile(env.krb5Main()) ==
+                "[libdefaults]\nticket_lifetime = 2h\n",
+            "the administrator value must be preserved");
+}
+
 int main() {
     const struct {
         const char* name;
         void (*test)();
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
+        {"sssd executor rollback removes managed setting",
+         testSssdExecutorRollbackRemovesManagedSetting},
+        {"sssd executor drift conflict refuses disable",
+         testSssdExecutorDriftConflictRefusesDisable},
+        {"kerberos executor rollback restores exact line",
+         testKerberosExecutorRollbackRestoresExactLine},
+        {"kerberos executor drift conflict refuses disable",
+         testKerberosExecutorDriftConflictRefusesDisable},
         {"not enrolled policy keeps legacy disable", testNotEnrolledPolicyKeepsLegacyDisable},
         {"unsupported policy refuses disable", testUnsupportedPolicyRefusesDisable},
         {"sysctl rollback removes managed key and moves runtime",

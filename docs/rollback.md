@@ -482,6 +482,15 @@ I/O), это ошибка загрузки — fail closed. Существующ
   platform-baseline rollback (см. следующий раздел). Payload несёт только
   policy identity — доказательство того, что последнее изменившее состояние
   apply выполнил FIC; пред-FIC owner/group/mode не хранятся никогда.
+* `UndoRemoveSssdManagedSetting{section, option, appliedValue}` — SSSD
+  ownership-release rollback (см. раздел «SSSD rollback
+  (IDENTITY_ACCESS/SSSD)»); payload доказывает FIC-владение setting'ом
+  (section, option, appliedValue); предыдущее foreign значение не хранится.
+* `UndoRestoreKerberosScalar{section, relation, appliedValue, beforeKind,
+  beforeRawLine, sectionExistedBefore}` — Kerberos reversible structured
+  edit (см. раздел «Kerberos rollback (IDENTITY_ACCESS/KERBEROS)»);
+  payload хранит ТОЧНЫЙ before-state целевой relation (raw line или факт
+  отсутствия), snapshot всего krb5.conf не используется.
 
 ## Platform-baseline rollback (DAC hardening)
 
@@ -796,6 +805,93 @@ Rollback семантика (обе топологии):
   pre-rollback FIC-owned состояние (только пока цель всё ещё является
   rollback-installed состоянием; при внешнем drift компенсация запрещена),
   выполняется компенсирующая пересборка, journal-запись остаётся активной.
+
+## SSSD rollback (IDENTITY_ACCESS/SSSD)
+
+Rollback-supported: только `sssd_offline_credentials_expiration` (explicit
+whitelist; любая будущая SSSD-политика — Unsupported по умолчанию).
+
+**Модель владения.** FIC никогда не редактирует foreign
+`/etc/sssd/sssd.conf`. Все FIC-owned настройки SSSD живут в едином
+FIC-owned drop-in `/etc/sssd/conf.d/zzzz-fic.conf` (root owner, mode 0600,
+atomic writes, отказ от symlink/non-regular target). Основной файл остаётся
+byte-for-byte неизменным и при apply, и при rollback.
+
+```text
+FIC-owned drop-in:
+    /etc/sssd/conf.d/zzzz-fic.conf        foreign main config:
+        # FIC managed configuration           /etc/sssd/sssd.conf  (read-only для FIC)
+        [pam]
+        offline_credentials_expiration = 30
+```
+
+**Apply** (`inspect → Prepared → atomic install → effective verification →
+SSSD restart verification → Applied`):
+
+* топология проверяется перед мутацией: любой foreign snippet, сортирующийся
+  ПОЗЖЕ `zzzz-fic.conf` и определяющий target `(section, option)`, делает FIC
+  drop-in неоднозначно effective — apply fail closed, чужие файлы не
+  меняются;
+* unsafe/malformed FIC drop-in — fail closed;
+* если желаемое значение уже effective исключительно за счёт foreign
+  конфигурации и FIC ничего не меняет — journal-запись НЕ создаётся;
+* после persistent mutation подключается существующий `SssdRuntime`: активный
+  SSSD перезапускается, postcondition проверяется, и только затем
+  `Prepared → Applied`;
+* смена значения активной политики (`30 → 60`) — ownership-safe release
+  старой mutation (rollback backend) → старая запись `RolledBack` → свежая
+  `Prepared` → apply → `Applied`; две активные записи одного logical identity
+  невозможны; Conflict при release — fail closed.
+
+**Rollback** (`ownership-release`):
+
+* `AFTER` (option в FIC drop-in, value == appliedValue): удалить только
+  target option; семантически пустой drop-in удаляется целиком
+  (CAS-verified unlink); foreign `sssd.conf` и чужие snippets не меняются;
+  топология перечитывается, активный SSSD перезапускается и проверяется;
+  прежнее foreign значение становится effective естественно (без хранения
+  его в journal);
+* `BEFORE` (option уже отсутствует) — `NothingToDo`, запись завершается как
+  успешно откатанная;
+* `DRIFT` (значение отличается / drop-in malformed/unsafe) — `Conflict`,
+  ничего не менять.
+
+## Kerberos rollback (IDENTITY_ACCESS/KERBEROS)
+
+Rollback-supported: только `kerberos_ticket_lifetime` (explicit whitelist).
+FIC-owned drop-in НЕ используется: target — relation
+`[libdefaults]/ticket_lifetime` в root `/etc/krb5.conf` (foreign main
+config), редактируемая structured edit'ом с сохранением существующего
+conservative parser/include-graph подхода.
+
+**Apply** (`inspect exact BEFORE → Prepared → CAS/atomic structured edit →
+reparse full profile graph → effective verification → Applied`):
+
+* full profile graph обязан парситься; target relation не должна быть
+  определена во внешнем `include`/`includedir`; duplicate/ambiguous target в
+  root — fail closed; чужие include-файлы никогда не редактируются;
+* payload фиксирует ТОЧНЫЙ before-state: `Present` + исходная raw строка
+  (включая indentation и `*`-маркеры key-final/value-final), либо `Missing`
+  + `sectionExistedBefore`; snapshot всего `/etc/krb5.conf` не хранится;
+* если effective target уже равен желаемому значению через foreign
+  конфигурацию — journal mutation не создаётся;
+* смена значения активной политики — как у SSSD: ownership-safe release
+  (inverse delta) → `RolledBack` → свежая `Prepared` → `Applied`; Conflict
+  при release — fail closed.
+
+**Rollback** (inverse delta + CAS, классификация против journal):
+
+* топологический drift (target появился во внешнем include, дубликат в root,
+  raw-строка изменилась несовместимым образом) — `Conflict`, ничего не
+  менять (например, admin `2h` никогда не перезаписывается recorded `8h`);
+* `beforeKind == Present` и текущее значение == appliedValue — восстановить
+  ТОЧНУЮ исходную raw строку (indentation, `*`-маркеры); после записи —
+  reparse full graph и проверка восстановленного before-state;
+* `beforeKind == Missing` и текущее значение == appliedValue — удалить
+  relation; если journal доказывает, что section создан FIC
+  (`sectionExistedBefore == false`), section header удаляется только когда
+  структурно доказано, что он теперь пуст;
+* текущее состояние уже совпадает с recorded before-state — `NothingToDo`.
 
 ## Enrollment и результаты
 

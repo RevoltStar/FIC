@@ -20,7 +20,13 @@ protected:
         fic::identity::kerberos::KerberosConfiguration& configuration,
         const std::string& expectedValue) = 0;
 
+    const fic::identity::kerberos::KerberosConfigurationOptions&
+    configurationOptions() const {
+        return configurationOptions_;
+    }
+
 private:
+    fic::identity::kerberos::KerberosConfigurationOptions configurationOptions_;
     fic::identity::kerberos::KerberosConfiguration configuration_;
 };
 

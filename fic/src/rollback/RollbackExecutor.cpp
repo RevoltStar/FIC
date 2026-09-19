@@ -75,6 +75,17 @@ bool isSupportedGrubPolicy(const std::string& policyName) {
            policyName == "grub_disable_recovery";
 }
 
+// Explicit whitelists: any future SSSD/Kerberos policy must never become
+// automatically rollback-supported without its own journal integration and
+// undo action.
+bool isSupportedSssdPolicy(const std::string& policyName) {
+    return policyName == "sssd_offline_credentials_expiration";
+}
+
+bool isSupportedKerberosPolicy(const std::string& policyName) {
+    return policyName == "kerberos_ticket_lifetime";
+}
+
 MutationRollbackOutcome outcomeFromOperation(
     MutationId id,
     const std::string& resource,
@@ -351,6 +362,52 @@ MutationRollbackOutcome undoDeviceFeature(
     return outcome;
 }
 
+MutationRollbackOutcome undoSssdSetting(
+    const RollbackExecutorDeps& deps,
+    const MutationRecord& record,
+    const UndoRemoveSssdManagedSetting& undo) {
+    MutationRollbackOutcome outcome;
+    outcome.id = record.id;
+    outcome.resource = record.resource;
+    if (!deps.sssdOptions) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "SSSD rollback backend не настроен";
+        return outcome;
+    }
+    const SssdRollbackResult result = undoSssdManagedSetting(
+        deps.sssdOptions(), undo);
+    outcome.status = result.conflict
+        ? RollbackStatus::Conflict
+        : (result.nothingToDo ? RollbackStatus::NothingToDo
+                              : (result.ok ? RollbackStatus::Success
+                                           : RollbackStatus::Failed));
+    outcome.message = result.message;
+    return outcome;
+}
+
+MutationRollbackOutcome undoKerberosScalarMutation(
+    const RollbackExecutorDeps& deps,
+    const MutationRecord& record,
+    const UndoRestoreKerberosScalar& undo) {
+    MutationRollbackOutcome outcome;
+    outcome.id = record.id;
+    outcome.resource = record.resource;
+    if (!deps.kerberosOptions) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "Kerberos rollback backend не настроен";
+        return outcome;
+    }
+    const KerberosRollbackResult result = undoKerberosScalar(
+        deps.kerberosOptions(), undo);
+    outcome.status = result.conflict
+        ? RollbackStatus::Conflict
+        : (result.nothingToDo ? RollbackStatus::NothingToDo
+                              : (result.ok ? RollbackStatus::Success
+                                           : RollbackStatus::Failed));
+    outcome.message = result.message;
+    return outcome;
+}
+
 MutationRollbackOutcome undoMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record) {
@@ -373,6 +430,18 @@ MutationRollbackOutcome undoMutation(
             std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Grub) {
             return undoGrubSetting(deps, record, *grubSetting);
+        }
+    }
+    if (const auto* sssdSetting =
+            std::get_if<UndoRemoveSssdManagedSetting>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Sssd) {
+            return undoSssdSetting(deps, record, *sssdSetting);
+        }
+    }
+    if (const auto* kerberosScalar =
+            std::get_if<UndoRestoreKerberosScalar>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Kerberos) {
+            return undoKerberosScalarMutation(deps, record, *kerberosScalar);
         }
     }
     if (const auto* firewallPolicy =
@@ -506,6 +575,18 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
         // Explicit whitelist: a new GRUB policy needs its own journal
         // integration and undo payload before it becomes rollback-supported.
         return isSupportedGrubPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
+    }
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "SSSD") {
+        return isSupportedSssdPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
+    }
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "KERBEROS") {
+        return isSupportedKerberosPolicy(policy.policyName)
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
@@ -659,6 +740,92 @@ RollbackReport checkUnrecordedOwnership(
         report.status = RollbackStatus::NothingToDo;
         report.message = "Active mutation records отсутствуют; FIC managed "
                          "GRUB значение '" + resourceHint + "' отсутствует";
+        return report;
+    }
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "SSSD") {
+        if (resourceHint.empty()) {
+            return provenanceUnavailable(policy);
+        }
+        if (!deps.sssdOptions) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "SSSD rollback backend не настроен";
+            return report;
+        }
+        SssdRollbackOptions options = deps.sssdOptions();
+        const auto separator = resourceHint.find('/');
+        if (separator == std::string::npos) {
+            return provenanceUnavailable(policy);
+        }
+        const std::string section = resourceHint.substr(0, separator);
+        const std::string option = resourceHint.substr(separator + 1);
+        fic::identity::sssd::SssdConfiguration configuration(
+            options.configuration);
+        fic::identity::sssd::SssdManagedSnippetObservation observed;
+        std::string error;
+        if (!configuration.inspectManagedSnippet(
+                section, option, observed, error)) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message =
+                "Не удалось проанализировать SSSD конфигурацию: " + error;
+            return report;
+        }
+        // Provenance for SSSD lives in the FIC-owned drop-in: an option
+        // there without an active journal record is unattributable owned
+        // state and must fail closed.
+        if (observed.optionPresent) {
+            return provenanceUnavailable(policy);
+        }
+        RollbackReport report;
+        report.status = RollbackStatus::NothingToDo;
+        report.message = "Active mutation records отсутствуют; FIC-owned "
+                         "SSSD drop-in не содержит '" +
+            resourceHint + "'";
+        return report;
+    }
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "KERBEROS") {
+        if (resourceHint.empty()) {
+            return provenanceUnavailable(policy);
+        }
+        if (!deps.kerberosOptions) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "Kerberos rollback backend не настроен";
+            return report;
+        }
+        KerberosRollbackOptions options = deps.kerberosOptions();
+        const auto separator = resourceHint.find('/');
+        if (separator == std::string::npos) {
+            return provenanceUnavailable(policy);
+        }
+        const std::string section = resourceHint.substr(0, separator);
+        const std::string relation = resourceHint.substr(separator + 1);
+        fic::identity::kerberos::KerberosConfiguration configuration(
+            options.configuration);
+        fic::identity::kerberos::KerberosRootScalarObservation observed;
+        std::string error;
+        if (!configuration.inspectRootScalar(
+                section, relation, observed, error)) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message =
+                "Не удалось проанализировать Kerberos профиль: " + error;
+            return report;
+        }
+        // A root/external definition of the target without an active
+        // journal record is indistinguishable from a foreign (or
+        // legacy-FIC) value: fail closed instead of guessing.
+        if (observed.relationInRoot || observed.externallyDefined) {
+            return provenanceUnavailable(policy);
+        }
+        RollbackReport report;
+        report.status = RollbackStatus::NothingToDo;
+        report.message = "Active mutation records отсутствуют; target "
+                         "relation '" +
+            resourceHint + "' в Kerberos профиле отсутствует";
         return report;
     }
     // FIREWALL and DC: no cheap safe ownership check without the journal.
@@ -831,6 +998,25 @@ RollbackExecutorDeps productionRollbackDeps(
     deps.dacOptions = [dacConfig]() {
         DacBaselineRollbackOptions options;
         options.platform = dacConfig;
+        return options;
+    };
+
+    // SSSD ownership-release rollback: the FIC-owned drop-in location and
+    // the snippet topology come from the production SssdConfigurationOptions.
+    deps.sssdOptions = [&executables]() {
+        SssdRollbackOptions options;
+        options.configuration =
+            fic::identity::sssd::SssdConfigurationOptions::production();
+        options.executables = &executables;
+        return options;
+    };
+
+    // Kerberos reversible structured edit rollback: the root /etc/krb5.conf
+    // location comes from the production KerberosConfigurationOptions.
+    deps.kerberosOptions = []() {
+        KerberosRollbackOptions options;
+        options.configuration =
+            fic::identity::kerberos::KerberosConfigurationOptions::production();
         return options;
     };
 

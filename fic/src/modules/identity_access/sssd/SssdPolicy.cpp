@@ -6,6 +6,7 @@
 SssdPolicy::SssdPolicy(
     fic::identity::sssd::SssdConfigurationOptions options)
     : IdentityAccessPolicy("SSSD"),
+      configurationOptions_(options),
       configuration_(std::move(options)) {
 }
 

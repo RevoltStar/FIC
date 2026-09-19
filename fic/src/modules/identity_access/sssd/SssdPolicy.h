@@ -20,7 +20,13 @@ protected:
         fic::identity::sssd::SssdConfiguration& configuration,
         const std::string& expectedValue) = 0;
 
+    const fic::identity::sssd::SssdConfigurationOptions&
+    configurationOptions() const {
+        return configurationOptions_;
+    }
+
 private:
+    fic::identity::sssd::SssdConfigurationOptions configurationOptions_;
     fic::identity::sssd::SssdConfiguration configuration_;
 };
 

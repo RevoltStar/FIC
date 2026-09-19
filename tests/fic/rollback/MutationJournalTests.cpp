@@ -1976,6 +1976,411 @@ void testMigrationDoesNotRewriteJournalFile() {
     require(contentAfter == contentBefore,
             "the migration must keep the journal content unchanged");
 }
+// ------------------------------------------------------------ sssd/kerberos -
+
+void testSssdUndoPayloadRoundTrip() {
+    TempFile file;
+    MutationId id = 0;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+        MutationRecord record;
+        record.policy =
+            PolicyRef{"IDENTITY_ACCESS", "SSSD",
+                      "sssd_offline_credentials_expiration"};
+        record.resource = "pam/offline_credentials_expiration";
+        record.undo = UndoAction{
+            MutationBackend::Sssd,
+            UndoRemoveSssdManagedSetting{
+                "pam", "offline_credentials_expiration", "30"}};
+        require(journal.prepareMutation(record, id, error), error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    MutationJournal reloaded(file.path);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1,
+            "sssd record must survive reload");
+    const MutationRecord& record = reloaded.records().front();
+    require(record.undo.backend == MutationBackend::Sssd,
+            "sssd backend must survive reload");
+    require(record.resource == "pam/offline_credentials_expiration",
+            "sssd resource must survive reload");
+    const auto* undo =
+        std::get_if<UndoRemoveSssdManagedSetting>(&record.undo.payload);
+    require(undo != nullptr, "sssd undo payload must survive reload");
+    require(undo->section == "pam" &&
+                undo->option == "offline_credentials_expiration" &&
+                undo->appliedValue == "30",
+            "sssd section/option/appliedValue must survive reload");
+}
+
+void testKerberosUndoPayloadRoundTrip() {
+    TempFile file;
+    MutationId id = 0;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+        MutationRecord record;
+        record.policy =
+            PolicyRef{"IDENTITY_ACCESS", "KERBEROS",
+                      "kerberos_ticket_lifetime"};
+        record.resource = "libdefaults/ticket_lifetime";
+        record.undo = UndoAction{
+            MutationBackend::Kerberos,
+            UndoRestoreKerberosScalar{
+                "libdefaults",
+                "ticket_lifetime",
+                "36000s",
+                KerberosBeforeKind::Present,
+                "    ticket_lifetime = 8h",
+                true}};
+        require(journal.prepareMutation(record, id, error), error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    MutationJournal reloaded(file.path);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1,
+            "kerberos record must survive reload");
+    const MutationRecord& record = reloaded.records().front();
+    require(record.undo.backend == MutationBackend::Kerberos,
+            "kerberos backend must survive reload");
+    require(record.resource == "libdefaults/ticket_lifetime",
+            "kerberos resource must survive reload");
+    const auto* undo =
+        std::get_if<UndoRestoreKerberosScalar>(&record.undo.payload);
+    require(undo != nullptr, "kerberos undo payload must survive reload");
+    require(undo->section == "libdefaults" &&
+                undo->relation == "ticket_lifetime" &&
+                undo->appliedValue == "36000s" &&
+                undo->beforeKind == KerberosBeforeKind::Present &&
+                undo->beforeRawLine == "    ticket_lifetime = 8h" &&
+                undo->sectionExistedBefore,
+            "kerberos before-state must survive reload exactly");
+
+    // Missing-kind payload round trip.
+    TempFile missingFile;
+    {
+        MutationJournal journal(missingFile.path);
+        std::string error2;
+        require(journal.load(error2), error2);
+        MutationRecord record2;
+        record2.policy =
+            PolicyRef{"IDENTITY_ACCESS", "KERBEROS",
+                      "kerberos_ticket_lifetime"};
+        record2.resource = "libdefaults/ticket_lifetime";
+        record2.undo = UndoAction{
+            MutationBackend::Kerberos,
+            UndoRestoreKerberosScalar{
+                "libdefaults",
+                "ticket_lifetime",
+                "36000s",
+                KerberosBeforeKind::Missing,
+                {},
+                false}};
+        MutationId id2 = 0;
+        require(journal.prepareMutation(record2, id2, error2), error2);
+    }
+    MutationJournal reloadedMissing(missingFile.path);
+    std::string error3;
+    require(reloadedMissing.load(error3), error3);
+    const auto* undo2 = std::get_if<UndoRestoreKerberosScalar>(
+        &reloadedMissing.records().front().undo.payload);
+    require(undo2 != nullptr && undo2->beforeKind ==
+                    KerberosBeforeKind::Missing &&
+                undo2->beforeRawLine.empty() && !undo2->sectionExistedBefore,
+            "kerberos missing before-kind must survive reload");
+}
+
+std::string sssdJournalHead(const std::string& resource =
+                                "pam/offline_credentials_expiration") {
+    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+           "\"policy\":{\"module\":\"IDENTITY_ACCESS\",\"submodule\":\"SSSD\","
+           "\"policy\":\"sssd_offline_credentials_expiration\"},\"resource\":\"" +
+        resource +
+        "\",\"backend\":\"sssd\",\"status\":\"applied\",\"created_at_epoch\":1,"
+        "\"updated_at_epoch\":1,\"error\":\"\",\"undo\":{";
+}
+
+std::string kerberosJournalHead(const std::string& resource =
+                                    "libdefaults/ticket_lifetime") {
+    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+           "\"policy\":{\"module\":\"IDENTITY_ACCESS\","
+           "\"submodule\":\"KERBEROS\","
+           "\"policy\":\"kerberos_ticket_lifetime\"},\"resource\":\"" +
+        resource +
+        "\",\"backend\":\"kerberos\",\"status\":\"applied\","
+        "\"created_at_epoch\":1,"
+        "\"updated_at_epoch\":1,\"error\":\"\",\"undo\":{";
+}
+
+void requireBrokenIdentityJournalFailsClosed(const std::string& content,
+                                             const std::string& description) {
+    TempFile file;
+    file.write(content);
+    MutationJournal journal(file.path);
+    std::string error;
+    require(!journal.load(error),
+            "malformed journal must fail closed: " + description);
+    require(!error.empty(), "journal failure must report an error");
+}
+
+void testSssdUndoMalformedPayloadsFailClosed() {
+    const std::string head = sssdJournalHead();
+    const std::string tail = "}}]}";
+    const std::string action =
+        "\"action\":\"remove_sssd_managed_setting\",\"backend\":\"sssd\",";
+    const std::string option =
+        "\"section\":\"pam\",\"option\":\"offline_credentials_expiration\",";
+
+    // Backend/payload mismatch: the SSSD action under another backend is
+    // rejected; an SSSD backend with a foreign action is rejected too.
+    requireBrokenIdentityJournalFailsClosed(
+        head + "\"action\":\"remove_sssd_managed_setting\","
+               "\"backend\":\"grub\"," + option +
+            "\"applied_value\":\"30\"}" + tail,
+        "sssd action with wrong backend");
+    requireBrokenIdentityJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\","
+               "\"backend\":\"sssd\","
+               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":\"0\"}" + tail,
+        "foreign action with sssd backend");
+    requireBrokenIdentityJournalFailsClosed(
+        head + "\"action\":\"remove_sssd_managed_setting\","
+               "\"backend\":\"sssd\"}" + tail,
+        "missing payload fields");
+    // STRUCTURAL: applied_value must be present and a JSON string.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + option + "}" + tail, "missing applied value");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + option + "\"applied_value\":5}" + tail,
+        "non-string applied value");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + option + "\"applied_value\":null}" + tail,
+        "null applied value");
+    // Invalid section/option syntax.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + "\"section\":\"[pam\",\"option\":\"offline_"
+                        "credentials_expiration\",\"applied_value\":\"30\"}" +
+            tail,
+        "invalid section");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":\"pam\",\"option\":\"off line\","
+            "\"applied_value\":\"30\"}" + tail,
+        "invalid option name");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":\"pam\",\"option\":\"\",\"applied_value\":\"30\"}" +
+            tail,
+        "empty option name");
+    // CR/LF in the applied value.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + option + "\"applied_value\":\"3\\n0\"}" + tail,
+        "applied value with newline");
+    // Resource/payload identity mismatch.
+    requireBrokenIdentityJournalFailsClosed(
+        sssdJournalHead("pam/other_option") + action + option +
+            "\"applied_value\":\"30\"}" + tail,
+        "resource/option mismatch");
+}
+
+void testKerberosUndoMalformedPayloadsFailClosed() {
+    const std::string head = kerberosJournalHead();
+    const std::string tail = "}}]}";
+    const std::string action =
+        "\"action\":\"restore_kerberos_scalar\",\"backend\":\"kerberos\",";
+    const std::string section =
+        "\"section\":\"libdefaults\",\"relation\":\"ticket_lifetime\",";
+
+    // Backend/payload mismatch.
+    requireBrokenIdentityJournalFailsClosed(
+        head + "\"action\":\"restore_kerberos_scalar\",\"backend\":\"sssd\"," +
+            section + "\"applied_value\":\"36000s\",\"before_kind\":"
+                      "\"missing\",\"before_raw_line\":\"\","
+                      "\"section_existed_before\":false}" + tail,
+        "kerberos action with wrong backend");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + "\"section\":\"libdefaults\"}" + tail,
+        "missing payload fields");
+    // Wrong JSON types.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section + "\"applied_value\":5,"
+                                  "\"before_kind\":\"missing\","
+                                  "\"before_raw_line\":\"\","
+                                  "\"section_existed_before\":false}" + tail,
+        "non-string applied value");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"before_kind\":\"missing\",\"before_raw_line\":5,"
+            "\"section_existed_before\":false}" + tail,
+        "non-string before_raw_line");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"before_kind\":5,\"before_raw_line\":\"\","
+            "\"section_existed_before\":false}" + tail,
+        "non-string before_kind");
+    // Missing required fields.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"before_kind\":\"missing\",\"before_raw_line\":\"\"}" + tail,
+        "missing section_existed_before");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"applied_value\":\"36000s\",\"before_raw_line\":\"\","
+            "\"section_existed_before\":false}" + tail,
+        "missing before_kind");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + "\"section\":\"libdefaults\"}" + tail,
+        "missing payload fields entirely");
+    // Invalid section/option.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":\"\",\"relation\":\"ticket_lifetime\","
+            "\"applied_value\":\"36000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "empty section");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action +
+            "\"section\":\"libdefaults\",\"relation\":\"tick et\","
+            "\"applied_value\":\"36000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "invalid relation name");
+    // Invalid before_kind value.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"applied_value\":\"36000s\",\"before_kind\":\"bogus\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "unknown before_kind");
+    // beforeRawLine/sectionExistedBefore consistency rules.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"applied_value\":\"36000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"ticket_lifetime = 8h\","
+            "\"section_existed_before\":false}" + tail,
+        "raw line with missing before-kind");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"applied_value\":\"36000s\",\"before_kind\":\"present\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":true}" + tail,
+        "empty raw line with present before-kind");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"applied_value\":\"36000s\",\"before_kind\":\"present\","
+            "\"before_raw_line\":\"ticket_lifetime = 8h\","
+            "\"section_existed_before\":false}" + tail,
+        "present before-kind without section flag");
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"applied_value\":\"36000s\",\"before_kind\":\"present\","
+            "\"before_raw_line\":\"ticket_lifetime\\r = 8h\","
+            "\"section_existed_before\":true}" + tail,
+        "CR in raw before line");
+    // CR in the applied value.
+    requireBrokenIdentityJournalFailsClosed(
+        head + action + section +
+            "\"applied_value\":\"36\\n000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "applied value with newline");
+    // Resource/payload identity mismatch.
+    requireBrokenIdentityJournalFailsClosed(
+        kerberosJournalHead("libdefaults/other") + action + section +
+            "\"applied_value\":\"36000s\",\"before_kind\":\"missing\","
+            "\"before_raw_line\":\"\",\"section_existed_before\":false}" + tail,
+        "resource/relation mismatch");
+}
+
+void testSssdKerberosWriterLoaderParity() {
+    // The writer must reject everything the loader rejects, and none of the
+    // rejected records may ever be persisted.
+    TempFile file;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+
+        MutationRecord record;
+        record.policy =
+            PolicyRef{"IDENTITY_ACCESS", "SSSD",
+                      "sssd_offline_credentials_expiration"};
+        record.resource = "pam/offline_credentials_expiration";
+        // CR in the applied value.
+        record.undo = UndoAction{
+            MutationBackend::Sssd,
+            UndoRemoveSssdManagedSetting{
+                "pam", "offline_credentials_expiration", "3\n0"}};
+        require(!journal.prepareMutation(record, record.id, error),
+                "writer must reject CR in sssd applied value");
+        // Resource/payload mismatch.
+        record.resource = "pam/other";
+        record.undo = UndoAction{
+            MutationBackend::Sssd,
+            UndoRemoveSssdManagedSetting{
+                "pam", "offline_credentials_expiration", "30"}};
+        require(!journal.prepareMutation(record, record.id, error),
+                "writer must reject sssd resource/payload mismatch");
+        // Backend/payload type mismatch.
+        record.resource = "pam/offline_credentials_expiration";
+        record.undo = UndoAction{
+            MutationBackend::Sssd,
+            UndoRemoveGrubManagedSetting{
+                "pam/offline_credentials_expiration", "30"}};
+        require(!journal.prepareMutation(record, record.id, error),
+                "writer must reject sssd backend/payload type mismatch");
+
+        MutationRecord kerberosRecord;
+        kerberosRecord.policy =
+            PolicyRef{"IDENTITY_ACCESS", "KERBEROS",
+                      "kerberos_ticket_lifetime"};
+        kerberosRecord.resource = "libdefaults/ticket_lifetime";
+        // Empty applied value.
+        kerberosRecord.undo = UndoAction{
+            MutationBackend::Kerberos,
+            UndoRestoreKerberosScalar{
+                "libdefaults", "ticket_lifetime", "",
+                KerberosBeforeKind::Missing, {}, false}};
+        require(!journal.prepareMutation(kerberosRecord, kerberosRecord.id,
+                                         error),
+                "writer must reject empty kerberos applied value");
+        // Raw line with a missing before-kind.
+        kerberosRecord.undo = UndoAction{
+            MutationBackend::Kerberos,
+            UndoRestoreKerberosScalar{
+                "libdefaults", "ticket_lifetime", "36000s",
+                KerberosBeforeKind::Missing, "ticket_lifetime = 8h", false}};
+        require(!journal.prepareMutation(kerberosRecord, kerberosRecord.id,
+                                         error),
+                "writer must reject raw line with missing before-kind");
+        // Present before-kind without the section flag.
+        kerberosRecord.undo = UndoAction{
+            MutationBackend::Kerberos,
+            UndoRestoreKerberosScalar{
+                "libdefaults", "ticket_lifetime", "36000s",
+                KerberosBeforeKind::Present, "ticket_lifetime = 8h", false}};
+        require(!journal.prepareMutation(kerberosRecord, kerberosRecord.id,
+                                         error),
+                "writer must reject present before-kind without section flag");
+        // Kerberos resource/payload mismatch.
+        kerberosRecord.resource = "libdefaults/other";
+        kerberosRecord.undo = UndoAction{
+            MutationBackend::Kerberos,
+            UndoRestoreKerberosScalar{
+                "libdefaults", "ticket_lifetime", "36000s",
+                KerberosBeforeKind::Missing, {}, false}};
+        require(!journal.prepareMutation(kerberosRecord, kerberosRecord.id,
+                                         error),
+                "writer must reject kerberos resource/payload mismatch");
+    }
+    MutationJournal reloaded(file.path);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.records().empty(),
+            "rejected records must never be persisted");
+}
+
 int main() {
     const struct {
         const char* name;
@@ -2023,6 +2428,14 @@ int main() {
          testGrubResourcePayloadMismatchFailsClosed},
         {"duplicate active logical identity fails closed",
          testDuplicateActiveLogicalIdentityFailsClosed},
+        {"sssd undo payload round trip", testSssdUndoPayloadRoundTrip},
+        {"kerberos undo payload round trip", testKerberosUndoPayloadRoundTrip},
+        {"sssd undo malformed payloads fail closed",
+         testSssdUndoMalformedPayloadsFailClosed},
+        {"kerberos undo malformed payloads fail closed",
+         testKerberosUndoMalformedPayloadsFailClosed},
+        {"sssd/kerberos writer loader parity",
+         testSssdKerberosWriterLoaderParity},
         {"resolved history with active record loads",
          testResolvedHistoryWithActiveRecordLoads},
         {"daemon journal override and helpers", testDaemonJournalOverrideAndHelpers},

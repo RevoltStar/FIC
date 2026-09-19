@@ -496,6 +496,109 @@ bool verifyExpectedValues(
     return true;
 }
 
+// Decides whether the section header of `section` can be safely removed
+// after the relation on `targetLine` was removed: exactly one header exists
+// and the remaining body (up to the next header or EOF) contains only
+// blank/comment lines — the provable "FIC created this section and it is now
+// empty" case. Returns the header line index or nullopt.
+std::optional<std::size_t> provablyEmptyCreatedSectionHeader(
+    const ParsedProfile& parsed,
+    const std::string& section,
+    std::size_t targetLine) {
+    std::optional<std::size_t> headerLine;
+    std::size_t headers = 0;
+    for (const auto& entry : parsed.sections) {
+        if (entry.first != section) {
+            continue;
+        }
+        ++headers;
+        if (!headerLine.has_value()) {
+            headerLine = entry.second;
+        }
+    }
+    if (headers != 1 || !headerLine.has_value()) {
+        return std::nullopt;
+    }
+    std::size_t bodyEnd = parsed.lines.size();
+    for (const auto& candidate : parsed.sections) {
+        if (candidate.second > *headerLine) {
+            bodyEnd = candidate.second;
+            break;
+        }
+    }
+    for (std::size_t index = *headerLine + 1; index < bodyEnd; ++index) {
+        if (index == targetLine) {
+            continue;
+        }
+        const std::string trimmed = trimCopy(parsed.lines[index]);
+        if (!trimmed.empty() && trimmed.front() != '#' &&
+            trimmed.front() != ';') {
+            return std::nullopt;
+        }
+    }
+    return headerLine;
+}
+
+// Postcondition verifier of the root scalar mutation: the full profile graph
+// must re-parse and the ROOT document must carry the expected restored or
+// removed state. A new external definition of the target in a foreign
+// include fails closed.
+bool verifyRootScalarAfterMutation(
+    const KerberosConfigurationOptions& options,
+    const KerberosRootScalarMutation& mutation,
+    const std::string& content,
+    std::string& error) {
+    std::vector<ProfileDocument> documents;
+    ProfileGraphLoader loader(options, &content);
+    if (!loader.load(documents, error)) {
+        return false;
+    }
+    const auto& root = documents.front().parsed;
+    std::size_t occurrences = 0;
+    std::string rawLine;
+    for (const auto& relation : root.relations) {
+        if (relation.section == mutation.section &&
+            relation.name == mutation.relation) {
+            ++occurrences;
+            rawLine = root.lines[relation.line];
+        }
+    }
+    for (std::size_t index = 1; index < documents.size(); ++index) {
+        for (const auto& relation : documents[index].parsed.relations) {
+            if (relation.section == mutation.section &&
+                relation.name == mutation.relation) {
+                error = "Kerberos relation [" + mutation.section + "]/" +
+                    mutation.relation + " is defined in foreign include " +
+                    documents[index].path.string();
+                return false;
+            }
+        }
+    }
+    if (mutation.replacementRawLine.empty()) {
+        if (occurrences != 0) {
+            error = "Kerberos root relation [" + mutation.section + "]/" +
+                mutation.relation + " still present";
+            return false;
+        }
+        if (mutation.removeEmptyCreatedSection) {
+            for (const auto& entry : root.sections) {
+                if (entry.first == mutation.section) {
+                    error = "Kerberos root section [" + mutation.section +
+                        "] still present";
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    if (occurrences != 1 || rawLine != mutation.replacementRawLine) {
+        error = "Kerberos root relation [" + mutation.section + "]/" +
+            mutation.relation + " does not match the expected restored line";
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 KerberosConfigurationOptions KerberosConfigurationOptions::production() {
@@ -542,6 +645,121 @@ bool KerberosConfiguration::tryGetScalarValue(
         }
     }
     return true;
+}
+
+bool KerberosConfiguration::inspectRootScalar(
+    const std::string& section,
+    const std::string& relation,
+    KerberosRootScalarObservation& observation,
+    std::string& error) const {
+    observation = KerberosRootScalarObservation{};
+    if (!validSection(section) || !validRelation(relation)) {
+        error = "invalid Kerberos lookup";
+        return false;
+    }
+    std::vector<ProfileDocument> documents;
+    ProfileGraphLoader loader(options_, nullptr);
+    if (!loader.load(documents, error)) {
+        return false;
+    }
+    const auto& root = documents.front().parsed;
+    for (const auto& entry : root.sections) {
+        if (entry.first == section) {
+            observation.sectionExistsInRoot = true;
+        }
+    }
+    for (const auto& candidate : root.relations) {
+        if (candidate.section != section || candidate.name != relation) {
+            continue;
+        }
+        if (observation.relationInRoot) {
+            observation.duplicateInRoot = true;
+        }
+        observation.relationInRoot = true;
+        observation.rawLine = root.lines[candidate.line];
+        observation.value = candidate.value;
+    }
+    for (std::size_t index = 1; index < documents.size(); ++index) {
+        for (const auto& candidate : documents[index].parsed.relations) {
+            if (candidate.section == section && candidate.name == relation) {
+                observation.externallyDefined = true;
+                return true;
+            }
+        }
+    }
+    return true;
+}
+
+ConfigurationPreparationResult KerberosConfiguration::prepareRootScalarMutation(
+    const KerberosRootScalarMutation& mutation) const {
+    std::string error;
+    if (!validSection(mutation.section) ||
+        !validRelation(mutation.relation)) {
+        return {nullptr, "invalid Kerberos root scalar mutation"};
+    }
+    ConfigurationFileSnapshot original;
+    if (!readSecureConfigurationFile(options_.mainFile, original, error)) {
+        return {nullptr, std::move(error)};
+    }
+    ParsedProfile parsed;
+    if (!parseProfile(original.content, parsed, error)) {
+        return {nullptr, "could not parse Kerberos root profile: " + error};
+    }
+    // The target must be unambiguous in the ROOT document.
+    std::optional<std::size_t> targetLine;
+    for (const auto& relation : parsed.relations) {
+        if (relation.section != mutation.section ||
+            relation.name != mutation.relation) {
+            continue;
+        }
+        if (targetLine.has_value()) {
+            return {nullptr,
+                    "ambiguous Kerberos root relation [" +
+                        mutation.section + "]/" + mutation.relation};
+        }
+        targetLine = relation.line;
+    }
+    if (!targetLine.has_value()) {
+        return {nullptr,
+                "missing Kerberos root relation [" + mutation.section +
+                    "]/" + mutation.relation};
+    }
+
+    const bool restore = !mutation.replacementRawLine.empty();
+    if (restore) {
+        parsed.lines[*targetLine] = mutation.replacementRawLine;
+    } else {
+        std::vector<std::size_t> removeLines{*targetLine};
+        if (mutation.removeEmptyCreatedSection) {
+            const std::optional<std::size_t> headerLine =
+                provablyEmptyCreatedSectionHeader(
+                    parsed, mutation.section, *targetLine);
+            if (headerLine.has_value()) {
+                removeLines.push_back(*headerLine);
+            }
+        }
+        // Erase from the highest line index to keep the indices valid.
+        std::sort(removeLines.begin(), removeLines.end(),
+                  std::greater<std::size_t>());
+        for (const std::size_t line : removeLines) {
+            parsed.lines.erase(parsed.lines.begin() +
+                               static_cast<std::ptrdiff_t>(line));
+        }
+    }
+    std::string candidate = joinDocument(parsed);
+    return {
+        makePreparedFileChange(
+            "kerberos-root:" + options_.mainFile.path.string(),
+            options_.mainFile,
+            std::move(original),
+            std::move(candidate),
+            [options = options_, mutation](
+                const std::string& content,
+                std::string& verifyError) {
+                return verifyRootScalarAfterMutation(
+                    options, mutation, content, verifyError);
+            }),
+        {}};
 }
 
 ConfigurationPreparationResult KerberosConfiguration::prepareSetScalar(

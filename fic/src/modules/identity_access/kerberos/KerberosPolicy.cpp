@@ -6,6 +6,7 @@
 KerberosPolicy::KerberosPolicy(
     fic::identity::kerberos::KerberosConfigurationOptions options)
     : IdentityAccessPolicy("KERBEROS"),
+      configurationOptions_(options),
       configuration_(std::move(options)) {
 }
 

@@ -32,7 +32,9 @@ enum class MutationBackend {
     Firewall,
     DeviceControl,
     Dac,
-    Grub
+    Grub,
+    Sssd,
+    Kerberos
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -92,13 +94,53 @@ struct UndoApplyDacPlatformBaseline {
                             // "blocking_user_access_to_system_files"
 };
 
+// SSSD ownership-release payload for the FIC-owned drop-in
+// (/etc/sssd/conf.d/zzzz-fic.conf). The record proves ONLY that FIC owns the
+// managed setting (section, option, appliedValue); the foreign
+// /etc/sssd/sssd.conf is never read into the payload and never restored:
+// rollback releases the FIC override and the previous foreign value becomes
+// effective naturally. No previous foreign value, no whole-file snapshot.
+struct UndoRemoveSssdManagedSetting {
+    std::string section;      // SSSD section (e.g. pam)
+    std::string option;       // SSSD option (e.g. offline_credentials_expiration)
+    std::string appliedValue; // value FIC last applied; drift fingerprint
+};
+
+// Kerberos reversible structured edit payload for a scalar relation of the
+// root /etc/krb5.conf (foreign main config — no FIC-owned drop-in). The
+// payload stores the EXACT pre-FIC before-state of the single target
+// relation: the precise raw line (indentation, key-final/value-final '*'
+// markers included) or the fact that the relation (or its whole section) was
+// missing. No snapshot of the whole krb5.conf is ever stored; rollback is an
+// inverse delta against the recorded target before-state.
+enum class KerberosBeforeKind {
+    Missing,
+    Present
+};
+
+struct UndoRestoreKerberosScalar {
+    std::string section;      // root profile section (e.g. libdefaults)
+    std::string relation;     // relation name (e.g. ticket_lifetime)
+    std::string appliedValue; // native applied value; drift fingerprint
+    KerberosBeforeKind beforeKind = KerberosBeforeKind::Missing;
+    // Exact pre-FIC line content; meaningful ONLY for Present. Includes the
+    // original indentation and key/value '*' markers.
+    std::string beforeRawLine;
+    // Whether the section existed in the root profile before FIC touched it.
+    // When false (and the relation was Missing) rollback may remove the
+    // section header FIC created — but only while it is provably empty.
+    bool sectionExistedBefore = false;
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoRemoveSshManagedPolicy,
     UndoRemoveFirewallPolicy,
     UndoDisableDeviceFeature,
     UndoApplyDacPlatformBaseline,
-    UndoRemoveGrubManagedSetting>;
+    UndoRemoveGrubManagedSetting,
+    UndoRemoveSssdManagedSetting,
+    UndoRestoreKerberosScalar>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

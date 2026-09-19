@@ -25,6 +25,14 @@ public:
         std::vector<std::string> serviceUnits = {"sssd.service"},
         SssdCommandRunner runner = {});
 
+    const std::vector<std::string>& serviceUnits() const {
+        return serviceUnits_;
+    }
+
+    const SssdCommandRunner& runner() const {
+        return runner_;
+    }
+
     ConfigurationPreparationResult attach(
         std::unique_ptr<PreparedConfigurationChange> persistentChange) const;
 

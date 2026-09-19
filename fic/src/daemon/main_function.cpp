@@ -1,6 +1,8 @@
 #include "main_function.h"
 
 #include "modules/dac/sudo/Sudo.h"
+#include "modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.h"
+#include "modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
 #include "modules/net/ssh/Ssh.h"
 #include "modules/sysctl/Sysctl.h"
 #include "policy/registry/PolicyRegistryInitialization.h"
@@ -334,6 +336,12 @@ bool disable (PolicyRegistry& policyRegistry,
             resourceHint = sudoPolicy->managedResource();
         } else if (const Ssh* sshPolicy = dynamic_cast<const Ssh*>(concretePolicy)) {
             resourceHint = sshPolicy->managedResource();
+        } else if (dynamic_cast<const SssdOfflineCredentialsExpirationPolicy*>(
+                       concretePolicy) != nullptr) {
+            resourceHint = "pam/offline_credentials_expiration";
+        } else if (dynamic_cast<const KerberosTicketLifetimePolicy*>(
+                       concretePolicy) != nullptr) {
+            resourceHint = "libdefaults/ticket_lifetime";
         }
 
         fic::rollback::RollbackExecutorDeps rollbackDeps =
