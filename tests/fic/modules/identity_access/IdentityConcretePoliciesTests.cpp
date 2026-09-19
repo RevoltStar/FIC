@@ -9,6 +9,7 @@
 #include "rollback/RollbackExecutor.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <filesystem>
 #include <fstream>
@@ -358,6 +359,76 @@ void testSssdPreparedCrashRecoveryCompletesApplied(const fs::path& root) {
     }
 }
 
+void testSssdApplyAbsentSourceReconcilesRuntime(const fs::path& root) {
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    const std::vector<fic::rollback::MutationStatus> states = {
+        fic::rollback::MutationStatus::Prepared,
+        fic::rollback::MutationStatus::Applied,
+        fic::rollback::MutationStatus::RollbackFailed};
+    for (std::size_t index = 0; index < states.size(); ++index) {
+        const fs::path main = root / "system" /
+            ("sssd-absent-apply-" + std::to_string(index) + ".conf");
+        writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+        JournalOverride guard(root / "journals" /
+            ("sssd-absent-apply-" + std::to_string(index) + ".json"));
+        fic::rollback::MutationId id = 0;
+        std::string error;
+        require(fic::rollback::recordPreparedMutation(
+                    kSssdPolicyRef, kSssdResource,
+                    fic::rollback::UndoAction{
+                        fic::rollback::MutationBackend::Sssd,
+                        fic::rollback::UndoRemoveSssdManagedSetting{
+                            "pam", "offline_credentials_expiration", "30"}},
+                    id, error), error);
+        auto* journal =
+            fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+        require(journal != nullptr, "journal must be usable");
+        if (states[index] != fic::rollback::MutationStatus::Prepared) {
+            require(journal->setStatus(id, states[index], error), error);
+        }
+        int restarts = 0;
+        bool failRestart = true;
+        auto runner = [&](const std::string&,
+                          const std::vector<std::string>& arguments,
+                          const ProcessOptions&) {
+            if (!arguments.empty() && arguments.front() == "restart") {
+                ++restarts;
+                if (restarts <= 2) {
+                    require(singleActiveRecord(kSssdPolicyRef).id == id,
+                            "old provenance must stay active until runtime is reconciled");
+                }
+                if (failRestart) {
+                    ProcessResult failed = okResult();
+                    failed.exitCode = 1;
+                    return failed;
+                }
+            }
+            return okResult();
+        };
+        setPolicyValues(root, "30", "7200");
+        SssdOfflineCredentialsExpirationPolicy policy(
+            sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+        require(!policy.apply(), "runtime failure must fail apply closed");
+        require(restarts == 1, "absent source must still trigger restart");
+        require(singleActiveRecord(kSssdPolicyRef).id == id,
+                "failed runtime reconciliation must retain provenance");
+        failRestart = false;
+        require(policy.apply(), "runtime retry should permit fresh apply");
+        require(restarts >= 2, "retry must reconcile runtime again");
+        bool oldRolledBack = false;
+        for (const auto& record : journal->records()) {
+            if (record.id == id) {
+                oldRolledBack = record.status ==
+                    fic::rollback::MutationStatus::RolledBack;
+            }
+        }
+        require(oldRolledBack,
+                "old record must be RolledBack only after runtime success");
+    }
+}
+
 void testSssdForeignReplacementBetweenProofAndRemovalSurvives(
     const fs::path& root) {
     // Regression (TOCTOU): FIC proves zzzz-fic.conf, then a foreign actor
@@ -473,6 +544,96 @@ void testSssdCompensationRecreateOnlyOnProvenMissing(const fs::path& root) {
             "the compensation must recreate the drop-in");
     require(readFile(dropIn) == dropInContent,
             "the recreated content must be byte-exact");
+    struct stat recreated {};
+    require(::stat(dropIn.c_str(), &recreated) == 0,
+            "the recreated drop-in must be readable");
+    require(recreated.st_uid == ::geteuid() &&
+                recreated.st_gid == ::getegid() &&
+                (recreated.st_mode & 07777) == 0600,
+            "exclusive recreate must install the expected metadata");
+}
+
+void testSssdRemovalAndCompensationDurability(const fs::path& root) {
+    const fs::path main = root / "system/sssd-durability.conf";
+    const fs::path dropIn = sssdDropInPath(main);
+    const std::string content =
+        "# FIC managed configuration\n[pam]\n"
+        "offline_credentials_expiration = 30\n";
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    writeFile(dropIn, content, 0600);
+    fic::identity::sssd::SssdConfiguration configuration(
+        sssdOptions(main, root));
+    auto prepareRemoval = [&]() {
+        auto prepared = configuration.prepareManagedSnippetRemoval(
+            "pam", "offline_credentials_expiration");
+        require(prepared.ok(), "durability removal must prepare");
+        return std::move(prepared.change);
+    };
+    int barriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) {
+            if (path == dropIn.string()) {
+                ++barriers;
+                return barriers != 1;
+            }
+            return true;
+        });
+    auto removalFailure = fic::identity::executePreparedFileChangeDetailed(
+        prepareRemoval());
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(removalFailure.status ==
+                fic::identity::PreparedChangeExecutionStatus::Compensated,
+            "non-durable removal must be compensated, not committed");
+    require(barriers == 2,
+            "both removal and compensation must reach a directory barrier");
+    require(readFile(dropIn) == content,
+            "compensation after removal fsync failure must restore bytes");
+
+    barriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) {
+            if (path == dropIn.string()) {
+                ++barriers;
+                return barriers != 2;
+            }
+            return true;
+        });
+    auto compensationFailure = fic::identity::executePreparedFileChangeDetailed(
+        std::make_unique<VerifyFailingChange>(prepareRemoval()));
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(compensationFailure.status ==
+                fic::identity::PreparedChangeExecutionStatus::CompensationFailed,
+            "non-durable recreate must not count as Compensated");
+    require(barriers == 2, "recreate must reach the directory barrier");
+    require(readFile(dropIn) == content,
+            "failed durability confirmation must not rewrite content");
+}
+
+void testSssdRemovalFsyncFailureKeepsJournalActive(const fs::path& root) {
+    const fs::path main = root / "system/sssd-removal-fsync-journal.conf";
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    auto runner = [](const std::string&,
+                     const std::vector<std::string>&,
+                     const ProcessOptions&) { return okResult(); };
+    JournalOverride guard(root / "journals/sssd-removal-fsync-journal.json");
+    setPolicyValues(root, "30", "7200");
+    SssdOfflineCredentialsExpirationPolicy policy(
+        sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+    require(policy.apply(), "SSSD apply must create provenance");
+    const fs::path dropIn = sssdDropInPath(main);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) { return path != dropIn.string(); });
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        kSssdPolicyRef, kSssdResource,
+        sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(!report.rollbackCompleted(),
+            "non-durable removal must not complete rollback");
+    require(activeRecordCount(kSssdPolicyRef) == 1,
+            "non-durable removal must keep provenance active");
 }
 
 void testSssdCompensationNeverOverwritesForeignFile(const fs::path& root) {
@@ -1346,8 +1507,11 @@ int main() {
         testSssdCrashWindowPreparedRemainsRecoverable(root);
         testSssdRollbackRetryCompletesRuntimeReconciliation(root);
         testSssdPreparedCrashRecoveryCompletesApplied(root);
+        testSssdApplyAbsentSourceReconcilesRuntime(root);
         testSssdForeignReplacementBetweenProofAndRemovalSurvives(root);
         testSssdCompensationRecreateOnlyOnProvenMissing(root);
+        testSssdRemovalAndCompensationDurability(root);
+        testSssdRemovalFsyncFailureKeepsJournalActive(root);
         testSssdCompensationNeverOverwritesForeignFile(root);
         testSssdCompensationRefusesUnsafeTarget(root);
         testSssdDisableRollsBackManagedSetting(root);

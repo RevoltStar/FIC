@@ -608,6 +608,24 @@ bool exclusiveCreateOriginal(
             options.path.string() + ": " + std::strerror(errno);
         return false;
     }
+    if (options.expectedOwner.has_value() ||
+        options.expectedGroup.has_value()) {
+        const uid_t owner = options.expectedOwner.value_or(static_cast<uid_t>(-1));
+        const gid_t group = options.expectedGroup.value_or(static_cast<gid_t>(-1));
+        if (::fchown(descriptor, owner, group) != 0) {
+            error = "could not set metadata of managed SSSD drop-in " +
+                options.path.string() + ": " + std::strerror(errno);
+            ::close(descriptor);
+            return false;
+        }
+    }
+    if (options.exactMode.has_value() &&
+        ::fchmod(descriptor, *options.exactMode) != 0) {
+        error = "could not set mode of managed SSSD drop-in " +
+            options.path.string() + ": " + std::strerror(errno);
+        ::close(descriptor);
+        return false;
+    }
     std::size_t written = 0;
     while (written < content.size()) {
         const ssize_t count = ::write(
@@ -634,23 +652,8 @@ bool exclusiveCreateOriginal(
             options.path.string() + ": " + std::strerror(errno);
         return false;
     }
-    if (options.expectedOwner.has_value() ||
-        options.expectedGroup.has_value()) {
-        const uid_t owner = options.expectedOwner.value_or(static_cast<uid_t>(-1));
-        const gid_t group = options.expectedGroup.value_or(static_cast<gid_t>(-1));
-        if (::chown(options.path.c_str(), owner, group) != 0) {
-            error = "could not set metadata of managed SSSD drop-in " +
-                options.path.string() + ": " + std::strerror(errno);
-            return false;
-        }
-    }
-    if (options.exactMode.has_value() &&
-        ::chmod(options.path.c_str(), *options.exactMode) != 0) {
-        error = "could not set mode of managed SSSD drop-in " +
-            options.path.string() + ": " + std::strerror(errno);
-        return false;
-    }
-    return true;
+    return AtomicFileWriter::fsyncParentDirectoryForPath(
+        options.path.string(), &error);
 }
 
 // Proof-bound removal of the FIC-owned drop-in: only the EXACT target
@@ -719,6 +722,10 @@ ConfigurationStepResult removeManagedSnippetFile(
         return ConfigurationStepResult::failure(
             "could not delete the staged managed SSSD drop-in " +
             privateTarget + ": " + std::strerror(errno));
+    }
+    if (!AtomicFileWriter::fsyncParentDirectoryForPath(
+            options.path.string(), &error)) {
+        return ConfigurationStepResult::failure(std::move(error));
     }
     return ConfigurationStepResult::success(true);
 }
@@ -850,7 +857,26 @@ ConfigurationStepResult ManagedSnippetChange::rollbackPersistent() {
         }
         if (state == CompensationReadState::ReadableForCompare) {
             if (snapshotsEqualSnapshots(current, original_)) {
-                // The removal was already compensated: idempotent no-op.
+                // A previous exclusive recreate may have reached disk but
+                // failed its directory barrier. Re-prove the exact current
+                // object and finish durability before declaring compensation.
+                AtomicTargetState target;
+                if (!AtomicFileWriter::captureTargetState(
+                        options_.path.string(), target, &error)) {
+                    return ConfigurationStepResult::failure(std::move(error));
+                }
+                if (target.content != original_.content ||
+                    target.owner != original_.owner ||
+                    target.group != original_.group ||
+                    target.mode != original_.mode) {
+                    return ConfigurationStepResult::failure(
+                        "managed SSSD drop-in changed before compensation "
+                        "durability confirmation");
+                }
+                if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                        options_.path.string(), target, &error)) {
+                    return ConfigurationStepResult::failure(std::move(error));
+                }
                 return ConfigurationStepResult::success(false);
             }
             return ConfigurationStepResult::failure(

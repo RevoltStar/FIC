@@ -92,6 +92,11 @@ public:
     static void setDirectoryFsyncHookForTests(
         std::function<bool(const std::string& targetPath)> hook);
 
+    // Confirms a directory-entry change (including removal) for path.
+    // Unlike ensureTargetDurable(), the target need not exist.
+    static bool fsyncParentDirectoryForPath(
+        const std::string& path, std::string* errorMessage = nullptr);
+
     // Confirms the durability of a target that was already observed on disk:
     // fsyncs the parent directory WITHOUT touching the file itself. This is
     // the recovery barrier for a state (for example a config AFTER/BEFORE

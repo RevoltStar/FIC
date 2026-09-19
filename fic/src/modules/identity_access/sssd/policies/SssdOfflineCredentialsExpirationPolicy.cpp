@@ -131,24 +131,17 @@ ReconciliationOutcome reconcileSssdJournal(
             return ReconciliationOutcome::Failed;
         }
         if (!observed.optionPresent) {
-            // Source ownership was already released (crash after release, or
-            // a previous rollback attempt that completed the source undo).
-            // A record whose before-state is already proven (release
-            // completed) is stale and resolvable; a record whose postconditions
-            // were NOT proven yet (RollbackFailed with pending runtime
-            // reconciliation) stays fail closed and must be finished by the
-            // rollback executor, never silently by apply.
-            if (record.status == fic::rollback::MutationStatus::RollbackFailed) {
+            // Absence proves only source release. Finish the same runtime
+            // postcondition as the rollback executor before closing provenance.
+            const SssdRollbackResult released =
+                undoSssdManagedSetting(rollbackOptions, *undo);
+            if (released.conflict || !released.ok) {
                 policy.log(
-                    "Активная SSSD mutation в состоянии RollbackFailed "
-                    "требует завершения rollback (runtime-реконсиляция "
-                    "не подтверждена): apply отклонён (fail closed)",
+                    "Не удалось завершить SSSD rollback: " + released.message,
                     logLevel::ERROR);
                 ok = false;
                 return ReconciliationOutcome::Failed;
             }
-            // Ownership already released (crash window): resolve the stale
-            // record and continue fresh.
             std::string resolveError;
             if (!journal->setStatus(
                     record.id, MutationStatus::RolledBack, resolveError)) {

@@ -400,6 +400,17 @@ bool AtomicFileWriter::ensureTargetDurable(const std::string& path,
     return fsyncParentDirectory(resolvedPath.parent_path(), errorMessage);
 }
 
+bool AtomicFileWriter::fsyncParentDirectoryForPath(
+    const std::string& path, std::string* errorMessage) {
+    if (testDirectoryFsyncHook() && !testDirectoryFsyncHook()(path)) {
+        setError(errorMessage,
+                 "simulated directory fsync failure (test seam): " + path);
+        return false;
+    }
+    return fsyncParentDirectory(
+        std::filesystem::path(path).parent_path(), errorMessage);
+}
+
 bool AtomicFileWriter::ensureTargetDurableIfCurrentState(
     const std::string& path,
     const AtomicTargetState& expected,
