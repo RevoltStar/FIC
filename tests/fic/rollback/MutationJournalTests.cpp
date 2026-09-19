@@ -730,6 +730,25 @@ void testGrubUndoMalformedPayloadsFailClosed() {
                "\"key\":\"GRUB_TEST_VALUE\",\"applied_value\":\"expected\"}" +
             tail,
         "unknown managed key");
+    // STRUCTURAL parsing: applied_value must be PRESENT (missing field is
+    // malformed provenance, NOT equivalent to an empty value) ...
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
+               "\"key\":\"GRUB_TIMEOUT\"}" +
+            tail,
+        "missing applied value");
+    // ... and must be a JSON STRING (a non-string must fail closed with a
+    // diagnostic, never as an uncaught JSON type error).
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
+               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":5}" +
+            tail,
+        "non-string applied value");
+    requireBrokenGrubJournalFailsClosed(
+        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
+               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":null}" +
+            tail,
+        "null applied value");
     // NOTE: an empty applied value is VALID (grub_cmdline_linux="" is a
     // legitimate applied state) and is covered by the round-trip test.
     requireBrokenGrubJournalFailsClosed(
@@ -795,6 +814,27 @@ void testGrubResourcePayloadMismatchFailsClosed() {
                                "0", "applied")},
             2),
         "resource GRUB_DISABLE_RECOVERY with undo key GRUB_TIMEOUT");
+}
+
+// Structural distinction regression: a PRESENT empty applied_value is a
+// valid durable state and must LOAD, while a MISSING or non-string
+// applied_value is malformed provenance and must fail closed.
+void testGrubEmptyAppliedValueLoadsDirectly() {
+    // applied_value: "" (present, empty) -> load succeeds.
+    TempFile file;
+    file.write(grubJournalDocument(
+        {grubJournalRecord(1, "GRUB_CMDLINE_LINUX", "GRUB_CMDLINE_LINUX", "",
+                           "applied")},
+        2));
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1,
+            "journal with EMPTY applied_value must load");
+    const auto* undo = std::get_if<UndoRemoveGrubManagedSetting>(
+        &journal.records().front().undo.payload);
+    require(undo != nullptr && undo->appliedValue.empty(),
+            "loaded payload must keep the EMPTY applied value");
 }
 
 // Duplicate ACTIVE logical records: at most one active record may exist
@@ -1977,6 +2017,7 @@ int main() {
         {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
         {"grub undo payload round trip", testGrubUndoPayloadRoundTrip},
         {"grub empty applied value round trip", testGrubEmptyAppliedValueRoundTrip},
+        {"grub empty applied value loads directly", testGrubEmptyAppliedValueLoadsDirectly},
         {"grub undo malformed payloads fail closed", testGrubUndoMalformedPayloadsFailClosed},
         {"grub resource/payload mismatch fails closed",
          testGrubResourcePayloadMismatchFailsClosed},

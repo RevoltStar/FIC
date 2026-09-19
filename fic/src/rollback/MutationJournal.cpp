@@ -197,7 +197,20 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         backend == MutationBackend::Grub) {
         UndoRemoveGrubManagedSetting payload;
         payload.key = value.value("key", "");
-        payload.appliedValue = value.value("applied_value", "");
+        // Fail-closed STRUCTURAL parsing of applied_value: the field MUST
+        // be present and MUST be a JSON string. An empty string is a VALID
+        // value (e.g. grub_cmdline_linux=""), but a MISSING or non-string
+        // applied_value is malformed provenance: it must never silently
+        // deserialize as "" and must never escape as an uncaught JSON type
+        // error. Semantic constraints (managed-key whitelist, CR/LF/NUL)
+        // stay in validateGrubUndoPayload below.
+        const auto appliedIt = value.find("applied_value");
+        if (appliedIt == value.end() || !appliedIt->is_string()) {
+            error = "remove_grub_managed_setting undo requires a string "
+                    "applied_value (an empty string is valid)";
+            return false;
+        }
+        payload.appliedValue = appliedIt->get<std::string>();
         if (!validateGrubUndoPayload(payload, error)) {
             return false;
         }

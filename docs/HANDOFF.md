@@ -2,8 +2,8 @@
 
 ## Current base
 
-- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №7» (этот
-  коммит; предыдущий — `cfc94bf` «Hardering-изменения для GRUB №6»).
+- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №8» (этот
+  коммит; предыдущий — `7474742` «Hardering-изменения для GRUB №7»).
 - Рабочее дерево чистое; вспомогательные build-каталоги (`build-check`,
   `build-grub`, `build-sanitizers`, …) ignored.
 
@@ -126,6 +126,25 @@
   `testEmptyPolicyValueAppliedSurvivesRestartLikeReload`
   (apply `""` → Applied → restart-like reload → idempotent re-apply);
   кейс «empty applied value» удалён из malformed-теста loader'а.
+- №8: структурный parsing `applied_value` GRUB undo payload в
+  `deserializeUndoAction()`: поле ОБЯЗАНО присутствовать и быть JSON
+  string (`""` валидно); missing / non-string / null `applied_value` →
+  load fail closed с диагностикой (раньше missing молча превращался в
+  `""`, а non-string мог выйти непойманным JSON type error —
+  deserializeRecord вызывается вне try/catch).
+  `validateGrubUndoPayload()` осталась semantic-validator'ом (key +
+  managed-key whitelist + CR/LF/NUL). Тесты: missing / non-string /
+  null applied_value → fail closed в
+  `testGrubUndoMalformedPayloadsFailClosed`;
+  `testGrubEmptyAppliedValueLoadsDirectly` (raw document с
+  `applied_value: ""` → load succeeds).
+  `testEmptyPolicyValueAppliedSurvivesRestartLikeReload` усилен:
+  после первого apply singleton journal закрывается
+  (`setOverridePath`) и переоткрывается через production startup path
+  (`tryGet` → `initializeOrLoad`); Applied-запись с пустым
+  appliedValue переживает daemon-style reopen как единственная
+  активная, затем idempotent повторный apply через переоткрытый
+  singleton.
 
 ## Changed areas
 
@@ -137,10 +156,13 @@
 
 ## Validation
 
-- Targeted (№7): `mutation_journal_tests`, `grub_rollback_journal_tests`,
-  `grub_policy_tests`, `rollback_executor_tests` — все PASS, включая
-  новые `testGrubEmptyAppliedValueRoundTrip` и
-  `testEmptyPolicyValueAppliedSurvivesRestartLikeReload`.
+- Targeted (№7/№8): `mutation_journal_tests`,
+  `grub_rollback_journal_tests`, `grub_policy_tests`,
+  `rollback_executor_tests` — все PASS, включая
+  `testGrubEmptyAppliedValueRoundTrip`,
+  `testGrubEmptyAppliedValueLoadsDirectly` и
+  `testEmptyPolicyValueAppliedSurvivesRestartLikeReload`
+  (production daemon-style reopen через `initializeOrLoad`).
 - Full build + full CTest: 100% passed, 0 failed (97 tests; 1
   environment-dependent skip `command_hash_batch_tests`, как и в №6).
 - `git diff --check`: clean.

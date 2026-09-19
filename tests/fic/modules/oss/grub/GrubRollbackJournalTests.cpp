@@ -353,8 +353,9 @@ void testEmptyPolicyValueAppliedSurvivesRestartLikeReload(
                     "# FIC_GRUB_BLOCK_END\n",
             "empty-value apply must write an empty assigned managed value");
 
-    // Restart-like reload: a fresh journal object must load the persistent
-    // document carrying the empty applied value without failing closed.
+    // Restart-like reload, part 1 (raw document): a fresh raw journal
+    // object must load the persistent document carrying the empty applied
+    // value without failing closed.
     rollback::MutationJournal reloaded(journalPath);
     std::string error;
     require(reloaded.load(error), error);
@@ -371,12 +372,38 @@ void testEmptyPolicyValueAppliedSurvivesRestartLikeReload(
                 reloadedUndo->appliedValue.empty(),
             "reloaded payload must keep the EMPTY applied value");
 
-    // Repeated apply after the reload: idempotent, still exactly one record.
+    // Restart-like reload, part 2 (production daemon path): CLOSE the
+    // singleton journal (setOverridePath resets the cached instance) and
+    // reopen the SAME journal file through the production startup path
+    // (tryGet -> open -> initializeOrLoad). The record with the EMPTY
+    // applied value must survive this real daemon-style reopen and remain
+    // the single active record BEFORE the next apply.
+    rollback::DaemonMutationJournal::instance().setOverridePath(journalPath);
+    rollback::MutationJournal* reopened = testJournal();
+    require(reopened != nullptr,
+            "daemon-style reopen must produce an operational journal");
+    require(reopened->records().size() == 1,
+            "daemon-style reopen must see exactly one record");
+    const rollback::MutationRecord& reopenedRecord =
+        reopened->records().front();
+    require(reopenedRecord.status == rollback::MutationStatus::Applied &&
+                reopenedRecord.resource == "GRUB_CMDLINE_LINUX",
+            "daemon-style reopen must keep the record Applied");
+    const auto* reopenedUndo =
+        std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &reopenedRecord.undo.payload);
+    require(reopenedUndo != nullptr &&
+                reopenedUndo->key == "GRUB_CMDLINE_LINUX" &&
+                reopenedUndo->appliedValue.empty(),
+            "daemon-style reopen must keep the EMPTY applied value");
+
+    // Repeated apply after the REAL restart: idempotent through the
+    // reopened singleton journal, still exactly one record.
     JournalGrubPolicy repeat(altConfig(shared), resolver,
                              "GRUB_CMDLINE_LINUX", "grub_test_policy",
                              std::vector<std::string>{""});
     require(repeat.apply(),
-            "repeated empty-value apply after reload must succeed");
+            "repeated empty-value apply after restart must succeed");
     require(activeCount(policy.ref()) == 1,
             "repeated empty-value apply must not create new records");
 }
