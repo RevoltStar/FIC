@@ -2,8 +2,8 @@
 
 ## Current base
 
-- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №6» (этот
-  коммит; предыдущий — `8e70089` «Hardering-изменения для GRUB №5»).
+- Ветка `main`, HEAD — коммит «Hardering-изменения для GRUB №7» (этот
+  коммит; предыдущий — `cfc94bf` «Hardering-изменения для GRUB №6»).
 - Рабочее дерево чистое; вспомогательные build-каталоги (`build-check`,
   `build-grub`, `build-sanitizers`, …) ignored.
 
@@ -109,10 +109,23 @@
   сохранена). GRUB-level: `testWrongResourceRecordIsNotReusedByPayloadKey`
   в `GrubRollbackJournalTests.cpp` (запись чужого resource не
   переиспользуется по payload key; fresh fallback; payload чужой записи
-  не переписывается). Malformed exact-resource состояние в памяти через
-  public API невоспроизводимо после hardening (loader + prepareMutation
-  его отвергают) — helper `Invalid`-ветка покрывается loader-тестами как
-  defense-in-depth.
+  не переписывается). После №7 уточнение: malformed GRUB payload
+  (кроме пустого appliedValue) через public API невоспроизводим —
+  loader + prepareMutation его отвергают; helper `Invalid`-ветка
+  покрывается loader-тестами как defense-in-depth.
+- №7 (P1 fix): пустой `appliedValue` GRUB undo payload — ВАЛИДНОЕ
+  состояние (`grub_cmdline_linux=""`): ранее `prepareMutation()`
+  допускал запись с `appliedValue == ""`, но `deserializeUndoAction()`
+  отвергал пустой `applied_value`, ломая journal после такого apply.
+  Общая `validateGrubUndoPayload()` в `MutationJournal.cpp` используется
+  на write (`prepareMutation`) и read (`deserializeUndoAction`) путях —
+  writer не может создать запись, которую loader отвергнет. Правила:
+  key непуст + `isGrubManagedKey`, appliedValue (в т.ч. пустой) без
+  CR/LF/NUL; resource == undo.key — без изменений. Тесты:
+  `testGrubEmptyAppliedValueRoundTrip` (persist → reload),
+  `testEmptyPolicyValueAppliedSurvivesRestartLikeReload`
+  (apply `""` → Applied → restart-like reload → idempotent re-apply);
+  кейс «empty applied value» удалён из malformed-теста loader'а.
 
 ## Changed areas
 
@@ -124,12 +137,12 @@
 
 ## Validation
 
-- Targeted: `grub_policy_tests`, `grub_rollback_journal_tests`,
-  `mutation_journal_tests`, `rollback_executor_tests`,
-  `ssh_apply_rollback_tests`, `platform_profile_tests` — все PASS.
-- Full build (`cmake --build build-grub -j4`, full tree): OK, 0 errors,
-  0 warnings.
-- Full CTest: **97/97 — 100% passed, 0 failed**.
+- Targeted (№7): `mutation_journal_tests`, `grub_rollback_journal_tests`,
+  `grub_policy_tests`, `rollback_executor_tests` — все PASS, включая
+  новые `testGrubEmptyAppliedValueRoundTrip` и
+  `testEmptyPolicyValueAppliedSurvivesRestartLikeReload`.
+- Full build + full CTest: 100% passed, 0 failed (97 tests; 1
+  environment-dependent skip `command_hash_batch_tests`, как и в №6).
 - `git diff --check`: clean.
 - Sanitizer build не выполнялся — не заявлять как выполненный.
 

@@ -181,13 +181,14 @@ public:
         fic::platform::GrubPlatformConfig platformConfig,
         const fic::platform::PlatformExecutableResolver& executables,
         std::string key,
-        std::string policyName)
+        std::string policyName,
+        std::vector<std::string> allowedValues =
+            std::vector<std::string>{"expected", "0", "5", "quiet"})
         : Grub(std::move(platformConfig), executables, false),
           key_(std::move(key)) {
         this->policyName = std::move(policyName);
         this->policyTypeValue =
-            std::make_unique<PossibleListPolicyTypeValue>(
-                std::vector<std::string>{"expected", "0", "5", "quiet"});
+            std::make_unique<PossibleListPolicyTypeValue>(allowedValues);
     }
 
     PolicyRef ref() const { return this->policyRef(); }
@@ -310,6 +311,74 @@ void testAltApplyJournalLifecycle(const fs::path& root,
             "external managed value drift must fail the apply");
     require(activeCount(policy.ref()) == 1,
             "drift must not resolve the journal record");
+}
+
+// P1 regression: an applied policy value of "" is a legitimate durable
+// state (grub_cmdline_linux=""). The Applied journal record must carry an
+// EMPTY applied value and the record must survive a restart-like reload:
+// the loader must not treat an empty applied_value as malformed.
+void testEmptyPolicyValueAppliedSurvivesRestartLikeReload(
+    const fs::path& root, const fs::path& rebuildExecutable) {
+    const fs::path journalPath =
+        root / "cmdline-empty" / "data" / "mutation-journal.json";
+    JournalOverride journalOverride(journalPath);
+    const auto resolver = makeResolver(rebuildExecutable);
+    const fs::path shared = root / "cmdline-empty/etc/sysconfig/grub2";
+    const std::string foreign = "GRUB_CMDLINE_LINUX=\"$local\"\n";
+    writeFile(shared, foreign);
+    setPolicyConfig(root, {{"grub_test_policy", ""}});
+    JournalGrubPolicy policy(altConfig(shared), resolver, "GRUB_CMDLINE_LINUX",
+                             "grub_test_policy",
+                             std::vector<std::string>{""});
+
+    require(policy.apply(), "apply of an empty policy value must succeed");
+    require(activeCount(policy.ref()) == 1,
+            "empty-value apply must create exactly one journal record");
+    const std::vector<rollback::MutationRecord> appliedRecords =
+        testJournal()->activeRecords(policy.ref());
+    const rollback::MutationRecord& record = appliedRecords[0];
+    require(record.status == rollback::MutationStatus::Applied &&
+                record.resource == "GRUB_CMDLINE_LINUX",
+            "empty-value apply must be journaled as Applied");
+    const auto* undo =
+        std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &record.undo.payload);
+    require(undo != nullptr && undo->key == "GRUB_CMDLINE_LINUX" &&
+                undo->appliedValue.empty(),
+            "the Applied record must carry an EMPTY applied value");
+    require(readFile(shared) ==
+                foreign + "\n" +
+                    "# FIC_GRUB_BLOCK_BEGIN version=1\n"
+                    "GRUB_CMDLINE_LINUX=\"\"\n"
+                    "# FIC_GRUB_BLOCK_END\n",
+            "empty-value apply must write an empty assigned managed value");
+
+    // Restart-like reload: a fresh journal object must load the persistent
+    // document carrying the empty applied value without failing closed.
+    rollback::MutationJournal reloaded(journalPath);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1,
+            "empty-value Applied record must survive restart-like reload");
+    const rollback::MutationRecord& reloadedRecord = reloaded.records().front();
+    require(reloadedRecord.status == rollback::MutationStatus::Applied,
+            "reloaded record must keep the Applied status");
+    const auto* reloadedUndo =
+        std::get_if<rollback::UndoRemoveGrubManagedSetting>(
+            &reloadedRecord.undo.payload);
+    require(reloadedUndo != nullptr &&
+                reloadedUndo->key == "GRUB_CMDLINE_LINUX" &&
+                reloadedUndo->appliedValue.empty(),
+            "reloaded payload must keep the EMPTY applied value");
+
+    // Repeated apply after the reload: idempotent, still exactly one record.
+    JournalGrubPolicy repeat(altConfig(shared), resolver,
+                             "GRUB_CMDLINE_LINUX", "grub_test_policy",
+                             std::vector<std::string>{""});
+    require(repeat.apply(),
+            "repeated empty-value apply after reload must succeed");
+    require(activeCount(policy.ref()) == 1,
+            "repeated empty-value apply must not create new records");
 }
 
 // ALT value change: the old FIC ownership is released through the SAME
@@ -2571,6 +2640,8 @@ int main() {
                 "717cb\n");
 
         testAltApplyJournalLifecycle(root, rebuildExecutable);
+        testEmptyPolicyValueAppliedSurvivesRestartLikeReload(
+            root, rebuildExecutable);
         testAltValueChange(root, rebuildExecutable);
         testAltPreparedRecoveryAfter(root, rebuildExecutable);
         testAltPreparedRecoveryBefore(root, rebuildExecutable);

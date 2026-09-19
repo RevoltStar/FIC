@@ -662,6 +662,42 @@ void testGrubUndoPayloadRoundTrip() {
             "grub key and applied value must survive reload");
 }
 
+// An empty applied value is a legitimate durable state (an applied policy
+// value of "" e.g. produces grub_cmdline_linux="") and must round-trip:
+// persist -> reload. The loader must not treat it as malformed.
+void testGrubEmptyAppliedValueRoundTrip() {
+    TempFile file;
+    MutationId id = 0;
+    {
+        MutationJournal journal(file.path);
+        std::string error;
+        require(journal.load(error), error);
+        MutationRecord record;
+        record.policy = PolicyRef{"OSS", "Grub", "grub_test_policy"};
+        record.resource = "GRUB_CMDLINE_LINUX";
+        record.undo = UndoAction{
+            MutationBackend::Grub,
+            UndoRemoveGrubManagedSetting{"GRUB_CMDLINE_LINUX", ""}};
+        require(journal.prepareMutation(record, id, error), error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    MutationJournal reloaded(file.path);
+    std::string error;
+    require(reloaded.load(error), error);
+    require(reloaded.records().size() == 1,
+            "grub record with empty applied value must survive reload");
+    const MutationRecord& record = reloaded.records().front();
+    require(record.status == MutationStatus::Applied,
+            "reloaded record must keep the Applied status");
+    require(record.resource == "GRUB_CMDLINE_LINUX",
+            "reloaded resource must survive reload");
+    const auto* undo =
+        std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload);
+    require(undo != nullptr, "grub undo payload must survive reload");
+    require(undo->key == "GRUB_CMDLINE_LINUX" && undo->appliedValue.empty(),
+            "grub key with EMPTY applied value must survive reload");
+}
+
 void requireBrokenGrubJournalFailsClosed(const std::string& content,
                                          const std::string& description) {
     TempFile file;
@@ -694,11 +730,8 @@ void testGrubUndoMalformedPayloadsFailClosed() {
                "\"key\":\"GRUB_TEST_VALUE\",\"applied_value\":\"expected\"}" +
             tail,
         "unknown managed key");
-    requireBrokenGrubJournalFailsClosed(
-        head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
-               "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":\"\"}" +
-            tail,
-        "empty applied value");
+    // NOTE: an empty applied value is VALID (grub_cmdline_linux="" is a
+    // legitimate applied state) and is covered by the round-trip test.
     requireBrokenGrubJournalFailsClosed(
         head + "\"action\":\"remove_grub_managed_setting\",\"backend\":\"grub\","
                "\"key\":\"GRUB_TIMEOUT\",\"applied_value\":\"ex\\npected\"}" +
@@ -1943,6 +1976,7 @@ int main() {
         {"ssh undo payload round trip", testSshUndoPayloadRoundTrip},
         {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
         {"grub undo payload round trip", testGrubUndoPayloadRoundTrip},
+        {"grub empty applied value round trip", testGrubEmptyAppliedValueRoundTrip},
         {"grub undo malformed payloads fail closed", testGrubUndoMalformedPayloadsFailClosed},
         {"grub resource/payload mismatch fails closed",
          testGrubResourcePayloadMismatchFailsClosed},

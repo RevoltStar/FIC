@@ -75,6 +75,34 @@ json serializeUndoAction(const UndoAction& action) {
     return value;
 }
 
+// Shared GRUB undo-payload validation. Used by BOTH the write path
+// (MutationJournal::prepareMutation) and the read path
+// (deserializeUndoAction) so that the writer can never persist a record
+// the loader would reject. An empty appliedValue is VALID: an applied
+// policy value of "" (e.g. grub_cmdline_linux="") is a legitimate
+// durable state. Only the managed-key identity and the absence of
+// CR, LF and NUL in the applied value are enforced.
+bool validateGrubUndoPayload(const UndoRemoveGrubManagedSetting& payload,
+                             std::string& error) {
+    if (payload.key.empty()) {
+        error = "remove_grub_managed_setting undo requires a managed key";
+        return false;
+    }
+    if (!isGrubManagedKey(payload.key)) {
+        error = "remove_grub_managed_setting undo requires a FIC "
+                "supported GRUB key, got: " +
+            payload.key;
+        return false;
+    }
+    if (payload.appliedValue.find_first_of("\r\n") != std::string::npos ||
+        payload.appliedValue.find('\0') != std::string::npos) {
+        error = "remove_grub_managed_setting undo applied value must not "
+                "contain CR, LF or NUL";
+        return false;
+    }
+    return true;
+}
+
 bool deserializeUndoAction(const json& value, UndoAction& action, std::string& error) {
     const std::string actionName = value.value("action", "");
     const std::string backendName = value.value("backend", "");
@@ -170,20 +198,7 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         UndoRemoveGrubManagedSetting payload;
         payload.key = value.value("key", "");
         payload.appliedValue = value.value("applied_value", "");
-        if (payload.key.empty() || payload.appliedValue.empty()) {
-            error = "remove_grub_managed_setting undo requires a key and an "
-                    "applied value";
-            return false;
-        }
-        if (!isGrubManagedKey(payload.key)) {
-            error = "remove_grub_managed_setting undo requires a FIC "
-                    "supported GRUB key, got: " + payload.key;
-            return false;
-        }
-        if (payload.appliedValue.find_first_of("\r\n") != std::string::npos ||
-            payload.appliedValue.find('\0') != std::string::npos) {
-            error = "remove_grub_managed_setting undo applied value must not "
-                    "contain CR, LF or NUL";
+        if (!validateGrubUndoPayload(payload, error)) {
             return false;
         }
         action.payload = std::move(payload);
@@ -980,9 +995,12 @@ bool MutationJournal::prepareMutation(MutationRecord record,
     }
     // Record consistency before ANY refresh/insert: for GRUB the logical
     // identity carries the managed key, so the payload MUST agree with it
-    // (record.resource == undo.key). A malformed record is never silently
-    // refreshed or persisted — fail closed. Other backends keep their
-    // existing semantics unchanged.
+    // (record.resource == undo.key). The payload itself must satisfy the
+    // SAME rules the loader enforces (see validateGrubUndoPayload): the
+    // writer must never persist a record the loader would reject. An
+    // empty appliedValue is valid (applied policy value "" is legitimate).
+    // A malformed record is never silently refreshed or persisted — fail
+    // closed. Other backends keep their existing semantics unchanged.
     if (record.undo.backend == MutationBackend::Grub) {
         const auto* grub =
             std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload);
@@ -990,6 +1008,9 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             error = "GRUB mutation record требует undo key == resource ('" +
                 record.resource + "'): "
                 "payload не согласован с identity (fail closed)";
+            return false;
+        }
+        if (!validateGrubUndoPayload(*grub, error)) {
             return false;
         }
     }
