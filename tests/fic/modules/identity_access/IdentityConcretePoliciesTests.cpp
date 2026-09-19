@@ -342,9 +342,8 @@ void testSssdPreparedCrashRecoveryCompletesApplied(const fs::path& root) {
         SssdOfflineCredentialsExpirationPolicy recoveryPolicy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(recoveryPolicy.apply(), "the recovery apply must succeed");
-        require(restartCalls >= 1,
-                "the recovery MUST run the mandatory runtime reconciliation "
-                "(restart) even though the persistent write is a no-op");
+        require(restartCalls == 1,
+                "Prepared recovery must restart exactly once");
         const auto& record = singleActiveRecord(kSssdPolicyRef);
         require(record.id == idBefore,
                 "recovery must reuse the SAME MutationId");
@@ -463,10 +462,21 @@ void testSssdForeignReplacementBetweenProofAndRemovalSurvives(
         [&main, staged]() {
             ::rename(staged.c_str(), sssdDropInPath(main).c_str());
         });
+    int restoreBarriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) {
+            if (path == sssdDropInPath(main).string()) {
+                ++restoreBarriers;
+            }
+            return true;
+        });
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(restoreBarriers >= 1,
+            "restored foreign replacement requires a directory barrier");
     require(!report.rollbackCompleted(),
             "a foreign replacement must fail the removal closed");
     require(report.status == fic::rollback::RollbackStatus::Failed ||
@@ -509,17 +519,71 @@ void testSssdDoubleReplacementPreservesBothForeignObjects(
             staged = privatePath;
             writeFile(dropIn, c, 0600);
         });
+    int stagedBarriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) {
+            if (path == dropIn.string()) {
+                ++stagedBarriers;
+            }
+            return true;
+        });
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
     fic::identity::sssd::setManagedSnippetStagedRaceHookForTests(nullptr);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(stagedBarriers >= 1,
+            "B-staged/C-at-source arrangement requires a directory barrier");
     require(!report.rollbackCompleted(), "double replacement must fail closed");
     require(readFile(dropIn) == c, "foreign C must not be overwritten by B");
     require(!staged.empty() && readFile(staged) == b,
             "foreign B must remain staged byte-exact");
     require(activeRecordCount(kSssdPolicyRef) == 1,
             "double replacement must retain provenance");
+}
+
+void testSssdForeignRestoreFsyncFailureKeepsProvenance(
+    const fs::path& root) {
+    const fs::path main = root / "system/sssd-restore-fsync.conf";
+    writeFile(main, "[pam]\noffline_credentials_expiration = 7\n", 0600);
+    const fs::path systemctl = root / "bin/systemctl";
+    writeFile(systemctl, "test executable\n", 0755);
+    auto resolver = makeResolver(systemctl);
+    auto runner = [](const std::string&,
+                     const std::vector<std::string>&,
+                     const ProcessOptions&) { return okResult(); };
+    JournalOverride guard(root / "journals/sssd-restore-fsync.json");
+    setPolicyValues(root, "30", "7200");
+    SssdOfflineCredentialsExpirationPolicy policy(
+        sssdOptions(main, root), resolver, {"sssd.service"}, runner);
+    require(policy.apply(), "initial SSSD apply must succeed");
+    const fs::path dropIn = sssdDropInPath(main);
+    const std::string foreign =
+        "[pam]\noffline_credentials_expiration = 40\n";
+    fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(
+        [&]() {
+            const fs::path replacement = dropIn.string() + ".replacement";
+            writeFile(replacement, foreign, 0600);
+            require(::rename(replacement.c_str(), dropIn.c_str()) == 0,
+                    "could not install foreign replacement");
+        });
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) { return path != dropIn.string(); });
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        kSssdPolicyRef, kSssdResource,
+        sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
+    require(!report.rollbackCompleted(),
+            "failed restore fsync must not complete rollback");
+    require(report.message.find("directory state indeterminate") !=
+                std::string::npos,
+            "failed restore fsync must report indeterminate directory state");
+    require(readFile(dropIn) == foreign,
+            "foreign replacement must remain untouched");
+    require(activeRecordCount(kSssdPolicyRef) == 1,
+            "failed restore fsync must retain provenance");
 }
 
 void testSssdStagingCollisionDoesNotReplaceObject(const fs::path& root) {
@@ -560,13 +624,12 @@ void testSssdReusedDriftAfterProofSurvives(const fs::path& root) {
     const fs::path dropIn = sssdDropInPath(main);
     const std::string foreign =
         "# foreign edit\n[pam]\noffline_credentials_expiration = 40\n";
-    bool inject = false;
+    int restarts = 0;
     auto runner = [&](const std::string&,
                       const std::vector<std::string>& arguments,
                       const ProcessOptions&) {
-        if (inject && !arguments.empty() && arguments.front() == "restart") {
-            inject = false;
-            writeFile(dropIn, foreign, 0600);
+        if (!arguments.empty() && arguments.front() == "restart") {
+            ++restarts;
         }
         return okResult();
     };
@@ -575,8 +638,17 @@ void testSssdReusedDriftAfterProofSurvives(const fs::path& root) {
     SssdOfflineCredentialsExpirationPolicy policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "initial SSSD apply must succeed");
-    inject = true;
-    require(!policy.apply(), "post-proof drift must fail reused apply closed");
+    const int firstRestarts = restarts;
+    require(policy.apply(), "unchanged Applied reapply must succeed");
+    require(restarts == firstRestarts,
+            "unchanged Applied reapply must not restart SSSD");
+    SssdOfflineCredentialsExpirationPolicy::setReusedProofHookForTests(
+        [&]() { writeFile(dropIn, foreign, 0600); });
+    const bool applied = policy.apply();
+    SssdOfflineCredentialsExpirationPolicy::setReusedProofHookForTests(nullptr);
+    require(!applied, "post-proof drift must fail reused apply closed");
+    require(restarts == firstRestarts,
+            "drifted Applied reapply must not restart SSSD");
     require(readFile(dropIn) == foreign,
             "reused apply must not restore 30 over foreign 40");
     require(activeRecordCount(kSssdPolicyRef) == 1,
@@ -1668,6 +1740,7 @@ int main() {
         testSssdApplyAbsentSourceReconcilesRuntime(root);
         testSssdForeignReplacementBetweenProofAndRemovalSurvives(root);
         testSssdDoubleReplacementPreservesBothForeignObjects(root);
+        testSssdForeignRestoreFsyncFailureKeepsProvenance(root);
         testSssdStagingCollisionDoesNotReplaceObject(root);
         testSssdReusedDriftAfterProofSurvives(root);
         testSssdCompensationRecreateOnlyOnProvenMissing(root);

@@ -744,6 +744,15 @@ ConfigurationStepResult removeManagedSnippetFile(
             restoreNote = " (foreign object left staged at " + privateTarget +
                 ": " + std::strerror(errno) + ")";
         }
+        // Both the restored B and the B-staged/C-at-source arrangements are
+        // FIC-induced directory changes. Confirm their durability before
+        // reporting the conflict; failed fsync leaves provenance active.
+        std::string durabilityError;
+        if (!AtomicFileWriter::fsyncParentDirectoryForPath(
+                options.path.string(), &durabilityError)) {
+            restoreNote += " (directory state indeterminate: " +
+                durabilityError + ")";
+        }
         return ConfigurationStepResult::failure(
             "refusing to remove a foreign replacement of the managed SSSD "
             "drop-in" + restoreNote + ": " + options.path.string());

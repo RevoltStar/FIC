@@ -19,6 +19,11 @@ std::string managedResource() {
     return std::string(kSection) + "/" + kOption;
 }
 
+std::function<void()>& reusedProofHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
 } // namespace
 
 SssdOfflineCredentialsExpirationPolicy::
@@ -63,8 +68,10 @@ using fic::identity::sssd::SssdManagedSnippetObservation;
 //   Reused      — the drop-in already carries exactly the desired value and
 //                 the single active record proves FIC ownership: no new
 //                 provenance, no persistent mutation;
+//   Recovered   — Prepared recovery completed runtime reconciliation, fresh
+//                 AFTER proof and Applied promotion; no further work;
 //   Failed      — fail closed (error is set).
-enum class ReconciliationOutcome { Proceed, Reused, Failed };
+enum class ReconciliationOutcome { Proceed, Reused, Recovered, Failed };
 
 bool classifyObservedDropIn(
     SssdPolicy& policy,
@@ -218,6 +225,7 @@ ReconciliationOutcome reconcileSssdJournal(
                     ok = false;
                     return ReconciliationOutcome::Failed;
                 }
+                return ReconciliationOutcome::Recovered;
             }
             // Applied: the proven AFTER state is already idempotent.
             return ReconciliationOutcome::Reused;
@@ -280,7 +288,13 @@ bool SssdOfflineCredentialsExpirationPolicy::applySssd(
             return false;
         }
         if (outcome == ReconciliationOutcome::Reused) {
+            if (auto hook = reusedProofHook()) {
+                hook();
+            }
             return reapplyExistingManagedValue(configuration, expectedValue);
+        }
+        if (outcome == ReconciliationOutcome::Recovered) {
+            return true;
         }
     }
     return applyFreshManagedValue(configuration, expectedValue, journal,
@@ -291,16 +305,9 @@ bool SssdOfflineCredentialsExpirationPolicy::reapplyExistingManagedValue(
     fic::identity::sssd::SssdConfiguration& configuration,
     const std::string& expectedValue) {
     // Reused provenance never authorizes another persistent writer. The
-    // source may drift after reconciliation's proof; re-check it after the
-    // mandatory runtime restart instead of restoring the old value.
+    // source may drift after reconciliation's proof; re-check it read-only.
+    // Applied same-value has no persistent change and needs no restart.
     std::string error;
-    if (!reconcileSssdRuntime(rollbackOptions_, error)) {
-        this->log(
-            "Could not reconcile SSSD runtime for " + this->policyName +
-                ": " + error,
-            logLevel::ERROR);
-        return false;
-    }
     fic::identity::sssd::SssdManagedSnippetObservation observed;
     using DropInState = fic::identity::sssd::
         SssdManagedSnippetObservation::DropInState;
@@ -317,6 +324,11 @@ bool SssdOfflineCredentialsExpirationPolicy::reapplyExistingManagedValue(
         "SSSD policy " + this->policyName + " is persistent and effective",
         logLevel::INFO);
     return true;
+}
+
+void SssdOfflineCredentialsExpirationPolicy::setReusedProofHookForTests(
+    std::function<void()> hook) {
+    reusedProofHook() = std::move(hook);
 }
 
 bool SssdOfflineCredentialsExpirationPolicy::applyFreshManagedValue(

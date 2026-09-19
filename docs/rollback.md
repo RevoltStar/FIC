@@ -877,6 +877,10 @@ SSSD restart verification → Applied`):
 а новая версия не перезаписывается. Оба переноса используют
 `RENAME_NOREPLACE`: занятый private target также не перезаписывается.
 Если атомарный no-replace rename недоступен, удаление fail closed.
+После restore foreign replacement либо сохранения его в staging при
+появившейся третьей версии FIC подтверждает итоговое состояние каталога
+через `fsync` перед возвратом conflict. Ошибка fsync означает
+indeterminate directory state; journal provenance остаётся активной.
 
 Удаление считается durable только после `fsync` родительского каталога
 после rename-away и unlink. Компенсационное exclusive recreate выставляет
@@ -901,8 +905,8 @@ proof'а (crash между системной мутацией и коммито
   apply → обязательная runtime-реконсиляция (restart активного SSSD,
   без повторного persistent writer), свежий повторный proof persistent
   AFTER, затем тот же `MutationId` становится `Applied`. Новая запись не
-  создаётся; для уже `Applied` same-value reapply также не пишет source,
-  а повторно проверяет его после runtime-реконсиляции;
+  создаётся и recovery завершается без второго restart; для уже `Applied`
+  same-value reapply только повторно читает source, без write и restart;
 * Kerberos: fresh full-graph AFTER proof (relation ровно в ожидаемой root
   топологии, нет внешнего include-определения, нет дубликата, текущее
   значение == undo.appliedValue == желаемое) при same-value apply → тот же

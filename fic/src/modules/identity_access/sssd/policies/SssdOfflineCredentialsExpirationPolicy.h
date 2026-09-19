@@ -5,6 +5,8 @@
 #include "modules/identity_access/sssd/SssdRollback.h"
 #include "modules/identity_access/sssd/SssdRuntime.h"
 
+#include <functional>
+
 namespace fic::rollback {
 class MutationJournal;
 }
@@ -20,13 +22,14 @@ public:
         std::vector<std::string> serviceUnits,
         fic::identity::sssd::SssdCommandRunner runner);
 
+    static void setReusedProofHookForTests(std::function<void()> hook);
+
 private:
     bool applySssd(
         fic::identity::sssd::SssdConfiguration& configuration,
         const std::string& expectedValue) override;
 
-    // Same-value re-apply under the reused active record: no new
-    // provenance, runtime effectiveness is re-enforced.
+    // Applied same-value: read-only final proof, no writer or restart.
     bool reapplyExistingManagedValue(
         fic::identity::sssd::SssdConfiguration& configuration,
         const std::string& expectedValue);
