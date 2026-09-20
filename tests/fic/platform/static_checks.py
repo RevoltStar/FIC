@@ -306,7 +306,7 @@ def main():
             and 'supportedFaillockStrategies = {' in profiles[name]
             and 'defaultFaillockStrategy =' in profiles[name]
             and '"fic-pwhistory"' in profiles[name]
-            and '"pwquality"' in profiles[name],
+            and '"fic-pwquality"' in profiles[name],
             f"{name} does not compose the PAM activation recipes",
         )
 

@@ -908,13 +908,15 @@ profiles равны `0/99999/7`, а UID range равен `1000..60000` на Debi
 `500..60000` на ALT p11.
 
 Package integration не меняет эту границу. DEB-пакет `fic` для Debian и Ubuntu
-устанавливает три физически принадлежащих пакету, по умолчанию выключенных
-`pam-auth-update` profile declaration: `fic-faillock-notify` размещает
-`preauth` и account check, `fic-faillock` — `authfail`, а `fic-pwhistory` —
-password-history check. `postinst configure` вызывает только
-`pam-auth-update --package`; activation policies используют recipes
-`fic-faillock-notify fic-faillock`, `fic-pwhistory` и distro-owned `pwquality`,
-после чего Structural verifier анализирует новый effective graph. Policy values
+устанавливает принадлежащие пакету, по умолчанию выключенные
+`pam-auth-update` profile declarations: `fic-faillock-*` кодируют три selector
+strategy и общий `authfail`, `fic-pwquality` подключает `pam_pwquality`, а
+`fic-pwhistory` — password-history check. `postinst configure` вызывает только
+`pam-auth-update --package`; activation policies включают только FIC-owned
+profiles. Уже выбранный distro `pwquality` считается external compliant
+topology: он удовлетворяет PasswordQuality, но FIC его не усыновляет и никогда
+не передаёт в `--disable`. После activation Structural verifier анализирует
+новый effective graph. Policy values
 остаются в `faillock.conf`; history values находятся в `pwhistory.conf` на
 modern profiles и в `pam_pwhistory.so` argv на Debian 12. ALT p11 не получает эти files и
 не вызывает Debian-specific mechanism. RPM устанавливает выключенную facility

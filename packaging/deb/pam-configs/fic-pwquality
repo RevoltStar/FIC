@@ -1,0 +1,6 @@
+Name: FIC PAM password quality checking
+Default: no
+Priority: 1024
+Password-Type: Primary
+Password:
+	requisite			pam_pwquality.so retry=3

@@ -50,22 +50,35 @@ PamRollbackResult undoPamCapability(const PamRollbackOptions& options,
     }
     auto manager = options.managerFactory(*capability, *services, error);
     if (!manager) return {PamRollbackState::Failed, error};
-    if (capability->activationOwnershipRequiresJournal &&
-        !undo.confirmedNativeOwnership) {
-        // Prepared alone proves intent, not which writer selected a shared
-        // distro profile. Never release an ambiguous post-crash selection.
-        fic::identity::pam::PamTopologyStatus unresolved;
-        if (!manager->inspect(unresolved, error))
-            return {PamRollbackState::Conflict, error};
-        if (unresolved.state != PamTopologyState::Disabled)
-            return {PamRollbackState::Conflict,
-                    "fresh Prepared shared PAM selection has no ownership proof"};
+
+    // pam-auth-update ownership is the exact FIC profile identifier set, not
+    // semantic equality of the generated PAM graph. A structurally ambiguous
+    // graph (for example concurrent distro pwquality + fic-pwquality) must not
+    // block release of the exact FIC identifiers, and rollback must never
+    // restore a snapshot over administrator selections.
+    if (kind == PamTopologyKind::PamAuthUpdate) {
+        fic::identity::pam::PamTopologyStatus classified;
+        std::string classificationError;
+        if (manager->inspect(classified, classificationError) &&
+            (classified.state == PamTopologyState::Disabled ||
+             (classified.state == PamTopologyState::Enabled &&
+              !classified.manageable))) {
+            if (!manager->confirmDurable(error))
+                return {PamRollbackState::Failed,
+                        "PAM release durability unconfirmed: " + error};
+            return {PamRollbackState::AlreadyReleased,
+                    "FIC pam-auth-update selection absent"};
+        }
+        if (!manager->disable(error))
+            return {PamRollbackState::Failed,
+                    "FIC pam-auth-update release failed: " + error};
         if (!manager->confirmDurable(error))
-            return {PamRollbackState::Failed, error};
-        return {PamRollbackState::AlreadyReleased,
-                "fresh Prepared shared PAM selection is absent"};
+            return {PamRollbackState::Failed,
+                    "PAM release durability unconfirmed: " + error};
+        return {PamRollbackState::Released,
+                "FIC pam-auth-update selection released"};
     }
-    manager->setJournalProvenance(true);
+
     fic::identity::pam::PamTopologyStatus before;
     if (!manager->inspect(before, error))
         return {PamRollbackState::Conflict, "PAM topology drift: " + error};
@@ -78,22 +91,13 @@ PamRollbackResult undoPamCapability(const PamRollbackOptions& options,
     if (before.state != PamTopologyState::Enabled)
         return {PamRollbackState::Conflict, "PAM topology is not proven"};
     if (!before.manageable) {
-        if (kind == PamTopologyKind::PamAuthUpdate) {
-            if (!manager->confirmDurable(error))
-                return {PamRollbackState::Failed,
-                        "PAM release durability unconfirmed: " + error};
-            return {PamRollbackState::AlreadyReleased,
-                    "FIC selection absent; foreign PAM topology untouched"};
-        }
         return {PamRollbackState::Conflict, "PAM topology is foreign"};
     }
     if (!manager->disable(error))
         return {PamRollbackState::Failed, "PAM release failed: " + error};
     fic::identity::pam::PamTopologyStatus after;
     if (!manager->inspect(after, error) ||
-        (after.state != PamTopologyState::Disabled &&
-         !(kind == PamTopologyKind::PamAuthUpdate &&
-           after.state == PamTopologyState::Enabled && !after.manageable))) {
+        after.state != PamTopologyState::Disabled) {
         return {PamRollbackState::Failed,
                 "PAM release postcondition failed: " + error};
     }

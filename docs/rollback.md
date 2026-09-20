@@ -991,10 +991,14 @@ Foreign relation / root-определение без активной запи�
 Payload содержит `had_applied_provenance`: recovery вправе удалить
 `Prepared + Disabled` только для fresh записи, а не для reused provenance.
 Для strategy transition payload также фиксирует прежнюю и целевую стратегии
-и прежний error. Recovery сначала разрешает именно эту durable операцию:
-точный BEFORE восстанавливает предыдущую `Applied`, точный AFTER подтверждает
-новую `Applied`, а drift остаётся fail closed. Только после этого применяется
-текущее desired value, которое могло измениться после crash.
+и прежний error. Fresh transition содержит только target; reused provenance
+обязана содержать exact pair previous/target, причём previous != target.
+Один validator применяется writer и loader, поэтому невозможный для writer
+reused payload не может быть принят после reload. Recovery сначала разрешает
+именно эту durable операцию: точный BEFORE восстанавливает предыдущую
+`Applied`, точный AFTER подтверждает новую `Applied`, а drift остаётся fail
+closed. Только после этого применяется текущее desired value, которое могло
+измениться после crash.
 
 `Prepared` проверяется до обычного no-op: доказанный AFTER проходит свежую
 структурную проверку и durability barrier, затем становится `Applied`;
@@ -1013,11 +1017,17 @@ native deactivation. PAM provider options (`PamOptionPolicy`, включая
 Без active journal явно FIC-owned markers/selections
 считаются orphaned provenance: disable отклоняется, автоматического
 «усыновления» или разрушительного legacy rollback нет.
-Общий distro profile `pwquality` сам по себе не является FIC ownership marker:
-уже выбранный без журнала профиль остаётся external/no-op. Для FIC activation
-успешный native writer отдельно подтверждается durable refresh записи
-`Prepared`; без этого подтверждения свежая запись не даёт права отключить
-неоднозначный shared profile даже после failed rollback retry.
+PasswordQuality на Debian/Ubuntu разделяет compliance и ownership: distro
+profile `pwquality` может обеспечивать требуемую topology, но всегда остаётся
+external и потому даёт no-op без journal. Когда activation действительно
+нужна, FIC включает собственный profile `fic-pwquality`. Rollback отключает
+только `fic-pwquality`; disappearance этого marker при сохранённом journal
+означает release FIC-owned topology, даже если администратор затем включил
+эквивалентный distro `pwquality`. Таким образом journal доказывает lifecycle
+FIC mutation, а не превращает shared native identifier во владение FIC.
+Старые записи, содержащие activation domain `pwquality`, не усыновляются:
+несовпадение с текущим `fic-pwquality` domain даёт Conflict и требует ручной
+reconciliation.
 Чистые preflight failures происходят до создания `Prepared`. Доказательство
 ALT password-history BEFORE при отсутствии managed topology не требует ещё
 не созданного history storage.

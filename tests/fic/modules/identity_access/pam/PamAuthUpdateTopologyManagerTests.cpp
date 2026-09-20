@@ -750,8 +750,10 @@ void testSelectedButIneffectiveIsBroken(const TestTree& tree) {
     require(!manager.inspect(status, error) &&
                 status.state == fic::identity::pam::PamTopologyState::Broken,
             "selected FIC profiles with ineffective topology must fail closed");
-    require(!manager.disable(error) && fake.calls == 0,
-            "ineffective selected topology must not be disabled blindly");
+    require(manager.disable(error) && fake.calls == 1,
+            "exact FIC selections must be releasable despite ineffective topology");
+    require(readFile(tree.stateDir() / "auth").empty(),
+            "ineffective FIC selections must be removed");
     resetTree(tree);
 }
 
@@ -773,8 +775,10 @@ void testSelectionStrategyMismatchIsBroken(const TestTree& tree) {
     require(!manager.inspect(status, error) &&
                 status.state == fic::identity::pam::PamTopologyState::Broken,
             "profile recipe differing from effective strategy must be drift");
-    require(!manager.disable(error) && fake.calls == 0,
-            "mismatched FIC selection must not be released blindly");
+    require(manager.disable(error) && fake.calls == 1,
+            "exact FIC selections must be releasable despite strategy drift");
+    require(readFile(tree.stateDir() / "auth").empty(),
+            "mismatched FIC selections must be removed");
     resetTree(tree);
 }
 

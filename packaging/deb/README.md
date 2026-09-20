@@ -37,7 +37,8 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - inactive package profiles `/usr/share/pam-configs/fic-faillock-notify`,
   `/usr/share/pam-configs/fic-faillock-authfail`,
   `/usr/share/pam-configs/fic-faillock-preauth-required`,
-  `/usr/share/pam-configs/fic-faillock-authsucc` and
+  `/usr/share/pam-configs/fic-faillock-authsucc`,
+  `/usr/share/pam-configs/fic-pwquality` and
   `/usr/share/pam-configs/fic-pwhistory`
 - `/bin/fic` symlink to `/opt/fic/bin/fic`
 
@@ -73,8 +74,9 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
 - `fic` depends on `fic-dick`
 - `fic` directly depends on `libpam-runtime`, `libpam-modules` and
   `libpam-pwquality`: the first provides `pam-auth-update`, the second owns the
-  PAM modules referenced by the FIC profiles, and the third owns the distro
-  `pwquality` profile selected by password-quality activation
+  core PAM modules referenced by the FIC profiles, and the third provides
+  `pam_pwquality.so`; FIC ships its own inactive `fic-pwquality` activation
+  profile and never takes ownership of the distro `pwquality` profile
 - `fic` directly depends on `libnotify-bin` for `notify-send` and on
   `util-linux` for the notification dispatcher's `setpriv`
 - `fic` recommends `fic-session-agent`

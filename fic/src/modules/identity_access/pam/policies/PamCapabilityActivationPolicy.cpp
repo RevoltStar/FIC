@@ -198,12 +198,6 @@ bool PamCapabilityActivationPolicy::applyPam(
                     "(fail closed)", logLevel::ERROR);
                 return false;
             }
-            // A fresh Prepared record alone cannot prove who selected a
-            // shared distro profile after a crash. Only a durably confirmed
-            // native writer can; an ambiguous fresh AFTER stays fail closed.
-            manager->setJournalProvenance(
-                !capability->activationOwnershipRequiresJournal ||
-                recorded->confirmedNativeOwnership);
         }
     }
 
@@ -312,7 +306,6 @@ bool PamCapabilityActivationPolicy::applyPam(
                 return false;
             }
             active.clear();
-            manager->setJournalProvenance(false);
         } else {
             log("PAM Prepared topology is indeterminate (fail closed)",
                 logLevel::ERROR);
@@ -359,9 +352,6 @@ bool PamCapabilityActivationPolicy::applyPam(
     const auto previous = reused ? active.front() : fic::rollback::MutationRecord{};
     if (mutationRequired && mutableTopology) {
         undo.hadAppliedProvenance = reused;
-        undo.confirmedNativeOwnership =
-            reused && std::get<fic::rollback::UndoDisablePamCapability>(
-                previous.undo.payload).confirmedNativeOwnership;
         undo.previousError = reused ? previous.error : std::string();
         if (strategyAware()) {
             undo.targetStrategy =
@@ -460,25 +450,6 @@ bool PamCapabilityActivationPolicy::applyPam(
     if (!proveEnabled(mutationRequired, strategy)) {
         log("PAM postcondition failed: " + error, logLevel::ERROR);
         return false;
-    }
-    if (mutationRequired &&
-        capability->activationOwnershipRequiresJournal) {
-        // A second durable Prepared refresh records that this process ran
-        // the native writer successfully. If this write fails, the earlier
-        // intent-only Prepared remains fail closed and cannot claim a
-        // concurrently selected administrator profile.
-        undo.confirmedNativeOwnership = true;
-        fic::rollback::MutationRecord confirmed;
-        confirmed.policy = policy;
-        confirmed.resource = "capability/" + policyName;
-        confirmed.undo = {fic::rollback::MutationBackend::Pam, undo};
-        fic::rollback::MutationId confirmedId = 0;
-        if (!journal->prepareMutation(confirmed, confirmedId, error) ||
-            confirmedId != mutationId) {
-            log("PAM native ownership confirmation failed: " + error,
-                logLevel::ERROR);
-            return false;
-        }
     }
     if (mutationRequired &&
         !journal->setStatus(mutationId,

@@ -107,6 +107,11 @@ void testPamJournalContract() {
     require(!journal.prepareMutation(invalid, id, error),
             "writer must reject previous strategy without prior provenance");
     invalid = pamRecord();
+    std::get<UndoDisablePamCapability>(invalid.undo.payload)
+        .hadAppliedProvenance = true;
+    require(!journal.prepareMutation(invalid, id, error),
+            "writer must reject reused transition without previous strategy");
+    invalid = pamRecord();
     std::get<UndoDisablePamCapability>(invalid.undo.payload).targetStrategy =
         "invalid_strategy";
     require(!journal.prepareMutation(invalid, id, error),
@@ -154,8 +159,8 @@ void testPamJournalContract() {
     document["records"][0]["undo"].erase("previous_strategy");
     rejects(document, "missing transition provenance field");
     document = original;
-    document["records"][0]["undo"].erase("confirmed_native_ownership");
-    rejects(document, "missing shared-profile ownership confirmation");
+    document["records"][0]["undo"]["had_applied_provenance"] = true;
+    rejects(document, "reused transition without previous strategy");
     document = original;
     document["records"][0]["resource"] = "capability/other";
     rejects(document, "PAM resource mismatch");

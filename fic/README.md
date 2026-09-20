@@ -624,7 +624,7 @@ platform id. Поэтому synthetic `passwdqc+pwhistory` и `pwquality` без
 
 | Платформы | Capability | Provider | Config grammar | Topology |
 | --- | --- | --- | --- | --- |
-| Debian 12/13, Ubuntu 24.04/26.04 | PasswordQuality | pam_pwquality | key/value | `PamAuthUpdate`: `pwquality` |
+| Debian 12/13, Ubuntu 24.04/26.04 | PasswordQuality | pam_pwquality | key/value | `PamAuthUpdate`: FIC-owned `fic-pwquality`; distro `pwquality` is external/compliant |
 | Debian 12 | PasswordHistory | pam_pwhistory | module arguments | `PamAuthUpdate`: `fic-pwhistory` |
 | Debian 13, Ubuntu 24.04/26.04 | PasswordHistory | pam_pwhistory | key/value | `PamAuthUpdate`: `fic-pwhistory` |
 | Debian 12/13, Ubuntu 24.04/26.04 | AuthenticationLockout | pam_faillock | key/value | `PamAuthUpdate`: strategy recipes `fic-faillock-notify`/`fic-faillock-preauth-required` + `fic-faillock-authfail`, `fic-faillock-authsucc` + `fic-faillock-authfail` |

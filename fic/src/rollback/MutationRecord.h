@@ -149,9 +149,6 @@ struct UndoDisablePamCapability {
     std::optional<std::string> previousStrategy;
     std::optional<std::string> targetStrategy;
     std::string previousError;
-    // For shared distro identifiers, an intent-only Prepared record is not
-    // ownership. Set durably only after FIC's native writer and proof.
-    bool confirmedNativeOwnership = false;
 };
 
 using UndoPayload = std::variant<

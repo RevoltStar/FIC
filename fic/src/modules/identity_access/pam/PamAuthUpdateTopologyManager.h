@@ -49,9 +49,6 @@ public:
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
     bool confirmDurable(std::string& error) const override;
-    void setJournalProvenance(bool present) override {
-        journalProvenance_ = present;
-    }
 
     bool canEnableStrategy(
         fic::platform::PamFaillockStrategy strategy,
@@ -68,7 +65,6 @@ private:
     enum class Ownership {
         FicOwned,
         NoFicProfiles,
-        ExternalSelection,
         InvalidSelection
     };
 
@@ -87,7 +83,6 @@ private:
     std::vector<std::string> services_;
     const fic::platform::PlatformExecutableResolver& executables_;
     PamAuthUpdateTopologyManagerOptions options_;
-    bool journalProvenance_ = false;
 
     std::filesystem::path stateDirectory() const;
     std::filesystem::path configDirectory() const;
@@ -127,7 +122,19 @@ private:
     bool resolveExecutable(std::filesystem::path& executable,
                            std::string& error) const;
 
-    // Transaction support: snapshot the pam-auth-update state database and
+    // Simple capability activation is owned by exact FIC profile identifiers.
+    // Compensation and rollback remove only those identifiers through
+    // pam-auth-update; they never restore a whole state snapshot over foreign
+    // selections that may have changed concurrently.
+    bool releaseSelectedIdentifiers(
+        const std::vector<std::string>& identifiers,
+        std::string& error);
+    bool failWithActivationCompensation(
+        const std::vector<std::string>& identifiers,
+        const std::string& failure,
+        std::string& error);
+
+    // Strategy-transition support: snapshot the pam-auth-update state database and
     // the generated common-* configs, apply the mutation with a single
     // pam-auth-update invocation, re-read and verify the exact requested
     // strategy, and restore the snapshot on any failure. A rollback that

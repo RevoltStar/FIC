@@ -473,8 +473,7 @@ void testSelectedProfile() {
                     fic::platform::PamTopologyStrategyKind::StaticVerifyOnly &&
                 faillock->activationIdentifiers.empty() &&
                 history->activationIdentifiers.empty() &&
-                quality->activationIdentifiers.empty() &&
-                !quality->activationOwnershipRequiresJournal,
+                quality->activationIdentifiers.empty(),
             "ALT PAM capabilities or supported faillock strategies are "
             "incorrect");
     } else {
@@ -510,10 +509,7 @@ void testSelectedProfile() {
                 history->activationIdentifiers ==
                     std::vector<std::string>{"fic-pwhistory"} &&
                 quality->activationIdentifiers ==
-                    std::vector<std::string>{"pwquality"} &&
-                quality->activationOwnershipRequiresJournal &&
-                !history->activationOwnershipRequiresJournal &&
-                !faillock->activationOwnershipRequiresJournal,
+                    std::vector<std::string>{"fic-pwquality"},
             "Debian-family PAM activation recipes are incorrect");
         require(pamAuthUpdate != nullptr &&
                     pamAuthUpdate->candidates ==

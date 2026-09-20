@@ -194,12 +194,6 @@ bool PamAuthUpdateTopologyManager::detectOwnership(
         error.clear();
         return true;
     }
-    if (capability_.activationOwnershipRequiresJournal &&
-        !journalProvenance_) {
-        ownership = Ownership::ExternalSelection;
-        error.clear();
-        return true;
-    }
     if (capability_.capability ==
             fic::platform::PamCapability::AuthenticationLockout &&
         !capability_.strategyActivations.empty()) {
@@ -379,7 +373,6 @@ bool PamAuthUpdateTopologyManager::inspect(PamTopologyStatus& status,
                 }
             }
             break;
-        case Ownership::ExternalSelection:
         case Ownership::NoFicProfiles:
             status.manageable = false;
             status.detail =
@@ -464,6 +457,53 @@ bool PamAuthUpdateTopologyManager::runPamAuthUpdate(
     return true;
 }
 
+bool PamAuthUpdateTopologyManager::releaseSelectedIdentifiers(
+    const std::vector<std::string>& identifiers,
+    std::string& error) {
+    std::set<std::string> enabled;
+    if (!enabledStateIdentifiers(enabled, error)) return false;
+
+    std::vector<std::string> arguments{"--disable"};
+    for (const std::string& identifier : identifiers) {
+        if (enabled.count(identifier) != 0) {
+            arguments.push_back(identifier);
+        }
+    }
+    if (arguments.size() == 1) {
+        error.clear();
+        return true;
+    }
+    if (!runPamAuthUpdate(arguments, error)) return false;
+
+    std::set<std::string> after;
+    if (!enabledStateIdentifiers(after, error)) return false;
+    for (const std::string& identifier : identifiers) {
+        if (after.count(identifier) != 0) {
+            error = "FIC PAM selection remains after pam-auth-update disable: " +
+                identifier;
+            return false;
+        }
+    }
+    return confirmDurable(error);
+}
+
+bool PamAuthUpdateTopologyManager::failWithActivationCompensation(
+    const std::vector<std::string>& identifiers,
+    const std::string& failure,
+    std::string& error) {
+    std::string cleanupError;
+    if (!releaseSelectedIdentifiers(identifiers, cleanupError)) {
+        error = failure +
+            "; CRITICAL: exact FIC PAM activation cleanup failed: " +
+            cleanupError;
+        return false;
+    }
+    error = failure +
+        "; FIC activation identifiers removed without restoring foreign "
+        "pam-auth-update state";
+    return false;
+}
+
 bool PamAuthUpdateTopologyManager::canEnable(std::string& error) const {
     if (capability_.topology !=
             fic::platform::PamTopologyStrategyKind::PamAuthUpdate ||
@@ -504,25 +544,19 @@ bool PamAuthUpdateTopologyManager::enable(std::string& error) {
         return false;
     }
 
-    StateSnapshot snapshot;
-    if (!snapshotState(snapshot, error)) {
-        return false;
-    }
     std::vector<std::string> arguments{"--enable"};
     arguments.insert(arguments.end(), identifiers.begin(), identifiers.end());
     std::string failure;
     if (!runPamAuthUpdate(arguments, failure)) {
-        return rollback(snapshot, std::nullopt, failure, error);
+        return failWithActivationCompensation(
+            identifiers, failure, error);
     }
-    // Prepared was persisted before invoking the native writer. Only this
-    // successful writer call may establish ownership of a shared profile.
-    journalProvenance_ = true;
     PamTopologyStatus after;
     std::string postconditionError;
     if (!inspect(after, postconditionError) ||
         after.state != PamTopologyState::Enabled ||
         !after.manageable) {
-        return rollback(snapshot, std::nullopt,
+        return failWithActivationCompensation(identifiers,
             "pam-auth-update activation did not produce a managed enabled "
             "topology: " +
                 (postconditionError.empty() ? after.detail
@@ -536,8 +570,7 @@ bool PamAuthUpdateTopologyManager::enable(std::string& error) {
 bool PamAuthUpdateTopologyManager::disable(std::string& error) {
     Ownership ownership = Ownership::NoFicProfiles;
     if (!detectOwnership(ownership, error)) return false;
-    if (ownership == Ownership::NoFicProfiles ||
-        ownership == Ownership::ExternalSelection) {
+    if (ownership == Ownership::NoFicProfiles) {
         error.clear();
         return true;
     }
@@ -545,40 +578,7 @@ bool PamAuthUpdateTopologyManager::disable(std::string& error) {
         error = "FIC pam-auth-update selection is partial or mixed";
         return false;
     }
-    PamTopologyStatus before;
-    if (!inspect(before, error) || before.state != PamTopologyState::Enabled ||
-        !before.manageable) {
-        if (error.empty()) error = "FIC-owned PAM topology is not proven";
-        return false;
-    }
-    std::set<std::string> enabled;
-    if (!enabledStateIdentifiers(enabled, error)) return false;
-    std::vector<std::string> arguments{"--disable"};
-    for (const std::string& identifier : knownActivationIdentifiers()) {
-        if (enabled.count(identifier) != 0) arguments.push_back(identifier);
-    }
-    if (arguments.size() == 1) {
-        error = "FIC PAM selections disappeared before disable";
-        return false;
-    }
-    if (!runPamAuthUpdate(arguments, error)) return false;
-    Ownership after = Ownership::InvalidSelection;
-    if (!detectOwnership(after, error) || after != Ownership::NoFicProfiles) {
-        if (error.empty()) error = "FIC selections remain after pam-auth-update";
-        return false;
-    }
-    PamTopologyStatus current;
-    // A foreign equivalent topology may remain active; it must not be
-    // removed. The required postcondition is absence of FIC selections.
-    if (!inspect(current, error) ||
-        (current.state != PamTopologyState::Disabled &&
-         !(current.state == PamTopologyState::Enabled &&
-           !current.manageable))) {
-        if (error.empty())
-            error = "PAM release did not reach a FIC-selection-free topology";
-        return false;
-    }
-    return confirmDurable(error);
+    return releaseSelectedIdentifiers(knownActivationIdentifiers(), error);
 }
 
 bool PamAuthUpdateTopologyManager::confirmDurable(std::string& error) const {
@@ -689,7 +689,6 @@ bool PamAuthUpdateTopologyManager::canEnableStrategy(
     switch (ownership) {
     case Ownership::FicOwned:
         break;
-    case Ownership::ExternalSelection:
     case Ownership::NoFicProfiles: {
         std::string externalError;
         const ExternalFaillockGraphState graph =

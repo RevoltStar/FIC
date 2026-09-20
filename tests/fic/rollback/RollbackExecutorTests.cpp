@@ -391,40 +391,48 @@ void testPamOwnershipRelease() {
                 PamRollbackState::AlreadyReleased,
             "StaticVerifyOnly must not require a native deactivation manager");
 
-    PamRollbackOptions sharedOptions;
-    sharedOptions.platform.scopes = {
+    PamRollbackOptions qualityOptions;
+    qualityOptions.platform.scopes = {
         {PamScope::EffectivePasswordStack, {"passwd"}}};
-    PamCapabilityConfig shared = capability;
-    shared.capability = PamCapability::PasswordQuality;
-    shared.activationIdentifiers = {"pwquality"};
-    shared.activationOwnershipRequiresJournal = true;
-    sharedOptions.platform.capabilities = {shared};
-    auto sharedState = std::make_shared<FakePamState>();
-    sharedState->manageable = false;
-    sharedOptions.managerFactory = [sharedState](const auto&, const auto&,
-                                                 std::string& error) {
+    PamCapabilityConfig quality = capability;
+    quality.capability = PamCapability::PasswordQuality;
+    quality.activationIdentifiers = {"fic-pwquality"};
+    qualityOptions.platform.capabilities = {quality};
+    auto qualityState = std::make_shared<FakePamState>();
+    qualityOptions.managerFactory = [qualityState](const auto&, const auto&,
+                                                   std::string& error) {
         error.clear();
-        return std::make_unique<FakePamManager>(sharedState);
+        return std::make_unique<FakePamManager>(qualityState);
     };
-    const UndoDisablePamCapability sharedUndo{
+    const UndoDisablePamCapability qualityUndo{
         "enable_password_quality", PamTopologyKind::PamAuthUpdate,
-        {"pwquality"}};
-    require(inspectUnrecordedPamCapability(sharedOptions,
-                "enable_password_quality").state ==
-                PamRollbackState::AlreadyReleased &&
-                sharedState->disableCalls == 0,
-            "unrecorded distro pwquality must remain enabled");
-    require(undoPamCapability(sharedOptions, sharedUndo).state ==
-                PamRollbackState::Conflict &&
-                sharedState->disableCalls == 0,
-            "intent-only journal cannot claim a shared distro profile");
-    sharedState->manageable = true;
-    auto provenSharedUndo = sharedUndo;
-    provenSharedUndo.confirmedNativeOwnership = true;
-    require(undoPamCapability(sharedOptions, provenSharedUndo).state ==
+        {"fic-pwquality"}};
+
+    // Exact FIC marker + matching journal provenance may be released.
+    require(undoPamCapability(qualityOptions, qualityUndo).state ==
                 PamRollbackState::Released &&
-                sharedState->disableCalls == 1,
-            "confirmed native shared-profile provenance must permit release");
+                qualityState->disableCalls == 1,
+            "FIC-specific pwquality profile must be releasable");
+
+    // ABA regression: the old journal remains, but the FIC marker disappeared
+    // and an administrator supplied an equivalent distro topology. Rollback
+    // must close the FIC provenance without touching the external selection.
+    qualityState->state = fic::identity::pam::PamTopologyState::Enabled;
+    qualityState->manageable = false;
+    qualityState->disableCalls = 0;
+    require(undoPamCapability(qualityOptions, qualityUndo).state ==
+                PamRollbackState::AlreadyReleased &&
+                qualityState->disableCalls == 0,
+            "external pwquality replacement must never be disabled");
+
+    // Records from the old shared-identifier architecture are not migrated:
+    // their ownership domain no longer matches the platform profile.
+    auto legacySharedUndo = qualityUndo;
+    legacySharedUndo.activationIdentifiers = {"pwquality"};
+    require(undoPamCapability(qualityOptions, legacySharedUndo).state ==
+                PamRollbackState::Conflict &&
+                qualityState->disableCalls == 0,
+            "legacy shared pwquality provenance must require reconciliation");
 }
 
 void testPamExecutorJournalLifecycle() {

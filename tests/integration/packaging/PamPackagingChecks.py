@@ -61,6 +61,11 @@ def main() -> int:
             "Priority": "1025",
             "rules": ("required\t\t\tpam_faillock.so authsucc",),
         },
+        "fic-pwquality": {
+            "Name": "FIC PAM password quality checking",
+            "Priority": "1024",
+            "rules": ("requisite\t\t\tpam_pwquality.so retry=3",),
+        },
         "fic-pwhistory": {
             "Name": "FIC PAM password history checking",
             "Priority": "1023",
@@ -142,6 +147,12 @@ def main() -> int:
     for selector in selector_profiles:
         require(selector not in authfail_conflicts,
                 f"authfail conflicts with required selector {selector}")
+
+    quality = (profile_dir / "fic-pwquality").read_text(encoding="utf-8")
+    require(field(quality, "Password-Type") == "Primary",
+            "pwquality profile Password-Type is not Primary")
+    require("pwquality" not in optional_field(quality, "Conflicts").split(),
+            "fic-pwquality must not conflict with the distro pwquality profile")
 
     history = (profile_dir / "fic-pwhistory").read_text(encoding="utf-8")
     require(field(history, "Password-Type") == "Primary", "history profile Password-Type is not Primary")

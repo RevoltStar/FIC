@@ -82,7 +82,7 @@ fic::platform::PamPlatformConfig makePlatform(
         {fic::platform::PamFaillockStrategy::Authsucc,
          {"fic-faillock-authsucc", "fic-faillock-authfail"}}};
     platform.capabilities[1].activationIdentifiers = {"fic-pwhistory"};
-    platform.capabilities[2].activationIdentifiers = {"pwquality"};
+    platform.capabilities[2].activationIdentifiers = {"fic-pwquality"};
     return platform;
 }
 
@@ -558,7 +558,6 @@ void testExternalPwquality(const std::filesystem::path& root) {
     require(::chmod(executable.c_str(), 0755) == 0,
             "could not prepare pam-auth-update fixture");
     auto platform = makePlatform(qualityRoot);
-    platform.capabilities[2].activationOwnershipRequiresJournal = true;
     fic::platform::PamProviderConfigTopology qualityConfig;
     qualityConfig.primaryPath = qualityRoot / "security/pwquality.conf";
     platform.capabilities[2].configTopology = qualityConfig;
@@ -577,7 +576,7 @@ void testExternalPwquality(const std::filesystem::path& root) {
         if (std::find(arguments.begin(), arguments.end(), "--enable") !=
             arguments.end()) {
             writeFile(qualityRoot / "var/lib/pam/password",
-                      "Module: unix\nModule: pwquality\n");
+                      "Module: unix\nModule: fic-pwquality\n");
             writeFile(qualityRoot / "pam.d/passwd",
                       "password requisite pam_pwquality.so\n"
                       "password required pam_unix.so\n");
@@ -656,15 +655,34 @@ void testExternalPwquality(const std::filesystem::path& root) {
         ? std::get_if<fic::rollback::UndoDisablePamCapability>(
               &records.front().undo.payload)
         : nullptr;
-    require(owned != nullptr && owned->confirmedNativeOwnership &&
+    require(owned != nullptr &&
+                owned->activationIdentifiers ==
+                    std::vector<std::string>{"fic-pwquality"} &&
                 records.front().status ==
                     fic::rollback::MutationStatus::Applied,
-            "FIC-enabled shared profile lacks durable writer provenance");
+            "FIC pwquality activation lacks exact profile provenance");
+
+    // ABA regression: an administrator removes the FIC profile and selects
+    // the distro profile with the same semantic effect. The journal is still
+    // active, but ownership of the current selection is external.
+    writeFile(qualityRoot / "var/lib/pam/password",
+              "Module: unix\nModule: pwquality\n");
     manager = factory(platform.capabilities[2],
                       std::vector<std::string>{"passwd"}, error);
-    manager->setJournalProvenance(true);
+    require(manager->inspect(status, error) &&
+                status.state ==
+                    fic::identity::pam::PamTopologyState::Enabled &&
+                !status.manageable &&
+                manager->disable(error) && writerCalls == 1,
+            "external pwquality replacement was treated as FIC-owned");
+
+    // Restoring the exact FIC marker proves the selection domain again.
+    writeFile(qualityRoot / "var/lib/pam/password",
+              "Module: unix\nModule: fic-pwquality\n");
+    manager = factory(platform.capabilities[2],
+                      std::vector<std::string>{"passwd"}, error);
     require(manager->disable(error) && writerCalls == 2,
-            "journal-backed pwquality release did not invoke native disable");
+            "FIC pwquality profile was not released");
 }
 
 } // namespace

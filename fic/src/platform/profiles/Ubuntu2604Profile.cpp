@@ -141,8 +141,7 @@ PlatformProfile makeBuildPlatformProfile() {
         {PamFaillockStrategy::Authsucc,
          {"fic-faillock-authsucc", "fic-faillock-authfail"}}
     };
-    profile.pam.capabilities[1].activationIdentifiers = {"pwquality"};
-    profile.pam.capabilities[1].activationOwnershipRequiresJournal = true;
+    profile.pam.capabilities[1].activationIdentifiers = {"fic-pwquality"};
     profile.pam.capabilities[2].activationIdentifiers = {"fic-pwhistory"};
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";

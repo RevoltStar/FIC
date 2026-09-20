@@ -100,8 +100,6 @@ json serializeUndoAction(const UndoAction& action) {
         value["previous_strategy"] = pam->previousStrategy;
         value["target_strategy"] = pam->targetStrategy;
         value["previous_error"] = pam->previousError;
-        value["confirmed_native_ownership"] =
-            pam->confirmedNativeOwnership;
     }
     return value;
 }
@@ -178,6 +176,8 @@ bool validatePamUndoPayload(const UndoDisablePamCapability& payload,
         (payload.previousStrategy &&
          (!payload.hadAppliedProvenance || !payload.targetStrategy ||
           payload.previousStrategy == payload.targetStrategy)) ||
+        (payload.hadAppliedProvenance && payload.targetStrategy &&
+         !payload.previousStrategy) ||
         ((payload.previousStrategy || payload.targetStrategy) &&
          payload.capability != "enable_authentication_lockout") ||
         (!payload.hadAppliedProvenance && !payload.previousError.empty())) {
@@ -302,10 +302,8 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         const auto previous = value.find("previous_strategy");
         const auto target = value.find("target_strategy");
         const auto previousError = value.find("previous_error");
-        const auto confirmed = value.find("confirmed_native_ownership");
         if (previous == value.end() || target == value.end() ||
             previousError == value.end() || !previousError->is_string() ||
-            confirmed == value.end() || !confirmed->is_boolean() ||
             (!previous->is_null() && !previous->is_string()) ||
             (!target->is_null() && !target->is_string())) {
             error = "malformed PAM strategy transition provenance";
@@ -316,7 +314,6 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         if (target->is_string())
             payload.targetStrategy = target->get<std::string>();
         payload.previousError = previousError->get<std::string>();
-        payload.confirmedNativeOwnership = confirmed->get<bool>();
         if (*topology == "pam_auth_update") {
             payload.topology = PamTopologyKind::PamAuthUpdate;
         } else if (*topology == "alt_tcb_managed") {

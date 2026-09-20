@@ -658,6 +658,7 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-authfail \
         fic-faillock-preauth-required \
         fic-faillock-authsucc \
+        fic-pwquality \
         fic-pwhistory
 fi
 
@@ -767,7 +768,8 @@ install_fic_pam_profiles() {
 
     mkdir -p "$profile_dir"
     for profile in fic-faillock-notify fic-faillock-authfail \
-        fic-faillock-preauth-required fic-faillock-authsucc fic-pwhistory; do
+        fic-faillock-preauth-required fic-faillock-authsucc \
+        fic-pwquality fic-pwhistory; do
         install -m 0644 \
             "$ROOT_DIR/packaging/deb/pam-configs/$profile" \
             "$profile_dir/$profile"
