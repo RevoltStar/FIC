@@ -490,6 +490,24 @@ bool AltPamPasswordHistoryTopologyManager::confirmDurable(
         error = "could not acquire PAM topology lock for durability proof";
         return false;
     }
+    AtomicTargetState topology;
+    if (!AtomicFileWriter::captureTargetState(
+            capability->topologyTarget.string(), topology, &error))
+        return false;
+    std::vector<PhysicalLine> lines;
+    std::vector<PamRule> rules;
+    ManagedBlock block;
+    if (!inspectTopology(capability->topologyTarget, topology.content,
+                         lines, rules, block, error))
+        return false;
+    if (!block.present) {
+        // BEFORE needs proof of the unchanged PAM topology, not storage
+        // objects that only the AFTER activation is expected to create.
+        return AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                   capability->topologyTarget.string(), topology, &error) &&
+            AtomicFileWriter::targetStateMatches(
+                capability->topologyTarget.string(), topology, &error);
+    }
     if (!validateStorageObject(options_.stateDirectory, 02730,
             options_.storageOwner, options_.storageGroup, true, false,
             error))
@@ -502,10 +520,6 @@ bool AltPamPasswordHistoryTopologyManager::confirmDurable(
             std::nullopt, options_.storageGroup, false, false, error))
         return false;
 
-    AtomicTargetState topology;
-    if (!AtomicFileWriter::captureTargetState(
-            capability->topologyTarget.string(), topology, &error))
-        return false;
     std::vector<std::pair<std::filesystem::path, struct stat>> storageStates;
     for (const auto& path : {options_.transactionLockFile,
                              options_.historyFile}) {

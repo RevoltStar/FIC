@@ -35,6 +35,10 @@ public:
     virtual bool enable(std::string& error) = 0;
     virtual bool disable(std::string& error) = 0;
 
+    // A persisted active record can prove ownership of a shared native
+    // activation identifier; FIC-specific identifiers need no such hint.
+    virtual void setJournalProvenance(bool) {}
+
     // Confirm that the native persistent state used for the latest proof is
     // durable before closing a Prepared journal record. ALT managers use
     // AtomicFileWriter; pam-auth-update must prove its external writes.

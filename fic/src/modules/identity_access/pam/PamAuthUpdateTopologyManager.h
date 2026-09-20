@@ -49,6 +49,9 @@ public:
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
     bool confirmDurable(std::string& error) const override;
+    void setJournalProvenance(bool present) override {
+        journalProvenance_ = present;
+    }
 
     bool canEnableStrategy(
         fic::platform::PamFaillockStrategy strategy,
@@ -65,6 +68,7 @@ private:
     enum class Ownership {
         FicOwned,
         NoFicProfiles,
+        ExternalSelection,
         InvalidSelection
     };
 
@@ -83,6 +87,7 @@ private:
     std::vector<std::string> services_;
     const fic::platform::PlatformExecutableResolver& executables_;
     PamAuthUpdateTopologyManagerOptions options_;
+    bool journalProvenance_ = false;
 
     std::filesystem::path stateDirectory() const;
     std::filesystem::path configDirectory() const;

@@ -50,6 +50,22 @@ PamRollbackResult undoPamCapability(const PamRollbackOptions& options,
     }
     auto manager = options.managerFactory(*capability, *services, error);
     if (!manager) return {PamRollbackState::Failed, error};
+    if (capability->activationOwnershipRequiresJournal &&
+        !undo.confirmedNativeOwnership) {
+        // Prepared alone proves intent, not which writer selected a shared
+        // distro profile. Never release an ambiguous post-crash selection.
+        fic::identity::pam::PamTopologyStatus unresolved;
+        if (!manager->inspect(unresolved, error))
+            return {PamRollbackState::Conflict, error};
+        if (unresolved.state != PamTopologyState::Disabled)
+            return {PamRollbackState::Conflict,
+                    "fresh Prepared shared PAM selection has no ownership proof"};
+        if (!manager->confirmDurable(error))
+            return {PamRollbackState::Failed, error};
+        return {PamRollbackState::AlreadyReleased,
+                "fresh Prepared shared PAM selection is absent"};
+    }
+    manager->setJournalProvenance(true);
     fic::identity::pam::PamTopologyStatus before;
     if (!manager->inspect(before, error))
         return {PamRollbackState::Conflict, "PAM topology drift: " + error};

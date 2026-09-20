@@ -198,6 +198,12 @@ bool PamCapabilityActivationPolicy::applyPam(
                     "(fail closed)", logLevel::ERROR);
                 return false;
             }
+            // A fresh Prepared record alone cannot prove who selected a
+            // shared distro profile after a crash. Only a durably confirmed
+            // native writer can; an ambiguous fresh AFTER stays fail closed.
+            manager->setJournalProvenance(
+                !capability->activationOwnershipRequiresJournal ||
+                recorded->confirmedNativeOwnership);
         }
     }
 
@@ -219,13 +225,14 @@ bool PamCapabilityActivationPolicy::applyPam(
         return false;
     }
 
-    const auto proveEnabled = [&](bool durable) {
+    const auto proveEnabled = [&](bool durable,
+            std::optional<fic::platform::PamFaillockStrategy> expected) {
         fic::identity::pam::PamTopologyStatus current;
         std::string proofError;
         if (!manager->inspect(current, proofError) ||
             current.state != fic::identity::pam::PamTopologyState::Enabled ||
             ((durable || !active.empty()) && !current.manageable) ||
-            (strategyAware() && current.activeStrategy != strategy)) {
+            (strategyAware() && current.activeStrategy != expected)) {
             error = "PAM topology AFTER proof failed: " +
                 (proofError.empty() ? current.detail : proofError);
             return false;
@@ -251,29 +258,61 @@ bool PamCapabilityActivationPolicy::applyPam(
 
     if (!active.empty() && active.front().status ==
             fic::rollback::MutationStatus::Prepared) {
-        if (status.state == fic::identity::pam::PamTopologyState::Enabled &&
-            status.manageable &&
-            (!strategyAware() || status.activeStrategy == strategy)) {
-            if (!proveEnabled(true) ||
-                !journal->setStatus(active.front().id,
-                    fic::rollback::MutationStatus::Applied, error)) {
-                log("PAM Prepared recovery failed: " + error, logLevel::ERROR);
-                return false;
-            }
-            return true;
-        }
         const auto* preparedUndo = std::get_if<
             fic::rollback::UndoDisablePamCapability>(
                 &active.front().undo.payload);
-        if (status.state == fic::identity::pam::PamTopologyState::Disabled &&
-            preparedUndo != nullptr &&
-            !preparedUndo->hadAppliedProvenance) {
-            if (!journal->discard(active.front().id, error)) {
+        const auto recordedTarget = preparedUndo != nullptr &&
+                preparedUndo->targetStrategy
+            ? fic::platform::parsePamFaillockStrategy(
+                  *preparedUndo->targetStrategy)
+            : std::optional<fic::platform::PamFaillockStrategy>{};
+        const auto recordedPrevious = preparedUndo != nullptr &&
+                preparedUndo->previousStrategy
+            ? fic::platform::parsePamFaillockStrategy(
+                  *preparedUndo->previousStrategy)
+            : std::optional<fic::platform::PamFaillockStrategy>{};
+        if (preparedUndo == nullptr ||
+            (strategyAware() && !recordedTarget)) {
+            log("PAM Prepared has no persisted target strategy (fail closed)",
+                logLevel::ERROR);
+            return false;
+        }
+        if (status.state == fic::identity::pam::PamTopologyState::Enabled &&
+            status.manageable &&
+            (!strategyAware() || status.activeStrategy == recordedTarget)) {
+            if (!proveEnabled(true, recordedTarget) ||
+                !journal->setStatus(active.front().id,
+                    fic::rollback::MutationStatus::Applied, error)) {
+                log("PAM Prepared AFTER recovery failed: " + error,
+                    logLevel::ERROR);
+                return false;
+            }
+            active = journal->activeRecords(policy);
+        } else if (preparedUndo->hadAppliedProvenance &&
+                   status.state ==
+                       fic::identity::pam::PamTopologyState::Enabled &&
+                   status.manageable && recordedPrevious &&
+                   status.activeStrategy == recordedPrevious) {
+            if (!proveEnabled(true, recordedPrevious) ||
+                !journal->setStatusWithMessage(active.front().id,
+                    fic::rollback::MutationStatus::Applied,
+                    preparedUndo->previousError, error)) {
+                log("PAM Prepared BEFORE recovery failed: " + error,
+                    logLevel::ERROR);
+                return false;
+            }
+            active = journal->activeRecords(policy);
+        } else if (status.state ==
+                       fic::identity::pam::PamTopologyState::Disabled &&
+                   !preparedUndo->hadAppliedProvenance) {
+            if (!manager->confirmDurable(error) ||
+                !journal->discard(active.front().id, error)) {
                 log("PAM stale Prepared discard failed: " + error,
                     logLevel::ERROR);
                 return false;
             }
             active.clear();
+            manager->setJournalProvenance(false);
         } else {
             log("PAM Prepared topology is indeterminate (fail closed)",
                 logLevel::ERROR);
@@ -301,11 +340,37 @@ bool PamCapabilityActivationPolicy::applyPam(
         status.state == fic::identity::pam::PamTopologyState::Disabled ||
         (status.state == fic::identity::pam::PamTopologyState::Enabled &&
          strategyAware() && status.activeStrategy != strategy);
+    if (mutationRequired && status.state ==
+            fic::identity::pam::PamTopologyState::Enabled &&
+        !status.manageable) {
+        log("External PAM topology has a different strategy; refusing "
+            "ownership (no mutation)", logLevel::ERROR);
+        return false;
+    }
+    if (mutationRequired &&
+        !(strategyAware() ? manager->canEnableStrategy(*strategy, error)
+                          : manager->canEnable(error))) {
+        log("PAM topology preflight failed before journal prepare: " + error,
+            logLevel::ERROR);
+        return false;
+    }
     fic::rollback::MutationId mutationId = 0;
     const bool reused = !active.empty();
     const auto previous = reused ? active.front() : fic::rollback::MutationRecord{};
     if (mutationRequired && mutableTopology) {
         undo.hadAppliedProvenance = reused;
+        undo.confirmedNativeOwnership =
+            reused && std::get<fic::rollback::UndoDisablePamCapability>(
+                previous.undo.payload).confirmedNativeOwnership;
+        undo.previousError = reused ? previous.error : std::string();
+        if (strategyAware()) {
+            undo.targetStrategy =
+                fic::platform::pamFaillockStrategyName(*strategy);
+            if (reused && status.activeStrategy)
+                undo.previousStrategy =
+                    fic::platform::pamFaillockStrategyName(
+                        *status.activeStrategy);
+        }
         fic::rollback::MutationRecord record;
         record.policy = policy;
         record.resource = "capability/" + policyName;
@@ -392,9 +457,28 @@ bool PamCapabilityActivationPolicy::applyPam(
         return false;
     }
 
-    if (!proveEnabled(mutationRequired)) {
+    if (!proveEnabled(mutationRequired, strategy)) {
         log("PAM postcondition failed: " + error, logLevel::ERROR);
         return false;
+    }
+    if (mutationRequired &&
+        capability->activationOwnershipRequiresJournal) {
+        // A second durable Prepared refresh records that this process ran
+        // the native writer successfully. If this write fails, the earlier
+        // intent-only Prepared remains fail closed and cannot claim a
+        // concurrently selected administrator profile.
+        undo.confirmedNativeOwnership = true;
+        fic::rollback::MutationRecord confirmed;
+        confirmed.policy = policy;
+        confirmed.resource = "capability/" + policyName;
+        confirmed.undo = {fic::rollback::MutationBackend::Pam, undo};
+        fic::rollback::MutationId confirmedId = 0;
+        if (!journal->prepareMutation(confirmed, confirmedId, error) ||
+            confirmedId != mutationId) {
+            log("PAM native ownership confirmation failed: " + error,
+                logLevel::ERROR);
+            return false;
+        }
     }
     if (mutationRequired &&
         !journal->setStatus(mutationId,

@@ -390,6 +390,41 @@ void testPamOwnershipRelease() {
                 "enable_password_quality").state ==
                 PamRollbackState::AlreadyReleased,
             "StaticVerifyOnly must not require a native deactivation manager");
+
+    PamRollbackOptions sharedOptions;
+    sharedOptions.platform.scopes = {
+        {PamScope::EffectivePasswordStack, {"passwd"}}};
+    PamCapabilityConfig shared = capability;
+    shared.capability = PamCapability::PasswordQuality;
+    shared.activationIdentifiers = {"pwquality"};
+    shared.activationOwnershipRequiresJournal = true;
+    sharedOptions.platform.capabilities = {shared};
+    auto sharedState = std::make_shared<FakePamState>();
+    sharedState->manageable = false;
+    sharedOptions.managerFactory = [sharedState](const auto&, const auto&,
+                                                 std::string& error) {
+        error.clear();
+        return std::make_unique<FakePamManager>(sharedState);
+    };
+    const UndoDisablePamCapability sharedUndo{
+        "enable_password_quality", PamTopologyKind::PamAuthUpdate,
+        {"pwquality"}};
+    require(inspectUnrecordedPamCapability(sharedOptions,
+                "enable_password_quality").state ==
+                PamRollbackState::AlreadyReleased &&
+                sharedState->disableCalls == 0,
+            "unrecorded distro pwquality must remain enabled");
+    require(undoPamCapability(sharedOptions, sharedUndo).state ==
+                PamRollbackState::Conflict &&
+                sharedState->disableCalls == 0,
+            "intent-only journal cannot claim a shared distro profile");
+    sharedState->manageable = true;
+    auto provenSharedUndo = sharedUndo;
+    provenSharedUndo.confirmedNativeOwnership = true;
+    require(undoPamCapability(sharedOptions, provenSharedUndo).state ==
+                PamRollbackState::Released &&
+                sharedState->disableCalls == 1,
+            "confirmed native shared-profile provenance must permit release");
 }
 
 void testPamExecutorJournalLifecycle() {

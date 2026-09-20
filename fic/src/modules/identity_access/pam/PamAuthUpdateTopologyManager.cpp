@@ -194,6 +194,12 @@ bool PamAuthUpdateTopologyManager::detectOwnership(
         error.clear();
         return true;
     }
+    if (capability_.activationOwnershipRequiresJournal &&
+        !journalProvenance_) {
+        ownership = Ownership::ExternalSelection;
+        error.clear();
+        return true;
+    }
     if (capability_.capability ==
             fic::platform::PamCapability::AuthenticationLockout &&
         !capability_.strategyActivations.empty()) {
@@ -373,6 +379,7 @@ bool PamAuthUpdateTopologyManager::inspect(PamTopologyStatus& status,
                 }
             }
             break;
+        case Ownership::ExternalSelection:
         case Ownership::NoFicProfiles:
             status.manageable = false;
             status.detail =
@@ -507,6 +514,9 @@ bool PamAuthUpdateTopologyManager::enable(std::string& error) {
     if (!runPamAuthUpdate(arguments, failure)) {
         return rollback(snapshot, std::nullopt, failure, error);
     }
+    // Prepared was persisted before invoking the native writer. Only this
+    // successful writer call may establish ownership of a shared profile.
+    journalProvenance_ = true;
     PamTopologyStatus after;
     std::string postconditionError;
     if (!inspect(after, postconditionError) ||
@@ -526,7 +536,8 @@ bool PamAuthUpdateTopologyManager::enable(std::string& error) {
 bool PamAuthUpdateTopologyManager::disable(std::string& error) {
     Ownership ownership = Ownership::NoFicProfiles;
     if (!detectOwnership(ownership, error)) return false;
-    if (ownership == Ownership::NoFicProfiles) {
+    if (ownership == Ownership::NoFicProfiles ||
+        ownership == Ownership::ExternalSelection) {
         error.clear();
         return true;
     }
@@ -678,6 +689,7 @@ bool PamAuthUpdateTopologyManager::canEnableStrategy(
     switch (ownership) {
     case Ownership::FicOwned:
         break;
+    case Ownership::ExternalSelection:
     case Ownership::NoFicProfiles: {
         std::string externalError;
         const ExternalFaillockGraphState graph =

@@ -120,6 +120,10 @@ void testRoundTripAndStorage() {
     require(manager.status(state, error) &&
                 state == AltPamPasswordHistoryTopologyState::Disabled,
             error);
+    require(manager.confirmDurable(error) &&
+                !fs::exists(tree.options().stateDirectory),
+            "Disabled BEFORE proof must not require future history storage: " +
+                error);
     require(manager.enable(error), error);
     require(manager.confirmDurable(error),
             "ALT password-history durability proof failed: " + error);

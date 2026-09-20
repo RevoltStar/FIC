@@ -86,6 +86,8 @@ MutationRecord pamRecord() {
     record.undo = {MutationBackend::Pam, UndoDisablePamCapability{
         "enable_authentication_lockout", PamTopologyKind::PamAuthUpdate,
         {"fic-faillock-authfail", "fic-faillock-preauth-required"}}};
+    std::get<UndoDisablePamCapability>(record.undo.payload).targetStrategy =
+        "preauth_required";
     return record;
 }
 
@@ -99,6 +101,16 @@ void testPamJournalContract() {
     invalid.resource = "capability/enable_password_history";
     require(!journal.prepareMutation(invalid, id, error),
             "writer must reject resource/payload mismatch");
+    invalid = pamRecord();
+    std::get<UndoDisablePamCapability>(invalid.undo.payload).previousStrategy =
+        "authsucc";
+    require(!journal.prepareMutation(invalid, id, error),
+            "writer must reject previous strategy without prior provenance");
+    invalid = pamRecord();
+    std::get<UndoDisablePamCapability>(invalid.undo.payload).targetStrategy =
+        "invalid_strategy";
+    require(!journal.prepareMutation(invalid, id, error),
+            "writer must reject invalid persisted transition target");
     invalid = pamRecord();
     std::get<UndoDisablePamCapability>(invalid.undo.payload)
         .activationIdentifiers = {"fic-ok", "bad\nidentifier"};
@@ -115,7 +127,8 @@ void testPamJournalContract() {
     require(reloaded.load(error), error);
     const auto* payload = std::get_if<UndoDisablePamCapability>(
         &reloaded.records().front().undo.payload);
-    require(payload && payload->activationIdentifiers.size() == 2,
+    require(payload && payload->activationIdentifiers.size() == 2 &&
+                payload->targetStrategy == "preauth_required",
             "PAM undo must round-trip");
     auto document = nlohmann::json::parse(file.read());
     const auto original = document;
@@ -134,6 +147,15 @@ void testPamJournalContract() {
     document = original;
     document["records"][0]["undo"].erase("had_applied_provenance");
     rejects(document, "missing PAM reused provenance marker");
+    document = original;
+    document["records"][0]["undo"]["target_strategy"] = "invalid_strategy";
+    rejects(document, "invalid persisted transition target");
+    document = original;
+    document["records"][0]["undo"].erase("previous_strategy");
+    rejects(document, "missing transition provenance field");
+    document = original;
+    document["records"][0]["undo"].erase("confirmed_native_ownership");
+    rejects(document, "missing shared-profile ownership confirmation");
     document = original;
     document["records"][0]["resource"] = "capability/other";
     rejects(document, "PAM resource mismatch");

@@ -97,6 +97,11 @@ json serializeUndoAction(const UndoAction& action) {
             ? "pam_auth_update" : "alt_tcb_managed";
         value["activation_identifiers"] = pam->activationIdentifiers;
         value["had_applied_provenance"] = pam->hadAppliedProvenance;
+        value["previous_strategy"] = pam->previousStrategy;
+        value["target_strategy"] = pam->targetStrategy;
+        value["previous_error"] = pam->previousError;
+        value["confirmed_native_ownership"] =
+            pam->confirmedNativeOwnership;
     }
     return value;
 }
@@ -164,6 +169,21 @@ bool validateSssdUndoPayload(const UndoRemoveSssdManagedSetting& payload,
 
 bool validatePamUndoPayload(const UndoDisablePamCapability& payload,
                             std::string& error) {
+    const auto validStrategy = [](const std::optional<std::string>& value) {
+        return !value || *value == "preauth_required" ||
+            *value == "preauth_requisite" || *value == "authsucc";
+    };
+    if (!validStrategy(payload.previousStrategy) ||
+        !validStrategy(payload.targetStrategy) ||
+        (payload.previousStrategy &&
+         (!payload.hadAppliedProvenance || !payload.targetStrategy ||
+          payload.previousStrategy == payload.targetStrategy)) ||
+        ((payload.previousStrategy || payload.targetStrategy) &&
+         payload.capability != "enable_authentication_lockout") ||
+        (!payload.hadAppliedProvenance && !payload.previousError.empty())) {
+        error = "invalid PAM strategy transition provenance";
+        return false;
+    }
     if (payload.topology != PamTopologyKind::PamAuthUpdate &&
         payload.topology != PamTopologyKind::AltTcbManaged) {
         error = "disable_pam_capability has an unknown topology kind";
@@ -279,6 +299,24 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         }
         payload.capability = capability->get<std::string>();
         payload.hadAppliedProvenance = established->get<bool>();
+        const auto previous = value.find("previous_strategy");
+        const auto target = value.find("target_strategy");
+        const auto previousError = value.find("previous_error");
+        const auto confirmed = value.find("confirmed_native_ownership");
+        if (previous == value.end() || target == value.end() ||
+            previousError == value.end() || !previousError->is_string() ||
+            confirmed == value.end() || !confirmed->is_boolean() ||
+            (!previous->is_null() && !previous->is_string()) ||
+            (!target->is_null() && !target->is_string())) {
+            error = "malformed PAM strategy transition provenance";
+            return false;
+        }
+        if (previous->is_string())
+            payload.previousStrategy = previous->get<std::string>();
+        if (target->is_string())
+            payload.targetStrategy = target->get<std::string>();
+        payload.previousError = previousError->get<std::string>();
+        payload.confirmedNativeOwnership = confirmed->get<bool>();
         if (*topology == "pam_auth_update") {
             payload.topology = PamTopologyKind::PamAuthUpdate;
         } else if (*topology == "alt_tcb_managed") {

@@ -286,6 +286,9 @@ struct PamCapabilityConfig {
     // a set of platform recipes (pam-auth-update profiles). Strategies
     // without a recipe cannot be activated on such platforms.
     std::vector<PamFaillockStrategyActivation> strategyActivations;
+    // A shared distro activation profile (for example pwquality) does not
+    // prove FIC ownership by its name. Only journal provenance can do that.
+    bool activationOwnershipRequiresJournal = false;
 };
 
 struct PamPlatformConfig {

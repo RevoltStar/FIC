@@ -144,6 +144,14 @@ struct UndoDisablePamCapability {
     // Set before reusing an already Applied record. Crash recovery may
     // discard Prepared+Disabled only for a genuinely fresh mutation.
     bool hadAppliedProvenance = false;
+    // Persisted transaction identity for a strategy change. Recovery must
+    // resolve this BEFORE consulting the possibly changed policy value.
+    std::optional<std::string> previousStrategy;
+    std::optional<std::string> targetStrategy;
+    std::string previousError;
+    // For shared distro identifiers, an intent-only Prepared record is not
+    // ownership. Set durably only after FIC's native writer and proof.
+    bool confirmedNativeOwnership = false;
 };
 
 using UndoPayload = std::variant<

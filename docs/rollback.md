@@ -990,6 +990,11 @@ Foreign relation / root-определение без активной запи�
 в `Prepared` до native transition, без промежуточного полного disable.
 Payload содержит `had_applied_provenance`: recovery вправе удалить
 `Prepared + Disabled` только для fresh записи, а не для reused provenance.
+Для strategy transition payload также фиксирует прежнюю и целевую стратегии
+и прежний error. Recovery сначала разрешает именно эту durable операцию:
+точный BEFORE восстанавливает предыдущую `Applied`, точный AFTER подтверждает
+новую `Applied`, а drift остаётся fail closed. Только после этого применяется
+текущее desired value, которое могло измениться после crash.
 
 `Prepared` проверяется до обычного no-op: доказанный AFTER проходит свежую
 структурную проверку и durability barrier, затем становится `Applied`;
@@ -1008,6 +1013,14 @@ native deactivation. PAM provider options (`PamOptionPolicy`, включая
 Без active journal явно FIC-owned markers/selections
 считаются orphaned provenance: disable отклоняется, автоматического
 «усыновления» или разрушительного legacy rollback нет.
+Общий distro profile `pwquality` сам по себе не является FIC ownership marker:
+уже выбранный без журнала профиль остаётся external/no-op. Для FIC activation
+успешный native writer отдельно подтверждается durable refresh записи
+`Prepared`; без этого подтверждения свежая запись не даёт права отключить
+неоднозначный shared profile даже после failed rollback retry.
+Чистые preflight failures происходят до создания `Prepared`. Доказательство
+ALT password-history BEFORE при отсутствии managed topology не требует ещё
+не созданного history storage.
 
 `pam-auth-update` — внешний multi-file writer, не атомарный вместе с journal.
 FIC перед переводом записи в `Applied` захватывает и подтверждает durable
