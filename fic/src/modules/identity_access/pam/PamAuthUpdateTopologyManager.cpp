@@ -570,15 +570,23 @@ bool PamAuthUpdateTopologyManager::enable(std::string& error) {
 bool PamAuthUpdateTopologyManager::disable(std::string& error) {
     Ownership ownership = Ownership::NoFicProfiles;
     if (!detectOwnership(ownership, error)) return false;
-    if (ownership == Ownership::NoFicProfiles) {
+
+    switch (ownership) {
+    case Ownership::NoFicProfiles:
         error.clear();
         return true;
+    case Ownership::FicOwned:
+    case Ownership::InvalidSelection:
+        // Partial/mixed recipes are invalid for inspection and strategy
+        // transitions, but their selected identifiers are still exact
+        // FIC-owned resources. Release only those identifiers; never restore
+        // shared pam-auth-update state or touch foreign selections.
+        return releaseSelectedIdentifiers(
+            knownActivationIdentifiers(), error);
     }
-    if (ownership != Ownership::FicOwned) {
-        error = "FIC pam-auth-update selection is partial or mixed";
-        return false;
-    }
-    return releaseSelectedIdentifiers(knownActivationIdentifiers(), error);
+
+    error = "unknown pam-auth-update ownership state";
+    return false;
 }
 
 bool PamAuthUpdateTopologyManager::confirmDurable(std::string& error) const {

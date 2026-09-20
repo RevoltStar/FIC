@@ -708,13 +708,17 @@ void testConflictingStrategiesAcrossServices(const TestTree& tree) {
 
 void testPartialProfileSelectionIsBroken(const TestTree& tree) {
     // Only one of the two recipe profiles is selected: the selection does
-    // not match any declared recipe and must fail closed.
+    // not match any declared recipe and must fail closed for apply/strategy
+    // changes. Release is different: the selected identifier is still an
+    // exact FIC-owned resource and must be removable without touching a
+    // foreign selection.
     resetTree(tree);
     TestTree::writeFile(tree.authFile(),
                         strategyContent(PamFaillockStrategy::PreauthRequired,
                                         tree));
     TestTree::writeFile(tree.stateDir() / "auth",
-                        "Module: fic-faillock-preauth-required\n");
+                        "Module: fic-faillock-preauth-required\n"
+                        "Module: admin-profile\n");
     std::error_code ignored;
     fs::remove(tree.stateDir() / "account", ignored);
     FakePamAuthUpdate fake;
@@ -731,6 +735,74 @@ void testPartialProfileSelectionIsBroken(const TestTree& tree) {
     require(!manager.enableStrategy(PamFaillockStrategy::Authsucc, error),
             "partial selection topology was mutated");
     require(fake.calls == 0, "broken topology invoked pam-auth-update");
+
+    require(manager.disable(error), error);
+    require(fake.calls == 1,
+            "partial FIC selection was not released");
+    require(fake.lastArguments.size() == 2 &&
+                fake.lastArguments.front() == "--disable" &&
+                fake.lastArguments.back() ==
+                    "fic-faillock-preauth-required",
+            "partial release must disable only the selected FIC identifier");
+    require(readFile(tree.stateDir() / "auth") ==
+                "Module: admin-profile\n",
+            "partial release removed a foreign pam-auth-update selection");
+    resetTree(tree);
+}
+
+void testMixedProfileSelectionIsBrokenButReleasable(const TestTree& tree) {
+    // Two mutually exclusive selectors plus the shared authfail profile are
+    // not a valid strategy recipe. They are nevertheless all inside the
+    // journal/platform FIC ownership domain and can be selectively released.
+    resetTree(tree);
+    TestTree::writeFile(tree.authFile(),
+                        strategyContent(PamFaillockStrategy::PreauthRequired,
+                                        tree));
+    TestTree::writeFile(tree.stateDir() / "auth",
+                        "Module: fic-faillock-preauth-required\n"
+                        "Module: fic-faillock-authsucc\n"
+                        "Module: fic-faillock-authfail\n"
+                        "Module: admin-profile\n");
+    std::error_code ignored;
+    fs::remove(tree.stateDir() / "account", ignored);
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    auto resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    fic::identity::pam::PamTopologyStatus status;
+    require(!manager.inspect(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Broken,
+            "mixed FIC profile selection was accepted");
+    require(!manager.enableStrategy(PamFaillockStrategy::Authsucc, error),
+            "mixed selection topology was mutated by strategy apply");
+    require(fake.calls == 0,
+            "mixed broken topology invoked pam-auth-update before release");
+
+    require(manager.disable(error), error);
+    require(fake.calls == 1,
+            "mixed FIC selection was not selectively released");
+    require(fake.lastArguments.front() == "--disable" &&
+                fake.lastArguments.size() == 4,
+            "mixed release must contain exactly three selected FIC identifiers");
+    for (const std::string& identifier : {
+             "fic-faillock-preauth-required",
+             "fic-faillock-authsucc",
+             "fic-faillock-authfail"}) {
+        require(std::find(fake.lastArguments.begin(),
+                          fake.lastArguments.end(), identifier) !=
+                    fake.lastArguments.end(),
+                "mixed release omitted selected FIC identifier: " +
+                    identifier);
+    }
+    require(std::find(fake.lastArguments.begin(), fake.lastArguments.end(),
+                      "admin-profile") == fake.lastArguments.end(),
+            "mixed release passed a foreign identifier to pam-auth-update");
+    require(readFile(tree.stateDir() / "auth") ==
+                "Module: admin-profile\n",
+            "mixed release removed a foreign pam-auth-update selection");
     resetTree(tree);
 }
 
@@ -859,6 +931,7 @@ int main() {
         testUnreadableStateFailsClosed(tree);
         testConflictingStrategiesAcrossServices(tree);
         testPartialProfileSelectionIsBroken(tree);
+        testMixedProfileSelectionIsBrokenButReleasable(tree);
         testSelectedButIneffectiveIsBroken(tree);
         testSelectionStrategyMismatchIsBroken(tree);
         testDisableOwnedSelectionsPreservesAdmin(tree);

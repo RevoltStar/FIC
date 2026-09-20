@@ -1008,11 +1008,14 @@ closed. Только после этого применяется текущее
 и error; при недоказанной компенсации запись остаётся `Prepared`.
 
 Rollback сверяет payload с текущим platform profile и отказывается от
-неоднозначной topology. Для `PamAuthUpdate` удаляются только реально выбранные
-FIC identifiers через `pam-auth-update --disable`; внешние selections не
-передаются утилите. ALT использует существующие topology managers и их
-lock order. `StaticVerifyOnly` никогда не создаёт provenance и не запускает
-native deactivation. PAM provider options (`PamOptionPolicy`, включая
+ownership-domain mismatch. Структурный drift effective topology сам по себе не
+запрещает release доказанных FIC resources. Для `PamAuthUpdate` partial/mixed
+комбинация известных FIC profiles остаётся invalid для apply и смены strategy,
+но rollback удаляет только реально выбранные FIC identifiers через
+`pam-auth-update --disable`; внешние selections не передаются утилите. ALT
+использует существующие topology managers и их lock order. `StaticVerifyOnly`
+никогда не создаёт provenance и не запускает native deactivation. PAM provider
+options (`PamOptionPolicy`, включая
 `faillock.conf`/`pwquality.conf`/`pwhistory.conf`) в этот rollback не входят.
 Без active journal явно FIC-owned markers/selections
 считаются orphaned provenance: disable отклоняется, автоматического
