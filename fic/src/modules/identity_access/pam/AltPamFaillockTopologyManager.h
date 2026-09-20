@@ -30,6 +30,7 @@ struct AltPamFaillockTopologyOptions {
 
 class AltPamFaillockTopologyManager final : public PamTopologyManager {
 public:
+    bool confirmDurable(std::string& error) const override;
     // Preauth strategies keep the original pam_tcb rule shape: the FIC
     // preauth block stores the original rule (hex encoded) and re-adds it as
     // a sufficient authenticator after the preauth rule.

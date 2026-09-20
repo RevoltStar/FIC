@@ -35,6 +35,14 @@ public:
     virtual bool enable(std::string& error) = 0;
     virtual bool disable(std::string& error) = 0;
 
+    // Confirm that the native persistent state used for the latest proof is
+    // durable before closing a Prepared journal record. ALT managers use
+    // AtomicFileWriter; pam-auth-update must prove its external writes.
+    virtual bool confirmDurable(std::string& error) const {
+        error = "PAM topology manager has no durability proof";
+        return false;
+    }
+
     // Strategy-aware faillock activation. Base implementations reject the
     // operation: only faillock topology managers with declared strategies
     // override them. A strategy transition must be atomic: inspect the

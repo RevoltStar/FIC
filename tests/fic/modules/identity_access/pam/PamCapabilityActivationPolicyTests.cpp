@@ -2,14 +2,18 @@
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "modules/identity_access/pam/PamAuthUpdateTopologyManager.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
+#include "rollback/DaemonMutationJournal.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <map>
@@ -96,6 +100,7 @@ struct ManagerState {
     bool transitionToEnabled = true;
     bool canEnableStrategyResult = true;
     bool enableStrategyResult = true;
+    std::function<void()> onConfirmDurable;
     std::optional<fic::platform::PamFaillockStrategy> activeStrategy;
     std::vector<fic::platform::PamFaillockStrategy> requestedStrategies;
     fic::identity::pam::PamTopologyState topologyState =
@@ -104,6 +109,10 @@ struct ManagerState {
 
 class FakeManager final : public fic::identity::pam::PamTopologyManager {
 public:
+    bool confirmDurable(std::string& error) const override {
+        if (state_->onConfirmDurable) state_->onConfirmDurable();
+        error.clear(); return true;
+    }
     explicit FakeManager(std::shared_ptr<ManagerState> state)
         : state_(std::move(state)) {}
 
@@ -174,6 +183,47 @@ PamCapabilityActivationPolicy makePolicy(
     std::vector<bool> verificationResults,
     int& verifierCalls,
     fic::platform::PamCapability& factoryCapability) {
+    static unsigned journalSequence = 0;
+    const auto journalPath = fic::core::FicRuntimePaths::get().dataDir /
+        ("pam-activation-" + std::to_string(++journalSequence) + ".json");
+    std::filesystem::create_directories(journalPath.parent_path());
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(journalPath);
+    if (managerState->topologyState ==
+        fic::identity::pam::PamTopologyState::Enabled) {
+        const auto* config = fic::identity::pam::capabilityConfig(
+            platform, capability);
+        require(config != nullptr, "missing PAM test capability");
+        fic::rollback::UndoDisablePamCapability undo;
+        undo.capability = pamCapabilityActivationPolicyName(capability);
+        undo.topology = config->topology ==
+                fic::platform::PamTopologyStrategyKind::PamAuthUpdate
+            ? fic::rollback::PamTopologyKind::PamAuthUpdate
+            : fic::rollback::PamTopologyKind::AltTcbManaged;
+        for (const auto& activation : config->strategyActivations)
+            for (const auto& id : activation.activationIdentifiers)
+                if (std::find(undo.activationIdentifiers.begin(),
+                              undo.activationIdentifiers.end(), id) ==
+                    undo.activationIdentifiers.end())
+                    undo.activationIdentifiers.push_back(id);
+        for (const auto& id : config->activationIdentifiers)
+            if (std::find(undo.activationIdentifiers.begin(),
+                          undo.activationIdentifiers.end(), id) ==
+                undo.activationIdentifiers.end())
+                undo.activationIdentifiers.push_back(id);
+        std::string journalError;
+        auto* journal = fic::rollback::DaemonMutationJournal::instance()
+            .tryGet(journalError);
+        require(journal != nullptr, journalError);
+        fic::rollback::MutationRecord record;
+        record.policy = {"IDENTITY_ACCESS", "PAM", undo.capability};
+        record.resource = "capability/" + undo.capability;
+        record.undo = {fic::rollback::MutationBackend::Pam, undo};
+        fic::rollback::MutationId id = 0;
+        require(journal->prepareMutation(record, id, journalError),
+                journalError);
+        require(journal->setStatus(id, fic::rollback::MutationStatus::Applied,
+                                   journalError), journalError);
+    }
     auto results = std::make_shared<std::vector<bool>>(
         std::move(verificationResults));
     PamCapabilityActivationPolicyOptions options;
@@ -258,6 +308,150 @@ PamCapabilityActivationPolicy makeAltLockoutPolicy(
         std::move(options));
 }
 
+void testPamJournalLifecycle(const std::filesystem::path& root,
+                             const fic::platform::PamPlatformConfig& platform) {
+    const auto setLockoutValue = [&](const std::string& value) {
+        writeFile(root / "config/IDENTITY_ACCESS.conf",
+                  "enable_authentication_lockout.status=ENABLE\n"
+                  "enable_authentication_lockout.value=" + value + "\n");
+    };
+    setLockoutValue("preauth_required");
+    auto state = std::make_shared<ManagerState>();
+    int verifierCalls = 0;
+    auto observed = fic::platform::PamCapability::PasswordQuality;
+    auto policy = makePolicy(platform,
+        fic::platform::PamCapability::AuthenticationLockout, state,
+        {true, true, true}, verifierCalls, observed);
+    const auto onCurrentJournal = [&]() {
+        PamCapabilityActivationPolicyOptions options;
+        options.managerFactory = [state](const auto&, const auto&,
+                                         std::string& error) {
+            error.clear();
+            return std::make_unique<FakeManager>(state);
+        };
+        options.verifier = [](const auto&, const auto&,
+                              auto& verification) {
+            verification.state =
+                fic::identity::pam::PamEnforcementState::Effective;
+            verification.detail.clear();
+            return true;
+        };
+        return PamCapabilityActivationPolicy(platform,
+            fic::platform::PamCapability::AuthenticationLockout,
+            std::move(options));
+    };
+    require(policy.apply(), "fresh PAM activation must succeed");
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    const PolicyRef ref{"IDENTITY_ACCESS", "PAM",
+                        "enable_authentication_lockout"};
+    auto records = journal->activeRecords(ref);
+    require(records.size() == 1 &&
+                records.front().status == fic::rollback::MutationStatus::Applied,
+            "fresh PAM activation must commit exactly one Applied record");
+    const auto id = records.front().id;
+    setLockoutValue("authsucc");
+    auto authsuccPolicy = onCurrentJournal();
+    require(authsuccPolicy.apply(),
+            "faillock strategy transition must succeed");
+    records = journal->activeRecords(ref);
+    require(records.size() == 1 && records.front().id == id &&
+                records.front().status == fic::rollback::MutationStatus::Applied,
+            "strategy transition must reuse the same MutationId");
+    require(std::get<fic::rollback::UndoDisablePamCapability>(
+                records.front().undo.payload).hadAppliedProvenance,
+            "strategy transition must persist reused provenance marker");
+    require(journal->setStatus(id, fic::rollback::MutationStatus::Prepared,
+                               error), error);
+    const int transitionsBeforeRecovery = state->enableStrategyCalls;
+    require(authsuccPolicy.apply(), "Prepared AFTER must recover");
+    require(state->enableStrategyCalls == transitionsBeforeRecovery &&
+                journal->activeRecords(ref).front().status ==
+                    fic::rollback::MutationStatus::Applied,
+            "Prepared recovery must not invoke native writer again");
+    setLockoutValue("preauth_requisite");
+    auto requisitePolicy = onCurrentJournal();
+    state->enableStrategyResult = false;
+    require(!requisitePolicy.apply(),
+            "failed strategy transition must be rejected");
+    records = journal->activeRecords(ref);
+    require(records.size() == 1 && records.front().id == id &&
+                records.front().status == fic::rollback::MutationStatus::Applied,
+            "fully compensated reused transition must restore Applied");
+    require(journal->setStatus(id, fic::rollback::MutationStatus::Prepared,
+                               error), error);
+    state->topologyState = fic::identity::pam::PamTopologyState::Broken;
+    require(!requisitePolicy.apply() &&
+                journal->activeRecords(ref).size() == 1 &&
+                journal->activeRecords(ref).front().status ==
+                    fic::rollback::MutationStatus::Prepared,
+            "Prepared drift must remain active and fail closed");
+    state->topologyState = fic::identity::pam::PamTopologyState::Disabled;
+    require(!requisitePolicy.apply() &&
+                journal->activeRecords(ref).size() == 1 &&
+                journal->activeRecords(ref).front().status ==
+                    fic::rollback::MutationStatus::Prepared,
+            "reused Prepared+Disabled must never discard established provenance");
+
+    setLockoutValue("preauth_required");
+    state = std::make_shared<ManagerState>();
+    verifierCalls = 0;
+    auto freshPolicy = makePolicy(platform,
+        fic::platform::PamCapability::AuthenticationLockout, state,
+        {true}, verifierCalls, observed);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    fic::rollback::MutationRecord stale;
+    stale.policy = ref;
+    stale.resource = "capability/enable_authentication_lockout";
+    stale.undo = {fic::rollback::MutationBackend::Pam,
+        fic::rollback::UndoDisablePamCapability{
+            "enable_authentication_lockout",
+            fic::rollback::PamTopologyKind::PamAuthUpdate,
+            {"fic-faillock-notify", "fic-faillock-authfail",
+             "fic-faillock-preauth-required", "fic-faillock-authsucc"}}};
+    fic::rollback::MutationId staleId = 0;
+    require(journal->prepareMutation(stale, staleId, error), error);
+    require(freshPolicy.apply(), "Prepared BEFORE must be discarded and retried");
+    records = journal->activeRecords(ref);
+    require(records.size() == 1 && records.front().id != staleId &&
+                records.front().status == fic::rollback::MutationStatus::Applied,
+            "fresh stale Prepared must not be reused");
+
+    // The native mutation has happened, but the Applied journal write loses
+    // its durability proof. Prepared ownership must remain available to the
+    // next daemon instance rather than being discarded as a failed apply.
+    state = std::make_shared<ManagerState>();
+    verifierCalls = 0;
+    auto commitFailurePolicy = makePolicy(platform,
+        fic::platform::PamCapability::AuthenticationLockout, state,
+        {true}, verifierCalls, observed);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    state->onConfirmDurable = []() {
+        AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [](const std::string&) { return false; });
+    };
+    const bool commitSucceeded = commitFailurePolicy.apply();
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    state->onConfirmDurable = nullptr;
+    // A failed post-rename fsync poisons the live journal. Recovery must
+    // reload and prove the on-disk state before any ownership decision.
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, "PAM journal could not recover: " + error);
+    records = journal->activeRecords(ref);
+    require(!commitSucceeded && state->topologyState ==
+                fic::identity::pam::PamTopologyState::Enabled &&
+                records.size() == 1 &&
+                (records.front().status ==
+                     fic::rollback::MutationStatus::Prepared ||
+                 records.front().status ==
+                     fic::rollback::MutationStatus::Applied),
+            "journal commit failure after native mutation lost active "
+            "PAM provenance");
+}
+
 } // namespace
 
 int main() {
@@ -301,7 +495,7 @@ int main() {
                     alreadyEnabled.getDefaultValue() == "preauth_required" &&
                     alreadyEnabled.apply() && alreadyEnabled.apply() &&
                     verifierCalls == 2 &&
-                    state->factoryCalls == 2 && state->inspectCalls == 2 &&
+                    state->factoryCalls == 2 && state->inspectCalls == 4 &&
                     state->canEnableCalls == 0 && state->enableCalls == 0 &&
                     state->enableStrategyCalls == 0,
                 "manager-first repeated activation was not idempotent");
@@ -316,7 +510,7 @@ int main() {
             platform, fic::platform::PamCapability::AuthenticationLockout,
             state, {false}, verifierCalls, factoryCapability);
         require(!enabledButStructurallyInvalid.apply() &&
-                    state->factoryCalls == 1 && state->inspectCalls == 1 &&
+                    state->factoryCalls == 1 && state->inspectCalls == 2 &&
                     state->enableCalls == 0 && verifierCalls == 1,
                 "manager-enabled topology bypassed fresh verification");
 
@@ -423,7 +617,7 @@ int main() {
                     activated.apply() && verifierCalls == 1 &&
                     factoryCapability ==
                         fic::platform::PamCapability::PasswordHistory &&
-                    state->inspectCalls == 2 && state->canEnableCalls == 1 &&
+                    state->inspectCalls == 3 && state->canEnableCalls == 1 &&
                     state->enableCalls == 1 && state->disableCalls == 0,
                 "disabled topology was not activated and freshly verified");
 
@@ -432,7 +626,7 @@ int main() {
         auto invalidPostcondition = makePolicy(
             platform, fic::platform::PamCapability::PasswordHistory,
             state, {false}, verifierCalls, factoryCapability);
-        require(!invalidPostcondition.apply() && state->inspectCalls == 2 &&
+        require(!invalidPostcondition.apply() && state->inspectCalls == 3 &&
                     state->enableCalls == 1 && state->disableCalls == 0 &&
                     verifierCalls == 1,
                 "invalid post-activation topology was accepted or disabled");
@@ -443,7 +637,7 @@ int main() {
         auto failedEnable = makePolicy(
             platform, fic::platform::PamCapability::PasswordHistory,
             state, {}, verifierCalls, factoryCapability);
-        require(!failedEnable.apply() && state->inspectCalls == 1 &&
+        require(!failedEnable.apply() && state->inspectCalls == 2 &&
                     state->enableCalls == 1 && verifierCalls == 0,
                 "native activation failure was accepted");
 
@@ -478,7 +672,7 @@ int main() {
             platform, fic::platform::PamCapability::PasswordHistory,
             state, {}, verifierCalls, factoryCapability);
         require(!ownershipNotEstablished.apply() &&
-                    state->inspectCalls == 2 && state->enableCalls == 1 &&
+                    state->inspectCalls == 3 && state->enableCalls == 1 &&
                     verifierCalls == 0,
                 "post-enable non-enabled ownership state was accepted");
 
@@ -565,11 +759,11 @@ int main() {
             ownedAltRoot / "pam.d/system-auth-local-only");
         auto ownedAltPolicy = makeAltLockoutPolicy(
             ownedAltPlatform, ownedAltRoot);
-        require(ownedAltPolicy.apply() &&
+        require(!ownedAltPolicy.apply() &&
                     readFile(ownedAltRoot /
                              "pam.d/system-auth-local-only") ==
                         ownedAltFaillock,
-                "FIC-owned enabled ALT faillock was mutated or rejected");
+                "orphaned FIC-owned ALT faillock must fail closed without mutation");
 
         const fs::path externalHistoryRoot = root / "alt-external-history";
         writeFile(externalHistoryRoot / "security/pam_pwhistory.so",
@@ -702,6 +896,15 @@ int main() {
         require(staticPolicy.apply() &&
                     readFile(staticRoot / "pam.d/passwd") == staticPamBefore,
                 "StaticVerifyOnly passwdqc was mutated or rejected");
+        {
+            std::string journalError;
+            auto* journal = fic::rollback::DaemonMutationJournal::instance()
+                .tryGet(journalError);
+            require(journal != nullptr &&
+                        journal->activeRecords({"IDENTITY_ACCESS", "PAM",
+                            "enable_password_quality"}).empty(),
+                    "StaticVerifyOnly must not create PAM provenance");
+        }
 
         writeFile(
             root / "config/IDENTITY_ACCESS.conf",
@@ -825,7 +1028,7 @@ int main() {
         };
         fic::identity::pam::PamAuthUpdateTopologyManagerOptions commandOptions;
         commandOptions.stateDirectory = pamAuthUpdateState;
-        commandOptions.configDirectory = root / "etc/pam.d";
+        commandOptions.configDirectory = root / "pam.d";
         commandOptions.runner =
             [&](const std::string& executable,
                 const std::vector<std::string>& arguments,
@@ -835,6 +1038,17 @@ int main() {
                 observedClearEnvironment = processOptions.clearEnvironment;
                 ProcessResult result;
                 result.started = true;
+                if (!arguments.empty() && arguments.front() == "--disable" &&
+                    std::find(arguments.begin(), arguments.end(),
+                              "--enable") == arguments.end()) {
+                    writeFile(root / "pam.d/login",
+                              "auth required pam_unix.so nullok\n"
+                              "account required pam_unix.so\n");
+                    writeFile(pamAuthUpdateState / "auth", "Module: unix\n");
+                    writeFile(pamAuthUpdateState / "account", "Module: unix\n");
+                    result.exitCode = 0;
+                    return result;
+                }
                 result.exitCode =
                     applyPamAuthUpdate(arguments).has_value() ? 0 : 1;
                 return result;
@@ -859,17 +1073,20 @@ int main() {
                     "fic-faillock-authfail"},
                 "pam-auth-update activation did not combine the disable and "
                 "enable selection in a single invocation");
-        require(!commandManager.disable(error),
-                "pam-auth-update manager allowed automatic deactivation");
         // Idempotency at the manager level.
         require(commandManager.enable(error) &&
                     observedArguments.front() == "--disable",
                 "repeated pam-auth-update activation was not idempotent");
+        require(commandManager.disable(error) &&
+                    observedArguments.front() == "--disable" &&
+                    observedArguments.size() == 3,
+                "pam-auth-update did not release only FIC selections");
+        require(commandManager.enable(error), error);
 
         int pamAuthUpdateCalls = 0;
         fic::identity::pam::PamAuthUpdateTopologyManagerOptions policyCommand;
         policyCommand.stateDirectory = pamAuthUpdateState;
-        policyCommand.configDirectory = root / "etc/pam.d";
+        policyCommand.configDirectory = root / "pam.d";
         policyCommand.runner =
             [&](const std::string&,
                 const std::vector<std::string>& arguments,
@@ -902,8 +1119,8 @@ int main() {
         auto pamAuthUpdateAlreadyEnabled = makePamAuthUpdatePolicy();
         const bool alreadyEnabledApplied = pamAuthUpdateAlreadyEnabled.apply();
         require(
-            alreadyEnabledApplied && pamAuthUpdateCalls == 0,
-            "already-enabled pam-auth-update topology was mutated: apply=" +
+            !alreadyEnabledApplied && pamAuthUpdateCalls == 0,
+            "orphaned pam-auth-update topology was accepted or mutated: apply=" +
                 std::string(alreadyEnabledApplied ? "true" : "false") +
                 " calls=" + std::to_string(pamAuthUpdateCalls) +
                 " error=" + error);
@@ -918,6 +1135,18 @@ int main() {
                 "disabled pam-auth-update topology was not activated once");
         require(pamAuthUpdateDisabled.apply() && pamAuthUpdateCalls == 1,
                 "repeated pam-auth-update activation was not idempotent");
+        {
+            std::string journalError;
+            auto* journal = fic::rollback::DaemonMutationJournal::instance()
+                .tryGet(journalError);
+            require(journal != nullptr, journalError);
+            const auto records = journal->activeRecords(
+                {"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"});
+            require(records.size() == 1 &&
+                        records.front().status ==
+                            fic::rollback::MutationStatus::Applied,
+                    "native PAM activation must commit Applied provenance");
+        }
 
         writeFile(root / "pam.d/login", "auth include login\n");
         auto pamAuthUpdateBroken = makePamAuthUpdatePolicy();
@@ -953,6 +1182,7 @@ int main() {
                     AltPamFaillockTopologyManager*>(factoryManager.get()) !=
                     nullptr,
                 "factory did not select the ALT faillock manager");
+        testPamJournalLifecycle(root, platform);
     } catch (const std::exception& exception) {
         std::cerr << "PamCapabilityActivationPolicyTests failed: "
                   << exception.what() << '\n';

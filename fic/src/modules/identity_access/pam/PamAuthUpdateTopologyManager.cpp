@@ -3,18 +3,25 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <set>
 #include <sstream>
 #include <system_error>
 #include <utility>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace fic::identity::pam {
 namespace {
@@ -338,6 +345,33 @@ bool PamAuthUpdateTopologyManager::inspect(PamTopologyStatus& status,
         }
         switch (ownership) {
         case Ownership::FicOwned:
+            if (capability_.capability ==
+                fic::platform::PamCapability::AuthenticationLockout) {
+                const auto* recipe = status.activeStrategy.has_value()
+                    ? strategyActivationIdentifiers(*status.activeStrategy,
+                                                    error)
+                    : nullptr;
+                std::set<std::string> selected;
+                if (recipe == nullptr ||
+                    !enabledStateIdentifiers(selected, error)) {
+                    if (error.empty())
+                        error = "active pam_faillock strategy has no FIC recipe";
+                    status = {PamTopologyState::Broken, true, {}, error};
+                    return false;
+                }
+                std::set<std::string> ficSelected;
+                for (const auto& id : knownActivationIdentifiers()) {
+                    if (selected.count(id) != 0) ficSelected.insert(id);
+                }
+                if (ficSelected != std::set<std::string>(
+                        recipe->begin(), recipe->end())) {
+                    status = {PamTopologyState::Broken, true, {},
+                        "FIC profile selection does not match the effective "
+                        "pam_faillock strategy"};
+                    error = status.detail;
+                    return false;
+                }
+            }
             break;
         case Ownership::NoFicProfiles:
             status.manageable = false;
@@ -360,6 +394,18 @@ bool PamAuthUpdateTopologyManager::inspect(PamTopologyStatus& status,
     status.detail = formatPamCapabilityVerification(verification);
     if (verification.state == PamEnforcementState::Missing ||
         verification.state == PamEnforcementState::Inactive) {
+        Ownership ownership = Ownership::NoFicProfiles;
+        if (!detectOwnership(ownership, error)) {
+            status = {PamTopologyState::Broken, true, {}, error};
+            return false;
+        }
+        if (ownership != Ownership::NoFicProfiles) {
+            status = {PamTopologyState::Broken, true, {},
+                "FIC pam-auth-update selection exists but the capability "
+                "topology is not structurally effective"};
+            error = status.detail;
+            return false;
+        }
         status.state = PamTopologyState::Disabled;
         status.activeStrategy.reset();
         error.clear();
@@ -373,21 +419,7 @@ bool PamAuthUpdateTopologyManager::inspect(PamTopologyStatus& status,
 
 std::vector<std::string>
 PamAuthUpdateTopologyManager::knownActivationIdentifiers() const {
-    std::vector<std::string> identifiers;
-    for (const auto& activation : capability_.strategyActivations) {
-        for (const std::string& identifier :
-             activation.activationIdentifiers) {
-            if (!contains(identifiers, identifier)) {
-                identifiers.push_back(identifier);
-            }
-        }
-    }
-    for (const std::string& identifier : capability_.activationIdentifiers) {
-        if (!contains(identifiers, identifier)) {
-            identifiers.push_back(identifier);
-        }
-    }
-    return identifiers;
+    return activationIdentifiers(capability_);
 }
 
 const std::vector<std::string>*
@@ -492,8 +524,124 @@ bool PamAuthUpdateTopologyManager::enable(std::string& error) {
 }
 
 bool PamAuthUpdateTopologyManager::disable(std::string& error) {
-    error = "automatic PAM topology deactivation is not supported";
-    return false;
+    Ownership ownership = Ownership::NoFicProfiles;
+    if (!detectOwnership(ownership, error)) return false;
+    if (ownership == Ownership::NoFicProfiles) {
+        error.clear();
+        return true;
+    }
+    if (ownership != Ownership::FicOwned) {
+        error = "FIC pam-auth-update selection is partial or mixed";
+        return false;
+    }
+    PamTopologyStatus before;
+    if (!inspect(before, error) || before.state != PamTopologyState::Enabled ||
+        !before.manageable) {
+        if (error.empty()) error = "FIC-owned PAM topology is not proven";
+        return false;
+    }
+    std::set<std::string> enabled;
+    if (!enabledStateIdentifiers(enabled, error)) return false;
+    std::vector<std::string> arguments{"--disable"};
+    for (const std::string& identifier : knownActivationIdentifiers()) {
+        if (enabled.count(identifier) != 0) arguments.push_back(identifier);
+    }
+    if (arguments.size() == 1) {
+        error = "FIC PAM selections disappeared before disable";
+        return false;
+    }
+    if (!runPamAuthUpdate(arguments, error)) return false;
+    Ownership after = Ownership::InvalidSelection;
+    if (!detectOwnership(after, error) || after != Ownership::NoFicProfiles) {
+        if (error.empty()) error = "FIC selections remain after pam-auth-update";
+        return false;
+    }
+    PamTopologyStatus current;
+    // A foreign equivalent topology may remain active; it must not be
+    // removed. The required postcondition is absence of FIC selections.
+    if (!inspect(current, error) ||
+        (current.state != PamTopologyState::Disabled &&
+         !(current.state == PamTopologyState::Enabled &&
+           !current.manageable))) {
+        if (error.empty())
+            error = "PAM release did not reach a FIC-selection-free topology";
+        return false;
+    }
+    return confirmDurable(error);
+}
+
+bool PamAuthUpdateTopologyManager::confirmDurable(std::string& error) const {
+    // pam-auth-update is external and may use either in-place writes or
+    // rename. Bind file and parent-directory fsync to each captured current
+    // state, then re-prove it; do not infer durability from process exit.
+    std::vector<std::pair<std::filesystem::path,
+                          std::optional<AtomicTargetState>>> capturedStates;
+    for (const auto& path : transactionPaths()) {
+        std::error_code ec;
+        const auto status = std::filesystem::symlink_status(path, ec);
+        if (ec == std::errc::no_such_file_or_directory ||
+            (!ec && !std::filesystem::exists(status))) {
+            if (!AtomicFileWriter::fsyncParentDirectoryForPath(
+                    path.string(), &error)) {
+                return false;
+            }
+            const auto rechecked = std::filesystem::symlink_status(path, ec);
+            if (ec != std::errc::no_such_file_or_directory &&
+                (ec || std::filesystem::exists(rechecked))) {
+                if (error.empty()) error = "PAM state appeared during durability proof";
+                return false;
+            }
+            capturedStates.emplace_back(path, std::nullopt);
+            continue;
+        }
+        if (ec || !std::filesystem::is_regular_file(status)) {
+            error = "unsafe PAM state path: " + path.string();
+            return false;
+        }
+        AtomicTargetState captured;
+        if (!AtomicFileWriter::captureTargetState(
+                path.string(), captured, &error)) return false;
+        const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0) {
+            error = "could not open PAM state for fsync: " +
+                std::string(std::strerror(errno));
+            return false;
+        }
+        struct stat fdState {};
+        const bool matched = ::fstat(fd, &fdState) == 0 &&
+            fdState.st_dev == captured.identity.device &&
+            fdState.st_ino == captured.identity.inode;
+        const bool synced = matched && ::fsync(fd) == 0;
+        const int savedErrno = errno;
+        ::close(fd);
+        if (!synced) {
+            error = matched
+                ? "PAM state fsync failed: " + path.string() + ": " +
+                    std::strerror(savedErrno)
+                : "PAM state changed before fsync: " + path.string();
+            return false;
+        }
+        if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                path.string(), captured, &error)) return false;
+        capturedStates.emplace_back(path, std::move(captured));
+    }
+    for (const auto& [path, captured] : capturedStates) {
+        if (captured.has_value()) {
+            if (!AtomicFileWriter::targetStateMatches(
+                    path.string(), *captured, &error)) return false;
+        } else {
+            std::error_code ec;
+            const auto status = std::filesystem::symlink_status(path, ec);
+            if (ec != std::errc::no_such_file_or_directory &&
+                (ec || std::filesystem::exists(status))) {
+                error = "PAM state appeared after durability proof: " +
+                    path.string();
+                return false;
+            }
+        }
+    }
+    error.clear();
+    return true;
 }
 
 bool PamAuthUpdateTopologyManager::canEnableStrategy(

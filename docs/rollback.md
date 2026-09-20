@@ -979,6 +979,46 @@ Foreign relation / root-определение без активной запи�
 трактуется как неявная provenance FIC; legacy-FIC владение не
 восстанавливается (migration out of scope).
 
+## PAM capability topology rollback (IDENTITY_ACCESS/PAM)
+
+Автоматический rollback разрешён только для `enable_authentication_lockout`,
+`enable_password_history`, `enable_password_quality`. Journal payload
+`UndoDisablePamCapability` содержит capability, native topology kind и полный
+домен FIC activation identifiers; содержимое PAM-файлов и foreign rules не
+сохраняются. Logical resource — `capability/<policyName>`. Повторное apply
+использует тот же active MutationId; смена faillock strategy переводит его
+в `Prepared` до native transition, без промежуточного полного disable.
+Payload содержит `had_applied_provenance`: recovery вправе удалить
+`Prepared + Disabled` только для fresh записи, а не для reused provenance.
+
+`Prepared` проверяется до обычного no-op: доказанный AFTER проходит свежую
+структурную проверку и durability barrier, затем становится `Applied`;
+доказанный Disabled для свежей записи позволяет discard; неоднозначное
+состояние остаётся active и блокирует дальнейшее изменение. Полностью
+компенсированная неудача reused transition восстанавливает предыдущие status
+и error; при недоказанной компенсации запись остаётся `Prepared`.
+
+Rollback сверяет payload с текущим platform profile и отказывается от
+неоднозначной topology. Для `PamAuthUpdate` удаляются только реально выбранные
+FIC identifiers через `pam-auth-update --disable`; внешние selections не
+передаются утилите. ALT использует существующие topology managers и их
+lock order. `StaticVerifyOnly` никогда не создаёт provenance и не запускает
+native deactivation. PAM provider options (`PamOptionPolicy`, включая
+`faillock.conf`/`pwquality.conf`/`pwhistory.conf`) в этот rollback не входят.
+Без active journal явно FIC-owned markers/selections
+считаются orphaned provenance: disable отклоняется, автоматического
+«усыновления» или разрушительного legacy rollback нет.
+
+`pam-auth-update` — внешний multi-file writer, не атомарный вместе с journal.
+FIC перед переводом записи в `Applied` захватывает и подтверждает durable
+состояние известного набора state/generated files (file fsync, parent fsync,
+повторная проверка identity/content). Если это доказательство не проходит,
+`Prepared` остаётся active; exit code утилиты сам по себе не является
+durability proof. Это не даёт транзакционной атомарности произвольным
+побочным файлам, которые будущая версия `pam-auth-update` может менять вне
+известной topology: такие случаи требуют отдельной проверки профиля/ручного
+recovery, а не восстановления historical snapshot.
+
 ## Enrollment и результаты
 
 `rollbackEnrollment(PolicyRef)` возвращает:
@@ -999,6 +1039,8 @@ Foreign relation / root-определение без активной запи�
   * `OSS/Grub` (`grub_timeout`, `grub_cmdline_linux`,
     `grub_disable_recovery` — явный whitelist, см. раздел
     «GRUB rollback (OSS/Grub)»);
+  * `IDENTITY_ACCESS/PAM` — только три capability activation policies,
+    перечисленные выше;
 * `Unsupported` — модуль в системе rollback, но автоматический откат не
   реализован: `sudo_require_authentication` (чужие NOPASSWD/PASSWD specs),
   `exclusive_firewall_control` (уничтожает внешнее состояние), DC
@@ -1035,7 +1077,7 @@ target-директивы в global section без journal-записей озн
 
 ## Расширение
 
-Новые backend'ы (PAM, fstab и т.д.) подключаются добавлением
+Новые backend'ы (например, fstab) подключаются добавлением
 payload'а в `UndoAction`, ветки в `RollbackExecutor` и записи мутации в
 момент фактического изменения ресурса — без изменений в `Policy` и без
 новых виртуальных методов.

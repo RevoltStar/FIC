@@ -48,6 +48,7 @@ public:
     bool canEnable(std::string& error) const override;
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
+    bool confirmDurable(std::string& error) const override;
 
     bool canEnableStrategy(
         fic::platform::PamFaillockStrategy strategy,

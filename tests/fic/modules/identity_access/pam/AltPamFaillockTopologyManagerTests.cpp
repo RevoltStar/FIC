@@ -1036,6 +1036,14 @@ void testDisablePreservesExternalLines() {
     AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
     std::string error;
     require(manager.enable(error), error);
+    require(manager.confirmDurable(error),
+            "ALT faillock topology durability proof failed: " + error);
+    const std::string targetPath = tree.target().string();
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [targetPath](const std::string& path) { return path != targetPath; });
+    const bool failedProof = manager.confirmDurable(error);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!failedProof, "ALT faillock fsync failure was accepted");
     std::string mixed = TemporaryTree::read(tree.target());
     const std::string external = "auth optional pam_faillock.so silent\n";
     mixed += external;

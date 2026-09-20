@@ -3,6 +3,7 @@
 #include "rollback/MutationRecord.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <filesystem>
@@ -76,6 +77,90 @@ MutationRecord preparedRecord(const PolicyRef& policy) {
     record.resource = "vm.swappiness";
     record.undo = sysctlUndo();
     return record;
+}
+
+MutationRecord pamRecord() {
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"};
+    record.resource = "capability/enable_authentication_lockout";
+    record.undo = {MutationBackend::Pam, UndoDisablePamCapability{
+        "enable_authentication_lockout", PamTopologyKind::PamAuthUpdate,
+        {"fic-faillock-authfail", "fic-faillock-preauth-required"}}};
+    return record;
+}
+
+void testPamJournalContract() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+    auto invalid = pamRecord();
+    invalid.resource = "capability/enable_password_history";
+    require(!journal.prepareMutation(invalid, id, error),
+            "writer must reject resource/payload mismatch");
+    invalid = pamRecord();
+    std::get<UndoDisablePamCapability>(invalid.undo.payload)
+        .activationIdentifiers = {"fic-ok", "bad\nidentifier"};
+    require(!journal.prepareMutation(invalid, id, error),
+            "writer must reject control characters");
+    invalid = pamRecord();
+    std::get<UndoDisablePamCapability>(invalid.undo.payload).topology =
+        static_cast<PamTopologyKind>(999);
+    require(!journal.prepareMutation(invalid, id, error),
+            "writer must reject an invalid PAM topology enum");
+    require(journal.prepareMutation(pamRecord(), id, error), error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    const auto* payload = std::get_if<UndoDisablePamCapability>(
+        &reloaded.records().front().undo.payload);
+    require(payload && payload->activationIdentifiers.size() == 2,
+            "PAM undo must round-trip");
+    auto document = nlohmann::json::parse(file.read());
+    const auto original = document;
+    const auto rejects = [&](const nlohmann::json& broken,
+                             const std::string& label) {
+        file.write(broken.dump());
+        MutationJournal rejected(file.path);
+        std::string loadError;
+        require(!rejected.load(loadError), label + " must fail closed");
+    };
+    document["records"][0]["undo"]["capability"] = "future_policy";
+    rejects(document, "unknown PAM capability");
+    document = original;
+    document["records"][0]["undo"]["topology"] = "future_topology";
+    rejects(document, "unknown PAM topology");
+    document = original;
+    document["records"][0]["undo"].erase("had_applied_provenance");
+    rejects(document, "missing PAM reused provenance marker");
+    document = original;
+    document["records"][0]["resource"] = "capability/other";
+    rejects(document, "PAM resource mismatch");
+    document = original;
+    document["records"][0]["backend"] = "sudo";
+    rejects(document, "PAM top-level backend mismatch");
+    document = original;
+    document["records"][0]["undo"]["activation_identifiers"] =
+        nlohmann::json::array({"fic-ok", "fic-ok"});
+    rejects(document, "duplicate PAM identifiers");
+    document = original;
+    auto duplicate = document["records"][0];
+    duplicate["id"] = 2;
+    document["next_id"] = 3;
+    document["records"].push_back(duplicate);
+    rejects(document, "duplicate active PAM logical identity");
+    file.write(original.dump());
+    MutationJournal history(file.path);
+    require(history.load(error), error);
+    require(history.setStatus(id, MutationStatus::RolledBack, error), error);
+    MutationId newId = 0;
+    require(history.prepareMutation(pamRecord(), newId, error), error);
+    require(newId != id, "resolved PAM history must allow one new active id");
+    MutationJournal historyReloaded(file.path);
+    require(historyReloaded.load(error), error);
+    require(historyReloaded.records().size() == 2,
+            "resolved history plus active PAM record must load");
 }
 
 // Structural comparison of in-memory records (MutationRecord has no
@@ -2423,6 +2508,7 @@ int main() {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"PAM journal contract", testPamJournalContract},
         {"missing file is empty journal", testMissingFileIsEmptyJournal},
         {"prepare commit reload persistence", testPrepareCommitAndReloadPersistence},
         {"prepare idempotency", testPrepareIsIdempotentForSameTriple},

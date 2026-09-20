@@ -2,6 +2,7 @@
 
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.h"
+#include "modules/identity_access/pam/PamTopologyManagerFactory.h"
 #include "modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
 #include "modules/net/ssh/Ssh.h"
 #include "modules/sysctl/Sysctl.h"
@@ -371,6 +372,14 @@ bool disable (PolicyRegistry& policyRegistry,
                     }
                     return true;
                 });
+        rollbackDeps.pamManagerFactory =
+            [&platform, &executables](
+                const fic::platform::PamCapabilityConfig& capability,
+                const std::vector<std::string>& services,
+                std::string& error) {
+                return fic::identity::pam::createPamTopologyManager(
+                    platform.pam, capability, services, executables, error);
+            };
 
         const fic::rollback::RollbackReport rollbackReport =
             fic::rollback::rollbackPolicyBeforeDisable(

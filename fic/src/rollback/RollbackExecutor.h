@@ -4,6 +4,7 @@
 #include "modules/dac/mode_and_owner/DacBaselineRollback.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/identity_access/kerberos/KerberosRollback.h"
+#include "modules/identity_access/pam/PamTopologyManager.h"
 #include "modules/identity_access/sssd/SssdRollback.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/oss/grub/GrubRollback.h"
@@ -13,6 +14,7 @@
 #include "rollback/MutationRecord.h"
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -68,6 +70,10 @@ enum class RollbackEnrollment {
 RollbackEnrollment rollbackEnrollment(const PolicyRef& policy);
 
 struct RollbackExecutorDeps {
+    fic::platform::PamPlatformConfig pamPlatform;
+    std::function<std::unique_ptr<fic::identity::pam::PamTopologyManager>(
+        const fic::platform::PamCapabilityConfig&,
+        const std::vector<std::string>&, std::string&)> pamManagerFactory;
     // SYSCTL backend configuration (managed file layout etc.).
     std::function<SysctlConfigurationOptions()> sysctlOptions;
     // Runtime /proc/sys root override for tests; production default is used when empty.

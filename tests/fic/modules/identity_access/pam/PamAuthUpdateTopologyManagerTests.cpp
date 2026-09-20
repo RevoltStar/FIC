@@ -4,6 +4,7 @@
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -199,10 +201,18 @@ ProcessResult runFakePamAuthUpdate(FakePamAuthUpdate& fake,
         return result;
     }
     std::vector<std::string> enableIds;
+    std::vector<std::string> disableIds;
     bool collecting = false;
+    bool disabling = false;
     for (const std::string& argument : arguments) {
         if (argument == "--enable") {
             collecting = true;
+            disabling = false;
+            continue;
+        }
+        if (argument == "--disable") {
+            disabling = true;
+            collecting = false;
             continue;
         }
         if (argument.rfind("--", 0) == 0) {
@@ -211,7 +221,31 @@ ProcessResult runFakePamAuthUpdate(FakePamAuthUpdate& fake,
         }
         if (collecting) {
             enableIds.push_back(argument);
+        } else if (disabling) {
+            disableIds.push_back(argument);
         }
+    }
+    if (enableIds.empty() && !disableIds.empty()) {
+        for (const std::string& type : {"auth", "account"}) {
+            const fs::path path = tree.stateDir() / type;
+            std::string prior = fs::exists(path) ? readFile(path) : "";
+            std::istringstream lines(prior);
+            std::string line;
+            std::string remaining;
+            while (std::getline(lines, line)) {
+                const std::string prefix = "Module: ";
+                if (line.rfind(prefix, 0) == 0 &&
+                    std::find(disableIds.begin(), disableIds.end(),
+                              line.substr(prefix.size())) != disableIds.end())
+                    continue;
+                remaining += line + "\n";
+            }
+            TestTree::writeFile(path, remaining);
+        }
+        TestTree::writeFile(tree.authFile(), TestTree::kClean);
+        fake.applied.reset();
+        result.exitCode = 0;
+        return result;
     }
     std::optional<PamFaillockStrategy> requested;
     for (PamFaillockStrategy strategy : {
@@ -700,6 +734,103 @@ void testPartialProfileSelectionIsBroken(const TestTree& tree) {
     resetTree(tree);
 }
 
+void testSelectedButIneffectiveIsBroken(const TestTree& tree) {
+    resetTree(tree);
+    TestTree::writeFile(tree.stateDir() / "auth",
+                        "Module: fic-faillock-preauth-required\n"
+                        "Module: fic-faillock-authfail\n");
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    auto resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    fic::identity::pam::PamTopologyStatus status;
+    std::string error;
+    require(!manager.inspect(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Broken,
+            "selected FIC profiles with ineffective topology must fail closed");
+    require(!manager.disable(error) && fake.calls == 0,
+            "ineffective selected topology must not be disabled blindly");
+    resetTree(tree);
+}
+
+void testSelectionStrategyMismatchIsBroken(const TestTree& tree) {
+    resetTree(tree);
+    TestTree::writeFile(tree.authFile(),
+        strategyContent(PamFaillockStrategy::PreauthRequired, tree));
+    TestTree::writeFile(tree.stateDir() / "auth",
+                        "Module: fic-faillock-authsucc\n"
+                        "Module: fic-faillock-authfail\n");
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    auto resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    fic::identity::pam::PamTopologyStatus status;
+    std::string error;
+    require(!manager.inspect(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Broken,
+            "profile recipe differing from effective strategy must be drift");
+    require(!manager.disable(error) && fake.calls == 0,
+            "mismatched FIC selection must not be released blindly");
+    resetTree(tree);
+}
+
+void testDisableOwnedSelectionsPreservesAdmin(const TestTree& tree) {
+    resetTree(tree);
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    auto resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    require(manager.enableStrategy(PamFaillockStrategy::PreauthRequired, error),
+            error);
+    for (const std::string& type : {"auth", "account"}) {
+        const fs::path path = tree.stateDir() / type;
+        TestTree::writeFile(path, readFile(path) + "Module: admin-profile\n");
+    }
+    require(manager.disable(error), error);
+    require(fake.lastArguments.size() == 3 &&
+            fake.lastArguments.front() == "--disable" &&
+            std::find(fake.lastArguments.begin(), fake.lastArguments.end(),
+                      "admin-profile") == fake.lastArguments.end(),
+            "disable must address only the active FIC identifiers");
+    require(readFile(tree.stateDir() / "auth") ==
+                "Module: admin-profile\n",
+            "unrelated pam-auth-update selection must survive");
+    fic::identity::pam::PamTopologyStatus status;
+    require(manager.inspect(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Disabled,
+            "disabled topology must be structurally rechecked");
+    resetTree(tree);
+}
+
+void testDurabilityFailureIsNotAccepted(const TestTree& tree) {
+    resetTree(tree);
+    FakePamAuthUpdate fake;
+    auto platform = tree.platform();
+    auto resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    require(manager.enableStrategy(PamFaillockStrategy::PreauthRequired, error),
+            error);
+    const std::string target = (tree.stateDir() / "auth").string();
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [target](const std::string& path) { return path != target; });
+    const bool proven = manager.confirmDurable(error);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!proven && !error.empty(),
+            "failed state-bound fsync must refuse PAM durability proof");
+    require(manager.confirmDurable(error), error);
+    resetTree(tree);
+}
+
 } // namespace
 
 int main() {
@@ -724,6 +855,10 @@ int main() {
         testUnreadableStateFailsClosed(tree);
         testConflictingStrategiesAcrossServices(tree);
         testPartialProfileSelectionIsBroken(tree);
+        testSelectedButIneffectiveIsBroken(tree);
+        testSelectionStrategyMismatchIsBroken(tree);
+        testDisableOwnedSelectionsPreservesAdmin(tree);
+        testDurabilityFailureIsNotAccepted(tree);
     } catch (const std::exception& exception) {
         std::cerr << "PamAuthUpdateTopologyManagerTests failed: "
                   << exception.what() << '\n';

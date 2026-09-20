@@ -48,4 +48,20 @@ bool resolveCapability(
     return true;
 }
 
+std::vector<std::string> activationIdentifiers(
+    const fic::platform::PamCapabilityConfig& capability) {
+    std::vector<std::string> ids;
+    for (const auto& activation : capability.strategyActivations) {
+        for (const auto& id : activation.activationIdentifiers) {
+            if (std::find(ids.begin(), ids.end(), id) == ids.end())
+                ids.push_back(id);
+        }
+    }
+    for (const auto& id : capability.activationIdentifiers) {
+        if (std::find(ids.begin(), ids.end(), id) == ids.end())
+            ids.push_back(id);
+    }
+    return ids;
+}
+
 } // namespace fic::identity::pam

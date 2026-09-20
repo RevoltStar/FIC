@@ -38,6 +38,7 @@ struct AltPamPasswordHistoryTopologyOptions {
 
 class AltPamPasswordHistoryTopologyManager final : public PamTopologyManager {
 public:
+    bool confirmDurable(std::string& error) const override;
     inline static constexpr const char* BEGIN =
         "# BEGIN FIC pam_pwhistory transaction";
     inline static constexpr const char* LOCK_RULE =

@@ -23,6 +23,11 @@ bool resolveCapability(
     const std::vector<std::string>*& servicesResult,
     std::string& error);
 
+// Complete FIC-owned pam-auth-update identifier domain for a capability,
+// including every declared faillock strategy.
+std::vector<std::string> activationIdentifiers(
+    const fic::platform::PamCapabilityConfig& capability);
+
 } // namespace fic::identity::pam
 
 #endif // FIC_IDENTITY_ACCESS_PAM_PLATFORM_COMPOSITION_H

@@ -1,5 +1,6 @@
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
+#include "rollback/PamRollback.h"
 
 #include "modules/dac/mode_and_owner/policies/DAC_systemcommandlock.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
@@ -198,6 +199,17 @@ const PolicyRef kSudoPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
 // ---------------------------------------------------------------- tests -----
 
 void testEnrollmentMatrix() {
+    for (const std::string& name : {"enable_authentication_lockout",
+                                    "enable_password_history",
+                                    "enable_password_quality"}) {
+        require(rollbackEnrollment({"IDENTITY_ACCESS", "PAM", name}) ==
+                    RollbackEnrollment::Supported,
+                "PAM capability topology policy must be enrolled");
+    }
+    require(rollbackEnrollment({"IDENTITY_ACCESS", "PAM",
+                                "future_pam_policy"}) ==
+                RollbackEnrollment::Unsupported,
+            "future PAM policy must not be auto-enrolled");
     require(rollbackEnrollment({"SYSCTL", "Global", "anything"}) ==
                 RollbackEnrollment::Supported,
             "all SYSCTL policies must be enrolled");
@@ -281,6 +293,163 @@ void testEnrollmentMatrix() {
                 RollbackEnrollment::NotEnrolled,
             "other IDENTITY_ACCESS submodules stay outside the rollback "
             "system");
+}
+
+struct FakePamState {
+    fic::identity::pam::PamTopologyState state =
+        fic::identity::pam::PamTopologyState::Enabled;
+    bool manageable = true;
+    bool disableSucceeds = true;
+    int disableCalls = 0;
+};
+
+class FakePamManager final : public fic::identity::pam::PamTopologyManager {
+public:
+    bool confirmDurable(std::string& error) const override {
+        error.clear(); return true;
+    }
+    explicit FakePamManager(std::shared_ptr<FakePamState> state)
+        : state_(std::move(state)) {}
+    bool inspect(fic::identity::pam::PamTopologyStatus& status,
+                 std::string& error) override {
+        status = {state_->state, state_->manageable, {}, {}};
+        error.clear();
+        return true;
+    }
+    bool canEnable(std::string& error) const override {
+        error.clear(); return true;
+    }
+    bool enable(std::string& error) override {
+        error.clear(); return true;
+    }
+    bool disable(std::string& error) override {
+        ++state_->disableCalls;
+        if (!state_->disableSucceeds) {
+            error = "injected PAM disable failure";
+            return false;
+        }
+        state_->state = fic::identity::pam::PamTopologyState::Disabled;
+        error.clear();
+        return true;
+    }
+private:
+    std::shared_ptr<FakePamState> state_;
+};
+
+void testPamOwnershipRelease() {
+    using namespace fic::platform;
+    PamRollbackOptions options;
+    options.platform.scopes = {{PamScope::EffectivePasswordStack, {"passwd"}}};
+    PamCapabilityConfig capability;
+    capability.capability = PamCapability::PasswordHistory;
+    capability.scope = PamScope::EffectivePasswordStack;
+    capability.topology = PamTopologyStrategyKind::PamAuthUpdate;
+    capability.activationIdentifiers = {"fic-pwhistory"};
+    options.platform.capabilities = {capability};
+    auto state = std::make_shared<FakePamState>();
+    options.managerFactory = [state](const auto&, const auto&,
+                                     std::string& error) {
+        error.clear();
+        return std::make_unique<FakePamManager>(state);
+    };
+    const UndoDisablePamCapability undo{
+        "enable_password_history", PamTopologyKind::PamAuthUpdate,
+        {"fic-pwhistory"}};
+    const auto orphan = inspectUnrecordedPamCapability(
+        options, "enable_password_history");
+    require(orphan.state == PamRollbackState::Conflict,
+            "FIC marker without provenance must fail closed");
+    auto mismatched = undo;
+    mismatched.activationIdentifiers = {"foreign"};
+    require(undoPamCapability(options, mismatched).state ==
+                PamRollbackState::Conflict,
+            "recorded selection domain must match current profile");
+    require(state->disableCalls == 0,
+            "mismatched provenance must not invoke native disable");
+    state->manageable = false;
+    require(undoPamCapability(options, undo).state ==
+                PamRollbackState::AlreadyReleased,
+            "external equivalent topology must not be disabled");
+    state->manageable = true;
+    require(undoPamCapability(options, undo).state ==
+                PamRollbackState::Released,
+            "owned topology must be released");
+    require(state->disableCalls == 1, "native disable must run exactly once");
+    require(undoPamCapability(options, undo).state ==
+                PamRollbackState::AlreadyReleased,
+            "released topology must be idempotent");
+    PamRollbackOptions staticOptions;
+    staticOptions.platform.scopes = {
+        {PamScope::EffectivePasswordStack, {"passwd"}}};
+    PamCapabilityConfig staticCapability;
+    staticCapability.capability = PamCapability::PasswordQuality;
+    staticCapability.scope = PamScope::EffectivePasswordStack;
+    staticCapability.topology = PamTopologyStrategyKind::StaticVerifyOnly;
+    staticOptions.platform.capabilities = {staticCapability};
+    require(inspectUnrecordedPamCapability(staticOptions,
+                "enable_password_quality").state ==
+                PamRollbackState::AlreadyReleased,
+            "StaticVerifyOnly must not require a native deactivation manager");
+}
+
+void testPamExecutorJournalLifecycle() {
+    using namespace fic::platform;
+    TempJournal journal;
+    JournalOverride overrideGuard(journal.tree.root / "journal.json");
+    RollbackExecutorDeps deps;
+    deps.pamPlatform.scopes = {{PamScope::EffectivePasswordStack, {"passwd"}}};
+    PamCapabilityConfig capability;
+    capability.capability = PamCapability::PasswordHistory;
+    capability.scope = PamScope::EffectivePasswordStack;
+    capability.topology = PamTopologyStrategyKind::PamAuthUpdate;
+    capability.activationIdentifiers = {"fic-pwhistory"};
+    deps.pamPlatform.capabilities = {capability};
+    auto state = std::make_shared<FakePamState>();
+    deps.pamManagerFactory = [state](const auto&, const auto&,
+                                     std::string& error) {
+        error.clear();
+        return std::make_unique<FakePamManager>(state);
+    };
+    const PolicyRef policy{"IDENTITY_ACCESS", "PAM",
+                           "enable_password_history"};
+    const std::string resource = "capability/enable_password_history";
+    const UndoAction undo{MutationBackend::Pam, UndoDisablePamCapability{
+        "enable_password_history", PamTopologyKind::PamAuthUpdate,
+        {"fic-pwhistory"}}};
+    require(rollbackPolicyBeforeDisable(policy, resource, deps).status ==
+                RollbackStatus::Conflict,
+            "unrecorded FIC-owned PAM topology must refuse disable");
+    const MutationId id = recordApplied(policy, resource, undo);
+    const RollbackReport report =
+        rollbackPolicyBeforeDisable(policy, resource, deps);
+    require(report.status == RollbackStatus::Success &&
+                state->disableCalls == 1,
+            "journal-backed PAM rollback must release owned topology");
+    std::string error;
+    auto* persisted = DaemonMutationJournal::instance().tryGet(error);
+    require(persisted != nullptr, error);
+    require(persisted->records().front().id == id &&
+                persisted->records().front().status ==
+                    MutationStatus::RolledBack,
+            "successful PAM release must close its journal record");
+    require(rollbackPolicyBeforeDisable(policy, resource, deps).status ==
+                RollbackStatus::NothingToDo && state->disableCalls == 1,
+            "repeated PAM disable must not re-run native mutation");
+    state->state = fic::identity::pam::PamTopologyState::Enabled;
+    state->manageable = false;
+    recordApplied(policy, resource, undo);
+    require(rollbackPolicyBeforeDisable(policy, resource, deps).status ==
+                RollbackStatus::NothingToDo && state->disableCalls == 1,
+            "external equivalent PAM topology must remain untouched");
+    state->manageable = true;
+    state->disableSucceeds = false;
+    recordApplied(policy, resource, undo);
+    require(rollbackPolicyBeforeDisable(policy, resource, deps).status ==
+                RollbackStatus::Failed,
+            "native PAM rollback failure must refuse disable");
+    require(persisted->activeRecords(policy).front().status ==
+                MutationStatus::RollbackFailed,
+            "failed PAM release must retain active provenance");
 }
 
 void testNotEnrolledPolicyKeepsLegacyDisable() {
@@ -2440,6 +2609,8 @@ int main() {
         void (*test)();
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
+        {"PAM ownership release", testPamOwnershipRelease},
+        {"PAM executor journal lifecycle", testPamExecutorJournalLifecycle},
         {"sssd executor rollback removes managed setting",
          testSssdExecutorRollbackRemovesManagedSetting},
         {"sssd executor drift conflict refuses disable",
@@ -2555,4 +2726,3 @@ int main() {
     }
     return failures == 0 ? 0 : 1;
 }
-

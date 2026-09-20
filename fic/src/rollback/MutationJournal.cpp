@@ -9,6 +9,7 @@
 #include <cctype>
 #include <ctime>
 #include <functional>
+#include <set>
 #include <system_error>
 #include <utility>
 
@@ -89,6 +90,13 @@ json serializeUndoAction(const UndoAction& action) {
             : "missing";
         value["before_raw_line"] = kerberosScalar->beforeRawLine;
         value["section_existed_before"] = kerberosScalar->sectionExistedBefore;
+    } else if (const auto* pam =
+                   std::get_if<UndoDisablePamCapability>(&action.payload)) {
+        value["capability"] = pam->capability;
+        value["topology"] = pam->topology == PamTopologyKind::PamAuthUpdate
+            ? "pam_auth_update" : "alt_tcb_managed";
+        value["activation_identifiers"] = pam->activationIdentifiers;
+        value["had_applied_provenance"] = pam->hadAppliedProvenance;
     }
     return value;
 }
@@ -150,6 +158,42 @@ bool validateSssdUndoPayload(const UndoRemoveSssdManagedSetting& payload,
         error = "remove_sssd_managed_setting undo applied value must not "
                 "contain CR, LF or NUL";
         return false;
+    }
+    return true;
+}
+
+bool validatePamUndoPayload(const UndoDisablePamCapability& payload,
+                            std::string& error) {
+    if (payload.topology != PamTopologyKind::PamAuthUpdate &&
+        payload.topology != PamTopologyKind::AltTcbManaged) {
+        error = "disable_pam_capability has an unknown topology kind";
+        return false;
+    }
+    if (payload.capability != "enable_authentication_lockout" &&
+        payload.capability != "enable_password_history" &&
+        payload.capability != "enable_password_quality") {
+        error = "disable_pam_capability requires a supported capability";
+        return false;
+    }
+    if (payload.topology == PamTopologyKind::PamAuthUpdate &&
+        payload.activationIdentifiers.empty()) {
+        error = "pam_auth_update undo requires activation identifiers";
+        return false;
+    }
+    if (payload.topology == PamTopologyKind::AltTcbManaged &&
+        !payload.activationIdentifiers.empty()) {
+        error = "ALT PAM undo must not contain activation identifiers";
+        return false;
+    }
+    std::set<std::string> unique;
+    for (const std::string& id : payload.activationIdentifiers) {
+        if (id.empty() || id[0] == '-' ||
+            !std::all_of(id.begin(), id.end(), [](unsigned char c) {
+                return std::isalnum(c) != 0 || c == '-' || c == '_';
+            }) || !unique.insert(id).second) {
+            error = "invalid or duplicate PAM activation identifier";
+            return false;
+        }
     }
     return true;
 }
@@ -219,6 +263,41 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         return false;
     }
     action.backend = backend;
+    if (actionName == "disable_pam_capability" &&
+        backend == MutationBackend::Pam) {
+        UndoDisablePamCapability payload;
+        const auto capability = value.find("capability");
+        const auto topology = value.find("topology");
+        const auto identifiers = value.find("activation_identifiers");
+        const auto established = value.find("had_applied_provenance");
+        if (capability == value.end() || !capability->is_string() ||
+            topology == value.end() || !topology->is_string() ||
+            identifiers == value.end() || !identifiers->is_array() ||
+            established == value.end() || !established->is_boolean()) {
+            error = "malformed disable_pam_capability undo";
+            return false;
+        }
+        payload.capability = capability->get<std::string>();
+        payload.hadAppliedProvenance = established->get<bool>();
+        if (*topology == "pam_auth_update") {
+            payload.topology = PamTopologyKind::PamAuthUpdate;
+        } else if (*topology == "alt_tcb_managed") {
+            payload.topology = PamTopologyKind::AltTcbManaged;
+        } else {
+            error = "unknown PAM topology in undo";
+            return false;
+        }
+        for (const auto& id : *identifiers) {
+            if (!id.is_string()) {
+                error = "PAM activation identifiers must be strings";
+                return false;
+            }
+            payload.activationIdentifiers.push_back(id.get<std::string>());
+        }
+        if (!validatePamUndoPayload(payload, error)) return false;
+        action.payload = std::move(payload);
+        return true;
+    }
     if (actionName == "remove_managed_setting" &&
         (backend == MutationBackend::Sysctl || backend == MutationBackend::Sudo)) {
         UndoRemoveManagedSetting payload;
@@ -515,6 +594,20 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
             return false;
         }
     }
+    if (record.undo.backend == MutationBackend::Pam) {
+        const auto* pam =
+            std::get_if<UndoDisablePamCapability>(&record.undo.payload);
+        const auto backendIt = value.find("backend");
+        if (backendIt == value.end() || !backendIt->is_string() ||
+            *backendIt != "pam" || pam == nullptr ||
+            record.policy.moduleName != "IDENTITY_ACCESS" ||
+            record.policy.submoduleName != "PAM" ||
+            record.policy.policyName != pam->capability ||
+            record.resource != "capability/" + pam->capability) {
+            error = "PAM journal resource/policy does not match undo capability";
+            return false;
+        }
+    }
 
     MutationStatus status;
     if (!mutationStatusFromString(value.value("status", ""), status)) {
@@ -562,6 +655,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Grub: return "grub";
     case MutationBackend::Sssd: return "sssd";
     case MutationBackend::Kerberos: return "kerberos";
+    case MutationBackend::Pam: return "pam";
     }
     return "unknown";
 }
@@ -576,6 +670,7 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "grub") { backend = MutationBackend::Grub; return true; }
     if (value == "sssd") { backend = MutationBackend::Sssd; return true; }
     if (value == "kerberos") { backend = MutationBackend::Kerberos; return true; }
+    if (value == "pam") { backend = MutationBackend::Pam; return true; }
     return false;
 }
 
@@ -603,6 +698,9 @@ std::string undoActionTypeName(const UndoAction& action) {
     }
     if (std::holds_alternative<UndoRestoreKerberosScalar>(action.payload)) {
         return "restore_kerberos_scalar";
+    }
+    if (std::holds_alternative<UndoDisablePamCapability>(action.payload)) {
+        return "disable_pam_capability";
     }
     return "unknown";
 }
@@ -1296,6 +1394,18 @@ bool MutationJournal::prepareMutation(MutationRecord record,
         if (!validateKerberosUndoPayload(*kerberos, error)) {
             return false;
         }
+    }
+    if (record.undo.backend == MutationBackend::Pam) {
+        const auto* pam =
+            std::get_if<UndoDisablePamCapability>(&record.undo.payload);
+        if (pam == nullptr || record.policy.moduleName != "IDENTITY_ACCESS" ||
+            record.policy.submoduleName != "PAM" ||
+            record.policy.policyName != pam->capability ||
+            record.resource != "capability/" + pam->capability) {
+            error = "PAM mutation record identity does not match undo";
+            return false;
+        }
+        if (!validatePamUndoPayload(*pam, error)) return false;
     }
 
     // Idempotency: an active record for the same (policy, backend, resource)

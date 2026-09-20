@@ -1148,6 +1148,33 @@ AltPamFaillockTopologyManager::AltPamFaillockTopologyManager(
     options_.writeOptions.exclusiveCreate = false;
 }
 
+bool AltPamFaillockTopologyManager::confirmDurable(
+    std::string& error) const {
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::AuthenticationLockout);
+    if (capability == nullptr || capability->managedTopologyTargets.empty()) {
+        error = "ALT pam_faillock has no managed targets for durability proof";
+        return false;
+    }
+    std::vector<std::pair<std::filesystem::path, AtomicTargetState>> states;
+    for (const auto& target : capability->managedTopologyTargets) {
+        AtomicTargetState snapshot;
+        if (!AtomicFileWriter::captureTargetState(
+                target.path.string(), snapshot, &error) ||
+            !AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                target.path.string(), snapshot, &error))
+            return false;
+        states.emplace_back(target.path, std::move(snapshot));
+    }
+    for (const auto& [path, snapshot] : states) {
+        if (!AtomicFileWriter::targetStateMatches(
+                path.string(), snapshot, &error))
+            return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool AltPamFaillockTopologyManager::verifySemanticEffectiveness(
     std::string& error) const {
     if (options_.semanticVerifier) {

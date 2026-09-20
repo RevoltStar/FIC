@@ -2,6 +2,7 @@
 
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "rollback/DaemonMutationJournal.h"
 
 #include <fic/policy/PolicyTypeValue.h>
 
@@ -158,6 +159,48 @@ bool PamCapabilityActivationPolicy::applyPam(
         return false;
     }
 
+    const bool mutableTopology = capability->topology !=
+        fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
+    fic::rollback::MutationJournal* journal = nullptr;
+    std::vector<fic::rollback::MutationRecord> active;
+    const auto policy = policyRef();
+    fic::rollback::UndoDisablePamCapability undo;
+    undo.capability = policyName;
+    if (mutableTopology) {
+        undo.topology = capability->topology ==
+                fic::platform::PamTopologyStrategyKind::PamAuthUpdate
+            ? fic::rollback::PamTopologyKind::PamAuthUpdate
+            : fic::rollback::PamTopologyKind::AltTcbManaged;
+        undo.activationIdentifiers =
+            fic::identity::pam::activationIdentifiers(*capability);
+        journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+        if (journal == nullptr) {
+            log("PAM mutation journal unavailable: " + error, logLevel::ERROR);
+            return false;
+        }
+        active = journal->activeRecords(policy);
+        if (active.size() > 1) {
+            log("Multiple active PAM topology mutations (fail closed)",
+                logLevel::ERROR);
+            return false;
+        }
+        if (!active.empty()) {
+            const auto* recorded = std::get_if<
+                fic::rollback::UndoDisablePamCapability>(
+                    &active.front().undo.payload);
+            if (active.front().undo.backend !=
+                    fic::rollback::MutationBackend::Pam ||
+                active.front().resource != "capability/" + policyName ||
+                recorded == nullptr || recorded->capability != undo.capability ||
+                recorded->topology != undo.topology ||
+                recorded->activationIdentifiers != undo.activationIdentifiers) {
+                log("Active PAM provenance does not match current profile "
+                    "(fail closed)", logLevel::ERROR);
+                return false;
+            }
+        }
+    }
+
     fic::identity::pam::PamTopologyStatus status;
     if (!manager->inspect(status, error)) {
         if (status.state == fic::identity::pam::PamTopologyState::Broken) {
@@ -176,7 +219,102 @@ bool PamCapabilityActivationPolicy::applyPam(
         return false;
     }
 
+    const auto proveEnabled = [&](bool durable) {
+        fic::identity::pam::PamTopologyStatus current;
+        std::string proofError;
+        if (!manager->inspect(current, proofError) ||
+            current.state != fic::identity::pam::PamTopologyState::Enabled ||
+            ((durable || !active.empty()) && !current.manageable) ||
+            (strategyAware() && current.activeStrategy != strategy)) {
+            error = "PAM topology AFTER proof failed: " +
+                (proofError.empty() ? current.detail : proofError);
+            return false;
+        }
+        fic::identity::pam::PamCapabilityVerification verification;
+        if (!verifyFresh(*capability, *services, verification)) {
+            error = "PAM structural proof failed: " +
+                fic::identity::pam::formatPamCapabilityVerification(
+                    verification);
+            return false;
+        }
+        if (durable && !manager->confirmDurable(error)) return false;
+        return true;
+    };
+
+    if (!active.empty() && active.front().status ==
+            fic::rollback::MutationStatus::RollbackFailed) {
+        log("PAM rollback previously failed; active provenance requires "
+            "rollback recovery before apply (fail closed)",
+            logLevel::ERROR);
+        return false;
+    }
+
+    if (!active.empty() && active.front().status ==
+            fic::rollback::MutationStatus::Prepared) {
+        if (status.state == fic::identity::pam::PamTopologyState::Enabled &&
+            status.manageable &&
+            (!strategyAware() || status.activeStrategy == strategy)) {
+            if (!proveEnabled(true) ||
+                !journal->setStatus(active.front().id,
+                    fic::rollback::MutationStatus::Applied, error)) {
+                log("PAM Prepared recovery failed: " + error, logLevel::ERROR);
+                return false;
+            }
+            return true;
+        }
+        const auto* preparedUndo = std::get_if<
+            fic::rollback::UndoDisablePamCapability>(
+                &active.front().undo.payload);
+        if (status.state == fic::identity::pam::PamTopologyState::Disabled &&
+            preparedUndo != nullptr &&
+            !preparedUndo->hadAppliedProvenance) {
+            if (!journal->discard(active.front().id, error)) {
+                log("PAM stale Prepared discard failed: " + error,
+                    logLevel::ERROR);
+                return false;
+            }
+            active.clear();
+        } else {
+            log("PAM Prepared topology is indeterminate (fail closed)",
+                logLevel::ERROR);
+            return false;
+        }
+    }
+
+    if (!active.empty() &&
+        (status.state != fic::identity::pam::PamTopologyState::Enabled ||
+         !status.manageable)) {
+        log("Active PAM provenance has no proven owned topology "
+            "(fail closed)", logLevel::ERROR);
+        return false;
+    }
+    if (active.empty() && mutableTopology &&
+        status.state == fic::identity::pam::PamTopologyState::Enabled &&
+        status.manageable) {
+        log("FIC-owned PAM topology has no journal provenance "
+            "(fail closed)", logLevel::ERROR);
+        return false;
+    }
+
     bool activated = false;
+    const bool mutationRequired =
+        status.state == fic::identity::pam::PamTopologyState::Disabled ||
+        (status.state == fic::identity::pam::PamTopologyState::Enabled &&
+         strategyAware() && status.activeStrategy != strategy);
+    fic::rollback::MutationId mutationId = 0;
+    const bool reused = !active.empty();
+    const auto previous = reused ? active.front() : fic::rollback::MutationRecord{};
+    if (mutationRequired && mutableTopology) {
+        undo.hadAppliedProvenance = reused;
+        fic::rollback::MutationRecord record;
+        record.policy = policy;
+        record.resource = "capability/" + policyName;
+        record.undo = {fic::rollback::MutationBackend::Pam, undo};
+        if (!journal->prepareMutation(record, mutationId, error)) {
+            log("PAM journal prepare failed: " + error, logLevel::ERROR);
+            return false;
+        }
+    }
     switch (status.state) {
     case fic::identity::pam::PamTopologyState::Enabled:
         // Strategy-aware idempotency: a mismatching active strategy is an
@@ -187,14 +325,14 @@ bool PamCapabilityActivationPolicy::applyPam(
                         fic::platform::pamFaillockStrategyName(*strategy) +
                         ": " + error,
                     logLevel::ERROR);
-                return false;
+                goto mutation_failed;
             }
             if (!manager->enableStrategy(*strategy, error)) {
                 log("PAM topology strategy transition to " +
                         fic::platform::pamFaillockStrategyName(*strategy) +
                         " failed: " + error,
                     logLevel::ERROR);
-                return false;
+                goto mutation_failed;
             }
         }
         break;
@@ -205,25 +343,25 @@ bool PamCapabilityActivationPolicy::applyPam(
                         fic::platform::pamFaillockStrategyName(*strategy) +
                         ": " + error,
                     logLevel::ERROR);
-                return false;
+                goto mutation_failed;
             }
             if (!manager->enableStrategy(*strategy, error)) {
                 log("PAM topology activation with strategy " +
                         fic::platform::pamFaillockStrategyName(*strategy) +
                         " failed: " + error,
                     logLevel::ERROR);
-                return false;
+                goto mutation_failed;
             }
         } else {
             if (!manager->canEnable(error)) {
                 log("PAM topology cannot be activated: " + error,
                     logLevel::ERROR);
-                return false;
+                goto mutation_failed;
             }
             if (!manager->enable(error)) {
                 log("PAM topology activation failed: " + error,
                     logLevel::ERROR);
-                return false;
+                goto mutation_failed;
             }
         }
         activated = true;
@@ -233,7 +371,7 @@ bool PamCapabilityActivationPolicy::applyPam(
                 "verification failed: " +
                     (status.detail.empty() ? error : status.detail),
                 logLevel::ERROR);
-            return false;
+            goto mutation_failed;
         }
         if (status.state != fic::identity::pam::PamTopologyState::Enabled ||
             (strategyAware() && status.activeStrategy != strategy)) {
@@ -241,7 +379,7 @@ bool PamCapabilityActivationPolicy::applyPam(
                 "verification did not report the requested topology: " +
                     status.detail,
                 logLevel::ERROR);
-            return false;
+            goto mutation_failed;
         }
         break;
     case fic::identity::pam::PamTopologyState::Broken:
@@ -254,17 +392,14 @@ bool PamCapabilityActivationPolicy::applyPam(
         return false;
     }
 
-    fic::identity::pam::PamCapabilityVerification verification;
-    if (!verifyFresh(*capability, *services, verification)) {
-        log(std::string(activated
-                ? "PAM topology activation succeeded but capability "
-                  "structural verification failed; manual/native recovery "
-                  "may be required: "
-                : "PAM topology is enabled but capability structural "
-                  "verification failed: ") +
-                fic::identity::pam::formatPamCapabilityVerification(
-                    verification),
-            logLevel::ERROR);
+    if (!proveEnabled(mutationRequired)) {
+        log("PAM postcondition failed: " + error, logLevel::ERROR);
+        return false;
+    }
+    if (mutationRequired &&
+        !journal->setStatus(mutationId,
+            fic::rollback::MutationStatus::Applied, error)) {
+        log("PAM journal commit failed: " + error, logLevel::ERROR);
         return false;
     }
     log(activated
@@ -272,4 +407,30 @@ bool PamCapabilityActivationPolicy::applyPam(
             : "PAM capability topology is enabled and structurally verified",
         logLevel::INFO);
     return true;
+
+mutation_failed:
+    if (mutationId != 0) {
+        fic::identity::pam::PamTopologyStatus restored;
+        std::string restoreError;
+        const bool proven = manager->inspect(restored, restoreError) &&
+            manager->confirmDurable(restoreError) &&
+            (reused
+                ? restored.state == fic::identity::pam::PamTopologyState::Enabled &&
+                    restored.manageable &&
+                    restored.activeStrategy == status.activeStrategy
+                : restored.state == fic::identity::pam::PamTopologyState::Disabled);
+        if (proven) {
+            if (reused) {
+                journal->setStatusWithMessage(mutationId, previous.status,
+                    previous.error, restoreError);
+            } else {
+                journal->discard(mutationId, restoreError);
+            }
+        }
+        if (!restoreError.empty()) {
+            log("PAM mutation provenance remains Prepared: " + restoreError,
+                logLevel::ERROR);
+        }
+    }
+    return false;
 }

@@ -34,7 +34,8 @@ enum class MutationBackend {
     Dac,
     Grub,
     Sssd,
-    Kerberos
+    Kerberos,
+    Pam
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -132,6 +133,19 @@ struct UndoRestoreKerberosScalar {
     bool sectionExistedBefore = false;
 };
 
+// PAM activation provenance, never a snapshot of PAM configuration. The
+// identifiers form the complete FIC-owned selection domain for this
+// capability (including all supported faillock strategies).
+enum class PamTopologyKind { PamAuthUpdate, AltTcbManaged };
+struct UndoDisablePamCapability {
+    std::string capability;
+    PamTopologyKind topology = PamTopologyKind::PamAuthUpdate;
+    std::vector<std::string> activationIdentifiers;
+    // Set before reusing an already Applied record. Crash recovery may
+    // discard Prepared+Disabled only for a genuinely fresh mutation.
+    bool hadAppliedProvenance = false;
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoRemoveSshManagedPolicy,
@@ -140,7 +154,8 @@ using UndoPayload = std::variant<
     UndoApplyDacPlatformBaseline,
     UndoRemoveGrubManagedSetting,
     UndoRemoveSssdManagedSetting,
-    UndoRestoreKerberosScalar>;
+    UndoRestoreKerberosScalar,
+    UndoDisablePamCapability>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

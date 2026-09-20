@@ -11,6 +11,7 @@
 #include "modules/sysctl/SysctlKey.h"
 #include "modules/sysctl/SysctlRuntime.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "rollback/PamRollback.h"
 
 #include <algorithm>
 #include <map>
@@ -84,6 +85,16 @@ bool isSupportedSssdPolicy(const std::string& policyName) {
 
 bool isSupportedKerberosPolicy(const std::string& policyName) {
     return policyName == "kerberos_ticket_lifetime";
+}
+
+bool isSupportedPamPolicy(const std::string& policyName) {
+    return policyName == "enable_authentication_lockout" ||
+           policyName == "enable_password_history" ||
+           policyName == "enable_password_quality";
+}
+
+PamRollbackOptions pamOptions(const RollbackExecutorDeps& deps) {
+    return {deps.pamPlatform, deps.pamManagerFactory};
 }
 
 MutationRollbackOutcome outcomeFromOperation(
@@ -444,6 +455,24 @@ MutationRollbackOutcome undoMutation(
             return undoKerberosScalarMutation(deps, record, *kerberosScalar);
         }
     }
+    if (const auto* pam =
+            std::get_if<UndoDisablePamCapability>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Pam) {
+            MutationRollbackOutcome outcome;
+            outcome.id = record.id;
+            outcome.resource = record.resource;
+            const PamRollbackResult result =
+                undoPamCapability(pamOptions(deps), *pam);
+            outcome.status = result.state == PamRollbackState::Released
+                ? RollbackStatus::Success
+                : result.state == PamRollbackState::AlreadyReleased
+                    ? RollbackStatus::NothingToDo
+                    : result.state == PamRollbackState::Conflict
+                        ? RollbackStatus::Conflict : RollbackStatus::Failed;
+            outcome.message = result.message;
+            return outcome;
+        }
+    }
     if (const auto* firewallPolicy =
             std::get_if<UndoRemoveFirewallPolicy>(&record.undo.payload)) {
         return undoFirewallPolicyMutation(deps, record, *firewallPolicy);
@@ -590,6 +619,12 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "PAM") {
+        return isSupportedPamPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "DC" && policy.submoduleName == "DeviceControl") {
         return isDcCategoryFeature(policy.policyName)
             ? RollbackEnrollment::Supported
@@ -611,6 +646,18 @@ RollbackReport checkUnrecordedOwnership(
     report.status = RollbackStatus::NothingToDo;
     report.message = "Active mutation records отсутствуют; FIC не владеет "
                      "изменениями этой политики";
+
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "PAM") {
+        const PamRollbackResult result = inspectUnrecordedPamCapability(
+            pamOptions(deps), policy.policyName);
+        report.status = result.state == PamRollbackState::AlreadyReleased
+            ? RollbackStatus::NothingToDo
+            : result.state == PamRollbackState::Conflict
+                ? RollbackStatus::Conflict : RollbackStatus::Failed;
+        report.message = result.message;
+        return report;
+    }
 
     if (policy.moduleName == "SYSCTL") {
         if (resourceHint.empty()) {
@@ -923,6 +970,7 @@ RollbackExecutorDeps productionRollbackDeps(
     std::function<bool(const std::string& feature, std::string& error)>
         disableDeviceFeature) {
     RollbackExecutorDeps deps;
+    deps.pamPlatform = platform.pam;
     const fic::platform::SysctlPlatformConfig sysctlConfig = platform.sysctl;
     deps.sysctlOptions = [sysctlConfig]() {
         SysctlConfigurationOptions options;

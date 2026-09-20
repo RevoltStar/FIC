@@ -476,6 +476,100 @@ AltPamPasswordHistoryTopologyManager::AltPamPasswordHistoryTopologyManager(
     options_.writeOptions.rejectSymlink = true;
 }
 
+bool AltPamPasswordHistoryTopologyManager::confirmDurable(
+    std::string& error) const {
+    const auto* capability = capabilityConfig(
+        platformConfig_, PamCapability::PasswordHistory);
+    if (capability == nullptr || capability->topologyTarget.empty()) {
+        error = "ALT password-history topology target is unavailable";
+        return false;
+    }
+    ExclusivePidLock topologyLock(options_.lockFilePath.string(),
+        options_.lockDebugLogPath.string(), false);
+    if (!topologyLock.acquire()) {
+        error = "could not acquire PAM topology lock for durability proof";
+        return false;
+    }
+    if (!validateStorageObject(options_.stateDirectory, 02730,
+            options_.storageOwner, options_.storageGroup, true, false,
+            error))
+        return false;
+    TransactionFileLock transactionLock;
+    if (transactionLock.acquire(options_, error) !=
+        TransactionLockResult::Acquired)
+        return false;
+    if (!validateStorageObject(options_.historyFile, 0660,
+            std::nullopt, options_.storageGroup, false, false, error))
+        return false;
+
+    AtomicTargetState topology;
+    if (!AtomicFileWriter::captureTargetState(
+            capability->topologyTarget.string(), topology, &error))
+        return false;
+    std::vector<std::pair<std::filesystem::path, struct stat>> storageStates;
+    for (const auto& path : {options_.transactionLockFile,
+                             options_.historyFile}) {
+        struct stat before {};
+        if (::lstat(path.c_str(), &before) != 0 || !S_ISREG(before.st_mode) ||
+            before.st_nlink != 1) {
+            error = "password-history state changed before durability proof: " +
+                path.string();
+            return false;
+        }
+        const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0) {
+            error = "could not open password-history state for fsync: " +
+                path.string() + ": " + errnoText();
+            return false;
+        }
+        struct stat opened {};
+        const bool matched = ::fstat(fd, &opened) == 0 &&
+            opened.st_dev == before.st_dev && opened.st_ino == before.st_ino;
+        const bool synced = matched && ::fsync(fd) == 0;
+        const std::string detail = synced ? std::string() :
+            (matched ? errnoText() : "inode changed");
+        ::close(fd);
+        if (!synced) {
+            error = "password-history state fsync failed: " +
+                path.string() + ": " + detail;
+            return false;
+        }
+        storageStates.emplace_back(path, before);
+    }
+    const int dirfd = ::open(options_.stateDirectory.c_str(),
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dirfd < 0) {
+        error = "could not open password-history directory for fsync: " +
+            errnoText();
+        return false;
+    }
+    const bool directorySynced = ::fsync(dirfd) == 0;
+    const std::string detail = directorySynced ? std::string() : errnoText();
+    ::close(dirfd);
+    if (!directorySynced) {
+        error = "password-history directory fsync failed: " + detail;
+        return false;
+    }
+    if (!AtomicFileWriter::fsyncParentDirectoryForPath(
+            options_.stateDirectory.string(), &error) ||
+        !AtomicFileWriter::ensureTargetDurableIfCurrentState(
+            capability->topologyTarget.string(), topology, &error) ||
+        !AtomicFileWriter::targetStateMatches(
+            capability->topologyTarget.string(), topology, &error))
+        return false;
+    for (const auto& [path, before] : storageStates) {
+        struct stat current {};
+        if (::lstat(path.c_str(), &current) != 0 ||
+            current.st_dev != before.st_dev || current.st_ino != before.st_ino) {
+            error = "password-history state changed during durability proof: " +
+                path.string();
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool AltPamPasswordHistoryTopologyManager::prepareStorage(
     std::string& error) const {
     ExclusivePidLock topologyLock(options_.lockFilePath.string(),

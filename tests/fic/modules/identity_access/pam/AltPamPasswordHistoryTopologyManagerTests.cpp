@@ -121,6 +121,15 @@ void testRoundTripAndStorage() {
                 state == AltPamPasswordHistoryTopologyState::Disabled,
             error);
     require(manager.enable(error), error);
+    require(manager.confirmDurable(error),
+            "ALT password-history durability proof failed: " + error);
+    const std::string targetPath = tree.target().string();
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [targetPath](const std::string& path) { return path != targetPath; });
+    const bool failedProof = manager.confirmDurable(error);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!failedProof,
+            "ALT password-history fsync failure was accepted");
     const std::string enabled = TemporaryTree::read(tree.target());
     require(enabled.find(AltPamPasswordHistoryTopologyManager::LOCK_RULE) !=
                 std::string::npos &&
