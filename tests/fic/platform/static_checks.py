@@ -545,8 +545,9 @@ def main():
         root / "fic/src/modules/identity_access/pam/PamTopologyManagerFactory.cpp"
     ).read_text(encoding="utf-8")
     require(
-        registry.count("std::make_unique<PamCapabilityActivationPolicy>") == 3,
-        "PolicyRegistry must register exactly three PAM activation policies",
+        "registerPamActivationPolicy" in registry
+        and "PamPolicySupport::RequiresTopologyActivation" in registry,
+        "PolicyRegistry does not gate PAM activation policy exposure by support",
     )
     require(
         "PamCapabilityVerificationMode::Structural" in activation_policy

@@ -13,6 +13,9 @@
   profile-selection causal-ownership gaps.
 - Исправлена совместимая с nlohmann-json 3.11.2/3.11.3 сериализация optional
   PAM strategy provenance: string при наличии значения, JSON `null` иначе.
+- Исправлен top-level layout Debian builder и regressions follow-up; legacy
+  PasswordQuality/PasswordHistory на Debian/Ubuntu больше не экспонируют
+  activation policies и классифицируются как `ReadOnly`.
 
 ## Accepted architecture / invariants
 
@@ -41,6 +44,13 @@
 - Debian packaging устанавливает четыре hook profiles и четыре PAM conffile
   slots; maintainer scripts регистрируют и удаляют hook infrastructure.
 - Добавлены unit/static/package regressions и документация модели.
+- `write_fic_pam_preinst()` вынесен из `write_common_preinst()`; packaging test
+  source-ит builder и проверяет наличие обеих top-level functions.
+- Fake PAM manager после успешного enable восстанавливает manageable state;
+  legacy external-equivalent rollback ожидает ноль destructive disable calls.
+- Activation policy регистрируется только при
+  `PamPolicySupport::RequiresTopologyActivation`; observation-only option
+  policies не получают зависимость на отсутствующую activation policy.
 
 ## Changed areas
 
@@ -75,6 +85,16 @@
   topology must remain untouched`) и `pam_capability_activation_policy_tests`
   (`journal-bound crash-partial Prepared was not compensated/reapplied`).
 - `git diff --check` — успешно.
+- После corrective review: targets `fic`,
+  `pam_capability_activation_policy_tests`, `rollback_executor_tests` и
+  `identity_policy_hierarchy_tests` собраны успешно.
+- `pam_capability_activation_policy_tests` и
+  `identity_policy_hierarchy_tests` — успешно.
+- `rollback_executor_tests`: относящийся к PAM сценарий теперь PASS; общий test
+  в текущем окружении падает только на восьми DAC cases из-за
+  `could not resolve test group`.
+- Direct packaging/platform static checks, shell source regression и `bash -n`
+  Debian builder — успешно.
 
 ### Validation, зафиксированная в `626cee...`
 

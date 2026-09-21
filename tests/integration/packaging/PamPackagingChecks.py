@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -179,6 +180,23 @@ def main() -> int:
     require("Password-Initial:" in history, "history profile has no Password-Initial stanza")
 
     deb_builder = (root / "packaging/deb/build-fic-debian12-deb.sh").read_text(encoding="utf-8")
+    sourced = subprocess.run(
+        ["bash", "-c",
+         'set -- 0.1.0; source "$BUILDER"; '
+         'declare -F write_common_preinst >/dev/null; '
+         'declare -F write_fic_pam_preinst >/dev/null'],
+        cwd=root,
+        env={"PATH": "/usr/bin:/bin", "BUILDER":
+             str(root / "packaging/deb/build-fic-debian12-deb.sh")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    require(
+        sourced.returncode == 0,
+        "Debian PAM preinst helpers are not top-level shell functions: " +
+        sourced.stderr.strip(),
+    )
     rpm_builder = (root / "packaging/rpm/build-fic-alt-p11-rpm.sh").read_text(encoding="utf-8")
     rpm_facility_path = root / "packaging/rpm/fic-pam-faillock"
     rpm_facility = rpm_facility_path.read_text(encoding="utf-8")

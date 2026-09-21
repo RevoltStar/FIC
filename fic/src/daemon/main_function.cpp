@@ -512,12 +512,23 @@ bool initPolicyRegistry(
                 platform.pam, capability, services, executables,
                 managerError);
         };
-    cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
-        platform.pam, fic::platform::PamCapability::PasswordHistory,
-        activationOptions));
-    cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
-        platform.pam, fic::platform::PamCapability::PasswordQuality,
-        activationOptions));
+    const auto registerPamActivationPolicy =
+        [&](fic::platform::PamCapability capability,
+            fic::platform::PamPolicyFeature representativeFeature) {
+            if (fic::identity::pam::pamPolicySupport(
+                    platform.pam, representativeFeature) ==
+                fic::platform::PamPolicySupport::RequiresTopologyActivation) {
+                cafArr.push_back(
+                    std::make_unique<PamCapabilityActivationPolicy>(
+                        platform.pam, capability, activationOptions));
+            }
+        };
+    registerPamActivationPolicy(
+        fic::platform::PamCapability::PasswordHistory,
+        fic::platform::PamPolicyFeature::PasswordHistoryDepth);
+    registerPamActivationPolicy(
+        fic::platform::PamCapability::PasswordQuality,
+        fic::platform::PamPolicyFeature::PasswordMinLength);
     // The authentication lockout activation policy is only registered when
     // the platform profile declares at least one supported pam_faillock
     // strategy; otherwise the capability is unsupported on this platform.

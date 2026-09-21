@@ -351,6 +351,20 @@ write_common_preinst() {
     local package_root="$1"
 
 
+    cat > "$package_root/DEBIAN/preinst" <<'EOF'
+#!/bin/sh
+set -e
+
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd --system fic
+fi
+
+exit 0
+EOF
+
+    chmod 0755 "$package_root/DEBIAN/preinst"
+}
+
 write_fic_pam_preinst() {
     local package_root="$1"
 
@@ -454,19 +468,7 @@ EOF
 
     chmod 0755 "$package_root/DEBIAN/preinst"
 }
-    cat > "$package_root/DEBIAN/preinst" <<'EOF'
-#!/bin/sh
-set -e
 
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/preinst"
-}
 
 write_fic_preinst() {
     local package_root="$1"
@@ -1154,4 +1156,6 @@ main() {
     echo "  $gui_deb"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

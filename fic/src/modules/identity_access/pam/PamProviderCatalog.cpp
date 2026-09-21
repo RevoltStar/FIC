@@ -76,8 +76,12 @@ fic::platform::PamPolicySupport pamPolicySupport(
         return fic::platform::PamPolicySupport::Unsupported;
     }
     if (capability->topology ==
-            fic::platform::PamTopologyStrategyKind::PamAuthUpdate ||
-        capability->topology ==
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+        return capability->capability == Capability::AuthenticationLockout
+            ? fic::platform::PamPolicySupport::RequiresTopologyActivation
+            : fic::platform::PamPolicySupport::ReadOnly;
+    }
+    if (capability->topology ==
             fic::platform::PamTopologyStrategyKind::AltTcbManaged) {
         return fic::platform::PamPolicySupport::RequiresTopologyActivation;
     }

@@ -21,9 +21,12 @@ PamOptionPolicy::PamOptionPolicy(
       feature_(feature) {
     const auto capability =
         fic::identity::pam::pamPolicyCapability(feature_);
-    addRecommendedDependency(
-        {"IDENTITY_ACCESS", "PAM",
-         pamCapabilityActivationPolicyName(capability)});
+    if (fic::identity::pam::pamPolicySupport(platformConfig_, feature_) ==
+        fic::platform::PamPolicySupport::RequiresTopologyActivation) {
+        addRecommendedDependency(
+            {"IDENTITY_ACCESS", "PAM",
+             pamCapabilityActivationPolicyName(capability)});
+    }
     if (capability ==
             fic::platform::PamCapability::AuthenticationLockout &&
         platformConfig_.passwordlessLoginControl.has_value()) {

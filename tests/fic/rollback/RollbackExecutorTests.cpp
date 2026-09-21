@@ -479,7 +479,7 @@ void testPamExecutorJournalLifecycle() {
     state->manageable = false;
     recordApplied(policy, resource, undo);
     require(rollbackPolicyBeforeDisable(policy, resource, deps).status ==
-                RollbackStatus::NothingToDo && state->disableCalls == 1,
+                RollbackStatus::NothingToDo && state->disableCalls == 0,
             "external equivalent PAM topology must remain untouched");
     state->manageable = true;
     state->disableSucceeds = false;

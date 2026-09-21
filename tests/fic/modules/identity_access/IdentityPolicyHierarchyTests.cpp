@@ -1434,6 +1434,12 @@ int main() {
         DummyPamPolicy pam;
         PamFailedAuthenticationCountingPeriodPolicy countingPeriod({});
         TestPamPlatformConfig dependencyPlatform;
+        dependencyPlatform.capabilities[0].topology =
+            fic::platform::PamTopologyStrategyKind::AltTcbManaged;
+        dependencyPlatform.capabilities[1].topology =
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+        dependencyPlatform.capabilities[2].topology =
+            fic::platform::PamTopologyStrategyKind::AltTcbManaged;
         dependencyPlatform.passwordlessLoginControl = {
             "nopasswdlogin", "/etc/passwd", "/etc/group",
             "/etc/nsswitch.conf"};
@@ -1484,12 +1490,12 @@ int main() {
                     recommendedCount(rootLockout, lockoutActivationRef) == 1 &&
                     recommendedCount(unlock, lockoutActivationRef) == 1 &&
                     recommendedCount(history, historyActivationRef) == 1 &&
-                    recommendedCount(quality, qualityActivationRef) == 1,
+                    recommendedCount(quality, qualityActivationRef) == 0,
                 "PAM option policies lack unique capability activation "
                 "recommendations");
         require(attempts.dependencies().size() == 2 &&
                     history.dependencies().size() == 1 &&
-                    quality.dependencies().size() == 1,
+                    quality.dependencies().empty(),
                 "PAM option dependency mapping contains duplicates");
         DummySssdPolicy sssd;
         DummyKerberosPolicy kerberos;

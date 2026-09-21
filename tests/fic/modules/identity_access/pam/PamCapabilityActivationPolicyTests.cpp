@@ -3,6 +3,7 @@
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "modules/identity_access/pam/PamAuthUpdateTopologyManager.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
 #include "rollback/DaemonMutationJournal.h"
 
@@ -158,6 +159,8 @@ public:
         if (state_->enableResult && state_->transitionToEnabled) {
             state_->topologyState =
                 fic::identity::pam::PamTopologyState::Enabled;
+            state_->manageable = true;
+            state_->inspectResult = true;
         }
         return state_->enableResult;
     }
@@ -197,6 +200,8 @@ public:
         if (state_->transitionToEnabled) {
             state_->topologyState =
                 fic::identity::pam::PamTopologyState::Enabled;
+            state_->manageable = true;
+            state_->inspectResult = true;
         }
         error.clear();
         return true;
@@ -746,14 +751,22 @@ void testExternalPwquality(const std::filesystem::path& root) {
     // Even the exact reserved identifier is not a causal witness.
     writeFile(qualityRoot / "var/lib/pam/password",
               "Module: unix\nModule: fic-pwquality\n");
+    writeFile(qualityRoot / "pam.d/passwd",
+              "password requisite pam_pwquality.so\n"
+              "password required pam_unix.so\n");
     manager = factory(platform.capabilities[2],
                       std::vector<std::string>{"passwd"}, error);
-    require(manager->inspect(status, error) &&
+    const bool inspected = manager->inspect(status, error);
+    const bool disabled = inspected && manager->disable(error);
+    require(inspected &&
                 status.state ==
                     fic::identity::pam::PamTopologyState::Enabled &&
-                status.manageable &&
-                !manager->disable(error) && writerCalls == 0,
-            "exact legacy pwquality profile was destructively released");
+                status.manageable && !disabled && writerCalls == 0,
+            "exact legacy pwquality profile contract mismatch: manageable=" +
+                std::string(status.manageable ? "true" : "false") +
+                " disabled=" + (disabled ? "true" : "false") +
+                " writer_calls=" + std::to_string(writerCalls) +
+                " error=" + error);
 }
 
 } // namespace
@@ -781,6 +794,16 @@ int main() {
             "enable_password_quality.status=DISABLE\n"
             "enable_password_quality.value=ENABLE\n");
         const auto platform = makePlatform(root);
+        require(
+            fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordHistoryDepth) ==
+                fic::platform::PamPolicySupport::ReadOnly &&
+            fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordMinLength) ==
+                fic::platform::PamPolicySupport::ReadOnly,
+            "legacy pam-auth-update password capabilities must be observation-only");
 
         auto state = std::make_shared<ManagerState>();
         state->topologyState =
