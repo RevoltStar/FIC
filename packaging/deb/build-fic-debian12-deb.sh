@@ -794,6 +794,14 @@ if [ "\$1" = "remove" ]; then
                 attempt=\$((attempt + 1))
                 sleep 1
             done
+            # Invariant: hook detach requires positive proof that every FIC
+            # PAM writer is inactive. A stop timeout is a package-removal
+            # failure, not permission to continue: the permanent hooks stay
+            # attached and the removal aborts before any pam-auth-update.
+            if systemctl is-active --quiet "\$unit"; then
+                echo "FIC: unit \$unit is still active after the bounded stop wait; refusing to detach permanent PAM hooks" >&2
+                exit 1
+            fi
         done
     fi
     # Only now detach the permanent FIC PAM hook infrastructure.

@@ -4,6 +4,7 @@
 #include "rollback/MutationJournal.h"
 #include "rollback/MutationRecord.h"
 
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -20,19 +21,27 @@ using fic::rollback::UndoDisablePamCapability;
 // must carry an ACTIVE record whose payload proves the exact managed-slot
 // ownership domain for this capability. No semantic equality and no
 // profile-name inference is used as a substitute for this physical proof.
+//
+// The journal is accessed through the read-only witness-aware persistent
+// state validation: the pre-attach proof is accepted only from a persistent
+// (journal, witness) state that the normal daemon lifecycle would also
+// accept, and the validation itself never creates, bootstraps, migrates or
+// repairs anything on disk.
 bool proveJournalOwnership(
     std::uint64_t mutationId,
+    const std::optional<fic::platform::PamFaillockStrategy>& activeStrategy,
     const fic::platform::PamCapabilityConfig& capability,
     const std::filesystem::path& mutationJournalFile,
     PamSlotAttachVerdict& verdict) {
-    // Read-only journal access: load() never creates, bootstraps or rewrites
-    // the document. A missing, zero-byte or malformed journal fails closed
-    // instead of healing into an empty provenance source.
+    // Witness-aware READ-ONLY persistent-state proof: virgin state, lost
+    // journal, corrupted witness and the pending-migration state (existing
+    // journal without witness) all fail closed instead of being healed.
     MutationJournal journal(mutationJournalFile);
     std::string journalError;
-    if (!journal.load(journalError)) {
+    if (!journal.validatePersistentStateReadOnly(journalError)) {
         verdict.detail =
-            "mutation journal is not readable (fail closed): " + journalError;
+            "mutation journal persistent state is not proven (fail closed): " +
+            journalError;
         return true;
     }
 
@@ -56,6 +65,24 @@ bool proveJournalOwnership(
             " is not active (status " +
             fic::rollback::mutationStatusToString(match->status) +
             "); it cannot prove the active slot state";
+        return true;
+    }
+    // Exact journal identity: the record must be the PAM capability mutation
+    // itself, not a foreign-policy record reusing the same id.
+    if (match->policy.moduleName != "IDENTITY_ACCESS" ||
+        match->policy.submoduleName != "PAM" ||
+        match->policy.policyName != "enable_authentication_lockout") {
+        verdict.detail =
+            "journal record for mutation " + std::to_string(mutationId) +
+            " proves a different policy identity (expected "
+            "IDENTITY_ACCESS/PAM/enable_authentication_lockout)";
+        return true;
+    }
+    if (match->resource != "capability/enable_authentication_lockout") {
+        verdict.detail =
+            "journal record for mutation " + std::to_string(mutationId) +
+            " proves a different resource (expected "
+            "capability/enable_authentication_lockout)";
         return true;
     }
     if (match->undo.backend != MutationBackend::Pam) {
@@ -92,6 +119,23 @@ bool proveJournalOwnership(
         verdict.detail =
             "journal record for mutation " + std::to_string(mutationId) +
             " proves a different FIC PAM activation domain";
+        return true;
+    }
+    // Physical strategy binding: the recorded target strategy must be the
+    // exact physical strategy carried by the active slots themselves.
+    if (!activeStrategy.has_value()) {
+        verdict.detail =
+            "active FIC PAM slots report no physical faillock strategy; "
+            "journal provenance cannot be bound to the slot state";
+        return true;
+    }
+    if (!payload->targetStrategy.has_value() ||
+        *payload->targetStrategy !=
+            fic::platform::pamFaillockStrategyName(*activeStrategy)) {
+        verdict.detail =
+            "journal record for mutation " + std::to_string(mutationId) +
+            " proves a different physical faillock strategy than the "
+            "active slots";
         return true;
     }
     verdict.safeToAttach = true;
@@ -159,8 +203,8 @@ bool validatePamSlotAttach(
         }
         error.clear();
         return proveJournalOwnership(
-            *status.ownershipMutationId, capability, mutationJournalFile,
-            verdict);
+            *status.ownershipMutationId, status.activeStrategy, capability,
+            mutationJournalFile, verdict);
     }
 
     // Broken (malformed marker, modified body, partial or mixed strategy

@@ -292,6 +292,16 @@ def main() -> int:
     require("is-active --quiet" in stop_block,
             "Debian prerm does not verify that FIC services stopped before "
             "detaching PAM hooks")
+    # Final stop proof: after the bounded wait the prerm must POSITIVELY
+    # prove every FIC PAM writer is inactive; a timeout is a package-removal
+    # failure (exit 1), never permission to detach the hooks. The proof is a
+    # plain is-active check (no `|| true`) followed by exit 1 with a unit
+    # name in the diagnostic.
+    require('if systemctl is-active --quiet "\\$unit"; then' in stop_block and
+            "is still active after the bounded stop wait" in stop_block and
+            "exit 1" in stop_block,
+            "Debian prerm must abort hook detachment when a FIC service is "
+            "still active after the bounded stop wait")
 
     # Lifecycle invariant: installation/reinstallation never attaches the
     # permanent fic-faillock-hook-* profiles until the existing
@@ -314,6 +324,13 @@ def main() -> int:
     require(configure_pos >= 0 and validate_pos > configure_pos,
             "pre-attach slot validation must run inside the postinst "
             "configure branch")
+
+    # The daemon (a PAM writer) must not be started before the pre-attach
+    # validation passed and the hooks were attached.
+    start_pos = fic_postinst.find("systemctl enable --now fic.service")
+    require(start_pos < 0 or start_pos > enable_pos,
+            "postinst must not start the FIC daemon before pre-attach slot "
+            "validation and hook attach")
 
     # Behavioral proof of the removal invariant: run the generated prerm
     # with fake systemctl/pam-auth-update and verify the actual call order.
@@ -380,6 +397,157 @@ def main() -> int:
                 "FIC services were stopped")
         require(any("--remove" in calls[index] for index in pam_calls),
                 "prerm did not deselect the FIC PAM profiles on remove")
+
+        # Timeout path: a FIC service that stays active after the bounded
+        # wait must abort the removal BEFORE any pam-auth-update call and
+        # name the offending unit in the diagnostic.
+        fake_sleep = fake_bin / "sleep"
+        fake_sleep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake_sleep.chmod(0o755)
+        fake_systemctl.write_text(
+            "#!/bin/sh\n"
+            'printf "systemctl %s\\n" "$*" >> "$FAKE_LOG"\n'
+            "exit 0\n",
+            encoding="utf-8")
+        fake_systemctl.chmod(0o755)
+        log.unlink(missing_ok=True)
+        stuck = subprocess.run(
+            [str(prerm_path), "remove"],
+            env={"PATH": f"{fake_bin}:/usr/bin:/bin", "FAKE_LOG": str(log)},
+            text=True,
+            capture_output=True,
+            check=False)
+        require(stuck.returncode != 0,
+                "prerm remove must fail when a FIC service remains active "
+                "after the bounded stop wait")
+        stuck_calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        require(not any(line.startswith("pam-auth-update")
+                        for line in stuck_calls),
+                "pam-auth-update ran although a FIC service remained active")
+        require("fic.service" in stuck.stderr,
+                "stop-timeout diagnostic must name the unit that failed "
+                "to stop: " + stuck.stderr.strip())
+
+
+
+    # Behavioral proof of the attach invariant: run the configure tail of the
+    # generated postinst with fake binaries and verify the actual order:
+    # pre-attach validation → pam-auth-update --package → hook enable →
+    # daemon start; on validator failure no pam-auth-update and no daemon
+    # start may happen at all. /opt/fic paths are redirected to PATH fakes
+    # so the host system is never touched.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        package_root = tmp_path / "pkg"
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir(parents=True)
+        (package_root / "DEBIAN").mkdir(parents=True)
+        log = tmp_path / "postinst-calls.log"
+
+        def fake_tool(name: str, exit_code: int) -> None:
+            tool = fake_bin / name
+            tool.write_text(
+                "#!/bin/sh\n"
+                f'printf "{name} %s\\n" "$*" >> "$FAKE_LOG"\n'
+                f"exit {exit_code}\n",
+                encoding="utf-8")
+            tool.chmod(0o755)
+
+        fake_tool("pam-auth-update", 0)
+        fake_tool("systemctl", 0)
+        fake_tool("fic", 0)
+        fake_tool("fic-dick", 0)
+
+        generated = subprocess.run(
+            ["bash", "-c",
+             'pkg_root="$1"; '
+             'set -- 0.1.0; '
+             'source "$BUILDER" >/dev/null 2>&1; '
+             'write_system_integration_symlink_postinst "$pkg_root" fic '
+             '"/opt/fic/bin/fic"',
+             "bash", str(package_root)],
+            cwd=root,
+            env={"PATH": "/usr/bin:/bin",
+                 "BUILDER": str(root / "packaging/deb/build-fic-debian12-deb.sh")},
+            text=True,
+            capture_output=True,
+            check=False)
+        require(generated.returncode == 0,
+                "could not generate Debian postinst for the behavioral "
+                "check: " + generated.stderr.strip())
+        postinst_text = (package_root / "DEBIAN/postinst").read_text(
+            encoding="utf-8")
+        configure_start = postinst_text.find(
+            'if [ "${1:-}" = "configure" ]; then')
+        require(configure_start >= 0,
+                "generated postinst lost its configure branch")
+        configure_tail = postinst_text[configure_start:].replace(
+            "/opt/fic/bin/fic-dick", "fic-dick").replace(
+                "/opt/fic/bin/fic", "fic")
+        tail_script = tmp_path / "configure-tail.sh"
+        tail_script.write_text("#!/bin/sh\nset -e\n" + configure_tail,
+                               encoding="utf-8")
+        tail_script.chmod(0o755)
+
+        # Success path: validation passes → hooks attach → daemon starts.
+        ran = subprocess.run(
+            [str(tail_script), "configure"],
+            env={"PATH": str(fake_bin), "FAKE_LOG": str(log)},
+            text=True,
+            capture_output=True,
+            check=False)
+        require(ran.returncode == 0,
+                "postinst configure tail failed under fake binaries: " +
+                ran.stderr.strip())
+        calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        validate_calls = [index for index, line in enumerate(calls)
+                          if "validate-pam-slots-before-attach" in line]
+        pam_package_calls = [index for index, line in enumerate(calls)
+                             if line.startswith("pam-auth-update --package")]
+        pam_enable_calls = [index for index, line in enumerate(calls)
+                            if line.startswith("pam-auth-update --enable")]
+        daemon_start_calls = [index for index, line in enumerate(calls)
+                              if "enable --now fic.service" in line]
+        require(validate_calls and pam_package_calls and pam_enable_calls
+                and daemon_start_calls
+                and max(validate_calls) < min(pam_package_calls)
+                and max(pam_package_calls) < min(pam_enable_calls)
+                and max(pam_enable_calls) < min(daemon_start_calls),
+                "postinst attach-order regression: validation, "
+                "pam-auth-update and daemon start are out of order: " +
+                "\n".join(calls))
+        enable_call = calls[min(pam_enable_calls)]
+        for hook in ("fic-faillock-hook-preauth", "fic-faillock-hook-authfail",
+                     "fic-faillock-hook-authsucc", "fic-faillock-hook-account"):
+            require(hook in enable_call,
+                    f"postinst did not enable permanent hook {hook} "
+                    "in the behavioral check")
+
+        # Failure path: the pre-attach validator refuses → exit non-zero,
+        # no pam-auth-update, no daemon start.
+        log.unlink(missing_ok=True)
+        fake_tool("fic", 1)
+        refused = subprocess.run(
+            [str(tail_script), "configure"],
+            env={"PATH": str(fake_bin), "FAKE_LOG": str(log)},
+            text=True,
+            capture_output=True,
+            check=False)
+        require(refused.returncode != 0,
+                "postinst must abort when pre-attach slot validation fails")
+        refused_calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        require(not any(line.startswith("pam-auth-update")
+                        for line in refused_calls),
+                "pam-auth-update ran although pre-attach validation failed")
+        require(not any("enable --now" in line for line in refused_calls),
+                "daemon was started although pre-attach validation failed")
+        require("pre-attach validation" in refused.stderr,
+                "postinst failure diagnostic must mention pre-attach "
+                "validation: " + refused.stderr.strip())
+
 
     require('if [ "\\$1" = "remove" ]; then' in fic_prerm,
             "PAM profile removal is not limited to package removal")

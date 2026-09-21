@@ -165,12 +165,17 @@ those hook selections: AuthenticationLockout owns only strict marker blocks
 inside the four slot files.
 
 On `remove` the maintainer script stops `fic.service`, `fic-device.service`
-and `fic-notify.service` first and only then runs
+and `fic-notify.service` first, then performs a final strict
+`systemctl is-active` proof per unit (no `|| true`) and only then runs
 `pam-auth-update --package --remove ...`: a live daemon could otherwise mutate
 PAM or re-activate the hook infrastructure concurrently with the detach.
-The full lifecycle invariants, the validator contract and the reinstall
-behavior with preserved conffiles are documented in
-`docs/pam-owned-faillock-slots.md`.
+If any of the three units is still active after the bounded stop wait, the
+prerm fails (non-zero exit, diagnostic naming the unit) and the hooks stay
+attached — a stop timeout is a package-removal failure, not permission to
+continue.
+The full lifecycle invariants, the validator contract, the journal/witness
+state table and the reinstall behavior with preserved conffiles are
+documented in `docs/pam-owned-faillock-slots.md`.
 
 The hook topology is:
 

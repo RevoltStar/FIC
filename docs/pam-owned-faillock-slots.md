@@ -71,16 +71,35 @@ that were active before preinst are restarted.
 > permanent hooks; package installation/reinstallation never attaches
 > permanent hooks until existing FIC slot state is proven canonical-neutral or
 > journal-bound owned state.
+>
+> Hook detach requires positive proof that every FIC PAM writer is inactive;
+> timeout is a package-removal failure, not permission to continue.
+>
+> Active slot provenance is accepted only from a read-only witness-aware
+> persistent journal state that the normal daemon lifecycle would also
+> accept.
+>
+> Journal ownership proof includes exact mutation id, active status, backend,
+> capability, topology, activation domain, policy identity, resource identity
+> and physical target strategy.
 
 ### Removal (`prerm remove`)
 
+> Hook detach requires positive proof that every FIC PAM writer is inactive;
+> timeout is a package-removal failure, not permission to continue.
+
 `prerm` stops `fic.service`, `fic-device.service` and `fic-notify.service`
-(`systemctl disable --now`) and waits until they are inactive **before** it
-runs `pam-auth-update --package --remove ...`. A live daemon could otherwise
-perform PAM mutations or re-activate the hook infrastructure concurrently
-with the profile detach; after the services are stopped no new PAM mutation
-is possible. Upgrade semantics are unchanged: this ordering applies only to
-the `remove` action.
+(`systemctl disable --now`, best-effort) and waits (bounded, 10 × 1 s per
+unit) until they are inactive **before** it runs
+`pam-auth-update --package --remove ...`. After the bounded wait the prerm
+performs a final `systemctl is-active` proof per unit with no `|| true`:
+if any of the three units is **still active**, the prerm prints a diagnostic
+naming the unit and exits non-zero. In that case no
+`pam-auth-update --remove` is executed and the permanent hooks stay attached;
+the package removal fails. A live daemon could otherwise perform PAM
+mutations or re-activate the hook infrastructure concurrently with the
+profile detach. Upgrade semantics are unchanged: this ordering applies only
+to the `remove` action.
 
 ### Installation / reinstallation (`postinst configure`)
 
@@ -101,20 +120,57 @@ rewrites slots, never creates or mutates the mutation journal, never runs
 Attach is allowed only in two cases:
 
 1. **Canonical neutral state** — all four slots carry the exact canonical
-   neutral content.
+   neutral content. The journal is not consulted at all (neutral slots do
+   not need journal provenance), so a virgin system without any journal
+   state passes here.
 2. **Active FIC-owned state** — the slots form a complete consistent strategy
    topology with matching strict markers, and the mutation journal carries an
-   active record (`Prepared`, `Applied` or `RollbackFailed`) that:
+   active record (`Prepared`, `Applied` or `RollbackFailed`; `RolledBack`
+   fails) that:
    - matches the slot mutation id exactly;
+   - carries the exact policy identity `IDENTITY_ACCESS` / `PAM` /
+     `enable_authentication_lockout` and the resource
+     `capability/enable_authentication_lockout`;
    - belongs to the PAM backend with an `enable_authentication_lockout`
      ownership payload;
    - proves the exact managed-slot activation domain of the current platform
-     profile (no semantic equality, no profile-name inference).
+     profile (no semantic equality, no profile-name inference);
+   - records a `target_strategy` equal to the exact physical strategy the
+     active slots carry (`status.activeStrategy` from the daemon slot
+     inspection; e.g. physical `preauth_required` with journal
+     `target_strategy=authsucc` is rejected).
+
+### Journal provenance state table (read-only, witness-aware)
+
+> Active slot provenance is accepted only from a read-only witness-aware
+> persistent journal state that the normal daemon lifecycle would also
+> accept.
+
+The pre-attach validator never loads the journal through the raw legacy
+primitive. `MutationJournal::validatePersistentStateReadOnly()` evaluates the
+same persistent (journal, witness) state table as the daemon's
+`initializeOrLoad()`, with the identical security checks, but performs **no**
+filesystem mutation: no bootstrap, no witness creation, no migration, no
+repair. The exact table:
+
+| journal `mutation-journal.json` | witness `.initialized`        | verdict for active slots                                                                                     |
+| ------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| missing                         | missing (virgin system)       | **FAIL** — read-only validation cannot bootstrap a journal                                                     |
+| missing                         | valid                         | **FAIL CLOSED** — provenance loss (same as the daemon runtime)                                                 |
+| missing                         | invalid/malformed             | **FAIL CLOSED** — persistent-state anomaly                                                                     |
+| valid                           | missing                       | **FAIL CLOSED** — pending migration; the runtime accepts this state only by durably *creating* a witness, which the validator must never do. Complete the migration through the normal daemon lifecycle (start `fic` once, letting `initializeOrLoad()` finish the migration) and re-run configuration |
+| valid                           | invalid/malformed             | **FAIL CLOSED** — persistent-state anomaly; no witness repair                                                  |
+| valid                           | valid                         | journal is strictly loaded and may be used as the ownership proof (record lookup and identity checks above)    |
+
+After a PASS or a FAIL the validator leaves the journal, the witness and all
+slot files byte-for-byte unchanged; missing files stay missing (regression
+tested).
 
 Everything else fails closed **before** any `pam-auth-update` invocation and
 before the daemon is started: active slots with a missing journal, a wrong or
-mixed mutation id, a non-active record, a foreign capability/domain/backend
-payload, malformed markers, modified marker bodies, partial strategies or
+mixed mutation id, a non-active record, a foreign policy/resource identity,
+a foreign capability/domain/backend payload, a mismatched physical strategy,
+malformed markers, modified marker bodies, partial strategies or
 missing slots. The package never repairs, neutralizes or deletes such state;
 the administrator must resolve it manually.
 

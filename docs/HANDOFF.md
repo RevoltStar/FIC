@@ -2,106 +2,115 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `1ec0f1ca536fdbfc84401ffb668cb70b7114c232`, изменения
+- Ветка `main`, HEAD `2be63d7f7963affae1040c1fa44b3eee1ef8b22c`, изменения
   поверх него коммитом не зафиксированы.
 
 ## Current task
 
-- Узкий hardening Debian/Ubuntu package lifecycle permanent PAM hooks при
-  remove/reinstall (без перестройки PAM architecture, без изменений ALT
-  backend и без возврата legacy `pam-auth-update` ownership).
+- Узкий follow-up hardening Debian/Ubuntu permanent PAM hook lifecycle:
+  строгий stop-proof в `prerm remove`, witness-aware read-only journal
+  proof в pre-attach валидаторе, ужесточение journal identity proof.
 
 ## Accepted architecture / invariants
 
-- Package removal first stops all FIC PAM writers and only then detaches
-  permanent hooks; package installation/reinstallation never attaches
-  permanent hooks until existing FIC slot state is proven canonical-neutral
-  or journal-bound owned state.
-- `prerm remove`: `systemctl disable --now` всех FIC сервисов + ожидание
-  неактивности ДО `pam-auth-update --package --remove`. Upgrade semantics не
-  изменены (блок исполняется только для `remove`).
-- `postinst configure`: read-only
-  `fic --maintenance validate-pam-slots-before-attach` выполняется ДО
-  `pam-auth-update --package` и ДО `pam-auth-update --enable
-  fic-faillock-hook-*`; при FAIL — `exit 1` до подключения hooks и до старта
-  daemon, без «починки»/удаления слотов.
-- Валидатор (`PamSlotAttachValidator`) строго read-only: не переписывает
-  slots, не создаёт/не мутирует journal (raw `load()`, не
-  `initializeOrLoad`), не запускает `pam-auth-update`, не делает rollback.
-  PASS = canonical neutral все четыре слота ИЛИ полный consistent active
-  topology + journal record (`Prepared`/`Applied`/`RollbackFailed`) с exact
-  mutation id, backend=PAM, capability=`enable_authentication_lockout`,
-  topology=PamAuthUpdate, activation domain == текущему платформенному
-  домену (`activationIdentifiers`). Всё остальное — fail closed.
-- Классификация slots не дублируется: валидатор переиспользует публичный
-  `PamAuthUpdateTopologyManager::inspect()` (managed-slot grammar остаётся
-  в topology manager).
-- Permanent hook selection остаётся package infrastructure; policy владеет
-  только strict `/etc/pam.d/fic-faillock-*` slots.
+- **prerm remove**: `systemctl disable --now` (best-effort) всех FIC
+  сервисов + bounded wait, затем обязательный финальный строгий
+  `systemctl is-active` proof на каждый unit (`fic.service`,
+  `fic-device.service`, `fic-notify.service`) БЕЗ `|| true`. Если unit
+  всё ещё active — diagnostic с именем unit + `exit 1`;
+  `pam-auth-update --package --remove` НЕ вызывается, hooks остаются
+  подключёнными. Timeout остановки = failure удаления пакета, а не
+  разрешение продолжать.
+- **Journal persistent-state proof**: новый read-only API
+  `MutationJournal::validatePersistentStateReadOnly()` — та же
+  witness-aware state table, что и `initializeOrLoad()`, те же security
+  checks, но НОЛЬ файловых мутаций (без bootstrap/witness creation/
+  migration/repair). State table:
+  - J missing + W missing (virgin) → FAIL;
+  - J missing + W valid → FAIL (provenance loss);
+  - J missing + W invalid → FAIL (anomaly);
+  - J valid + W missing → **FAIL CLOSED** (pending migration: runtime
+    принимает это состояние только записью witness; выбранное поведение —
+    fail closed, миграцию завершать нормальным daemon lifecycle, из
+    postinst witness не создаётся);
+  - J valid + W invalid → FAIL (anomaly);
+  - J valid + W valid → строгая загрузка, records доступны для proof.
+- **Journal ownership proof** (active slots): exact mutation id, active
+  status (`Prepared`/`Applied`/`RollbackFailed`; `RolledBack` FAIL),
+  backend=PAM, capability=`enable_authentication_lockout`, topology
+  `PamAuthUpdate`, exact activation domain текущего профиля, exact policy
+  identity (`IDENTITY_ACCESS`/`PAM`/`enable_authentication_lockout`),
+  resource `capability/enable_authentication_lockout` и `targetStrategy`
+  == exact физическая стратегия слотов (`status.activeStrategy`,
+  каноническое имя из `pamFaillockStrategyName`). Плохая стратегия
+  (физическая `preauth_required` vs journal `authsucc`) — FAIL.
+- Валидатор строго read-only: не создаёт/не правит journal и witness,
+  не трогает slots, не запускает pam-auth-update, не делает rollback.
+  Journal/witness логика централизована в `MutationJournal` (parser не
+  дублируется в валидаторе).
+- Production writer journal отвергает wrong policy identity записи, а
+  loader их не загружает — wrong-identity сценарии в тестах покрыты
+  прямыми schema-shaped JSON фикстурами (fail closed на read-only
+  load), не через production `prepareMutation`.
 
 ## Completed
 
+- `fic/src/rollback/MutationJournal.{h,cpp}` — read-only
+  `validatePersistentStateReadOnly()` + контрактные сценарии в
+  `tests/fic/rollback/MutationJournalTests.cpp` (5 новых).
 - `fic/src/modules/identity_access/pam/PamSlotAttachValidator.{h,cpp}` —
-  read-only pre-attach validation (верdict safe/unsafe + detail).
-- `fic/src/main.cpp` — maintenance-команда
-  `validate-pam-slots-before-attach` (root-only, печатает `safe to attach`
-  либо fail-closed диагностик, exit 1).
-- `packaging/deb/build-fic-debian12-deb.sh` — reorder prerm remove (stop →
-  remove) и pre-attach validation в postinst configure (до обоих
-  pam-auth-update вызовов, с понятным сообщением и `exit 1`).
+  witness-aware read-only journal proof вместо raw `load()`; policy
+  identity, resource identity и exact `targetStrategy` ==
+  `status.activeStrategy` в ownership proof.
+- `packaging/deb/build-fic-debian12-deb.sh` — финальный is-active proof
+  после bounded wait в prerm remove (unit-имя в диагностике, `exit 1`,
+  без `|| true`).
 - `tests/fic/modules/identity_access/pam/PamSlotAttachValidatorTests.cpp`
-  (16 сценариев: fresh neutral PASS, neutral+empty journal PASS, active+exact
-  journal PASS (Applied и Prepared), active без journal FAIL, active+пустой
-  journal FAIL, wrong mutation id FAIL, RolledBack FAIL, foreign
-  capability/domain/backend FAIL, mixed ids FAIL, partial strategy FAIL,
-  missing slot FAIL, malformed marker FAIL, modified body FAIL, read-only
-  byte-for-byte на PASS и FAIL) + регистрация `pam_slot_attach_validator_tests`
-  в `tests/CMakeLists.txt`.
-- `tests/integration/packaging/PamPackagingChecks.py` — структурные регрессии
-  ordering (prerm stop-before-remove, postinst validate-before-attach, валидация
-  внутри configure-ветки, `exit 1` при FAIL) и поведенческая регрессия:
-  сгенерированный prerm запускается с fake `systemctl`/`pam-auth-update` и
-  реально проверяется порядок вызовов.
-- Документация: `docs/pam-owned-faillock-slots.md` (новый раздел Package
-  lifecycle invariants, включая reinstall с сохранёнными conffiles),
-  `packaging/deb/README.md` (pre-attach validation + remove ordering).
+  — новые сценарии: J missing + W valid FAIL, malformed witness FAIL,
+  missing witness (pending migration) FAIL + witness не создан, wrong
+  module/submodule/policy/resource FAIL, wrong targetStrategy FAIL;
+  read-only fingerprint на virgin-FAIL пути.
+- `tests/integration/packaging/PamPackagingChecks.py` — статические
+  проверки prerm stop-proof и порядка daemon start в postinst;
+  поведенческие: prerm timeout path (fake systemctl всегда active +
+  fake sleep → non-zero exit, ни одного pam-auth-update, unit в
+  diagnostic) и postinst configure tail (fake binaries, PATH только из
+  fakes; success: validate → --package → --enable hooks → daemon start;
+  failure validator: non-zero, нет pam-auth-update, нет daemon start).
+- Документация: `docs/pam-owned-faillock-slots.md` (3 invariants + state
+  table + prerm timeout behavior), `packaging/deb/README.md`.
 
 ## Changed areas
 
-- `fic/src/main.cpp`, `fic/src/modules/identity_access/pam/`;
+- `fic/src/rollback/`, `fic/src/modules/identity_access/pam/`;
 - `packaging/deb/` (builder + README);
-- `tests/fic/modules/identity_access/pam/`, `tests/CMakeLists.txt`,
+- `tests/fic/rollback/`, `tests/fic/modules/identity_access/pam/`,
   `tests/integration/packaging/PamPackagingChecks.py`;
 - `docs/pam-owned-faillock-slots.md`, `docs/HANDOFF.md`.
 
 ## Validation
 
-- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
-- Полный `cmake --build build-check -j4` — RC 0, 0 warnings/errors.
-- Полный `ctest --test-dir build-check --output-on-failure` — 97/98 passed,
-  1 pre-existing skip (`command_hash_batch_tests`) и 1 failure
-  (`passwdqc_config_file_tests`: «pwquality policy did not retain its
-  topology-dependent state»), воспроизведённый на чистом дереве без этого
-  diff (git stash + rebuild) — предсуществующее падение окружения, к данной
-  задаче отношения не имеет.
-- `ctest -R 'pam_slot_attach_validator_tests|pam_auth_update_topology_tests|
-  pam_packaging_static_checks|mutation_journal_tests'` — 4/4 passed.
+- `cmake --build build-check -j4` (full) — RC 0, 0 warnings/errors.
+- `ctest --test-dir build-check -R 'pam_slot_attach_validator_tests|
+  mutation_journal_tests|pam_packaging_static_checks'` — 3/3 passed.
+- Полный `ctest --test-dir build-check` — 97/98 passed: 1 pre-existing
+  skip (`command_hash_batch_tests`), 1 pre-existing failure
+  (`passwdqc_config_file_tests` — известное падение окружения,
+  воспроизведено на чистом дереве ранее, к этому diff не относится).
 - `python3 tests/integration/packaging/PamPackagingChecks.py .` — passed
-  (включая поведенческую prerm-регрессию с fake systemctl/pam-auth-update).
+  (включая новые поведенческие prerm timeout и postinst configure tests).
 - `bash -n packaging/deb/build-fic-debian12-deb.sh` — успешно.
 - `git diff --check` — успешно.
 
 ## Remaining
 
-- Real host apply / настоящий `apt install`/`dpkg` lifecycle и живой
-  `pam-auth-update` не выполнялись (запрещены validation policy);
-  ordering доказан статической + поведенческой регрессией с fakes.
-- Integration/shell fixture полного цикла install→active→remove→reinstall с
-  настоящим dpkg не создавалась (unit + packaging-регрессии покрывают
-  ordering и provenance validation); при необходимости — отдельная задача
-  с Docker-окружением.
-- Валидатор fail-closed для missing slot conffile (администратор удалил
-  conffile): postinst будет падать до ручного восстановления — это
-  осознанное fail-closed поведение, задокументировано.
-- Предсуществующее падение `passwdqc_config_file_tests` в текущем окружении
-  (не связано с этой задачей) — упомянуто для следующего агента.
+- Real host apply / настоящий `dpkg`/`apt` lifecycle не выполнялись
+  (запрещены validation policy); ordering доказан unit + behavioral
+  tests с fakes. Docker-фикстура install→active→remove→reinstall —
+  отдельная задача.
+- Pre-existing failure `passwdqc_config_file_tests` в окружении —
+  отдельная задача.
+- Migration contract «existing journal + missing witness» задокументирован
+  как fail closed (witness создаёт только daemon lifecycle); если
+  понадобится безопасный maintenance-путь миграции из postinst — это
+  осознанное расширение, сейчас отсутствует.

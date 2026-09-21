@@ -1790,6 +1790,132 @@ void testEmptyRecordsKeepWitness() {
     DaemonMutationJournal::instance().resetOverride();
 }
 
+// Read-only persistent-state validation (package-side pre-attach proof):
+// the initialized state (journal + witness) is accepted and the records
+// become inspectable, while both persistent files stay byte-for-byte intact.
+void testReadOnlyValidationAcceptsInitializedState() {
+    TempFile file;
+    std::string error;
+    {
+        MutationJournal journal(file.path);
+        require(journal.initializeOrLoad(error), error);
+        MutationId id = 0;
+        require(journal.prepareMutation(preparedRecord(sysctlPolicy()), id,
+                                        error),
+                error);
+        require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    }
+    const std::string journalContent = file.read();
+    std::ifstream witnessStream(file.path.string() + ".initialized",
+                                std::ios::binary);
+    require(witnessStream.is_open(), "witness must exist after bootstrap");
+    const std::string witnessContent(
+        (std::istreambuf_iterator<char>(witnessStream)),
+        std::istreambuf_iterator<char>());
+
+    MutationJournal probe(file.path);
+    require(probe.validatePersistentStateReadOnly(error), error);
+    require(probe.usable(), error);
+    require(probe.lifecycleInitialized(), error);
+    require(probe.records().size() == 1 &&
+                probe.records().front().status == MutationStatus::Applied,
+            error);
+    require(file.read() == journalContent,
+            "read-only validation rewrote the journal");
+    std::ifstream witnessAfter(file.path.string() + ".initialized",
+                               std::ios::binary);
+    const std::string witnessAfterContent(
+        (std::istreambuf_iterator<char>(witnessAfter)),
+        std::istreambuf_iterator<char>());
+    require(witnessAfterContent == witnessContent,
+            "read-only validation rewrote the witness");
+}
+
+// Read-only persistent-state validation: virgin state (no journal, no
+// witness) fails closed and creates no persistent state.
+void testReadOnlyValidationVirginStateFailsWithoutCreatingFiles() {
+    TempFile file;
+    MutationJournal probe(file.path);
+    std::string error;
+    require(!probe.validatePersistentStateReadOnly(error),
+            "virgin state must fail closed for read-only validation");
+    require(probe.health() == JournalHealth::Indeterminate, error);
+    require(!probe.usable(), error);
+    require(!std::filesystem::exists(file.path),
+            "read-only validation must not bootstrap the journal");
+    require(!std::filesystem::exists(file.path.string() + ".initialized"),
+            "read-only validation must not create the witness");
+}
+
+// Read-only persistent-state validation: existing journal without witness
+// (pending migration) fails closed and does NOT create the witness — the
+// migration write belongs to the runtime lifecycle, never to the validator.
+void testReadOnlyValidationPendingMigrationFailsClosed() {
+    TempFile file;
+    std::string error;
+    {
+        MutationJournal journal(file.path);
+        require(journal.initializeOrLoad(error), error);
+    }
+    std::error_code ec;
+    require(std::filesystem::remove(file.path.string() + ".initialized", ec) &&
+                ec == std::error_code(),
+            ec.message());
+    MutationJournal probe(file.path);
+    require(!probe.validatePersistentStateReadOnly(error),
+            "pending migration must fail closed for read-only validation");
+    require(error.find("migration") != std::string::npos, error);
+    require(!std::filesystem::exists(file.path.string() + ".initialized"),
+            "read-only validation must not create the witness");
+}
+
+// Read-only persistent-state validation: corrupted witness fails closed and
+// the malformed witness is left untouched (no repair).
+void testReadOnlyValidationMalformedWitnessFailsClosed() {
+    TempFile file;
+    std::string error;
+    {
+        MutationJournal journal(file.path);
+        require(journal.initializeOrLoad(error), error);
+    }
+    {
+        std::ofstream stream(file.path.string() + ".initialized",
+                             std::ios::binary | std::ios::trunc);
+        require(stream.is_open(), "witness must exist after bootstrap");
+        stream << "not json\n";
+    }
+    MutationJournal probe(file.path);
+    require(!probe.validatePersistentStateReadOnly(error),
+            "a malformed witness must fail closed for read-only validation");
+    std::ifstream witnessAfter(file.path.string() + ".initialized",
+                               std::ios::binary);
+    const std::string witnessAfterContent(
+        (std::istreambuf_iterator<char>(witnessAfter)),
+        std::istreambuf_iterator<char>());
+    require(witnessAfterContent == "not json\n",
+            "read-only validation must not repair the witness");
+}
+
+// Read-only persistent-state validation: missing journal with a valid
+// witness (provenance loss) fails closed and recreates nothing.
+void testReadOnlyValidationMissingJournalFailsClosed() {
+    TempFile file;
+    std::string error;
+    {
+        MutationJournal journal(file.path);
+        require(journal.initializeOrLoad(error), error);
+    }
+    std::error_code ec;
+    require(std::filesystem::remove(file.path, ec) &&
+                ec == std::error_code(),
+            ec.message());
+    MutationJournal probe(file.path);
+    require(!probe.validatePersistentStateReadOnly(error),
+            "provenance loss must fail closed for read-only validation");
+    require(!std::filesystem::exists(file.path),
+            "read-only validation must not recreate the journal");
+}
+
 // Models a concurrent FIC instance performing a full legitimate
 // witness-aware bootstrap with one Applied record.
 void concurrentFullBootstrapWithRecord(const std::filesystem::path& path) {
@@ -2640,7 +2766,17 @@ int main() {
          testSuccessfulLifecycleThenJournalDeletionFailsClosed},
         {"migration does not rewrite journal file",
          testMigrationDoesNotRewriteJournalFile},
-        {"empty records keep witness", testEmptyRecordsKeepWitness}
+        {"empty records keep witness", testEmptyRecordsKeepWitness},
+        {"read-only validation accepts initialized state",
+         testReadOnlyValidationAcceptsInitializedState},
+        {"read-only validation virgin state creates no files",
+         testReadOnlyValidationVirginStateFailsWithoutCreatingFiles},
+        {"read-only validation pending migration fails closed",
+         testReadOnlyValidationPendingMigrationFailsClosed},
+        {"read-only validation malformed witness fails closed",
+         testReadOnlyValidationMalformedWitnessFailsClosed},
+        {"read-only validation missing journal fails closed",
+         testReadOnlyValidationMissingJournalFailsClosed}
     };
 
     std::size_t failures = 0;

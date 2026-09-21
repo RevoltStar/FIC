@@ -13,7 +13,11 @@ namespace fic::identity::pam {
 struct PamSlotAttachVerdict {
     // true only when the existing /etc/pam.d/fic-faillock-* slot state is
     // PROVEN safe for attaching the permanent hooks to the live PAM graph:
-    // either canonical neutral, or journal-bound FIC-owned active state.
+    // either canonical neutral, or journal-bound FIC-owned active state
+    // (exact mutation id, active status, PAM backend, capability, topology,
+    // activation domain, policy identity, resource identity and physical
+    // target strategy proven from a read-only witness-aware persistent
+    // journal state).
     // Everything else (malformed markers, modified bodies, partial or mixed
     // topologies, missing/mismatched journal provenance) stays unsafe and
     // fails closed.

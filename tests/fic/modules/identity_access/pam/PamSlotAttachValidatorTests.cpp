@@ -261,17 +261,26 @@ std::uint64_t seedJournal(const fs::path& path, const char* module,
     return id;
 }
 
-std::uint64_t seedOwnedJournal(const fs::path& path, MutationStatus status) {
+UndoDisablePamCapability ownedUndo(const std::string& targetStrategy) {
     UndoDisablePamCapability undo;
     undo.capability = "enable_authentication_lockout";
     undo.topology = PamTopologyKind::PamAuthUpdate;
     undo.activationIdentifiers = {
         "fic-faillock-hook-preauth", "fic-faillock-hook-authfail",
         "fic-faillock-hook-authsucc", "fic-faillock-hook-account"};
+    // The physical strategy the record must prove (exact canonical name).
+    undo.targetStrategy = targetStrategy;
+    return undo;
+}
+
+std::uint64_t seedOwnedJournal(
+    const fs::path& path, MutationStatus status,
+    PamFaillockStrategy strategy = PamFaillockStrategy::PreauthRequired) {
     return seedJournal(path, "IDENTITY_ACCESS", "PAM",
                        "enable_authentication_lockout",
                        "capability/enable_authentication_lockout",
-                       {MutationBackend::Pam, undo}, status);
+                       {MutationBackend::Pam, ownedUndo(strategyName(strategy))},
+                       status);
 }
 
 std::uint64_t seedForeignPamJournal(const fs::path& path,
@@ -281,6 +290,11 @@ std::uint64_t seedForeignPamJournal(const fs::path& path,
     undo.capability = capability;
     undo.topology = PamTopologyKind::PamAuthUpdate;
     undo.activationIdentifiers = ids;
+    if (capability == "enable_authentication_lockout") {
+        // Strategy transition provenance is only valid for the lockout
+        // capability (journal writer contract).
+        undo.targetStrategy = "preauth_required";
+    }
     return seedJournal(path, "IDENTITY_ACCESS", "PAM", capability,
                        "capability/" + capability, {MutationBackend::Pam, undo},
                        MutationStatus::Applied);
@@ -358,16 +372,24 @@ void testActiveSlotsWithMatchingJournalPass(const TestTree& tree) {
 
 // 3a. A Prepared (crash-window) record still proves the owned state.
 void testActiveSlotsWithPreparedJournalPass(const TestTree& tree) {
-    const std::uint64_t id =
-        seedOwnedJournal(tree.journalPath(), MutationStatus::Prepared);
+    const std::uint64_t id = seedOwnedJournal(
+        tree.journalPath(), MutationStatus::Prepared,
+        PamFaillockStrategy::Authsucc);
     writeActiveTopology(tree, PamFaillockStrategy::Authsucc, id);
     requireSafe(tree, tree.journalPath());
 }
 
 // 4. Active slots without any journal: fail closed before attach.
+// Virgin persistent state (no journal, no witness) must not be bootstrapped
+// read-only, and no file may appear on disk.
 void testActiveSlotsWithoutJournalFail(const TestTree& tree) {
     writeActiveTopology(tree, PamFaillockStrategy::PreauthRequired, 41);
+    const StateFingerprint before =
+        fingerprint(tree.root / "db/absent-journal.json", tree.slotPaths());
     requireUnsafe(tree, tree.root / "db/absent-journal.json");
+    const StateFingerprint after =
+        fingerprint(tree.root / "db/absent-journal.json", tree.slotPaths());
+    requireUnchanged(before, after);
 }
 
 // 4a. Active slots with an existing but record-less journal.
@@ -397,6 +419,56 @@ void testRolledBackJournalFails(const TestTree& tree) {
     requireUnsafe(tree, tree.journalPath());
 }
 
+// Journal persistent-state table (witness-aware, read-only):
+
+// 4a. Journal missing while a valid initialization witness exists: provenance
+// loss, fail closed; nothing may be recreated or healed on disk.
+// (Dedicated journal path: the poisoned persistent state must not leak into
+// other scenarios' fixtures.)
+void testJournalMissingWithValidWitnessFails(const TestTree& tree) {
+    const fs::path journal = tree.root / "db/state-missing-journal.json";
+    const std::uint64_t id = seedOwnedJournal(journal, MutationStatus::Applied);
+    writeActiveTopology(tree, PamFaillockStrategy::PreauthRequired, id);
+    std::error_code ignored;
+    fs::remove(journal, ignored);
+    const StateFingerprint before = fingerprint(journal, tree.slotPaths());
+    requireUnsafe(tree, journal);
+    const StateFingerprint after = fingerprint(journal, tree.slotPaths());
+    requireUnchanged(before, after);
+}
+
+// 4b. Valid journal but corrupted witness: persistent-state anomaly, fail
+// closed; the witness must not be repaired.
+void testMalformedWitnessFails(const TestTree& tree) {
+    const fs::path journal = tree.root / "db/state-malformed-witness.json";
+    const std::uint64_t id = seedOwnedJournal(journal, MutationStatus::Applied);
+    writeActiveTopology(tree, PamFaillockStrategy::PreauthRequired, id);
+    writeFile(journal.string() + ".initialized", "not json\n");
+    const StateFingerprint before = fingerprint(journal, tree.slotPaths());
+    requireUnsafe(tree, journal);
+    const StateFingerprint after = fingerprint(journal, tree.slotPaths());
+    requireUnchanged(before, after);
+}
+
+// 4c. Valid journal but missing witness: pending migration. The runtime
+// lifecycle accepts this state ONLY by durably creating a witness (a write);
+// the read-only pre-attach validation must not, so it fails closed and
+// requires the migration to be completed through the normal daemon
+// lifecycle. No witness may be created as a side effect.
+void testMissingWitnessPendingMigrationFails(const TestTree& tree) {
+    const fs::path journal = tree.root / "db/state-missing-witness.json";
+    const std::uint64_t id = seedOwnedJournal(journal, MutationStatus::Applied);
+    writeActiveTopology(tree, PamFaillockStrategy::PreauthRequired, id);
+    std::error_code ignored;
+    fs::remove(journal.string() + ".initialized", ignored);
+    const StateFingerprint before = fingerprint(journal, tree.slotPaths());
+    requireUnsafe(tree, journal);
+    const StateFingerprint after = fingerprint(journal, tree.slotPaths());
+    requireUnchanged(before, after);
+    require(!fs::exists(journal.string() + ".initialized"),
+            "read-only validation must not create the witness");
+}
+
 // 5b. Journal records proving another capability/domain/backend: fail closed.
 void testWrongOwnershipPayloadFails(const TestTree& tree) {
     seedForeignPamJournal(tree.journalPath(), "enable_password_history",
@@ -411,6 +483,83 @@ void testWrongOwnershipPayloadFails(const TestTree& tree) {
 
     seedForeignBackendJournal(tree.journalPath());
     writeActiveTopology(tree, PamFaillockStrategy::PreauthRequired, 1);
+    requireUnsafe(tree, tree.journalPath());
+}
+
+// 5c. Exact journal policy identity: module, submodule, policy name and
+// resource must be the AuthenticationLockout capability mutation itself.
+// The production journal writer never persists such records and the loader
+// refuses to load them, so each case is a direct schema-shaped journal
+// fixture: the read-only persistent-state proof must fail closed and never
+// treat such a document as provenance.
+void testWrongPolicyIdentityFails(const TestTree& tree) {
+    struct IdentityCase {
+        const char* module;
+        const char* submodule;
+        const char* policy;
+        const char* resource;
+    };
+    const IdentityCase cases[] = {
+        {"IDENTITY", "PAM", "enable_authentication_lockout",
+         "capability/enable_authentication_lockout"},
+        {"IDENTITY_ACCESS", "PAMX", "enable_authentication_lockout",
+         "capability/enable_authentication_lockout"},
+        {"IDENTITY_ACCESS", "PAM", "enable_password_history",
+         "capability/enable_authentication_lockout"},
+        {"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout",
+         "capability/wrong_resource"},
+    };
+    for (std::size_t index = 0; index < std::size(cases); ++index) {
+        const fs::path journal =
+            tree.root / ("db/identity-case-" + std::to_string(index) +
+                         ".json");
+        const std::string record =
+            std::string("{\n") +
+            "  \"schema_version\": 1,\n"
+            "  \"next_id\": 2,\n"
+            "  \"records\": [{\n"
+            "    \"id\": 1,\n"
+            "    \"policy\": {\"module\": \"" + cases[index].module +
+            "\", \"submodule\": \"" + cases[index].submodule +
+            "\", \"policy\": \"" + cases[index].policy + "\"},\n"
+            "    \"resource\": \"" + cases[index].resource + "\",\n"
+            "    \"backend\": \"pam\",\n"
+            "    \"status\": \"applied\",\n"
+            "    \"undo\": {\n"
+            "      \"action\": \"disable_pam_capability\",\n"
+            "      \"backend\": \"pam\",\n"
+            "      \"capability\": \"enable_authentication_lockout\",\n"
+            "      \"topology\": \"pam_auth_update\",\n"
+            "      \"activation_identifiers\": [\"fic-faillock-hook-preauth\","
+            " \"fic-faillock-hook-authfail\", \"fic-faillock-hook-authsucc\","
+            " \"fic-faillock-hook-account\"],\n"
+            "      \"had_applied_provenance\": false,\n"
+            "      \"previous_strategy\": null,\n"
+            "      \"target_strategy\": \"preauth_required\",\n"
+            "      \"previous_error\": \"\"\n"
+            "    },\n"
+            "    \"created_at_epoch\": 1,\n"
+            "    \"updated_at_epoch\": 1,\n"
+            "    \"error\": \"\"\n"
+            "  }]\n"
+            "}\n";
+        fs::create_directories(journal.parent_path());
+        writeFile(journal, record, 0600);
+        writeFile(journal.string() + ".initialized",
+                  "{\n  \"initialized\": true,\n  \"schema_version\": 1\n}\n",
+                  0600);
+        writeActiveTopology(tree, PamFaillockStrategy::PreauthRequired, 1);
+        requireUnsafe(tree, journal);
+    }
+}
+
+// 5d. The recorded target strategy must equal the exact physical strategy
+// carried by the active slots (no cross-strategy provenance reuse).
+void testWrongTargetStrategyFails(const TestTree& tree) {
+    const std::uint64_t id = seedOwnedJournal(
+        tree.journalPath(), MutationStatus::Applied,
+        PamFaillockStrategy::Authsucc);
+    writeActiveTopology(tree, PamFaillockStrategy::PreauthRequired, id);
     requireUnsafe(tree, tree.journalPath());
 }
 
@@ -509,10 +658,15 @@ int main() {
         testActiveSlotsWithMatchingJournalPass(tree);
         testActiveSlotsWithPreparedJournalPass(tree);
         testActiveSlotsWithoutJournalFail(tree);
+        testJournalMissingWithValidWitnessFails(tree);
+        testMalformedWitnessFails(tree);
+        testMissingWitnessPendingMigrationFails(tree);
         testActiveSlotsWithEmptyJournalFail(tree);
         testActiveSlotsWithWrongMutationIdFail(tree);
         testRolledBackJournalFails(tree);
         testWrongOwnershipPayloadFails(tree);
+        testWrongPolicyIdentityFails(tree);
+        testWrongTargetStrategyFails(tree);
         testMixedMutationIdsFail(tree);
         testPartialStrategyFails(tree);
         testMissingSlotFails(tree);

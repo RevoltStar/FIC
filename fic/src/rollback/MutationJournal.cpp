@@ -947,6 +947,104 @@ bool MutationJournal::initializeFresh(std::string& error) {
                     error);
 }
 
+bool MutationJournal::validatePersistentStateReadOnly(std::string& error) {
+    // Same persistent (journal, witness) presence probe as the witness-aware
+    // state table of initializeOrLoad(). Read-only: a probe never mutates.
+    std::error_code journalProbeError;
+    const std::filesystem::file_status journalStatus =
+        std::filesystem::status(path_, journalProbeError);
+    if (journalProbeError &&
+        journalStatus.type() != std::filesystem::file_type::not_found) {
+        return failLoad("Не удалось проверить наличие mutation journal " +
+                            path_.string() + ": " +
+                            journalProbeError.message(),
+                        error);
+    }
+    const bool journalMissing =
+        journalStatus.type() == std::filesystem::file_type::not_found ||
+        !std::filesystem::exists(journalStatus);
+
+    std::error_code witnessProbeError;
+    const std::filesystem::file_status witnessStatus =
+        std::filesystem::status(witnessPath(), witnessProbeError);
+    if (witnessProbeError &&
+        witnessStatus.type() != std::filesystem::file_type::not_found) {
+        return failLoad("Не удалось проверить наличие initialization "
+                        "witness " +
+                            witnessPath().string() + ": " +
+                            witnessProbeError.message(),
+                        error);
+    }
+    const bool witnessMissing =
+        witnessStatus.type() == std::filesystem::file_type::not_found ||
+        !std::filesystem::exists(witnessStatus);
+
+    if (journalMissing) {
+        // Nothing may be bootstrapped, healed or migrated read-only: the
+        // runtime would either bootstrap a virgin journal (a write) or fail
+        // closed; neither leaves usable provenance for a read-only caller.
+        if (witnessMissing) {
+            return failLoad(
+                "Persistent-state validation (read-only): mutation journal "
+                "отсутствует, initialization witness отсутствует (virgin "
+                "state); read-only validation cannot bootstrap a journal "
+                "(fail closed): " +
+                    path_.string(),
+                error);
+        }
+        std::string witnessError;
+        if (witnessIsValid(witnessError)) {
+            return failLoad(
+                "Persistent-state validation (read-only): mutation journal "
+                "is missing although its initialization witness exists; "
+                "rollback provenance may have been lost (fail closed): " +
+                    path_.string(),
+                error);
+        }
+        return failLoad(
+            "Persistent-state validation (read-only): mutation journal "
+            "отсутствует, initialization witness некорректен "
+            "(fail closed): " +
+                witnessError,
+            error);
+    }
+
+    // Journal exists. The runtime lifecycle accepts this branch only after
+    // the witness is proven (normal startup) or durably created
+    // (migration). The migration branch is a WRITE, which a read-only
+    // validation must never perform, so the pending-migration state stays
+    // indeterminate until it is completed through the normal daemon
+    // lifecycle.
+    if (witnessMissing) {
+        return failLoad(
+            "Persistent-state validation (read-only): mutation journal "
+            "exists without its initialization witness (pending migration); "
+            "read-only validation must not create the witness — complete "
+            "the journal migration through the normal daemon lifecycle and "
+            "retry (fail closed): " +
+                path_.string(),
+            error);
+    }
+    std::string witnessError;
+    if (!witnessIsValid(witnessError)) {
+        return failLoad(
+            "Persistent-state validation (read-only): mutation journal "
+            "корректен, но initialization witness некорректен "
+            "(fail closed): " +
+                witnessError,
+            error);
+    }
+    // Strict existing-journal proof: identical parser/durability flow to the
+    // runtime normal-startup branch; a vanished or replaced journal fails
+    // closed and nothing is ever written.
+    if (!loadExisting(error)) {
+        return false;
+    }
+    lifecycleInitialized_ = true;
+    error.clear();
+    return true;
+}
+
 bool MutationJournal::initializeExistingJournal(bool witnessMissing,
                                                 std::string& error) {
     // Journal exists: strict load only — a vanished journal inside this

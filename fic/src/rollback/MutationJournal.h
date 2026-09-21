@@ -106,6 +106,30 @@ public:
     // Any failure poisons the object (Indeterminate, usable() == false) while
     // records_/nextId_ stay untouched for diagnostics.
     bool initializeOrLoad(std::string& error);
+    // Read-only persistent-state validation for non-daemon diagnostics
+    // (package-side pre-attach proof). Implements the SAME witness-aware
+    // (journal, witness) persistent state table as initializeOrLoad() with
+    // the same security checks (witness proof + strict journal proof +
+    // durability barriers), but performs NO filesystem mutation: no journal
+    // bootstrap, no witness creation or repair, no journal rewrite, no
+    // migration. The state table is evaluated strictly:
+    //   J exists + W valid   → witness proven + strict journal load; the
+    //                          records become available for inspection;
+    //   J exists + W missing → FAIL: this is the migration branch of the
+    //                          runtime lifecycle and the runtime accepts it
+    //                          ONLY by creating a witness (a write); a
+    //                          read-only validator must not, so the state
+    //                          stays indeterminate until the migration is
+    //                          completed through the normal daemon
+    //                          lifecycle;
+    //   J exists + W invalid → FAIL (persistent-state anomaly, exactly as
+    //                          the runtime);
+    //   J missing (any W)    → FAIL (virgin bootstrap, provenance loss or
+    //                          persistent-state anomaly — none of them may
+    //                          be healed read-only).
+    // On failure the object is poisoned exactly like a failed load
+    // (Indeterminate, usable() == false) and the caller must fail closed.
+    bool validatePersistentStateReadOnly(std::string& error);
     bool loaded() const { return loaded_; }
     const std::vector<MutationRecord>& records() const { return records_; }
     JournalHealth health() const { return health_; }
