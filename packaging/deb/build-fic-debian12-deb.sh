@@ -623,20 +623,34 @@ write_system_integration_symlink_postinst() {
     local command_name="$2"
     local target_path="$3"
 
-    cat > "$package_root/DEBIAN/postinst" <<EOF
+    cat > "$package_root/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 
+EOF
+    write_pam_hook_proof_function >> "$package_root/DEBIAN/postinst"
+    cat >> "$package_root/DEBIAN/postinst" <<EOF
+
 # Recovery path after a failed \`prerm remove\`. When the pre-removal script
-# aborts (e.g. a live FIC PAM writer refused to stop), dpkg runs
-# \`postinst abort-remove\` to restore the package. This is NOT a configure
-# path: it only restores package-managed service enablement/runtime state
-# and exits before any configure-specific mutation. The permanent PAM hooks
-# were never detached by the failed removal, so PAM topology, managed
-# slots, the mutation journal and the journal witness must stay exactly as
-# the failed removal left them.
+# aborts, dpkg runs \`postinst abort-remove\` to restore the package. This is
+# NOT a configure path: it only restores package-managed service
+# enablement/runtime state and exits before any configure-specific mutation.
+# The generated prerm contains its own PAM detach-failure recovery: whenever
+# its \`pam-auth-update --remove\` fails, the prerm restores and proves the
+# permanent hook infrastructure while every FIC writer is still stopped, so
+# by the time dpkg reaches this path the PAM state is either intact (the
+# detach never started or changed nothing) or restored and proven. The
+# read-only guard below keeps that invariant complete: if the prerm-side
+# recovery could not prove the permanent hooks attached, no FIC writer is
+# restarted and the package is left in the dpkg error state for manual
+# administrator recovery. PAM topology, managed slots, the mutation journal
+# and the journal witness are never touched here.
 if [ "\${1:-}" = "abort-remove" ]; then
     if command -v systemctl >/dev/null 2>&1; then
+        if ! fic_prove_permanent_hooks_attached; then
+            echo "FIC: abort-remove refuses to restore FIC services: the permanent PAM hook infrastructure is not proven attached (the PAM recovery after the failed removal did not succeed); fix the PAM state and re-run the removal or reinstall the package" >&2
+            exit 1
+        fi
         systemctl daemon-reload || true
         # Restore package-owned enablement. The critical units must be
         # re-enabled; the optional udev helper keeps its existing optional
@@ -649,7 +663,10 @@ if [ "\${1:-}" = "abort-remove" ]; then
             echo "FIC: abort-remove could not re-enable fic-device.service" >&2
             exit 1
         fi
-        systemctl enable fic-notify.service || true
+        if ! systemctl enable fic-notify.service; then
+            echo "FIC: abort-remove could not re-enable fic-notify.service" >&2
+            exit 1
+        fi
         systemctl enable fic_get_device_udev_info.service || true
         # Restore runtime state. \`systemctl start\` on an already-active
         # unit is idempotent. stop/restart are deliberately never used here:
@@ -663,16 +680,25 @@ if [ "\${1:-}" = "abort-remove" ]; then
             echo "FIC: abort-remove could not restore fic-device.service runtime state" >&2
             exit 1
         fi
-        systemctl start fic-notify.service || true
+        if ! systemctl start fic-notify.service; then
+            echo "FIC: abort-remove could not restore fic-notify.service runtime state" >&2
+            exit 1
+        fi
         # Critical FIC writers must be active again for the package to count
         # as restored; otherwise the recovery genuinely failed and dpkg must
-        # keep the failure visible.
+        # keep the failure visible. Normal \`postinst configure\` treats
+        # \`fic-notify.service\` as mandatory (\`systemctl enable --now\` under
+        # \`set -e\`), so the abort-remove recovery uses the same strict model.
         if ! systemctl is-active --quiet fic.service; then
             echo "FIC: abort-remove recovery left fic.service inactive" >&2
             exit 1
         fi
         if ! systemctl is-active --quiet fic-device.service; then
             echo "FIC: abort-remove recovery left fic-device.service inactive" >&2
+            exit 1
+        fi
+        if ! systemctl is-active --quiet fic-notify.service; then
+            echo "FIC: abort-remove recovery left fic-notify.service inactive" >&2
             exit 1
         fi
     fi
@@ -781,6 +807,80 @@ EOF
 
     chmod 0755 "$package_root/DEBIAN/postinst"
 }
+# Shared generated-script snippet: read-only proof that the package-owned
+# permanent FIC PAM hook profiles are attached, expressed purely in terms of
+# the standard pam-auth-update state model:
+#   - the selected-profile records under /var/lib/pam (auth, account,
+#     password, session, session-noninteractive) contain a
+#     "Module: <profile>" entry for every permanent hook profile;
+#   - the generated /etc/pam.d/common-auth stack mentions the preauth,
+#     authfail and authsucc hook targets and /etc/pam.d/common-account
+#     mentions the account hook target.
+# The proof never invokes pam-auth-update and never mutates PAM state,
+# managed slots, the mutation journal or its witness. It is used by the
+# generated prerm (detach-failure recovery proof) and by the generated
+# postinst abort-remove recovery guard.
+write_pam_hook_proof_function() {
+    cat <<'EOF'
+fic_prove_permanent_hooks_attached() {
+    if [ ! -d /var/lib/pam ] || [ ! -f /etc/pam.d/common-auth ] ||
+        [ ! -f /etc/pam.d/common-account ]; then
+        return 1
+    fi
+    fic_selected=
+    for fic_record in auth account password session session-noninteractive; do
+        if [ -f "/var/lib/pam/$fic_record" ]; then
+            fic_selected="$fic_selected$(cat "/var/lib/pam/$fic_record")"
+        fi
+    done
+    for fic_hook in fic-faillock-hook-preauth fic-faillock-hook-authfail \
+        fic-faillock-hook-authsucc fic-faillock-hook-account; do
+        case "$fic_selected" in
+            *"Module: $fic_hook"*) ;;
+            *) return 1 ;;
+        esac
+    done
+    grep -q 'fic-faillock-preauth' /etc/pam.d/common-auth || return 1
+    grep -q 'fic-faillock-authfail' /etc/pam.d/common-auth || return 1
+    grep -q 'fic-faillock-authsucc' /etc/pam.d/common-auth || return 1
+    grep -q 'fic-faillock-account' /etc/pam.d/common-account || return 1
+    return 0
+}
+EOF
+}
+
+write_fic_dick_postinst() {
+    local package_root="$1"
+
+    cat > "$package_root/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd --system fic
+fi
+
+if [ -d /opt/fic ]; then
+    chown -R root:fic /opt/fic
+    find /opt/fic -type d -exec chmod 2750 {} \;
+    find /opt/fic -type f -exec chmod 0640 {} \;
+
+    if [ -d /opt/fic/bin ]; then
+        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+    fi
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable fic-device.service || true
+    systemctl enable fic_get_device_info.service || true
+fi
+
+exit 0
+EOF
+
+    chmod 0755 "$package_root/DEBIAN/postinst"
+}
 
 write_system_integration_prerm() {
     local package_root="$1"
@@ -823,9 +923,13 @@ write_system_integration_symlink_prerm() {
     local command_name="$2"
     local target_path="$3"
 
-    cat > "$package_root/DEBIAN/prerm" <<EOF
+    cat > "$package_root/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
+
+EOF
+    write_pam_hook_proof_function >> "$package_root/DEBIAN/prerm"
+    cat >> "$package_root/DEBIAN/prerm" <<EOF
 
 if [ "\$1" = "remove" ]; then
     # Invariant: package removal first stops all FIC PAM writers and only
@@ -856,8 +960,13 @@ if [ "\$1" = "remove" ]; then
             fi
         done
     fi
-    # Only now detach the permanent FIC PAM hook infrastructure.
-    pam-auth-update --package --remove \
+    # Only now detach the permanent FIC PAM hook infrastructure. Every FIC
+    # writer is proven inactive at this point, so this is the only safe
+    # window in which a failed detach can be contained: the permanent hook
+    # infrastructure is restored and proven right here while no FIC writer
+    # can interfere, and dpkg's later abort-remove path never has to restart
+    # a writer on top of a partially detached PAM graph.
+    if ! pam-auth-update --package --remove \
         fic-faillock-notify \
         fic-faillock-authfail \
         fic-faillock-preauth-required \
@@ -867,7 +976,35 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-hook-authsucc \
         fic-faillock-hook-account \
         fic-pwquality \
-        fic-pwhistory
+        fic-pwhistory; then
+        echo "FIC: failed to detach permanent PAM hooks; restoring the package PAM hook infrastructure while all FIC writers remain stopped" >&2
+        # Only the permanent hook infrastructure is restored here. The legacy
+        # policy-owned selector profiles are deliberately NOT re-enabled:
+        # policy state lives in the managed /etc/pam.d/fic-faillock-* slots,
+        # and the installed package only guarantees the permanent hooks.
+        # A single \`--enable\` is sufficient: it re-selects the four profiles
+        # and regenerates the common-* stacks; a preceding \`--package\` call
+        # would only regenerate from the post-failure selection state and
+        # add nothing.
+        if ! pam-auth-update --enable \
+            fic-faillock-hook-preauth \
+            fic-faillock-hook-authfail \
+            fic-faillock-hook-authsucc \
+            fic-faillock-hook-account; then
+            if fic_prove_permanent_hooks_attached; then
+                echo "FIC: PAM infrastructure recovery failed: pam-auth-update could not re-enable the permanent hook profiles, but the permanent hooks are proven still attached; the package removal failed" >&2
+                exit 1
+            fi
+            echo "FIC: PAM infrastructure recovery failed: pam-auth-update could not re-enable the permanent hook profiles and the permanent hook state is NOT proven restored; no FIC writer may be restarted" >&2
+            exit 1
+        fi
+        if ! fic_prove_permanent_hooks_attached; then
+            echo "FIC: PAM infrastructure recovery failed: the re-enabled permanent hook profiles could not be proven attached; the permanent hook state is NOT proven restored and no FIC writer may be restarted" >&2
+            exit 1
+        fi
+        echo "FIC: permanent PAM hook infrastructure restored and proven attached; the package removal failed" >&2
+        exit 1
+    fi
 fi
 
 if [ "\$1" = "remove" ] && [ -L "/bin/$command_name" ] && [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then

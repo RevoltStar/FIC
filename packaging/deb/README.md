@@ -174,18 +174,37 @@ prerm fails (non-zero exit, diagnostic naming the unit) and the hooks stay
 attached — a stop timeout is a package-removal failure, not permission to
 continue.
 
+If the `pam-auth-update --remove` itself fails, the prerm contains the
+damage locally while every FIC writer is still proven stopped: it re-enables
+only the four permanent hook profiles, proves the restoration with a
+read-only standard-state check (`/var/lib/pam` selection records plus the
+generated `/etc/pam.d/common-*` stacks) and always exits non-zero. Legacy
+policy-owned selector profiles are never re-enabled by the recovery, and
+managed slots, the mutation journal and its witness are never touched. If
+the recovery cannot be proven (for example after a partial detach), the
+prerm states explicitly that the permanent hook state is not proven
+restored.
+
 Recovery after such a failed removal is dpkg's `postinst abort-remove` path.
-It is an early dedicated branch (not a configure path): it only reloads
-systemd units and restores package-owned enablement and runtime state
-(`enable`/`start` for `fic.service`, `fic-device.service`, `fic-notify.service`
-and the optional udev helper; `start` on an already-active unit is
-idempotent, so a writer that refused to stop keeps running). `fic.service`
-and `fic-device.service` are critical: if they cannot be restored to
-active+enabled, the recovery exits non-zero. `abort-remove` never calls
-`pam-auth-update`, never touches PAM managed slots, the mutation journal or
-its witness, and never stops or restarts a FIC writer. The failed removal
-keeps its non-zero status while the package returns to
-`install ok installed`.
+It is an early dedicated branch (not a configure path). A read-only guard
+first proves the permanent PAM hook infrastructure is attached; if that
+proof fails (a prerm-side recovery that could not be proven), the recovery
+refuses to restart any FIC writer and exits non-zero, leaving the package
+in the dpkg error state for manual administrator recovery. Otherwise it only
+reloads systemd units and restores package-owned enablement and runtime
+state (`enable`/`start` for `fic.service`, `fic-device.service`,
+`fic-notify.service` and the optional udev helper; `start` on an
+already-active unit is idempotent, so a writer that refused to stop keeps
+running). `fic.service`, `fic-device.service` and `fic-notify.service` are
+critical — normal configure starts `fic-notify.service` strictly
+(`systemctl enable --now` under `set -e`), so the recovery restores it
+strictly too; if any of the three cannot be restored to active+enabled, the
+recovery exits non-zero. `abort-remove` never calls `pam-auth-update`, never
+touches PAM managed slots, the mutation journal or its witness, and never
+stops or restarts a FIC writer. The failed removal keeps its non-zero status
+while the package returns to the Installed state (checked semantically as
+the third dpkg status field; the `install`/`deinstall` first-field wording
+varies between dpkg versions after an aborted removal).
 The full lifecycle invariants, the validator contract, the journal/witness
 state table and the reinstall behavior with preserved conffiles are
 documented in `docs/pam-owned-faillock-slots.md`.

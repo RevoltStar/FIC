@@ -33,6 +33,154 @@ def function_body(script: str, name: str) -> str:
     return match.group("body")
 
 
+PERMANENT_HOOKS = (
+    "fic-faillock-hook-preauth",
+    "fic-faillock-hook-authfail",
+    "fic-faillock-hook-authsucc",
+    "fic-faillock-hook-account",
+)
+AUTH_HOOKS = PERMANENT_HOOKS[:3]
+LEGACY_POLICY_PROFILES = (
+    "fic-faillock-notify",
+    "fic-faillock-preauth-required",
+    "fic-faillock-authsucc",
+    "fic-pwquality",
+    "fic-pwhistory",
+)
+
+
+def hook_target(hook: str) -> str:
+    return hook.replace("fic-faillock-hook-", "fic-faillock-")
+
+
+def sandbox_pam_paths(script_text: str, pam_state: Path, pam_d: Path) -> str:
+    """Redirect the standard pam-auth-update state paths of a generated
+    maintainer script into a test sandbox so the host is never touched."""
+    require("/var/lib/pam" in script_text and "/etc/pam.d" in script_text,
+            "generated script lost the standard pam-auth-update state paths")
+    return (script_text
+            .replace("/var/lib/pam", str(pam_state))
+            .replace("/etc/pam.d", str(pam_d)))
+
+
+def write_attached_pam_state(pam_state: Path, pam_d: Path) -> None:
+    """Seed the sandbox with the standard pam-auth-update state of an
+    installed package: all four permanent hook profiles selected and the
+    common-* stacks regenerated (Module: records plus include lines)."""
+    pam_state.mkdir(parents=True, exist_ok=True)
+    pam_d.mkdir(parents=True, exist_ok=True)
+    (pam_state / "auth").write_text(
+        "".join(f"Module: {hook}\ninclude {hook_target(hook)}\n"
+                for hook in AUTH_HOOKS),
+        encoding="utf-8")
+    (pam_state / "account").write_text(
+        f"Module: {PERMANENT_HOOKS[3]}\n"
+        f"include {hook_target(PERMANENT_HOOKS[3])}\n",
+        encoding="utf-8")
+    (pam_d / "common-auth").write_text(
+        "".join(f"include\t\t\t\t{hook_target(hook)}\n" for hook in AUTH_HOOKS),
+        encoding="utf-8")
+    (pam_d / "common-account").write_text(
+        f"include\t\t\t\t{hook_target(PERMANENT_HOOKS[3])}\n",
+        encoding="utf-8")
+
+
+def read_pam_state(pam_state: Path, pam_d: Path) -> tuple[str, str]:
+    state = "".join(
+        (pam_state / name).read_text(encoding="utf-8") + "\n"
+        for name in ("auth", "account") if (pam_state / name).is_file())
+    stack = "".join(
+        (pam_d / name).read_text(encoding="utf-8") + "\n"
+        for name in ("common-auth", "common-account")
+        if (pam_d / name).is_file())
+    return state, stack
+
+
+def stateful_pam_auth_update_fake() -> str:
+    """POSIX-sh simulator of pam-auth-update. Selection state lives in
+    $FAKE_PAM_STATE/{auth,account} as "Module: <profile>" blocks; each run
+    regenerates include lines into $FAKE_PAM_D/common-{auth,account}.
+    Failure injection: FAKE_PAU_REMOVE_FAILS (detach failure),
+    FAKE_PAU_PARTIAL + FAKE_PAU_PARTIAL_HOOKS (detach fails after a real
+    partial mutation), FAKE_PAU_ENABLE_FAILS (recovery failure). Pure shell
+    builtins plus awk, so it works on a fakes-only PATH."""
+    return """#!/bin/sh
+printf "pam-auth-update %s\\n" "$*" >> "$FAKE_LOG"
+state="$FAKE_PAM_STATE"
+pam_d="$FAKE_PAM_D"
+mkdir -p "$state" "$pam_d"
+remove_profile() {
+    [ -f "$1" ] || return 0
+    awk -v p="$2" '/^Module: / { keep = (substr($0, 9) != p) } keep { print }' "$1" > "$1.new" && mv "$1.new" "$1"
+}
+add_profile() {
+    file="$1"; profile="$2"
+    [ -f "$file" ] || : > "$file"
+    case "$(cat "$file")" in
+        *"Module: $profile"*) return 0 ;;
+    esac
+    printf "Module: %s\\ninclude fic-faillock-%s\\n" "$profile" "${profile#fic-faillock-hook-}" >> "$file"
+}
+regen() {
+    : > "$pam_d/common-auth.new"
+    for h in fic-faillock-hook-preauth fic-faillock-hook-authfail fic-faillock-hook-authsucc; do
+        case "$(cat "$state/auth" 2>/dev/null)" in
+            *"Module: $h"*)
+                printf "include\\t\\t\\t\\tfic-faillock-%s\\n" "${h#fic-faillock-hook-}" >> "$pam_d/common-auth.new" ;;
+        esac
+    done
+    mv "$pam_d/common-auth.new" "$pam_d/common-auth"
+    : > "$pam_d/common-account.new"
+    case "$(cat "$state/account" 2>/dev/null)" in
+        *"Module: fic-faillock-hook-account"*)
+            printf "include\\t\\t\\t\\tfic-faillock-account\\n" >> "$pam_d/common-account.new" ;;
+    esac
+    mv "$pam_d/common-account.new" "$pam_d/common-account"
+}
+case " $* " in
+    *" --remove "*)
+        if [ "$FAKE_PAU_REMOVE_FAILS" = "1" ]; then
+            if [ "$FAKE_PAU_PARTIAL" = "1" ]; then
+                printf "FAKE-PAU-PARTIAL-MUTATION %s\\n" "$FAKE_PAU_PARTIAL_HOOKS" >> "$FAKE_LOG"
+                for p in $FAKE_PAU_PARTIAL_HOOKS; do
+                    remove_profile "$state/auth" "$p"
+                    remove_profile "$state/account" "$p"
+                done
+                regen
+            fi
+            exit 1
+        fi
+        shift 2
+        for p in "$@"; do
+            remove_profile "$state/auth" "$p"
+            remove_profile "$state/account" "$p"
+        done
+        regen
+        exit 0
+        ;;
+esac
+case "$1" in
+    --enable)
+        shift
+        [ "$FAKE_PAU_ENABLE_FAILS" = "1" ] && exit 1
+        for p in "$@"; do
+            case "$p" in
+                fic-faillock-hook-account) add_profile "$state/account" "$p" ;;
+                *) add_profile "$state/auth" "$p" ;;
+            esac
+        done
+        regen
+        exit 0
+        ;;
+    --package)
+        regen
+        exit 0
+        ;;
+esac
+exit 0
+"""
+
+
 def main() -> int:
     root = Path(sys.argv[1])
     profile_dir = root / "packaging/deb/pam-configs"
@@ -292,6 +440,52 @@ def main() -> int:
     require("is-active --quiet" in stop_block,
             "Debian prerm does not verify that FIC services stopped before "
             "detaching PAM hooks")
+
+    # Lifecycle invariant: a failing `pam-auth-update --remove` must be
+    # contained inside the prerm while every FIC writer is still stopped.
+    # The prerm restores ONLY the permanent hook infrastructure (never the
+    # legacy policy-owned selector profiles), proves the restoration with the
+    # read-only standard-state proof, and always exits non-zero, so dpkg's
+    # later abort-remove path never has to restart a writer on top of a
+    # partially detached PAM graph.
+    require("if ! pam-auth-update --package --remove" in fic_prerm,
+            "Debian prerm does not contain the PAM detach failure branch")
+    enable_pos = fic_prerm.find("pam-auth-update --enable")
+    require(enable_pos > remove_pos,
+            "Debian prerm PAM recovery does not re-enable the permanent "
+            "hooks after the failed detach attempt")
+    recovery_enable_block = fic_prerm[enable_pos:fic_prerm.find(
+        "then", enable_pos)]
+    for hook in ("fic-faillock-hook-preauth", "fic-faillock-hook-authfail",
+                 "fic-faillock-hook-authsucc", "fic-faillock-hook-account"):
+        require(hook in recovery_enable_block,
+                f"Debian prerm PAM recovery does not re-enable {hook}")
+    for legacy_policy_profile in ("fic-faillock-notify",
+                                  "fic-faillock-preauth-required",
+                                  "fic-pwquality", "fic-pwhistory"):
+        require(legacy_policy_profile not in fic_prerm[enable_pos:],
+                f"prerm PAM recovery must not re-activate the legacy "
+                f"policy-owned profile {legacy_policy_profile}")
+    require("fic_prove_permanent_hooks_attached" in fic_prerm[enable_pos:],
+            "Debian prerm PAM recovery does not prove the restored "
+            "permanent hooks")
+    for diagnostic in ("restoring the package PAM hook infrastructure",
+                       "PAM infrastructure recovery failed",
+                       "restored and proven attached",
+                       "NOT proven restored"):
+        require(diagnostic in fic_prerm,
+                f"Debian prerm PAM detach-failure diagnostic missing: "
+                f"{diagnostic}")
+    pam_proof = function_body(deb_builder, "write_pam_hook_proof_function")
+    for state_element in ("/var/lib/pam", "/etc/pam.d/common-auth",
+                          "/etc/pam.d/common-account", '"Module: '):
+        require(state_element in pam_proof,
+                f"standard-state permanent hook proof lacks {state_element}")
+    # The prerm itself never touches managed slots, journal or witness:
+    # it has no reason to run any FIC maintenance command.
+    for forbidden in ("fic --maintenance", "fic-dick", "mutation-journal"):
+        require(forbidden not in fic_prerm,
+                f"Debian prerm must not touch FIC runtime state: {forbidden}")
     # Final stop proof: after the bounded wait the prerm must POSITIVELY
     # prove every FIC PAM writer is inactive; a timeout is a package-removal
     # failure (exit 1), never permission to detach the hooks. The proof is a
@@ -363,6 +557,26 @@ def main() -> int:
                       "systemctl restart", "disable --now"):
         require(forbidden not in abort_block,
                 f"abort-remove recovery path must not contain: {forbidden}")
+
+    # The read-only permanent hook guard: dpkg runs abort-remove after ANY
+    # failed `prerm remove` and the argument carries no failure reason. The
+    # guard proves the permanent hook infrastructure is attached (standard
+    # state, no PAM tool invocation, no slot/journal/witness access) before
+    # any FIC writer is restarted.
+    require("fic_prove_permanent_hooks_attached" in abort_block,
+            "abort-remove recovery lacks the read-only permanent hook guard")
+    require("not proven attached" in abort_block,
+            "abort-remove guard diagnostic must state the unproven PAM state")
+    # fic-notify.service is mandatory in the normal configure path
+    # (`systemctl enable --now` under `set -e`), so the abort-remove
+    # recovery must restore it strictly as well.
+    require("if ! systemctl enable fic-notify.service" in abort_block and
+            "if ! systemctl start fic-notify.service" in abort_block and
+            "systemctl is-active --quiet fic-notify.service" in abort_block,
+            "abort-remove must restore fic-notify.service strictly "
+            "(mandatory service, same model as configure)")
+    require("fic-notify.service || true" not in abort_block,
+            "abort-remove still treats fic-notify.service as best-effort")
 
     # Behavioral proof of the removal invariant: run the generated prerm
     # with fake systemctl/pam-auth-update and verify the actual call order.
@@ -461,7 +675,198 @@ def main() -> int:
                 "stop-timeout diagnostic must name the unit that failed "
                 "to stop: " + stuck.stderr.strip())
 
+    # Behavioral proof of the detach-failure recovery invariant: run the
+    # generated prerm with fake systemctl and a stateful fake
+    # pam-auth-update while the standard pam-auth-update state paths are
+    # substituted into a sandbox (the host is never touched). Verifies: a
+    # failing detach restores ONLY the permanent hook infrastructure,
+    # proves the restoration, and always exits non-zero.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        package_root = tmp_path / "pkg"
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir(parents=True)
+        (package_root / "DEBIAN").mkdir(parents=True)
+        log = tmp_path / "prerm-recovery-calls.log"
+        pam_state = tmp_path / "pam-state"
+        pam_d = tmp_path / "pam.d"
 
+        fake_systemctl = fake_bin / "systemctl"
+        fake_systemctl.write_text(
+            "#!/bin/sh\n"
+            'printf "systemctl %s\\n" "$*" >> "$FAKE_LOG"\n'
+            "for argument in \"$@\"; do\n"
+            "  [ \"$argument\" = \"is-active\" ] && exit 1\n"
+            "done\n"
+            "exit 0\n",
+            encoding="utf-8")
+        fake_systemctl.chmod(0o755)
+        fake_pam = fake_bin / "pam-auth-update"
+        fake_pam.write_text(stateful_pam_auth_update_fake(),
+                            encoding="utf-8")
+        fake_pam.chmod(0o755)
+
+        generated = subprocess.run(
+            ["bash", "-c",
+             'pkg_root="$1"; '
+             'set -- 0.1.0; '
+             'source "$BUILDER" >/dev/null 2>&1; '
+             'write_system_integration_symlink_prerm "$pkg_root" fic /opt/fic/bin/fic',
+             "bash", str(package_root)],
+            cwd=root,
+            env={"PATH": "/usr/bin:/bin",
+                 "BUILDER": str(root / "packaging/deb/build-fic-debian12-deb.sh")},
+            text=True,
+            capture_output=True,
+            check=False)
+        require(generated.returncode == 0,
+                "could not generate Debian prerm for the detach-failure "
+                "behavioral check: " + generated.stderr.strip())
+        prerm_text = (package_root / "DEBIAN/prerm").read_text(
+            encoding="utf-8")
+        prerm_script = tmp_path / "prerm-sandboxed.sh"
+
+        # detach-failure scenario helpers follow
+        def run_prerm(env_extra=None) -> subprocess.CompletedProcess:
+            prerm_script.write_text(
+                sandbox_pam_paths(prerm_text, pam_state, pam_d),
+                encoding="utf-8")
+            prerm_script.chmod(0o755)
+            env = {"PATH": f"{fake_bin}:/usr/bin:/bin",
+                   "FAKE_LOG": str(log),
+                   "FAKE_PAM_STATE": str(pam_state),
+                   "FAKE_PAM_D": str(pam_d),
+                   "FAKE_PAU_REMOVE_FAILS": "", "FAKE_PAU_PARTIAL": "",
+                   "FAKE_PAU_PARTIAL_HOOKS": "",
+                   "FAKE_PAU_ENABLE_FAILS": ""}
+            if env_extra:
+                env.update(env_extra)
+            return subprocess.run(
+                [str(prerm_script), "remove"],
+                env=env, text=True, capture_output=True, check=False)
+
+        def read_calls() -> list:
+            return log.read_text(encoding="utf-8").splitlines() \
+                if log.is_file() else []
+
+        def require_hooks_attached() -> None:
+            state, stack = read_pam_state(pam_state, pam_d)
+            for hook in PERMANENT_HOOKS:
+                require(f"Module: {hook}" in state,
+                        f"permanent hook profile not selected after "
+                        f"recovery: {hook}")
+                require(hook_target(hook) in stack,
+                        f"permanent hook target missing from the generated "
+                        f"stacks after recovery: {hook_target(hook)}")
+
+        partial_hooks = ("fic-faillock-hook-preauth "
+                         "fic-faillock-hook-authsucc")
+
+        # Scenario A: the detach fails without changing any PAM state.
+        # Recovery must still run, re-enable exactly the four permanent
+        # hooks (never the legacy policy-owned selector profiles), prove
+        # the restored state and exit non-zero. All FIC stop/proof work
+        # must have happened before any PAM operation.
+        write_attached_pam_state(pam_state, pam_d)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1"})
+        require(ran.returncode != 0,
+                "prerm must fail when the PAM detach fails: " +
+                ran.stderr.strip())
+        calls = read_calls()
+        pam_positions = [index for index, line in enumerate(calls)
+                         if line.startswith("pam-auth-update")]
+        stop_positions = [index for index, line in enumerate(calls)
+                          if "disable --now" in line]
+        require(stop_positions and pam_positions
+                and max(stop_positions) < min(pam_positions),
+                "prerm ordering regression: PAM operations ran before the "
+                "FIC service stop proof: " + "\n".join(calls))
+        enable_calls = [line for line in calls
+                        if line.startswith("pam-auth-update --enable")]
+        require(len(enable_calls) == 1,
+                "prerm recovery must run exactly one permanent hook "
+                "re-enable call: " + "\n".join(calls))
+        for hook in PERMANENT_HOOKS:
+            require(hook in enable_calls[0],
+                    f"prerm recovery does not re-enable {hook}")
+        for legacy in LEGACY_POLICY_PROFILES:
+            require(legacy not in enable_calls[0],
+                    f"prerm recovery re-activated legacy profile {legacy}")
+        require_hooks_attached()
+        require("restoring the package PAM hook infrastructure"
+                in ran.stderr,
+                "prerm detach-failure diagnostic must announce the PAM "
+                "recovery: " + ran.stderr.strip())
+        require("restored and proven attached" in ran.stderr,
+                "prerm must report the proven restoration: " +
+                ran.stderr.strip())
+        require(all(line.startswith(("systemctl ", "pam-auth-update "))
+                    for line in calls),
+                "prerm detach-failure path touched non-systemd, non-PAM "
+                "state (managed slots, journal or witness must stay "
+                "untouched): " + "\n".join(calls))
+
+    # detach-failure scenarios B-D follow
+        # Scenario B: the detach fails AFTER a real partial mutation (two
+        # hooks already deselected and the stacks regenerated). Recovery
+        # must fully restore and prove all four permanent hooks.
+        write_attached_pam_state(pam_state, pam_d)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
+                         "FAKE_PAU_PARTIAL": "1",
+                         "FAKE_PAU_PARTIAL_HOOKS": partial_hooks})
+        require(ran.returncode != 0,
+                "prerm must fail when the PAM detach fails after a partial "
+                "mutation: " + ran.stderr.strip())
+        calls = read_calls()
+        require(any(line.startswith("FAKE-PAU-PARTIAL-MUTATION")
+                    for line in calls),
+                "partial mutation injection did not run: " +
+                "\n".join(calls))
+        require_hooks_attached()
+        require("restored and proven attached" in ran.stderr,
+                "prerm must report the proven restoration after a partial "
+                "detach: " + ran.stderr.strip())
+
+        # Scenario C: the recovery itself fails while the detach changed
+        # nothing. The permanent hooks stay attached and are proven, but the
+        # prerm must report the failed recovery explicitly and exit non-zero.
+        write_attached_pam_state(pam_state, pam_d)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
+                         "FAKE_PAU_ENABLE_FAILS": "1"})
+        require(ran.returncode != 0,
+                "prerm must fail when the PAM recovery enable fails")
+        require("PAM infrastructure recovery failed" in ran.stderr and
+                "proven still attached" in ran.stderr,
+                "prerm must distinguish failed recovery with intact hook "
+                "state: " + ran.stderr.strip())
+        require_hooks_attached()
+
+        # Scenario D: the recovery fails after a partial mutation. The PAM
+        # state is NOT proven restored: the prerm must say so explicitly,
+        # leave the partial state untouched and exit non-zero.
+        write_attached_pam_state(pam_state, pam_d)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
+                         "FAKE_PAU_PARTIAL": "1",
+                         "FAKE_PAU_PARTIAL_HOOKS": partial_hooks,
+                         "FAKE_PAU_ENABLE_FAILS": "1"})
+        require(ran.returncode != 0,
+                "prerm must fail when recovery cannot restore the "
+                "permanent hooks")
+        require("NOT proven restored" in ran.stderr,
+                "prerm must state that the PAM state is not proven "
+                "restored: " + ran.stderr.strip())
+        state, stack = read_pam_state(pam_state, pam_d)
+        require("Module: fic-faillock-hook-preauth" not in state and
+                "Module: fic-faillock-hook-authsucc" not in state,
+                "prerm recovery silently restored hooks although the "
+                "recovery enable failed")
+        require("Module: fic-faillock-hook-authfail" in state and
+                "Module: fic-faillock-hook-account" in state,
+                "untouched hook profiles must stay selected")
 
     # Behavioral proof of the attach invariant: run the configure tail of the
     # generated postinst with fake binaries and verify the actual order:
@@ -610,8 +1015,9 @@ def main() -> int:
             # State model (pure shell builtins, works on a fakes-only PATH):
             # active/enabled markers are files in $FAKE_STATE; stop/restart
             # always fail (the failed-prerm scenario: a live writer refuses
-            # to stop); start/enable honor FAKE_START_FAILS /
-            # FAKE_ENABLE_FAILS for failure injection.
+            # to stop); start/enable/is-active honor FAKE_START_FAILS /
+            # FAKE_ENABLE_FAILS / FAKE_IS_ACTIVE_FAILS for failure
+            # injection.
             fake = fake_bin / "systemctl"
             fake.write_text(
                 "#!/bin/sh\n"
@@ -620,6 +1026,9 @@ def main() -> int:
                 'for unit in "$@"; do :; done\n'
                 "state=$FAKE_STATE\n"
                 'if [ "$action" = "is-active" ]; then\n'
+                '    if [ "$unit" = "$FAKE_IS_ACTIVE_FAILS" ]; then\n'
+                "        exit 1\n"
+                "    fi\n"
                 '    if [ -f "$state/active-$unit" ]; then\n'
                 "        exit 0\n"
                 "    fi\n"
@@ -655,13 +1064,17 @@ def main() -> int:
             if fic_active:
                 (state_dir / "active-fic.service").write_text("")
 
-        def run_abort() -> subprocess.CompletedProcess:
+        def run_abort(overrides=None) -> subprocess.CompletedProcess:
+            env = {"PATH": f"{fake_bin}:/usr/bin:/bin",
+                   "FAKE_LOG": str(log),
+                   "FAKE_STATE": str(state_dir),
+                   "FAKE_START_FAILS": "", "FAKE_ENABLE_FAILS": "",
+                   "FAKE_IS_ACTIVE_FAILS": ""}
+            if overrides:
+                env.update(overrides)
             return subprocess.run(
                 [str(postinst_path), "abort-remove"],
-                env={"PATH": str(fake_bin), "FAKE_LOG": str(log),
-                     "FAKE_STATE": str(state_dir),
-                     "FAKE_START_FAILS": "", "FAKE_ENABLE_FAILS": ""},
-                text=True, capture_output=True, check=False)
+                env=env, text=True, capture_output=True, check=False)
 
         for name in ("getent", "groupadd", "mkdir", "chown", "find", "ln",
                      "systemd-tmpfiles", "udevadm", "pam-auth-update",
@@ -687,6 +1100,18 @@ def main() -> int:
         require(generated.returncode == 0 and postinst_path.is_file(),
                 "could not generate Debian postinst for the abort-remove "
                 "behavioral check: " + generated.stderr.strip())
+
+        # The read-only permanent hook guard inspects the standard
+        # pam-auth-update state; sandbox those paths so the host is never
+        # touched, and seed the installed-package state (all four permanent
+        # hooks attached).
+        pam_state = tmp_path / "pam-state"
+        pam_d = tmp_path / "pam.d"
+        postinst_text = postinst_path.read_text(encoding="utf-8")
+        postinst_path.write_text(
+            sandbox_pam_paths(postinst_text, pam_state, pam_d),
+            encoding="utf-8")
+        write_attached_pam_state(pam_state, pam_d)
 
         # Test A: abort-remove must not go through the configure path. All
         # non-systemd helpers are logging fakes, so any configure-path step
@@ -751,7 +1176,8 @@ def main() -> int:
         for unit in ("fic.service", "fic-device.service", "fic-notify.service"):
             require(f"systemctl start {unit}" in calls,
                     f"abort-remove did not start {unit}")
-        for unit in ("fic.service", "fic-device.service"):
+        for unit in ("fic.service", "fic-device.service",
+                     "fic-notify.service"):
             require(f"systemctl is-active --quiet {unit}" in calls,
                     f"abort-remove did not prove {unit} active")
         for unit in ("fic.service", "fic-device.service",
@@ -767,22 +1193,88 @@ def main() -> int:
         # genuine recovery failure: abort-remove must exit non-zero with a
         # diagnostic naming the unit instead of pretending success.
         fresh_state(fic_active=False)
-        broken = fake_bin / "systemctl"
-        broken.write_text(
-            broken.read_text(encoding="utf-8").replace(
-                'for unit in "$@"; do :; done\n',
-                'for unit in "$@"; do :; done\n'
-                "FAKE_START_FAILS=fic-device.service\n"),
-            encoding="utf-8")
-        broken.chmod(0o755)
         log.unlink(missing_ok=True)
-        failed = run_abort()
+        failed = run_abort({"FAKE_START_FAILS": "fic-device.service"})
         require(failed.returncode != 0,
                 "abort-remove must fail when a critical FIC writer cannot "
                 "be restored")
         require("fic-device.service" in failed.stderr,
                 "abort-remove failure diagnostic must name the critical "
                 "unit: " + failed.stderr.strip())
+
+        # Test D: mandatory fic-notify.service. Normal configure starts it
+        # strictly (`systemctl enable --now` under `set -e`), so a failing
+        # enable or start of fic-notify.service must fail the recovery.
+        fresh_state(fic_active=False)
+        log.unlink(missing_ok=True)
+        failed = run_abort({"FAKE_ENABLE_FAILS": "fic-notify.service"})
+        require(failed.returncode != 0,
+                "abort-remove must fail when fic-notify.service cannot be "
+                "re-enabled (mandatory service)")
+        require("fic-notify.service" in failed.stderr,
+                "abort-remove diagnostic must name fic-notify.service: " +
+                failed.stderr.strip())
+        fresh_state(fic_active=False)
+        log.unlink(missing_ok=True)
+        failed = run_abort({"FAKE_START_FAILS": "fic-notify.service"})
+        require(failed.returncode != 0,
+                "abort-remove must fail when fic-notify.service cannot be "
+                "started (mandatory service)")
+        require("fic-notify.service" in failed.stderr,
+                "abort-remove diagnostic must name fic-notify.service: " +
+                failed.stderr.strip())
+        # A start that "succeeds" but leaves the unit inactive must fail the
+        # final activity proof as well.
+        fresh_state(fic_active=False)
+        log.unlink(missing_ok=True)
+        failed = run_abort({"FAKE_IS_ACTIVE_FAILS": "fic-notify.service"})
+        require(failed.returncode != 0,
+                "abort-remove must fail when fic-notify.service is left "
+                "inactive")
+        require("fic-notify.service inactive" in failed.stderr,
+                "abort-remove diagnostic must name the inactive unit: " +
+                failed.stderr.strip())
+
+        # Test E: when the prerm-side PAM recovery did not succeed, the
+        # permanent hooks are not proven attached and abort-remove must
+        # refuse to restart any FIC writer (read-only guard) instead of
+        # silently starting a daemon on top of a partially detached PAM
+        # graph. dpkg then keeps the package in the error state for manual
+        # administrator recovery.
+        stateful_systemctl()
+        detached_state = tmp_path / "pam-state-detached"
+        detached_d = tmp_path / "pam.d-detached"
+        detached_state.mkdir()
+        detached_d.mkdir()
+        # Simulate a partially detached state: hooks deselected, stacks
+        # regenerated without the permanent hook targets.
+        (detached_state / "auth").write_text("", encoding="utf-8")
+        (detached_state / "account").write_text("", encoding="utf-8")
+        (detached_d / "common-auth").write_text("", encoding="utf-8")
+        (detached_d / "common-account").write_text("", encoding="utf-8")
+        postinst_path.write_text(
+            sandbox_pam_paths(postinst_text, detached_state, detached_d),
+            encoding="utf-8")
+        fresh_state(fic_active=False)
+        log.unlink(missing_ok=True)
+        failed = run_abort()
+        require(failed.returncode != 0,
+                "abort-remove must refuse to restore FIC services when the "
+                "permanent PAM hooks are not proven attached")
+        require("not proven attached" in failed.stderr,
+                "abort-remove guard diagnostic must state the unproven PAM "
+                "state: " + failed.stderr.strip())
+        guard_calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        require(not any(" start " in line or " enable " in line
+                        for line in guard_calls),
+                "abort-remove restarted FIC writers over an unproven PAM "
+                "state: " + "\n".join(guard_calls))
+
+        # Restore the attached-state postinst for consistency.
+        postinst_path.write_text(
+            sandbox_pam_paths(postinst_text, pam_state, pam_d),
+            encoding="utf-8")
 
     require('if [ "\\$1" = "remove" ]; then' in fic_prerm,
             "PAM profile removal is not limited to package removal")

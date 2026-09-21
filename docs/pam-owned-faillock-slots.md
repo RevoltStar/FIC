@@ -75,6 +75,12 @@ that were active before preinst are restarted.
 > Hook detach requires positive proof that every FIC PAM writer is inactive;
 > timeout is a package-removal failure, not permission to continue.
 >
+> After a PAM hook detach begins, no FIC writer may be restarted until the
+> permanent hook infrastructure is either proven untouched or restored and
+> proven attached. The prerm performs that recovery itself while the writers
+> are still stopped; `postinst abort-remove` re-proves the state with a
+> read-only check before it restarts any writer.
+>
 > If `prerm remove` fails before PAM hook detach because a FIC PAM writer
 > remains active, dpkg's `postinst abort-remove` path restores
 > package-managed service enablement/runtime state without touching PAM
@@ -108,36 +114,103 @@ mutations or re-activate the hook infrastructure concurrently with the
 profile detach. Upgrade semantics are unchanged: this ordering applies only
 to the `remove` action.
 
+### Detach failure recovery (Phase B, `prerm remove`)
+
+`pam-auth-update --package --remove ...` is a failure-guarded command. If it
+exits non-zero, the prerm must contain the damage right there: this is the
+only window in which every FIC PAM writer is proven stopped, and dpkg gives
+`postinst abort-remove` no information about why the removal failed.
+
+The prerm recovery:
+
+1. re-enables **only** the four permanent hook profiles
+   (`pam-auth-update --enable fic-faillock-hook-preauth
+   fic-faillock-hook-authfail fic-faillock-hook-authsucc
+   fic-faillock-hook-account`). The legacy policy-owned selector profiles
+   are deliberately **not** re-enabled — policy state lives in the managed
+   `/etc/pam.d/fic-faillock-*` slots and the installed package guarantees
+   only the permanent hooks. A single `--enable` is sufficient: it
+   re-selects the profiles and regenerates the `common-*` stacks;
+2. proves the restoration through the read-only standard-state proof
+   (`fic_prove_permanent_hooks_attached`, see below) and prints an explicit
+   diagnostic;
+3. always exits non-zero — the removal failed.
+
+If the recovery `--enable` fails but the proof still passes, the prerm
+reports that the hooks are proven still attached (the detach failed before
+any state change). If the recovery enable fails **and** the proof fails
+(for example after a partial detach), the prerm reports explicitly that the
+permanent hook state is **not proven restored**; the partial state is left
+untouched for manual administrator recovery. The prerm never touches managed
+slots, the mutation journal or its witness, and never runs any FIC command.
+
+### The standard-state permanent hook proof
+
+`fic_prove_permanent_hooks_attached()` is shared by the generated `prerm`
+(recovery proof) and `postinst` (abort-remove guard) and is strictly
+read-only:
+
+- the selected-profile records under `/var/lib/pam` (`auth`, `account`,
+  `password`, `session`, `session-noninteractive`) must contain a
+  `Module: <profile>` entry for every permanent hook profile;
+- the generated `/etc/pam.d/common-auth` stack must mention the
+  `fic-faillock-preauth`, `fic-faillock-authfail` and
+  `fic-faillock-authsucc` hook targets and `/etc/pam.d/common-account` must
+  mention `fic-faillock-account`.
+
+It never invokes `pam-auth-update` and never mutates PAM state, managed
+slots, the journal or the witness.
+
 ### Failed removal recovery (`postinst abort-remove`)
 
-When `prerm remove` aborts (a FIC PAM writer refused to stop), dpkg invokes
-`postinst abort-remove` to restore the package. This is a dedicated early
-recovery path, handled before any configure-specific logic:
+When `prerm remove` aborts (Phase A: a FIC PAM writer refused to stop before
+any PAM operation; Phase B: the PAM detach failed and the prerm recovered as
+described above), dpkg invokes `postinst abort-remove` — the same way in
+both phases, with no failure reason in the argument. This is a dedicated
+early recovery path, handled before any configure-specific logic:
 
-- **Does**: `systemctl daemon-reload`, then restores package-owned
-  enablement (`systemctl enable` for `fic.service`, `fic-device.service`,
-  `fic-notify.service` and the optional `fic_get_device_udev_info.service`
-  helper) and runtime availability (`systemctl start` for `fic.service`,
-  `fic-device.service`, `fic-notify.service`). `systemctl start` on an
-  already-active unit is idempotent, so the live writer that caused the
-  removal failure is simply left running.
-- **Critical units**: `fic.service` and `fic-device.service`. After recovery
-  they must be active and enabled; the path proves this with a strict
-  `systemctl is-active` check per unit and exits non-zero (naming the unit)
-  if restoration is impossible. `fic-notify.service` and the udev helper
-  keep their non-blocking semantics: a failure to restore them is
-  best-effort and does not fail the recovery.
-- **Never does**: run any `pam-auth-update` call (the permanent hooks were
-  never detached by the failed removal), neutralize/rewrite/repair/recreate
-  managed slots, rollback/discard/mark or migrate the mutation journal or
-  its witness, run `ensure-config`, `check-config`, trust sync or
-  `validate-pam-slots-before-attach` as a form of recovery, and never
-  `systemctl stop`/`restart` a FIC writer.
+- **Guard**: before any action, the read-only
+  `fic_prove_permanent_hooks_attached` check must pass. Normally it only
+  re-confirms what the prerm already proved (Phase A: hooks untouched;
+  Phase B recovery success: hooks restored). If the proof fails — the only
+  case is a Phase B recovery that could not be proven — abort-remove
+  **refuses to restart any FIC writer**, prints a diagnostic naming the
+  unproven PAM state and exits non-zero, leaving the package in the dpkg
+  error state (Half-Configured) for manual administrator recovery. This is
+  the honest outcome: restarting writers over a partially detached PAM
+  graph is exactly what the lifecycle invariant forbids. No marker file is
+  needed: the proof is stateless and covers even a crash between the prerm
+  and abort-remove.
+- **Does** (only after the guard passes): `systemctl daemon-reload`, then
+  restores package-owned enablement (`systemctl enable` for `fic.service`,
+  `fic-device.service`, `fic-notify.service` and the optional
+  `fic_get_device_udev_info.service` helper) and runtime availability
+  (`systemctl start` for `fic.service`, `fic-device.service`,
+  `fic-notify.service`). `systemctl start` on an already-active unit is
+  idempotent, so the live writer that caused the removal failure is simply
+  left running.
+- **Critical units**: `fic.service`, `fic-device.service` and
+  `fic-notify.service`. Normal `postinst configure` treats
+  `fic-notify.service` as mandatory (`systemctl enable --now` under
+  `set -e`), so the abort-remove recovery uses the same strict model:
+  strict `enable`, strict `start` and a final `systemctl is-active` proof
+  per unit; a failure names the unit and exits non-zero. The udev helper
+  keeps its non-blocking, best-effort semantics.
+- **Never does**: run any `pam-auth-update` call, neutralize/rewrite/
+  repair/recreate managed slots, rollback/discard/mark or migrate the
+  mutation journal or its witness, run `ensure-config`, `check-config`,
+  trust sync or `validate-pam-slots-before-attach` as a form of recovery,
+  and never `systemctl stop`/`restart` a FIC writer.
 
-The exit status of the failed removal itself stays non-zero: dpkg keeps the
-package in the `install ok installed` state, with the services, permanent
-hooks, slots and journal provenance exactly as they were before the removal
-attempt.
+The exit status of the failed removal itself stays non-zero. After a
+successful abort-remove recovery dpkg reports the package in the
+**Installed** state (checked semantically as the third status field, e.g.
+`dpkg-query -W -f='${db:Status-Status}\n'`; the first-field wording —
+`install`/`deinstall` — varies between dpkg versions after an aborted
+removal), with the services, permanent hooks, slots and journal provenance
+exactly as they were before the removal attempt. After a guard refusal the
+package is left Half-Configured: that is the explicit, visible signal that
+the PAM recovery failed and manual action is required.
 
 ### Installation / reinstallation (`postinst configure`)
 
