@@ -33,6 +33,8 @@
 #include "daemon/LogRecordsReader.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include "rollback/DaemonMutationJournal.h"
 #include <fic/ipc/FicAdminSocket.h>
@@ -1122,6 +1124,47 @@ int main(int argc, char* argv[]) {
             std::cerr << "fic daemon did not become version-compatible and ready: "
                       << response.value("message", "unknown error") << std::endl;
             return 1;
+        }
+        if (command == "validate-pam-slots-before-attach") {
+            // Read-only package-side pre-attach validation: proves that the
+            // existing /etc/pam.d/fic-faillock-* slots are canonical neutral
+            // or journal-bound FIC-owned state BEFORE the maintainer script
+            // may attach the permanent fic-faillock-hook-* profiles to the
+            // live PAM graph. Never writes, repairs or neutralizes anything.
+            if (::geteuid() != 0) {
+                std::cerr << "FIC PAM slot attach validation must be run as root"
+                          << std::endl;
+                return 1;
+            }
+            const fic::platform::PamCapabilityConfig* capability = nullptr;
+            const std::vector<std::string>* services = nullptr;
+            if (!fic::identity::pam::resolveCapability(
+                    platform.pam,
+                    fic::platform::PamCapability::AuthenticationLockout,
+                    capability, services, maintenanceError)) {
+                std::cerr << "FIC PAM slot attach validation failed: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            const fic::platform::PlatformExecutableResolver executables(
+                platform.executables);
+            fic::identity::pam::PamSlotAttachVerdict verdict;
+            std::string validationError;
+            if (!fic::identity::pam::validatePamSlotAttach(
+                    platform.pam, *capability, *services, executables,
+                    paths.mutationJournalFile, {}, verdict, validationError)) {
+                std::cerr << "FIC PAM slot attach validation failed: "
+                          << validationError << std::endl;
+                return 1;
+            }
+            if (!verdict.safeToAttach) {
+                std::cerr << "FIC PAM slots are not safe to attach permanent "
+                             "hooks (fail closed): "
+                          << verdict.detail << std::endl;
+                return 1;
+            }
+            std::cout << "safe to attach" << std::endl;
+            return 0;
         }
         if (command == "pam-alt-faillock") {
             if (::geteuid() != 0) {

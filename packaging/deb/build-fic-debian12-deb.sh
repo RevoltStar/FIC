@@ -684,6 +684,15 @@ if [ -x /opt/fic/bin/fic ]; then
 fi
 
 if [ "\${1:-}" = "configure" ]; then
+    # Package-side pre-attach validation (read-only): preserved
+    # /etc/pam.d/fic-faillock-* conffiles must be proven canonical-neutral or
+    # journal-bound FIC-owned state BEFORE the permanent hooks may reach the
+    # live PAM graph. On failure the package configuration aborts before any
+    # pam-auth-update invocation and before the daemon is started.
+    if ! /opt/fic/bin/fic --maintenance validate-pam-slots-before-attach; then
+        echo "FIC: refusing to attach permanent PAM hooks: existing /etc/pam.d/fic-faillock-* state failed pre-attach validation" >&2
+        exit 1
+    fi
     pam-auth-update --package
     # These four profiles are permanent integration infrastructure. Policy
     # enable/disable never owns or deselects them; mutable ownership stays in
@@ -767,6 +776,27 @@ write_system_integration_symlink_prerm() {
 set -e
 
 if [ "\$1" = "remove" ]; then
+    # Invariant: package removal first stops all FIC PAM writers and only
+    # then detaches the permanent hooks. A live daemon could still perform
+    # PAM mutations or re-activate the infrastructure concurrently with the
+    # profile detach; after the services are stopped no new PAM mutation is
+    # possible.
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now fic-notify.service || true
+        systemctl disable --now fic-device.service || true
+        systemctl disable --now fic.service || true
+        systemctl disable fic_get_device_udev_info.service || true
+        systemctl daemon-reload || true
+        for unit in fic.service fic-device.service fic-notify.service; do
+            attempt=0
+            while [ "\$attempt" -lt 10 ]; do
+                systemctl is-active --quiet "\$unit" || break
+                attempt=\$((attempt + 1))
+                sleep 1
+            done
+        done
+    fi
+    # Only now detach the permanent FIC PAM hook infrastructure.
     pam-auth-update --package --remove \
         fic-faillock-notify \
         fic-faillock-authfail \
@@ -782,14 +812,6 @@ fi
 
 if [ "\$1" = "remove" ] && [ -L "/bin/$command_name" ] && [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
     rm -f "/bin/$command_name"
-fi
-
-if [ "\$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl disable --now fic-notify.service || true
-    systemctl disable --now fic-device.service || true
-    systemctl disable --now fic.service || true
-    systemctl disable fic_get_device_udev_info.service || true
-    systemctl daemon-reload || true
 fi
 
 exit 0

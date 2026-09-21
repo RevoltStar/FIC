@@ -756,6 +756,36 @@ target_link_libraries(pam_auth_update_topology_tests PRIVATE
 add_test(NAME pam_auth_update_topology_tests
          COMMAND pam_auth_update_topology_tests)
 
+add_executable(pam_slot_attach_validator_tests
+    fic/modules/identity_access/pam/PamSlotAttachValidatorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamSlotAttachValidator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamAuthUpdateTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+)
+target_include_directories(pam_slot_attach_validator_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_slot_attach_validator_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(NAME pam_slot_attach_validator_tests
+         COMMAND pam_slot_attach_validator_tests)
+
 add_executable(pam_disable_nopasswdlogin_policy_tests
     fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
@@ -1383,6 +1413,7 @@ set(FIC_UNIT_TESTS
     pam_configuration_tests
     pam_control_flow_analyzer_tests
     pam_auth_update_topology_tests
+    pam_slot_attach_validator_tests
     pam_disable_nopasswdlogin_policy_tests
     pam_disable_root_sddm_login_policy_tests
     passwdqc_config_file_tests

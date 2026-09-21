@@ -2,116 +2,106 @@
 
 ## Current base
 
-- Ветка `main`, base для follow-up:
-  `626cee143920efdf590238053888cab27acc3e01`.
-- Follow-up исправляет safety gaps первого managed-slot коммита.
+- Ветка `main`, HEAD `1ec0f1ca536fdbfc84401ffb668cb70b7114c232`, изменения
+  поверх него коммитом не зафиксированы.
 
 ## Current task
 
-- Follow-up к managed-slot commit `626cee143920efdf590238053888cab27acc3e01`:
-  закрыть crash compensation/recovery, upgrade legacy-domain и оставшиеся
-  profile-selection causal-ownership gaps.
-- Исправлена совместимая с nlohmann-json 3.11.2/3.11.3 сериализация optional
-  PAM strategy provenance: string при наличии значения, JSON `null` иначе.
-- Исправлен top-level layout Debian builder и regressions follow-up; legacy
-  PasswordQuality/PasswordHistory на Debian/Ubuntu больше не экспонируют
-  activation policies и классифицируются как `ReadOnly`.
+- Узкий hardening Debian/Ubuntu package lifecycle permanent PAM hooks при
+  remove/reinstall (без перестройки PAM architecture, без изменений ALT
+  backend и без возврата legacy `pam-auth-update` ownership).
 
 ## Accepted architecture / invariants
 
-- `Prepared` journal record и имя `fic-*` сами по себе не доказывают physical
-  ownership и не дают права destructive rollback.
-- Четыре permanent hook profile являются package infrastructure; policy меняет
-  только strict `/etc/pam.d/fic-faillock-*` slots с exact mutation id.
-- Rollback нейтрализует active или crash-partial slots только при совпадении
-  journal mutation id. Malformed, mixed и wrong-id state остаётся fail-closed.
-- Legacy exact/partial/mixed `PamAuthUpdate` selection не освобождается по
-  одному лишь profile name.
-- PasswordQuality/PasswordHistory legacy profile backend временно
-  observation-only: новая topology mutation и destructive rollback запрещены
-  до отдельной доказанной password-slot модели.
-- Neutral faillock slot использует `optional pam_deny.so`, а не `pam_permit`,
-  чтобы degenerate stack был fail-closed.
-- Upgrade с legacy selected FIC PAM profiles блокируется в `preinst`; automatic
-  adoption/migration запрещена как причинно недоказуемая.
+- Package removal first stops all FIC PAM writers and only then detaches
+  permanent hooks; package installation/reinstallation never attaches
+  permanent hooks until existing FIC slot state is proven canonical-neutral
+  or journal-bound owned state.
+- `prerm remove`: `systemctl disable --now` всех FIC сервисов + ожидание
+  неактивности ДО `pam-auth-update --package --remove`. Upgrade semantics не
+  изменены (блок исполняется только для `remove`).
+- `postinst configure`: read-only
+  `fic --maintenance validate-pam-slots-before-attach` выполняется ДО
+  `pam-auth-update --package` и ДО `pam-auth-update --enable
+  fic-faillock-hook-*`; при FAIL — `exit 1` до подключения hooks и до старта
+  daemon, без «починки»/удаления слотов.
+- Валидатор (`PamSlotAttachValidator`) строго read-only: не переписывает
+  slots, не создаёт/не мутирует journal (raw `load()`, не
+  `initializeOrLoad`), не запускает `pam-auth-update`, не делает rollback.
+  PASS = canonical neutral все четыре слота ИЛИ полный consistent active
+  topology + journal record (`Prepared`/`Applied`/`RollbackFailed`) с exact
+  mutation id, backend=PAM, capability=`enable_authentication_lockout`,
+  topology=PamAuthUpdate, activation domain == текущему платформенному
+  домену (`activationIdentifiers`). Всё остальное — fail closed.
+- Классификация slots не дублируется: валидатор переиспользует публичный
+  `PamAuthUpdateTopologyManager::inspect()` (managed-slot grammar остаётся
+  в topology manager).
+- Permanent hook selection остаётся package infrastructure; policy владеет
+  только strict `/etc/pam.d/fic-faillock-*` slots.
 
 ## Completed
 
-- Добавлены managed-slot grammar, inspection, activation, durability и binding
-  journal mutation id в `PamAuthUpdateTopologyManager`.
-- Activation policy и rollback проверяют physical ownership witness.
-- Debian/Ubuntu profiles используют единый permanent-hook activation domain.
-- Debian packaging устанавливает четыре hook profiles и четыре PAM conffile
-  slots; maintainer scripts регистрируют и удаляют hook infrastructure.
-- Добавлены unit/static/package regressions и документация модели.
-- `write_fic_pam_preinst()` вынесен из `write_common_preinst()`; packaging test
-  source-ит builder и проверяет наличие обеих top-level functions.
-- Fake PAM manager после успешного enable восстанавливает manageable state;
-  legacy external-equivalent rollback ожидает ноль destructive disable calls.
-- Activation policy регистрируется только при
-  `PamPolicySupport::RequiresTopologyActivation`; observation-only option
-  policies не получают зависимость на отсутствующую activation policy.
+- `fic/src/modules/identity_access/pam/PamSlotAttachValidator.{h,cpp}` —
+  read-only pre-attach validation (верdict safe/unsafe + detail).
+- `fic/src/main.cpp` — maintenance-команда
+  `validate-pam-slots-before-attach` (root-only, печатает `safe to attach`
+  либо fail-closed диагностик, exit 1).
+- `packaging/deb/build-fic-debian12-deb.sh` — reorder prerm remove (stop →
+  remove) и pre-attach validation в postinst configure (до обоих
+  pam-auth-update вызовов, с понятным сообщением и `exit 1`).
+- `tests/fic/modules/identity_access/pam/PamSlotAttachValidatorTests.cpp`
+  (16 сценариев: fresh neutral PASS, neutral+empty journal PASS, active+exact
+  journal PASS (Applied и Prepared), active без journal FAIL, active+пустой
+  journal FAIL, wrong mutation id FAIL, RolledBack FAIL, foreign
+  capability/domain/backend FAIL, mixed ids FAIL, partial strategy FAIL,
+  missing slot FAIL, malformed marker FAIL, modified body FAIL, read-only
+  byte-for-byte на PASS и FAIL) + регистрация `pam_slot_attach_validator_tests`
+  в `tests/CMakeLists.txt`.
+- `tests/integration/packaging/PamPackagingChecks.py` — структурные регрессии
+  ordering (prerm stop-before-remove, postinst validate-before-attach, валидация
+  внутри configure-ветки, `exit 1` при FAIL) и поведенческая регрессия:
+  сгенерированный prerm запускается с fake `systemctl`/`pam-auth-update` и
+  реально проверяется порядок вызовов.
+- Документация: `docs/pam-owned-faillock-slots.md` (новый раздел Package
+  lifecycle invariants, включая reinstall с сохранёнными conffiles),
+  `packaging/deb/README.md` (pre-attach validation + remove ordering).
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/pam/`, `fic/src/rollback/`,
-  `fic/src/platform/profiles/`;
-- `packaging/deb/`, `tests/fic/`, `tests/integration/packaging/`;
-- `docs/pam-owned-faillock-slots.md`, `docs/rollback.md`.
+- `fic/src/main.cpp`, `fic/src/modules/identity_access/pam/`;
+- `packaging/deb/` (builder + README);
+- `tests/fic/modules/identity_access/pam/`, `tests/CMakeLists.txt`,
+  `tests/integration/packaging/PamPackagingChecks.py`;
+- `docs/pam-owned-faillock-slots.md`, `docs/HANDOFF.md`.
 
 ## Validation
 
-### Follow-up review / patch generation
-
-- Код `626cee143920efdf590238053888cab27acc3e01` повторно сверён по GitHub.
-- Исправлены: missing current-snapshot compensation, policy-level
-  crash-partial Prepared recovery, permissive neutral `pam_permit`, unsafe
-  legacy password-profile release и upgrade-domain mismatch.
-- Follow-up patch проходит синтаксический `git apply --stat`; полного checkout
-  и build/CTest в среде генерации patch нет, поэтому PASS сборки для follow-up
-  не заявляется.
-
-### Validation после применения follow-up
-
-- `pam_auth_update_topology_tests` build + CTest — успешно.
-- `pam_packaging_static_checks` и `platform_profile_static_checks` — успешно.
-- Direct `PamPackagingChecks.py`, platform `static_checks.py` и `bash -n` для
-  Debian builder — успешно.
-- Targets `mutation_journal_tests`, `pam_capability_activation_policy_tests`,
-  `rollback_executor_tests` и `fic` — успешно собраны после явной сериализации
-  optional strategy fields.
-- `mutation_journal_tests` — успешно. Два follow-up tests пока падают уже на
-  behavioral assertions: `rollback_executor_tests` (`external equivalent PAM
-  topology must remain untouched`) и `pam_capability_activation_policy_tests`
-  (`journal-bound crash-partial Prepared was not compensated/reapplied`).
-- `git diff --check` — успешно.
-- После corrective review: targets `fic`,
-  `pam_capability_activation_policy_tests`, `rollback_executor_tests` и
-  `identity_policy_hierarchy_tests` собраны успешно.
-- `pam_capability_activation_policy_tests` и
-  `identity_policy_hierarchy_tests` — успешно.
-- `rollback_executor_tests`: относящийся к PAM сценарий теперь PASS; общий test
-  в текущем окружении падает только на восьми DAC cases из-за
-  `could not resolve test group`.
-- Direct packaging/platform static checks, shell source regression и `bash -n`
-  Debian builder — успешно.
-
-### Validation, зафиксированная в `626cee...`
-
-- Fresh configure Ubuntu 24.04 — успешно.
-- `pam_auth_update_topology_tests` build + CTest — успешно.
-- `platform_profile_tests` build + CTest — успешно.
-- `pam_packaging_static_checks` и `platform_profile_static_checks` — успешно
-  после согласования conffile contract.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — успешно.
+- Полный `cmake --build build-check -j4` — RC 0, 0 warnings/errors.
+- Полный `ctest --test-dir build-check --output-on-failure` — 97/98 passed,
+  1 pre-existing skip (`command_hash_batch_tests`) и 1 failure
+  (`passwdqc_config_file_tests`: «pwquality policy did not retain its
+  topology-dependent state»), воспроизведённый на чистом дереве без этого
+  diff (git stash + rebuild) — предсуществующее падение окружения, к данной
+  задаче отношения не имеет.
+- `ctest -R 'pam_slot_attach_validator_tests|pam_auth_update_topology_tests|
+  pam_packaging_static_checks|mutation_journal_tests'` — 4/4 passed.
+- `python3 tests/integration/packaging/PamPackagingChecks.py .` — passed
+  (включая поведенческую prerm-регрессию с fake systemctl/pam-auth-update).
 - `bash -n packaging/deb/build-fic-debian12-deb.sh` — успешно.
-- `pam_capability_activation_policy_tests` и `rollback_executor_tests` дошли до
-  изменённых PAM sources, но общий build остановился в неизменённом
-  `MutationJournal.cpp`: установленный nlohmann-json не сериализует
-  `std::optional<std::string>` напрямую.
 - `git diff --check` — успешно.
 
 ## Remaining
 
-- Native privileged PAM runtime и multi-platform package/install validation не
-  выполнялись.
-- Полные build и CTest не выполнялись.
+- Real host apply / настоящий `apt install`/`dpkg` lifecycle и живой
+  `pam-auth-update` не выполнялись (запрещены validation policy);
+  ordering доказан статической + поведенческой регрессией с fakes.
+- Integration/shell fixture полного цикла install→active→remove→reinstall с
+  настоящим dpkg не создавалась (unit + packaging-регрессии покрывают
+  ordering и provenance validation); при необходимости — отдельная задача
+  с Docker-окружением.
+- Валидатор fail-closed для missing slot conffile (администратор удалил
+  conffile): postinst будет падать до ручного восстановления — это
+  осознанное fail-closed поведение, задокументировано.
+- Предсуществующее падение `passwdqc_config_file_tests` в текущем окружении
+  (не связано с этой задачей) — упомянуто для следующего агента.

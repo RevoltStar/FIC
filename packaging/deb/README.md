@@ -150,10 +150,27 @@ profiles. The declarations are ordinary package data, not conffiles. The
 package also owns four `/etc/pam.d/fic-faillock-*` conffile slots.
 
 `pam-auth-update` remains the owner of generated `common-*`. On configure the
-maintainer script runs `pam-auth-update --package` and explicitly enables only
-the four permanent hook profiles. It never uses `--force`. Runtime policy
-enable/disable does not own those hook selections: AuthenticationLockout owns
-only strict marker blocks inside the four slot files.
+maintainer script first runs the read-only pre-attach validation
+
+```sh
+/opt/fic/bin/fic --maintenance validate-pam-slots-before-attach
+```
+
+and aborts package configuration (before the daemon is started) when the
+preserved `/etc/pam.d/fic-faillock-*` slots are not proven canonical-neutral
+or journal-bound FIC-owned state. Only after a passing validation does it run
+`pam-auth-update --package` and explicitly enable the four permanent hook
+profiles. It never uses `--force`. Runtime policy enable/disable does not own
+those hook selections: AuthenticationLockout owns only strict marker blocks
+inside the four slot files.
+
+On `remove` the maintainer script stops `fic.service`, `fic-device.service`
+and `fic-notify.service` first and only then runs
+`pam-auth-update --package --remove ...`: a live daemon could otherwise mutate
+PAM or re-activate the hook infrastructure concurrently with the detach.
+The full lifecycle invariants, the validator contract and the reinstall
+behavior with preserved conffiles are documented in
+`docs/pam-owned-faillock-slots.md`.
 
 The hook topology is:
 

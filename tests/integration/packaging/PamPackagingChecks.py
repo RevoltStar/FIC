@@ -3,6 +3,7 @@
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -274,6 +275,111 @@ def main() -> int:
     remove_block = fic_prerm[remove_start:remove_end]
     for name in expected:
         require(name in remove_block, f"Debian prerm does not remove {name}")
+
+    # Lifecycle invariant: package removal first stops all FIC PAM writers
+    # (the daemon can mutate PAM or re-activate infrastructure while alive)
+    # and only then detaches the permanent hook profiles.
+    stop_pos = fic_prerm.find("systemctl disable --now fic.service")
+    remove_pos = fic_prerm.find("pam-auth-update --package --remove")
+    require(stop_pos >= 0 and remove_pos > stop_pos,
+            "Debian prerm must stop FIC services before pam-auth-update --remove")
+    stop_block = fic_prerm[stop_pos:remove_pos]
+    for unit in ("fic-notify.service", "fic-device.service"):
+        require(unit in stop_block,
+                f"Debian prerm must stop {unit} before detaching PAM hooks")
+    require("daemon-reload" in stop_block,
+            "Debian prerm must reload systemd units before detaching PAM hooks")
+    require("is-active --quiet" in stop_block,
+            "Debian prerm does not verify that FIC services stopped before "
+            "detaching PAM hooks")
+
+    # Lifecycle invariant: installation/reinstallation never attaches the
+    # permanent fic-faillock-hook-* profiles until the existing
+    # /etc/pam.d/fic-faillock-* state passed read-only pre-attach validation
+    # (canonical neutral or journal-bound FIC-owned).
+    validator_call = "fic --maintenance validate-pam-slots-before-attach"
+    require(validator_call in fic_postinst,
+            "Debian postinst never validates existing FIC PAM slots "
+            "before attach")
+    validate_pos = fic_postinst.find(validator_call)
+    package_pos = fic_postinst.find("pam-auth-update --package")
+    enable_pos = fic_postinst.find("pam-auth-update --enable")
+    require(package_pos > validate_pos and enable_pos > validate_pos,
+            "Debian postinst must attach FIC PAM hooks only after "
+            "pre-attach slot validation")
+    require("exit 1" in fic_postinst[validate_pos:package_pos],
+            "Debian postinst must abort package configuration when slot "
+            "validation fails")
+    configure_pos = fic_postinst.find('\\${1:-}" = "configure"')
+    require(configure_pos >= 0 and validate_pos > configure_pos,
+            "pre-attach slot validation must run inside the postinst "
+            "configure branch")
+
+    # Behavioral proof of the removal invariant: run the generated prerm
+    # with fake systemctl/pam-auth-update and verify the actual call order.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        package_root = tmp_path / "pkg"
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir(parents=True)
+        (package_root / "DEBIAN").mkdir(parents=True)
+        log = tmp_path / "calls.log"
+
+        fake_systemctl = fake_bin / "systemctl"
+        fake_systemctl.write_text(
+            "#!/bin/sh\n"
+            'printf "systemctl %s\\n" "$*" >> "$FAKE_LOG"\n'
+            "for argument in \"$@\"; do\n"
+            "  [ \"$argument\" = \"is-active\" ] && exit 1\n"
+            "done\n"
+            "exit 0\n",
+            encoding="utf-8")
+        fake_systemctl.chmod(0o755)
+        fake_pam = fake_bin / "pam-auth-update"
+        fake_pam.write_text(
+            "#!/bin/sh\n"
+            'printf "pam-auth-update %s\\n" "$*" >> "$FAKE_LOG"\n'
+            "exit 0\n",
+            encoding="utf-8")
+        fake_pam.chmod(0o755)
+
+        generated = subprocess.run(
+            ["bash", "-c",
+             'pkg_root="$1"; '
+             'set -- 0.1.0; '
+             'source "$BUILDER" >/dev/null 2>&1; '
+             'write_system_integration_symlink_prerm "$pkg_root" fic /opt/fic/bin/fic',
+             "bash", str(package_root)],
+            cwd=root,
+            env={"PATH": "/usr/bin:/bin",
+                 "BUILDER": str(root / "packaging/deb/build-fic-debian12-deb.sh")},
+            text=True,
+            capture_output=True,
+            check=False)
+        prerm_path = package_root / "DEBIAN/prerm"
+        require(generated.returncode == 0 and prerm_path.is_file(),
+                "could not generate Debian prerm for the behavioral check: " +
+                generated.stderr.strip())
+        ran = subprocess.run(
+            [str(prerm_path), "remove"],
+            env={"PATH": f"{fake_bin}:/usr/bin:/bin", "FAKE_LOG": str(log)},
+            text=True,
+            capture_output=True,
+            check=False)
+        require(ran.returncode == 0,
+                "generated prerm failed under fake systemctl: " +
+                ran.stderr.strip())
+        calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        pam_calls = [index for index, line in enumerate(calls)
+                     if line.startswith("pam-auth-update")]
+        stop_calls = [index for index, line in enumerate(calls)
+                      if "disable --now" in line]
+        require(pam_calls and stop_calls and max(stop_calls) < min(pam_calls),
+                "prerm ordering regression: pam-auth-update ran before the "
+                "FIC services were stopped")
+        require(any("--remove" in calls[index] for index in pam_calls),
+                "prerm did not deselect the FIC PAM profiles on remove")
 
     require('if [ "\\$1" = "remove" ]; then' in fic_prerm,
             "PAM profile removal is not limited to package removal")

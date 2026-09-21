@@ -65,6 +65,77 @@ must reconcile it with the installed version first. The guard is repeated
 after stopping the old daemon; if that race check refuses the upgrade, services
 that were active before preinst are restarted.
 
+## Package lifecycle invariants (removal and reinstallation)
+
+> Package removal first stops all FIC PAM writers and only then detaches
+> permanent hooks; package installation/reinstallation never attaches
+> permanent hooks until existing FIC slot state is proven canonical-neutral or
+> journal-bound owned state.
+
+### Removal (`prerm remove`)
+
+`prerm` stops `fic.service`, `fic-device.service` and `fic-notify.service`
+(`systemctl disable --now`) and waits until they are inactive **before** it
+runs `pam-auth-update --package --remove ...`. A live daemon could otherwise
+perform PAM mutations or re-activate the hook infrastructure concurrently
+with the profile detach; after the services are stopped no new PAM mutation
+is possible. Upgrade semantics are unchanged: this ordering applies only to
+the `remove` action.
+
+### Installation / reinstallation (`postinst configure`)
+
+`postinst configure` validates the existing `/etc/pam.d/fic-faillock-*`
+slots through the read-only maintenance command
+
+```sh
+/opt/fic/bin/fic --maintenance validate-pam-slots-before-attach
+```
+
+**before** the first action that could make a FIC slot effective in the live
+PAM graph (`pam-auth-update --package`, then
+`pam-auth-update --enable fic-faillock-hook-*`). The validator reuses the
+daemon managed-slot classification and answers strictly read-only: it never
+rewrites slots, never creates or mutates the mutation journal, never runs
+`pam-auth-update`, never rolls back or neutralizes state.
+
+Attach is allowed only in two cases:
+
+1. **Canonical neutral state** — all four slots carry the exact canonical
+   neutral content.
+2. **Active FIC-owned state** — the slots form a complete consistent strategy
+   topology with matching strict markers, and the mutation journal carries an
+   active record (`Prepared`, `Applied` or `RollbackFailed`) that:
+   - matches the slot mutation id exactly;
+   - belongs to the PAM backend with an `enable_authentication_lockout`
+     ownership payload;
+   - proves the exact managed-slot activation domain of the current platform
+     profile (no semantic equality, no profile-name inference).
+
+Everything else fails closed **before** any `pam-auth-update` invocation and
+before the daemon is started: active slots with a missing journal, a wrong or
+mixed mutation id, a non-active record, a foreign capability/domain/backend
+payload, malformed markers, modified marker bodies, partial strategies or
+missing slots. The package never repairs, neutralizes or deletes such state;
+the administrator must resolve it manually.
+
+### Reinstall with preserved conffiles
+
+The four `/etc/pam.d/fic-faillock-*` files are conffiles and survive
+`apt remove fic` followed by `apt install fic`. On reinstall:
+
+- neutral slots (fresh install or post-rollback state) pass validation and
+  the hooks are attached as usual;
+- active slots left behind by a working `remove`-before-reinstall cycle are
+  proven against the preserved journal in `/opt/fic` and attach only when the
+  journal record matches exactly;
+- any preserved slot state that cannot be proven (missing journal record,
+  drifted or malformed markers, partial topology) aborts package
+  configuration with a diagnostic instead of silently attaching unproven PAM
+  content. This is intentional fail-closed behavior: the daemon never gets a
+  chance to run, and the live PAM graph is never extended with the
+  permanent hooks.
+
+
 ## ALT p11
 
 ALT stays on `AltTcbManaged`. A hook-only translation is not semantically
