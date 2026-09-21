@@ -188,10 +188,38 @@ def main() -> int:
 
     fic_package = function_body(deb_builder, "build_fic_package")
     fic_dick_package = function_body(deb_builder, "build_fic_dick_package")
+    fic_pam_preinst_start = deb_builder.find("\nwrite_fic_pam_preinst() {")
+    fic_pam_preinst_end = deb_builder.find(
+        "\nwrite_common_postinst() {", fic_pam_preinst_start + 1
+    )
+    require(fic_pam_preinst_start >= 0 and
+            fic_pam_preinst_end > fic_pam_preinst_start,
+            "Debian builder has no bounded write_fic_pam_preinst function")
+    fic_pam_preinst = deb_builder[fic_pam_preinst_start:fic_pam_preinst_end]
+    require('write_fic_pam_preinst "$package_root"' in fic_package,
+            "Debian fic package does not use the legacy PAM upgrade guard")
+    for legacy_id in (
+        "fic-faillock-notify",
+        "fic-faillock-authfail",
+        "fic-faillock-preauth-required",
+        "fic-faillock-authsucc",
+        "fic-pwquality",
+        "fic-pwhistory",
+    ):
+        require(legacy_id in fic_pam_preinst,
+                f"upgrade guard misses legacy PAM identifier {legacy_id}")
+    require('"${1:-}" = "upgrade"' in fic_pam_preinst,
+            "legacy PAM guard is not limited to upgrades")
     fic_postinst = function_body(deb_builder, "write_system_integration_symlink_postinst")
     fic_prerm = function_body(deb_builder, "write_system_integration_symlink_prerm")
     generic_prerm = function_body(deb_builder, "write_symlink_prerm")
 
+    require("/opt/fic/db/mutation-journal.json" in fic_pam_preinst and
+            '"status": "(prepared|applied|rollback_failed)"' in fic_pam_preinst,
+            "legacy PAM upgrade guard does not inspect active journal provenance")
+    require("active_units=" in fic_pam_preinst and
+            'systemctl start "$unit" || true' in fic_pam_preinst,
+            "legacy PAM upgrade guard does not restore services after race refusal")
     require('local profile_dir="$package_root/usr/share/pam-configs"' in deb_builder,
             "Debian builder does not stage profiles in /usr/share/pam-configs")
     require('install_fic_pam_profiles "$package_root"' in fic_package,

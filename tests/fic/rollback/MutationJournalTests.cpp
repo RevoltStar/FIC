@@ -136,6 +136,10 @@ void testPamJournalContract() {
                 payload->targetStrategy == "preauth_required",
             "PAM undo must round-trip");
     auto document = nlohmann::json::parse(file.read());
+    require(document["records"][0]["undo"]["previous_strategy"].is_null() &&
+                document["records"][0]["undo"]["target_strategy"] ==
+                    "preauth_required",
+            "PAM optional strategies must serialize as null or string");
     const auto original = document;
     const auto rejects = [&](const nlohmann::json& broken,
                              const std::string& label) {

@@ -550,7 +550,7 @@ def main():
     )
     require(
         "PamCapabilityVerificationMode::Structural" in activation_policy
-        and "manager->disable" not in activation_policy
+        and activation_policy.count("manager->disable") == 1
         and "PamCapabilityActivationPolicy" in registry,
         "PAM activation policy does not enforce structural-only enable semantics",
     )
@@ -910,7 +910,8 @@ def main():
             f"{builder_name} removal can recursively destroy persistent FIC state",
         )
     require(
-        deb_builder.count('write_fic_preinst "$package_root"') >= 2,
+        deb_builder.count('write_fic_preinst "$package_root"') >= 1
+        and deb_builder.count('write_fic_pam_preinst "$package_root"') == 1,
         "Debian-family daemon packages do not stop services before payload replacement",
     )
     require(

@@ -48,6 +48,12 @@ public:
         return false;
     }
 
+    // True only when the manager's physical ownership grammar embeds the
+    // journal mutation id. Policy code must not require bindJournalMutationId()
+    // from legacy/profile-selection managers or test doubles that do not own
+    // such an artifact.
+    virtual bool journalBindsPhysicalOwnership() const { return false; }
+
     // Binds the durable journal identity to a physical FIC-owned artifact.
     // The default implementation rejects the operation; only managers whose
     // on-disk grammar carries a mutation id override it.

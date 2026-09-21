@@ -906,22 +906,22 @@ void writeManagedSlotFixture(const TestTree& tree) {
         tree.root / "pam.d/fic-faillock-preauth",
         "#@FIC_PAM_SLOT_NEUTRAL version=1 "
         "capability=enable_authentication_lockout slot=preauth\n"
-        "auth optional pam_permit.so\n");
+        "auth optional pam_deny.so\n");
     TestTree::writeFile(
         tree.root / "pam.d/fic-faillock-authfail",
         "#@FIC_PAM_SLOT_NEUTRAL version=1 "
         "capability=enable_authentication_lockout slot=authfail\n"
-        "auth optional pam_permit.so\n");
+        "auth optional pam_deny.so\n");
     TestTree::writeFile(
         tree.root / "pam.d/fic-faillock-authsucc",
         "#@FIC_PAM_SLOT_NEUTRAL version=1 "
         "capability=enable_authentication_lockout slot=authsucc\n"
-        "auth optional pam_permit.so\n");
+        "auth optional pam_deny.so\n");
     TestTree::writeFile(
         tree.root / "pam.d/fic-faillock-account",
         "#@FIC_PAM_SLOT_NEUTRAL version=1 "
         "capability=enable_authentication_lockout slot=account\n"
-        "account optional pam_permit.so\n");
+        "account optional pam_deny.so\n");
 }
 
 fic::platform::PamPlatformConfig managedSlotPlatform(const TestTree& tree) {
@@ -1017,7 +1017,7 @@ void testManagedSlotOwnershipAndCrashRelease(const TestTree& tree) {
         tree.root / "pam.d/fic-faillock-preauth",
         "#@FIC_PAM_SLOT_NEUTRAL version=1 "
         "capability=enable_authentication_lockout slot=preauth\n"
-        "auth optional pam_permit.so\n");
+        "auth optional pam_deny.so\n");
     require(!manager.inspect(status, error) &&
                 status.state ==
                     fic::identity::pam::PamTopologyState::Broken,
@@ -1028,6 +1028,68 @@ void testManagedSlotOwnershipAndCrashRelease(const TestTree& tree) {
                 status.state ==
                     fic::identity::pam::PamTopologyState::Disabled,
             "crash-partial release did not restore neutral slots");
+    resetTree(tree);
+}
+
+void testManagedSlotFailingCurrentWriteIsCompensated(const TestTree& tree) {
+    resetTree(tree);
+    writeManagedSlotFixture(tree);
+    auto platform = managedSlotPlatform(tree);
+    auto resolver = fakeResolver(tree);
+    int calls = 0;
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        managedSlotOptions(tree, calls));
+    std::string error;
+    require(manager.bindJournalMutationId(88, error), error);
+
+    const std::string failingPath =
+        (tree.root / "pam.d/fic-faillock-authfail").string();
+    bool failureInjected = false;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [failingPath, &failureInjected](const std::string& path) {
+            if (!failureInjected && path == failingPath) {
+                failureInjected = true;
+                return false;
+            }
+            return true;
+        });
+    const bool enabled = manager.enableStrategy(
+        PamFaillockStrategy::PreauthRequired, error);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+
+    require(failureInjected && !enabled,
+            "injected post-install failure was not exercised");
+    fic::identity::pam::PamTopologyStatus status;
+    require(manager.inspect(status, error) &&
+                status.state ==
+                    fic::identity::pam::PamTopologyState::Disabled,
+            "failing current slot was not compensated back to neutral");
+    resetTree(tree);
+}
+
+void testLegacyPasswordProfileMutationIsObservationOnly(
+    const TestTree& tree) {
+    resetTree(tree);
+    auto platform = tree.platform();
+    auto quality = platform.capabilities.front();
+    quality.capability = fic::platform::PamCapability::PasswordQuality;
+    quality.supportedFaillockStrategies.clear();
+    quality.strategyActivations.clear();
+    quality.activationIdentifiers = {"fic-pwquality"};
+    FakePamAuthUpdate fake;
+    auto resolver = fakeResolver(tree);
+    PamAuthUpdateTopologyManager manager(
+        platform, quality, {"common-password"}, resolver,
+        makeOptions(tree, fake));
+    std::string error;
+    require(!manager.canEnable(error) &&
+                error.find("observation-only") != std::string::npos,
+            "legacy password profile activation was still writable");
+    TestTree::writeFile(
+        tree.stateDir() / "password", "Module: fic-pwquality\n");
+    require(!manager.disable(error) && fake.calls == 0,
+            "legacy password profile was destructively released");
     resetTree(tree);
 }
 
@@ -1080,6 +1142,8 @@ int main() {
         testPartialProfileSelectionIsBroken(tree);
         testMixedProfileSelectionIsBrokenAndNotReleased(tree);
         testManagedSlotOwnershipAndCrashRelease(tree);
+        testManagedSlotFailingCurrentWriteIsCompensated(tree);
+        testLegacyPasswordProfileMutationIsObservationOnly(tree);
         testManagedSlotMalformedMarkerFailsClosed(tree);
         testSelectedButIneffectiveIsBroken(tree);
         testSelectionStrategyMismatchIsBroken(tree);

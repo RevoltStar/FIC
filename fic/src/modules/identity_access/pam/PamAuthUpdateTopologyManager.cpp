@@ -76,7 +76,10 @@ std::string neutralManagedSlot(const ManagedFaillockSlotSpec& slot) {
     return "#@FIC_PAM_SLOT_NEUTRAL version=1 "
            "capability=enable_authentication_lockout slot=" +
         std::string(slot.name) + "\n" +
-        (account ? "account" : "auth") + " optional pam_permit.so\n";
+        // Keep one stack element so pam-auth-update numeric jumps retain the
+        // shape proven by the Docker diagnostic, but make the degenerate
+        // "hook is the only module" case fail closed instead of authorizing.
+        (account ? "account" : "auth") + " optional pam_deny.so\n";
 }
 
 bool strategyUsesSlot(
@@ -341,6 +344,10 @@ PamAuthUpdateTopologyManager::managedFaillockSlotPaths() const {
     return paths;
 }
 
+bool PamAuthUpdateTopologyManager::journalBindsPhysicalOwnership() const {
+    return usesManagedFaillockSlots();
+}
+
 bool PamAuthUpdateTopologyManager::bindJournalMutationId(
     std::uint64_t mutationId, std::string& error) {
     if (mutationId == 0) {
@@ -562,7 +569,12 @@ bool PamAuthUpdateTopologyManager::writeManagedFaillockSlots(
                 },
                 error)) {
             std::string rollbackError;
-            for (std::size_t index = committed; index > 0; --index) {
+            // mutate() may return false after the atomic rename was installed
+            // (for example a durability/post-install failure) while marking
+            // the current snapshot MutationCommitted. Always include the
+            // failing snapshot in compensation; rollback() is a no-op when it
+            // never committed.
+            for (std::size_t index = committed + 1; index > 0; --index) {
                 std::string oneError;
                 if (!PamConfigFileTransaction::rollback(
                         snapshots[index - 1], oneError)) {
@@ -1011,6 +1023,13 @@ bool PamAuthUpdateTopologyManager::canEnable(std::string& error) const {
         error = "PAM capability has no pam-auth-update activation recipe";
         return false;
     }
+    if (capability_.capability !=
+        fic::platform::PamCapability::AuthenticationLockout) {
+        error =
+            "legacy pam-auth-update profile activation is observation-only: "
+            "profile selection does not prove causal FIC ownership";
+        return false;
+    }
     std::filesystem::path executable;
     return resolveExecutable(executable, error);
 }
@@ -1073,6 +1092,18 @@ bool PamAuthUpdateTopologyManager::disable(std::string& error) {
 
     Ownership ownership = Ownership::NoFicProfiles;
     if (!detectOwnership(ownership, error)) return false;
+
+    if (capability_.capability !=
+        fic::platform::PamCapability::AuthenticationLockout) {
+        if (ownership == Ownership::NoFicProfiles) {
+            error.clear();
+            return true;
+        }
+        error =
+            "legacy pam-auth-update profile release is disabled: profile "
+            "selection does not prove causal FIC ownership";
+        return false;
+    }
 
     switch (ownership) {
     case Ownership::NoFicProfiles:

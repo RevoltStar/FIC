@@ -50,6 +50,7 @@ public:
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
     bool confirmDurable(std::string& error) const override;
+    bool journalBindsPhysicalOwnership() const override;
     bool bindJournalMutationId(
         std::uint64_t mutationId, std::string& error) override;
 

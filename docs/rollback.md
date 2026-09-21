@@ -1009,10 +1009,14 @@ closed. Только после этого применяется текущее
 
 Rollback сверяет payload с текущим platform profile и отказывается от
 ownership-domain mismatch. Структурный drift effective topology сам по себе не
-даёт права угадывать ownership. Для legacy `PamAuthUpdate` partial/mixed
-комбинация известных FIC profiles остаётся invalid и для apply, и для rollback:
-profile identifier не является причинным доказательством, поэтому release
-fail-closed. Debian/Ubuntu AuthenticationLockout использует отдельную модель:
+даёт права угадывать ownership. Для legacy `PamAuthUpdate` даже exact
+`fic-pwquality` / `fic-pwhistory`, а также partial/mixed комбинации известных
+FIC profiles не являются причинным доказательством: old apply мог увидеть
+selection, созданную другим actor после `Prepared`, и ошибочно принять её за
+AFTER. Поэтому PasswordQuality/PasswordHistory profile backend временно
+observation-only: он не создаёт новую topology selection и automatic rollback
+не удаляет selected profile. Debian/Ubuntu AuthenticationLockout использует
+отдельную модель:
 permanent pam-auth-update hooks являются инфраструктурой, а rollback
 нейтрализует только strict FIC slot markers с exact journal mutation id. Crash-
 partial subset допускается к release только при совпадении id; malformed/wrong

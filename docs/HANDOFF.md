@@ -2,13 +2,17 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `b11a23308c58aa0650870f2cb137bbe45179b0b1`.
-- Изменения текущей задачи не закоммичены.
+- Ветка `main`, base для follow-up:
+  `626cee143920efdf590238053888cab27acc3e01`.
+- Follow-up исправляет safety gaps первого managed-slot коммита.
 
 ## Current task
 
-- Применён PAM ownership patch: Debian/Ubuntu AuthenticationLockout переводится
-  на permanent `pam-auth-update` hooks и FIC-owned journal-bound slots.
+- Follow-up к managed-slot commit `626cee143920efdf590238053888cab27acc3e01`:
+  закрыть crash compensation/recovery, upgrade legacy-domain и оставшиеся
+  profile-selection causal-ownership gaps.
+- Исправлена совместимая с nlohmann-json 3.11.2/3.11.3 сериализация optional
+  PAM strategy provenance: string при наличии значения, JSON `null` иначе.
 
 ## Accepted architecture / invariants
 
@@ -18,8 +22,15 @@
   только strict `/etc/pam.d/fic-faillock-*` slots с exact mutation id.
 - Rollback нейтрализует active или crash-partial slots только при совпадении
   journal mutation id. Malformed, mixed и wrong-id state остаётся fail-closed.
-- Legacy ambiguous partial/mixed `PamAuthUpdate` selection не освобождается по
+- Legacy exact/partial/mixed `PamAuthUpdate` selection не освобождается по
   одному лишь profile name.
+- PasswordQuality/PasswordHistory legacy profile backend временно
+  observation-only: новая topology mutation и destructive rollback запрещены
+  до отдельной доказанной password-slot модели.
+- Neutral faillock slot использует `optional pam_deny.so`, а не `pam_permit`,
+  чтобы degenerate stack был fail-closed.
+- Upgrade с legacy selected FIC PAM profiles блокируется в `preinst`; automatic
+  adoption/migration запрещена как причинно недоказуемая.
 
 ## Completed
 
@@ -39,6 +50,33 @@
 - `docs/pam-owned-faillock-slots.md`, `docs/rollback.md`.
 
 ## Validation
+
+### Follow-up review / patch generation
+
+- Код `626cee143920efdf590238053888cab27acc3e01` повторно сверён по GitHub.
+- Исправлены: missing current-snapshot compensation, policy-level
+  crash-partial Prepared recovery, permissive neutral `pam_permit`, unsafe
+  legacy password-profile release и upgrade-domain mismatch.
+- Follow-up patch проходит синтаксический `git apply --stat`; полного checkout
+  и build/CTest в среде генерации patch нет, поэтому PASS сборки для follow-up
+  не заявляется.
+
+### Validation после применения follow-up
+
+- `pam_auth_update_topology_tests` build + CTest — успешно.
+- `pam_packaging_static_checks` и `platform_profile_static_checks` — успешно.
+- Direct `PamPackagingChecks.py`, platform `static_checks.py` и `bash -n` для
+  Debian builder — успешно.
+- Targets `mutation_journal_tests`, `pam_capability_activation_policy_tests`,
+  `rollback_executor_tests` и `fic` — успешно собраны после явной сериализации
+  optional strategy fields.
+- `mutation_journal_tests` — успешно. Два follow-up tests пока падают уже на
+  behavioral assertions: `rollback_executor_tests` (`external equivalent PAM
+  topology must remain untouched`) и `pam_capability_activation_policy_tests`
+  (`journal-bound crash-partial Prepared was not compensated/reapplied`).
+- `git diff --check` — успешно.
+
+### Validation, зафиксированная в `626cee...`
 
 - Fresh configure Ubuntu 24.04 — успешно.
 - `pam_auth_update_topology_tests` build + CTest — успешно.

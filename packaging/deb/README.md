@@ -143,74 +143,52 @@ fails the maintainer-script action.
 
 ## PAM integration
 
-The Debian and Ubuntu `fic` package physically owns three declarations under
-`/usr/share/pam-configs/`. They are ordinary package data, not conffiles, and
-all have `Default: no`. Package installation and upgrade call
-`pam-auth-update --package` so the operating system can regenerate its managed
-stacks without enabling an FIC profile or overwriting a locally modified stack.
-The removal path unregisters the profiles before their declarations disappear.
-Maintainer scripts never use `--enable` or `--force`, and upgrades do not reset
-the administrator's selection.
+The Debian and Ubuntu `fic` package ships ten declarations under
+`/usr/share/pam-configs/`: four legacy faillock profiles, `fic-pwquality`,
+`fic-pwhistory`, and four permanent `fic-faillock-hook-*` integration
+profiles. The declarations are ordinary package data, not conffiles. The
+package also owns four `/etc/pam.d/fic-faillock-*` conffile slots.
 
-The capability activation policies use the following native recipes:
+`pam-auth-update` remains the owner of generated `common-*`. On configure the
+maintainer script runs `pam-auth-update --package` and explicitly enables only
+the four permanent hook profiles. It never uses `--force`. Runtime policy
+enable/disable does not own those hook selections: AuthenticationLockout owns
+only strict marker blocks inside the four slot files.
 
-```bash
-# preauth_required strategy (FIC default):
-enable_authentication_lockout: pam-auth-update --disable <other FIC faillock profiles> --enable fic-faillock-preauth-required fic-faillock-authfail
-# preauth_requisite strategy:
-enable_authentication_lockout: pam-auth-update --disable <other FIC faillock profiles> --enable fic-faillock-notify fic-faillock-authfail
-# authsucc strategy (no pam_faillock account phase):
-enable_authentication_lockout: permanent fic-faillock-hook-* profiles + journal-bound /etc/pam.d/fic-faillock-* slots
-enable_password_history:       pam-auth-update --enable fic-pwhistory
-enable_password_quality:       pam-auth-update --enable pwquality
+The hook topology is:
+
+```text
+fic-faillock-hook-preauth  -> /etc/pam.d/fic-faillock-preauth
+fic-faillock-hook-authfail -> /etc/pam.d/fic-faillock-authfail
+fic-faillock-hook-authsucc -> /etc/pam.d/fic-faillock-authsucc
+fic-faillock-hook-account  -> /etc/pam.d/fic-faillock-account
 ```
 
-Faillock is compositional: the strategy value of
-`enable_authentication_lockout` selects exactly one faillock profile set, and
-a strategy change disables every other FIC faillock profile and enables the
-requested set in one `pam-auth-update` invocation
-(`pam-auth-update --disable ... --enable ...`), wrapped into a transaction
-that snapshots `/var/lib/pam` and the generated `common-*` files, re-verifies
-the exact requested strategy for every configured service, and restores the
-snapshot when application or verification fails (a failed rollback is
-reported as CRITICAL).
-The physical profiles are split because `preauth`/account, `authfail` and
-`authsucc` require different `pam-auth-update` priorities and placement in
-the generated stacks. In the generated `common-auth` the Primary block is
-emitted in descending priority order and every primary credential provider
-jumps on success past the remaining primary lines into `pam_permit`-style
-continuation after `pam_deny`; therefore:
+An active slot carries the exact journal mutation id and strategy. A neutral
+slot contains one `optional pam_deny.so`: this preserves the one-element slot
+shape used when `pam-auth-update` calculates numeric jumps, while a degenerate
+stack containing only the hook fails closed. A strategy transition rewrites
+only the FIC-owned slots; `common-*` is never directly edited by the daemon.
 
-- `fic-faillock-notify` / `fic-faillock-preauth-required` (Priority 1025,
-  Primary) run before all credential providers: preauth_requisite stops a
-  locked user before the password prompt, preauth_required defers the denial
-  to the account phase;
-- `fic-faillock-authfail` (Priority 1, Primary, `[default=die]`) is the last
-  Primary line, so it runs only after every credential provider has failed;
-- `fic-faillock-authsucc` (Priority 1025, **Additional**, `required`) runs
-  after `pam_permit`, so a successful primary provider always reaches it: a
-  locked user is denied there, a normal login resets the tally, and
-  downstream Additional modules such as `pam_gnome_keyring` still run.
-  A Primary authsucc would be jumped over by successful primary providers
-  and must never be used.
+The old `fic-faillock-*` selector profiles are retained in package data only
+for upgrade/removal compatibility. They are not selected by the new runtime.
+Upgrade preinst refuses to unpack the new ownership model if an old FIC PAM
+selection or an active old PAM journal record still exists. Automatic adoption
+is intentionally forbidden because neither the profile name nor an old
+`Prepared`/`Applied` record proves which actor created the selection. The old
+daemon is stopped between two checks; if the second race check refuses the
+upgrade, units that were active are restarted.
 
-The strategy selector profiles (`notify`, `preauth-required`, `authsucc`)
-declare mutual `Conflicts`, so `pam-auth-update` cannot keep two faillock
-strategy selections at once. The shared `fic-faillock-authfail` profile does
-not conflict with them: every strategy recipe enables exactly one selector
-plus `authfail`. The FIC profiles contain only topology and fixed role
-arguments (`preauth`, `authfail`, `authsucc`, `use_authtok`). Policy values
-remain in
-`/etc/security/faillock.conf`; history values use
-`/etc/security/pwhistory.conf` on modern Linux-PAM and the already activated
-`pam_pwhistory.so` rule arguments on Debian 12/Linux-PAM 1.5.2. Activation
-policies invoke verified `pam-auth-update` without a shell and then rebuild
-`PamConfiguration` and require a Structural `PamCapabilityVerifier` result.
-The legacy argv strategy changes only managed arguments on the existing parsed
-rule; it does not create a second provider call.
-The platform composition keeps `pam_pwhistory` configuration separate from
-this external opt-in topology state; changing a history value never invokes
-`pam-auth-update` or claims that an inactive profile is operational.
+PasswordQuality and PasswordHistory are staged separately. Their legacy
+`PamAuthUpdate` backend can inspect and verify an already-effective topology,
+but it does not create a new `fic-pwquality`/`fic-pwhistory` selection and
+automatic rollback does not delete an exact legacy selection. A future
+password-stack ownership model must first prove `Password-Initial` /
+`use_authtok` placement and physical causal ownership. Provider configuration
+files/arguments remain independent from this topology decision.
+
+The full ownership and diagnostic rationale is documented in
+`docs/pam-owned-faillock-slots.md`.
 
 ## Bundled Qt runtime for fic-gui
 

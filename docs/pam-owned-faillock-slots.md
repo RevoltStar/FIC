@@ -38,21 +38,32 @@ They include four package conffiles under `/etc/pam.d`:
 The hook selection is infrastructure and is never policy ownership.  Policy
 enable/disable mutates only the four slots. Active slots contain a strict
 versioned marker with the durable journal mutation id, slot name and faillock
-strategy. Neutral slots contain only the canonical neutral marker and
-`pam_permit.so`.
+strategy. Neutral slots contain the canonical neutral marker and one
+`optional pam_deny.so` rule. Keeping one rule preserves the numeric-jump shape
+validated by the Docker probe, while a degenerate stack containing only a FIC
+hook fails closed instead of authenticating through `pam_permit`.
 
 Rollback binds the journal record id to the manager. It can neutralize a
 crash-partial subset only when every existing active marker has that exact id.
 A malformed marker or a different id is a conflict. An unmarked external
 `pam_faillock` graph is never removed.
 
-This stage intentionally leaves PasswordQuality and PasswordHistory on the
-legacy pam-auth-update backend. The Docker probe validated faillock hook
-placement, not a permanent password-stack hook contract; Password-Initial /
-`use_authtok` composition requires its own proof before migration.
+PasswordQuality and PasswordHistory still use the legacy pam-auth-update
+inspection backend, but **new profile-selection mutation and destructive
+rollback are disabled**. The Docker probe validated faillock hook placement,
+not a permanent password-stack ownership contract; Password-Initial /
+`use_authtok` composition requires its own proof before those activation
+policies can safely mutate topology. An already-effective foreign topology may
+still be verified.
 
-Legacy partial/mixed pam-auth-update selections now fail closed on release.
-The b11a selective-release behavior is not retained.
+Legacy exact, partial and mixed pam-auth-update selections are never treated as
+causal ownership merely from their profile names. Debian/Ubuntu package upgrade
+is blocked before unpacking the new PAM ownership model when an old FIC
+faillock/pwquality/pwhistory profile remains selected **or** an active legacy
+PAM journal record still refers to that identifier domain. The administrator
+must reconcile it with the installed version first. The guard is repeated
+after stopping the old daemon; if that race check refuses the upgrade, services
+that were active before preinst are restarted.
 
 ## ALT p11
 

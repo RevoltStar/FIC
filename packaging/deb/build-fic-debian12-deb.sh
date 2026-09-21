@@ -350,6 +350,110 @@ EOF
 write_common_preinst() {
     local package_root="$1"
 
+
+write_fic_pam_preinst() {
+    local package_root="$1"
+
+    cat > "$package_root/DEBIAN/preinst" <<'EOF'
+#!/bin/sh
+set -e
+
+fic_legacy_pam_selection_present() {
+    for state in /var/lib/pam/auth /var/lib/pam/account \
+        /var/lib/pam/password /var/lib/pam/session \
+        /var/lib/pam/session-noninteractive; do
+        [ -f "$state" ] || continue
+        if grep -Eq '^Module: (fic-faillock-notify|fic-faillock-authfail|fic-faillock-preauth-required|fic-faillock-authsucc|fic-pwquality|fic-pwhistory)$' "$state"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+fic_legacy_pam_journal_present() {
+    journal=/opt/fic/db/mutation-journal.json
+    [ -f "$journal" ] || return 1
+
+    # The journal is written by FIC as nlohmann::json dump(2). Parse one
+    # top-level record object at a time instead of matching unrelated records
+    # together. This check is intentionally read-only and conservative.
+    awk '
+        function evaluate_record() {
+            if (record ~ /"backend": "pam"/ &&
+                record ~ /"status": "(prepared|applied|rollback_failed)"/ &&
+                record ~ /"capability": "enable_(authentication_lockout|password_history|password_quality)"/ &&
+                record ~ /"activation_identifiers": \[/ &&
+                record ~ /"fic-(faillock-notify|faillock-authfail|faillock-preauth-required|faillock-authsucc|pwquality|pwhistory)"/) {
+                found = 1
+            }
+        }
+        /^    \{$/ {
+            in_record = 1
+            record = $0 "\n"
+            next
+        }
+        in_record {
+            record = record $0 "\n"
+        }
+        in_record && /^    \}[,]?$/ {
+            evaluate_record()
+            in_record = 0
+            record = ""
+        }
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$journal"
+}
+
+fic_legacy_pam_state_present() {
+    fic_legacy_pam_selection_present || fic_legacy_pam_journal_present
+}
+
+fic_report_legacy_pam_upgrade_refusal() {
+    cat >&2 <<'MSG'
+FIC upgrade refused: legacy PAM ownership state is still active.
+The new version cannot prove who selected an old fic-* pam-auth-update profile
+and will not adopt or delete that state automatically. Disable/reconcile the
+affected PAM activation policy with the currently installed FIC version, then
+retry the upgrade.
+MSG
+}
+
+if [ "${1:-}" = "upgrade" ] && fic_legacy_pam_state_present; then
+    fic_report_legacy_pam_upgrade_refusal
+    exit 1
+fi
+
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd --system fic
+fi
+
+active_units=""
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    for unit in fic.service fic-device.service fic-notify.service; do
+        if systemctl is-active --quiet "$unit"; then
+            active_units="$active_units $unit"
+            systemctl stop "$unit"
+        fi
+    done
+fi
+
+# Close the race in which the old daemon could persist a legacy selection or
+# journal record after the first check but before it was stopped.
+if [ "${1:-}" = "upgrade" ] && fic_legacy_pam_state_present; then
+    fic_report_legacy_pam_upgrade_refusal
+    for unit in $active_units; do
+        systemctl start "$unit" || true
+    done
+    exit 1
+fi
+
+exit 0
+EOF
+
+    chmod 0755 "$package_root/DEBIAN/preinst"
+}
     cat > "$package_root/DEBIAN/preinst" <<'EOF'
 #!/bin/sh
 set -e
@@ -940,7 +1044,7 @@ build_fic_package() {
         "Free Integrity Control daemon package with runtime data" \
         "fic-session-agent (= ${PACKAGE_VERSION})"
 
-    write_fic_preinst "$package_root"
+    write_fic_pam_preinst "$package_root"
     write_platform_trust_triggers "$package_root" "$FIC_BUILD_DIR/fic"
     write_system_integration_symlink_postinst "$package_root" "fic" "/opt/fic/bin/fic"
     write_system_integration_symlink_prerm "$package_root" "fic" "/opt/fic/bin/fic"

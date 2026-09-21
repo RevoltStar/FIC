@@ -372,12 +372,11 @@ void testPamOwnershipRelease() {
             "external equivalent topology must not be disabled");
     state->manageable = true;
     require(undoPamCapability(options, undo).state ==
-                PamRollbackState::Released,
-            "owned topology must be released");
-    require(state->disableCalls == 1, "native disable must run exactly once");
-    require(undoPamCapability(options, undo).state ==
-                PamRollbackState::AlreadyReleased,
-            "released topology must be idempotent");
+                PamRollbackState::Conflict,
+            "legacy profile-backed password history must not be "
+            "destructively released");
+    require(state->disableCalls == 0,
+            "legacy profile-backed rollback invoked native disable");
     PamRollbackOptions staticOptions;
     staticOptions.platform.scopes = {
         {PamScope::EffectivePasswordStack, {"passwd"}}};
@@ -408,11 +407,12 @@ void testPamOwnershipRelease() {
         "enable_password_quality", PamTopologyKind::PamAuthUpdate,
         {"fic-pwquality"}};
 
-    // Exact FIC marker + matching journal provenance may be released.
+    // Exact profile name + journal record is still not causal provenance.
     require(undoPamCapability(qualityOptions, qualityUndo).state ==
-                PamRollbackState::Released &&
-                qualityState->disableCalls == 1,
-            "FIC-specific pwquality profile must be releasable");
+                PamRollbackState::Conflict &&
+                qualityState->disableCalls == 0,
+            "FIC-specific pwquality profile must fail closed without a "
+            "physical ownership witness");
 
     // ABA regression: the old journal remains, but the FIC marker disappeared
     // and an administrator supplied an equivalent distro topology. Rollback
@@ -465,19 +465,16 @@ void testPamExecutorJournalLifecycle() {
     const MutationId id = recordApplied(policy, resource, undo);
     const RollbackReport report =
         rollbackPolicyBeforeDisable(policy, resource, deps);
-    require(report.status == RollbackStatus::Success &&
-                state->disableCalls == 1,
-            "journal-backed PAM rollback must release owned topology");
+    require(report.status == RollbackStatus::Conflict &&
+                state->disableCalls == 0,
+            "legacy journal-backed PAM profile rollback must fail closed");
     std::string error;
     auto* persisted = DaemonMutationJournal::instance().tryGet(error);
     require(persisted != nullptr, error);
     require(persisted->records().front().id == id &&
-                persisted->records().front().status ==
+                persisted->records().front().status !=
                     MutationStatus::RolledBack,
-            "successful PAM release must close its journal record");
-    require(rollbackPolicyBeforeDisable(policy, resource, deps).status ==
-                RollbackStatus::NothingToDo && state->disableCalls == 1,
-            "repeated PAM disable must not re-run native mutation");
+            "conflicting legacy PAM rollback closed its journal record");
     state->state = fic::identity::pam::PamTopologyState::Enabled;
     state->manageable = false;
     recordApplied(policy, resource, undo);
@@ -488,11 +485,9 @@ void testPamExecutorJournalLifecycle() {
     state->disableSucceeds = false;
     recordApplied(policy, resource, undo);
     require(rollbackPolicyBeforeDisable(policy, resource, deps).status ==
-                RollbackStatus::Failed,
-            "native PAM rollback failure must refuse disable");
-    require(persisted->activeRecords(policy).front().status ==
-                MutationStatus::RollbackFailed,
-            "failed PAM release must retain active provenance");
+                RollbackStatus::Conflict &&
+                state->disableCalls == 0,
+            "legacy PAM profile rollback must refuse native disable");
 }
 
 void testNotEnrolledPolicyKeepsLegacyDisable() {

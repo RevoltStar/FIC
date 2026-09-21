@@ -97,8 +97,12 @@ json serializeUndoAction(const UndoAction& action) {
             ? "pam_auth_update" : "alt_tcb_managed";
         value["activation_identifiers"] = pam->activationIdentifiers;
         value["had_applied_provenance"] = pam->hadAppliedProvenance;
-        value["previous_strategy"] = pam->previousStrategy;
-        value["target_strategy"] = pam->targetStrategy;
+        value["previous_strategy"] = pam->previousStrategy
+            ? nlohmann::json(*pam->previousStrategy)
+            : nlohmann::json(nullptr);
+        value["target_strategy"] = pam->targetStrategy
+            ? nlohmann::json(*pam->targetStrategy)
+            : nlohmann::json(nullptr);
         value["previous_error"] = pam->previousError;
     }
     return value;

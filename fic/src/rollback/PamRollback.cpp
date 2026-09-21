@@ -135,14 +135,14 @@ PamRollbackResult undoPamCapability(
             return {PamRollbackState::AlreadyReleased,
                     "FIC pam-auth-update selection absent"};
         }
-        if (!manager->disable(error))
-            return {PamRollbackState::Failed,
-                    "FIC pam-auth-update release failed: " + error};
-        if (!manager->confirmDurable(error))
-            return {PamRollbackState::Failed,
-                    "PAM release durability unconfirmed: " + error};
-        return {PamRollbackState::Released,
-                "FIC pam-auth-update selection released"};
+        // A profile identifier plus an Applied journal record is still not a
+        // physical causal witness: old versions could promote a race-created
+        // exact selection to Applied without a FIC native mutation. Until
+        // PasswordQuality/PasswordHistory get their own marker/slot ownership,
+        // automatic destructive release is forbidden.
+        return {PamRollbackState::Conflict,
+                "legacy pam-auth-update selection is present but causal "
+                "ownership is not physically proven"};
     }
 
     fic::identity::pam::PamTopologyStatus before;
