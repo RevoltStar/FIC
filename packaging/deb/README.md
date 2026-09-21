@@ -173,6 +173,19 @@ If any of the three units is still active after the bounded stop wait, the
 prerm fails (non-zero exit, diagnostic naming the unit) and the hooks stay
 attached — a stop timeout is a package-removal failure, not permission to
 continue.
+
+Recovery after such a failed removal is dpkg's `postinst abort-remove` path.
+It is an early dedicated branch (not a configure path): it only reloads
+systemd units and restores package-owned enablement and runtime state
+(`enable`/`start` for `fic.service`, `fic-device.service`, `fic-notify.service`
+and the optional udev helper; `start` on an already-active unit is
+idempotent, so a writer that refused to stop keeps running). `fic.service`
+and `fic-device.service` are critical: if they cannot be restored to
+active+enabled, the recovery exits non-zero. `abort-remove` never calls
+`pam-auth-update`, never touches PAM managed slots, the mutation journal or
+its witness, and never stops or restarts a FIC writer. The failed removal
+keeps its non-zero status while the package returns to
+`install ok installed`.
 The full lifecycle invariants, the validator contract, the journal/witness
 state table and the reinstall behavior with preserved conffiles are
 documented in `docs/pam-owned-faillock-slots.md`.

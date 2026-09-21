@@ -2,115 +2,98 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `2be63d7f7963affae1040c1fa44b3eee1ef8b22c`, изменения
+- Ветка `main`, HEAD `411870107ce3d0441b0004683f196c327a03263c`, изменения
   поверх него коммитом не зафиксированы.
 
 ## Current task
 
-- Узкий follow-up hardening Debian/Ubuntu permanent PAM hook lifecycle:
-  строгий stop-proof в `prerm remove`, witness-aware read-only journal
-  proof в pre-attach валидаторе, ужесточение journal identity proof.
+- Debian/Ubuntu packaging follow-up: recovery после failed `prerm remove` —
+  early `postinst abort-remove` path, behavioral/regression тесты,
+  real-systemd harness expectations, документация.
 
 ## Accepted architecture / invariants
 
-- **prerm remove**: `systemctl disable --now` (best-effort) всех FIC
-  сервисов + bounded wait, затем обязательный финальный строгий
-  `systemctl is-active` proof на каждый unit (`fic.service`,
-  `fic-device.service`, `fic-notify.service`) БЕЗ `|| true`. Если unit
-  всё ещё active — diagnostic с именем unit + `exit 1`;
-  `pam-auth-update --package --remove` НЕ вызывается, hooks остаются
-  подключёнными. Timeout остановки = failure удаления пакета, а не
-  разрешение продолжать.
-- **Journal persistent-state proof**: новый read-only API
-  `MutationJournal::validatePersistentStateReadOnly()` — та же
-  witness-aware state table, что и `initializeOrLoad()`, те же security
-  checks, но НОЛЬ файловых мутаций (без bootstrap/witness creation/
-  migration/repair). State table:
-  - J missing + W missing (virgin) → FAIL;
-  - J missing + W valid → FAIL (provenance loss);
-  - J missing + W invalid → FAIL (anomaly);
-  - J valid + W missing → **FAIL CLOSED** (pending migration: runtime
-    принимает это состояние только записью witness; выбранное поведение —
-    fail closed, миграцию завершать нормальным daemon lifecycle, из
-    postinst witness не создаётся);
-  - J valid + W invalid → FAIL (anomaly);
-  - J valid + W valid → строгая загрузка, records доступны для proof.
-- **Journal ownership proof** (active slots): exact mutation id, active
-  status (`Prepared`/`Applied`/`RollbackFailed`; `RolledBack` FAIL),
-  backend=PAM, capability=`enable_authentication_lockout`, topology
-  `PamAuthUpdate`, exact activation domain текущего профиля, exact policy
-  identity (`IDENTITY_ACCESS`/`PAM`/`enable_authentication_lockout`),
-  resource `capability/enable_authentication_lockout` и `targetStrategy`
-  == exact физическая стратегия слотов (`status.activeStrategy`,
-  каноническое имя из `pamFaillockStrategyName`). Плохая стратегия
-  (физическая `preauth_required` vs journal `authsucc`) — FAIL.
-- Валидатор строго read-only: не создаёт/не правит journal и witness,
-  не трогает slots, не запускает pam-auth-update, не делает rollback.
-  Journal/witness логика централизована в `MutationJournal` (parser не
-  дублируется в валидаторе).
-- Production writer journal отвергает wrong policy identity записи, а
-  loader их не загружает — wrong-identity сценарии в тестах покрыты
-  прямыми schema-shaped JSON фикстурами (fail closed на read-only
-  load), не через production `prepareMutation`.
+- **prerm remove** (без изменений): `systemctl disable --now` всех FIC
+  сервисов (best-effort) + bounded wait (10×1s/unit) + финальный строгий
+  `systemctl is-active` proof БЕЗ `|| true`; если unit ещё active —
+  diagnostic + `exit 1`, `pam-auth-update --remove` НЕ вызывается.
+- **Новый `postinst abort-remove`** (пакет `fic`, генератор
+  `write_system_integration_symlink_postinst`): early branch сразу после
+  `set -e`, ДО triggered/configure logic. Контракт:
+  - If `prerm remove` fails before PAM hook detach because a FIC PAM writer
+    remains active, dpkg's `postinst abort-remove` path restores
+    package-managed service enablement/runtime state without touching PAM
+    hooks, PAM managed slots, mutation journal, or journal witness.
+  - `abort-remove` is not a configure path.
+  - systemd-only recovery: `daemon-reload` → enable fic/fic-device/notify +
+    udev helper → start fic/fic-device/notify. `start` на active unit
+    идемпотентен; stop/restart в abort-remove НЕ вызываются никогда.
+  - Critical units: `fic.service`, `fic-device.service` — после recovery
+    должны быть active+enabled, строгий `is-active` proof в конце;
+    иначе `exit 1` с diagnostic. `fic-notify.service` и
+    `fic_get_device_udev_info.service` — best-effort (прежняя optional
+    семантика).
+  - Никогда: pam-auth-update (любой вызов), neutralize/rewrite/repair
+    slots, rollback/discard/mark/migrate journal/witness,
+    ensure-config/check-config/check-db/trust-sync/
+    validate-pam-slots-before-attach как «recovery».
+  - Сам `dpkg --remove fic` остаётся non-zero; пакет возвращается в
+    `install ok installed` (не half-configured).
+- Normal `postinst configure` и `prerm remove` orderings не изменены.
 
 ## Completed
 
-- `fic/src/rollback/MutationJournal.{h,cpp}` — read-only
-  `validatePersistentStateReadOnly()` + контрактные сценарии в
-  `tests/fic/rollback/MutationJournalTests.cpp` (5 новых).
-- `fic/src/modules/identity_access/pam/PamSlotAttachValidator.{h,cpp}` —
-  witness-aware read-only journal proof вместо raw `load()`; policy
-  identity, resource identity и exact `targetStrategy` ==
-  `status.activeStrategy` в ownership proof.
-- `packaging/deb/build-fic-debian12-deb.sh` — финальный is-active proof
-  после bounded wait в prerm remove (unit-имя в диагностике, `exit 1`,
-  без `|| true`).
-- `tests/fic/modules/identity_access/pam/PamSlotAttachValidatorTests.cpp`
-  — новые сценарии: J missing + W valid FAIL, malformed witness FAIL,
-  missing witness (pending migration) FAIL + witness не создан, wrong
-  module/submodule/policy/resource FAIL, wrong targetStrategy FAIL;
-  read-only fingerprint на virgin-FAIL пути.
-- `tests/integration/packaging/PamPackagingChecks.py` — статические
-  проверки prerm stop-proof и порядка daemon start в postinst;
-  поведенческие: prerm timeout path (fake systemctl всегда active +
-  fake sleep → non-zero exit, ни одного pam-auth-update, unit в
-  diagnostic) и postinst configure tail (fake binaries, PATH только из
-  fakes; success: validate → --package → --enable hooks → daemon start;
-  failure validator: non-zero, нет pam-auth-update, нет daemon start).
-- Документация: `docs/pam-owned-faillock-slots.md` (3 invariants + state
-  table + prerm timeout behavior), `packaging/deb/README.md`.
+- `packaging/deb/build-fic-debian12-deb.sh` — early `abort-remove` branch в
+  generated `fic` postinst.
+- `tests/integration/packaging/PamPackagingChecks.py`:
+  - статические проверки abort-remove блока (позиция до stop-loop и
+    configure branch, обязательные ops, запрет pam-auth-update/
+    maintenance/stop/restart/disable);
+  - behavioral Test A: полный generated postinst `abort-remove` на
+    fakes-only PATH — rc 0, только systemctl recovery ops, ни одной
+    configure-path команды;
+  - behavioral Test B: live fic.service (active+disabled, stop/restart
+    всегда fail у fake) → rc 0, порядок daemon-reload → enable → start,
+    is-active proof, финальное active+enabled состояние всех units;
+  - behavioral Test C: start критичного unit невозможен → rc≠0, unit
+    в diagnostic.
+- `fic_pam_systemd_ipc_lifecycle_v4.py` refusal scenario: после failed
+  remove дополнительно проверяет fic/fic-device/fic-notify active+enabled,
+  slots byte-for-byte, journal/witness sha256, `install ok installed`,
+  cleanup RefuseManualStop drop-in + `fic --maintenance wait-daemon 10`.
+- Документация: `docs/pam-owned-faillock-slots.md` (новый раздел
+  «Failed removal recovery (postinst abort-remove)» + invariants),
+  `packaging/deb/README.md`.
 
 ## Changed areas
 
-- `fic/src/rollback/`, `fic/src/modules/identity_access/pam/`;
-- `packaging/deb/` (builder + README);
-- `tests/fic/rollback/`, `tests/fic/modules/identity_access/pam/`,
-  `tests/integration/packaging/PamPackagingChecks.py`;
+- `packaging/deb/build-fic-debian12-deb.sh`, `packaging/deb/README.md`;
+- `tests/integration/packaging/PamPackagingChecks.py`;
+- `fic_pam_systemd_ipc_lifecycle_v4.py` (repo root);
 - `docs/pam-owned-faillock-slots.md`, `docs/HANDOFF.md`.
 
 ## Validation
 
-- `cmake --build build-check -j4` (full) — RC 0, 0 warnings/errors.
-- `ctest --test-dir build-check -R 'pam_slot_attach_validator_tests|
-  mutation_journal_tests|pam_packaging_static_checks'` — 3/3 passed.
-- Полный `ctest --test-dir build-check` — 97/98 passed: 1 pre-existing
-  skip (`command_hash_batch_tests`), 1 pre-existing failure
-  (`passwdqc_config_file_tests` — известное падение окружения,
-  воспроизведено на чистом дереве ранее, к этому diff не относится).
 - `python3 tests/integration/packaging/PamPackagingChecks.py .` — passed
-  (включая новые поведенческие prerm timeout и postinst configure tests).
+  (включая новые A/B/C behavioral abort-remove тесты).
 - `bash -n packaging/deb/build-fic-debian12-deb.sh` — успешно.
+- `ctest -R pam_packaging_static_checks` (build-check) — passed.
 - `git diff --check` — успешно.
+- Real-systemd harness `fic_pam_systemd_ipc_lifecycle_v4.py` (запуск через
+  `sudo -n python3 …`, HEAD == REFERENCE_COMMIT `4118701…`):
+  - debian12 (`/tmp/fic-abort-removal-debian12-sudo.json`): PASS;
+  - debian13, ubuntu2404, ubuntu2604 (`/tmp/fic-abort-removal-rest.json`):
+    PASS;
+  - оба сценария на каждой цели: `real_systemd_remove_reinstall` (реальный
+    daemon IPC state пережил remove/reinstall; stop-before-detach
+    наблюдался) и `prerm_refuses_detach_while_fic_service_alive` (реальный
+    systemd держал fic.service; prerm failed; abort-remove восстановил
+    сервисы и состояние пакета; hooks/slots/journal не тронуты).
 
 ## Remaining
 
-- Real host apply / настоящий `dpkg`/`apt` lifecycle не выполнялись
-  (запрещены validation policy); ordering доказан unit + behavioral
-  tests с fakes. Docker-фикстура install→active→remove→reinstall —
-  отдельная задача.
-- Pre-existing failure `passwdqc_config_file_tests` в окружении —
-  отдельная задача.
-- Migration contract «existing journal + missing witness» задокументирован
-  как fail closed (witness создаёт только daemon lifecycle); если
-  понадобится безопасный maintenance-путь миграции из postinst — это
-  осознанное расширение, сейчас отсутствует.
+- Задача завершена. Изменения не закоммичены (поверх `4118701…`).
+- Infra-заметка (не блокер): в этой среде `docker` в интерактивном shell —
+  alias на rootless podman; системный docker socket требует root. Harness
+  (`subprocess ["docker",…]`) запускать как `sudo -n python3
+  fic_pam_systemd_ipc_lifecycle_v4.py …`.

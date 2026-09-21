@@ -332,6 +332,38 @@ def main() -> int:
             "postinst must not start the FIC daemon before pre-attach slot "
             "validation and hook attach")
 
+    # Lifecycle invariant: `postinst abort-remove` (dpkg's recovery entry
+    # point after a failed `prerm remove`) is an early systemd-only path,
+    # never a configure path: it restores package-managed service
+    # enablement/runtime state and must not touch PAM topology, managed
+    # slots, the mutation journal, the journal witness, or stop/restart a
+    # possibly refusing live writer.
+    abort_pos = fic_postinst.find('"abort-remove"')
+    require(abort_pos >= 0, "Debian postinst has no abort-remove recovery path")
+    abort_exit = fic_postinst.find("exit 0", abort_pos)
+    require(abort_exit > abort_pos,
+            "abort-remove recovery path does not exit before configure logic")
+    abort_block = fic_postinst[abort_pos:abort_exit]
+    require(abort_exit < configure_pos,
+            "abort-remove recovery path must precede the configure branch")
+    stop_loop_pos = fic_postinst.find("systemctl stop")
+    require(stop_loop_pos < 0 or stop_loop_pos > abort_exit,
+            "abort-remove recovery path must precede the generic "
+            "service-stop loop")
+    require("daemon-reload" in abort_block,
+            "abort-remove recovery must reload systemd units")
+    for unit in ("fic.service", "fic-device.service"):
+        require(f"enable {unit}" in abort_block and f"start {unit}" in abort_block,
+                f"abort-remove recovery must re-enable and start {unit}")
+        require(f"is-active --quiet {unit}" in abort_block,
+                f"abort-remove recovery must prove {unit} active")
+    for forbidden in ("pam-auth-update", "validate-pam-slots-before-attach",
+                      "ensure-config", "check-config", "check-db",
+                      "trust-sync", "initialize-db", "systemctl stop",
+                      "systemctl restart", "disable --now"):
+        require(forbidden not in abort_block,
+                f"abort-remove recovery path must not contain: {forbidden}")
+
     # Behavioral proof of the removal invariant: run the generated prerm
     # with fake systemctl/pam-auth-update and verify the actual call order.
     with tempfile.TemporaryDirectory() as tmp:
@@ -548,6 +580,209 @@ def main() -> int:
                 "postinst failure diagnostic must mention pre-attach "
                 "validation: " + refused.stderr.strip())
 
+    # Behavioral proof of the abort-remove recovery invariant: run the full
+    # generated postinst with `abort-remove` against fake binaries and
+    # verify the actual recovery call set/order (daemon-reload → enable →
+    # start) and that nothing from the configure path runs (no PAM
+    # operations, no maintenance commands, no service stop/restart).
+    # Every non-systemd helper (getent, groupadd, mkdir, ...) is a logging
+    # no-op fake, so even a broken early exit can never touch the host.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        package_root = tmp_path / "pkg"
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir(parents=True)
+        (package_root / "DEBIAN").mkdir(parents=True)
+        log = tmp_path / "abort-remove-calls.log"
+        state_dir = tmp_path / "systemd-state"
+        state_dir.mkdir()
+
+        def fake_tool(name: str) -> None:
+            tool = fake_bin / name
+            tool.write_text(
+                "#!/bin/sh\n"
+                f'printf "{name} %s\\n" "$*" >> "$FAKE_LOG"\n'
+                "exit 0\n",
+                encoding="utf-8")
+            tool.chmod(0o755)
+
+        def stateful_systemctl() -> None:
+            # State model (pure shell builtins, works on a fakes-only PATH):
+            # active/enabled markers are files in $FAKE_STATE; stop/restart
+            # always fail (the failed-prerm scenario: a live writer refuses
+            # to stop); start/enable honor FAKE_START_FAILS /
+            # FAKE_ENABLE_FAILS for failure injection.
+            fake = fake_bin / "systemctl"
+            fake.write_text(
+                "#!/bin/sh\n"
+                'printf "systemctl %s\\n" "$*" >> "$FAKE_LOG"\n'
+                "action=$1\n"
+                'for unit in "$@"; do :; done\n'
+                "state=$FAKE_STATE\n"
+                'if [ "$action" = "is-active" ]; then\n'
+                '    if [ -f "$state/active-$unit" ]; then\n'
+                "        exit 0\n"
+                "    fi\n"
+                "    exit 1\n"
+                "fi\n"
+                'if [ "$action" = "start" ]; then\n'
+                '    if [ "$unit" = "$FAKE_START_FAILS" ]; then\n'
+                "        exit 1\n"
+                "    fi\n"
+                '    : > "$state/active-$unit"\n'
+                "    exit 0\n"
+                "fi\n"
+                'if [ "$action" = "stop" ] || [ "$action" = "restart" ]; then\n'
+                "    exit 1\n"
+                "fi\n"
+                'if [ "$action" = "enable" ]; then\n'
+                '    if [ "$unit" = "$FAKE_ENABLE_FAILS" ]; then\n'
+                "        exit 1\n"
+                "    fi\n"
+                '    : > "$state/enabled-$unit"\n'
+                "    exit 0\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8")
+            fake.chmod(0o755)
+
+        def fresh_state(fic_active: bool) -> None:
+            # Post-failed-prerm state: the failed prerm disabled everything
+            # and stopped fic-device/fic-notify; fic.service could not be
+            # stopped, so it is still active (but disabled).
+            for stale in state_dir.glob("*"):
+                stale.unlink()
+            if fic_active:
+                (state_dir / "active-fic.service").write_text("")
+
+        def run_abort() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [str(postinst_path), "abort-remove"],
+                env={"PATH": str(fake_bin), "FAKE_LOG": str(log),
+                     "FAKE_STATE": str(state_dir),
+                     "FAKE_START_FAILS": "", "FAKE_ENABLE_FAILS": ""},
+                text=True, capture_output=True, check=False)
+
+        for name in ("getent", "groupadd", "mkdir", "chown", "find", "ln",
+                     "systemd-tmpfiles", "udevadm", "pam-auth-update",
+                     "fic", "fic-dick"):
+            fake_tool(name)
+        stateful_systemctl()
+
+        generated = subprocess.run(
+            ["bash", "-c",
+             'pkg_root="$1"; '
+             'set -- 0.1.0; '
+             'source "$BUILDER" >/dev/null 2>&1; '
+             'write_system_integration_symlink_postinst "$pkg_root" fic '
+             '"/opt/fic/bin/fic"',
+             "bash", str(package_root)],
+            cwd=root,
+            env={"PATH": "/usr/bin:/bin",
+                 "BUILDER": str(root / "packaging/deb/build-fic-debian12-deb.sh")},
+            text=True,
+            capture_output=True,
+            check=False)
+        postinst_path = package_root / "DEBIAN/postinst"
+        require(generated.returncode == 0 and postinst_path.is_file(),
+                "could not generate Debian postinst for the abort-remove "
+                "behavioral check: " + generated.stderr.strip())
+
+        # Test A: abort-remove must not go through the configure path. All
+        # non-systemd helpers are logging fakes, so any configure-path step
+        # (group setup, /opt/fic mutations, PAM operations, maintenance
+        # commands) would appear in the log even though it would be a no-op.
+        fresh_state(fic_active=True)
+        log.unlink(missing_ok=True)
+        ran = run_abort()
+        require(ran.returncode == 0,
+                "postinst abort-remove must restore the package and exit 0: " +
+                ran.stderr.strip())
+        calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        require(calls and all(line.startswith("systemctl ") for line in calls),
+                "abort-remove reached a non-systemd (configure path) "
+                "command: " + "\n".join(calls))
+        for required in ("systemctl daemon-reload",
+                         "systemctl enable fic.service",
+                         "systemctl enable fic-device.service",
+                         "systemctl enable fic-notify.service",
+                         "systemctl enable fic_get_device_udev_info.service",
+                         "systemctl start fic.service",
+                         "systemctl start fic-device.service",
+                         "systemctl start fic-notify.service"):
+            require(required in calls,
+                    f"abort-remove recovery did not run: {required}")
+        for forbidden in (" stop ", " restart ", "disable",
+                          "pam-auth-update", "ensure-config", "check-config",
+                          "initialize-db", "trust-sync",
+                          "validate-pam-slots-before-attach"):
+            require(not any(forbidden in line for line in calls),
+                    f"abort-remove ran a forbidden operation "
+                    f"({forbidden.strip()}): " + "\n".join(calls))
+
+        # Test B: live fic.service recovery. fic.service is active but
+        # disabled and physically refuses manual stops (fake systemctl
+        # fails any stop/restart); fic-device/fic-notify are inactive and
+        # disabled. Recovery must rely on idempotent enable/start only and
+        # finish with all FIC services active and enabled again.
+        fresh_state(fic_active=True)
+        log.unlink(missing_ok=True)
+        ran = run_abort()
+        require(ran.returncode == 0,
+                "abort-remove must succeed while fic.service refuses to "
+                "stop: " + ran.stderr.strip())
+        calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        require(all(line.startswith("systemctl ") for line in calls),
+                "abort-remove recovery ran non-systemd commands: " +
+                "\n".join(calls))
+        reload_positions = [index for index, line in enumerate(calls)
+                            if line == "systemctl daemon-reload"]
+        enable_positions = [index for index, line in enumerate(calls)
+                            if line.startswith("systemctl enable ")]
+        start_positions = [index for index, line in enumerate(calls)
+                           if line.startswith("systemctl start ")]
+        require(reload_positions and enable_positions and start_positions
+                and max(reload_positions) < min(enable_positions)
+                and max(enable_positions) < min(start_positions),
+                "abort-remove recovery ordering regression "
+                "(daemon-reload → enable → start): " + "\n".join(calls))
+        for unit in ("fic.service", "fic-device.service", "fic-notify.service"):
+            require(f"systemctl start {unit}" in calls,
+                    f"abort-remove did not start {unit}")
+        for unit in ("fic.service", "fic-device.service"):
+            require(f"systemctl is-active --quiet {unit}" in calls,
+                    f"abort-remove did not prove {unit} active")
+        for unit in ("fic.service", "fic-device.service",
+                     "fic-notify.service"):
+            require((state_dir / f"active-{unit}").is_file(),
+                    f"abort-remove did not restore runtime state of {unit}")
+        for unit in ("fic.service", "fic-device.service",
+                     "fic-notify.service", "fic_get_device_udev_info.service"):
+            require((state_dir / f"enabled-{unit}").is_file(),
+                    f"abort-remove did not restore enablement of {unit}")
+
+        # Test C: a critical FIC writer that cannot be started again is a
+        # genuine recovery failure: abort-remove must exit non-zero with a
+        # diagnostic naming the unit instead of pretending success.
+        fresh_state(fic_active=False)
+        broken = fake_bin / "systemctl"
+        broken.write_text(
+            broken.read_text(encoding="utf-8").replace(
+                'for unit in "$@"; do :; done\n',
+                'for unit in "$@"; do :; done\n'
+                "FAKE_START_FAILS=fic-device.service\n"),
+            encoding="utf-8")
+        broken.chmod(0o755)
+        log.unlink(missing_ok=True)
+        failed = run_abort()
+        require(failed.returncode != 0,
+                "abort-remove must fail when a critical FIC writer cannot "
+                "be restored")
+        require("fic-device.service" in failed.stderr,
+                "abort-remove failure diagnostic must name the critical "
+                "unit: " + failed.stderr.strip())
 
     require('if [ "\\$1" = "remove" ]; then' in fic_prerm,
             "PAM profile removal is not limited to package removal")

@@ -627,6 +627,58 @@ write_system_integration_symlink_postinst() {
 #!/bin/sh
 set -e
 
+# Recovery path after a failed \`prerm remove\`. When the pre-removal script
+# aborts (e.g. a live FIC PAM writer refused to stop), dpkg runs
+# \`postinst abort-remove\` to restore the package. This is NOT a configure
+# path: it only restores package-managed service enablement/runtime state
+# and exits before any configure-specific mutation. The permanent PAM hooks
+# were never detached by the failed removal, so PAM topology, managed
+# slots, the mutation journal and the journal witness must stay exactly as
+# the failed removal left them.
+if [ "\${1:-}" = "abort-remove" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload || true
+        # Restore package-owned enablement. The critical units must be
+        # re-enabled; the optional udev helper keeps its existing optional
+        # semantics.
+        if ! systemctl enable fic.service; then
+            echo "FIC: abort-remove could not re-enable fic.service" >&2
+            exit 1
+        fi
+        if ! systemctl enable fic-device.service; then
+            echo "FIC: abort-remove could not re-enable fic-device.service" >&2
+            exit 1
+        fi
+        systemctl enable fic-notify.service || true
+        systemctl enable fic_get_device_udev_info.service || true
+        # Restore runtime state. \`systemctl start\` on an already-active
+        # unit is idempotent. stop/restart are deliberately never used here:
+        # the removal may have failed exactly because a live FIC writer
+        # refuses to stop.
+        if ! systemctl start fic.service; then
+            echo "FIC: abort-remove could not restore fic.service runtime state" >&2
+            exit 1
+        fi
+        if ! systemctl start fic-device.service; then
+            echo "FIC: abort-remove could not restore fic-device.service runtime state" >&2
+            exit 1
+        fi
+        systemctl start fic-notify.service || true
+        # Critical FIC writers must be active again for the package to count
+        # as restored; otherwise the recovery genuinely failed and dpkg must
+        # keep the failure visible.
+        if ! systemctl is-active --quiet fic.service; then
+            echo "FIC: abort-remove recovery left fic.service inactive" >&2
+            exit 1
+        fi
+        if ! systemctl is-active --quiet fic-device.service; then
+            echo "FIC: abort-remove recovery left fic-device.service inactive" >&2
+            exit 1
+        fi
+    fi
+    exit 0
+fi
+
 if [ "\${1:-}" = "triggered" ]; then
     shift
     printf '%s\n' "\$@" |

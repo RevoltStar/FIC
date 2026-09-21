@@ -75,6 +75,13 @@ that were active before preinst are restarted.
 > Hook detach requires positive proof that every FIC PAM writer is inactive;
 > timeout is a package-removal failure, not permission to continue.
 >
+> If `prerm remove` fails before PAM hook detach because a FIC PAM writer
+> remains active, dpkg's `postinst abort-remove` path restores
+> package-managed service enablement/runtime state without touching PAM
+> hooks, PAM managed slots, mutation journal, or journal witness.
+>
+> `abort-remove` is not a configure path.
+>
 > Active slot provenance is accepted only from a read-only witness-aware
 > persistent journal state that the normal daemon lifecycle would also
 > accept.
@@ -100,6 +107,37 @@ the package removal fails. A live daemon could otherwise perform PAM
 mutations or re-activate the hook infrastructure concurrently with the
 profile detach. Upgrade semantics are unchanged: this ordering applies only
 to the `remove` action.
+
+### Failed removal recovery (`postinst abort-remove`)
+
+When `prerm remove` aborts (a FIC PAM writer refused to stop), dpkg invokes
+`postinst abort-remove` to restore the package. This is a dedicated early
+recovery path, handled before any configure-specific logic:
+
+- **Does**: `systemctl daemon-reload`, then restores package-owned
+  enablement (`systemctl enable` for `fic.service`, `fic-device.service`,
+  `fic-notify.service` and the optional `fic_get_device_udev_info.service`
+  helper) and runtime availability (`systemctl start` for `fic.service`,
+  `fic-device.service`, `fic-notify.service`). `systemctl start` on an
+  already-active unit is idempotent, so the live writer that caused the
+  removal failure is simply left running.
+- **Critical units**: `fic.service` and `fic-device.service`. After recovery
+  they must be active and enabled; the path proves this with a strict
+  `systemctl is-active` check per unit and exits non-zero (naming the unit)
+  if restoration is impossible. `fic-notify.service` and the udev helper
+  keep their non-blocking semantics: a failure to restore them is
+  best-effort and does not fail the recovery.
+- **Never does**: run any `pam-auth-update` call (the permanent hooks were
+  never detached by the failed removal), neutralize/rewrite/repair/recreate
+  managed slots, rollback/discard/mark or migrate the mutation journal or
+  its witness, run `ensure-config`, `check-config`, trust sync or
+  `validate-pam-slots-before-attach` as a form of recovery, and never
+  `systemctl stop`/`restart` a FIC writer.
+
+The exit status of the failed removal itself stays non-zero: dpkg keeps the
+package in the `install ok installed` state, with the services, permanent
+hooks, slots and journal provenance exactly as they were before the removal
+attempt.
 
 ### Installation / reinstallation (`postinst configure`)
 
