@@ -498,14 +498,22 @@ void testSelectedProfile() {
                 faillock->activationIdentifiers.empty() &&
                 hasStrategyActivation(
                     fic::platform::PamFaillockStrategy::PreauthRequisite,
-                    {"fic-faillock-notify", "fic-faillock-authfail"}) &&
+                    {"fic-faillock-hook-preauth",
+                     "fic-faillock-hook-authfail",
+                     "fic-faillock-hook-authsucc",
+                     "fic-faillock-hook-account"}) &&
                 hasStrategyActivation(
                     fic::platform::PamFaillockStrategy::PreauthRequired,
-                    {"fic-faillock-preauth-required",
-                     "fic-faillock-authfail"}) &&
+                    {"fic-faillock-hook-preauth",
+                     "fic-faillock-hook-authfail",
+                     "fic-faillock-hook-authsucc",
+                     "fic-faillock-hook-account"}) &&
                 hasStrategyActivation(
                     fic::platform::PamFaillockStrategy::Authsucc,
-                    {"fic-faillock-authsucc", "fic-faillock-authfail"}) &&
+                    {"fic-faillock-hook-preauth",
+                     "fic-faillock-hook-authfail",
+                     "fic-faillock-hook-authsucc",
+                     "fic-faillock-hook-account"}) &&
                 history->activationIdentifiers ==
                     std::vector<std::string>{"fic-pwhistory"} &&
                 quality->activationIdentifiers ==

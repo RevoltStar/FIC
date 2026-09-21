@@ -3,6 +3,7 @@
 
 #include "platform/PlatformProfile.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -23,6 +24,10 @@ struct PamTopologyStatus {
     // nullopt means the topology is not strategy-aware or not enabled.
     std::optional<fic::platform::PamFaillockStrategy> activeStrategy;
     std::string detail;
+    // Physical ownership witness carried by the managed artifact itself.
+    // Empty for legacy/foreign topologies.  A journal Prepared record alone
+    // never populates this field and therefore never proves ownership.
+    std::optional<std::uint64_t> ownershipMutationId;
 };
 
 class PamTopologyManager {
@@ -42,6 +47,12 @@ public:
         error = "PAM topology manager has no durability proof";
         return false;
     }
+
+    // Binds the durable journal identity to a physical FIC-owned artifact.
+    // The default implementation rejects the operation; only managers whose
+    // on-disk grammar carries a mutation id override it.
+    virtual bool bindJournalMutationId(
+        std::uint64_t mutationId, std::string& error);
 
     // Strategy-aware faillock activation. Base implementations reject the
     // operation: only faillock topology managers with declared strategies

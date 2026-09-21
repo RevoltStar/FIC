@@ -6,6 +6,7 @@
 
 #include <fic/core/process/ProcessExecutor.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -49,6 +50,8 @@ public:
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
     bool confirmDurable(std::string& error) const override;
+    bool bindJournalMutationId(
+        std::uint64_t mutationId, std::string& error) override;
 
     bool canEnableStrategy(
         fic::platform::PamFaillockStrategy strategy,
@@ -83,10 +86,30 @@ private:
     std::vector<std::string> services_;
     const fic::platform::PlatformExecutableResolver& executables_;
     PamAuthUpdateTopologyManagerOptions options_;
+    std::optional<std::uint64_t> boundMutationId_;
 
     std::filesystem::path stateDirectory() const;
     std::filesystem::path configDirectory() const;
     std::vector<std::filesystem::path> transactionPaths() const;
+
+    // Debian/Ubuntu AuthenticationLockout uses pam-auth-update only to place
+    // permanent include hooks.  Policy ownership lives in FIC-owned slot
+    // files under /etc/pam.d and is bound to the journal mutation id.
+    bool usesManagedFaillockSlots() const;
+    std::vector<std::filesystem::path> managedFaillockSlotPaths() const;
+    bool inspectManagedFaillockSlots(
+        PamTopologyStatus& status, std::string& error) const;
+    bool canEnableManagedFaillockStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error) const;
+    bool enableManagedFaillockStrategy(
+        fic::platform::PamFaillockStrategy strategy,
+        std::string& error);
+    bool ensureManagedFaillockInfrastructure(std::string& error);
+    bool writeManagedFaillockSlots(
+        std::optional<fic::platform::PamFaillockStrategy> strategy,
+        std::string& error);
+    bool releaseManagedFaillockSlots(std::string& error);
 
     // All faillock activation identifiers declared by this platform, across
     // every supported strategy. Used to reset the profile selection before

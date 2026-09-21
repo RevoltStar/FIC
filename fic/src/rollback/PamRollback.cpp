@@ -2,10 +2,27 @@
 
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 
+#include <set>
+
 namespace fic::rollback {
 namespace {
 
 using fic::identity::pam::PamTopologyState;
+
+bool managedFaillockSlotDomain(const UndoDisablePamCapability& undo) {
+    if (undo.capability != "enable_authentication_lockout" ||
+        undo.topology != PamTopologyKind::PamAuthUpdate) {
+        return false;
+    }
+    static const std::set<std::string> expected{
+        "fic-faillock-hook-preauth",
+        "fic-faillock-hook-authfail",
+        "fic-faillock-hook-authsucc",
+        "fic-faillock-hook-account"};
+    return std::set<std::string>(
+               undo.activationIdentifiers.begin(),
+               undo.activationIdentifiers.end()) == expected;
+}
 
 bool resolve(const PamRollbackOptions& options, const std::string& name,
              const fic::platform::PamCapabilityConfig*& capability,
@@ -28,8 +45,10 @@ bool resolve(const PamRollbackOptions& options, const std::string& name,
 
 } // namespace
 
-PamRollbackResult undoPamCapability(const PamRollbackOptions& options,
-                                     const UndoDisablePamCapability& undo) {
+PamRollbackResult undoPamCapability(
+    const PamRollbackOptions& options,
+    MutationId mutationId,
+    const UndoDisablePamCapability& undo) {
     if (!options.managerFactory)
         return {PamRollbackState::Failed, "PAM manager factory unavailable"};
     const fic::platform::PamCapabilityConfig* capability = nullptr;
@@ -51,7 +70,50 @@ PamRollbackResult undoPamCapability(const PamRollbackOptions& options,
     auto manager = options.managerFactory(*capability, *services, error);
     if (!manager) return {PamRollbackState::Failed, error};
 
-    // pam-auth-update ownership is the exact FIC profile identifier set, not
+    if (managedFaillockSlotDomain(undo)) {
+        if (mutationId == 0 ||
+            !manager->bindJournalMutationId(mutationId, error)) {
+            return {PamRollbackState::Conflict,
+                    "PAM managed-slot rollback has no matching journal id: " +
+                        error};
+        }
+
+        fic::identity::pam::PamTopologyStatus classified;
+        std::string classificationError;
+        const bool classifiedOk =
+            manager->inspect(classified, classificationError);
+        if (classifiedOk &&
+            (classified.state == PamTopologyState::Disabled ||
+             (classified.state == PamTopologyState::Enabled &&
+              !classified.manageable))) {
+            if (!manager->confirmDurable(error))
+                return {PamRollbackState::Failed,
+                        "PAM release durability unconfirmed: " + error};
+            return {PamRollbackState::AlreadyReleased,
+                    "FIC PAM managed slots are neutral"};
+        }
+        if (classifiedOk && classified.ownershipMutationId.has_value() &&
+            *classified.ownershipMutationId != mutationId) {
+            return {PamRollbackState::Conflict,
+                    "FIC PAM managed slots belong to another journal mutation"};
+        }
+
+        // A crash can leave a strict partial set of exact markers. inspect()
+        // correctly classifies that as Broken, but disable() is allowed to
+        // neutralize only exact markers carrying this record id. Malformed
+        // markers or another id are still refused by the manager.
+        if (!manager->disable(error)) {
+            return {PamRollbackState::Conflict,
+                    "FIC PAM managed-slot release refused: " + error};
+        }
+        if (!manager->confirmDurable(error))
+            return {PamRollbackState::Failed,
+                    "PAM release durability unconfirmed: " + error};
+        return {PamRollbackState::Released,
+                "FIC PAM managed slots released"};
+    }
+
+    // Legacy pam-auth-update ownership is still profile-selection based.
     // semantic equality of the generated PAM graph. A structurally ambiguous
     // graph (for example concurrent distro pwquality + fic-pwquality) must not
     // block release of the exact FIC identifiers, and rollback must never
@@ -59,10 +121,14 @@ PamRollbackResult undoPamCapability(const PamRollbackOptions& options,
     if (kind == PamTopologyKind::PamAuthUpdate) {
         fic::identity::pam::PamTopologyStatus classified;
         std::string classificationError;
-        if (manager->inspect(classified, classificationError) &&
-            (classified.state == PamTopologyState::Disabled ||
-             (classified.state == PamTopologyState::Enabled &&
-              !classified.manageable))) {
+        if (!manager->inspect(classified, classificationError)) {
+            return {PamRollbackState::Conflict,
+                    "legacy pam-auth-update ownership is indeterminate: " +
+                        classificationError};
+        }
+        if (classified.state == PamTopologyState::Disabled ||
+            (classified.state == PamTopologyState::Enabled &&
+             !classified.manageable)) {
             if (!manager->confirmDurable(error))
                 return {PamRollbackState::Failed,
                         "PAM release durability unconfirmed: " + error};

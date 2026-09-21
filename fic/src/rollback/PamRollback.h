@@ -22,8 +22,17 @@ struct PamRollbackResult {
     std::string message;
 };
 
-PamRollbackResult undoPamCapability(const PamRollbackOptions& options,
-                                     const UndoDisablePamCapability& undo);
+PamRollbackResult undoPamCapability(
+    const PamRollbackOptions& options,
+    MutationId mutationId,
+    const UndoDisablePamCapability& undo);
+// Compatibility overload for legacy/ALT direct unit tests. Managed-slot
+// rollback requires a non-zero record id and will fail closed through it.
+inline PamRollbackResult undoPamCapability(
+    const PamRollbackOptions& options,
+    const UndoDisablePamCapability& undo) {
+    return undoPamCapability(options, 0, undo);
+}
 PamRollbackResult inspectUnrecordedPamCapability(
     const PamRollbackOptions& options, const std::string& policyName);
 

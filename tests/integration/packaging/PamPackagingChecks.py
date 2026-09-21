@@ -61,6 +61,26 @@ def main() -> int:
             "Priority": "1025",
             "rules": ("required\t\t\tpam_faillock.so authsucc",),
         },
+        "fic-faillock-hook-preauth": {
+            "Name": "FIC permanent pam_faillock preauth hook",
+            "Priority": "100000",
+            "rules": ("include                     fic-faillock-preauth",),
+        },
+        "fic-faillock-hook-authfail": {
+            "Name": "FIC permanent pam_faillock authfail hook",
+            "Priority": "-100000",
+            "rules": ("include                     fic-faillock-authfail",),
+        },
+        "fic-faillock-hook-authsucc": {
+            "Name": "FIC permanent pam_faillock authsucc hook",
+            "Priority": "-100000",
+            "rules": ("include                     fic-faillock-authsucc",),
+        },
+        "fic-faillock-hook-account": {
+            "Name": "FIC permanent pam_faillock account hook",
+            "Priority": "100000",
+            "rules": ("include                     fic-faillock-account",),
+        },
         "fic-pwquality": {
             "Name": "FIC PAM password quality checking",
             "Priority": "1024",
@@ -178,14 +198,26 @@ def main() -> int:
             "Debian fic package does not install PAM profiles")
     require(deb_builder.count('install_fic_pam_profiles "$package_root"') == 1,
             "PAM profiles must be staged only in the Debian fic package")
+    require('install_fic_pam_slots "$package_root"' in fic_package,
+            "Debian fic package does not install PAM managed slots")
+    require(deb_builder.count('install_fic_pam_slots "$package_root"') == 1,
+            "PAM slots must be staged only in the Debian fic package")
     require('"libpam-runtime" "libpam-modules" "libpam-pwquality"' in fic_package,
             "Debian fic package lacks direct PAM dependencies")
     require('package_depends="$(join_depends "$binary_depends" "udev")"' in fic_dick_package,
             "Debian fic-dick package does not compose the udev runtime dependency")
     require('"$package_name" \\\n        "$package_depends" \\' in fic_dick_package,
             "Debian fic-dick control file does not use its composed runtime dependencies")
-    require("DEBIAN/conffiles" not in deb_builder,
-            "package-owned PAM declarations must not be conffiles")
+    require('"$package_root/DEBIAN/conffiles"' in deb_builder,
+            "Debian builder does not protect mutable PAM slots as conffiles")
+    for slot in (
+        "fic-faillock-preauth",
+        "fic-faillock-authfail",
+        "fic-faillock-authsucc",
+        "fic-faillock-account",
+    ):
+        require(f"/etc/pam.d/{slot}" in deb_builder,
+                f"Debian conffiles contract misses PAM slot {slot}")
     require("pam-auth-update --package" in fic_postinst,
             "Debian postinst does not register package profiles")
 
@@ -205,8 +237,26 @@ def main() -> int:
             "CLI/GUI package removal must not unregister fic PAM profiles")
     require("pam-auth-update --force" not in deb_builder,
             "maintainer scripts must not force PAM regeneration")
-    require("pam-auth-update --enable" not in deb_builder,
-            "maintainer scripts must not activate FIC PAM profiles")
+    require("pam-auth-update --enable" in fic_postinst,
+            "Debian postinst does not enable permanent faillock hooks")
+    for hook in (
+        "fic-faillock-hook-preauth",
+        "fic-faillock-hook-authfail",
+        "fic-faillock-hook-authsucc",
+        "fic-faillock-hook-account",
+    ):
+        require(hook in fic_postinst,
+                f"Debian postinst does not enable permanent hook {hook}")
+    for legacy_policy_profile in (
+        "fic-faillock-notify",
+        "fic-faillock-preauth-required",
+        "fic-faillock-authsucc",
+        "fic-pwquality",
+        "fic-pwhistory",
+    ):
+        enable_pos = fic_postinst.find("pam-auth-update --enable")
+        require(legacy_policy_profile not in fic_postinst[enable_pos:],
+                f"postinst must not activate policy-owned legacy profile {legacy_policy_profile}")
 
     for forbidden in ("pam-auth-update", "libpam-runtime", "libpam-modules", "pam-configs/fic-"):
         require(forbidden not in rpm_builder, f"ALT packaging contains Debian PAM integration: {forbidden}")

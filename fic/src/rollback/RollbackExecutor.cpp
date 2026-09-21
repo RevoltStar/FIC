@@ -462,7 +462,7 @@ MutationRollbackOutcome undoMutation(
             outcome.id = record.id;
             outcome.resource = record.resource;
             const PamRollbackResult result =
-                undoPamCapability(pamOptions(deps), *pam);
+                undoPamCapability(pamOptions(deps), record.id, *pam);
             outcome.status = result.state == PamRollbackState::Released
                 ? RollbackStatus::Success
                 : result.state == PamRollbackState::AlreadyReleased

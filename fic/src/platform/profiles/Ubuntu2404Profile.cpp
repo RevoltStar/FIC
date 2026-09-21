@@ -127,13 +127,19 @@ PlatformProfile makeBuildPlatformProfile() {
         PamFaillockStrategy::Authsucc};
     profile.pam.capabilities[0].defaultFaillockStrategy =
         PamFaillockStrategy::PreauthRequired;
+    // Permanent pam-auth-update hooks are infrastructure, not policy
+    // ownership. Every strategy uses the same four hooks; the actual policy
+    // state lives in /etc/pam.d/fic-faillock-* slots and is tagged with the
+    // journal mutation id.
+    const std::vector<std::string> faillockHooks = {
+        "fic-faillock-hook-preauth",
+        "fic-faillock-hook-authfail",
+        "fic-faillock-hook-authsucc",
+        "fic-faillock-hook-account"};
     profile.pam.capabilities[0].strategyActivations = {
-        {PamFaillockStrategy::PreauthRequisite,
-         {"fic-faillock-notify", "fic-faillock-authfail"}},
-        {PamFaillockStrategy::PreauthRequired,
-         {"fic-faillock-preauth-required", "fic-faillock-authfail"}},
-        {PamFaillockStrategy::Authsucc,
-         {"fic-faillock-authsucc", "fic-faillock-authfail"}}
+        {PamFaillockStrategy::PreauthRequisite, faillockHooks},
+        {PamFaillockStrategy::PreauthRequired, faillockHooks},
+        {PamFaillockStrategy::Authsucc, faillockHooks}
     };
     profile.pam.capabilities[1].activationIdentifiers = {"fic-pwquality"};
     profile.pam.capabilities[2].activationIdentifiers = {"fic-pwhistory"};

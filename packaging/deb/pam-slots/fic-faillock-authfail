@@ -1,0 +1,2 @@
+#@FIC_PAM_SLOT_NEUTRAL version=1 capability=enable_authentication_lockout slot=authfail
+auth optional pam_permit.so

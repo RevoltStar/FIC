@@ -707,11 +707,9 @@ void testConflictingStrategiesAcrossServices(const TestTree& tree) {
 }
 
 void testPartialProfileSelectionIsBroken(const TestTree& tree) {
-    // Only one of the two recipe profiles is selected: the selection does
-    // not match any declared recipe and must fail closed for apply/strategy
-    // changes. Release is different: the selected identifier is still an
-    // exact FIC-owned resource and must be removable without touching a
-    // foreign selection.
+    // Only one recipe profile is selected.  A reserved fic-* identifier is
+    // not causal ownership: an administrator can create this state after a
+    // Prepared journal write but before FIC invokes pam-auth-update.
     resetTree(tree);
     TestTree::writeFile(tree.authFile(),
                         strategyContent(PamFaillockStrategy::PreauthRequired,
@@ -736,24 +734,20 @@ void testPartialProfileSelectionIsBroken(const TestTree& tree) {
             "partial selection topology was mutated");
     require(fake.calls == 0, "broken topology invoked pam-auth-update");
 
-    require(manager.disable(error), error);
-    require(fake.calls == 1,
-            "partial FIC selection was not released");
-    require(fake.lastArguments.size() == 2 &&
-                fake.lastArguments.front() == "--disable" &&
-                fake.lastArguments.back() ==
-                    "fic-faillock-preauth-required",
-            "partial release must disable only the selected FIC identifier");
+    require(!manager.disable(error),
+            "partial FIC selection was destructively released");
+    require(fake.calls == 0,
+            "partial selection invoked pam-auth-update during fail-closed release");
     require(readFile(tree.stateDir() / "auth") ==
+                "Module: fic-faillock-preauth-required\n"
                 "Module: admin-profile\n",
-            "partial release removed a foreign pam-auth-update selection");
+            "partial fail-closed release changed pam-auth-update state");
     resetTree(tree);
 }
 
-void testMixedProfileSelectionIsBrokenButReleasable(const TestTree& tree) {
-    // Two mutually exclusive selectors plus the shared authfail profile are
-    // not a valid strategy recipe. They are nevertheless all inside the
-    // journal/platform FIC ownership domain and can be selectively released.
+void testMixedProfileSelectionIsBrokenAndNotReleased(const TestTree& tree) {
+    // A mixed selection is invalid and still does not prove which actor
+    // selected the reserved identifiers. Release must therefore fail closed.
     resetTree(tree);
     TestTree::writeFile(tree.authFile(),
                         strategyContent(PamFaillockStrategy::PreauthRequired,
@@ -781,28 +775,16 @@ void testMixedProfileSelectionIsBrokenButReleasable(const TestTree& tree) {
     require(fake.calls == 0,
             "mixed broken topology invoked pam-auth-update before release");
 
-    require(manager.disable(error), error);
-    require(fake.calls == 1,
-            "mixed FIC selection was not selectively released");
-    require(fake.lastArguments.front() == "--disable" &&
-                fake.lastArguments.size() == 4,
-            "mixed release must contain exactly three selected FIC identifiers");
-    for (const std::string& identifier : {
-             "fic-faillock-preauth-required",
-             "fic-faillock-authsucc",
-             "fic-faillock-authfail"}) {
-        require(std::find(fake.lastArguments.begin(),
-                          fake.lastArguments.end(), identifier) !=
-                    fake.lastArguments.end(),
-                "mixed release omitted selected FIC identifier: " +
-                    identifier);
-    }
-    require(std::find(fake.lastArguments.begin(), fake.lastArguments.end(),
-                      "admin-profile") == fake.lastArguments.end(),
-            "mixed release passed a foreign identifier to pam-auth-update");
+    require(!manager.disable(error),
+            "mixed FIC selection was destructively released");
+    require(fake.calls == 0,
+            "mixed fail-closed release invoked pam-auth-update");
     require(readFile(tree.stateDir() / "auth") ==
+                "Module: fic-faillock-preauth-required\n"
+                "Module: fic-faillock-authsucc\n"
+                "Module: fic-faillock-authfail\n"
                 "Module: admin-profile\n",
-            "mixed release removed a foreign pam-auth-update selection");
+            "mixed fail-closed release changed pam-auth-update state");
     resetTree(tree);
 }
 
@@ -907,6 +889,171 @@ void testDurabilityFailureIsNotAccepted(const TestTree& tree) {
     resetTree(tree);
 }
 
+void writeManagedSlotFixture(const TestTree& tree) {
+    TestTree::writeFile(
+        tree.root / "pam.d/common-auth",
+        "auth include fic-faillock-preauth\n"
+        "auth [success=2 default=ignore] pam_unix.so nullok try_first_pass\n"
+        "auth include fic-faillock-authfail\n"
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "auth include fic-faillock-authsucc\n");
+    TestTree::writeFile(
+        tree.root / "pam.d/common-account",
+        "account include fic-faillock-account\n"
+        "account required pam_unix.so\n");
+    TestTree::writeFile(
+        tree.root / "pam.d/fic-faillock-preauth",
+        "#@FIC_PAM_SLOT_NEUTRAL version=1 "
+        "capability=enable_authentication_lockout slot=preauth\n"
+        "auth optional pam_permit.so\n");
+    TestTree::writeFile(
+        tree.root / "pam.d/fic-faillock-authfail",
+        "#@FIC_PAM_SLOT_NEUTRAL version=1 "
+        "capability=enable_authentication_lockout slot=authfail\n"
+        "auth optional pam_permit.so\n");
+    TestTree::writeFile(
+        tree.root / "pam.d/fic-faillock-authsucc",
+        "#@FIC_PAM_SLOT_NEUTRAL version=1 "
+        "capability=enable_authentication_lockout slot=authsucc\n"
+        "auth optional pam_permit.so\n");
+    TestTree::writeFile(
+        tree.root / "pam.d/fic-faillock-account",
+        "#@FIC_PAM_SLOT_NEUTRAL version=1 "
+        "capability=enable_authentication_lockout slot=account\n"
+        "account optional pam_permit.so\n");
+}
+
+fic::platform::PamPlatformConfig managedSlotPlatform(const TestTree& tree) {
+    auto platform = tree.platform();
+    const std::vector<std::string> hooks = {
+        "fic-faillock-hook-preauth",
+        "fic-faillock-hook-authfail",
+        "fic-faillock-hook-authsucc",
+        "fic-faillock-hook-account"};
+    platform.capabilities.front().strategyActivations = {
+        {PamFaillockStrategy::PreauthRequisite, hooks},
+        {PamFaillockStrategy::PreauthRequired, hooks},
+        {PamFaillockStrategy::Authsucc, hooks}};
+    return platform;
+}
+
+PamAuthUpdateTopologyManagerOptions managedSlotOptions(
+    const TestTree& tree, int& calls) {
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    options.runner = [&tree, &calls](
+        const std::string&,
+        const std::vector<std::string>& arguments,
+        const ProcessOptions&) {
+        ++calls;
+        std::string selected;
+        bool enabled = false;
+        for (const auto& argument : arguments) {
+            if (argument == "--enable") {
+                enabled = true;
+                continue;
+            }
+            if (enabled && argument.rfind("--", 0) != 0)
+                selected += "Module: " + argument + "\n";
+        }
+        TestTree::writeFile(tree.stateDir() / "auth", selected);
+        TestTree::writeFile(tree.stateDir() / "account", selected);
+        ProcessResult result;
+        result.started = true;
+        result.exitCode = 0;
+        return result;
+    };
+    return options;
+}
+
+void testManagedSlotOwnershipAndCrashRelease(const TestTree& tree) {
+    resetTree(tree);
+    writeManagedSlotFixture(tree);
+    auto platform = managedSlotPlatform(tree);
+    auto resolver = fakeResolver(tree);
+    int calls = 0;
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        managedSlotOptions(tree, calls));
+    std::string error;
+    require(manager.bindJournalMutationId(42, error), error);
+
+    fic::identity::pam::PamTopologyStatus status;
+    require(manager.inspect(status, error) &&
+                status.state ==
+                    fic::identity::pam::PamTopologyState::Disabled,
+            "neutral managed slots were not Disabled");
+
+    require(manager.enableStrategy(
+                PamFaillockStrategy::PreauthRequired, error), error);
+    require(calls == 1, "permanent PAM hooks were not enabled");
+    require(manager.inspect(status, error) &&
+                status.state ==
+                    fic::identity::pam::PamTopologyState::Enabled &&
+                status.manageable &&
+                status.activeStrategy ==
+                    PamFaillockStrategy::PreauthRequired &&
+                status.ownershipMutationId ==
+                    std::optional<std::uint64_t>{42},
+            "managed-slot mutation id/strategy was not proven");
+
+    const std::string ownedAuthfail =
+        readFile(tree.root / "pam.d/fic-faillock-authfail");
+    int wrongCalls = 0;
+    PamAuthUpdateTopologyManager wrong(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        managedSlotOptions(tree, wrongCalls));
+    require(wrong.bindJournalMutationId(43, error), error);
+    require(!wrong.disable(error),
+            "wrong journal id released another mutation's slot");
+    require(readFile(tree.root / "pam.d/fic-faillock-authfail") ==
+                ownedAuthfail,
+            "wrong journal id changed FIC-owned slot");
+
+    // Crash-partial release: one slot reached neutral before the process died.
+    TestTree::writeFile(
+        tree.root / "pam.d/fic-faillock-preauth",
+        "#@FIC_PAM_SLOT_NEUTRAL version=1 "
+        "capability=enable_authentication_lockout slot=preauth\n"
+        "auth optional pam_permit.so\n");
+    require(!manager.inspect(status, error) &&
+                status.state ==
+                    fic::identity::pam::PamTopologyState::Broken,
+            "partial slot state was not classified Broken");
+    require(manager.disable(error),
+            "exact crash-partial markers with the journal id were not released");
+    require(manager.inspect(status, error) &&
+                status.state ==
+                    fic::identity::pam::PamTopologyState::Disabled,
+            "crash-partial release did not restore neutral slots");
+    resetTree(tree);
+}
+
+void testManagedSlotMalformedMarkerFailsClosed(const TestTree& tree) {
+    resetTree(tree);
+    writeManagedSlotFixture(tree);
+    TestTree::writeFile(
+        tree.root / "pam.d/fic-faillock-authfail",
+        "#@FIC_PAM_SLOT_BEGIN broken\n"
+        "auth [default=die] pam_faillock.so authfail\n");
+    auto platform = managedSlotPlatform(tree);
+    auto resolver = fakeResolver(tree);
+    int calls = 0;
+    PamAuthUpdateTopologyManager manager(
+        platform, platform.capabilities.front(), {"common-auth"}, resolver,
+        managedSlotOptions(tree, calls));
+    std::string error;
+    require(manager.bindJournalMutationId(9, error), error);
+    require(!manager.disable(error),
+            "malformed FIC PAM slot marker was destructively released");
+    require(calls == 0,
+            "malformed marker unexpectedly invoked pam-auth-update");
+    resetTree(tree);
+}
+
+
 } // namespace
 
 int main() {
@@ -931,7 +1078,9 @@ int main() {
         testUnreadableStateFailsClosed(tree);
         testConflictingStrategiesAcrossServices(tree);
         testPartialProfileSelectionIsBroken(tree);
-        testMixedProfileSelectionIsBrokenButReleasable(tree);
+        testMixedProfileSelectionIsBrokenAndNotReleased(tree);
+        testManagedSlotOwnershipAndCrashRelease(tree);
+        testManagedSlotMalformedMarkerFailsClosed(tree);
         testSelectedButIneffectiveIsBroken(tree);
         testSelectionStrategyMismatchIsBroken(tree);
         testDisableOwnedSelectionsPreservesAdmin(tree);

@@ -198,9 +198,19 @@ bool PamCapabilityActivationPolicy::applyPam(
                     "(fail closed)", logLevel::ERROR);
                 return false;
             }
+            if (capability->topology ==
+                    fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
+                capability->capability ==
+                    fic::platform::PamCapability::AuthenticationLockout &&
+                !manager->bindJournalMutationId(active.front().id, error)) {
+                log("Could not bind PAM journal mutation id: " + error,
+                    logLevel::ERROR);
+                return false;
+            }
         }
     }
 
+    fic::rollback::MutationId mutationId = 0;
     fic::identity::pam::PamTopologyStatus status;
     if (!manager->inspect(status, error)) {
         if (status.state == fic::identity::pam::PamTopologyState::Broken) {
@@ -273,6 +283,8 @@ bool PamCapabilityActivationPolicy::applyPam(
         }
         if (status.state == fic::identity::pam::PamTopologyState::Enabled &&
             status.manageable &&
+            (!status.ownershipMutationId.has_value() ||
+             *status.ownershipMutationId == active.front().id) &&
             (!strategyAware() || status.activeStrategy == recordedTarget)) {
             if (!proveEnabled(true, recordedTarget) ||
                 !journal->setStatus(active.front().id,
@@ -315,7 +327,9 @@ bool PamCapabilityActivationPolicy::applyPam(
 
     if (!active.empty() &&
         (status.state != fic::identity::pam::PamTopologyState::Enabled ||
-         !status.manageable)) {
+         !status.manageable ||
+         (status.ownershipMutationId.has_value() &&
+          *status.ownershipMutationId != active.front().id))) {
         log("Active PAM provenance has no proven owned topology "
             "(fail closed)", logLevel::ERROR);
         return false;
@@ -347,7 +361,6 @@ bool PamCapabilityActivationPolicy::applyPam(
             logLevel::ERROR);
         return false;
     }
-    fic::rollback::MutationId mutationId = 0;
     const bool reused = !active.empty();
     const auto previous = reused ? active.front() : fic::rollback::MutationRecord{};
     if (mutationRequired && mutableTopology) {
@@ -367,6 +380,15 @@ bool PamCapabilityActivationPolicy::applyPam(
         record.undo = {fic::rollback::MutationBackend::Pam, undo};
         if (!journal->prepareMutation(record, mutationId, error)) {
             log("PAM journal prepare failed: " + error, logLevel::ERROR);
+            return false;
+        }
+        if (capability->topology ==
+                fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
+            capability->capability ==
+                fic::platform::PamCapability::AuthenticationLockout &&
+            !manager->bindJournalMutationId(mutationId, error)) {
+            log("Could not bind prepared PAM mutation id: " + error,
+                logLevel::ERROR);
             return false;
         }
     }
@@ -429,7 +451,9 @@ bool PamCapabilityActivationPolicy::applyPam(
             goto mutation_failed;
         }
         if (status.state != fic::identity::pam::PamTopologyState::Enabled ||
-            (strategyAware() && status.activeStrategy != strategy)) {
+            (strategyAware() && status.activeStrategy != strategy) ||
+            (status.ownershipMutationId.has_value() &&
+             *status.ownershipMutationId != mutationId)) {
             log("PAM topology activation succeeded but ownership/state "
                 "verification did not report the requested topology: " +
                     status.detail,

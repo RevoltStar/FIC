@@ -579,6 +579,14 @@ fi
 
 if [ "\${1:-}" = "configure" ]; then
     pam-auth-update --package
+    # These four profiles are permanent integration infrastructure. Policy
+    # enable/disable never owns or deselects them; mutable ownership stays in
+    # the /etc/pam.d/fic-faillock-* conffile slots.
+    pam-auth-update --enable \
+        fic-faillock-hook-preauth \
+        fic-faillock-hook-authfail \
+        fic-faillock-hook-authsucc \
+        fic-faillock-hook-account
 fi
 
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
@@ -658,6 +666,10 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-authfail \
         fic-faillock-preauth-required \
         fic-faillock-authsucc \
+        fic-faillock-hook-preauth \
+        fic-faillock-hook-authfail \
+        fic-faillock-hook-authsucc \
+        fic-faillock-hook-account \
         fic-pwquality \
         fic-pwhistory
 fi
@@ -769,11 +781,33 @@ install_fic_pam_profiles() {
     mkdir -p "$profile_dir"
     for profile in fic-faillock-notify fic-faillock-authfail \
         fic-faillock-preauth-required fic-faillock-authsucc \
+        fic-faillock-hook-preauth fic-faillock-hook-authfail \
+        fic-faillock-hook-authsucc fic-faillock-hook-account \
         fic-pwquality fic-pwhistory; do
         install -m 0644 \
             "$ROOT_DIR/packaging/deb/pam-configs/$profile" \
             "$profile_dir/$profile"
     done
+}
+
+install_fic_pam_slots() {
+    local package_root="$1"
+    local slot
+    local slot_dir="$package_root/etc/pam.d"
+
+    mkdir -p "$slot_dir"
+    for slot in fic-faillock-preauth fic-faillock-authfail \
+        fic-faillock-authsucc fic-faillock-account; do
+        install -m 0644 \
+            "$ROOT_DIR/packaging/deb/pam-slots/$slot" \
+            "$slot_dir/$slot"
+    done
+    cat > "$package_root/DEBIAN/conffiles" <<'EOF'
+/etc/pam.d/fic-faillock-preauth
+/etc/pam.d/fic-faillock-authfail
+/etc/pam.d/fic-faillock-authsucc
+/etc/pam.d/fic-faillock-account
+EOF
 }
 
 build_fic_dick_package() {
@@ -892,6 +926,7 @@ build_fic_package() {
 
     install_cmake_component "$FIC_BUILD_DIR" fic "$package_root"
     install_fic_pam_profiles "$package_root"
+    install_fic_pam_slots "$package_root"
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
 

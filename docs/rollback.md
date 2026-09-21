@@ -1009,11 +1009,15 @@ closed. Только после этого применяется текущее
 
 Rollback сверяет payload с текущим platform profile и отказывается от
 ownership-domain mismatch. Структурный drift effective topology сам по себе не
-запрещает release доказанных FIC resources. Для `PamAuthUpdate` partial/mixed
-комбинация известных FIC profiles остаётся invalid для apply и смены strategy,
-но rollback удаляет только реально выбранные FIC identifiers через
-`pam-auth-update --disable`; внешние selections не передаются утилите. ALT
-использует существующие topology managers и их lock order. `StaticVerifyOnly`
+даёт права угадывать ownership. Для legacy `PamAuthUpdate` partial/mixed
+комбинация известных FIC profiles остаётся invalid и для apply, и для rollback:
+profile identifier не является причинным доказательством, поэтому release
+fail-closed. Debian/Ubuntu AuthenticationLockout использует отдельную модель:
+permanent pam-auth-update hooks являются инфраструктурой, а rollback
+нейтрализует только strict FIC slot markers с exact journal mutation id. Crash-
+partial subset допускается к release только при совпадении id; malformed/wrong
+id — conflict. ALT использует существующие topology managers и их lock order.
+`StaticVerifyOnly`
 никогда не создаёт provenance и не запускает native deactivation. PAM provider
 options (`PamOptionPolicy`, включая
 `faillock.conf`/`pwquality.conf`/`pwhistory.conf`) в этот rollback не входят.

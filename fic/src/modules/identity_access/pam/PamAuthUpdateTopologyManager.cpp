@@ -1,6 +1,7 @@
 #include "modules/identity_access/pam/PamAuthUpdateTopologyManager.h"
 
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
+#include "modules/identity_access/pam/PamConfigFileTransaction.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
@@ -9,6 +10,8 @@
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <chrono>
 #include <cerrno>
 #include <cstring>
@@ -28,6 +31,177 @@ namespace {
 
 constexpr const char* kDefaultStateDirectory = "/var/lib/pam";
 constexpr const char* kDefaultConfigDirectory = "/etc/pam.d";
+
+
+enum class ManagedFaillockSlotRole {
+    Preauth,
+    Authfail,
+    Authsucc,
+    Account
+};
+
+struct ManagedFaillockSlotSpec {
+    ManagedFaillockSlotRole role;
+    const char* name;
+};
+
+constexpr std::array<ManagedFaillockSlotSpec, 4> kManagedFaillockSlots{{
+    {ManagedFaillockSlotRole::Preauth, "preauth"},
+    {ManagedFaillockSlotRole::Authfail, "authfail"},
+    {ManagedFaillockSlotRole::Authsucc, "authsucc"},
+    {ManagedFaillockSlotRole::Account, "account"}
+}};
+
+constexpr std::array<const char*, 4> kManagedFaillockHookIds{{
+    "fic-faillock-hook-preauth",
+    "fic-faillock-hook-authfail",
+    "fic-faillock-hook-authsucc",
+    "fic-faillock-hook-account"
+}};
+
+enum class ManagedSlotState {
+    Neutral,
+    Active,
+    Broken
+};
+
+struct ManagedSlotInspection {
+    ManagedSlotState state = ManagedSlotState::Broken;
+    std::uint64_t mutationId = 0;
+    std::optional<fic::platform::PamFaillockStrategy> strategy;
+};
+
+std::string neutralManagedSlot(const ManagedFaillockSlotSpec& slot) {
+    const bool account = slot.role == ManagedFaillockSlotRole::Account;
+    return "#@FIC_PAM_SLOT_NEUTRAL version=1 "
+           "capability=enable_authentication_lockout slot=" +
+        std::string(slot.name) + "\n" +
+        (account ? "account" : "auth") + " optional pam_permit.so\n";
+}
+
+bool strategyUsesSlot(
+    ManagedFaillockSlotRole role,
+    fic::platform::PamFaillockStrategy strategy) {
+    switch (role) {
+    case ManagedFaillockSlotRole::Preauth:
+    case ManagedFaillockSlotRole::Account:
+        return strategy != fic::platform::PamFaillockStrategy::Authsucc;
+    case ManagedFaillockSlotRole::Authfail:
+        return true;
+    case ManagedFaillockSlotRole::Authsucc:
+        return strategy == fic::platform::PamFaillockStrategy::Authsucc;
+    }
+    return false;
+}
+
+std::string managedSlotRule(
+    ManagedFaillockSlotRole role,
+    fic::platform::PamFaillockStrategy strategy) {
+    switch (role) {
+    case ManagedFaillockSlotRole::Preauth:
+        return std::string("auth ") +
+            (strategy == fic::platform::PamFaillockStrategy::PreauthRequisite
+                ? "requisite" : "required") +
+            " pam_faillock.so preauth";
+    case ManagedFaillockSlotRole::Authfail:
+        return "auth [default=die] pam_faillock.so authfail";
+    case ManagedFaillockSlotRole::Authsucc:
+        return "auth required pam_faillock.so authsucc";
+    case ManagedFaillockSlotRole::Account:
+        return "account required pam_faillock.so";
+    }
+    return {};
+}
+
+std::string activeManagedSlot(
+    const ManagedFaillockSlotSpec& slot,
+    fic::platform::PamFaillockStrategy strategy,
+    std::uint64_t mutationId) {
+    const std::string strategyName =
+        fic::platform::pamFaillockStrategyName(strategy);
+    return "#@FIC_PAM_SLOT_BEGIN version=1 "
+           "capability=enable_authentication_lockout mutation=" +
+        std::to_string(mutationId) + " slot=" + slot.name +
+        " strategy=" + strategyName + "\n" +
+        managedSlotRule(slot.role, strategy) + "\n" +
+        "#@FIC_PAM_SLOT_END capability=enable_authentication_lockout mutation=" +
+        std::to_string(mutationId) + " slot=" + slot.name + "\n";
+}
+
+bool parseMutationId(const std::string& text, std::uint64_t& value) {
+    if (text.empty()) return false;
+    const char* first = text.data();
+    const char* last = first + text.size();
+    const auto result = std::from_chars(first, last, value);
+    return result.ec == std::errc{} && result.ptr == last && value != 0;
+}
+
+bool inspectManagedSlot(
+    const ManagedFaillockSlotSpec& slot,
+    const std::string& content,
+    ManagedSlotInspection& inspection,
+    std::string& error) {
+    inspection = ManagedSlotInspection{};
+    if (content == neutralManagedSlot(slot)) {
+        inspection.state = ManagedSlotState::Neutral;
+        error.clear();
+        return true;
+    }
+
+    const std::string prefix =
+        "#@FIC_PAM_SLOT_BEGIN version=1 "
+        "capability=enable_authentication_lockout mutation=";
+    const std::size_t firstNewline = content.find('\n');
+    if (firstNewline == std::string::npos ||
+        content.compare(0, prefix.size(), prefix) != 0) {
+        error = "malformed FIC PAM managed slot " + std::string(slot.name);
+        return false;
+    }
+    const std::string firstLine = content.substr(0, firstNewline);
+    const std::size_t slotPos = firstLine.find(" slot=", prefix.size());
+    const std::size_t strategyPos =
+        slotPos == std::string::npos
+            ? std::string::npos
+            : firstLine.find(" strategy=", slotPos + 6);
+    if (slotPos == std::string::npos ||
+        strategyPos == std::string::npos) {
+        error = "malformed FIC PAM managed slot marker " +
+            std::string(slot.name);
+        return false;
+    }
+    std::uint64_t mutationId = 0;
+    if (!parseMutationId(
+            firstLine.substr(prefix.size(), slotPos - prefix.size()),
+            mutationId)) {
+        error = "invalid FIC PAM managed slot mutation id";
+        return false;
+    }
+    const std::string markerSlot = firstLine.substr(
+        slotPos + 6, strategyPos - (slotPos + 6));
+    if (markerSlot != slot.name) {
+        error = "FIC PAM managed slot marker names another slot";
+        return false;
+    }
+    const auto strategy = fic::platform::parsePamFaillockStrategy(
+        firstLine.substr(strategyPos + 10));
+    if (!strategy.has_value() ||
+        !strategyUsesSlot(slot.role, *strategy)) {
+        error = "FIC PAM managed slot declares an incompatible strategy";
+        return false;
+    }
+    const std::string expected =
+        activeManagedSlot(slot, *strategy, mutationId);
+    if (content != expected) {
+        error = "modified FIC PAM managed slot body: " +
+            std::string(slot.name);
+        return false;
+    }
+    inspection.state = ManagedSlotState::Active;
+    inspection.mutationId = mutationId;
+    inspection.strategy = strategy;
+    error.clear();
+    return true;
+}
 
 std::string processFailure(const ProcessResult& result) {
     if (!result.error.empty()) {
@@ -119,14 +293,335 @@ PamAuthUpdateTopologyManager::transactionPaths() const {
         "common-auth", "common-account", "common-password",
         "common-session", "common-session-noninteractive"};
     std::vector<std::filesystem::path> paths;
-    paths.reserve(kStateFiles.size() + kConfigFiles.size());
+    paths.reserve(kStateFiles.size() + kConfigFiles.size() +
+                  kManagedFaillockSlots.size());
     for (const std::string& name : kStateFiles) {
         paths.push_back(stateDirectory() / name);
     }
     for (const std::string& name : kConfigFiles) {
         paths.push_back(configDirectory() / name);
     }
+    if (usesManagedFaillockSlots()) {
+        const auto slots = managedFaillockSlotPaths();
+        paths.insert(paths.end(), slots.begin(), slots.end());
+    }
     return paths;
+}
+
+bool PamAuthUpdateTopologyManager::usesManagedFaillockSlots() const {
+    if (capability_.capability !=
+            fic::platform::PamCapability::AuthenticationLockout ||
+        capability_.strategyActivations.empty()) {
+        return false;
+    }
+    const std::set<std::string> expected(
+        kManagedFaillockHookIds.begin(), kManagedFaillockHookIds.end());
+    const std::vector<std::string> domain = knownActivationIdentifiers();
+    if (std::set<std::string>(domain.begin(), domain.end()) != expected) {
+        return false;
+    }
+    return std::all_of(
+        capability_.strategyActivations.begin(),
+        capability_.strategyActivations.end(),
+        [&](const auto& activation) {
+            return std::set<std::string>(
+                       activation.activationIdentifiers.begin(),
+                       activation.activationIdentifiers.end()) == expected;
+        });
+}
+
+std::vector<std::filesystem::path>
+PamAuthUpdateTopologyManager::managedFaillockSlotPaths() const {
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(kManagedFaillockSlots.size());
+    for (const auto& slot : kManagedFaillockSlots) {
+        paths.push_back(
+            configDirectory() / ("fic-faillock-" + std::string(slot.name)));
+    }
+    return paths;
+}
+
+bool PamAuthUpdateTopologyManager::bindJournalMutationId(
+    std::uint64_t mutationId, std::string& error) {
+    if (mutationId == 0) {
+        error = "PAM managed-slot ownership requires a non-zero mutation id";
+        return false;
+    }
+    boundMutationId_ = mutationId;
+    error.clear();
+    return true;
+}
+
+bool PamAuthUpdateTopologyManager::inspectManagedFaillockSlots(
+    PamTopologyStatus& status, std::string& error) const {
+    status = {};
+    std::optional<std::uint64_t> mutationId;
+    std::optional<fic::platform::PamFaillockStrategy> strategy;
+    std::array<ManagedSlotInspection, 4> inspections{};
+
+    for (std::size_t index = 0; index < kManagedFaillockSlots.size(); ++index) {
+        PamConfigFileSnapshot snapshot;
+        const auto path =
+            configDirectory() /
+            ("fic-faillock-" +
+             std::string(kManagedFaillockSlots[index].name));
+        if (!PamConfigFileTransaction::capture(path, snapshot, error) ||
+            !snapshot.existed) {
+            status.state = PamTopologyState::Unavailable;
+            status.detail = error.empty()
+                ? "FIC PAM managed slot is missing: " + path.string()
+                : error;
+            error = status.detail;
+            return false;
+        }
+        if (!inspectManagedSlot(
+                kManagedFaillockSlots[index], snapshot.content,
+                inspections[index], error)) {
+            status.state = PamTopologyState::Broken;
+            status.manageable = true;
+            status.detail = error;
+            return false;
+        }
+        if (inspections[index].state == ManagedSlotState::Active) {
+            if (!mutationId.has_value()) {
+                mutationId = inspections[index].mutationId;
+                strategy = inspections[index].strategy;
+            } else if (*mutationId != inspections[index].mutationId ||
+                       strategy != inspections[index].strategy) {
+                status.state = PamTopologyState::Broken;
+                status.manageable = true;
+                status.detail =
+                    "FIC PAM managed slots contain mixed mutation ids or "
+                    "strategies";
+                error = status.detail;
+                return false;
+            }
+        }
+    }
+
+    if (!mutationId.has_value()) {
+        std::string graphError;
+        const ExternalFaillockGraphState graph =
+            externalFaillockGraphState(graphError);
+        if (graph == ExternalFaillockGraphState::Error) {
+            status.state = PamTopologyState::Broken;
+            status.manageable = false;
+            status.detail = graphError;
+            error = graphError;
+            return false;
+        }
+        if (graph == ExternalFaillockGraphState::Present) {
+            status.state = PamTopologyState::Enabled;
+            status.manageable = false;
+            status.detail =
+                "external pam_faillock topology exists while all FIC "
+                "managed slots are neutral";
+        } else {
+            status.state = PamTopologyState::Disabled;
+            status.manageable = false;
+        }
+        error.clear();
+        return true;
+    }
+
+    for (std::size_t index = 0; index < kManagedFaillockSlots.size(); ++index) {
+        const bool expectedActive = strategyUsesSlot(
+            kManagedFaillockSlots[index].role, *strategy);
+        const bool active =
+            inspections[index].state == ManagedSlotState::Active;
+        if (active != expectedActive) {
+            status.state = PamTopologyState::Broken;
+            status.manageable = true;
+            status.detail =
+                "FIC PAM managed slots form a partial strategy topology";
+            error = status.detail;
+            return false;
+        }
+    }
+
+    status.state = PamTopologyState::Enabled;
+    status.manageable = true;
+    status.activeStrategy = strategy;
+    status.ownershipMutationId = mutationId;
+    error.clear();
+    return true;
+}
+
+bool PamAuthUpdateTopologyManager::canEnableManagedFaillockStrategy(
+    fic::platform::PamFaillockStrategy strategy,
+    std::string& error) const {
+    if (!fic::platform::supportsPamFaillockStrategy(capability_, strategy)) {
+        error = "pam_faillock strategy is not supported by this platform";
+        return false;
+    }
+    std::filesystem::path executable;
+    if (!resolveExecutable(executable, error)) return false;
+
+    PamTopologyStatus status;
+    if (!inspectManagedFaillockSlots(status, error)) return false;
+    if (status.state == PamTopologyState::Enabled && !status.manageable) {
+        error =
+            "external pam_faillock topology exists; FIC will not take "
+            "ownership";
+        return false;
+    }
+    if (status.ownershipMutationId.has_value() &&
+        boundMutationId_.has_value() &&
+        *status.ownershipMutationId != *boundMutationId_) {
+        error =
+            "FIC PAM managed slots belong to another journal mutation";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool PamAuthUpdateTopologyManager::ensureManagedFaillockInfrastructure(
+    std::string& error) {
+    std::vector<std::string> arguments{"--enable"};
+    const std::vector<std::string> identifiers =
+        knownActivationIdentifiers();
+    arguments.insert(
+        arguments.end(), identifiers.begin(), identifiers.end());
+    if (!runPamAuthUpdate(arguments, error)) return false;
+
+    std::set<std::string> enabled;
+    if (!enabledStateIdentifiers(enabled, error)) return false;
+    for (const auto& identifier : identifiers) {
+        if (enabled.count(identifier) == 0) {
+            error =
+                "permanent FIC PAM hook was not selected by pam-auth-update: " +
+                identifier;
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool PamAuthUpdateTopologyManager::writeManagedFaillockSlots(
+    std::optional<fic::platform::PamFaillockStrategy> strategy,
+    std::string& error) {
+    if (!boundMutationId_.has_value()) {
+        error =
+            "FIC PAM managed-slot mutation has no bound journal mutation id";
+        return false;
+    }
+
+    std::array<PamConfigFileSnapshot, 4> snapshots{};
+    std::array<std::string, 4> desired{};
+    for (std::size_t index = 0; index < kManagedFaillockSlots.size(); ++index) {
+        const auto& slot = kManagedFaillockSlots[index];
+        const auto path =
+            configDirectory() /
+            ("fic-faillock-" + std::string(slot.name));
+        if (!PamConfigFileTransaction::capture(
+                path, snapshots[index], error) ||
+            !snapshots[index].existed) {
+            if (error.empty()) {
+                error = "FIC PAM managed slot is missing: " + path.string();
+            }
+            return false;
+        }
+
+        ManagedSlotInspection inspection;
+        if (!inspectManagedSlot(
+                slot, snapshots[index].content, inspection, error)) {
+            return false;
+        }
+        if (inspection.state == ManagedSlotState::Active &&
+            inspection.mutationId != *boundMutationId_) {
+            error =
+                "refusing to overwrite FIC PAM slot owned by journal "
+                "mutation " +
+                std::to_string(inspection.mutationId);
+            return false;
+        }
+
+        desired[index] =
+            strategy.has_value() && strategyUsesSlot(slot.role, *strategy)
+            ? activeManagedSlot(
+                  slot, *strategy, *boundMutationId_)
+            : neutralManagedSlot(slot);
+    }
+
+    std::size_t committed = 0;
+    for (; committed < snapshots.size(); ++committed) {
+        if (!PamConfigFileTransaction::mutate(
+                snapshots[committed],
+                [&](const PamConfigFileTransaction::Writer& writer,
+                    std::string& mutationError) {
+                    AtomicWriteOptions options;
+                    options.createIfMissing = false;
+                    options.rejectSymlink = true;
+                    options.metadataPolicy =
+                        FileMetadataPolicy::PreserveExisting;
+                    return writer(
+                        snapshots[committed].path.string(),
+                        desired[committed], options, &mutationError);
+                },
+                error)) {
+            std::string rollbackError;
+            for (std::size_t index = committed; index > 0; --index) {
+                std::string oneError;
+                if (!PamConfigFileTransaction::rollback(
+                        snapshots[index - 1], oneError)) {
+                    if (!rollbackError.empty()) rollbackError += "; ";
+                    rollbackError += oneError;
+                }
+            }
+            if (!rollbackError.empty()) {
+                error +=
+                    "; CRITICAL: PAM managed-slot rollback failed: " +
+                    rollbackError;
+            }
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool PamAuthUpdateTopologyManager::enableManagedFaillockStrategy(
+    fic::platform::PamFaillockStrategy strategy,
+    std::string& error) {
+    if (!boundMutationId_.has_value()) {
+        error =
+            "FIC PAM managed-slot activation has no bound journal mutation id";
+        return false;
+    }
+    if (!canEnableManagedFaillockStrategy(strategy, error) ||
+        !ensureManagedFaillockInfrastructure(error) ||
+        !writeManagedFaillockSlots(strategy, error)) {
+        return false;
+    }
+
+    PamTopologyStatus after;
+    if (!inspectManagedFaillockSlots(after, error) ||
+        after.state != PamTopologyState::Enabled ||
+        !after.manageable ||
+        after.activeStrategy != strategy ||
+        after.ownershipMutationId != boundMutationId_) {
+        if (error.empty()) {
+            error =
+                "FIC PAM managed-slot activation postcondition failed";
+        }
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool PamAuthUpdateTopologyManager::releaseManagedFaillockSlots(
+    std::string& error) {
+    if (!boundMutationId_.has_value()) {
+        error =
+            "FIC PAM managed-slot release has no bound journal mutation id";
+        return false;
+    }
+    // This deliberately accepts a crash-partial subset of exact markers with
+    // the bound id.  Malformed markers or another mutation id fail closed.
+    return writeManagedFaillockSlots(std::nullopt, error);
 }
 
 bool PamAuthUpdateTopologyManager::enabledStateIdentifiers(
@@ -314,6 +809,10 @@ bool PamAuthUpdateTopologyManager::detectUniformStrategy(
 
 bool PamAuthUpdateTopologyManager::inspect(PamTopologyStatus& status,
                                             std::string& error) {
+    if (usesManagedFaillockSlots()) {
+        return inspectManagedFaillockSlots(status, error);
+    }
+
     PamConfiguration configuration(platformConfig_);
     PamCapabilityVerification verification;
     if (PamCapabilityVerifier::verify(
@@ -568,6 +1067,10 @@ bool PamAuthUpdateTopologyManager::enable(std::string& error) {
 }
 
 bool PamAuthUpdateTopologyManager::disable(std::string& error) {
+    if (usesManagedFaillockSlots()) {
+        return releaseManagedFaillockSlots(error);
+    }
+
     Ownership ownership = Ownership::NoFicProfiles;
     if (!detectOwnership(ownership, error)) return false;
 
@@ -576,13 +1079,18 @@ bool PamAuthUpdateTopologyManager::disable(std::string& error) {
         error.clear();
         return true;
     case Ownership::FicOwned:
-    case Ownership::InvalidSelection:
-        // Partial/mixed recipes are invalid for inspection and strategy
-        // transitions, but their selected identifiers are still exact
-        // FIC-owned resources. Release only those identifiers; never restore
-        // shared pam-auth-update state or touch foreign selections.
         return releaseSelectedIdentifiers(
             knownActivationIdentifiers(), error);
+    case Ownership::InvalidSelection:
+        // Selection in the reserved FIC namespace is not causal ownership:
+        // an administrator can select one of these profiles after FIC has
+        // persisted Prepared but before the native writer executes.  Never
+        // delete a partial/mixed selection merely because its id starts with
+        // fic-*.
+        error =
+            "FIC pam-auth-update selection is partial/mixed; causal "
+            "ownership is not proven, refusing release";
+        return false;
     }
 
     error = "unknown pam-auth-update ownership state";
@@ -678,6 +1186,9 @@ bool PamAuthUpdateTopologyManager::canEnableStrategy(
             " is not supported by this platform profile";
         return false;
     }
+    if (usesManagedFaillockSlots()) {
+        return canEnableManagedFaillockStrategy(strategy, error);
+    }
     if (strategyActivationIdentifiers(strategy, error) == nullptr) {
         return false;
     }
@@ -730,6 +1241,9 @@ bool PamAuthUpdateTopologyManager::canEnableStrategy(
 bool PamAuthUpdateTopologyManager::enableStrategy(
     fic::platform::PamFaillockStrategy strategy,
     std::string& error) {
+    if (usesManagedFaillockSlots()) {
+        return enableManagedFaillockStrategy(strategy, error);
+    }
     if (!canEnableStrategy(strategy, error)) {
         return false;
     }

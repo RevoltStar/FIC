@@ -1,0 +1,6 @@
+Name: FIC permanent pam_faillock authsucc hook
+Default: no
+Priority: -100000
+Auth-Type: Additional
+Auth:
+    include                     fic-faillock-authsucc

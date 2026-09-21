@@ -1,0 +1,6 @@
+Name: FIC permanent pam_faillock account hook
+Default: no
+Priority: 100000
+Account-Type: Primary
+Account:
+    include                     fic-faillock-account

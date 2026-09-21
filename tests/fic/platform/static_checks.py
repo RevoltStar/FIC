@@ -300,14 +300,15 @@ def main():
             and "PamProviderKind::PamPwhistory" in profiles[name]
             and "ExecutableId::PamAuthUpdate" in profiles[name]
             and "PamTopologyStrategyKind::PamAuthUpdate" in profiles[name]
-            and '"fic-faillock-notify", "fic-faillock-authfail"' in profiles[name]
-            and '"fic-faillock-preauth-required", "fic-faillock-authfail"' in profiles[name]
-            and '"fic-faillock-authsucc", "fic-faillock-authfail"' in profiles[name]
+            and '"fic-faillock-hook-preauth"' in profiles[name]
+            and '"fic-faillock-hook-authfail"' in profiles[name]
+            and '"fic-faillock-hook-authsucc"' in profiles[name]
+            and '"fic-faillock-hook-account"' in profiles[name]
             and 'supportedFaillockStrategies = {' in profiles[name]
             and 'defaultFaillockStrategy =' in profiles[name]
             and '"fic-pwhistory"' in profiles[name]
             and '"fic-pwquality"' in profiles[name],
-            f"{name} does not compose the PAM activation recipes",
+            f"{name} does not compose the PAM permanent-hook activation domain",
         )
 
     platform_cmake = (
@@ -819,8 +820,7 @@ def main():
         "Debian-family packaging does not pass its compile-time profile",
     )
     require(
-        "write_conffiles" not in deb_builder
-        and "DEBIAN/conffiles" not in deb_builder,
+        "write_conffiles" not in deb_builder,
         "Debian-family packaging still registers working configs as conffiles",
     )
     require(

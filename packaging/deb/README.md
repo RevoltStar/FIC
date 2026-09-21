@@ -76,7 +76,10 @@ Each project is packaged as a single binary file placed into `/opt/fic/bin`.
   `libpam-pwquality`: the first provides `pam-auth-update`, the second owns the
   core PAM modules referenced by the FIC profiles, and the third provides
   `pam_pwquality.so`; FIC ships its own inactive `fic-pwquality` activation
-  profile and never takes ownership of the distro `pwquality` profile
+  profile and never takes ownership of the distro `pwquality` profile.
+  AuthenticationLockout additionally installs four permanent pam-auth-update
+  hook profiles plus four `/etc/pam.d/fic-faillock-*` conffile slots. The
+  hooks are infrastructure; only journal-bound slot markers are policy-owned.
 - `fic` directly depends on `libnotify-bin` for `notify-send` and on
   `util-linux` for the notification dispatcher's `setpriv`
 - `fic` recommends `fic-session-agent`
@@ -157,7 +160,7 @@ enable_authentication_lockout: pam-auth-update --disable <other FIC faillock pro
 # preauth_requisite strategy:
 enable_authentication_lockout: pam-auth-update --disable <other FIC faillock profiles> --enable fic-faillock-notify fic-faillock-authfail
 # authsucc strategy (no pam_faillock account phase):
-enable_authentication_lockout: pam-auth-update --disable <other FIC faillock profiles> --enable fic-faillock-authsucc fic-faillock-authfail
+enable_authentication_lockout: permanent fic-faillock-hook-* profiles + journal-bound /etc/pam.d/fic-faillock-* slots
 enable_password_history:       pam-auth-update --enable fic-pwhistory
 enable_password_quality:       pam-auth-update --enable pwquality
 ```

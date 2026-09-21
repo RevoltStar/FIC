@@ -2,6 +2,12 @@
 
 namespace fic::identity::pam {
 
+bool PamTopologyManager::bindJournalMutationId(
+    std::uint64_t, std::string& error) {
+    error = "this PAM topology manager does not bind journal mutation ids";
+    return false;
+}
+
 bool PamTopologyManager::canEnableStrategy(
     fic::platform::PamFaillockStrategy,
     std::string& error) const {

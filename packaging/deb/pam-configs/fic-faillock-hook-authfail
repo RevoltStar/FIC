@@ -1,0 +1,6 @@
+Name: FIC permanent pam_faillock authfail hook
+Default: no
+Priority: -100000
+Auth-Type: Primary
+Auth:
+    include                     fic-faillock-authfail
