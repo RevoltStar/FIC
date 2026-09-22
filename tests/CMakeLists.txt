@@ -786,6 +786,19 @@ target_link_libraries(pam_slot_attach_validator_tests PRIVATE
 add_test(NAME pam_slot_attach_validator_tests
          COMMAND pam_slot_attach_validator_tests)
 
+add_executable(pam_managed_password_slots_tests
+    fic/modules/identity_access/pam/PamManagedPasswordSlotsTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+)
+target_include_directories(pam_managed_password_slots_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_managed_password_slots_tests PRIVATE
+    fic-core fic-platform
+)
+add_test(NAME pam_managed_password_slots_tests
+         COMMAND pam_managed_password_slots_tests)
+
 add_executable(pam_disable_nopasswdlogin_policy_tests
     fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp

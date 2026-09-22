@@ -2,15 +2,71 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `b826359`; рабочее дерево содержит правку только
-  `docs/HANDOFF.md` (docs-only Step 1 design closure).
+- Ветка `main`, HEAD `9342c35`; рабочее дерево содержит изменения Step 2
+  (новый компонент managed password slots + тесты + tests/CMakeLists.txt),
+  не закоммичены — оставлены для review (Step 2, п. 44).
 
 ## Current task
 
-- Docs-only design closure Step 1 (PasswordQuality/PasswordHistory managed
-  topology): закрыты архитектурные блокеры A/B/C/G/I/J с behavioral
-  доказательствами (fixture v3). Production-код, тесты, packaging НЕ
-  менялись. Step 2 РАЗБЛОКИРОВАН (см. Remaining).
+- Step 2 PasswordQuality/PasswordHistory: физическая модель трёх
+  FIC-owned managed password slots и строгий typed parser/inspector
+  реализованы (`PamManagedPasswordSlots`). Pure logic: только render +
+  inspect content, файловая система не мутируется, runtime activation
+  НЕ подключён, `PamPolicySupport::ReadOnly`, journal, packaging,
+  platform profiles, `legacyPamAuthUpdatePasswordTopology` — не тронуты.
+  Step 3 (journal-bound lifecycle) РАЗБЛОКИРОВАН.
+
+## Step 2 реализованный контракт
+
+- Typed модель (`fic/src/modules/identity_access/pam/PamManagedPasswordSlots.{h,cpp}`):
+  `ManagedPasswordSlotRole{Quality,HistoryNormal,HistoryInitial}`,
+  `ManagedPasswordCapability{PasswordQuality,PasswordHistory}`,
+  `ManagedPasswordSlotState{Neutral,Active,Broken,Unavailable}`,
+  `ManagedPwhistorySlotOptions{optional<unsigned> remember, enforceForRoot}`,
+  `ManagedPasswordSlotInspection{state,role,observedRole,capability,mutationId,pwhistoryOptions,error}`,
+  pair-level `ManagedHistoryPairState{Neutral,Active,Broken}` +
+  `ManagedHistoryPairInspection`.
+- Specs: `fic-password-quality` (quality, enable_password_quality),
+  `fic-password-history` (history-normal, enable_password_history),
+  `fic-password-history-initial` (history-initial,
+  enable_password_history). Путь: `<configDirectory>/fileName`
+  (по умолчанию `/etc/pam.d`).
+- Exact canonical neutral bytes (все три слота, зафиксировано тестом):
+  `# FIC managed password slot: state=neutral\n` — одна comment-строка,
+  0 PAM rules, trailing newline входит в canonical bytes. Empty, без
+  newline, extra whitespace/lines, любой PAM rule => Broken.
+- Active marker grammar (строгая, whole-file, 3 строки ровно):
+  `#@FIC_PAM_SLOT_BEGIN version=1 capability=<cap> mutation=<id> slot=<slot>`
+  + canonical rule + `#@FIC_PAM_SLOT_END capability=<cap> mutation=<id> slot=<slot>`.
+  Токены через одиночные пробелы, canonical key order, лишние/дубли/
+  перестановки полей => Broken. mutation id: full decimal from_chars,
+  > 0, overflow/garbage => Broken. BEGIN/END id/capability/slot должны
+  совпадать. CRLF, no trailing newline, extra prefix/suffix/rule,
+  duplicate BEGIN/END => Broken.
+- Canonical bodies:
+  - quality: `password requisite pam_pwquality.so retry=3` (только это;
+    retry=3 берётся из текущего legacy provider contract, тестом
+    зафиксировано; опции pwquality — только в `/etc/security/pwquality.conf`).
+  - history-normal: `password requisite pam_pwhistory.so use_authtok
+    [remember=N] [enforce_for_root]` — `use_authtok` ОБЯЗАТЕЛЕН ровно
+    один раз (наследует семантику `PamPwhistoryArguments::evaluate()`,
+    сам evaluate НЕ изменён).
+  - history-initial: `password requisite pam_pwhistory.so [remember=N]
+    [enforce_for_root]` — `use_authtok` ЗАПРЕЩЁН.
+  - Canonical argument order: use_authtok, remember=N, enforce_for_root;
+    перестановки/регистровые варианты (`USE_AUTHTOK`,
+    `Enforce_For_Root`)/unknown args (`debug`, `retry=`) => Broken
+    (semantic equivalence != physical FIC ownership).
+  - `remember=0` синтаксически валиден (typed parse), semantic
+    effectiveness — Step 4+ verifier.
+- Pair consistency (history normal+initial): Neutral+Neutral или
+  Active+Active с same mutation id, same remember/enforce_for_root,
+  правильные roles; mixed/разные id/options/missing/malformed =>
+  Broken (missing различим per-slot как Unavailable; missing НЕКОГДА
+  не Neutral).
+- Quality и history — независимые capabilities: history-active +
+  quality-neutral структурно представим на физическом слое
+  (history-only Unsupported = Step 4 verifier rule, не parser).
 
 ## Fixture evidence
 
@@ -269,6 +325,13 @@ neutral baseline, hook-include no-op.
 
 ## Completed
 
+- Step 2 реализован: `PamManagedPasswordSlots` (typed specs трёх slots,
+  canonical rendering, strict marker/body parsing, cross-slot history
+  pair consistency, round-trip) + `PamManagedPasswordSlotsTests`
+  (~700 строк: neutral/marker/body/pair/independence/round-trip, все
+  списки FAIL из ТЗ 29–36) + test target `pam_managed_password_slots_tests`
+  в tests/CMakeLists.txt. Existing contract `PamPwhistoryArguments`
+  не ослаблен (use_authtok required для authoritative rule сохранён).
 - Step 1 design closure (docs-only): fixture v3 behavioral proofs
   (neutral candidates, history-behind-include, FIC-producer, external +
   FIC history, history-only, lifecycle enable/disable/enable); выбор
@@ -279,44 +342,52 @@ neutral baseline, hook-include no-op.
 
 ## Changed areas
 
-- `docs/HANDOFF.md` (единственный изменённый файл; scratch-артефакты —
-  `/tmp/pam-gate-v3/`, вне репозитория).
+- `fic/src/modules/identity_access/pam/PamManagedPasswordSlots.h/.cpp`
+  (новый компонент; в daemon target попадает через GLOB_RECURSE).
+- `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotsTests.cpp`
+  (новый), `tests/CMakeLists.txt` (новый test target).
+- `docs/HANDOFF.md`.
 
 ## Validation
 
-- Docker fixture v3 (podman-backed docker CLI, контейнеры `--rm`,
-  debian:12 + ubuntu:24.04; методика и ограничения описаны выше в
-  «Fixture evidence v3»): r0 (debug), r1-neutral ×2 платформы, r2-ficq,
-  r3-pos0, r4-extqh ×2 платформы, r5-historyonly, lifecycle probe в
-  постоянном контейнере (удалён после теста). Все PASS (= наблюдаемое
-  поведение получено и задокументировано).
-- Интерактивный `passwd(1)` в контейнере — недостоверён (артефакт
-  pty-агрегации `script`), вынесен в staging (Step 4+).
-- `git diff --check` — чисто; production-код/тесты/packaging не
-  затронуты.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — ок.
+- `cmake --build build-check --target pam_managed_password_slots_tests`
+  и `--target fic` — ок (компонент компилируется в daemon target).
+- `ctest --test-dir build-check -R 'pam'` — 12/12 PASS:
+  pam_configuration_tests, pam_control_flow_analyzer_tests,
+  pam_auth_update_topology_tests, pam_slot_attach_validator_tests,
+  pam_managed_password_slots_tests (новый),
+  pam_disable_nopasswdlogin/root_sddm_policy_tests,
+  pam_capability_activation_policy_tests, alt_pam_faillock_topology_tests,
+  alt_pam_password_history_topology_tests, pam_policy_defaults_tests
+  (включая static-проверки). Regression suites затронутых контрактов —
+  без изменений поведения.
+- `git diff --check` — чисто. Full CTest не запускался (targeted
+  subset достаточен: изменения изолированы в новом компоненте + tests
+  CMake).
 
 ## Remaining
 
-- Step 1 ЗАКРЫТ (A/B/C/G/I/J = RESOLVED, decision matrix заполнена).
-  К Step 2 можно переходить.
-- Step 2: password slot topology + marker parsing в
-  `fic/src/modules/identity_access/pam/` (модель
-  `PamAuthUpdateTopologyManager`/faillock slots).
-- Step 3: journal-bound ownership + marker parser (контракт D выше).
-- Step 4: `PamSlotAttachValidator` (правила G/I: token-producer перед
-  history, single pam_pwquality provider; external-compliant
-  detection) + интерактивная passwd-валидация на staging.
+- Step 2 ЗАКРЫТ. Шаги 1–2 завершены.
+- Step 3: journal-bound ownership + physical slot writer/activation
+  manager lifecycle (Prepared/Applied; binding marker `mutation=<id>` ↔
+  journal record; single authoritative option state → normal+initial
+  transactionally; preflight marker↔journal ownership check перед
+  option mutation). Parser/renderer из Step 2 — основа.
+- Step 4: `PamSlotAttachValidator` (правила G/I: token-producer
+  pam_pwquality.so перед history include, single pam_pwquality provider;
+  external-compliant detection через `/var/lib/pam/password` + parsed
+  stack; semantic remember=0/enforce_for_root effective-state checks) +
+  интерактивная passwd-валидация на staging.
 - Step 5: packaging (`packaging/deb/`: hook-профили + slot targets;
-  extend permanent-hook proof на password hooks; конffile registration
-  всех трёх slot).
+  extend permanent-hook proof на password hooks; conffile registration
+  всех трёх slot; slot existence гарантия).
 - Step 6: Debian 12 module-argument writer (по J).
 - Step 7: lift `PamPolicySupport::ReadOnly` →
   `RequiresTopologyActivation`; удалить
   `legacyPamAuthUpdatePasswordTopology` bypass последним.
-- Step 8: обязательные тесты (PamCapabilityActivationPolicyTests,
-  PamAuthUpdateTopologyManagerTests, PamSlotAttachValidatorTests,
-  PamOptionPolicy/pwhistory argument tests, PlatformProfileTests,
-  RollbackExecutorTests, PamPackagingChecks).
+- Step 8: обязательные тесты (RollbackExecutorTests,
+  PlatformProfileTests, PamPackagingChecks и т.д. по мере шагов).
 - Step 9: docs (авторитетное описание password slots — расширение
   `docs/pam-owned-faillock-slots.md`).
 - Infra: docker CLI = podman (user socket
