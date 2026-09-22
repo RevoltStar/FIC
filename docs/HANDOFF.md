@@ -14,7 +14,32 @@
   inspect content, файловая система не мутируется, runtime activation
   НЕ подключён, `PamPolicySupport::ReadOnly`, journal, packaging,
   platform profiles, `legacyPamAuthUpdatePasswordTopology` — не тронуты.
-  Step 3 (journal-bound lifecycle) РАЗБЛОКИРОВАН.
+- Step 2 hardening follow-up ВЫПОЛНЕН (3 review-дефекта):
+  1. P1: textual mutation ID canonicalization — маркер принимает
+     ТОЛЬКО canonical decimal (`1`, `42`, `18446744073709551615`);
+     `0`, `00`, `01`, `00042`, `+1`, `-1`, `1x`, `0x1`,
+     overflow/garbage => Broken. BEGIN и END каноникализуются
+     НЕЗАВИСИМО: `BEGIN 01 / END 1` и `BEGIN 1 / END 01` => Broken
+     (numeric comparison только после независимой canonical parse
+     обоих маркеров). Правило: `from_chars` full parse AND value > 0
+     AND `std::to_string(parsed) == token`.
+  2. P2: `inspectHistoryPair()` type-safe во ВСЕХ ветках (Neutral,
+     Active, Broken, Unavailable): до сравнения states требует
+     exact typed identity — normal: `role == observedRole ==
+     HistoryNormal` + `capability == PasswordHistory`; initial:
+     аналогично HistoryInitial + PasswordHistory. Wrong identity =>
+     Broken с диагностикой `history pair received wrong normal/initial
+     slot identity`; роль по содержимому не угадывается. Active-ветка
+     дополнительно проверяет mutationId != 0 и опции.
+  3. P2: renderer fail-safe contract — все 4 рендера
+     (`renderActiveQuality/HistoryNormal/HistoryInitial` и generic
+     `renderActive`) теперь `bool (…, std::string& content,
+     std::string& error)`: `mutationId == 0` => runtime failure,
+     content гарантированно пуст, никаких active bytes наружу
+     (не assert). Successful render гарантирует
+     `inspectContent() == Active`; caller не обязан пере-inspect'ить
+     свой render. `remember=0` по-прежнему syntactically valid.
+- Step 3 (journal-bound lifecycle) РАЗБЛОКИРОВАН.
 
 ## Step 2 реализованный контракт
 
@@ -325,11 +350,15 @@ neutral baseline, hook-include no-op.
 
 ## Completed
 
-- Step 2 реализован: `PamManagedPasswordSlots` (typed specs трёх slots,
-  canonical rendering, strict marker/body parsing, cross-slot history
-  pair consistency, round-trip) + `PamManagedPasswordSlotsTests`
-  (~700 строк: neutral/marker/body/pair/independence/round-trip, все
-  списки FAIL из ТЗ 29–36) + test target `pam_managed_password_slots_tests`
+- Step 2 + hardening follow-up реализованы: `PamManagedPasswordSlots`
+  (typed specs трёх slots, canonical rendering, strict marker/body
+  parsing, canonical textual mutation ids, type-safe history pair
+  identity, fail-safe renderer с reject mutationId==0, cross-slot
+  history pair consistency, round-trip) + `PamManagedPasswordSlotsTests`
+  (~1000 строк: neutral/marker/body/pair/independence/round-trip +
+  mutation canonicalization / renderer zero rejection /
+  successful-render-implies-Active / pair identity, все списки FAIL из
+  ТЗ 29–36) + test target `pam_managed_password_slots_tests`
   в tests/CMakeLists.txt. Existing contract `PamPwhistoryArguments`
   не ослаблен (use_authtok required для authoritative rule сохранён).
 - Step 1 design closure (docs-only): fixture v3 behavioral proofs
@@ -353,10 +382,13 @@ neutral baseline, hook-include no-op.
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — ок.
 - `cmake --build build-check --target pam_managed_password_slots_tests`
   и `--target fic` — ок (компонент компилируется в daemon target).
-- `ctest --test-dir build-check -R 'pam'` — 12/12 PASS:
+- `ctest --test-dir build-check -R 'pam'` — 12/12 PASS (после
+  hardening follow-up перезапущено):
   pam_configuration_tests, pam_control_flow_analyzer_tests,
   pam_auth_update_topology_tests, pam_slot_attach_validator_tests,
-  pam_managed_password_slots_tests (новый),
+  pam_managed_password_slots_tests (14 test-групп, включая
+  mutation canonicalization / renderer zero rejection /
+  successful-render-implies-Active / pair identity),
   pam_disable_nopasswdlogin/root_sddm_policy_tests,
   pam_capability_activation_policy_tests, alt_pam_faillock_topology_tests,
   alt_pam_password_history_topology_tests, pam_policy_defaults_tests
@@ -368,7 +400,9 @@ neutral baseline, hook-include no-op.
 
 ## Remaining
 
-- Step 2 ЗАКРЫТ. Шаги 1–2 завершены.
+- Step 2 ЗАКРЫТ (включая hardening follow-up: textual mutation id
+  canonicalization, type-safe history pair identity, renderer rejects
+  mutationId=0). Шаги 1–2 завершены.
 - Step 3: journal-bound ownership + physical slot writer/activation
   manager lifecycle (Prepared/Applied; binding marker `mutation=<id>` ↔
   journal record; single authoritative option state → normal+initial

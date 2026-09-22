@@ -46,6 +46,20 @@ bool parseUnsignedArgument(const std::string& text, unsigned& value) {
     return result.ec == std::errc{} && result.ptr == last;
 }
 
+// Canonical decimal mutation id in a slot marker (Step 2 hardening,
+// P1): full unsigned decimal parse, value > 0, and the token text must
+// be the canonical representation of the parsed value. This rejects
+// "0", "00", "01", "00042", "+1" and any other non-canonical textual
+// form: physical ownership requires the exact canonical bytes, not
+// just semantic numeric equality. Each BEGIN/END marker is validated
+// with this rule independently.
+bool parseCanonicalMutationId(const std::string& text, std::uint64_t& value) {
+    if (!parseUnsignedFull(text, value) || value == 0) {
+        return false;
+    }
+    return std::to_string(value) == text;
+}
+
 std::string tagName(const ManagedPasswordSlotSpec& spec) {
     return "FIC managed password slot " + std::string(spec.fileName);
 }
@@ -108,8 +122,7 @@ bool parseBeginMarker(
         return false;
     }
     if (tokens[3].rfind("mutation=", 0) != 0 ||
-        !parseUnsignedFull(tokens[3].substr(9), marker.mutationId) ||
-        marker.mutationId == 0) {
+        !parseCanonicalMutationId(tokens[3].substr(9), marker.mutationId)) {
         error = tagName(spec) + ": invalid mutation id in BEGIN marker";
         return false;
     }
@@ -146,8 +159,14 @@ bool parseEndMarker(
     }
     std::uint64_t mutationId = 0;
     if (tokens[2].rfind("mutation=", 0) != 0 ||
-        !parseUnsignedFull(tokens[2].substr(9), mutationId) ||
-        mutationId != begin.mutationId) {
+        !parseCanonicalMutationId(tokens[2].substr(9), mutationId)) {
+        error = tagName(spec) + ": invalid mutation id in END marker";
+        return false;
+    }
+    // Canonical textual identity is enforced per marker above; only
+    // after both markers independently parse as canonical decimal ids
+    // do the numeric values have to agree.
+    if (mutationId != begin.mutationId) {
         error = tagName(spec) + ": END marker mutation id mismatch";
         return false;
     }
@@ -450,41 +469,60 @@ std::string PamManagedPasswordSlots::renderNeutral(
     return kNeutralBody;
 }
 
-std::string PamManagedPasswordSlots::renderActiveQuality(
-    std::uint64_t mutationId) {
-    const std::string id = std::to_string(mutationId);
-    return "#@FIC_PAM_SLOT_BEGIN version=1 "
-        "capability=enable_password_quality mutation=" + id +
-        " slot=fic-password-quality\n" +
-        kQualityBodyLine +
-        "\n#@FIC_PAM_SLOT_END capability=enable_password_quality mutation=" +
-        id + " slot=fic-password-quality\n";
-}
-
-std::string PamManagedPasswordSlots::renderActiveHistoryNormal(
+bool PamManagedPasswordSlots::renderActiveQuality(
     std::uint64_t mutationId,
-    const ManagedPwhistorySlotOptions& options) {
-    return renderActive(historyNormalSlot(), mutationId, options);
+    std::string& content,
+    std::string& error) {
+    return renderActive(qualitySlot(), mutationId, {}, content, error);
 }
 
-std::string PamManagedPasswordSlots::renderActiveHistoryInitial(
+bool PamManagedPasswordSlots::renderActiveHistoryNormal(
     std::uint64_t mutationId,
-    const ManagedPwhistorySlotOptions& options) {
-    return renderActive(historyInitialSlot(), mutationId, options);
+    const ManagedPwhistorySlotOptions& options,
+    std::string& content,
+    std::string& error) {
+    return renderActive(
+        historyNormalSlot(), mutationId, options, content, error);
 }
 
-std::string PamManagedPasswordSlots::renderActive(
+bool PamManagedPasswordSlots::renderActiveHistoryInitial(
+    std::uint64_t mutationId,
+    const ManagedPwhistorySlotOptions& options,
+    std::string& content,
+    std::string& error) {
+    return renderActive(
+        historyInitialSlot(), mutationId, options, content, error);
+}
+
+bool PamManagedPasswordSlots::renderActive(
     const ManagedPasswordSlotSpec& spec,
     std::uint64_t mutationId,
-    const ManagedPwhistorySlotOptions& options) {
+    const ManagedPwhistorySlotOptions& options,
+    std::string& content,
+    std::string& error) {
+    content.clear();
+    // Fail-safe contract (Step 2 hardening): the canonical renderer
+    // must never successfully emit bytes its own parser would reject.
+    // mutationId == 0 is not a canonical mutation id (see
+    // parseCanonicalMutationId), so it is rejected here with a runtime
+    // error, not an assert: release builds may remove asserts, and the
+    // renderer is the Step 3 source of persistent physical bytes.
+    if (mutationId == 0) {
+        error = tagName(spec) +
+            ": mutation id must be a canonical decimal value greater "
+            "than zero";
+        return false;
+    }
     const std::string id = std::to_string(mutationId);
     const std::string capability = capabilityToken(spec.capability);
     const std::string slot = std::string(spec.fileName);
-    return "#@FIC_PAM_SLOT_BEGIN version=1 capability=" + capability +
+    content = "#@FIC_PAM_SLOT_BEGIN version=1 capability=" + capability +
         " mutation=" + id + " slot=" + slot + "\n" +
         markerBodyLine(spec.role, options) +
         "\n#@FIC_PAM_SLOT_END capability=" + capability +
         " mutation=" + id + " slot=" + slot + "\n";
+    error.clear();
+    return true;
 }
 
 bool PamManagedPasswordSlots::inspectContent(
@@ -533,6 +571,35 @@ bool PamManagedPasswordSlots::inspectHistoryPair(
     ManagedHistoryPairInspection& pair,
     std::string& error) {
     pair = ManagedHistoryPairInspection{};
+    // Type-safe identity contract (Step 2 hardening): the pair API
+    // proves the exact slot identity of its arguments itself instead
+    // of relying on caller discipline. Declared role, observed role and
+    // capability must all match the expected history slot identity in
+    // every state (Neutral, Active, Broken, Unavailable): inspectContent
+    // preserves this typed identity even after a parse failure, so an
+    // artificially constructed inspection (for example a quality
+    // inspection passed as history-normal) is rejected here rather
+    // than silently accepted by state equality.
+    const auto identityMatches = [](const ManagedPasswordSlotInspection& slot,
+                                     ManagedPasswordSlotRole expectedRole) {
+        return slot.role == expectedRole &&
+            slot.observedRole == expectedRole &&
+            slot.capability == ManagedPasswordCapability::PasswordHistory;
+    };
+    if (!identityMatches(normal, ManagedPasswordSlotRole::HistoryNormal)) {
+        pair.state = ManagedHistoryPairState::Broken;
+        pair.error =
+            "history pair received wrong normal slot identity";
+        error = pair.error;
+        return false;
+    }
+    if (!identityMatches(initial, ManagedPasswordSlotRole::HistoryInitial)) {
+        pair.state = ManagedHistoryPairState::Broken;
+        pair.error =
+            "history pair received wrong initial slot identity";
+        error = pair.error;
+        return false;
+    }
     const bool normalNeutral =
         normal.state == ManagedPasswordSlotState::Neutral;
     const bool initialNeutral =
@@ -546,6 +613,16 @@ bool PamManagedPasswordSlots::inspectHistoryPair(
         return true;
     }
     if (normalActive && initialActive) {
+        // Explicit full identity proof for the active pair: declared
+        // role, observed role and capability were already checked above;
+        // the remaining active-level checks are mutation id and managed
+        // options consistency.
+        if (normal.mutationId == 0 || initial.mutationId == 0) {
+            pair.state = ManagedHistoryPairState::Broken;
+            pair.error = "active history pair has no mutation id";
+            error = pair.error;
+            return false;
+        }
         if (normal.mutationId != initial.mutationId) {
             pair.state = ManagedHistoryPairState::Broken;
             pair.error =

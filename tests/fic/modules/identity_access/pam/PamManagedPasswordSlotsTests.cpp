@@ -70,16 +70,70 @@ std::string neutral() {
     return PamManagedPasswordSlots::neutralBody();
 }
 
+bool activeNormal(
+    std::uint64_t id,
+    const ManagedPwhistorySlotOptions& options,
+    std::string& content,
+    std::string& error) {
+    return PamManagedPasswordSlots::renderActiveHistoryNormal(
+        id, options, content, error);
+}
+
 std::string activeNormal(
     std::uint64_t id,
     const ManagedPwhistorySlotOptions& options = {}) {
-    return PamManagedPasswordSlots::renderActiveHistoryNormal(id, options);
+    std::string content;
+    std::string error;
+    if (!PamManagedPasswordSlots::renderActiveHistoryNormal(
+            id, options, content, error)) {
+        throw std::runtime_error(
+            "renderActiveHistoryNormal failed: " + error);
+    }
+    return content;
+}
+
+bool activeInitial(
+    std::uint64_t id,
+    const ManagedPwhistorySlotOptions& options,
+    std::string& content,
+    std::string& error) {
+    return PamManagedPasswordSlots::renderActiveHistoryInitial(
+        id, options, content, error);
 }
 
 std::string activeInitial(
     std::uint64_t id,
     const ManagedPwhistorySlotOptions& options = {}) {
-    return PamManagedPasswordSlots::renderActiveHistoryInitial(id, options);
+    std::string content;
+    std::string error;
+    if (!PamManagedPasswordSlots::renderActiveHistoryInitial(
+            id, options, content, error)) {
+        throw std::runtime_error(
+            "renderActiveHistoryInitial failed: " + error);
+    }
+    return content;
+}
+
+std::string activeQuality(std::uint64_t id) {
+    std::string content;
+    std::string error;
+    if (!PamManagedPasswordSlots::renderActiveQuality(id, content, error)) {
+        throw std::runtime_error("renderActiveQuality failed: " + error);
+    }
+    return content;
+}
+
+std::string renderActive(
+    const ManagedPasswordSlotSpec& spec,
+    std::uint64_t id,
+    const ManagedPwhistorySlotOptions& options = {}) {
+    std::string content;
+    std::string error;
+    if (!PamManagedPasswordSlots::renderActive(
+            spec, id, options, content, error)) {
+        throw std::runtime_error("renderActive failed: " + error);
+    }
+    return content;
 }
 
 void testSpecsAndNeutralBytes() {
@@ -191,15 +245,14 @@ void testActiveMarkers() {
     // Canonical renders parse as Active for every role.
     const auto quality = expectState(
         qualitySpec(),
-        PamManagedPasswordSlots::renderActiveQuality(1),
+        activeQuality(1),
         ManagedPasswordSlotState::Active);
     require(quality.mutationId == 1, "quality mutation id");
     require(quality.observedRole == ManagedPasswordSlotRole::Quality,
         "quality observed role");
     require(!quality.pwhistoryOptions.has_value(),
         "quality slot has no pwhistory options");
-    require(PamManagedPasswordSlots::renderActiveQuality(1) ==
-        PamManagedPasswordSlots::renderActive(qualitySpec(), 1, {}),
+    require(activeQuality(1) == renderActive(qualitySpec(), 1),
         "quality generic render equals specialized render");
 
     const auto normal = expectState(
@@ -226,57 +279,53 @@ void testActiveMarkers() {
         ManagedPasswordSlotState::Active);
     expectState(
         qualitySpec(),
-        PamManagedPasswordSlots::renderActiveQuality(18446744073709551615ULL),
+        activeQuality(18446744073709551615ULL),
         ManagedPasswordSlotState::Active);
 
     // Mutation id failures (task section 30).
     for (const auto& spec : PamManagedPasswordSlots::slots()) {
         expectState(
             spec,
-            PamManagedPasswordSlots::renderActive(spec, 0, {}),
-            ManagedPasswordSlotState::Broken);
-        expectState(
-            spec,
             replaceAll(
-                PamManagedPasswordSlots::renderActive(spec, 1, {}),
+                renderActive(spec, 1),
                 "mutation=1", "mutation=-5"),
             ManagedPasswordSlotState::Broken);
         expectState(
             spec,
             replaceAll(
-                PamManagedPasswordSlots::renderActive(spec, 1, {}),
+                renderActive(spec, 1),
                 "mutation=1", "mutation=abc"),
             ManagedPasswordSlotState::Broken);
         expectState(
             spec,
             replaceAll(
-                PamManagedPasswordSlots::renderActive(spec, 1, {}),
+                renderActive(spec, 1),
                 "mutation=1", "mutation=99999999999999999999999"),
             ManagedPasswordSlotState::Broken);
         expectState(
             spec,
             replaceAll(
-                PamManagedPasswordSlots::renderActive(spec, 12, {}),
+                renderActive(spec, 12),
                 "mutation=12", "mutation=12x"),
             ManagedPasswordSlotState::Broken);
         expectState(
             spec,
             replaceAll(
-                PamManagedPasswordSlots::renderActive(spec, 1, {}),
+                renderActive(spec, 1),
                 "version=1", "version=2"),
             ManagedPasswordSlotState::Broken);
         // Wrong slot name in the markers.
         expectState(
             spec,
             replaceAll(
-                PamManagedPasswordSlots::renderActive(spec, 1, {}),
+                renderActive(spec, 1),
                 "slot=" + std::string(spec.fileName), "slot=fic-faillock-x"),
             ManagedPasswordSlotState::Broken);
         // Wrong capability in the markers.
         expectState(
             spec,
             replaceAll(
-                PamManagedPasswordSlots::renderActive(spec, 1, {}),
+                renderActive(spec, 1),
                 "capability=" +
                     PamManagedPasswordSlots::capabilityName(spec.capability),
                 "capability=enable_authentication_lockout"),
@@ -288,7 +337,7 @@ void testActiveMarkerStructure() {
     // Missing BEGIN / missing END.
     for (const auto& spec : PamManagedPasswordSlots::slots()) {
         const std::string full =
-            PamManagedPasswordSlots::renderActive(spec, 1, {});
+            renderActive(spec, 1);
         expectState(
             spec,
             full.substr(full.find('\n') + 1),
@@ -508,7 +557,7 @@ void testQualityHistoryIndependence() {
     // And the reverse: quality active with history neutral.
     expectState(
         qualitySpec(),
-        PamManagedPasswordSlots::renderActiveQuality(7),
+        activeQuality(7),
         ManagedPasswordSlotState::Active);
     expectState(
         normalSpec(), neutral(), ManagedPasswordSlotState::Neutral);
@@ -626,15 +675,21 @@ void testRoundTrips() {
                             const std::string& content) {
         const auto inspection = expectState(
             spec, content, ManagedPasswordSlotState::Active);
-        const auto reRendered = PamManagedPasswordSlots::renderActive(
-            spec,
-            inspection.mutationId,
-            inspection.pwhistoryOptions.value_or(ManagedPwhistorySlotOptions{}));
+        std::string reRendered;
+        std::string renderError;
+        require(PamManagedPasswordSlots::renderActive(
+                    spec,
+                    inspection.mutationId,
+                    inspection.pwhistoryOptions.value_or(
+                        ManagedPwhistorySlotOptions{}),
+                    reRendered,
+                    renderError),
+            "re-render must succeed: " + renderError);
         require(reRendered == content,
             "render(inspect(render(x))) == x for " +
                 std::string(spec.fileName));
     };
-    check(qualitySpec(), PamManagedPasswordSlots::renderActiveQuality(42));
+    check(qualitySpec(), activeQuality(42));
     check(normalSpec(), activeNormal(42));
     check(normalSpec(), activeNormal(42, withRemember));
     check(normalSpec(), activeNormal(42, withRoot));
@@ -661,9 +716,270 @@ void testRoundTrips() {
     // Cross-role bodies stay distinct.
     require(activeNormal(1, withBoth) != activeInitial(1, withBoth),
         "normal and initial bodies differ");
-    require(PamManagedPasswordSlots::renderActiveQuality(1) !=
-            PamManagedPasswordSlots::renderActive(normalSpec(), 1, {}),
+    require(activeQuality(1) !=
+            renderActive(normalSpec(), 1),
         "quality and history bodies differ");
+}
+
+// Renderer fail-safe contract: mutation id 0 must make every renderer
+// fail with no bytes (Step 2 hardening, P2). A canonical renderer must
+// never successfully return a non-canonical active slot.
+void testRendererZeroRejection() {
+    const auto expectZeroFailure =
+        [&](bool rendered, const std::string& content,
+            const std::string& error, const char* what) {
+            require(!rendered, std::string(what) + " must reject id 0");
+            require(content.empty(),
+                std::string(what) + " must produce no bytes on failure");
+            require(!error.empty(),
+                std::string(what) + " must report a diagnostic");
+        };
+
+    std::string content;
+    std::string error;
+    expectZeroFailure(
+        PamManagedPasswordSlots::renderActiveQuality(0, content, error),
+        content, error, "renderActiveQuality");
+    expectZeroFailure(
+        PamManagedPasswordSlots::renderActiveHistoryNormal(
+            0, {}, content, error),
+        content, error, "renderActiveHistoryNormal");
+    expectZeroFailure(
+        PamManagedPasswordSlots::renderActiveHistoryInitial(
+            0, {}, content, error),
+        content, error, "renderActiveHistoryInitial");
+    expectZeroFailure(
+        PamManagedPasswordSlots::renderActive(
+            qualitySpec(), 0, {}, content, error),
+        content, error, "renderActive");
+    expectZeroFailure(
+        PamManagedPasswordSlots::renderActive(
+            normalSpec(), 0, {}, content, error),
+        content, error, "renderActive (history-normal)");
+    expectZeroFailure(
+        PamManagedPasswordSlots::renderActive(
+            initialSpec(), 0, {}, content, error),
+        content, error, "renderActive (history-initial)");
+}
+
+// Property/invariant test: every successful renderer output inspects
+// as Active with the exact requested mutation id and options. This
+// protects the Step 3 writer from future renderer/parser divergence.
+void testSuccessfulRenderImpliesActive() {
+    ManagedPwhistorySlotOptions withRemember;
+    withRemember.remember = 5;
+    ManagedPwhistorySlotOptions withRoot;
+    withRoot.enforceForRoot = true;
+    ManagedPwhistorySlotOptions withBoth;
+    withBoth.remember = 5;
+    withBoth.enforceForRoot = true;
+
+    const auto check = [&](const ManagedPasswordSlotSpec& spec,
+                            std::uint64_t mutationId,
+                            const ManagedPwhistorySlotOptions& options) {
+        std::string content;
+        std::string renderError;
+        require(PamManagedPasswordSlots::renderActive(
+                    spec, mutationId, options, content, renderError),
+            "render must succeed: " + renderError);
+        const auto inspection = expectState(
+            spec, content, ManagedPasswordSlotState::Active);
+        require(inspection.mutationId == mutationId,
+            "successful render inspects with the requested mutation id");
+        if (spec.role == ManagedPasswordSlotRole::Quality) {
+            require(!inspection.pwhistoryOptions.has_value(),
+                "quality slot carries no pwhistory options");
+        } else {
+            require(inspection.pwhistoryOptions.has_value() &&
+                    *inspection.pwhistoryOptions == options,
+                "successful render inspects with the requested options");
+        }
+    };
+
+    check(qualitySpec(), 1, {});
+    check(qualitySpec(), 18446744073709551615ULL, {});
+    check(normalSpec(), 1, {});
+    check(initialSpec(), 1, {});
+    check(normalSpec(), 42, withRemember);
+    check(normalSpec(), 42, withRoot);
+    check(normalSpec(), 42, withBoth);
+    check(initialSpec(), 42, withRemember);
+    check(initialSpec(), 42, withRoot);
+    check(initialSpec(), 42, withBoth);
+}
+
+// P1: mutation id textual canonicalization. Physical ownership
+// requires the canonical decimal text, not just numeric equality.
+void testMutationIdCanonicalization() {
+    // PASS: canonical decimal forms.
+    for (const char* id : {"1", "42", "18446744073709551615"}) {
+        const auto active = [&](const ManagedPasswordSlotSpec& spec) {
+            expectState(
+                spec,
+                replaceAll(renderActive(spec, 1), "mutation=1",
+                    std::string("mutation=") + id),
+                ManagedPasswordSlotState::Active);
+        };
+        active(qualitySpec());
+        active(normalSpec());
+        active(initialSpec());
+    }
+
+    // FAIL: non-canonical textual forms must be Broken even when the
+    // numeric value parses (leading zeros, signs, garbage).
+    for (const char* id :
+        {"0", "00", "01", "00042", "+1", "-1", "1x", "0x1"}) {
+        const auto broken = [&](const ManagedPasswordSlotSpec& spec) {
+            expectState(
+                spec,
+                replaceAll(renderActive(spec, 1), "mutation=1",
+                    std::string("mutation=") + id),
+                ManagedPasswordSlotState::Broken);
+        };
+        broken(qualitySpec());
+        broken(normalSpec());
+        broken(initialSpec());
+    }
+
+    // FAIL: both markers non-canonical with the same value.
+    expectState(
+        normalSpec(),
+        replaceAll(renderActive(normalSpec(), 1), "mutation=1",
+            "mutation=01"),
+        ManagedPasswordSlotState::Broken);
+    expectState(
+        initialSpec(),
+        replaceAll(renderActive(initialSpec(), 1), "mutation=1",
+            "mutation=00018446744073709551615"),
+        ManagedPasswordSlotState::Broken);
+    expectState(
+        qualitySpec(),
+        replaceAll(renderActive(qualitySpec(), 1), "mutation=1",
+            "mutation=00"),
+        ManagedPasswordSlotState::Broken);
+
+    // FAIL: canonical uint64 max id with a leading zero.
+    expectState(
+        normalSpec(),
+        replaceAll(renderActive(normalSpec(), 1), "mutation=1",
+            "mutation=018446744073709551615"),
+        ManagedPasswordSlotState::Broken);
+
+    // FAIL: BEGIN and END are canonicalized independently, so a mixed
+    // pair of canonical and non-canonical ids that are numerically
+    // equal ("01" vs "1") is Broken, not accepted via numeric parse.
+    const std::string beginPrefix =
+        "#@FIC_PAM_SLOT_BEGIN version=1 capability=enable_password_history";
+    const std::string endPrefix =
+        "#@FIC_PAM_SLOT_END capability=enable_password_history";
+    const std::string normalFull = renderActive(normalSpec(), 1);
+    // BEGIN mutation=01 / END mutation=1.
+    expectState(
+        normalSpec(),
+        replaceAll(
+            replaceAll(normalFull, beginPrefix + " mutation=1",
+                beginPrefix + " mutation=01"),
+            endPrefix + " mutation=1", endPrefix + " mutation=1"),
+        ManagedPasswordSlotState::Broken);
+    // BEGIN mutation=1 / END mutation=01.
+    expectState(
+        normalSpec(),
+        replaceAll(normalFull, endPrefix + " mutation=1",
+            endPrefix + " mutation=01"),
+        ManagedPasswordSlotState::Broken);
+}
+
+// P2: pair-level API must prove the typed identity of its arguments in
+// every branch, not rely on caller discipline.
+void testHistoryPairIdentity() {
+    const auto pairState =
+        [&](const ManagedPasswordSlotInspection& normal,
+            const ManagedPasswordSlotInspection& initial) {
+            ManagedHistoryPairInspection result;
+            std::string pairError;
+            PamManagedPasswordSlots::inspectHistoryPair(
+                normal, initial, result, pairError);
+            return result;
+        };
+
+    const auto neutralNormal = inspect(normalSpec(), neutral());
+    const auto neutralInitial = inspect(initialSpec(), neutral());
+    const auto neutralQuality = inspect(qualitySpec(), neutral());
+
+    // Baseline: correct identities still form a Neutral pair.
+    const auto correctNeutral = pairState(neutralNormal, neutralInitial);
+    require(correctNeutral.state == ManagedHistoryPairState::Neutral,
+        "correct neutral history pair is neutral");
+    require(correctNeutral.error.empty(), "neutral pair has no error");
+
+    // FAIL: wrong roles/capabilities in the Neutral branch.
+    require(pairState(neutralQuality, neutralInitial).state ==
+            ManagedHistoryPairState::Broken,
+        "quality neutral + history-initial neutral is broken");
+    require(pairState(neutralNormal, neutralQuality).state ==
+            ManagedHistoryPairState::Broken,
+        "history-normal neutral + quality neutral is broken");
+    require(pairState(neutralQuality, neutralQuality).state ==
+            ManagedHistoryPairState::Broken,
+        "quality neutral + quality neutral is broken");
+    require(pairState(neutralInitial, neutralNormal).state ==
+            ManagedHistoryPairState::Broken,
+        "swapped history roles are broken");
+    require(pairState(neutralInitial, neutralInitial).state ==
+            ManagedHistoryPairState::Broken,
+        "history-initial passed as normal is broken");
+    require(pairState(neutralNormal, neutralNormal).state ==
+            ManagedHistoryPairState::Broken,
+        "history-normal passed as initial is broken");
+
+    // FAIL: artificially constructed inspections: correct-looking
+    // role/state but wrong capability must be rejected by identity.
+    ManagedPasswordSlotInspection forgedNormal;
+    forgedNormal.role = ManagedPasswordSlotRole::HistoryNormal;
+    forgedNormal.observedRole = ManagedPasswordSlotRole::HistoryNormal;
+    forgedNormal.capability = ManagedPasswordCapability::PasswordQuality;
+    forgedNormal.state = ManagedPasswordSlotState::Neutral;
+    const auto forgedNormalPair = pairState(forgedNormal, neutralInitial);
+    require(forgedNormalPair.state == ManagedHistoryPairState::Broken,
+        "history-normal role with quality capability is broken");
+    require(forgedNormalPair.error.find("normal") != std::string::npos,
+        "wrong normal identity is diagnosed");
+
+    ManagedPasswordSlotInspection forgedInitial;
+    forgedInitial.role = ManagedPasswordSlotRole::HistoryInitial;
+    forgedInitial.observedRole = ManagedPasswordSlotRole::HistoryInitial;
+    forgedInitial.capability = ManagedPasswordCapability::PasswordQuality;
+    forgedInitial.state = ManagedPasswordSlotState::Neutral;
+    const auto forgedInitialPair = pairState(neutralNormal, forgedInitial);
+    require(forgedInitialPair.state == ManagedHistoryPairState::Broken,
+        "history-initial role with quality capability is broken");
+    require(forgedInitialPair.error.find("initial") != std::string::npos,
+        "wrong initial identity is diagnosed");
+
+    // FAIL: Broken/Unavailable slots with wrong identity metadata.
+    const auto brokenQuality = inspect(qualitySpec(), std::string(""));
+    const auto missingInitial = inspect(initialSpec(), std::nullopt);
+    require(pairState(brokenQuality, missingInitial).state ==
+            ManagedHistoryPairState::Broken,
+        "quality broken passed as normal is broken");
+
+    // FAIL: active pair with wrong identity metadata is still rejected
+    // by the explicit capability check, not only by observedRole.
+    const auto activeNormalInspection =
+        inspect(normalSpec(), activeNormal(1));
+    const auto activeInitialInspection =
+        inspect(initialSpec(), activeInitial(1));
+    require(pairState(activeNormalInspection, forgedInitial).state ==
+            ManagedHistoryPairState::Broken,
+        "active pair with wrong initial identity is broken");
+    require(pairState(forgedNormal, activeInitialInspection).state ==
+            ManagedHistoryPairState::Broken,
+        "active pair with wrong normal identity is broken");
+
+    // PASS: correct active pair is still Active.
+    require(pairState(activeNormalInspection, activeInitialInspection)
+                .state == ManagedHistoryPairState::Active,
+        "correct active history pair is active");
 }
 
 } // namespace
@@ -681,6 +997,12 @@ int main() {
             {"testCrossSlotHistoryPair", testCrossSlotHistoryPair},
             {"testQualityHistoryIndependence",
              testQualityHistoryIndependence},
+            {"testMutationIdCanonicalization",
+             testMutationIdCanonicalization},
+            {"testRendererZeroRejection", testRendererZeroRejection},
+            {"testSuccessfulRenderImpliesActive",
+             testSuccessfulRenderImpliesActive},
+            {"testHistoryPairIdentity", testHistoryPairIdentity},
             {"testRoundTrips", testRoundTrips}};
         for (const auto& test : tests) {
             test.second();

@@ -134,17 +134,34 @@ public:
     // module arguments (Debian 12 argument mode); on config-file
     // platforms the bodies simply carry no optional arguments. Option
     // values are rendered in one canonical order.
-    static std::string renderActiveQuality(std::uint64_t mutationId);
-    static std::string renderActiveHistoryNormal(
+    //
+    // Fail-safe contract (Step 2 hardening): a canonical renderer must
+    // never successfully return non-canonical active slot bytes. A
+    // mutation id of 0 (or any other id the strict parser would reject)
+    // makes the renderer fail with no active bytes produced. On success
+    // the rendered bytes are guaranteed to inspect as Active by
+    // inspectContent(); the caller never needs to re-inspect its own
+    // render to detect invalid input.
+    static bool renderActiveQuality(
         std::uint64_t mutationId,
-        const ManagedPwhistorySlotOptions& options);
-    static std::string renderActiveHistoryInitial(
+        std::string& content,
+        std::string& error);
+    static bool renderActiveHistoryNormal(
         std::uint64_t mutationId,
-        const ManagedPwhistorySlotOptions& options);
-    static std::string renderActive(
+        const ManagedPwhistorySlotOptions& options,
+        std::string& content,
+        std::string& error);
+    static bool renderActiveHistoryInitial(
+        std::uint64_t mutationId,
+        const ManagedPwhistorySlotOptions& options,
+        std::string& content,
+        std::string& error);
+    static bool renderActive(
         const ManagedPasswordSlotSpec& spec,
         std::uint64_t mutationId,
-        const ManagedPwhistorySlotOptions& options);
+        const ManagedPwhistorySlotOptions& options,
+        std::string& content,
+        std::string& error);
 
     // Strict inspection of slot content. content == nullopt means the
     // slot file does not exist (Unavailable, never Neutral). content is
@@ -156,12 +173,17 @@ public:
         ManagedPasswordSlotInspection& inspection,
         std::string& error);
 
-    // Pair-level consistency of the two history slots. Valid outcomes:
+    // Pair-level consistency of the two history slots. The pair API is
+    // type-safe on its own: before any state comparison it requires the
+    // first inspection to carry the exact history-normal identity
+    // (role, observed role and PasswordHistory capability) and the
+    // second to carry the exact history-initial identity, in every
+    // state (Neutral, Active, Broken, Unavailable). Valid outcomes:
     // both Neutral, or both Active with the same mutation id, the same
     // logical remember/enforce_for_root values and the role-specific
-    // use_authtok invariant. Everything else (mixed states, divergent
-    // ids/options, missing or malformed files) is Broken; per-slot
-    // inspections expose Unavailable explicitly.
+    // use_authtok invariant. Everything else (wrong identity, mixed
+    // states, divergent ids/options, missing or malformed files) is
+    // Broken; per-slot inspections expose Unavailable explicitly.
     static bool inspectHistoryPair(
         const ManagedPasswordSlotInspection& normal,
         const ManagedPasswordSlotInspection& initial,
