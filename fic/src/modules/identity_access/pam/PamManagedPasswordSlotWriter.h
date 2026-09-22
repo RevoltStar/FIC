@@ -48,6 +48,15 @@ namespace fic::identity::pam {
 // a read-only proof path. The daemon runtime registry, platform profiles and
 // PamPolicySupport::ReadOnly are intentionally untouched (Step 7 wires the
 // capability policies to this lifecycle).
+//
+// Journal lifecycle gates (P1-1 hardening): operational mutation paths
+// require usable() AND lifecycleInitialized(); a raw load() (usable without
+// the witness-aware lifecycle) is never trusted operationally — the writer
+// runs the witness-aware initializeOrLoad() first and re-checks both flags
+// after it (a returned true alone is not accepted). Read-only proof paths
+// never write: when the lifecycle is not yet proven on the journal object
+// they run the strictly non-mutating validatePersistentStateReadOnly() and
+// fail closed unless it proves the persistent (journal, witness) pair.
 enum class PasswordSlotJournalBinding {
     // No journal record matches the physical marker id with exact metadata.
     Unbound,
@@ -74,11 +83,14 @@ struct PamManagedPasswordSlotOwnership {
     }
 };
 
-// Physical domain of the writer. The journal record payload and the set of
-// canonical slot files are derived from this domain; callers can never
-// combine a foreign policy name with foreign slot files (the writer always
-// resolves the canonical specs through PamManagedPasswordSlots and never
-// accepts externally constructed slot specs for persistent writes).
+// Physical domain of the writer. The journal record payload, the canonical
+// PolicyRef and the set of canonical slot files are ALL derived from this
+// single domain (P1-2 security identity: there is no policy input at all,
+// so a foreign policy/domain combination is not representable through the
+// public API). Callers can never combine a foreign policy name with
+// foreign slot files (the writer always resolves the canonical specs
+// through PamManagedPasswordSlots and never accepts externally constructed
+// slot specs for persistent writes).
 enum class PamManagedPasswordDomain {
     Quality,
     History
@@ -86,9 +98,14 @@ enum class PamManagedPasswordDomain {
 
 struct PamManagedPasswordSlotActivationResult {
     bool success = false;
-    // True only when physical disk bytes were mutated by this call and the
-    // mutation was not fully compensated. Never set merely because a write
-    // was attempted.
+    // True only when physical disk bytes were mutated by this top-level
+    // call RELATIVE TO THE ENTRY STATE and not fully compensated. The
+    // accounting covers the WHOLE call (P1-4), including the physical
+    // neutralization performed by the Prepared crash-partial recovery
+    // phase: a recovery that neutralized an exact-id Active slot keeps
+    // changedSystemState == true even when the subsequent fresh activation
+    // fails and fully compensates its own writes. Never set merely because
+    // a write was attempted.
     bool changedSystemState = false;
     // True only when the resulting state carries proven journal-bound
     // ownership (physical proof + matching Applied journal record).
@@ -102,12 +119,19 @@ class PamManagedPasswordSlotWriter {
 public:
     // journal must outlive the writer. configDirectory is the (test
     // injectable) PAM configuration directory; slot paths are always the
-    // canonical managed file names inside it.
+    // canonical managed file names inside it. The canonical PolicyRef is
+    // derived internally from the domain (canonicalPolicyRef): there is no
+    // policy argument that could be mismatched with the domain (P1-2).
     PamManagedPasswordSlotWriter(
         std::filesystem::path configDirectory,
         fic::rollback::MutationJournal& journal,
-        PolicyRef policyRef,
         PamManagedPasswordDomain domain);
+
+    // Canonical domain identity (P1-2 security identity, not caller
+    // input): the only two PolicyRefs this component may ever journal or
+    // prove. Exposed so callers/tests can use the canonical journal
+    // identity without duplicating the mapping.
+    static PolicyRef canonicalPolicyRef(PamManagedPasswordDomain domain);
 
     // The managed password slot grammar embeds the journal mutation id:
     // physical ownership is proven through the journal (Step 7 wires this
@@ -232,9 +256,21 @@ private:
     // Prepared recovery for a Broken history pair: compensates ONLY an
     // exact crash-partial composition (one slot Active with the Prepared
     // id, the other Neutral), then discards the record. Everything else
-    // fails closed.
+    // fails closed. Reports physical-change accounting relative to the
+    // entry state of the top-level activation call.
     bool recoverBrokenHistoryPair(
-        fic::rollback::MutationId preparedId, std::string& error);
+        fic::rollback::MutationId preparedId,
+        PamManagedPasswordSlotActivationResult& result, std::string& error);
+    // Read-only physical-state classification shared by the Prepared
+    // recovery matrix and the fresh activation path.
+    enum class PhysicalState {
+        Neutral,
+        ExactIdActivePair,
+        ActivePair,
+        CrashedPartial,
+        UnownedForeign
+    };
+    bool classifyPhysicalState(PhysicalState& state, std::string& error);
     // Fresh history activation: pair snapshots, starting-state
     // classification, Prepared record, both writes, fresh pair proof.
     bool activateFreshHistory(
@@ -243,6 +279,8 @@ private:
 
     std::filesystem::path configDirectory_;
     fic::rollback::MutationJournal& journal_;
+    // Canonical domain identity derived once from domain_ (P1-2): never
+    // caller-provided, never mutated after construction.
     PolicyRef policyRef_;
     PamManagedPasswordDomain domain_;
     SlotFaultHook beforeWriteHook_;

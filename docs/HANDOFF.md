@@ -2,14 +2,14 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `a85fd49`; рабочее дерево содержит изменения Step 3
-  (новый компонент `PamManagedPasswordSlotWriter` + тесты +
-  tests/CMakeLists.txt), не закоммичены — оставлены для review. НЕ коммитить.
+- Ветка `main`, HEAD `9e7a00e`; рабочее дерево содержит hardening
+  follow-up к Step 3 (правки `PamManagedPasswordSlotWriter.{h,cpp}` +
+  его тестов), не закоммичено — оставлено для review. НЕ коммитить.
 
 ## Current task
 
 - Step 3 PasswordQuality/PasswordHistory: journal-bound lifecycle для трёх
-  FIC-owned managed password slots реализован в новом helper
+  FIC-owned managed password slots реализован в helper
   `PamManagedPasswordSlotWriter` (отдельный компонент; faillock grammar
   не рефакторилась — решение §21). НЕ подключён к daemon registry и
   capability policies (это Step 7); `PamPolicySupport::ReadOnly`, journal,
@@ -19,7 +19,8 @@
   Neutral; whole-file canonical grammar; независимая textual mutation-id
   canonicalization; type-safe history pair identity; renderer fail-safe —
   mutationId=0 => failure, успешный render гарантирует Active).
-- Step 3 (этот шаг) РЕАЛИЗОВАН и провалидирован.
+- Step 3 РЕАЛИЗОВАН, провалидирован и ЗАКРЫТ hardening follow-up'ом
+  (4 P1 defect'а устранены — см. контракт ниже).
 ## Fixture evidence
 
 ### v2 — pam-auth-update mechanics (все 4 платформы)
@@ -281,14 +282,40 @@ neutral baseline, hook-include no-op.
   резолвятся ТОЛЬКО внутри через `PamManagedPasswordSlots`; публичный API
   не принимает произвольных slot specs; пути ограничены canonical slot
   filenames внутри test-injectable `configDirectory`.
+- P1-2 canonical domain identity: публичный конструктор НЕ принимает
+  `PolicyRef`; canonical policy выводится внутри из домена
+  (`canonicalPolicyRef(domain)`: Quality → `IDENTITY_ACCESS/PAM/
+  enable_password_quality`, History → `enable_password_history`);
+  произвольная комбинация domain ↔ policy непредставима через API.
+- Journal operational gate (P1-1): mutation-пути требуют
+  `usable() && lifecycleInitialized()`; raw `load()`
+  (usable без witness-aware lifecycle) операционно НЕ доверяется — writer
+  проходит `initializeOrLoad()` и ПОСЛЕ него повторно проверяет оба флага
+  (само возвращённое true не принимается).
+- Journal read-only gate (P1-1): при usable без lifecycleInitialized
+  `proveOwnedQuality`/`proveOwnedHistory` вызывают строго не-мутирующий
+  `validatePersistentStateReadOnly()` (проверяет pair J+W, ничего не
+  создаёт/чинит; при valid pair устанавливает lifecycleInitialized) и
+  после него требуют оба флага; иначе proof fail closed. Read-only proof
+  НИКОГДА не создаёт witness и не мигрирует `J exists + W missing`.
 - Ownership: `PasswordSlotJournalBinding{Unbound, MatchingApplied,
   MatchingPrepared}`; `owned()` == только MatchingApplied;
   MatchingPrepared — binding компенсации, НЕ ownership. Proof требует
   exact canonical Active physical state + exact mutation id + valid
-  Applied journal record с exact metadata (policy ref, Pam backend,
-  `capability/<policy>`, payload `UndoDisablePamCapability{capability,
-  PamAuthUpdate, activationIdentifiers == canonical slot filenames
-  домена}`). Same id с чужим доменом/метаданными => fail closed.
+  Applied journal record с exact metadata (canonical policy ref (P1-2),
+  Pam backend, `capability/<policy>`, payload `UndoDisablePamCapability
+  {capability, PamAuthUpdate, activationIdentifiers == permanent hook
+  profile id домена}`). Same id с чужим доменом/метаданными => fail
+  closed.
+- P1-3 journal payload: `activationIdentifiers` НЕсут pam-auth-update
+  permanent hook profile id — Quality → `["fic-password-quality-hook"]`,
+  History → `["fic-password-history-hook"]` (один dual-stack профиль для
+  обоих physical slots). Physical slot filenames (`fic-password-quality`,
+  `fic-password-history`, `fic-password-history-initial`) в journal
+  payload НЕ попадают. Step 3 journal payload использует final permanent
+  hook profile IDs; текущие platform profile activationIdentifiers
+  остаются legacy до integration шага (platform profiles в этом
+  follow-up не менялись).
 - Read-only `proveOwnedQuality` / `proveOwnedHistory`: не чинят journal,
   не пишут witness, не переводят Prepared→Applied, не переписывают slots;
   используют `validatePersistentStateReadOnly` (без bootstrap/witness).
@@ -310,8 +337,9 @@ neutral baseline, hook-include no-op.
      options) => prove durability + complete to Applied (тот же id).
   C) History crash-partial (один слот Active(exact id), другой Neutral)
      => neutralize ТОЛЬКО exact-id слот + fresh neutral proof + discard
-     + fresh activation с НОВЫМ id. Foreign-id/mixed/Broken partial =>
-     fail closed.
+     + fresh activation с НОВЫМ id. Physical neutralization
+     аккумулируется в `changedSystemState` (P1-4). Foreign-id/mixed/
+     Broken partial => fail closed, `changedSystemState == false`.
   D) Active(other id) / Broken / Unavailable / multiple active records /
      RollbackFailed => fail closed, ничего не мутируется.
 - Fresh activation: Unavailable/Broken start => fail closed (packaging
@@ -323,8 +351,17 @@ neutral baseline, hook-include no-op.
   Prepared только если rollback доказан. Rollback не доказан => Prepared
   остаётся (existing lifecycle), `changedSystemState = true`, никогда не
   чистый failure.
-- `changedSystemState`: true только когда дисковые байты изменены данным
-  вызовом и не полностью компенсированы; не из-за попытки записи.
+- `changedSystemState` (P1-4 accumulated accounting): true только когда
+  физическое состояние изменилось относительно начала ВСЕГО top-level
+  вызова и не полностью компенсировано. Accounting накапливается ЧЕРЕЗ
+  фазы: Prepared crash-partial recovery (`recoverBrokenHistoryPair`
+  после proven physical neutralization выставляет
+  `changedSystemState = true` немедленно — включая случай, когда
+  последующий `discardPrepared` или fresh activation падает) + все
+  компенсированные/некомпенсированные изменения fresh activation.
+  Recovery neutralization + свежая фаза, упавшая ДО первой записи =>
+  `success = false, ownershipProven = false, changedSystemState = true`.
+  Discard failure после neutralization: не чистый failure.
 - `journalBindsPhysicalOwnership() == true` (используется Step 7).
 - Fault injection (test-only): `setBefore/AfterSlotWriteHookForTests
   (slotIndex)`; 0 = quality | history-normal, 1 = history-initial;
@@ -341,7 +378,19 @@ neutral baseline, hook-include no-op.
   Active; Broken; history pair lifecycle + options identity; options
   transition fail-closed; fault injection (before/after, второй write
   после первого committed); fresh-verify tamper; crash-partial recovery
-  + foreign-id partial fail closed; idempotence без rewrite.
+  + foreign-id partial fail closed (с проверкой `changedSystemState ==
+  false` и нетронутых байтов); idempotence без rewrite. Hardening
+  follow-up добавил: journal payload identity (Quality →
+  `["fic-password-quality-hook"]`, History →
+  `["fic-password-history-hook"]`, canonical PolicyRef/resource);
+  raw-load operational regression (virgin raw load и raw-loaded
+  existing journal без witness — writer восстанавливает lifecycle через
+  initializeOrLoad до mutation); read-only raw-load negative (J+missing
+  W: proof FAIL, witness не создаётся, байты не трогаются); read-only
+  valid-witness positive (fresh journal object, proof устанавливает
+  lifecycle без записи); legacy slot-filename payload => foreign,
+  proof fail closed; P1-4 regression (crash-partial recovery + fresh
+  failure до первой записи => `changedSystemState == true`).
 
 ## Completed
 
@@ -351,6 +400,14 @@ neutral baseline, hook-include no-op.
   renderer rejects mutationId=0) — см. git history и fixture evidence
   ниже.
 - Step 3 реализован (контракт выше) и провалидирован.
+- Hardening follow-up к Step 3 завершён (4 P1): P1-1 witness-aware
+  journal gates (operational: `usable && lifecycleInitialized` через
+  `initializeOrLoad`; read-only: `validatePersistentStateReadOnly` без
+  writes); P1-2 `PolicyRef` убран из публичного конструктора
+  (`canonicalPolicyRef(domain)`); P1-3 journal payload → permanent hook
+  profile IDs; P1-4 accumulated `changedSystemState` через recovery +
+  fresh activation. Journal schema, `MutationJournal.*`, `PamRollback.*`,
+  platform profiles, packaging НЕ менялись.
 
 ## Changed areas
 
@@ -372,10 +429,19 @@ neutral baseline, hook-include no-op.
   pam_slot_attach_validator_tests, pam_capability_activation_policy_tests,
   rollback_executor_tests).
 - Full `ctest` — 99/100; единственный failure `passwdqc_config_file_tests`
-  («pwquality policy did not retain its topology-dependent state»)
-  воспроизводится на чистом a85fd49 (проверено git stash) —
+  воспроизводится на чистом baseline (проверено git stash) —
   ПРЕДСУЩЕСТВУЮЩАЯ проблема, не относится к Step 3, не чинилась (scope).
 - `git diff --check` — чисто.
+
+## Validation (hardening follow-up)
+
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` + full
+  `cmake --build build-check -j4` — 0 ошибок (включая daemon target).
+- `ctest -R 'pam|rollback|journal|mutation'` — 17/17 PASS.
+- Full `ctest` — 99/100; единственный failure `passwdqc_config_file_tests`
+  воспроизведён на чистом baseline `9e7a00e` через `git stash` —
+  pre-existing, не чинился (scope).
+- `git diff --check` — чисто; коммит НЕ выполнялся.
 
 ## Remaining
 

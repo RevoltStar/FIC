@@ -4,19 +4,56 @@
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
+#include <stdexcept>
 #include <utility>
 
 namespace fic::identity::pam {
 
+namespace {
+
+// Canonical domain identity (P1-2 security identity, not caller input):
+// the only two policies this component may ever journal or prove.
+const PolicyRef kQualityPolicyRef{
+    "IDENTITY_ACCESS", "PAM", "enable_password_quality"};
+const PolicyRef kHistoryPolicyRef{
+    "IDENTITY_ACCESS", "PAM", "enable_password_history"};
+
+// P1-3: activationIdentifiers carry the pam-auth-update PERMANENT HOOK
+// PROFILE id of the domain (the Step 1 design canonical journal activation
+// domain), never the physical slot filenames. The history domain uses ONE
+// identifier: its two physical slots are exposed through a single
+// dual-stack hook profile (Password -> include fic-password-history,
+// Password-Initial -> include fic-password-history-initial). Physical slot
+// file names stay internal to PamManagedPasswordSlots /
+// PamManagedPasswordSlotWriter. The current platform profiles still carry
+// legacy identifiers; they are migrated by the later packaging/platform
+// integration steps — this payload fixes the future provenance contract.
+constexpr const char* kQualityActivationIdentifier =
+    "fic-password-quality-hook";
+constexpr const char* kHistoryActivationIdentifier =
+    "fic-password-history-hook";
+
+} // namespace
+
 PamManagedPasswordSlotWriter::PamManagedPasswordSlotWriter(
     std::filesystem::path configDirectory,
     fic::rollback::MutationJournal& journal,
-    PolicyRef policyRef,
     PamManagedPasswordDomain domain)
     : configDirectory_(std::move(configDirectory)),
       journal_(journal),
-      policyRef_(std::move(policyRef)),
+      policyRef_(canonicalPolicyRef(domain)),
       domain_(domain) {}
+
+PolicyRef PamManagedPasswordSlotWriter::canonicalPolicyRef(
+    PamManagedPasswordDomain domain) {
+    switch (domain) {
+    case PamManagedPasswordDomain::Quality:
+        return kQualityPolicyRef;
+    case PamManagedPasswordDomain::History:
+        return kHistoryPolicyRef;
+    }
+    throw std::runtime_error("unknown PamManagedPasswordDomain");
+}
 
 void PamManagedPasswordSlotWriter::setBeforeSlotWriteHookForTests(
     SlotFaultHook hook) {
@@ -45,8 +82,18 @@ PamManagedPasswordSlotWriter::expectedUndo() const {
     fic::rollback::UndoDisablePamCapability undo;
     undo.capability = policyRef_.policyName;
     undo.topology = fic::rollback::PamTopologyKind::PamAuthUpdate;
-    for (const ManagedPasswordSlotSpec* spec : domainSlots()) {
-        undo.activationIdentifiers.push_back(spec->fileName);
+    // P1-3: journal undo activation domain = pam-auth-update hook/profile
+    // identifiers, NEVER the physical include-target slot filenames (the
+    // physical slot domain is /etc/pam.d/fic-password-* and stays internal
+    // to the slots layer).
+    switch (domain_) {
+    case PamManagedPasswordDomain::Quality:
+        undo.activationIdentifiers = {kQualityActivationIdentifier};
+        break;
+    case PamManagedPasswordDomain::History:
+        // One dual-stack hook profile for both history slots.
+        undo.activationIdentifiers = {kHistoryActivationIdentifier};
+        break;
     }
     return undo;
 }
@@ -85,15 +132,23 @@ bool PamManagedPasswordSlotWriter::journalMetadataMatches(
 
 bool PamManagedPasswordSlotWriter::ensureJournalOperational(
     std::string& error) {
-    if (journal_.usable()) {
+    // P1-1: operational provenance requires usable() AND
+    // lifecycleInitialized(). A raw load() (usable without the
+    // witness-aware lifecycle) is NEVER trusted as operational state here.
+    if (journal_.usable() && journal_.lifecycleInitialized()) {
         error.clear();
         return true;
     }
+    // Witness-aware lifecycle entrypoint only. Its returned true alone is
+    // not accepted: both flags are re-checked after the call (on a
+    // raw-loaded object initializeOrLoad() runs the full witness-aware
+    // state table — virgin bootstrap or migration — and establishes the
+    // lifecycle before the journal may drive mutations).
     if (!journal_.initializeOrLoad(error)) {
         error = "managed password journal is not operational: " + error;
         return false;
     }
-    if (!journal_.usable()) {
+    if (!journal_.usable() || !journal_.lifecycleInitialized()) {
         error = "managed password journal failed its operational gate";
         return false;
     }
@@ -103,20 +158,27 @@ bool PamManagedPasswordSlotWriter::ensureJournalOperational(
 
 bool PamManagedPasswordSlotWriter::ensureJournalReadable(
     std::string& error) const {
-    if (journal_.usable()) {
+    // Read-only path (P1-1): no writes, no witness creation, no migration,
+    // no bootstrap. usable() WITHOUT lifecycleInitialized() (e.g. after a
+    // raw load()) must never short-circuit to success: the persistent
+    // (journal, witness) pair is proven strictly non-mutatingly first.
+    if (journal_.usable() && journal_.lifecycleInitialized()) {
         error.clear();
         return true;
     }
     // Read-only persistent-state validation: the same witness-aware state
     // table as the operational lifecycle, but strictly without any
-    // filesystem mutation (no bootstrap, no witness creation, no repair).
+    // filesystem mutation (no bootstrap, no witness creation, no repair,
+    // no migration). On success it establishes the lifecycle on the
+    // journal object (the persistent pair was proven) without touching
+    // the filesystem.
     if (!journal_.validatePersistentStateReadOnly(error)) {
         error = "managed password journal persistent state is not proven "
                 "(fail closed): " +
             error;
         return false;
     }
-    if (!journal_.usable()) {
+    if (!journal_.usable() || !journal_.lifecycleInitialized()) {
         error = "managed password journal is not readable after validation";
         return false;
     }
@@ -597,7 +659,8 @@ bool PamManagedPasswordSlotWriter::finishHistoryActivation(
 }
 
 bool PamManagedPasswordSlotWriter::recoverBrokenHistoryPair(
-    fic::rollback::MutationId preparedId, std::string& error) {
+    fic::rollback::MutationId preparedId,
+    PamManagedPasswordSlotActivationResult& result, std::string& error) {
     ManagedPasswordSlotInspection normal;
     ManagedPasswordSlotInspection initial;
     if (!freshInspection(
@@ -630,6 +693,13 @@ bool PamManagedPasswordSlotWriter::recoverBrokenHistoryPair(
             activeSpec, preparedId, error)) {
         return false;
     }
+    // P1-4: the exact-id Active slot WAS physically neutralized. From this
+    // point the top-level activation call has changed the system state
+    // relative to its entry state, even if any later step (fresh neutral
+    // proof, Prepared discard, subsequent fresh activation) fails — a
+    // physical change that was installed must never be reported as a clean
+    // no-op failure.
+    result.changedSystemState = true;
     // Fresh proof of the compensated pair before the record is discarded.
     ManagedPasswordSlotInspection afterNormal;
     ManagedPasswordSlotInspection afterInitial;
@@ -789,7 +859,11 @@ bool PamManagedPasswordSlotWriter::activateOwnedPasswordHistory(
         std::string pairError;
         if (!PamManagedPasswordSlots::inspectHistoryPair(
                 normal, initial, pair, pairError)) {
-            if (!recoverBrokenHistoryPair(active.id, error)) {
+            if (!recoverBrokenHistoryPair(active.id, result, error)) {
+                // recoverBrokenHistoryPair already accumulated any physical
+                // change it installed into result.changedSystemState
+                // (P1-4); never report a clean failure after a real
+                // neutralization.
                 error = "Prepared managed history provenance faces a "
                         "broken pair (fail closed): " +
                     pairError + "; " + error;
@@ -846,8 +920,14 @@ bool PamManagedPasswordSlotWriter::activateOwnedPasswordHistory(
                     "owned by journal mutation " +
                 std::to_string(pair.mutationId) + " (fail closed)";
             return false;
-        } else if (!recoverBrokenHistoryPair(active.id, error)) {
-            return false;
+        } else {
+            // Exact crash-partial recovery. recoverBrokenHistoryPair
+            // accounts for its physical neutralization in
+            // result.changedSystemState (P1-4); the fresh activation below
+            // only ever ORs additional changes on top of it.
+            if (!recoverBrokenHistoryPair(active.id, result, error)) {
+                return false;
+            }
         }
     }
     return activateFreshHistory(options, result, error);

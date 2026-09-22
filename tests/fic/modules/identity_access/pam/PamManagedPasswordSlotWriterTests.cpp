@@ -144,6 +144,16 @@ bool prepareDomainRecord(
     return journal.prepareMutation(record, id, error);
 }
 
+const fic::rollback::MutationRecord* findRecord(
+    MutationJournal& journal, fic::rollback::MutationId id) {
+    for (const auto& record : journal.records()) {
+        if (record.id == id) {
+            return &record;
+        }
+    }
+    return nullptr;
+}
+
 std::string neutral() {
     return PamManagedPasswordSlots::neutralBody();
 }
@@ -169,17 +179,16 @@ bool renderActiveHistoryInitial(
         id, options, content, error);
 }
 
-// Fresh writer fixture: its own journal document inside the tree.
+// Fresh writer fixture: its own journal document inside the tree. The
+// canonical PolicyRef is derived inside the writer from the domain (P1-2):
+// tests use exactly the production API.
 class Fixture {
 public:
-    explicit Fixture(
-        PamManagedPasswordDomain domain,
-        const PolicyRef& policy)
+    explicit Fixture(PamManagedPasswordDomain domain)
         : journal_(tree_.path() / "mutation-journal.json") {
         std::string error;
         require(journal_.initializeOrLoad(error), error);
-        writer_.emplace(
-            tree_.path(), journal_, policy, domain);
+        writer_.emplace(tree_.path(), journal_, domain);
     }
 
     TemporaryDirectory& tree() { return tree_; }
@@ -194,18 +203,20 @@ private:
 
 bool prepareQualityRecord(
     Fixture& fixture, fic::rollback::MutationId& id, std::string& error) {
+    // Canonical Step 3 journal payload (P1-3): the permanent hook profile
+    // id, never the slot filename.
     return prepareDomainRecord(
         fixture.journal(), qualityPolicy(),
-        {PamManagedPasswordSlots::qualitySlot().fileName}, id, error);
+        {"fic-password-quality-hook"}, id, error);
 }
 
 bool prepareHistoryRecord(
     Fixture& fixture, fic::rollback::MutationId& id, std::string& error) {
+    // Canonical Step 3 journal payload (P1-3): ONE dual-stack hook profile
+    // id for both physical slots.
     return prepareDomainRecord(
         fixture.journal(), historyPolicy(),
-        {PamManagedPasswordSlots::historyNormalSlot().fileName,
-            PamManagedPasswordSlots::historyInitialSlot().fileName},
-        id, error);
+        {"fic-password-history-hook"}, id, error);
 }
 
 } // namespace
@@ -219,7 +230,7 @@ void runQualityTests() {
     // Neutral + no journal -> activation succeeds, ownership proven,
     // idempotent on the second call with the SAME mutation id.
     {
-        Fixture fixture(PamManagedPasswordDomain::Quality, qualityPolicy());
+        Fixture fixture(PamManagedPasswordDomain::Quality);
         writeFile(qualityPath(fixture.tree()), neutral());
         PamManagedPasswordSlotActivationResult result;
         std::string error;
@@ -249,7 +260,7 @@ void runQualityTests() {
     // read-only proof must NOT own, must report MatchingPrepared, and must
     // not complete the record to Applied.
     {
-        Fixture fixture(PamManagedPasswordDomain::Quality, qualityPolicy());
+        Fixture fixture(PamManagedPasswordDomain::Quality);
         std::string content;
         std::string error;
         fic::rollback::MutationId id = 0;
@@ -295,7 +306,7 @@ void runQualityNegativeTests() {
     // record 42 belongs to the history domain -> proveOwnedQuality must
     // fail closed even though the id matches.
     {
-        Fixture fixture(PamManagedPasswordDomain::Quality, qualityPolicy());
+        Fixture fixture(PamManagedPasswordDomain::Quality);
         std::string content;
         std::string error;
         fic::rollback::MutationId id = 0;
@@ -315,7 +326,7 @@ void runQualityNegativeTests() {
     // §43: canonical Active slot without any journal record -> both proof
     // and activation fail closed and never adopt the foreign state.
     {
-        Fixture fixture(PamManagedPasswordDomain::Quality, qualityPolicy());
+        Fixture fixture(PamManagedPasswordDomain::Quality);
         std::string content;
         std::string error;
         require(renderActiveQuality(777, content), "render");
@@ -338,7 +349,7 @@ void runQualityNegativeTests() {
 
     // Broken slot -> fail closed for both proof and activation.
     {
-        Fixture fixture(PamManagedPasswordDomain::Quality, qualityPolicy());
+        Fixture fixture(PamManagedPasswordDomain::Quality);
         writeFile(qualityPath(fixture.tree()), "pam_pwquality.so\n");
         std::string error;
         PamManagedPasswordSlotOwnership ownership;
@@ -360,7 +371,7 @@ void runHistoryTests() {
     // §37: Neutral pair -> activation as ONE logical mutation; both files
     // carry the same id; proof returns the options; idempotent.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         writeFile(historyNormalPath(fixture.tree()), neutral());
         writeFile(historyInitialPath(fixture.tree()), neutral());
         const ManagedPwhistorySlotOptions options = historyOptions(12);
@@ -398,7 +409,7 @@ void runHistoryTests() {
     // Different desired options over a proven Applied pair: fail closed,
     // no silent rewrite with a new mutation id.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         writeFile(historyNormalPath(fixture.tree()), neutral());
         writeFile(historyInitialPath(fixture.tree()), neutral());
         const ManagedPwhistorySlotOptions options = historyOptions(12);
@@ -432,7 +443,7 @@ void runHistoryNegativeTests() {
     // MatchingPrepared, not owned, record stays Prepared; then activation
     // completes the lifecycle with the same id.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         const ManagedPwhistorySlotOptions options = historyOptions(12);
         std::string normalContent;
         std::string initialContent;
@@ -475,7 +486,7 @@ void runHistoryNegativeTests() {
     // §43: Active pair without journal -> proof and activation fail
     // closed; bytes untouched.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         const ManagedPwhistorySlotOptions options = historyOptions(12);
         std::string normalContent;
         std::string initialContent;
@@ -513,7 +524,7 @@ void runFaultAndCompensationTests() {
     // §38: before-hook failure on the FIRST history write -> exact restore
     // of both prior bytes, Prepared discarded, no system state change.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         const ManagedPwhistorySlotOptions options = historyOptions(12);
         writeFile(historyNormalPath(fixture.tree()), neutral());
         writeFile(historyInitialPath(fixture.tree()), neutral());
@@ -539,7 +550,7 @@ void runFaultAndCompensationTests() {
     // §39: before-hook failure on the SECOND history write -> the first
     // committed write is restored to its exact prior bytes.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         const ManagedPwhistorySlotOptions options = historyOptions(12);
         writeFile(historyNormalPath(fixture.tree()), neutral());
         writeFile(historyInitialPath(fixture.tree()), neutral());
@@ -570,7 +581,7 @@ void runCompensationAndFreshVerifyTests() {
     // while leaving bytes committed) -> both files back to exact prior
     // bytes, Prepared discarded.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         const ManagedPwhistorySlotOptions options = historyOptions(12);
         writeFile(historyNormalPath(fixture.tree()), neutral());
         writeFile(historyInitialPath(fixture.tree()), neutral());
@@ -597,7 +608,7 @@ void runCompensationAndFreshVerifyTests() {
     // id -> the write is rolled back, no system state change, Prepared
     // discarded.
     {
-        Fixture fixture(PamManagedPasswordDomain::Quality, qualityPolicy());
+        Fixture fixture(PamManagedPasswordDomain::Quality);
         fixture.writer().setAfterSlotWriteHookForTests(
             [&fixture](std::size_t) {
                 writeFile(qualityPath(fixture.tree()), "tampered\n");
@@ -628,7 +639,7 @@ void runCrashPartialTests() {
     // discard the Prepared record and perform a fresh activation with a
     // NEW id.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         const ManagedPwhistorySlotOptions options = historyOptions(12);
         std::string normalContent;
         std::string initialContent;
@@ -665,9 +676,9 @@ void runCrashPartialTests() {
     }
 
     // Foreign-id partial (slot Active with another id, record Prepared)
-    // must NOT be compensated: fail closed.
+    // must NOT be compensated: fail closed, zero physical mutation.
     {
-        Fixture fixture(PamManagedPasswordDomain::History, historyPolicy());
+        Fixture fixture(PamManagedPasswordDomain::History);
         const ManagedPwhistorySlotOptions options = historyOptions(12);
         std::string foreignNormal;
         std::string error;
@@ -684,6 +695,419 @@ void runCrashPartialTests() {
             !fixture.writer().activateOwnedPasswordHistory(
                 options, rejected, error),
             "foreign-id partial must fail closed");
+        require(!rejected.ownershipProven, "no ownership");
+        require(!rejected.changedSystemState,
+            "P1-4: foreign-id partial must not change the system state");
+        require(
+            readFile(historyNormalPath(fixture.tree())) == foreignNormal &&
+                readFile(historyInitialPath(fixture.tree())) == neutral(),
+            "foreign-id partial bytes must be untouched");
+    }
+}
+} // namespace
+
+namespace {
+
+// P1-2 canonical domain mapping (security identity, not caller input).
+void requireCanonicalDomainMapping() {
+    require(
+        PamManagedPasswordSlotWriter::canonicalPolicyRef(
+            PamManagedPasswordDomain::Quality) ==
+            PolicyRef{"IDENTITY_ACCESS", "PAM", "enable_password_quality"},
+        "quality domain must map to enable_password_quality");
+    require(
+        PamManagedPasswordSlotWriter::canonicalPolicyRef(
+            PamManagedPasswordDomain::History) ==
+            PolicyRef{"IDENTITY_ACCESS", "PAM", "enable_password_history"},
+        "history domain must map to enable_password_history");
+}
+
+} // namespace
+
+namespace {
+
+// P1-3 + P1-2: the journal payload identity created by real activations.
+void runJournalPayloadTests() {
+    std::cout << "PamManagedPasswordSlotWriterTests: journal payload\n";
+    requireCanonicalDomainMapping();
+
+    // Quality: activation must journal the permanent hook profile id and
+    // the canonical policy/resource identity.
+    {
+        Fixture fixture(PamManagedPasswordDomain::Quality);
+        writeFile(qualityPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult result;
+        std::string error;
+        require(fixture.writer().activateOwnedPasswordQuality(result, error),
+            "quality activation: " + error);
+        const fic::rollback::MutationRecord* record =
+            findRecord(fixture.journal(), result.mutationId);
+        require(record != nullptr, "quality record exists");
+        const auto* payload =
+            std::get_if<fic::rollback::UndoDisablePamCapability>(
+                &record->undo.payload);
+        require(payload != nullptr, "quality PAM payload");
+        require(
+            payload->activationIdentifiers ==
+                std::vector<std::string>{"fic-password-quality-hook"},
+            "quality activationIdentifiers must be exactly the permanent "
+            "hook profile id (P1-3)");
+        require(
+            record->policy ==
+                PamManagedPasswordSlotWriter::canonicalPolicyRef(
+                    PamManagedPasswordDomain::Quality),
+            "quality canonical PolicyRef (P1-2)");
+        require(
+            record->resource == "capability/enable_password_quality",
+            "quality canonical resource");
+    }
+
+    // History: ONE dual-stack hook profile identifier for both slots.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        const ManagedPwhistorySlotOptions options = historyOptions(12);
+        PamManagedPasswordSlotActivationResult result;
+        std::string error;
+        require(
+            fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
+            "history activation: " + error);
+        const fic::rollback::MutationRecord* record =
+            findRecord(fixture.journal(), result.mutationId);
+        require(record != nullptr, "history record exists");
+        const auto* payload =
+            std::get_if<fic::rollback::UndoDisablePamCapability>(
+                &record->undo.payload);
+        require(payload != nullptr, "history PAM payload");
+        require(
+            payload->activationIdentifiers ==
+                std::vector<std::string>{"fic-password-history-hook"},
+            "history activationIdentifiers must be exactly the single "
+            "dual-stack hook profile id (P1-3)");
+        require(
+            record->policy ==
+                PamManagedPasswordSlotWriter::canonicalPolicyRef(
+                    PamManagedPasswordDomain::History),
+            "history canonical PolicyRef (P1-2)");
+        require(
+            record->resource == "capability/enable_password_history",
+            "history canonical resource");
+    }
+}
+} // namespace
+
+namespace {
+
+// P1-1: witness-aware journal lifecycle gates.
+void runJournalLifecycleTests() {
+    std::cout << "PamManagedPasswordSlotWriterTests: journal lifecycle\n";
+
+    // Raw load() on a virgin path: usable == true but
+    // lifecycleInitialized == false. The writer must NOT treat this as
+    // operational provenance: activation runs the witness-aware lifecycle
+    // (virgin bootstrap here) first and only then mutates.
+    {
+        TemporaryDirectory tree;
+        MutationJournal journal(tree.path() / "mutation-journal.json");
+        std::string error;
+        require(journal.load(error), "raw load of a virgin path");
+        require(journal.usable(), "raw load is usable");
+        require(!journal.lifecycleInitialized(),
+            "raw load must NOT establish the witness-aware lifecycle");
+
+        writeFile(qualityPath(tree), neutral());
+        PamManagedPasswordSlotWriter writer(
+            tree.path(), journal, PamManagedPasswordDomain::Quality);
+        PamManagedPasswordSlotActivationResult result;
+        require(writer.activateOwnedPasswordQuality(result, error),
+            "activation must recover through the witness-aware lifecycle: " +
+                error);
+        require(result.success && result.ownershipProven, "activated");
+        require(journal.lifecycleInitialized(),
+            "lifecycle established by the writer before the mutation");
+        require(std::filesystem::exists(journal.witnessPath()),
+            "witness exists after operational initialization");
+    }
+
+    // Raw-loaded EXISTING journal with a missing witness: the operational
+    // writer migrates through the witness-aware lifecycle (durable witness
+    // creation) before any mutation.
+    {
+        TemporaryDirectory tree;
+        const auto journalPath = tree.path() / "mutation-journal.json";
+        {
+            MutationJournal bootstrap(journalPath);
+            std::string error;
+            require(bootstrap.initializeOrLoad(error), error);
+        }
+        removeFile(journalPath.string() + ".initialized");
+
+        MutationJournal journal(journalPath);
+        std::string error;
+        require(journal.load(error), "raw load");
+        require(
+            journal.usable() && !journal.lifecycleInitialized(),
+            "raw-loaded existing journal without witness");
+
+        writeFile(qualityPath(tree), neutral());
+        PamManagedPasswordSlotWriter writer(
+            tree.path(), journal, PamManagedPasswordDomain::Quality);
+        PamManagedPasswordSlotActivationResult result;
+        require(writer.activateOwnedPasswordQuality(result, error),
+            "operational migration must precede the mutation: " + error);
+        require(result.success && result.ownershipProven, "activated");
+        require(std::filesystem::exists(journal.witnessPath()),
+            "witness created by the migration");
+        require(journal.lifecycleInitialized(), "lifecycle initialized");
+    }
+
+    // Read-only raw-load negative (missing witness): J exists, W missing,
+    // raw load succeeds; proveOwnedQuality must FAIL, create NO witness
+    // and leave journal and slot bytes untouched.
+    {
+        TemporaryDirectory tree;
+        const auto journalPath = tree.path() / "mutation-journal.json";
+        {
+            MutationJournal bootstrap(journalPath);
+            std::string error;
+            require(bootstrap.initializeOrLoad(error), error);
+        }
+        removeFile(journalPath.string() + ".initialized");
+
+        MutationJournal journal(journalPath);
+        std::string error;
+        require(journal.load(error), "raw load");
+        require(
+            journal.usable() && !journal.lifecycleInitialized(),
+            "raw-loaded existing journal without witness");
+
+        // Canonical Active physical slot matching an Applied record of the
+        // same domain — the proof would succeed if the lifecycle gate were
+        // bypassed.
+        PolicyRef policy =
+            PamManagedPasswordSlotWriter::canonicalPolicyRef(
+                PamManagedPasswordDomain::Quality);
+        fic::rollback::MutationId id = 0;
+        require(
+            prepareDomainRecord(
+                journal, policy, {"fic-password-quality-hook"}, id, error),
+            error);
+        require(
+            journal.setStatus(
+                id, fic::rollback::MutationStatus::Applied, error),
+            error);
+        std::string content;
+        require(renderActiveQuality(id, content), "render");
+        writeFile(qualityPath(tree), content);
+
+        PamManagedPasswordSlotWriter writer(
+            tree.path(), journal, PamManagedPasswordDomain::Quality);
+        PamManagedPasswordSlotOwnership ownership;
+        require(!writer.proveOwnedQuality(ownership, error),
+            "read-only proof must fail closed without a witness");
+        require(!ownership.owned(), "owned() must be false");
+        require(!std::filesystem::exists(journal.witnessPath()),
+            "read-only proof must NOT create the witness");
+        require(journalActiveCount(journal) == 1, "journal untouched");
+        require(
+            readFile(qualityPath(tree)) == content, "slot bytes untouched");
+    }
+
+    // Read-only valid-witness positive: J + valid W exist; a fresh journal
+    // object has not yet published the lifecycle; the read-only validation
+    // proves the persistent pair and ownership succeeds without any write.
+    {
+        TemporaryDirectory tree;
+        const auto journalPath = tree.path() / "mutation-journal.json";
+        {
+            MutationJournal bootstrap(journalPath);
+            std::string error;
+            require(bootstrap.initializeOrLoad(error), error);
+            PolicyRef policy =
+                PamManagedPasswordSlotWriter::canonicalPolicyRef(
+                    PamManagedPasswordDomain::Quality);
+            fic::rollback::MutationId id = 0;
+            require(
+                prepareDomainRecord(
+                    bootstrap, policy, {"fic-password-quality-hook"}, id,
+                    error),
+                error);
+            require(
+                bootstrap.setStatus(
+                    id, fic::rollback::MutationStatus::Applied, error),
+                error);
+            std::string content;
+            require(renderActiveQuality(id, content), "render");
+            writeFile(qualityPath(tree), content);
+        }
+        MutationJournal journal(journalPath);
+        require(!journal.lifecycleInitialized(),
+            "fresh journal object has not published the lifecycle");
+
+        PamManagedPasswordSlotWriter writer(
+            tree.path(), journal, PamManagedPasswordDomain::Quality);
+        PamManagedPasswordSlotOwnership ownership;
+        std::string error;
+        require(writer.proveOwnedQuality(ownership, error),
+            "read-only validation must prove the persistent pair: " + error);
+        require(ownership.owned(), "owned");
+        require(journal.usable(), "usable after validation");
+        require(journal.lifecycleInitialized(),
+            "lifecycle established by the read-only validation");
+        require(std::filesystem::exists(journal.witnessPath()),
+            "witness was pre-existing, not created by the proof");
+    }
+}
+} // namespace
+
+namespace {
+
+// P1-3 negative: the legacy erroneous payload (slot filenames as
+// activationIdentifiers) must classify as foreign in the canonical Step 3
+// domain — ownership proof fails closed even with the exact same id and
+// policy.
+void runLegacyPayloadNegativeTests() {
+    std::cout << "PamManagedPasswordSlotWriterTests: legacy payload\n";
+
+    // Quality record with the legacy slot-filename payload.
+    {
+        Fixture fixture(PamManagedPasswordDomain::Quality);
+        std::string content;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(
+            prepareDomainRecord(
+                fixture.journal(), qualityPolicy(),
+                {PamManagedPasswordSlots::qualitySlot().fileName}, id,
+                error),
+            error);
+        require(
+            fixture.journal().setStatus(
+                id, fic::rollback::MutationStatus::Applied, error),
+            error);
+        require(renderActiveQuality(id, content), "render");
+        writeFile(qualityPath(fixture.tree()), content);
+
+        PamManagedPasswordSlotOwnership ownership;
+        require(!fixture.writer().proveOwnedQuality(ownership, error),
+            "legacy slot-filename payload must not own (P1-3)");
+        require(!ownership.owned(), "owned() must be false");
+    }
+
+    // History record with the legacy two-slot-filenames payload.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        const ManagedPwhistorySlotOptions options = historyOptions(12);
+        std::string normalContent;
+        std::string initialContent;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(
+            prepareDomainRecord(
+                fixture.journal(), historyPolicy(),
+                {PamManagedPasswordSlots::historyNormalSlot().fileName,
+                    PamManagedPasswordSlots::historyInitialSlot().fileName},
+                id, error),
+            error);
+        require(
+            fixture.journal().setStatus(
+                id, fic::rollback::MutationStatus::Applied, error),
+            error);
+        require(
+            renderActiveHistoryNormal(id, options, normalContent) &&
+                renderActiveHistoryInitial(id, options, initialContent),
+            "render pair");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), initialContent);
+
+        PamManagedPasswordSlotOwnership ownership;
+        require(!fixture.writer().proveOwnedHistory(ownership, error),
+            "legacy two-filename payload must not own (P1-3)");
+        require(!ownership.owned(), "owned() must be false");
+    }
+}
+} // namespace
+
+namespace {
+
+// P1-4: changedSystemState accumulates across the Prepared crash-partial
+// recovery phase and the subsequent fresh activation.
+void runRecoveryAccountingTests() {
+    std::cout << "PamManagedPasswordSlotWriterTests: recovery accounting\n";
+
+    // Entry state: normal Active(id) + initial Neutral (exact crash
+    // partial). The recovery neutralizes the Active slot (real physical
+    // change); the subsequent fresh activation fails BEFORE its first
+    // write. The overall result must keep changedSystemState == true
+    // because the physical state changed relative to the entry state:
+    // BEFORE: Active(id) + Neutral, AFTER: Neutral + Neutral.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        const ManagedPwhistorySlotOptions options = historyOptions(12);
+        std::string normalContent;
+        std::string initialContent;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(prepareHistoryRecord(fixture, id, error), error);
+        require(
+            renderActiveHistoryNormal(id, options, normalContent) &&
+                renderActiveHistoryInitial(id, options, initialContent),
+            "render pair");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+
+        // The fresh activation fails before its first physical write.
+        fixture.writer().setBeforeSlotWriteHookForTests(
+            [](std::size_t slotIndex) { return slotIndex != 0; });
+
+        PamManagedPasswordSlotActivationResult result;
+        require(
+            !fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
+            "fresh activation must fail on the injected fault");
+        require(!result.ownershipProven, "no ownership");
+        require(result.changedSystemState,
+            "P1-4: recovery neutralization must survive the fresh "
+            "activation failure");
+        require(
+            readFile(historyNormalPath(fixture.tree())) == neutral() &&
+                readFile(historyInitialPath(fixture.tree())) == neutral(),
+            "final physical state: both slots neutral");
+        require(journalStatus(fixture.journal(), id) == std::nullopt,
+            "stale Prepared discarded by the recovery");
+        require(journalActiveCount(fixture.journal()) == 0,
+            "no active records remain (fresh Prepared compensated)");
+    }
+
+    // Same entry state, but the fresh activation succeeds: the recovery
+    // and the fresh mutation both count (explicit accumulated accounting).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        const ManagedPwhistorySlotOptions options = historyOptions(12);
+        std::string normalContent;
+        std::string initialContent;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(prepareHistoryRecord(fixture, id, error), error);
+        require(
+            renderActiveHistoryNormal(id, options, normalContent) &&
+                renderActiveHistoryInitial(id, options, initialContent),
+            "render pair");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+
+        PamManagedPasswordSlotActivationResult result;
+        require(
+            fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
+            "recovery + fresh activation: " + error);
+        require(
+            result.success && result.ownershipProven &&
+                result.changedSystemState,
+            "physical change accumulated across both phases");
+        require(result.mutationId != id, "new mutation id");
     }
 }
 } // namespace
@@ -697,6 +1121,10 @@ int main() {
         runFaultAndCompensationTests();
         runCompensationAndFreshVerifyTests();
         runCrashPartialTests();
+        runJournalPayloadTests();
+        runJournalLifecycleTests();
+        runLegacyPayloadNegativeTests();
+        runRecoveryAccountingTests();
         std::cout << "PamManagedPasswordSlotWriterTests: OK\n";
         return 0;
     } catch (const std::exception& error) {
