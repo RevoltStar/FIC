@@ -150,13 +150,21 @@ slots, the mutation journal or its witness, and never runs any FIC command.
 (recovery proof) and `postinst` (abort-remove guard) and is strictly
 read-only:
 
-- the selected-profile records under `/var/lib/pam` (`auth`, `account`,
-  `password`, `session`, `session-noninteractive`) must contain a
-  `Module: <profile>` entry for every permanent hook profile;
-- the generated `/etc/pam.d/common-auth` stack must mention the
+- selected profile identity is proven by an exact full-line
+  `Module: <profile>` entry in the correct pam-auth-update facility state
+  file (`/var/lib/pam/auth` for `fic-faillock-hook-preauth`,
+  `fic-faillock-hook-authfail` and `fic-faillock-hook-authsucc`;
+  `/var/lib/pam/account` for `fic-faillock-hook-account`). Entries in
+  another facility file, entries embedded in other lines and profile-name
+  prefix/suffix collisions do not prove selection;
+- physical attachment is proven by an active, correctly facilitated, exact
+  include rule in the generated `common-*` stack (`auth include <target>`
+  anchored to the full rule in `common-auth` for the
   `fic-faillock-preauth`, `fic-faillock-authfail` and
-  `fic-faillock-authsucc` hook targets and `/etc/pam.d/common-account` must
-  mention `fic-faillock-account`.
+  `fic-faillock-authsucc` hook targets; `account include
+  fic-faillock-account` in `common-account`). Commented lines, wrong
+  facility, non-include control words, target prefix/suffix names and
+  unrelated text mentions do not prove attachment.
 
 It never invokes `pam-auth-update` and never mutates PAM state, managed
 slots, the journal or the witness.

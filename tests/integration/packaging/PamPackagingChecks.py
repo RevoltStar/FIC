@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -63,10 +64,16 @@ def sandbox_pam_paths(script_text: str, pam_state: Path, pam_d: Path) -> str:
             .replace("/etc/pam.d", str(pam_d)))
 
 
+def canonical_include(facility: str, target: str) -> str:
+    """Canonical pam-auth-update generated include rule for a hook target."""
+    return f"{facility}\t\t\t\tinclude\t\t\t\t{target}\n"
+
+
 def write_attached_pam_state(pam_state: Path, pam_d: Path) -> None:
     """Seed the sandbox with the standard pam-auth-update state of an
     installed package: all four permanent hook profiles selected and the
-    common-* stacks regenerated (Module: records plus include lines)."""
+    common-* stacks regenerated (Module: records plus active, correctly
+    facilitated include lines)."""
     pam_state.mkdir(parents=True, exist_ok=True)
     pam_d.mkdir(parents=True, exist_ok=True)
     (pam_state / "auth").write_text(
@@ -78,11 +85,27 @@ def write_attached_pam_state(pam_state: Path, pam_d: Path) -> None:
         f"include {hook_target(PERMANENT_HOOKS[3])}\n",
         encoding="utf-8")
     (pam_d / "common-auth").write_text(
-        "".join(f"include\t\t\t\t{hook_target(hook)}\n" for hook in AUTH_HOOKS),
+        "".join(canonical_include("auth", hook_target(hook))
+                for hook in AUTH_HOOKS),
         encoding="utf-8")
     (pam_d / "common-account").write_text(
-        f"include\t\t\t\t{hook_target(PERMANENT_HOOKS[3])}\n",
+        canonical_include("account", hook_target(PERMANENT_HOOKS[3])),
         encoding="utf-8")
+
+
+def pam_state_digest(pam_state: Path, pam_d: Path) -> str:
+    """Stable digest of every sandboxed PAM state element; used to prove the
+    generated proof function is strictly read-only."""
+    import hashlib
+    digest = hashlib.sha256()
+    for directory in (pam_state, pam_d):
+        if not directory.is_dir():
+            continue
+        for element in sorted(directory.rglob("*")):
+            digest.update(str(element.relative_to(directory)).encode())
+            if element.is_file():
+                digest.update(element.read_bytes())
+    return digest.hexdigest()
 
 
 def read_pam_state(pam_state: Path, pam_d: Path) -> tuple[str, str]:
@@ -99,10 +122,14 @@ def read_pam_state(pam_state: Path, pam_d: Path) -> tuple[str, str]:
 def stateful_pam_auth_update_fake() -> str:
     """POSIX-sh simulator of pam-auth-update. Selection state lives in
     $FAKE_PAM_STATE/{auth,account} as "Module: <profile>" blocks; each run
-    regenerates include lines into $FAKE_PAM_D/common-{auth,account}.
+    regenerates active, correctly facilitated include lines into
+    $FAKE_PAM_D/common-{auth,account}.
     Failure injection: FAKE_PAU_REMOVE_FAILS (detach failure),
     FAKE_PAU_PARTIAL + FAKE_PAU_PARTIAL_HOOKS (detach fails after a real
-    partial mutation), FAKE_PAU_ENABLE_FAILS (recovery failure). Pure shell
+    partial mutation), FAKE_PAU_ENABLE_FAILS (recovery failure),
+    FAKE_PAU_MALFORMED (commented | wrong-facility: the regenerated auth
+    hook lines are deliberately not valid active include rules, to exercise
+    the strict physical proof in the maintainer scripts). Pure shell
     builtins plus awk, so it works on a fakes-only PATH."""
     return """#!/bin/sh
 printf "pam-auth-update %s\\n" "$*" >> "$FAKE_LOG"
@@ -126,14 +153,21 @@ regen() {
     for h in fic-faillock-hook-preauth fic-faillock-hook-authfail fic-faillock-hook-authsucc; do
         case "$(cat "$state/auth" 2>/dev/null)" in
             *"Module: $h"*)
-                printf "include\\t\\t\\t\\tfic-faillock-%s\\n" "${h#fic-faillock-hook-}" >> "$pam_d/common-auth.new" ;;
+                case "$FAKE_PAU_MALFORMED" in
+                    commented)
+                        printf "# auth\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-faillock-%s\\n" "${h#fic-faillock-hook-}" >> "$pam_d/common-auth.new" ;;
+                    wrong-facility)
+                        printf "account\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-faillock-%s\\n" "${h#fic-faillock-hook-}" >> "$pam_d/common-auth.new" ;;
+                    *)
+                        printf "auth\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-faillock-%s\\n" "${h#fic-faillock-hook-}" >> "$pam_d/common-auth.new" ;;
+                esac ;;
         esac
     done
     mv "$pam_d/common-auth.new" "$pam_d/common-auth"
     : > "$pam_d/common-account.new"
     case "$(cat "$state/account" 2>/dev/null)" in
         *"Module: fic-faillock-hook-account"*)
-            printf "include\\t\\t\\t\\tfic-faillock-account\\n" >> "$pam_d/common-account.new" ;;
+            printf "account\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-faillock-account\\n" >> "$pam_d/common-account.new" ;;
     esac
     mv "$pam_d/common-account.new" "$pam_d/common-account"
 }
@@ -181,8 +215,195 @@ exit 0
 """
 
 
+def proof_unit_tests() -> None:
+    """Behavioral unit proof of the read-only permanent hook proof
+    (fic_prove_permanent_hooks_attached): the generated function is executed
+    against sandboxed /var/lib/pam and /etc/pam.d states and must accept
+    only the canonical pam-auth-update topology (exact Module: selection in
+    the correct facility state file plus an active, correctly facilitated,
+    exact include rule in the generated stack). Every candidate
+    false-positive shape must be rejected."""
+    builder_path = (Path(__file__).resolve().parents[3] /
+                    "packaging/deb/build-fic-debian12-deb.sh")
+    generated = subprocess.run(
+        ["bash", "-c",
+         'set -- 0.1.0; FIC_PRODUCT_VERSION=0.1.0 FIC_BUILD_COMMIT=test '
+         'FIC_RELEASE_TAG=test FIC_RELEASE_BUILD=0; '
+         'source "$BUILDER" >/dev/null 2>&1; '
+         'write_pam_hook_proof_function'],
+        env={"PATH": "/usr/bin:/bin",
+             "BUILDER": str(builder_path)},
+        text=True, capture_output=True, check=False)
+    require(generated.returncode == 0,
+            "could not generate the permanent hook proof function: " +
+            generated.stderr.strip())
+    proof_function = generated.stdout
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        pam_state = tmp_path / "var-lib-pam"
+        pam_d = tmp_path / "etc-pam.d"
+        proof_script = tmp_path / "proof-sandboxed.sh"
+
+        def run_proof(seed) -> subprocess.CompletedProcess:
+            for directory in (pam_state, pam_d):
+                if directory.is_dir():
+                    shutil.rmtree(directory)
+            seed()
+            proof_script.write_text(
+                "#!/bin/sh\n" +
+                sandbox_pam_paths(proof_function, pam_state, pam_d) +
+                "\nfic_prove_permanent_hooks_attached\n",
+                encoding="utf-8")
+            proof_script.chmod(0o755)
+            return subprocess.run(
+                [str(proof_script)],
+                env={"PATH": "/usr/bin:/bin"},
+                text=True, capture_output=True, check=False)
+
+        def expect_pass(name: str, seed) -> None:
+            ran = run_proof(seed)
+            require(ran.returncode == 0,
+                    f"proof must PASS for {name}: rc={ran.returncode} "
+                    f"{ran.stderr.strip()}")
+
+        def expect_fail(name: str, seed) -> None:
+            ran = run_proof(seed)
+            require(ran.returncode != 0,
+                    f"proof must FAIL for {name} (false-positive accepted)")
+
+        def seed_state(auth_state: str, account_state: str,
+                       common_auth: str, common_account: str) -> None:
+            pam_state.mkdir(parents=True, exist_ok=True)
+            pam_d.mkdir(parents=True, exist_ok=True)
+            (pam_state / "auth").write_text(auth_state, encoding="utf-8")
+            (pam_state / "account").write_text(account_state,
+                                               encoding="utf-8")
+            (pam_d / "common-auth").write_text(common_auth, encoding="utf-8")
+            (pam_d / "common-account").write_text(common_account,
+                                                  encoding="utf-8")
+
+        module_auth = "".join(f"Module: {hook}\ninclude {hook_target(hook)}\n"
+                              for hook in AUTH_HOOKS)
+        module_account = (f"Module: {PERMANENT_HOOKS[3]}\n"
+                          f"include {hook_target(PERMANENT_HOOKS[3])}\n")
+        include_auth = "".join(canonical_include("auth", hook_target(hook))
+                               for hook in AUTH_HOOKS)
+        include_account = canonical_include(
+            "account", hook_target(PERMANENT_HOOKS[3]))
+
+        # G: canonical valid topology — exact Module: records in the correct
+        # facility state files plus active, correctly facilitated include
+        # rules in the generated stacks.
+        expect_pass("canonical topology",
+                    lambda: seed_state(module_auth, module_account,
+                                       include_auth, include_account))
+
+        # G-variation: normal whitespace variation of the canonical
+        # generated include lines must still pass.
+        expect_pass(
+            "canonical topology (space-separated include)",
+            lambda: seed_state(
+                module_auth, module_account,
+                "".join(f"auth include {hook_target(hook)}\n"
+                        for hook in AUTH_HOOKS),
+                f"account include {hook_target(PERMANENT_HOOKS[3])}\n"))
+
+        # A: commented generated hook line with a correct Module: selection.
+        expect_fail(
+            "commented generated hook",
+            lambda: seed_state(module_auth, module_account,
+                               "# " + include_auth, include_account))
+
+        # B: wrong facility — the preauth target included from the account
+        # phase instead of auth.
+        expect_fail(
+            "wrong facility include",
+            lambda: seed_state(
+                module_auth, module_account,
+                include_auth.replace("auth\t\t\t\tinclude",
+                                     "account\t\t\t\tinclude", 1),
+                include_account))
+
+        # C: prefix/suffix collision — a longer target that merely contains
+        # the real target as a substring.
+        expect_fail(
+            "target suffix collision",
+            lambda: seed_state(
+                module_auth, module_account,
+                include_auth.replace("fic-faillock-preauth\n",
+                                     "fic-faillock-preauth-backup\n", 1),
+                include_account))
+
+        # D: mere text occurrence — the targets mentioned outside a PAM rule
+        # (comments), with no active include rule at all.
+        expect_fail(
+            "mere text occurrence",
+            lambda: seed_state(
+                module_auth, module_account,
+                "# managed target: fic-faillock-preauth\n"
+                "# managed target: fic-faillock-authfail\n"
+                "# managed target: fic-faillock-authsucc\n",
+                include_account))
+
+        # D2: active rules but with a non-include control word
+        # (auth optional <target>) must not prove attachment.
+        expect_fail(
+            "non-include control word",
+            lambda: seed_state(
+                module_auth, module_account,
+                "auth\t\t\t\toptional\t\t\t\tfic-faillock-preauth\n"
+                "auth\t\t\t\toptional\t\t\t\tfic-faillock-authfail\n"
+                "auth\t\t\t\toptional\t\t\t\tfic-faillock-authsucc\n",
+                include_account))
+
+        # E: the account hook Module: record only in the wrong facility
+        # state file (/var/lib/pam/auth instead of /var/lib/pam/account).
+        expect_fail(
+            "wrong /var/lib/pam facility record",
+            lambda: seed_state(module_auth + module_account, "",
+                               include_auth, include_account))
+
+        # F: Module: prefix/suffix collision — a longer profile name that
+        # merely contains the real profile name as a substring.
+        expect_fail(
+            "Module: suffix collision",
+            lambda: seed_state(
+                module_auth.replace("Module: fic-faillock-hook-preauth\n",
+                                    "Module: fic-faillock-hook-preauth-old\n", 1),
+                module_account, include_auth, include_account))
+
+        # F2: missing selection record — stacks intact but one profile
+        # deselected.
+        expect_fail(
+            "missing selection record",
+            lambda: seed_state(
+                module_auth.replace(
+                    "Module: fic-faillock-hook-authsucc\n"
+                    "include fic-faillock-authsucc\n", "", 1),
+                module_account, include_auth, include_account))
+
+        # Read-only guarantee: the proof must not change any state element
+        # it reads.
+        seed_state(module_auth, module_account, include_auth,
+                   include_account)
+        before = pam_state_digest(pam_state, pam_d)
+        ran = subprocess.run(
+            [str(proof_script)],
+            env={"PATH": "/usr/bin:/bin"},
+            text=True, capture_output=True, check=False)
+        require(ran.returncode == 0,
+                "proof unexpectedly failed on the canonical state: " +
+                ran.stderr.strip())
+        require(before == pam_state_digest(pam_state, pam_d),
+                "the permanent hook proof mutated the PAM state")
+
+    print("permanent hook proof unit checks passed")
+
+
 def main() -> int:
     root = Path(sys.argv[1])
+    proof_unit_tests()
     profile_dir = root / "packaging/deb/pam-configs"
     expected = {
         "fic-faillock-notify": {
@@ -481,6 +702,41 @@ def main() -> int:
                           "/etc/pam.d/common-account", '"Module: '):
         require(state_element in pam_proof,
                 f"standard-state permanent hook proof lacks {state_element}")
+    # Hardened selection proof: each permanent hook profile must be proven by
+    # an exact full-line "Module: <profile>" entry in the CORRECT facility
+    # state file (auth hooks in /var/lib/pam/auth, account hook in
+    # /var/lib/pam/account). Substring matching across concatenated state
+    # files cannot distinguish facilities and accepts prefix/suffix
+    # collisions, so it is forbidden.
+    for hook, facility in (("fic-faillock-hook-preauth", "auth"),
+                           ("fic-faillock-hook-authfail", "auth"),
+                           ("fic-faillock-hook-authsucc", "auth"),
+                           ("fic-faillock-hook-account", "account")):
+        require(f'grep -q "^Module: {hook}$" /var/lib/pam/{facility}'
+                in pam_proof,
+                f"permanent hook proof lacks the exact Module: selection "
+                f"check for {hook} in /var/lib/pam/{facility}")
+        # Hardened physical proof: each hook target must be proven by an
+        # active, correctly facilitated, exact include rule in the generated
+        # stack (anchored full PAM rule, real include control, exact target).
+        target = hook.replace("fic-faillock-hook-", "fic-faillock-")
+        require(f'grep -Eq "^{facility}[[:space:]]+include[[:space:]]+{target}$"'
+                in pam_proof,
+                f"permanent hook proof lacks the anchored {facility} include "
+                f"check for {target}")
+    for weak_form in ('*"Module: $fic_hook"*', "fic_selected=",
+                      "grep -q 'fic-faillock-", "session-noninteractive"):
+        require(weak_form not in pam_proof,
+                f"permanent hook proof still uses the weak proof form: "
+                f"{weak_form}")
+    # The proof stays strictly read-only: no pam-auth-update invocation, no
+    # writes into the pam-auth-update state, the generated stacks or any
+    # other PAM/slot/journal state.
+    for forbidden in ("pam-auth-update", "rm ", "mv ", ">>", "> ",
+                      "tee ", "chmod", "chown"):
+        require(forbidden not in pam_proof,
+                f"read-only permanent hook proof must not contain: "
+                f"{forbidden}")
     # The prerm itself never touches managed slots, journal or witness:
     # it has no reason to run any FIC maintenance command.
     for forbidden in ("fic --maintenance", "fic-dick", "mutation-journal"):
@@ -867,6 +1123,25 @@ def main() -> int:
         require("Module: fic-faillock-hook-authfail" in state and
                 "Module: fic-faillock-hook-account" in state,
                 "untouched hook profiles must stay selected")
+
+        # Scenario E (hardened physical proof): the recovery --enable
+        # "succeeds" but regenerates a malformed physical hook line
+        # (commented / wrong facility). The selection records look correct,
+        # but the strict physical proof must refuse to confirm the
+        # restoration: the prerm must report the state as NOT proven
+        # restored and exit non-zero.
+        for malformed in ("commented", "wrong-facility"):
+            write_attached_pam_state(pam_state, pam_d)
+            log.unlink(missing_ok=True)
+            ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
+                             "FAKE_PAU_MALFORMED": malformed})
+            require(ran.returncode != 0,
+                    f"prerm must fail when the regenerated physical hook "
+                    f"line is malformed ({malformed}): " + ran.stderr.strip())
+            require("NOT proven restored" in ran.stderr,
+                    f"prerm must treat a malformed physical hook line "
+                    f"({malformed}) as an unproven PAM restoration: " +
+                    ran.stderr.strip())
 
     # Behavioral proof of the attach invariant: run the configure tail of the
     # generated postinst with fake binaries and verify the actual order:
@@ -1270,6 +1545,65 @@ def main() -> int:
                         for line in guard_calls),
                 "abort-remove restarted FIC writers over an unproven PAM "
                 "state: " + "\n".join(guard_calls))
+
+        # Test F (hardened physical proof): the selection records look
+        # correct, but the generated common-auth hook includes are
+        # malformed (commented / wrong facility). The strict read-only
+        # guard must fail the proof and refuse to enable or start any FIC
+        # writer (fail-closed abort-remove).
+        for malformed in ("commented", "wrong-facility"):
+            malformed_state = tmp_path / f"pam-state-malformed-{malformed}"
+            malformed_d = tmp_path / f"pam.d-malformed-{malformed}"
+            malformed_state.mkdir()
+            malformed_d.mkdir()
+            # Correct Module: selection records in the correct facilities.
+            (malformed_state / "auth").write_text(
+                "".join(f"Module: {hook}\ninclude {hook_target(hook)}\n"
+                        for hook in AUTH_HOOKS),
+                encoding="utf-8")
+            (malformed_state / "account").write_text(
+                f"Module: {PERMANENT_HOOKS[3]}\n"
+                f"include {hook_target(PERMANENT_HOOKS[3])}\n",
+                encoding="utf-8")
+            # Correct account stack, malformed auth hook lines only.
+            (malformed_d / "common-account").write_text(
+                canonical_include("account",
+                                  hook_target(PERMANENT_HOOKS[3])),
+                encoding="utf-8")
+            if malformed == "commented":
+                (malformed_d / "common-auth").write_text(
+                    "".join("# " + canonical_include("auth",
+                                                     hook_target(hook))
+                            for hook in AUTH_HOOKS),
+                    encoding="utf-8")
+            else:
+                (malformed_d / "common-auth").write_text(
+                    "".join(canonical_include("account",
+                                              hook_target(hook))
+                            for hook in AUTH_HOOKS),
+                    encoding="utf-8")
+            postinst_path.write_text(
+                sandbox_pam_paths(postinst_text, malformed_state,
+                                  malformed_d),
+                encoding="utf-8")
+            fresh_state(fic_active=False)
+            log.unlink(missing_ok=True)
+            failed = run_abort()
+            require(failed.returncode != 0,
+                    f"abort-remove must fail the strict physical proof "
+                    f"when the generated hook line is malformed "
+                    f"({malformed})")
+            require("not proven attached" in failed.stderr,
+                    f"abort-remove diagnostic must state the unproven PAM "
+                    f"state for malformed physical hooks ({malformed}): " +
+                    failed.stderr.strip())
+            guard_calls = log.read_text(encoding="utf-8").splitlines() \
+                if log.is_file() else []
+            require(not any(" start " in line or " enable " in line
+                            for line in guard_calls),
+                    f"abort-remove enabled or started FIC writers over a "
+                    f"malformed physical hook state ({malformed}): " +
+                    "\n".join(guard_calls))
 
         # Restore the attached-state postinst for consistency.
         postinst_path.write_text(

@@ -810,13 +810,20 @@ EOF
 # Shared generated-script snippet: read-only proof that the package-owned
 # permanent FIC PAM hook profiles are attached, expressed purely in terms of
 # the standard pam-auth-update state model:
-#   - the selected-profile records under /var/lib/pam (auth, account,
-#     password, session, session-noninteractive) contain a
-#     "Module: <profile>" entry for every permanent hook profile;
-#   - the generated /etc/pam.d/common-auth stack mentions the preauth,
-#     authfail and authsucc hook targets and /etc/pam.d/common-account
-#     mentions the account hook target.
-# The proof never invokes pam-auth-update and never mutates PAM state,
+#   - selected profile identity is proven by an exact full-line
+#     "Module: <profile>" entry in the correct per-facility
+#     pam-auth-update state file (/var/lib/pam/auth for the three auth
+#     hooks, /var/lib/pam/account for the account hook); entries in another
+#     facility file, entries embedded in other lines and profile-name
+#     prefix/suffix collisions do not prove selection;
+#   - physical attachment is proven by an active, correctly facilitated,
+#     exact include rule in the generated common-* stack
+#     ("auth include <target>" in common-auth for the preauth/authfail/
+#     authsucc hook targets, "account include fic-faillock-account" in
+#     common-account); commented lines, wrong facility, non-include control
+#     words, target prefix/suffix names and unrelated text mentions do not
+#     prove attachment.
+# The proof never invokes any PAM tool and never mutates PAM state,
 # managed slots, the mutation journal or its witness. It is used by the
 # generated prerm (detach-failure recovery proof) and by the generated
 # postinst abort-remove recovery guard.
@@ -827,23 +834,18 @@ fic_prove_permanent_hooks_attached() {
         [ ! -f /etc/pam.d/common-account ]; then
         return 1
     fi
-    fic_selected=
-    for fic_record in auth account password session session-noninteractive; do
-        if [ -f "/var/lib/pam/$fic_record" ]; then
-            fic_selected="$fic_selected$(cat "/var/lib/pam/$fic_record")"
-        fi
-    done
-    for fic_hook in fic-faillock-hook-preauth fic-faillock-hook-authfail \
-        fic-faillock-hook-authsucc fic-faillock-hook-account; do
-        case "$fic_selected" in
-            *"Module: $fic_hook"*) ;;
-            *) return 1 ;;
-        esac
-    done
-    grep -q 'fic-faillock-preauth' /etc/pam.d/common-auth || return 1
-    grep -q 'fic-faillock-authfail' /etc/pam.d/common-auth || return 1
-    grep -q 'fic-faillock-authsucc' /etc/pam.d/common-auth || return 1
-    grep -q 'fic-faillock-account' /etc/pam.d/common-account || return 1
+    # Exact selection proof: a full-line "Module: <profile>" record in the
+    # correct per-facility pam state file.
+    grep -q "^Module: fic-faillock-hook-preauth$" /var/lib/pam/auth 2>/dev/null || return 1
+    grep -q "^Module: fic-faillock-hook-authfail$" /var/lib/pam/auth 2>/dev/null || return 1
+    grep -q "^Module: fic-faillock-hook-authsucc$" /var/lib/pam/auth 2>/dev/null || return 1
+    grep -q "^Module: fic-faillock-hook-account$" /var/lib/pam/account 2>/dev/null || return 1
+    # Exact physical attachment proof: an active, correctly facilitated
+    # include rule with the exact hook target in the generated stack.
+    grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-preauth$" /etc/pam.d/common-auth 2>/dev/null || return 1
+    grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-authfail$" /etc/pam.d/common-auth 2>/dev/null || return 1
+    grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-authsucc$" /etc/pam.d/common-auth 2>/dev/null || return 1
+    grep -Eq "^account[[:space:]]+include[[:space:]]+fic-faillock-account$" /etc/pam.d/common-account 2>/dev/null || return 1
     return 0
 }
 EOF
