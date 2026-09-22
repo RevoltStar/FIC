@@ -2,97 +2,24 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `9342c35`; рабочее дерево содержит изменения Step 2
-  (новый компонент managed password slots + тесты + tests/CMakeLists.txt),
-  не закоммичены — оставлены для review (Step 2, п. 44).
+- Ветка `main`, HEAD `a85fd49`; рабочее дерево содержит изменения Step 3
+  (новый компонент `PamManagedPasswordSlotWriter` + тесты +
+  tests/CMakeLists.txt), не закоммичены — оставлены для review. НЕ коммитить.
 
 ## Current task
 
-- Step 2 PasswordQuality/PasswordHistory: физическая модель трёх
-  FIC-owned managed password slots и строгий typed parser/inspector
-  реализованы (`PamManagedPasswordSlots`). Pure logic: только render +
-  inspect content, файловая система не мутируется, runtime activation
-  НЕ подключён, `PamPolicySupport::ReadOnly`, journal, packaging,
-  platform profiles, `legacyPamAuthUpdatePasswordTopology` — не тронуты.
-- Step 2 hardening follow-up ВЫПОЛНЕН (3 review-дефекта):
-  1. P1: textual mutation ID canonicalization — маркер принимает
-     ТОЛЬКО canonical decimal (`1`, `42`, `18446744073709551615`);
-     `0`, `00`, `01`, `00042`, `+1`, `-1`, `1x`, `0x1`,
-     overflow/garbage => Broken. BEGIN и END каноникализуются
-     НЕЗАВИСИМО: `BEGIN 01 / END 1` и `BEGIN 1 / END 01` => Broken
-     (numeric comparison только после независимой canonical parse
-     обоих маркеров). Правило: `from_chars` full parse AND value > 0
-     AND `std::to_string(parsed) == token`.
-  2. P2: `inspectHistoryPair()` type-safe во ВСЕХ ветках (Neutral,
-     Active, Broken, Unavailable): до сравнения states требует
-     exact typed identity — normal: `role == observedRole ==
-     HistoryNormal` + `capability == PasswordHistory`; initial:
-     аналогично HistoryInitial + PasswordHistory. Wrong identity =>
-     Broken с диагностикой `history pair received wrong normal/initial
-     slot identity`; роль по содержимому не угадывается. Active-ветка
-     дополнительно проверяет mutationId != 0 и опции.
-  3. P2: renderer fail-safe contract — все 4 рендера
-     (`renderActiveQuality/HistoryNormal/HistoryInitial` и generic
-     `renderActive`) теперь `bool (…, std::string& content,
-     std::string& error)`: `mutationId == 0` => runtime failure,
-     content гарантированно пуст, никаких active bytes наружу
-     (не assert). Successful render гарантирует
-     `inspectContent() == Active`; caller не обязан пере-inspect'ить
-     свой render. `remember=0` по-прежнему syntactically valid.
-- Step 3 (journal-bound lifecycle) РАЗБЛОКИРОВАН.
-
-## Step 2 реализованный контракт
-
-- Typed модель (`fic/src/modules/identity_access/pam/PamManagedPasswordSlots.{h,cpp}`):
-  `ManagedPasswordSlotRole{Quality,HistoryNormal,HistoryInitial}`,
-  `ManagedPasswordCapability{PasswordQuality,PasswordHistory}`,
-  `ManagedPasswordSlotState{Neutral,Active,Broken,Unavailable}`,
-  `ManagedPwhistorySlotOptions{optional<unsigned> remember, enforceForRoot}`,
-  `ManagedPasswordSlotInspection{state,role,observedRole,capability,mutationId,pwhistoryOptions,error}`,
-  pair-level `ManagedHistoryPairState{Neutral,Active,Broken}` +
-  `ManagedHistoryPairInspection`.
-- Specs: `fic-password-quality` (quality, enable_password_quality),
-  `fic-password-history` (history-normal, enable_password_history),
-  `fic-password-history-initial` (history-initial,
-  enable_password_history). Путь: `<configDirectory>/fileName`
-  (по умолчанию `/etc/pam.d`).
-- Exact canonical neutral bytes (все три слота, зафиксировано тестом):
-  `# FIC managed password slot: state=neutral\n` — одна comment-строка,
-  0 PAM rules, trailing newline входит в canonical bytes. Empty, без
-  newline, extra whitespace/lines, любой PAM rule => Broken.
-- Active marker grammar (строгая, whole-file, 3 строки ровно):
-  `#@FIC_PAM_SLOT_BEGIN version=1 capability=<cap> mutation=<id> slot=<slot>`
-  + canonical rule + `#@FIC_PAM_SLOT_END capability=<cap> mutation=<id> slot=<slot>`.
-  Токены через одиночные пробелы, canonical key order, лишние/дубли/
-  перестановки полей => Broken. mutation id: full decimal from_chars,
-  > 0, overflow/garbage => Broken. BEGIN/END id/capability/slot должны
-  совпадать. CRLF, no trailing newline, extra prefix/suffix/rule,
-  duplicate BEGIN/END => Broken.
-- Canonical bodies:
-  - quality: `password requisite pam_pwquality.so retry=3` (только это;
-    retry=3 берётся из текущего legacy provider contract, тестом
-    зафиксировано; опции pwquality — только в `/etc/security/pwquality.conf`).
-  - history-normal: `password requisite pam_pwhistory.so use_authtok
-    [remember=N] [enforce_for_root]` — `use_authtok` ОБЯЗАТЕЛЕН ровно
-    один раз (наследует семантику `PamPwhistoryArguments::evaluate()`,
-    сам evaluate НЕ изменён).
-  - history-initial: `password requisite pam_pwhistory.so [remember=N]
-    [enforce_for_root]` — `use_authtok` ЗАПРЕЩЁН.
-  - Canonical argument order: use_authtok, remember=N, enforce_for_root;
-    перестановки/регистровые варианты (`USE_AUTHTOK`,
-    `Enforce_For_Root`)/unknown args (`debug`, `retry=`) => Broken
-    (semantic equivalence != physical FIC ownership).
-  - `remember=0` синтаксически валиден (typed parse), semantic
-    effectiveness — Step 4+ verifier.
-- Pair consistency (history normal+initial): Neutral+Neutral или
-  Active+Active с same mutation id, same remember/enforce_for_root,
-  правильные roles; mixed/разные id/options/missing/malformed =>
-  Broken (missing различим per-slot как Unavailable; missing НЕКОГДА
-  не Neutral).
-- Quality и history — независимые capabilities: history-active +
-  quality-neutral структурно представим на физическом слое
-  (history-only Unsupported = Step 4 verifier rule, не parser).
-
+- Step 3 PasswordQuality/PasswordHistory: journal-bound lifecycle для трёх
+  FIC-owned managed password slots реализован в новом helper
+  `PamManagedPasswordSlotWriter` (отдельный компонент; faillock grammar
+  не рефакторилась — решение §21). НЕ подключён к daemon registry и
+  capability policies (это Step 7); `PamPolicySupport::ReadOnly`, journal,
+  packaging, platform profiles не тронуты.
+- Step 2 (`PamManagedPasswordSlots`) закрыт: typed модель трёх canonical
+  slots, строгий parser/inspector (missing = Unavailable, никогда не
+  Neutral; whole-file canonical grammar; независимая textual mutation-id
+  canonicalization; type-safe history pair identity; renderer fail-safe —
+  mutationId=0 => failure, успешный render гарантирует Active).
+- Step 3 (этот шаг) РЕАЛИЗОВАН и провалидирован.
 ## Fixture evidence
 
 ### v2 — pam-auth-update mechanics (все 4 платформы)
@@ -348,66 +275,110 @@ neutral baseline, hook-include no-op.
 - Отсутствующий slot-файл — тихий no-op для PAM (не fail-closed):
   существование файлов обязана обеспечивать packaging + validator.
 
+## Step 3 контракт (`PamManagedPasswordSlotWriter.{h,cpp}`)
+
+- Домены: `PamManagedPasswordDomain{Quality, History}`; canonical specs
+  резолвятся ТОЛЬКО внутри через `PamManagedPasswordSlots`; публичный API
+  не принимает произвольных slot specs; пути ограничены canonical slot
+  filenames внутри test-injectable `configDirectory`.
+- Ownership: `PasswordSlotJournalBinding{Unbound, MatchingApplied,
+  MatchingPrepared}`; `owned()` == только MatchingApplied;
+  MatchingPrepared — binding компенсации, НЕ ownership. Proof требует
+  exact canonical Active physical state + exact mutation id + valid
+  Applied journal record с exact metadata (policy ref, Pam backend,
+  `capability/<policy>`, payload `UndoDisablePamCapability{capability,
+  PamAuthUpdate, activationIdentifiers == canonical slot filenames
+  домена}`). Same id с чужим доменом/метаданными => fail closed.
+- Read-only `proveOwnedQuality` / `proveOwnedHistory`: не чинят journal,
+  не пишут witness, не переводят Prepared→Applied, не переписывают slots;
+  используют `validatePersistentStateReadOnly` (без bootstrap/witness).
+- Activation: Prepared BEFORE physical mutation → write
+  (`PamConfigFileTransaction::mutate`, rejectSymlink, PreserveExisting)
+  → fresh disk re-read → strict proof exact id → journal Applied.
+  History = ОДНА logical mutation (один Prepared/ID в обоих markers,
+  один options object); оба snapshot до записи; failure второго write
+  восстанавливает exact prior bytes первого; после обоих writes — fresh
+  read обоих + `inspectHistoryPair` + options equality.
+- Idempotence: Applied + exact Active physical state => success без
+  нового mutation id, без rewrite (`changedSystemState == false`);
+  history — дополнительно совпадение options; другие desired options
+  при proven Applied pair => fail closed (без молчаливого rewrite).
+- Recovery matrix при activation над Prepared record:
+  A) Neutral slot(s) => prove durability
+     (`ensureTargetDurableIfCurrentState`) + discard.
+  B) Quality Active(same id) / history pair Active(same id, same
+     options) => prove durability + complete to Applied (тот же id).
+  C) History crash-partial (один слот Active(exact id), другой Neutral)
+     => neutralize ТОЛЬКО exact-id слот + fresh neutral proof + discard
+     + fresh activation с НОВЫМ id. Foreign-id/mixed/Broken partial =>
+     fail closed.
+  D) Active(other id) / Broken / Unavailable / multiple active records /
+     RollbackFailed => fail closed, ничего не мутируется.
+- Fresh activation: Unavailable/Broken start => fail closed (packaging
+  должна предоставить файлы; missing != Neutral); canonical Active без
+  matching journal provenance => fail closed, байты не трогаются, никогда
+  не adopt/neutralize.
+- Failure compensation: exact rollback всех attempted snapshots в
+  обратном порядке (rollback() no-op для не-закоммиченного) + discard
+  Prepared только если rollback доказан. Rollback не доказан => Prepared
+  остаётся (existing lifecycle), `changedSystemState = true`, никогда не
+  чистый failure.
+- `changedSystemState`: true только когда дисковые байты изменены данным
+  вызовом и не полностью компенсированы; не из-за попытки записи.
+- `journalBindsPhysicalOwnership() == true` (используется Step 7).
+- Fault injection (test-only): `setBefore/AfterSlotWriteHookForTests
+  (slotIndex)`; 0 = quality | history-normal, 1 = history-initial;
+  after-hook может tamper'ить файл (fresh-verify failure => exact
+  rollback + Prepared discard).
+
+## Tests
+
+- `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotWriterTests.cpp`,
+  target `pam_managed_password_slot_writer_tests` в tests/CMakeLists.txt
+  (по образцу pam_slot_attach_validator_tests; MutationJournal.cpp deps).
+  Покрытие: quality lifecycle + idempotence; Prepared не ownership
+  (read-only proof не завершает record); exact-domain matching; foreign
+  Active; Broken; history pair lifecycle + options identity; options
+  transition fail-closed; fault injection (before/after, второй write
+  после первого committed); fresh-verify tamper; crash-partial recovery
+  + foreign-id partial fail closed; idempotence без rewrite.
+
 ## Completed
 
-- Step 2 + hardening follow-up реализованы: `PamManagedPasswordSlots`
-  (typed specs трёх slots, canonical rendering, strict marker/body
-  parsing, canonical textual mutation ids, type-safe history pair
-  identity, fail-safe renderer с reject mutationId==0, cross-slot
-  history pair consistency, round-trip) + `PamManagedPasswordSlotsTests`
-  (~1000 строк: neutral/marker/body/pair/independence/round-trip +
-  mutation canonicalization / renderer zero rejection /
-  successful-render-implies-Active / pair identity, все списки FAIL из
-  ТЗ 29–36) + test target `pam_managed_password_slots_tests`
-  в tests/CMakeLists.txt. Existing contract `PamPwhistoryArguments`
-  не ослаблен (use_authtok required для authoritative rule сохранён).
-- Step 1 design closure (docs-only): fixture v3 behavioral proofs
-  (neutral candidates, history-behind-include, FIC-producer, external +
-  FIC history, history-only, lifecycle enable/disable/enable); выбор
-  Candidate 1; решения A/B/C/G/I/J = RESOLVED; decision matrix;
-  уточнения D/E/F/H. Production-код, тесты, packaging НЕ менялись.
-- Ранее (v2): pam-auth-update mechanics без `--force` на 4 платформах,
-  placement/tie-break proof, инварианты packaging flow.
+- Шаги 1–3 завершены. Step 1 design closure и Step 2
+  (`PamManagedPasswordSlots` + tests, включая hardening follow-up:
+  textual mutation id canonicalization, type-safe pair identity,
+  renderer rejects mutationId=0) — см. git history и fixture evidence
+  ниже.
+- Step 3 реализован (контракт выше) и провалидирован.
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/pam/PamManagedPasswordSlots.h/.cpp`
+- `fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.h/.cpp`
   (новый компонент; в daemon target попадает через GLOB_RECURSE).
-- `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotsTests.cpp`
+- `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotWriterTests.cpp`
   (новый), `tests/CMakeLists.txt` (новый test target).
 - `docs/HANDOFF.md`.
 
 ## Validation
 
-- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — ок.
-- `cmake --build build-check --target pam_managed_password_slots_tests`
-  и `--target fic` — ок (компонент компилируется в daemon target).
-- `ctest --test-dir build-check -R 'pam'` — 12/12 PASS (после
-  hardening follow-up перезапущено):
-  pam_configuration_tests, pam_control_flow_analyzer_tests,
-  pam_auth_update_topology_tests, pam_slot_attach_validator_tests,
-  pam_managed_password_slots_tests (14 test-групп, включая
-  mutation canonicalization / renderer zero rejection /
-  successful-render-implies-Active / pair identity),
-  pam_disable_nopasswdlogin/root_sddm_policy_tests,
-  pam_capability_activation_policy_tests, alt_pam_faillock_topology_tests,
-  alt_pam_password_history_topology_tests, pam_policy_defaults_tests
-  (включая static-проверки). Regression suites затронутых контрактов —
-  без изменений поведения.
-- `git diff --check` — чисто. Full CTest не запускался (targeted
-  subset достаточен: изменения изолированы в новом компоненте + tests
-  CMake).
+- `rm -rf build-check && cmake -S . -B build-check
+  -DFIC_TARGET_PLATFORM=ubuntu-24.04` — ок (старый build-check имел
+  невалидный кэш от другого пути, пересоздан).
+- `cmake --build build-check -j4` — полная сборка, 0 ошибок.
+- `ctest --test-dir build-check -R 'pam|rollback'` — 16/16 PASS
+  (включая pam_managed_password_slot_writer_tests,
+  pam_managed_password_slots_tests, pam_auth_update_topology_tests,
+  pam_slot_attach_validator_tests, pam_capability_activation_policy_tests,
+  rollback_executor_tests).
+- Full `ctest` — 99/100; единственный failure `passwdqc_config_file_tests`
+  («pwquality policy did not retain its topology-dependent state»)
+  воспроизводится на чистом a85fd49 (проверено git stash) —
+  ПРЕДСУЩЕСТВУЮЩАЯ проблема, не относится к Step 3, не чинилась (scope).
+- `git diff --check` — чисто.
 
 ## Remaining
 
-- Step 2 ЗАКРЫТ (включая hardening follow-up: textual mutation id
-  canonicalization, type-safe history pair identity, renderer rejects
-  mutationId=0). Шаги 1–2 завершены.
-- Step 3: journal-bound ownership + physical slot writer/activation
-  manager lifecycle (Prepared/Applied; binding marker `mutation=<id>` ↔
-  journal record; single authoritative option state → normal+initial
-  transactionally; preflight marker↔journal ownership check перед
-  option mutation). Parser/renderer из Step 2 — основа.
 - Step 4: `PamSlotAttachValidator` (правила G/I: token-producer
   pam_pwquality.so перед history include, single pam_pwquality provider;
   external-compliant detection через `/var/lib/pam/password` + parsed
@@ -418,7 +389,9 @@ neutral baseline, hook-include no-op.
   всех трёх slot; slot existence гарантия).
 - Step 6: Debian 12 module-argument writer (по J).
 - Step 7: lift `PamPolicySupport::ReadOnly` →
-  `RequiresTopologyActivation`; удалить
+  `RequiresTopologyActivation`; подключить `PamManagedPasswordSlotWriter`
+  в `PamCapabilityActivationPolicy` (quality + history policies) по
+  контракту Step 3 выше; удалить
   `legacyPamAuthUpdatePasswordTopology` bypass последним.
 - Step 8: обязательные тесты (RollbackExecutorTests,
   PlatformProfileTests, PamPackagingChecks и т.д. по мере шагов).

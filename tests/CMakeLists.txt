@@ -799,6 +799,22 @@ target_link_libraries(pam_managed_password_slots_tests PRIVATE
 add_test(NAME pam_managed_password_slots_tests
          COMMAND pam_managed_password_slots_tests)
 
+add_executable(pam_managed_password_slot_writer_tests
+    fic/modules/identity_access/pam/PamManagedPasswordSlotWriterTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+)
+target_include_directories(pam_managed_password_slot_writer_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_managed_password_slot_writer_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(NAME pam_managed_password_slot_writer_tests
+         COMMAND pam_managed_password_slot_writer_tests)
+
 add_executable(pam_disable_nopasswdlogin_policy_tests
     fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
