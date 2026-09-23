@@ -243,6 +243,14 @@ private:
     // flag (monotonic); it never resets it. A successful return is NOT the
     // point at which a change becomes knowable: an installed write whose
     // rollback or post-write proof failed must still report the change.
+    //
+    // Same-snapshot ownership proof (P1-6): the exact Prepared-ID proof and
+    // the conditional mutation share ONE PamConfigFileSnapshot (no second
+    // capture between proof and write). A concurrent replacement after the
+    // proof fails the transaction's expectedTargetState precondition before
+    // any install; the snapshot then stays Captured, the foreign state is
+    // never neutralized or rolled back, and — because no FIC write was
+    // committed — changedSystemState stays false.
     bool neutralizeSlotForPreparedCompensation(
         const ManagedPasswordSlotSpec& spec,
         fic::rollback::MutationId preparedId, bool& changedSystemState,

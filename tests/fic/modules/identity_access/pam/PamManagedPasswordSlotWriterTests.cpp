@@ -15,8 +15,6 @@
 
 #include <unistd.h>
 
-#include <sys/stat.h>
-
 using fic::identity::pam::ManagedHistoryPairInspection;
 using fic::identity::pam::ManagedHistoryPairState;
 using fic::identity::pam::ManagedPasswordCapability;
@@ -1122,14 +1120,18 @@ void runRecoveryAccountingTests() {
 
 namespace {
 
-// P1-5: neutralizeSlotForPreparedCompensation reports its physical-change
-// outcome independently of success/failure. These tests drive the helper
-// through the public activation API and cover, for the Prepared crash-
-// partial recovery phase:
+// P1-5/P1-6: neutralizeSlotForPreparedCompensation reports its physical-
+// change outcome independently of success/failure, and its exact-ID proof
+// is bound to the same PamConfigFileSnapshot that performs the conditional
+// write. These tests drive the helper through the public activation API
+// and cover, for the Prepared crash-partial recovery phase:
 //   B. failure before any physical commit       -> changedSystemState false
 //   C. installed write + proven exact rollback  -> changedSystemState false
 //   D1. write success + fresh-proof failure     -> changedSystemState true
-//   D2. installed write + failed rollback       -> changedSystemState true
+//   D2. installed write + failed rollback (external replacement; UID-
+//       independent)                            -> changedSystemState true
+//   T1. concurrent Active(A) -> Active(B) between proof and write ->
+//       conditional write fails closed, B untouched, changed=false
 // (A: successful neutralization changed=true and E: recovery success +
 // fresh failure changed=true are covered by runCrashPartialTests and
 // runRecoveryAccountingTests; F: foreign-id partial changed=false and
@@ -1274,11 +1276,14 @@ void runNeutralizationAccountingTests() {
             "D1: Prepared record must stay (recovery did not complete)");
     }
 
-    // D2 (installed write + rollback failure): the after-hook makes the
-    // configuration directory read-only and fails the write AFTER the
-    // atomic replacement was installed. The exact rollback then cannot
-    // write the prior bytes back: the physical change remains and
-    // changedSystemState must be true.
+    // D2 (installed write + rollback failure, UID-independent): the
+    // after-hook fires AFTER the neutralization was physically installed
+    // and committed, then performs an EXTERNAL replacement of the target
+    // and fails the write. The exact rollback must refuse to touch the
+    // foreign state (mutated identity/content mismatch) and fail closed:
+    // the physical change remains and changedSystemState must be true.
+    // Unlike the previous chmod-based variant this does not rely on DAC
+    // permission denial, so it is deterministic under root and non-root.
     {
         Fixture fixture(PamManagedPasswordDomain::History);
         std::string normalContent;
@@ -1291,30 +1296,29 @@ void runNeutralizationAccountingTests() {
         writeFile(historyNormalPath(fixture.tree()), normalContent);
         writeFile(historyInitialPath(fixture.tree()), neutral());
 
-        const std::filesystem::path dirPath = fixture.tree().path();
+        const std::filesystem::path normalPath =
+            historyNormalPath(fixture.tree());
+        const std::string foreignBody =
+            "# FIC managed password slot: state=active\n"
+            "capability=password\nmutation=999999\n";
         fixture.writer().setAfterSlotWriteHookForTests(
-            [dirPath](std::size_t slotIndex) {
+            [normalPath, foreignBody](std::size_t slotIndex) {
                 if (slotIndex != 0) {
                     return true;
                 }
-                // The neutralization bytes are installed: make the exact
-                // rollback impossible and fail the write.
-                require(
-                    ::chmod(dirPath.c_str(), 0555) == 0,
-                    "test failed to make the config directory read-only");
+                // The neutralization bytes are installed and owned by the
+                // transaction: an external actor now replaces the target
+                // and the write reports failure. Rollback ownership over
+                // the foreign state is gone, deterministically for any
+                // uid.
+                writeFile(normalPath, foreignBody);
                 return false;
             });
 
         PamManagedPasswordSlotActivationResult result;
-        const bool failed = !fixture.writer().activateOwnedPasswordHistory(
-            options, result, error);
-        // Restore permissions before the fixture teardown regardless of
-        // the outcome above.
         require(
-            ::chmod(dirPath.c_str(), 0755) == 0,
-            "test failed to restore the config directory permissions");
-        require(
-            failed,
+            !fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
             "D2: installed write with failed rollback must fail the "
             "activation");
         require(!result.ownershipProven, "D2: no ownership");
@@ -1323,8 +1327,9 @@ void runNeutralizationAccountingTests() {
             "D2: installed write whose rollback failed must report "
             "changedSystemState == true");
         require(
-            readFile(historyNormalPath(fixture.tree())) == neutral(),
-            "D2: the installed neutral bytes remain (rollback failed)");
+            readFile(historyNormalPath(fixture.tree())) == foreignBody,
+            "D2: the foreign replacement must remain untouched — rollback "
+            "must not restore FIC bytes over external state");
         require(
             readFile(historyInitialPath(fixture.tree())) == neutral(),
             "D2: initial slot untouched");
@@ -1332,6 +1337,75 @@ void runNeutralizationAccountingTests() {
             journalStatus(fixture.journal(), id) ==
                 fic::rollback::MutationStatus::Prepared,
             "D2: Prepared record must stay for the existing lifecycle");
+    }
+
+    // T1 (P1-6 mandatory regression, concurrent foreign replacement between
+    // the exact-ID proof and the conditional write): the before-hook fires
+    // after the proof of Active(A) but BEFORE the transaction write and
+    // replaces the slot with canonical Active(B), B != A. The conditional
+    // write must fail on the expectedTargetState mismatch BEFORE any
+    // install; the snapshot stays Captured, so rollback must be a no-op and
+    // must NEVER restore Active(A) over the foreign Active(B). FIC did not
+    // install anything, so changedSystemState must stay false even though
+    // the on-disk state differs from the proof snapshot.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        std::string normalContent;
+        std::string error;
+        fic::rollback::MutationId idA = 0;
+        require(prepareHistoryRecord(fixture, idA, error), error);
+        require(
+            renderActiveHistoryNormal(idA, options, normalContent),
+            "render Active(A)");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+
+        const std::filesystem::path normalPath =
+            historyNormalPath(fixture.tree());
+        const std::uint64_t idB = idA + 1;
+        std::string foreignActiveB;
+        require(
+            renderActiveHistoryNormal(idB, options, foreignActiveB),
+            "render Active(B)");
+        require(foreignActiveB != normalContent, "B bytes differ from A");
+
+        fixture.writer().setBeforeSlotWriteHookForTests(
+            [normalPath, foreignActiveB](std::size_t slotIndex) {
+                if (slotIndex != 0) {
+                    return true;
+                }
+                // External actor: Active(A) -> Active(B) after the proof,
+                // before the conditional write. Proceed with the write so
+                // the transaction itself must detect the state mismatch.
+                writeFile(normalPath, foreignActiveB);
+                return true;
+            });
+
+        PamManagedPasswordSlotActivationResult result;
+        require(
+            !fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
+            "T1: conditional write over a concurrently replaced target "
+            "must fail closed");
+        require(!result.ownershipProven, "T1: no ownership");
+        require(
+            !result.changedSystemState,
+            "T1: FIC installed nothing — an external replacement must not "
+            "be reported as a FIC system change");
+        require(
+            readFile(normalPath) == foreignActiveB,
+            "T1: foreign Active(B) must remain byte-for-byte untouched — "
+            "FIC must not neutralize B and must not restore A over B");
+        require(
+            readFile(historyInitialPath(fixture.tree())) == neutral(),
+            "T1: initial slot untouched");
+        require(
+            journalStatus(fixture.journal(), idA) ==
+                fic::rollback::MutationStatus::Prepared,
+            "T1: Prepared(A) must remain for the existing recovery "
+            "lifecycle");
+        require(journalActiveCount(fixture.journal()) == 1,
+            "T1: no additional journal records (no FIC write happened)");
     }
 }
 

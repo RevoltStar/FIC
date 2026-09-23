@@ -483,26 +483,49 @@ bool PamManagedPasswordSlotWriter::neutralizeSlotForPreparedCompensation(
             " (fail closed)";
         return false;
     }
-    PamConfigFileSnapshot neutralSnapshot;
-    if (!captureSlot(spec, neutralSnapshot, error)) {
-        return false;
-    }
+    // P1-6 (same-snapshot ownership proof): from this point `snapshot` is
+    // the ownership proof token — these exact bytes/metadata/inode were
+    // proven as canonical Active with the EXACT prepared id above, and the
+    // conditional transaction write below is allowed only while the target
+    // is still exactly this state. There is deliberately NO second capture
+    // between the proof and the mutation: a concurrent Active(A) →
+    // Active(B) replacement after the proof makes the transaction's
+    // expectedTargetState (built from THIS snapshot) mismatch the current
+    // target, so the write fails closed and the foreign state is never
+    // neutralized.
+    //
     // Same fault-hook seam as the fresh activation writes so tests can
     // inject failures before and after the physical commit of the
     // compensation write itself. Production runs with no hooks set.
     const std::size_t slotIndex =
         spec.role == ManagedPasswordSlotRole::HistoryInitial ? 1 : 0;
     if (!writeSlot(
-            spec, neutralSnapshot, PamManagedPasswordSlots::neutralBody(),
+            spec, snapshot, PamManagedPasswordSlots::neutralBody(),
             slotIndex, true, error)) {
-        // The compensation write itself may have installed bytes before
-        // failing (mutate() marks the snapshot committed whenever the
-        // atomic replacement was installed, even on a failure return).
-        // Restore the exact pre-compensation state unconditionally:
-        // rollback() is a no-op for a snapshot that never committed.
+        // Distinguish what actually happened from the failure alone:
+        // mutate() marks the snapshot MutationCommitted only when the FIC
+        // replacement was physically installed AND ownership of the output
+        // was recorded. A concurrent A→B replacement between the proof and
+        // the write fails the expectedTargetState precondition BEFORE any
+        // install, so the snapshot stays Captured and the on-disk foreign
+        // state is not FIC's to restore (rollback() would be a no-op
+        // anyway and must never overwrite it with Active(A)).
+        if (snapshot.state !=
+            PamConfigFileTransactionState::MutationCommitted) {
+            // FIC replacement was never accepted as committed: no FIC
+            // physical change exists, so changedSystemState stays
+            // unchanged (false at this point) even though the current
+            // bytes may differ from the proof snapshot due to an external
+            // actor. Fail closed.
+            error = "Prepared compensation write was not committed to the "
+                    "proven snapshot state (fail closed): " +
+                std::string(spec.fileName) + "; " + error;
+            return false;
+        }
+        // The FIC replacement was installed: restore the exact
+        // pre-compensation state unconditionally.
         std::string rollbackError;
-        if (!PamConfigFileTransaction::rollback(
-                neutralSnapshot, rollbackError)) {
+        if (!PamConfigFileTransaction::rollback(snapshot, rollbackError)) {
             // Case E: the installed physical change cannot be undone;
             // the caller must never treat this as a clean no-op failure.
             changedSystemState = true;

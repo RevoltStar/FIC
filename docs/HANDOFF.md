@@ -2,10 +2,10 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `9013d8f`; рабочее дерево содержит recovery-accounting
-  follow-up к Step 3 (правки `PamManagedPasswordSlotWriter.{h,cpp}` + его
-  тестов + этот HANDOFF), не закоммичено — оставлено для review.
-  НЕ коммитить.
+- Ветка `main`, HEAD `935e439`; рабочее дерево содержит финальный
+  same-snapshot compensation fix к Step 3 (P1-6; правки
+  `PamManagedPasswordSlotWriter.{h,cpp}` + его тестов + этот HANDOFF),
+  не закоммичено — оставлено для review. НЕ коммитить.
 
 ## Current task
 
@@ -21,8 +21,9 @@
   canonicalization; type-safe history pair identity; renderer fail-safe —
   mutationId=0 => failure, успешный render гарантирует Active).
 - Step 3 РЕАЛИЗОВАН, провалидирован и ЗАКРЫТ hardening follow-up'ом
-  (4 P1 defect'а устранены — см. контракт ниже) и recovery-accounting
-  follow-up'ом (P1-5 — см. Completed).
+  (4 P1 defect'а устранены — см. контракт ниже), recovery-accounting
+  follow-up'ом (P1-5) и same-snapshot compensation fix'ом (P1-6 —
+  см. Completed).
 ## Fixture evidence
 
 ### v2 — pam-auth-update mechanics (все 4 платформы)
@@ -405,7 +406,9 @@ neutral baseline, hook-include no-op.
   Уточнён P1-4 regression: before-fault хук теперь stateful (первая
   index-0 запись = recovery-нейтрализация пропускается, вторая = первый
   fresh write фейлится), т.к. компенсационная запись теперь тоже проходит
-  через fault-hook seam.
+  через fault-hook seam. Same-snapshot fix (P1-6) добавил тест T1
+  (concurrent foreign replacement) и переписал D2 на UID-independent
+  external-replacement вариант; chmod-инфраструктура из тестов удалена.
 
 ## Completed
 
@@ -446,6 +449,28 @@ neutral baseline, hook-include no-op.
   аудит: аналог дефекта отсутствует — все post-write failures идут через
   `compensateFreshFailure`, который выставляет `changedSystemState`
   до возврата; правки не требовались.
+- Same-snapshot compensation fix (P1-6): proof exact Prepared mutation ID
+  и conditional physical mutation выполняются через ОДИН
+  `PamConfigFileSnapshot` — второй capture между proof и write удалён.
+  Snapshot стал ownership proof token: transaction `mutate()` строит
+  `expectedTargetState` из доказанного snapshot, поэтому concurrent
+  подмена Active(A) → Active(B) после proof фейлит expectedTargetState
+  precondition ДО install — foreign B никогда не нейтрализуется и не
+  откатывается. Failure accounting уточнён: после failed `writeSlot()`
+  helper различает `snapshot.state == Captured` (FIC replacement не был
+  committed — внешняя подмена не является FIC change, `changedSystemState`
+  остаётся false, rollback no-op, fail closed) и
+  `MutationCommitted` (FIC установил собственную мутацию — rollback
+  outcome управляет флагом: exact restore proven => false, failed/
+  unproven => true). Новый UID-independent D2: после install+commit
+  external replacement + hook failure → rollback отказывается трогать
+  foreign state (mutated identity/content mismatch), `changed=true`
+  детерминированно для root и non-root (chmod-вариант удалён). Новый
+  тест T1: concurrent A→B между proof и write → FAIL, B byte-for-byte
+  нетронут, `changed=false`, Prepared(A) остаётся. Все P1-5 cases
+  (B/C/D1, recovery→fresh, foreign-id partial) сохранены green.
+  Audit quality path: двойного capture нет — fresh-пути используют один
+  snapshot для inspect и write.
 
 ## Changed areas
 
@@ -459,9 +484,10 @@ neutral baseline, hook-include no-op.
 
 - `fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.h/.cpp`
   (P1-5 контракт helper'а + монотонная аккумуляция; мёртвая
-  `classifyPhysicalState`/`PhysicalState` удалены).
+  `classifyPhysicalState`/`PhysicalState` удалены; P1-6 same-snapshot
+  proof + Captured/MutationCommitted failure accounting).
 - `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotWriterTests.cpp`
-  (группа `neutralization accounting` B/C/D1/D2; уточнение P1-4 regression).
+  (группа `neutralization accounting` B/C/D1/D2/T1; уточнение P1-4 regression).
 - `docs/HANDOFF.md`. `tests/CMakeLists.txt` правок не требовал.
 
 ## Validation
@@ -502,6 +528,16 @@ neutral baseline, hook-include no-op.
   state") — pre-existing, не чинился (scope).
 - `git diff --check` — чисто; `git diff --name-only` — только 4
   разрешённых файла; коммит НЕ выполнялся.
+
+## Validation (same-snapshot compensation fix, P1-6)
+
+- `cmake --build build-check -j4` — 0 ошибок (включая daemon target).
+- `ctest -R 'pam_managed_password_slot_writer_tests|pam|rollback|journal|mutation'`
+  — 17/17 PASS.
+- Full `ctest` — 99/100; единственный failure `passwdqc_config_file_tests`
+  с тем же baseline-сообщением ("pwquality policy did not retain its
+  topology-dependent state") — pre-existing, не чинился (scope).
+- `git diff --check` — чисто; коммит НЕ выполнялся.
 
 ## Remaining
 
