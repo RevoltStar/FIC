@@ -131,7 +131,7 @@ bool PamManagedPasswordSlotWriter::journalMetadataMatches(
 }
 
 bool PamManagedPasswordSlotWriter::ensureJournalOperational(
-    std::string& error) {
+    std::string& error) const {
     // P1-1: operational provenance requires usable() AND
     // lifecycleInitialized(). A raw load() (usable without the
     // witness-aware lifecycle) is NEVER trusted as operational state here.
@@ -187,7 +187,8 @@ bool PamManagedPasswordSlotWriter::ensureJournalReadable(
 }
 
 bool PamManagedPasswordSlotWriter::collectActiveRecord(
-    bool& found, fic::rollback::MutationRecord& record, std::string& error) {
+    bool& found, fic::rollback::MutationRecord& record,
+    std::string& error) const {
     found = false;
     if (!ensureJournalOperational(error)) {
         return false;
@@ -651,6 +652,45 @@ bool PamManagedPasswordSlotWriter::proveOwnedHistory(
     }
     error.clear();
     return true;
+}
+
+PasswordDomainJournalState
+PamManagedPasswordSlotWriter::inspectJournalBindingForDomain(
+    std::uint64_t& mutationId, std::string& error) const {
+    mutationId = 0;
+    // Read-only persistent-state gate: exactly the same witness-aware
+    // state table as the ownership proofs use, strictly non-mutating.
+    if (!ensureJournalReadable(error)) {
+        error = "managed password journal persistent state is not proven "
+                "(fail closed): " +
+            error;
+        return PasswordDomainJournalState::Invalid;
+    }
+    // collectActiveRecord enforces the strict domain preconditions:
+    // at most one active record, exact metadata match (policy ref, PAM
+    // backend, resource, capability/topology/activation payload) and no
+    // RollbackFailed provenance. Multiple active records, metadata
+    // mismatches and RollbackFailed records all fail closed through the
+    // error path (Conflict), never by selecting a record by chance.
+    bool found = false;
+    fic::rollback::MutationRecord record;
+    if (!collectActiveRecord(found, record, error)) {
+        error = "managed password journal domain classification failed "
+                "(fail closed): " +
+            error;
+        return PasswordDomainJournalState::Conflict;
+    }
+    if (!found) {
+        error.clear();
+        return PasswordDomainJournalState::Unbound;
+    }
+    mutationId = record.id;
+    if (record.status == fic::rollback::MutationStatus::Applied) {
+        error.clear();
+        return PasswordDomainJournalState::Applied;
+    }
+    error.clear();
+    return PasswordDomainJournalState::Prepared;
 }
 
 bool PamManagedPasswordSlotWriter::finishQualityActivation(

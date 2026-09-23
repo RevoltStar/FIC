@@ -583,6 +583,200 @@ void testProviderUnreachableAfterAuthfail(const fs::path& root) {
             "unreachable");
 }
 
+// ---------------------------------------------------------------------------
+// Rule G password-flow tests (P1-2 hardening): symbolic control-flow proofs
+// for quality/history enforcement. Every fixture keeps quality textually
+// BEFORE history where relevant — the tests prove that verdicts come from
+// the control flow, not from textual index ordering.
+// ---------------------------------------------------------------------------
+
+void writePasswordFlowFixture(const fs::path& root,
+                              const std::string& stackContent) {
+    writeFile(root / "pam.d/passwd", stackContent);
+    writeFile(root / "security/pam_unix.so", "fixture\n");
+    writeFile(root / "security/pam_pwquality.so", "fixture\n");
+    writeFile(root / "security/pam_pwhistory.so", "fixture\n");
+}
+
+fic::platform::PamPlatformConfig makePasswordFlowPlatform(
+    const fs::path& root) {
+    fic::platform::PamPlatformConfig platform;
+    platform.configDirectories = {root / "pam.d"};
+    platform.moduleDirectories = {root / "security"};
+    platform.scopes = {
+        {fic::platform::PamScope::EffectivePasswordStack, {"passwd"}}};
+    return platform;
+}
+
+fic::identity::pam::PamPasswordFlowAnalysis analyzePasswordFlowFixture(
+    const fs::path& root, const std::string& stackContent) {
+    writePasswordFlowFixture(root, stackContent);
+    auto platform = makePasswordFlowPlatform(root);
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamEffectiveStack stack;
+    std::string error;
+    require(configuration.buildEffectiveStack(
+                "passwd",
+                fic::identity::pam::PamManagementGroup::Password,
+                stack, error),
+            error);
+    fic::identity::pam::PamPasswordFlowAnalysis analysis;
+    require(fic::identity::pam::analyzePasswordFlow(
+                stack, platform, analysis, error),
+            error);
+    return analysis;
+}
+
+// G1 positive: producer proven, history non-bypassable, token produced on
+// every successful path before the history rule.
+void testPasswordFlowPositive(const fs::path& root) {
+    const auto analysis = analyzePasswordFlowFixture(
+        root,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password required pam_unix.so use_authtok\n");
+    require(analysis.violations.empty(),
+            "G1 positive flow reported violations");
+    require(analysis.qualityNonBypassable,
+            "G1: quality bypassability not disproven");
+    require(analysis.historyNonBypassable,
+            "G1: history bypassability not disproven");
+    require(analysis.historyAlwaysHasTokenProducer,
+            "G1: token producer invariant not proven");
+}
+
+// G2 producer bypass: quality textually before history, but an earlier
+// success jump skips the quality rule — a successful path exists without
+// the quality/token producer. This proves the implementation is no longer
+// index-based.
+void testPasswordFlowProducerBypass(const fs::path& root) {
+    const auto analysis = analyzePasswordFlowFixture(
+        root,
+        "password [success=1 default=ignore] pam_permit.so\n"
+        "password requisite pam_pwquality.so retry=3\n"
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password required pam_unix.so use_authtok\n");
+    require(!analysis.qualityNonBypassable,
+            "G2: producer bypass not detected");
+    require(!analysis.violations.empty(),
+            "G2: bypass flow must report a violation");
+}
+
+// G2b history bypass: quality runs, but its success action jumps over the
+// history rule — history enforcement is bypassed while textual order stays
+// "correct" (quality before history).
+void testPasswordFlowHistoryBypass(const fs::path& root) {
+    const auto analysis = analyzePasswordFlowFixture(
+        root,
+        "password [success=1 default=ignore] pam_pwquality.so retry=3\n"
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password required pam_unix.so use_authtok\n");
+    require(!analysis.historyNonBypassable,
+            "G2b: history bypass (jump over pwhistory) not detected");
+    require(!analysis.violations.empty(),
+            "G2b: bypass flow must report a violation");
+}
+
+// G2c token-state: a successful path reaches the history rule while the
+// quality producer did not succeed on that same path.
+void testPasswordFlowTokenProducerBypass(const fs::path& root) {
+    const auto analysis = analyzePasswordFlowFixture(
+        root,
+        "password [success=1 default=ignore] pam_permit.so\n"
+        "password requisite pam_pwquality.so retry=3\n"
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password required pam_unix.so use_authtok\n");
+    require(!analysis.historyAlwaysHasTokenProducer,
+            "G2c: token producer bypass not detected");
+}
+
+// G4 normal ordering reversed: history before quality — the history rule
+// runs (successfully: use_authtok only sets the new token) BEFORE any
+// producer success exists, so the token invariant cannot hold; the flow is
+// rejected.
+void testPasswordFlowHistoryBeforeProducer(const fs::path& root) {
+    const auto analysis = analyzePasswordFlowFixture(
+        root,
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password requisite pam_pwquality.so retry=3\n"
+        "password required pam_unix.so use_authtok\n");
+    // The history rule succeeds on the happy path BEFORE the quality
+    // producer runs; the token-state proof must reject this topology.
+    require(!analysis.historyAlwaysHasTokenProducer,
+            "G4: history-before-producer topology not rejected");
+}
+
+// G5 unknown/unrepresentable control syntax: fail closed. The analyzer's
+// control parser rejects the unknown result token during the symbolic
+// execution (after stack construction): analyzePasswordFlow reports the
+// error and no security verdict is produced (never a safe one).
+void testPasswordFlowUnknownControl(const fs::path& root) {
+    writePasswordFlowFixture(
+        root,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password [bogus=1] pam_unix.so use_authtok\n");
+    auto platform = makePasswordFlowPlatform(root);
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamEffectiveStack stack;
+    std::string error;
+    require(configuration.buildEffectiveStack(
+                "passwd", fic::identity::pam::PamManagementGroup::Password,
+                stack, error),
+            error);
+    fic::identity::pam::PamPasswordFlowAnalysis analysis;
+    std::string flowError;
+    require(!fic::identity::pam::analyzePasswordFlow(
+                stack, platform, analysis, flowError),
+            "unknown control syntax must not produce a verdict");
+    require(!flowError.empty(),
+            "unknown control syntax must report an error");
+}
+
+// G6 no successful path provable at all: fail closed.
+void testPasswordFlowNoSuccessfulPath(const fs::path& root) {
+    const auto analysis = analyzePasswordFlowFixture(
+        root,
+        "password requisite pam_deny.so\n"
+        "password required pam_permit.so\n");
+    require(!analysis.violations.empty(),
+            "G6: flow without a provable successful path must fail closed");
+}
+
+// G7 substack boundaries: a history rule inside its own substack scope is
+// still proven non-bypassable on the successful path.
+void testPasswordFlowSubstackJump(const fs::path& root) {
+    writePasswordFlowFixture(
+        root,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password substack secret-branch\n"
+        "password required pam_unix.so use_authtok\n");
+    writeFile(root / "pam.d/secret-branch",
+              "password requisite pam_pwhistory.so use_authtok\n"
+              "password required pam_permit.so\n");
+    auto platform = makePasswordFlowPlatform(root);
+    fic::identity::pam::PamConfiguration configuration(platform);
+    fic::identity::pam::PamEffectiveStack stack;
+    std::string error;
+    require(configuration.buildEffectiveStack(
+                "passwd", fic::identity::pam::PamManagementGroup::Password,
+                stack, error),
+            error);
+    fic::identity::pam::PamPasswordFlowAnalysis analysis;
+    require(fic::identity::pam::analyzePasswordFlow(
+                stack, platform, analysis, error),
+            error);
+    require(analysis.violations.empty(),
+            "G7: substack-scoped history rule was misjudged: " +
+                (analysis.violations.empty()
+                     ? std::string()
+                     : analysis.violations.front().message));
+    require(analysis.historyNonBypassable,
+            "G7: history inside a substack must still be enforced");
+    require(analysis.historyAlwaysHasTokenProducer,
+            "G7: token producer invariant must hold across substacks");
+}
+
 } // namespace
 
 int main() {
@@ -599,6 +793,14 @@ int main() {
         testSddmRootExclusionWithAuthsucc(root);
         testAuthsuccDenialBypassDetected(root);
         testProviderUnreachableAfterAuthfail(root);
+        testPasswordFlowPositive(root);
+        testPasswordFlowProducerBypass(root);
+        testPasswordFlowHistoryBypass(root);
+        testPasswordFlowTokenProducerBypass(root);
+        testPasswordFlowHistoryBeforeProducer(root);
+        testPasswordFlowUnknownControl(root);
+        testPasswordFlowNoSuccessfulPath(root);
+        testPasswordFlowSubstackJump(root);
     } catch (const std::exception& exception) {
         std::cerr << "PamControlFlowAnalyzerTests failed: "
                   << exception.what() << '\n';

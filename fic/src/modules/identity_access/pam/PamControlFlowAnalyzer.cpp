@@ -90,6 +90,19 @@ struct Evidence {
     bool accountSucceeded = false;
     bool authenticationSuccessObserved = false;
     bool authenticationFailureObserved = false;
+    // Password-group token-state evidence (Rule G symbolic execution):
+    // sticky per-path state carried by every symbolic state.
+    bool passwordQualitySucceeded = false;
+    bool passwordHistoryReached = false;
+    bool passwordHistorySucceeded = false;
+    // Sticky: once a pam_pwquality.so success happened on the path, the
+    // token is produced for the rest of the execution.
+    bool passwordTokenProduced = false;
+    // Sticky snapshot of the token state at the moment a history rule was
+    // FIRST reached on the path: true only when the producer had already
+    // succeeded strictly earlier on the same path. A producer success
+    // after the history rule does not retroactively satisfy the invariant.
+    bool passwordHistoryTokenAvailable = false;
     std::optional<TrustedAuthenticationBypassEvidence>
         trustedAuthenticationBypass;
     std::optional<TrustedAuthenticationExclusionEvidence>
@@ -434,6 +447,28 @@ void recordEvidence(ExecutionState& state,
         }
     }
 
+    // Password token-state tracking (Rule G): sticky per-path state for
+    // the quality producer and the history consumer. The token-availability
+    // snapshot is taken when the history rule is FIRST reached: a producer
+    // success later on the path must not retroactively satisfy the
+    // producer-before-history invariant.
+    if (rule.group == PamManagementGroup::Password) {
+        if (module == "pam_pwquality.so") {
+            state.evidence.passwordQualitySucceeded |= result == "success";
+            if (result == "success") {
+                state.evidence.passwordTokenProduced = true;
+            }
+        }
+        if (module == "pam_pwhistory.so") {
+            if (!state.evidence.passwordHistoryReached) {
+                state.evidence.passwordHistoryTokenAvailable =
+                    state.evidence.passwordTokenProduced;
+            }
+            state.evidence.passwordHistoryReached = true;
+            state.evidence.passwordHistorySucceeded |= result == "success";
+        }
+    }
+
     if (provider == PamProviderKind::PamFaillock && expectedProvider) {
         if (rule.group == PamManagementGroup::Account && result == "success") {
             state.evidence.accountSucceeded = true;
@@ -626,6 +661,11 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
         a.accountSucceeded == b.accountSucceeded &&
         a.authenticationSuccessObserved == b.authenticationSuccessObserved &&
         a.authenticationFailureObserved == b.authenticationFailureObserved &&
+        a.passwordQualitySucceeded == b.passwordQualitySucceeded &&
+        a.passwordHistoryReached == b.passwordHistoryReached &&
+        a.passwordHistorySucceeded == b.passwordHistorySucceeded &&
+        a.passwordTokenProduced == b.passwordTokenProduced &&
+        a.passwordHistoryTokenAvailable == b.passwordHistoryTokenAvailable &&
         sameTrustedAuthenticationBypass(
             a.trustedAuthenticationBypass,
             b.trustedAuthenticationBypass) &&
@@ -1039,6 +1079,118 @@ bool analyzePasswordStack(const PamEffectiveStack& stack,
     return true;
 }
 
+enum class PasswordFlowResult {
+    Analyzed,
+    Error
+};
+
+PasswordFlowResult analyzePasswordFlowInternal(
+    const PamEffectiveStack& stack,
+    const fic::platform::PamPlatformConfig& platformConfig,
+    PamPasswordFlowAnalysis& analysis,
+    std::string& error) {
+    analysis = PamPasswordFlowAnalysis{};
+
+    // Symbolic execution with the SAME interpreter semantics as every
+    // other group analysis (jumps, substack scoping, unknown modules
+    // nondeterministic, budget limits fail closed). pam_pwquality.so is
+    // the quality/token producer and pam_pwhistory.so the history
+    // consumer; their behavior is tracked through the per-path sticky
+    // token-state evidence.
+    std::vector<ExecutionState> states;
+    ExecutionBudget budget;
+    if (!executeStack(
+            stack.entries,
+            ExecutionState{},
+            PamProviderKind::PamPwquality,
+            stack.service,
+            platformConfig,
+            states,
+            error,
+            budget)) {
+        return PasswordFlowResult::Error;
+    }
+    // No successful path provable at all: the flow cannot be used as a
+    // security proof (fail closed, UnsupportedControlFlow).
+    const auto successfulFirst = std::find_if(
+        states.begin(), states.end(), [&](const ExecutionState& state) {
+            return stackSucceeded(state);
+        });
+    if (successfulFirst == states.end()) {
+        PamFlowViolation violation;
+        violation.kind = PamFlowViolationKind::UnsupportedControlFlow;
+        violation.service = stack.service;
+        violation.group = PamManagementGroup::Password;
+        violation.message =
+            "no successful password-change path can be proven (fail "
+            "closed)";
+        analysis.violations.push_back(std::move(violation));
+        return PasswordFlowResult::Analyzed;
+    }
+
+    analysis.qualityNonBypassable = true;
+    analysis.historyNonBypassable = true;
+    analysis.historyAlwaysHasTokenProducer = true;
+    for (const auto& state : states) {
+        if (!stackSucceeded(state)) {
+            continue;
+        }
+        const bool qualityOnPath = state.evidence.passwordQualitySucceeded;
+        const bool historyOnPath =
+            state.evidence.passwordHistoryReached &&
+            state.evidence.passwordHistorySucceeded;
+        // Token-state invariant: a history rule on the path requires the
+        // token to have been produced BEFORE the history rule ran on that
+        // same path. The sticky passwordTokenProduced flag alone would
+        // also accept a producer that ran AFTER the history rule, so the
+        // path ordering is enforced by the evidence combination: when the
+        // history rule was reached, the token must already have existed
+        // (producer success strictly earlier than the history success on
+        // the path). The symbolic execution explores paths in control-flow
+        // order, so a state that reached history without a prior producer
+        // success keeps passwordTokenProduced == false at the history
+        // step; we capture that with a dedicated sticky flag set in
+        // recordEvidence when the history rule runs.
+        const bool producerBeforeHistory =
+            state.evidence.passwordHistoryReached
+                ? state.evidence.passwordHistoryTokenAvailable
+                : qualityOnPath;
+        if (!qualityOnPath) {
+            analysis.qualityNonBypassable = false;
+        }
+        if (!historyOnPath) {
+            analysis.historyNonBypassable = false;
+        }
+        if (state.evidence.passwordHistoryReached &&
+            !producerBeforeHistory) {
+            analysis.historyAlwaysHasTokenProducer = false;
+        }
+        if (!analysis.qualityNonBypassable ||
+            !analysis.historyNonBypassable ||
+            !analysis.historyAlwaysHasTokenProducer) {
+            PamFlowViolation violation;
+            violation.kind =
+                PamFlowViolationKind::PasswordEnforcementBypass;
+            violation.service = stack.service;
+            violation.group = PamManagementGroup::Password;
+            violation.message =
+                !analysis.qualityNonBypassable
+                ? "successful password-change path bypasses pam_pwquality.so"
+                : !analysis.historyNonBypassable
+                ? "successful password-change path bypasses "
+                  "pam_pwhistory.so use_authtok"
+                : "successful password-change path reaches "
+                  "pam_pwhistory.so without a proven token producer "
+                  "(PasswordTokenProducerBypass)";
+            violation.path = state.trace;
+            violation.pathTruncated = state.traceTruncated;
+            analysis.violations.push_back(std::move(violation));
+            return PasswordFlowResult::Analyzed;
+        }
+    }
+    return PasswordFlowResult::Analyzed;
+}
+
 bool analyzeFaillockStack(PamConfiguration& configuration,
                           const fic::platform::PamPlatformConfig& platformConfig,
                           const std::string& service,
@@ -1290,6 +1442,19 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
 }
 
 } // namespace
+
+bool analyzePasswordFlow(
+    const PamEffectiveStack& stack,
+    const fic::platform::PamPlatformConfig& platformConfig,
+    PamPasswordFlowAnalysis& analysis,
+    std::string& error) {
+    // The internal analysis reports a bypass by leaving the violated
+    // property false AND pushing a violation; an execution error (budget,
+    // substack depth, parse-adjacent failures) is the only Error case.
+    return analyzePasswordFlowInternal(
+               stack, platformConfig, analysis, error) ==
+        PasswordFlowResult::Analyzed;
+}
 
 std::optional<fic::platform::PamFaillockStrategy>
 detectPamFaillockStrategy(const PamEffectiveStack& authStack,

@@ -10,11 +10,14 @@
 
 - Step 4 PasswordQuality/PasswordHistory: `validatePamPasswordSlotAttach`
   в `PamSlotAttachValidator.{h,cpp}` — read-only pre-attach validation
-  трёх managed password slots + Rules G/I/J. Подключена в
-  `fic --maintenance validate-pam-slots-before-attach` (main.cpp):
-  команда теперь выполняет faillock-вердикт (Step 2) + password-вердикт
-  (Step 4), оба должны быть safe. НЕ подключена к daemon registry /
-  capability policies (это Step 7); packaging (Step 5) не менялся.
+  трёх managed password slots + Rules G/I/J. Hardening follow-up
+  (P1-1..P1-4, P2-1) завершён: validator усилен и доказан тестами,
+  НО из CLI (`fic --maintenance validate-pam-slots-before-attach`)
+  password-вердикт ВРЕМЕННО ОТКЛЮЧЁН (P1-1): команда выполняет только
+  faillock-вердикт (Step 2); comment в main.cpp документирует,
+  что re-wiring отложен до Step 5 (packaging). Validator API сохранён
+  и полностью покрыт тестами. К daemon registry / capability policies
+  не подключён (Step 7); packaging (Step 5) не менялся.
 
 ## Step 4 контракт (`validatePamPasswordSlotAttach`)
 
@@ -33,33 +36,61 @@
 - Ownership consistency: Active slot <=> MatchingApplied record своего
   домена; Neutral slot => Unbound. Active без journal / Neutral с
   journal / MatchingPrepared => fail closed.
-- Rule I: external present = distro `pwquality` selected в
-  `/var/lib/pam/password` (exact `Module: ` lines) AND pam_pwquality.so
-  в parsed Primary stack; >1 pam_pwquality.so в stack => fail closed;
-  external + Active FIC quality slot => fail closed (XOR ownership).
-  Выборка state-файла делается только при ровно одном provider в stack
-  (v2: selection без provider в графе не external; не должна
-  фейлить standalone FIC quality).
-- Rule G: Active history pair требует pam_pwquality.so token producer в
-  flattened Primary stack; ordering (producer перед history include)
-  проверяется ТОЛЬКО когда history include уже в parsed графе (active
-  hook include раскрывается в правилах pam_pwhistory.so). history-only
-  => fail closed.
+- Rule I: external selected = distro `pwquality` selected в
+  `/var/lib/pam/password` (exact `Module: ` lines); external effective =
+  selected AND ровно один pam_pwquality.so в parsed Primary stack
+  (externalSelected != externalEffective). FIC Active quality slot +
+  selected => fail closed даже если provider отсутствует в графе;
+  selected без provider (и provider без selected) => fail closed
+  (XOR ownership), ИСКЛЮЧЕНИЕ: единственный provider — FIC-owned
+  active slot (`!(pwqualityCount == 1 && qualityActive)`).
+- Rule G: контроль-flow proof, а не flattened-index. `PamControlFlowAnalyzer::
+  analyzePasswordFlow()` (public) возвращает
+  `PamPasswordFlowAnalysis {qualityNonBypassable, historyNonBypassable,
+  historyAlwaysHasTokenProducer, violations}`; internal
+  `analyzePasswordFlowInternal()` возвращает
+  `enum PasswordFlowResult {Analyzed, Error}` — неизвестное control
+  выражение => Error => fail closed. Token-state: sticky
+  `passwordTokenProduced`, а `passwordHistoryTokenAvailable`
+  снапшотится при ПЕРВОМ достижении history, чтобы producer,
+  запускаемый ПОСЛЕ history, не удовлетворял инварианту (G4
+  reversed-order). Все флаги участвуют в `sameState`.
 - Rule J semantic checks: arg-mode — slot options (из
   `PamManagedPasswordSlotOwnership::historyOptions`):
   `effectiveRemember == 0` и `!enforceForRoot` при AllPamSubjects =>
-  fail closed; conf-mode (`ProviderConfigFile` + непустой configPath) —
-  `PamOptionFile::hasOnlyValue(configPath, "remember", "0")` => fail
-  closed. Provider option semantics внешнего pwquality (enforcing,
-  localUsersOnly) НЕ проверяются — это зона `PamCapabilityVerifier`.
+  fail closed. Conf-mode (`ProviderConfigFile` + непустой configPath):
+  typed `PwhistoryRememberState {DefaultNonZero, ExplicitNonZero, Zero,
+  Broken}` через `readPwhistoryConfRememberState()` в
+  `PamManagedPasswordSlotWriter` — отсутствующий файл = документированный
+  nonzero default => pass; unreadable/malformed/конфликтующие дублии
+  `remember` => Broken => fail closed (никакого last-wins).
+- Neutral ⇔ Unbound provenance (P1-4): `enum class
+  PasswordDomainJournalState {Unbound, Prepared, Applied, Conflict,
+  Invalid}` + read-only `inspectJournalBindingForDomain()` в
+  `PamManagedPasswordSlotWriter`; `collectActiveRecord`/
+  `ensureJournalOperational` теперь const. Validator: Neutral slot
+  требует Unbound journal своего домена (Quality И History);
+  Applied/Prepared/Conflict/Invalid => fail closed.
 - Эффективные Primary stacks строятся `PamConfiguration::
   buildEffectiveStack` по всем services password scope; include
   раскрывается инлайн, поэтому маркеры ищутся по правилам
   pam_pwquality.so/pam_pwhistory.so в flattened sequence, а не по
   include-target именам.
-- main.cpp wiring: `validate-pam-slots-before-attach` => faillock verdict
-  + password verdict; сообщения об unsafe раздельные ("FIC faillock PAM
-  slots..." / "FIC password PAM slots...").
+- main.cpp wiring: password-вердикт ОТКЛЮЧЁН (P1-1, re-wiring в Step 5);
+  `validate-pam-slots-before-attach` => только faillock verdict.
+- Rule G control-flow: `PamControlFlowAnalyzerTests` (G1 positive, G2
+  producer bypass, G2b history bypass, G2c token bypass, G4
+  history-before-producer, G5 unknown control, G6 no successful path,
+  G7 substack scope); validator-level jump тесты
+  (`testValidatorRejectsJumpOverHistory/JumpOverProducer/
+  HistoryBeforeProducer`). Journal: `seedEmptyJournal` (полный reset
+  journal+witness `.initialized` — witness file нужен до re-init,
+  иначе migration branch протекает); JRN1-JRN6 provenance тесты.
+  Conf-mode: `testConfModeRememberNonZeroPasses`,
+  `testConfModeMissingConfigPasses`, `testConfModeUnreadableConfigFails`
+  (broken non-numeric remember), `testConfModeMalformedRememberFails`,
+  `testConfModeConflictingRememberFails`,
+  `testProviderWithoutSelectionFails` (I3).
 
 ## Previous task context (Step 3, закрыт)
 - Step 2 (`PamManagedPasswordSlots`) закрыт: typed модель трёх canonical
@@ -612,13 +643,26 @@ neutral baseline, hook-include no-op.
   topology-dependent state") — pre-existing, не чинился (scope).
 - `git diff --check` — чисто; коммит НЕ выполнялся.
 
+## Validation (password-validator hardening, P1/P2)
+
+- `cmake --build build-check -j4` — полная сборка, 0 ошибок (после
+  re-configure с CMakeLists без probe-таргета).
+- `ctest -R 'pam_password|pam_slot_attach|pam_control_flow|
+  pam_configuration|pam_managed_password|journal|rollback'` — 11/11
+  PASS (включая обновлённые PamControlFlowAnalyzerTests и
+  PamPasswordSlotAttachValidatorTests: G-серия, jump-тесты,
+  JRN-тесты, conf-mode P2-1 тесты).
+- Full `ctest` — 100/101; единственный failure `passwdqc_config_file_tests`
+  — известный pre-existing baseline failure, не чинился (scope).
+- `git diff --check` — чисто; коммит НЕ выполнялся.
+
 ## Remaining
 
-- Step 4 residual: интерактивная passwd-валидация на staging (не
-  выполнялась).
 - Step 5: packaging (`packaging/deb/`: hook-профили + slot targets;
   extend permanent-hook proof на password hooks; conffile registration
-  всех трёх slot; slot existence гарантия).
+  всех трёх slot; slot existence гарантия); в Step 5 же — re-wiring
+  password-вердикта в `fic --maintenance validate-pam-slots-before-attach`
+  (см. comment в main.cpp).
 - Step 6: Debian 12 module-argument writer (по J).
 - Step 7: lift `PamPolicySupport::ReadOnly` →
   `RequiresTopologyActivation`; подключить `PamManagedPasswordSlotWriter`

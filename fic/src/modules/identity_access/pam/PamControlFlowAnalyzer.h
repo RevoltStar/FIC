@@ -73,6 +73,25 @@ struct PamControlFlowAnalysis {
         acceptedTrustedAuthenticationExclusions;
 };
 
+// Password-specific control-flow analysis (Rule G security proof). All
+// answers come from symbolic execution of the real Linux-PAM control flow
+// over the parsed effective stack — never from textual index ordering.
+struct PamPasswordFlowAnalysis {
+    // No successful password-change path skips pam_pwquality.so.
+    bool qualityNonBypassable = false;
+    // No successful password-change path reaches the stack completion
+    // without pam_pwhistory.so use_authtok enforcement on that path.
+    bool historyNonBypassable = false;
+    // No successful path reaches pam_pwhistory.so without a proven token
+    // producer success (pam_pwquality.so) earlier on the SAME path
+    // (token-state symbolic execution).
+    bool historyAlwaysHasTokenProducer = false;
+    // Unsupported/unrepresentable control flow (unknown control syntax,
+    // unsupported jump, cycle, budget exhaustion, unsafe substack
+    // semantics, unknown significant result) — every entry fails closed.
+    std::vector<PamFlowViolation> violations;
+};
+
 class PamControlFlowAnalyzer {
 public:
     // false means that the effective graph or control syntax could not be
@@ -96,6 +115,20 @@ std::optional<fic::platform::PamFaillockStrategy> detectPamFaillockStrategy(
 
 std::string pamFlowViolationKindName(PamFlowViolationKind kind);
 std::string formatPamFlowViolation(const PamFlowViolation& violation);
+
+// Password-flow security proof for Rule G: symbolically executes the
+// effective Primary password stack (the same interpreter semantics the
+// analyzer uses for other groups) and classifies quality/history
+// non-bypassability plus the token-producer invariant. The stack is
+// analyzed as a graph (substacks are executed in their own scope; jumps
+// are honored as Linux-PAM honors them); textual positions are never used
+// as a proof. Returns false only when the analysis could not be performed
+// at all; unsupported control flow is reported through analysis.violations
+// (fail closed).
+bool analyzePasswordFlow(const PamEffectiveStack& stack,
+                         const fic::platform::PamPlatformConfig& platformConfig,
+                         PamPasswordFlowAnalysis& analysis,
+                         std::string& error);
 
 } // namespace fic::identity::pam
 

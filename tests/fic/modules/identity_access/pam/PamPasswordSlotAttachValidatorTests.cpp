@@ -227,6 +227,23 @@ std::uint64_t seedQualityJournal(const fs::path& path,
         status);
 }
 
+// Initializes the journal into a proven witness-aware persistent state
+// WITHOUT any domain record (Unbound provenance for both password
+// domains). This models the normal daemon runtime state on a system where
+// FIC never activated a password capability.
+void seedEmptyJournal(const fs::path& path) {
+    fs::create_directories(path.parent_path());
+    // Fully reset the persistent (journal, witness) pair first: an
+    // existing witness would route initializeOrLoad into the migration
+    // branch against whatever records the previous test case left behind.
+    std::error_code ignored;
+    fs::remove(path, ignored);
+    fs::remove(path.string() + ".initialized", ignored);
+    MutationJournal journal(path);
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+}
+
 std::uint64_t seedHistoryJournal(const fs::path& path,
                                  MutationStatus status) {
     return seedJournal(
@@ -290,17 +307,28 @@ void writePasswordState(const TestTree& tree, const char* content) {
 }
 
 // 1. All slots neutral + no external provider: safe (neutral baseline).
+// The journal is seeded as a proven witness-aware persistent state with NO
+// domain records (Unbound provenance) — the read-only validator must fail
+// closed on an un-bootstrapped journal (that is the intended P1-1
+// semantics); tests model a validly initialized runtime state.
 void testAllNeutralPass(const TestTree& tree) {
     for (const fs::path& slot : tree.slotPaths()) {
         writeFile(slot, neutralSlot());
     }
     writeStack(tree, TestTree::kPlainStack);
     writePasswordState(tree, kPasswordStateClean);
+    seedEmptyJournal(tree.journalPath());
     requireSafe(tree, tree.journalPath());
 }
 
 // 2. Active slots with matching Applied journal records + FIC quality as
-// the token producer (hook include in the stack): safe.
+// the token producer (hook include in the stack): safe. The active FIC
+// quality provider replaces the distro provider, so the distro selection
+// stays unselected and the parsed stack carries exactly the FIC provider
+// (this models the final Step 5 FIC-owned topology). The FIC history
+// include is already attached and expanded in place (the slot bodies are
+// canonical Active), so the history rule sits in the stack between the
+// producer and pam_unix.
 void testActiveOwnedPass(const TestTree& tree) {
     const std::uint64_t qualityId =
         seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
@@ -319,11 +347,11 @@ void testActiveOwnedPass(const TestTree& tree) {
     writeStack(
         tree,
         "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history\n"
         "password required pam_unix.so\n");
     writePasswordState(tree, kPasswordStateClean);
     requireSafe(tree, tree.journalPath());
 }
-
 
 // 14/15. The validator is strictly read-only on the PASS and FAIL paths.
 StateFingerprint snapshot(const TestTree& tree) {
@@ -365,17 +393,29 @@ void testReadOnlyOnPass(const TestTree& tree) {
 }
 
 // 3. Active history pair without any pam_pwquality token producer
-// (history-only): Unsupported, fail closed (Rule G).
+// (history-only): Unsupported, fail closed (Rule G). The quality slot is
+// seeded with clean Unbound provenance so the stale-journal gate does not
+// shadow the Rule G verdict.
 void testHistoryOnlyFails(const TestTree& tree) {
     const std::uint64_t historyId =
         seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    // Re-seed the history record into the FRESH Unbound journal so the
+    // quality domain stays Unbound (stale-journal gate) while the history
+    // pair remains journal-bound (ownership proof + Rule G verdict).
+    fs::remove(tree.journalPath());
+    fs::remove(MutationJournal(tree.journalPath()).witnessPath());
+    seedEmptyJournal(tree.journalPath());
+    const std::uint64_t reboundHistoryId =
+        seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
+    writeFile(tree.root / "pam.d/fic-password-quality",
+              neutralSlot());
     writeFile(tree.root / "pam.d/fic-password-history",
               activeHistoryNormalSlot(
-                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+                  reboundHistoryId, ManagedPwhistorySlotOptions{10u, true}));
     writeFile(tree.root / "pam.d/fic-password-history-initial",
               activeHistoryInitialSlot(
-                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+                  reboundHistoryId,
+                  ManagedPwhistorySlotOptions{10u, true}));
     writeStack(tree, TestTree::kPlainStack);
     writePasswordState(tree, kPasswordStateClean);
     std::string error;
@@ -391,8 +431,11 @@ void testHistoryOnlyFails(const TestTree& tree) {
 }
 
 
-// 4. Missing slot file: fail closed (missing != Neutral).
+// 4. Missing slot file: fail closed (missing != Neutral). The journal is
+// reset to Unbound so the missing-slot verdict is not shadowed by stale
+// provenance from a previous test case.
 void testMissingSlotFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
     writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
     writeFile(tree.root / "pam.d/fic-password-history-initial",
@@ -405,6 +448,7 @@ void testMissingSlotFails(const TestTree& tree) {
 
 // 5. Modified (broken) slot body: fail closed.
 void testBrokenSlotFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     writeFile(tree.root / "pam.d/fic-password-quality",
               "# FIC managed password slot: state=neutral\n# tail\n");
     writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
@@ -417,6 +461,7 @@ void testBrokenSlotFails(const TestTree& tree) {
 
 // 6. Active quality slot without journal provenance: fail closed.
 void testActiveQualityWithoutJournalFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     writeFile(tree.root / "pam.d/fic-password-quality",
               activeQualitySlot(777));
     writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
@@ -442,7 +487,9 @@ void testWrongPolicyIdentityFails(const TestTree& tree) {
     // The record identity stays self-consistent (journal validation
     // requires policy == undo.capability), but the record belongs to the
     // HISTORY domain while the marker sits in the QUALITY slot: the
-    // metadata proof must reject it.
+    // metadata proof must reject it. The history record also makes the
+    // neutral history pair stale-provenance (an additional fail-closed
+    // gate).
     fs::remove(tree.journalPath());
     fs::remove(MutationJournal(tree.journalPath()).witnessPath());
     const std::uint64_t foreignId = seedJournal(
@@ -461,6 +508,7 @@ void testWrongPolicyIdentityFails(const TestTree& tree) {
 // 8. Rule I: two pam_pwquality.so in the Primary stack (external + FIC
 // active slot): fail closed.
 void testDuplicatePwqualityFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     const std::uint64_t qualityId =
         seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
     writeFile(tree.root / "pam.d/fic-password-quality",
@@ -483,6 +531,7 @@ void testDuplicatePwqualityFails(const TestTree& tree) {
 // 9. Rule I: external distro pwquality present (selected + parsed) while
 // the FIC quality slot is active: ownership conflict, fail closed.
 void testExternalQualityWithFicActiveFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     const std::uint64_t qualityId =
         seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
     writeFile(tree.root / "pam.d/fic-password-quality",
@@ -495,10 +544,15 @@ void testExternalQualityWithFicActiveFails(const TestTree& tree) {
     requireUnsafe(tree, tree.journalPath(), "Rule I");
 }
 
-// 10. Rule I: distro profile selected but pam_pwquality.so missing from
-// the parsed stack: external NOT present (state selection alone does not
-// prove a provider), FIC active slot stays safe.
+// 10. Rule I/JRN hybrid: distro profile selected but the distro provider
+// is absent from the parsed stack while the FIC quality slot is active.
+// The selection-vs-provider XOR ownership conflict (Rule I) still fails
+// closed: the selection state already requests the distro provider and a
+// later regeneration can reintroduce it as a duplicate producer. (This is
+// the strengthened P1-3 semantics: selection is read regardless of the
+// providerCount.)
 void testSelectedWithoutStackIsNotExternal(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     const std::uint64_t qualityId =
         seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
     writeFile(tree.root / "pam.d/fic-password-quality",
@@ -508,11 +562,12 @@ void testSelectedWithoutStackIsNotExternal(const TestTree& tree) {
               neutralSlot());
     writeStack(tree, TestTree::kPlainStack);
     writePasswordState(tree, "Module: pwquality\n");
-    requireSafe(tree, tree.journalPath());
+    requireUnsafe(tree, tree.journalPath(), "Rule I");
 }
 
 // 11. Rule J: active FIC history with remember=0: fail closed.
 void testRememberZeroFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     const std::uint64_t historyId =
         seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
     writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
@@ -530,6 +585,7 @@ void testRememberZeroFails(const TestTree& tree) {
 // 12. Rule J: enforce_for_root=false with AllPamSubjects scope: fail
 // closed.
 void testEnforceForRootMissingFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     const std::uint64_t historyId =
         seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
     writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
@@ -544,14 +600,29 @@ void testEnforceForRootMissingFails(const TestTree& tree) {
     requireUnsafe(tree, tree.journalPath(), "enforce_for_root");
 }
 
-// 13. Rule J: conf-mode remember=0 in pwhistory.conf: fail closed.
+// 13. Rule J: conf-mode remember=0 in pwhistory.conf: fail closed. The
+// distro pwquality selection is modeled explicitly (selected + effective
+// external provider) so the Rule I topology check passes and the conf-mode
+// verdict is reachable.
 void testConfModeRememberZeroFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
     writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
     writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
     writeFile(tree.root / "pam.d/fic-password-history-initial",
               neutralSlot());
-    writeStack(tree, TestTree::kDistroQualityStack);
-    writePasswordState(tree, kPasswordStateClean);
+    // The distro pwquality provider is selected AND effective, and a
+    // live pwhistory rule is attached through a generated hook-include
+    // file (not a managed slot; the slot files stay canonical neutral),
+    // so the Rule G flow proof passes and the conf-mode verdict is
+    // reachable.
+    writeStack(
+        tree,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history-live\n"
+        "password required pam_unix.so\n");
+    writeFile(tree.root / "pam.d/fic-password-history-live",
+              "password requisite pam_pwhistory.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
     auto platform = tree.platform();
     platform.capabilities[1].configurationMode =
         fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
@@ -580,7 +651,369 @@ void testReadOnlyOnFail(const TestTree& tree) {
     requireUnchanged(before, snapshot(tree));
 }
 
+// ---------------------------------------------------------------------------
+// P1-4 hardening tests: Neutral slot ⇔ journal Unbound provenance.
+// ---------------------------------------------------------------------------
 
+// JRN1: quality Neutral + Applied quality record: stale provenance, fail
+// closed. The validator must never treat the domain as unbound.
+void testNeutralQualityAppliedJournalFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    (void)seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
+    for (const fs::path& slot : tree.slotPaths()) {
+        writeFile(slot, neutralSlot());
+    }
+    writeStack(tree, TestTree::kPlainStack);
+    writePasswordState(tree, kPasswordStateClean);
+    requireUnsafe(tree, tree.journalPath(), "stale provenance");
+}
+
+// JRN2: quality Neutral + Prepared quality record: unresolved crash
+// provenance, fail closed (recovery is the runtime responsibility, never
+// the read-only validator's).
+void testNeutralQualityPreparedJournalFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    (void)seedQualityJournal(tree.journalPath(), MutationStatus::Prepared);
+    for (const fs::path& slot : tree.slotPaths()) {
+        writeFile(slot, neutralSlot());
+    }
+    writeStack(tree, TestTree::kPlainStack);
+    writePasswordState(tree, kPasswordStateClean);
+    requireUnsafe(tree, tree.journalPath(), "unresolved crash provenance");
+}
+
+// JRN3: history Neutral pair + Applied history record: stale provenance,
+// fail closed.
+void testNeutralHistoryAppliedJournalFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    (void)seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
+    for (const fs::path& slot : tree.slotPaths()) {
+        writeFile(slot, neutralSlot());
+    }
+    writeStack(tree, TestTree::kPlainStack);
+    writePasswordState(tree, kPasswordStateClean);
+    requireUnsafe(tree, tree.journalPath(), "stale provenance");
+}
+
+// JRN3b: history Neutral pair + Prepared history record: fail closed.
+void testNeutralHistoryPreparedJournalFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    (void)seedHistoryJournal(tree.journalPath(), MutationStatus::Prepared);
+    for (const fs::path& slot : tree.slotPaths()) {
+        writeFile(slot, neutralSlot());
+    }
+    writeStack(tree, TestTree::kPlainStack);
+    writePasswordState(tree, kPasswordStateClean);
+    requireUnsafe(tree, tree.journalPath(), "unresolved crash provenance");
+}
+
+// JRN4b: Neutral + no domain records anywhere: safe from the provenance
+// perspective (the journal is freshly re-initialized to Unbound).
+void testNeutralUnboundJournalPasses(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    for (const fs::path& slot : tree.slotPaths()) {
+        writeFile(slot, neutralSlot());
+    }
+    writeStack(tree, TestTree::kPlainStack);
+    writePasswordState(tree, kPasswordStateClean);
+    requireSafe(tree, tree.journalPath());
+}
+
+// JRN5: multiple active records of the same domain: Conflict, fail
+// closed (never pick one by chance).
+void testMultipleDomainRecordsConflict(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    (void)seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
+    (void)seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
+    for (const fs::path& slot : tree.slotPaths()) {
+        writeFile(slot, neutralSlot());
+    }
+    writeStack(tree, TestTree::kPlainStack);
+    writePasswordState(tree, kPasswordStateClean);
+    requireUnsafe(tree, tree.journalPath(), "fail closed");
+}
+
+// JRN6: read-only fingerprint on the stale-journal FAIL path: the
+// validator must not repair, complete or discard the stale record.
+void testReadOnlyOnStaleJournalFail(const TestTree& tree) {
+    testNeutralQualityAppliedJournalFails(tree);
+    const StateFingerprint before = snapshot(tree);
+    requireUnsafe(tree, tree.journalPath(), "stale provenance");
+    requireUnchanged(before, snapshot(tree));
+}
+
+// ---------------------------------------------------------------------------
+// P1-2 hardening through the validator: explicit jump graphs (62).
+// ---------------------------------------------------------------------------
+
+// G-jump-a: quality textually BEFORE history, but the quality success
+// jumps over the history rule: history bypass, fail closed.
+void testValidatorRejectsJumpOverHistory(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    const std::uint64_t historyId =
+        seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history",
+              activeHistoryNormalSlot(
+                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              activeHistoryInitialSlot(
+                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+    // The history include IS attached (slot active) but its position is
+    // irrelevant: the quality success action jumps over it. The distro
+    // pwquality selection is modeled (selected + the single in-graph
+    // provider) so the Rule I topology check passes and the jump verdict
+    // is reachable.
+    writeStack(
+        tree,
+        "password [success=1 default=ignore] pam_pwquality.so retry=3\n"
+        "password include fic-password-history\n"
+        "password required pam_unix.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    requireUnsafe(tree, tree.journalPath(), "Rule G");
+}
+
+// G-jump-b: producer bypass via jump: a preceding success jump skips the
+// quality producer entirely, so the history rule runs without a token
+// producer (fail closed).
+void testValidatorRejectsJumpOverProducer(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    const std::uint64_t historyId =
+        seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history",
+              activeHistoryNormalSlot(
+                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              activeHistoryInitialSlot(
+                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+    // quality textually before history, but the FIRST rule's success jump
+    // lands after the quality rule (skipping the producer). The distro
+    // pwquality selection is modeled so the Rule I topology check passes
+    // and the jump verdict is reachable.
+    writeStack(
+        tree,
+        "password [success=1 default=ignore] pam_permit.so\n"
+        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history\n"
+        "password required pam_unix.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    requireUnsafe(tree, tree.journalPath(), "Rule G");
+}
+
+// G-jump-c: history textually FIRST (before the producer): no token can
+// exist yet on the successful path, fail closed.
+void testValidatorRejectsHistoryBeforeProducer(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    const std::uint64_t historyId =
+        seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history",
+              activeHistoryNormalSlot(
+                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              activeHistoryInitialSlot(
+                  historyId, ManagedPwhistorySlotOptions{10u, true}));
+    writeStack(
+        tree,
+        "password include fic-password-history\n"
+        "password requisite pam_pwquality.so retry=3\n"
+        "password required pam_unix.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    requireUnsafe(tree, tree.journalPath(), "Rule G");
+}
+
+// Rule I (I3): provider present but no distro selection with both FIC
+// domains neutral: unmanaged topology, fail closed.
+void testProviderWithoutSelectionFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    for (const fs::path& slot : tree.slotPaths()) {
+        writeFile(slot, neutralSlot());
+    }
+    writeStack(tree, TestTree::kDistroQualityStack);
+    writePasswordState(tree, kPasswordStateClean);
+    requireUnsafe(tree, tree.journalPath(), "unmanaged topology");
+}
+
+// ---------------------------------------------------------------------------
+// P2-1 hardening tests: conf-mode typed remember semantics.
+// ---------------------------------------------------------------------------
+
+// remember=10 in pwhistory.conf with a live history branch (conf-mode):
+// pass.
+void testConfModeRememberNonZeroPasses(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              neutralSlot());
+    writeStack(
+        tree,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history-live\n"
+        "password required pam_unix.so\n");
+    writeFile(tree.root / "pam.d/fic-password-history-live",
+              "password requisite pam_pwhistory.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    auto platform = tree.platform();
+    platform.capabilities[1].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+    writeFile(tree.confPath(), "remember = 10\nenforce_for_root = true\n");
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    PamSlotAttachVerdict verdict;
+    std::string error;
+    require(
+        fic::identity::pam::validatePamPasswordSlotAttach(
+            platform, {"passwd"}, resolver(), tree.journalPath(), options,
+            verdict, error),
+        error);
+    require(verdict.safeToAttach,
+            "conf-mode remember=10 must pass: " + verdict.detail);
+}
+
+// Missing pwhistory.conf with a live history branch (conf-mode): the
+// documented nonzero module default applies, pass.
+void testConfModeMissingConfigPasses(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              neutralSlot());
+    writeStack(
+        tree,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history-live\n"
+        "password required pam_unix.so\n");
+    writeFile(tree.root / "pam.d/fic-password-history-live",
+              "password requisite pam_pwhistory.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    auto platform = tree.platform();
+    platform.capabilities[1].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+    // No pwhistory.conf is written: the documented default remember is
+    // nonzero.
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    PamSlotAttachVerdict verdict;
+    std::string error;
+    require(
+        fic::identity::pam::validatePamPasswordSlotAttach(
+            platform, {"passwd"}, resolver(), tree.journalPath(), options,
+            verdict, error),
+        error);
+    require(verdict.safeToAttach,
+            "missing pwhistory.conf (documented nonzero default) must "
+            "pass: " +
+                verdict.detail);
+}
+
+// Unreadable pwhistory.conf: fail closed. The capability configPath in
+// this fixture points INTO the (regular-file) path that TestTree already
+// created in its constructor, so this test models the unreadable state
+// with a broken non-numeric remember value + a trailing NUL byte, which
+// the typed reader classifies as Broken.
+void testConfModeUnreadableConfigFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              neutralSlot());
+    writeStack(
+        tree,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history-live\n"
+        "password required pam_unix.so\n");
+    writeFile(tree.root / "pam.d/fic-password-history-live",
+              "password requisite pam_pwhistory.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    auto platform = tree.platform();
+    platform.capabilities[1].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+    writeFile(tree.confPath(), "remember\nremember =\n");
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    PamSlotAttachVerdict verdict;
+    std::string error;
+    require(
+        fic::identity::pam::validatePamPasswordSlotAttach(
+            platform, {"passwd"}, resolver(), tree.journalPath(), options,
+            verdict, error),
+        error);
+    require(!verdict.safeToAttach,
+            "unreadable pwhistory.conf must fail closed: " + verdict.detail);
+}
+
+// Malformed remember value: fail closed.
+void testConfModeMalformedRememberFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              neutralSlot());
+    writeStack(
+        tree,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history-live\n"
+        "password required pam_unix.so\n");
+    writeFile(tree.root / "pam.d/fic-password-history-live",
+              "password requisite pam_pwhistory.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    auto platform = tree.platform();
+    platform.capabilities[1].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+    writeFile(tree.confPath(), "remember = ten\n");
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    PamSlotAttachVerdict verdict;
+    std::string error;
+    require(
+        fic::identity::pam::validatePamPasswordSlotAttach(
+            platform, {"passwd"}, resolver(), tree.journalPath(), options,
+            verdict, error),
+        error);
+    require(!verdict.safeToAttach,
+            "malformed remember value must fail closed: " + verdict.detail);
+}
+
+// Conflicting duplicate remember directives: fail closed (never last-wins
+// guessing).
+void testConfModeConflictingRememberFails(const TestTree& tree) {
+    seedEmptyJournal(tree.journalPath());
+    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
+    writeFile(tree.root / "pam.d/fic-password-history-initial",
+              neutralSlot());
+    writeStack(
+        tree,
+        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-history-live\n"
+        "password required pam_unix.so\n");
+    writeFile(tree.root / "pam.d/fic-password-history-live",
+              "password requisite pam_pwhistory.so use_authtok\n");
+    writePasswordState(tree, "Module: pwquality\n");
+    auto platform = tree.platform();
+    platform.capabilities[1].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+    writeFile(tree.confPath(), "remember = 10\nremember = 0\n");
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    PamSlotAttachVerdict verdict;
+    std::string error;
+    require(
+        fic::identity::pam::validatePamPasswordSlotAttach(
+            platform, {"passwd"}, resolver(), tree.journalPath(), options,
+            verdict, error),
+        error);
+    require(!verdict.safeToAttach,
+            "conflicting remember directives must fail closed: " +
+                verdict.detail);
+}
 
 } // namespace
 
@@ -609,6 +1042,26 @@ int main() {
         testConfModeRememberZeroFails(tree);
         testReadOnlyOnPass(tree);
         testReadOnlyOnFail(tree);
+        // P1-4: Neutral ⇔ Unbound journal provenance.
+        testNeutralQualityAppliedJournalFails(tree);
+        testNeutralQualityPreparedJournalFails(tree);
+        testNeutralHistoryAppliedJournalFails(tree);
+        testNeutralHistoryPreparedJournalFails(tree);
+        testNeutralUnboundJournalPasses(tree);
+        testMultipleDomainRecordsConflict(tree);
+        testReadOnlyOnStaleJournalFail(tree);
+        // P1-2: explicit jump graphs through the validator.
+        testValidatorRejectsJumpOverHistory(tree);
+        testValidatorRejectsJumpOverProducer(tree);
+        testValidatorRejectsHistoryBeforeProducer(tree);
+        // P1-3: selection/provider topology matrix.
+        testProviderWithoutSelectionFails(tree);
+        // P2-1: conf-mode typed remember semantics.
+        testConfModeRememberNonZeroPasses(tree);
+        testConfModeMissingConfigPasses(tree);
+        testConfModeUnreadableConfigFails(tree);
+        testConfModeMalformedRememberFails(tree);
+        testConfModeConflictingRememberFails(tree);
     } catch (const std::exception& exception) {
         std::cerr << "PamPasswordSlotAttachValidatorTests failed: "
                   << exception.what() << '\n';

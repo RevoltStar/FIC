@@ -67,6 +67,27 @@ enum class PasswordSlotJournalBinding {
     MatchingPrepared
 };
 
+// Journal-domain classification (P1-4 hardening): the state of the journal
+// for one canonical password domain, independent of the physical slot
+// bytes. A Neutral physical slot is provenance-safe (journal Unbound) only
+// when the journal carries NO active record of that domain; any active
+// Prepared or Applied record for a Neutral domain is stale provenance and
+// fails closed (recovering it is the activation/recovery responsibility,
+// never the read-only validator's).
+enum class PasswordDomainJournalState {
+    // No active record of this domain exists.
+    Unbound,
+    // Exactly one active record of this domain exists and is Prepared.
+    Prepared,
+    // Exactly one active record of this domain exists and is Applied.
+    Applied,
+    // Multiple active records of this domain, a metadata mismatch against
+    // the canonical domain identity, or a RollbackFailed record.
+    Conflict,
+    // The journal persistent state could not be proven read-only.
+    Invalid
+};
+
 struct PamManagedPasswordSlotOwnership {
     PasswordSlotJournalBinding journal = PasswordSlotJournalBinding::Unbound;
     // Journal record id when bound, otherwise 0.
@@ -156,6 +177,31 @@ public:
     bool proveOwnedHistory(
         PamManagedPasswordSlotOwnership& ownership, std::string& error) const;
 
+    // Read-only journal-domain classification (P1-4 hardening): the state
+    // of THE JOURNAL for one canonical password domain, independent of the
+    // physical slot bytes. Never writes: uses the same strictly
+    // non-mutating read-only persistent-state gate as the ownership proofs
+    // (no bootstrap, no witness creation, no repair).
+    //
+    //   Unbound  — no active record exists for the canonical domain
+    //              (Neutral provenance);
+    //   Prepared — exactly one active record of this domain and it is
+    //              Prepared (active Prepared provenance);
+    //   Applied  — exactly one active record of this domain and it is
+    //              Applied (active Applied provenance);
+    //   Conflict — multiple active records of this domain, a record with
+    //              metadata that does not match the canonical domain
+    //              identity, or a RollbackFailed record (ambiguous or
+    //              broken provenance; never select a record by chance);
+    //   Invalid  — the journal persistent state itself could not be proven
+    //              read-only (the caller must fail closed).
+    //
+    // For the History domain the canonical identity is the single dual-slot
+    // domain (both history slots share one journal domain), so the pair
+    // classification is domain-wide, not per physical slot.
+    PasswordDomainJournalState inspectJournalBindingForDomain(
+        std::uint64_t& mutationId, std::string& error) const;
+
     // Journal-bound activation of the FIC-owned quality slot
     // (Neutral -> Active with a fresh Prepared->Applied lifecycle,
     // idempotent when already Active with a matching Applied record).
@@ -184,7 +230,7 @@ public:
     void setAfterSlotWriteHookForTests(SlotFaultHook hook);
 
 private:
-    bool ensureJournalOperational(std::string& error);
+    bool ensureJournalOperational(std::string& error) const;
     bool ensureJournalReadable(std::string& error) const;
     bool journalMetadataMatches(
         const fic::rollback::MutationRecord& record, std::string& error) const;
@@ -194,7 +240,7 @@ private:
     // record.status untouched when no active record exists.
     bool collectActiveRecord(
         bool& found, fic::rollback::MutationRecord& record,
-        std::string& error);
+        std::string& error) const;
     // Finds the record with the exact id and verifies the full metadata
     // match. binding reports the closest outcome for diagnostics.
     bool findBoundRecord(
