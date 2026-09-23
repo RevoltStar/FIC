@@ -2,19 +2,66 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `935e439`; рабочее дерево содержит финальный
-  same-snapshot compensation fix к Step 3 (P1-6; правки
-  `PamManagedPasswordSlotWriter.{h,cpp}` + его тестов + этот HANDOFF),
-  не закоммичено — оставлено для review. НЕ коммитить.
+- Ветка `main`, HEAD `62f466b`; рабочее дерево содержит Step 4
+  (read-only password-attach validator), не закоммичено — оставлено для
+  review. НЕ коммитить.
 
 ## Current task
 
-- Step 3 PasswordQuality/PasswordHistory: journal-bound lifecycle для трёх
-  FIC-owned managed password slots реализован в helper
-  `PamManagedPasswordSlotWriter` (отдельный компонент; faillock grammar
-  не рефакторилась — решение §21). НЕ подключён к daemon registry и
-  capability policies (это Step 7); `PamPolicySupport::ReadOnly`, journal,
-  packaging, platform profiles не тронуты.
+- Step 4 PasswordQuality/PasswordHistory: `validatePamPasswordSlotAttach`
+  в `PamSlotAttachValidator.{h,cpp}` — read-only pre-attach validation
+  трёх managed password slots + Rules G/I/J. Подключена в
+  `fic --maintenance validate-pam-slots-before-attach` (main.cpp):
+  команда теперь выполняет faillock-вердикт (Step 2) + password-вердикт
+  (Step 4), оба должны быть safe. НЕ подключена к daemon registry /
+  capability policies (это Step 7); packaging (Step 5) не менялся.
+
+## Step 4 контракт (`validatePamPasswordSlotAttach`)
+
+- Файл: `fic/src/modules/identity_access/pam/PamSlotAttachValidator.{h,cpp}`
+  (тот же компонент, что faillock-валидатор; общий `PamSlotAttachVerdict`).
+- Capability gate: требует наличия ОБЕИХ capability configs
+  (PasswordQuality + PasswordHistory) в platform profile, иначе error
+  (не verdict). Config directory/state directory берутся из
+  `PamAuthUpdateTopologyManagerOptions` с production default'ами
+  `/etc/pam.d` и `/var/lib/pam` (зеркалит topology manager).
+- Строго read-only: witness-aware journal proofs через
+  `PamManagedPasswordSlotWriter::proveOwnedQuality/proveOwnedHistory`
+  (`validatePersistentStateReadOnly`, никакого bootstrap/witness write),
+  slot inspection через `PamManagedPasswordSlots::inspectContent` +
+  `inspectHistoryPair` (missing = Unavailable = fail closed).
+- Ownership consistency: Active slot <=> MatchingApplied record своего
+  домена; Neutral slot => Unbound. Active без journal / Neutral с
+  journal / MatchingPrepared => fail closed.
+- Rule I: external present = distro `pwquality` selected в
+  `/var/lib/pam/password` (exact `Module: ` lines) AND pam_pwquality.so
+  в parsed Primary stack; >1 pam_pwquality.so в stack => fail closed;
+  external + Active FIC quality slot => fail closed (XOR ownership).
+  Выборка state-файла делается только при ровно одном provider в stack
+  (v2: selection без provider в графе не external; не должна
+  фейлить standalone FIC quality).
+- Rule G: Active history pair требует pam_pwquality.so token producer в
+  flattened Primary stack; ordering (producer перед history include)
+  проверяется ТОЛЬКО когда history include уже в parsed графе (active
+  hook include раскрывается в правилах pam_pwhistory.so). history-only
+  => fail closed.
+- Rule J semantic checks: arg-mode — slot options (из
+  `PamManagedPasswordSlotOwnership::historyOptions`):
+  `effectiveRemember == 0` и `!enforceForRoot` при AllPamSubjects =>
+  fail closed; conf-mode (`ProviderConfigFile` + непустой configPath) —
+  `PamOptionFile::hasOnlyValue(configPath, "remember", "0")` => fail
+  closed. Provider option semantics внешнего pwquality (enforcing,
+  localUsersOnly) НЕ проверяются — это зона `PamCapabilityVerifier`.
+- Эффективные Primary stacks строятся `PamConfiguration::
+  buildEffectiveStack` по всем services password scope; include
+  раскрывается инлайн, поэтому маркеры ищутся по правилам
+  pam_pwquality.so/pam_pwhistory.so в flattened sequence, а не по
+  include-target именам.
+- main.cpp wiring: `validate-pam-slots-before-attach` => faillock verdict
+  + password verdict; сообщения об unsafe раздельные ("FIC faillock PAM
+  slots..." / "FIC password PAM slots...").
+
+## Previous task context (Step 3, закрыт)
 - Step 2 (`PamManagedPasswordSlots`) закрыт: typed модель трёх canonical
   slots, строгий parser/inspector (missing = Unavailable, никогда не
   Neutral; whole-file canonical grammar; независимая textual mutation-id
@@ -373,6 +420,25 @@ neutral baseline, hook-include no-op.
 
 ## Tests
 
+- `tests/fic/modules/identity_access/pam/PamPasswordSlotAttachValidatorTests.cpp`,
+  target `pam_password_slot_attach_validator_tests` (tests/CMakeLists.txt;
+  deps = validator.cpp + writer.cpp + slots.cpp + PamConfiguration +
+  OptionFile + Composition + topologymgr + MutationJournal + provider
+  files). Покрытие: all-neutral pass; Active+owned pass (quality+history
+  Applied records, FIC producer в stack); history-only fail (Rule G);
+  missing slot fail; broken slot fail; Active без journal fail;
+  foreign-domain journal record на quality slot fail; duplicate
+  pam_pwquality (external + FIC include) fail (Rule I); external
+  selected+parsed при Active FIC quality fail (Rule I); selected без
+  parsed provider => НЕ external, pass (v2 semantics); remember=0 fail;
+  enforce_for_root=false при AllPamSubjects fail; conf-mode
+  pwhistory.conf remember=0 fail; read-only fingerprint на PASS и FAIL
+  путях (slots + journal + witness + stack + state file + conf).
+  Примечание: тестовый writeFile пересоздаёт файлы (unlink+O_EXCL) —
+  PamConfiguration кэширует parsed services в памяти между вызовами
+  валидатора (один PamConfiguration на вызов, кэш не разделяется между
+  вызовами, но идентичные стеки в разных тестах зависят от пересоздания
+  файлов только в пределах одного вызова).
 - `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotWriterTests.cpp`,
   target `pam_managed_password_slot_writer_tests` в tests/CMakeLists.txt
   (по образцу pam_slot_attach_validator_tests; MutationJournal.cpp deps).
@@ -418,6 +484,13 @@ neutral baseline, hook-include no-op.
   renderer rejects mutationId=0) — см. git history и fixture evidence
   ниже.
 - Step 3 реализован (контракт выше) и провалидирован.
+- Step 4 реализован: `validatePamPasswordSlotAttach` (контракт выше) +
+  тесты `pam_password_slot_attach_validator_tests` (15 сценариев) +
+  wiring в `validate-pam-slots-before-attach` (main.cpp). Полная сборка
+  всех таргетов и полный CTest: 100/101 pass, 1 pre-existing failure
+  `passwdqc_config_file_tests` ("pwquality policy did not retain its
+  topology-dependent state") — воспроизводится на чистом дереве без
+  изменений Step 4, к задаче не относится.
 - Hardening follow-up к Step 3 завершён (4 P1): P1-1 witness-aware
   journal gates (operational: `usable && lifecycleInitialized` через
   `initializeOrLoad`; read-only: `validatePersistentStateReadOnly` без
@@ -541,11 +614,8 @@ neutral baseline, hook-include no-op.
 
 ## Remaining
 
-- Step 4: `PamSlotAttachValidator` (правила G/I: token-producer
-  pam_pwquality.so перед history include, single pam_pwquality provider;
-  external-compliant detection через `/var/lib/pam/password` + parsed
-  stack; semantic remember=0/enforce_for_root effective-state checks) +
-  интерактивная passwd-валидация на staging.
+- Step 4 residual: интерактивная passwd-валидация на staging (не
+  выполнялась).
 - Step 5: packaging (`packaging/deb/`: hook-профили + slot targets;
   extend permanent-hook proof на password hooks; conffile registration
   всех трёх slot; slot existence гарантия).

@@ -1136,6 +1136,12 @@ int main(int argc, char* argv[]) {
                           << std::endl;
                 return 1;
             }
+            const fic::platform::PlatformExecutableResolver executables(
+                platform.executables);
+            fic::identity::pam::PamSlotAttachVerdict verdict;
+            std::string validationError;
+
+            // Faillock slots (existing Step 2 validation).
             const fic::platform::PamCapabilityConfig* capability = nullptr;
             const std::vector<std::string>* services = nullptr;
             if (!fic::identity::pam::resolveCapability(
@@ -1146,10 +1152,6 @@ int main(int argc, char* argv[]) {
                           << maintenanceError << std::endl;
                 return 1;
             }
-            const fic::platform::PlatformExecutableResolver executables(
-                platform.executables);
-            fic::identity::pam::PamSlotAttachVerdict verdict;
-            std::string validationError;
             if (!fic::identity::pam::validatePamSlotAttach(
                     platform.pam, *capability, *services, executables,
                     paths.mutationJournalFile, {}, verdict, validationError)) {
@@ -1158,8 +1160,36 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             if (!verdict.safeToAttach) {
-                std::cerr << "FIC PAM slots are not safe to attach permanent "
-                             "hooks (fail closed): "
+                std::cerr << "FIC faillock PAM slots are not safe to attach "
+                             "permanent hooks (fail closed): "
+                          << verdict.detail << std::endl;
+                return 1;
+            }
+
+            // Password slots (Step 4 validation): quality + history
+            // topology, journal provenance, external pwquality rules and
+            // pwhistory semantics. All verdicts must be safe.
+            const fic::platform::PamScopeConfig* passwordScope =
+                fic::identity::pam::scopeConfig(
+                    platform.pam,
+                    fic::platform::PamScope::EffectivePasswordStack);
+            if (passwordScope == nullptr ||
+                passwordScope->services.empty()) {
+                std::cerr << "FIC PAM slot attach validation failed: "
+                             "password scope is not configured"
+                          << std::endl;
+                return 1;
+            }
+            if (!fic::identity::pam::validatePamPasswordSlotAttach(
+                    platform.pam, passwordScope->services, executables,
+                    paths.mutationJournalFile, {}, verdict, validationError)) {
+                std::cerr << "FIC PAM slot attach validation failed: "
+                          << validationError << std::endl;
+                return 1;
+            }
+            if (!verdict.safeToAttach) {
+                std::cerr << "FIC password PAM slots are not safe to attach "
+                             "permanent hooks (fail closed): "
                           << verdict.detail << std::endl;
                 return 1;
             }

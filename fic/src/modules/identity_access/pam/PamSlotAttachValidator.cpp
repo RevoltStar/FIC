@@ -1,11 +1,20 @@
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 
+#include "modules/identity_access/pam/PamConfiguration.h"
+#include "modules/identity_access/pam/PamManagedPasswordSlots.h"
+#include "modules/identity_access/pam/PamManagedPasswordSlotWriter.h"
+#include "modules/identity_access/pam/PamOptionFile.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamPwhistoryArguments.h"
 #include "rollback/MutationJournal.h"
 #include "rollback/MutationRecord.h"
 
+#include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -145,6 +154,127 @@ bool proveJournalOwnership(
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Step 4: password slot attach validation helpers.
+// ---------------------------------------------------------------------------
+
+using fic::rollback::MutationJournal;
+
+constexpr const char* kDefaultPasswordStateDirectory = "/var/lib/pam";
+constexpr const char* kDefaultPasswordConfigDirectory = "/etc/pam.d";
+
+bool readFileIfPresent(const std::filesystem::path& path,
+                       std::string& content) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream.is_open()) {
+        return false;
+    }
+    content.assign(std::istreambuf_iterator<char>(stream),
+                   std::istreambuf_iterator<char>());
+    return true;
+}
+
+// Rule I external-provider detection, part 1: identifiers of the profiles
+// selected in the pam-auth-update password state database (exact
+// "Module: <profile>" lines, same grammar as the topology manager).
+bool selectedPasswordStateIdentifiers(
+    const std::filesystem::path& stateDirectory,
+    std::set<std::string>& identifiers,
+    std::string& error) {
+    identifiers.clear();
+    const std::filesystem::path path = stateDirectory / "password";
+    std::error_code statusError;
+    const std::filesystem::file_status status =
+        std::filesystem::symlink_status(path, statusError);
+    if (statusError) {
+        if (statusError ==
+            std::make_error_code(std::errc::no_such_file_or_directory)) {
+            error.clear();
+            return true;
+        }
+        error = "could not stat pam-auth-update state file " +
+            path.string() + ": " + statusError.message();
+        return false;
+    }
+    if (!std::filesystem::exists(status)) {
+        error.clear();
+        return true;
+    }
+    if (!std::filesystem::is_regular_file(status)) {
+        error = "pam-auth-update state path is not a regular file: " +
+            path.string();
+        return false;
+    }
+    std::string content;
+    if (!readFileIfPresent(path, content)) {
+        error = "could not read pam-auth-update state file " + path.string();
+        return false;
+    }
+    std::istringstream stream(content);
+    std::string line;
+    while (std::getline(stream, line)) {
+        const std::string prefix = "Module: ";
+        if (line.compare(0, prefix.size(), prefix) == 0) {
+            identifiers.insert(line.substr(prefix.size()));
+        }
+    }
+    error.clear();
+    return true;
+}
+
+// Flattens an effective stack into one ordered rule sequence. Substacks
+// are expanded in place so ordering guarantees (Rule G token-producer
+// position relative to the FIC history include) can be checked across
+// include boundaries.
+void flattenStackRules(const std::vector<PamStackEntry>& entries,
+                       std::vector<PamRule>& rules) {
+    for (const PamStackEntry& entry : entries) {
+        rules.push_back(entry.rule);
+        flattenStackRules(entry.substack, rules);
+    }
+}
+
+bool stackContainsModule(const std::vector<PamStackEntry>& entries,
+                         const std::string& moduleName) {
+    for (const PamStackEntry& entry : entries) {
+        if (entry.rule.includeKind == PamIncludeKind::None &&
+            std::filesystem::path(entry.rule.module).filename() ==
+                moduleName) {
+            return true;
+        }
+        if (stackContainsModule(entry.substack, moduleName)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stackCountsModule(const std::vector<PamStackEntry>& entries,
+                       const std::string& moduleName,
+                       std::size_t& count) {
+    for (const PamStackEntry& entry : entries) {
+        if (entry.rule.includeKind == PamIncludeKind::None &&
+            std::filesystem::path(entry.rule.module).filename() ==
+                moduleName) {
+            ++count;
+        }
+        if (!stackCountsModule(entry.substack, moduleName, count)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isHistorySlotInclude(const PamRule& rule) {
+    if (rule.includeKind == PamIncludeKind::None) {
+        return false;
+    }
+    const std::string target =
+        std::filesystem::path(rule.includeTarget).filename().string();
+    return target == PamManagedPasswordSlots::historyNormalSlot().fileName ||
+        target == PamManagedPasswordSlots::historyInitialSlot().fileName;
+}
+
 } // namespace
 
 bool validatePamSlotAttach(
@@ -213,6 +343,332 @@ bool validatePamSlotAttach(
     verdict.detail = status.detail.empty()
         ? "FIC PAM slot topology is broken or indeterminate"
         : "FIC PAM slot topology is not proven safe: " + status.detail;
+    error.clear();
+    return true;
+}
+
+namespace {
+
+// Read-only slot state classification (the writer proofs only separate
+// owned from not-owned; the canonical-neutral decision needs the direct
+// strict inspection). A missing slot file stays Unavailable (never
+// Neutral) and fails closed downstream.
+bool readSlotInspection(
+    const std::filesystem::path& configDirectory,
+    const ManagedPasswordSlotSpec& spec,
+    ManagedPasswordSlotInspection& inspection,
+    std::string& error) {
+    const std::filesystem::path path = configDirectory / spec.fileName;
+    std::optional<std::string> content;
+    std::error_code statusError;
+    if (std::filesystem::is_regular_file(path, statusError)) {
+        std::string fileContent;
+        if (!readFileIfPresent(path, fileContent)) {
+            error = "cannot read managed password slot " + path.string();
+            return false;
+        }
+        content = fileContent;
+    } else {
+        content.reset();
+    }
+    return PamManagedPasswordSlots::inspectContent(
+        spec, content, inspection, error);
+}
+
+// Rule J semantic checks for an FIC-owned active history pair in
+// module-arguments mode (Debian 12): the options are physical fields of
+// the slot bodies; the semantic effectiveness of the resulting
+// enforcement is verified here (fail closed).
+bool verifyHistorySlotOptions(
+    const PamManagedPasswordSlotOwnership& ownership,
+    const fic::platform::PamCapabilityConfig& historyCapability,
+    PamSlotAttachVerdict& verdict) {
+    if (!ownership.historyOptions.has_value()) {
+        verdict.detail =
+            "FIC-owned active history pair carries no logical pwhistory "
+            "options (fail closed)";
+        return false;
+    }
+    const ManagedPwhistorySlotOptions& slotOptions =
+        *ownership.historyOptions;
+    if (slotOptions.remember.value_or(
+            kLegacyPamPwhistoryDefaultRemember) == 0) {
+        verdict.detail =
+            "FIC pwhistory slots enforce remember=0 (no history "
+            "enforcement; fail closed)";
+        return false;
+    }
+    if (!slotOptions.enforceForRoot &&
+        historyCapability.subjectScope ==
+            fic::platform::PamIdentitySubjectScope::AllPamSubjects) {
+        verdict.detail =
+            "FIC pwhistory slots omit enforce_for_root while the "
+            "capability scope is AllPamSubjects (root bypasses history "
+            "enforcement; fail closed)";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+bool validatePamPasswordSlotAttach(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const std::vector<std::string>& services,
+    const fic::platform::PlatformExecutableResolver& executables,
+    const std::filesystem::path& mutationJournalFile,
+    const PamAuthUpdateTopologyManagerOptions& options,
+    PamSlotAttachVerdict& verdict,
+    std::string& error) {
+    (void)executables;
+    verdict = {};
+
+    const fic::platform::PamCapabilityConfig* qualityCapability =
+        capabilityConfig(
+            platformConfig, fic::platform::PamCapability::PasswordQuality);
+    const fic::platform::PamCapabilityConfig* historyCapability =
+        capabilityConfig(
+            platformConfig, fic::platform::PamCapability::PasswordHistory);
+    if (qualityCapability == nullptr || historyCapability == nullptr) {
+        error =
+            "password slot attach validation requires both PasswordQuality "
+            "and PasswordHistory capability configs";
+        return false;
+    }
+
+    // Directory contract (mirrors PamAuthUpdateTopologyManager defaults).
+    const std::filesystem::path configDirectory =
+        options.configDirectory.empty()
+            ? std::filesystem::path(kDefaultPasswordConfigDirectory)
+            : options.configDirectory;
+    const std::filesystem::path stateDirectory =
+        options.stateDirectory.empty()
+            ? std::filesystem::path(kDefaultPasswordStateDirectory)
+            : options.stateDirectory;
+
+    // Witness-aware read-only journal context. No bootstrap, no witness
+    // write, no repair (P1-1 read-only gate inside the writers).
+    MutationJournal journal(mutationJournalFile);
+
+    // 1. Read-only ownership proofs for both password domains. The proofs
+    // fail closed on any divergence (missing slot, broken marker, foreign
+    // or unbound journal, Prepared record, wrong metadata/payload).
+    PamManagedPasswordSlotOwnership qualityOwnership;
+    std::string proofError;
+    const bool qualityOwned =
+        PamManagedPasswordSlotWriter(
+            configDirectory, journal, PamManagedPasswordDomain::Quality)
+            .proveOwnedQuality(qualityOwnership, proofError);
+    PamManagedPasswordSlotOwnership historyOwnership;
+    std::string historyProofError;
+    const bool historyOwned =
+        PamManagedPasswordSlotWriter(
+            configDirectory, journal, PamManagedPasswordDomain::History)
+            .proveOwnedHistory(historyOwnership, historyProofError);
+
+    // 2. Strict physical slot state classification (missing slot =
+    // Unavailable = fail closed; packaging must provide the files).
+    ManagedPasswordSlotInspection qualityInspection;
+    if (!readSlotInspection(
+            configDirectory, PamManagedPasswordSlots::qualitySlot(),
+            qualityInspection, proofError)) {
+        verdict.detail =
+            "managed password quality slot state cannot be proven safe "
+            "(fail closed): " +
+            proofError;
+        error.clear();
+        return true;
+    }
+    ManagedPasswordSlotInspection historyNormalInspection;
+    ManagedPasswordSlotInspection historyInitialInspection;
+    ManagedHistoryPairInspection historyPair;
+    if (!readSlotInspection(
+            configDirectory, PamManagedPasswordSlots::historyNormalSlot(),
+            historyNormalInspection, proofError) ||
+        !readSlotInspection(
+            configDirectory, PamManagedPasswordSlots::historyInitialSlot(),
+            historyInitialInspection, proofError) ||
+        !PamManagedPasswordSlots::inspectHistoryPair(
+            historyNormalInspection, historyInitialInspection,
+            historyPair, proofError)) {
+        verdict.detail =
+            "managed password history slot state cannot be proven safe "
+            "(fail closed): " +
+            proofError;
+        error.clear();
+        return true;
+    }
+
+    // 3. Ownership consistency: an active slot MUST be owned; a neutral
+    // slot MUST NOT be owned (a matching Prepared record is compensation,
+    // never ownership). Everything else fails closed with the proof
+    // diagnostic.
+    const bool qualityActive =
+        qualityInspection.state == ManagedPasswordSlotState::Active;
+    const bool historyActive =
+        historyPair.state == ManagedHistoryPairState::Active;
+    if (qualityActive != qualityOwned) {
+        verdict.detail = qualityActive
+            ? "FIC password quality slot is active without proven journal "
+              "ownership (fail closed): " +
+                qualityOwnership.error
+            : "FIC password quality slot is neutral but its ownership "
+              "proof failed (fail closed): " +
+                qualityOwnership.error;
+        error.clear();
+        return true;
+    }
+    if (historyActive != historyOwned) {
+        verdict.detail = historyActive
+            ? "FIC password history pair is active without proven journal "
+              "ownership (fail closed): " +
+                historyOwnership.error
+            : "FIC password history pair is neutral but its ownership "
+              "proof failed (fail closed): " +
+                historyOwnership.error;
+        error.clear();
+        return true;
+    }
+
+    // 4. Rule J semantic checks on the FIC-owned active history options.
+    if (historyActive &&
+        !verifyHistorySlotOptions(historyOwnership, *historyCapability,
+                                  verdict)) {
+        error.clear();
+        return true;
+    }
+
+    // 5. Effective Primary password stacks across all configured services.
+    PamConfiguration configuration(platformConfig);
+    for (const std::string& service : services) {
+        PamEffectiveStack stack;
+        std::string stackError;
+        if (!configuration.buildEffectiveStack(
+                service, PamManagementGroup::Password, stack, stackError)) {
+            verdict.detail =
+                "cannot build effective Primary password stack for "
+                "service " +
+                service + " (fail closed): " + stackError;
+            error.clear();
+            return true;
+        }
+
+        // Rule I: at most one pam_pwquality.so in the Primary stack.
+        std::size_t pwqualityCount = 0;
+        stackCountsModule(stack.entries, "pam_pwquality.so",
+                          pwqualityCount);
+        if (pwqualityCount > 1) {
+            verdict.detail =
+                "more than one pam_pwquality.so in the Primary password "
+                "stack of service " +
+                service + " (Rule I; fail closed)";
+            error.clear();
+            return true;
+        }
+
+        // Rule I external detection: distro `pwquality` profile selected
+        // in the state database AND pam_pwquality.so in the parsed stack.
+        if (pwqualityCount == 1) {
+            std::set<std::string> identifiers;
+            std::string stateError;
+            if (!selectedPasswordStateIdentifiers(
+                    stateDirectory, identifiers, stateError)) {
+                verdict.detail =
+                    "cannot read pam-auth-update password selection state "
+                    "(fail closed): " +
+                    stateError;
+                error.clear();
+                return true;
+            }
+            if (identifiers.count("pwquality") != 0 && qualityActive) {
+                verdict.detail =
+                    "external distro pwquality is present while the FIC "
+                    "password quality slot is active (Rule I ownership "
+                    "conflict; fail closed)";
+                error.clear();
+                return true;
+            }
+        }
+
+        // Rule G: an active FIC history pair requires a token producer
+        // (pam_pwquality.so) in the Primary stack BEFORE the FIC history
+        // include point; history-only is Unsupported (fail closed).
+        //
+        // The effective stack expands slot includes IN PLACE (the slot
+        // bodies are canonical and are proven separately above), so the
+        // FIC history include point is identified by its first history
+        // rule (pam_pwhistory.so) inside the flattened rule sequence.
+        if (historyActive) {
+            std::vector<PamRule> flat;
+            flattenStackRules(stack.entries, flat);
+            std::size_t historyPosition = flat.size();
+            std::size_t producerPosition = flat.size();
+            bool producerFound = false;
+            for (std::size_t index = 0; index < flat.size(); ++index) {
+                const bool isHistoryRule =
+                    flat[index].includeKind == PamIncludeKind::None &&
+                    std::filesystem::path(flat[index].module).filename() ==
+                        "pam_pwhistory.so";
+                if (isHistoryRule) {
+                    historyPosition = index;
+                    break;
+                }
+                if (!producerFound &&
+                    flat[index].includeKind == PamIncludeKind::None &&
+                    std::filesystem::path(flat[index].module).filename() ==
+                        "pam_pwquality.so") {
+                    producerPosition = index;
+                    producerFound = true;
+                }
+            }
+            if (!producerFound) {
+                verdict.detail =
+                    "FIC password history is active with no pam_pwquality "
+                    "token producer in the Primary password stack of "
+                    "service " +
+                    service + " (Rule G history-only; fail closed)";
+                error.clear();
+                return true;
+            }
+            // The ordering requirement applies only when the FIC history
+            // entry is already present in the parsed graph (attached
+            // hook); pre-attach the history include is not in the graph
+            // yet and the producer presence alone is the decision input.
+            if (historyPosition != flat.size() &&
+                producerPosition >= historyPosition) {
+                verdict.detail =
+                    "pam_pwquality token producer does not precede the FIC "
+                    "history include in the Primary password stack of "
+                    "service " +
+                    service + " (Rule G ordering; fail closed)";
+                error.clear();
+                return true;
+            }
+        }
+
+        // Conf-mode semantic check (Rule J): remember=0 in the
+        // authoritative pwhistory.conf fails closed (Debian 13 / Ubuntu
+        // conf storage). A missing option or any other value is safe
+        // (the module default remember applies).
+        if (historyCapability->configurationMode ==
+                fic::platform::PamCapabilityConfigurationMode::
+                    ProviderConfigFile &&
+            !historyCapability->configPath.empty()) {
+            std::string confError;
+            if (PamOptionFile::hasOnlyValue(
+                    historyCapability->configPath, "remember", "0",
+                    confError)) {
+                verdict.detail =
+                    historyCapability->configPath.string() +
+                    " enforces remember=0 (no history enforcement; fail "
+                    "closed)";
+                error.clear();
+                return true;
+            }
+        }
+    }
+
+    verdict.safeToAttach = true;
+    verdict.detail = "FIC password slots are proven safe to attach";
     error.clear();
     return true;
 }
