@@ -438,7 +438,17 @@ void PamManagedPasswordSlotWriter::compensateFreshFailure(
 
 bool PamManagedPasswordSlotWriter::neutralizeSlotForPreparedCompensation(
     const ManagedPasswordSlotSpec& spec,
-    fic::rollback::MutationId preparedId, std::string& error) {
+    fic::rollback::MutationId preparedId, bool& changedSystemState,
+    std::string& error) {
+    // P1-5 contract: changedSystemState is only ever ORed with true by
+    // this helper (monotonic); the caller owns the accumulator and must
+    // never infer "no physical change" from a false return alone.
+    // Every return below after a possible physical mutation documents
+    // why the flag value is correct for its branch:
+    //   - failure before any write attempt: flag untouched (false);
+    //   - write installed + exact restore PROVEN: flag untouched (false);
+    //   - write installed + restore failed/unproven: flag set true;
+    //   - write committed (state left the entry state): flag set true.
     PamConfigFileSnapshot snapshot;
     if (!captureSlot(spec, snapshot, error)) {
         return false;
@@ -454,7 +464,8 @@ bool PamManagedPasswordSlotWriter::neutralizeSlotForPreparedCompensation(
         return false;
     }
     if (inspection.state == ManagedPasswordSlotState::Neutral) {
-        // Nothing this Prepared mutation left behind in this slot.
+        // Case A: nothing this Prepared mutation left behind in this
+        // slot; no write is attempted, so no change is reported.
         error.clear();
         return true;
     }
@@ -462,6 +473,7 @@ bool PamManagedPasswordSlotWriter::neutralizeSlotForPreparedCompensation(
         inspection.mutationId != preparedId) {
         // Exact mutation-ID compensation rule: a Prepared record may only
         // change physical state whose marker carries the exact same id.
+        // No write has been attempted: changedSystemState stays false.
         error = "refusing to compensate managed password slot " +
             std::string(spec.fileName) + " with " +
             (inspection.state == ManagedPasswordSlotState::Active
@@ -475,27 +487,62 @@ bool PamManagedPasswordSlotWriter::neutralizeSlotForPreparedCompensation(
     if (!captureSlot(spec, neutralSnapshot, error)) {
         return false;
     }
+    // Same fault-hook seam as the fresh activation writes so tests can
+    // inject failures before and after the physical commit of the
+    // compensation write itself. Production runs with no hooks set.
+    const std::size_t slotIndex =
+        spec.role == ManagedPasswordSlotRole::HistoryInitial ? 1 : 0;
     if (!writeSlot(
             spec, neutralSnapshot, PamManagedPasswordSlots::neutralBody(),
-            0, false, error)) {
+            slotIndex, true, error)) {
         // The compensation write itself may have installed bytes before
-        // failing: restore the exact pre-compensation state.
+        // failing (mutate() marks the snapshot committed whenever the
+        // atomic replacement was installed, even on a failure return).
+        // Restore the exact pre-compensation state unconditionally:
+        // rollback() is a no-op for a snapshot that never committed.
         std::string rollbackError;
         if (!PamConfigFileTransaction::rollback(
                 neutralSnapshot, rollbackError)) {
+            // Case E: the installed physical change cannot be undone;
+            // the caller must never treat this as a clean no-op failure.
+            changedSystemState = true;
             error += "; " + rollbackError;
+            return false;
         }
+        // Rollback reported success, but the exact restoration of the
+        // entry state (Active with the exact Prepared id) still has to
+        // be proven before the change may be reported as compensated.
+        ManagedPasswordSlotInspection restored;
+        std::string proofError;
+        if (!freshInspection(spec, restored, proofError) ||
+            restored.state != ManagedPasswordSlotState::Active ||
+            restored.mutationId != preparedId) {
+            // Case E variant: installed write, restore not provable.
+            changedSystemState = true;
+            error += "; exact restoration of the pre-compensation state "
+                     "could not be proven" +
+                (proofError.empty() ? std::string() : ": " + proofError);
+            return false;
+        }
+        // Case D: installed write, then exact proven restore of the
+        // entry bytes — no system state change remains (flag false).
         return false;
     }
+    // The write committed: physical state left the entry state. Set the
+    // flag BEFORE the post-write proof so a proof failure cannot lose it.
+    changedSystemState = true;
     ManagedPasswordSlotInspection after;
     if (!freshInspection(spec, after, error) ||
         after.state != ManagedPasswordSlotState::Neutral) {
+        // Case F: the physical neutralization stands (flag already true)
+        // but the fresh proof failed; fail closed, never clean.
         if (error.empty()) {
             error = "managed password slot is not neutral after Prepared "
                     "compensation";
         }
         return false;
     }
+    // Case B: proven fresh Neutral; the change is reported (flag true).
     error.clear();
     return true;
 }
@@ -689,17 +736,26 @@ bool PamManagedPasswordSlotWriter::recoverBrokenHistoryPair(
     const ManagedPasswordSlotSpec& activeSpec =
         normalPartial ? PamManagedPasswordSlots::historyNormalSlot()
                       : PamManagedPasswordSlots::historyInitialSlot();
+    // P1-5: the helper reports the physical-change outcome separately from
+    // success/failure. It may return false AFTER physically mutating the
+    // slot (installed write with failed/unproven restore, or failed post-
+    // write proof); the OR-accumulation below preserves that change in the
+    // top-level result regardless of the helper outcome.
+    bool neutralizeChanged = false;
     if (!neutralizeSlotForPreparedCompensation(
-            activeSpec, preparedId, error)) {
+            activeSpec, preparedId, neutralizeChanged, error)) {
+        result.changedSystemState = result.changedSystemState || neutralizeChanged;
         return false;
     }
-    // P1-4: the exact-id Active slot WAS physically neutralized. From this
-    // point the top-level activation call has changed the system state
-    // relative to its entry state, even if any later step (fresh neutral
-    // proof, Prepared discard, subsequent fresh activation) fails — a
-    // physical change that was installed must never be reported as a clean
-    // no-op failure.
-    result.changedSystemState = true;
+    // P1-4/P1-5: the exact-id Active slot WAS physically neutralized (the
+    // successful helper return here implies neutralizeChanged == true).
+    // From this point the top-level activation call has changed the system
+    // state relative to its entry state, even if any later step (fresh
+    // neutral proof, Prepared discard, subsequent fresh activation) fails
+    // — a physical change that was installed must never be reported as a
+    // clean no-op failure. Monotonic accumulation: later phases may only
+    // OR additional changes on top, never reset the flag.
+    result.changedSystemState = result.changedSystemState || neutralizeChanged;
     // Fresh proof of the compensated pair before the record is discarded.
     ManagedPasswordSlotInspection afterNormal;
     ManagedPasswordSlotInspection afterInitial;

@@ -235,9 +235,18 @@ private:
     // Prepared compensation (crash-recovery model): neutralize only a slot
     // whose canonical Active marker carries the EXACT Prepared id. Neutral
     // slots are left untouched; Broken/foreign-id slots fail closed.
+    //
+    // Physical-change accounting (P1-5): on every return, *changedSystemState
+    // is true iff the physical bytes may differ from the entry state of this
+    // call or an exact restoration could not be proven — even when the
+    // helper itself returns false. The helper only ever ORs true into the
+    // flag (monotonic); it never resets it. A successful return is NOT the
+    // point at which a change becomes knowable: an installed write whose
+    // rollback or post-write proof failed must still report the change.
     bool neutralizeSlotForPreparedCompensation(
         const ManagedPasswordSlotSpec& spec,
-        fic::rollback::MutationId preparedId, std::string& error);
+        fic::rollback::MutationId preparedId, bool& changedSystemState,
+        std::string& error);
     // Failure compensation for the fresh activation path: exact snapshot
     // rollback of every attempted slot plus Prepared discard when proven.
     void compensateFreshFailure(
@@ -261,16 +270,6 @@ private:
     bool recoverBrokenHistoryPair(
         fic::rollback::MutationId preparedId,
         PamManagedPasswordSlotActivationResult& result, std::string& error);
-    // Read-only physical-state classification shared by the Prepared
-    // recovery matrix and the fresh activation path.
-    enum class PhysicalState {
-        Neutral,
-        ExactIdActivePair,
-        ActivePair,
-        CrashedPartial,
-        UnownedForeign
-    };
-    bool classifyPhysicalState(PhysicalState& state, std::string& error);
     // Fresh history activation: pair snapshots, starting-state
     // classification, Prepared record, both writes, fresh pair proof.
     bool activateFreshHistory(

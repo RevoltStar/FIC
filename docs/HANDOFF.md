@@ -2,9 +2,10 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `9e7a00e`; рабочее дерево содержит hardening
-  follow-up к Step 3 (правки `PamManagedPasswordSlotWriter.{h,cpp}` +
-  его тестов), не закоммичено — оставлено для review. НЕ коммитить.
+- Ветка `main`, HEAD `9013d8f`; рабочее дерево содержит recovery-accounting
+  follow-up к Step 3 (правки `PamManagedPasswordSlotWriter.{h,cpp}` + его
+  тестов + этот HANDOFF), не закоммичено — оставлено для review.
+  НЕ коммитить.
 
 ## Current task
 
@@ -20,7 +21,8 @@
   canonicalization; type-safe history pair identity; renderer fail-safe —
   mutationId=0 => failure, успешный render гарантирует Active).
 - Step 3 РЕАЛИЗОВАН, провалидирован и ЗАКРЫТ hardening follow-up'ом
-  (4 P1 defect'а устранены — см. контракт ниже).
+  (4 P1 defect'а устранены — см. контракт ниже) и recovery-accounting
+  follow-up'ом (P1-5 — см. Completed).
 ## Fixture evidence
 
 ### v2 — pam-auth-update mechanics (все 4 платформы)
@@ -391,6 +393,19 @@ neutral baseline, hook-include no-op.
   lifecycle без записи); legacy slot-filename payload => foreign,
   proof fail closed; P1-4 regression (crash-partial recovery + fresh
   failure до первой записи => `changedSystemState == true`).
+  Recovery-accounting follow-up добавил группу `neutralization
+  accounting` (P1-5): B — failure компенсационной записи ДО commit'а =>
+  `changedSystemState == false`, байты нетронуты; C — installed write +
+  proven exact rollback => `changedSystemState == false`, entry bytes
+  восстановлены и доказаны; D1 — компенсационная запись закоммичена +
+  fresh proof сфейлилась (tamper после commit) => helper вернул failure
+  c `changedSystemState == true`, top-level activation пробросил флаг;
+  D2 — installed write + failed rollback (chmod 0555 на конфиг-каталог
+  после install) => `changedSystemState == true`, neutral bytes остались.
+  Уточнён P1-4 regression: before-fault хук теперь stateful (первая
+  index-0 запись = recovery-нейтрализация пропускается, вторая = первый
+  fresh write фейлится), т.к. компенсационная запись теперь тоже проходит
+  через fault-hook seam.
 
 ## Completed
 
@@ -408,6 +423,29 @@ neutral baseline, hook-include no-op.
   profile IDs; P1-4 accumulated `changedSystemState` через recovery +
   fresh activation. Journal schema, `MutationJournal.*`, `PamRollback.*`,
   platform profiles, packaging НЕ менялись.
+- Recovery-accounting follow-up к Step 3 завершён (P1-5):
+  `neutralizeSlotForPreparedCompensation()` теперь принимает
+  `bool& changedSystemState` и сообщает physical-change outcome
+  НЕЗАВИСИМО от success/failure. Ключевой инвариант: успешный возврат
+  helper'а — НЕ точка, в которой `changedSystemState` становится
+  известным; failed helper МОГ физически изменить slot (installed write
+  с failed/unproven rollback либо закоммиченная запись с проваленным
+  fresh proof) и обязан об этом сообщить. Ветка семантики: failure до
+  write attempt => flag false; installed + proven exact restore => flag
+  false (плюс новая proof-of-restore проверка после rollback: entry
+  state Active(exact id) должен быть доказан заново); installed +
+  failed/unproven restore => flag true; write committed => flag
+  выставляется ДО post-write proof; successful neutralization => flag
+  true (Case B). `recoverBrokenHistoryPair()` OR-аккумулирует outcome
+  (`result.changedSystemState |= helperChanged`) независимо от
+  success/failure; аккумуляция монотонна по всем фазам — флаг никогда
+  не сбрасывается позже. Компенсационная запись использует тот же
+  fault-hook seam, что и fresh-записи (production — hooks пусты).
+  Мёртвая declaration `classifyPhysicalState()` + enum `PhysicalState`
+  удалены из header (ни определения, ни вызовов не было). Quality path
+  аудит: аналог дефекта отсутствует — все post-write failures идут через
+  `compensateFreshFailure`, который выставляет `changedSystemState`
+  до возврата; правки не требовались.
 
 ## Changed areas
 
@@ -416,6 +454,15 @@ neutral baseline, hook-include no-op.
 - `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotWriterTests.cpp`
   (новый), `tests/CMakeLists.txt` (новый test target).
 - `docs/HANDOFF.md`.
+
+## Changed areas (recovery-accounting follow-up)
+
+- `fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.h/.cpp`
+  (P1-5 контракт helper'а + монотонная аккумуляция; мёртвая
+  `classifyPhysicalState`/`PhysicalState` удалены).
+- `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotWriterTests.cpp`
+  (группа `neutralization accounting` B/C/D1/D2; уточнение P1-4 regression).
+- `docs/HANDOFF.md`. `tests/CMakeLists.txt` правок не требовал.
 
 ## Validation
 
@@ -442,6 +489,19 @@ neutral baseline, hook-include no-op.
   воспроизведён на чистом baseline `9e7a00e` через `git stash` —
   pre-existing, не чинился (scope).
 - `git diff --check` — чисто; коммит НЕ выполнялся.
+
+## Validation (recovery-accounting follow-up)
+
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` + full
+  `cmake --build build-check -j4` — 0 ошибок.
+- `ctest -R 'pam_managed_password_slot_writer_tests|pam|rollback|journal|mutation'`
+  — PASS (все targeted tests зелёные).
+- Full `ctest` — 99/100; единственный failure `passwdqc_config_file_tests`
+  воспроизведён на чистом baseline `9013d8f` через `git stash` с тем же
+  сообщением ("pwquality policy did not retain its topology-dependent
+  state") — pre-existing, не чинился (scope).
+- `git diff --check` — чисто; `git diff --name-only` — только 4
+  разрешённых файла; коммит НЕ выполнялся.
 
 ## Remaining
 

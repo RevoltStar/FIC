@@ -15,6 +15,8 @@
 
 #include <unistd.h>
 
+#include <sys/stat.h>
+
 using fic::identity::pam::ManagedHistoryPairInspection;
 using fic::identity::pam::ManagedHistoryPairState;
 using fic::identity::pam::ManagedPasswordCapability;
@@ -1058,9 +1060,15 @@ void runRecoveryAccountingTests() {
         writeFile(historyNormalPath(fixture.tree()), normalContent);
         writeFile(historyInitialPath(fixture.tree()), neutral());
 
-        // The fresh activation fails before its first physical write.
+        // The recovery neutralization write (the first index-0 write) is
+        // allowed to commit; the FRESH activation's first write (the
+        // second index-0 write) fails BEFORE any physical commit. This
+        // isolates the recovery-phase physical change from any fresh-phase
+        // write.
         fixture.writer().setBeforeSlotWriteHookForTests(
-            [](std::size_t slotIndex) { return slotIndex != 0; });
+            [indexZeroWrites = 0](std::size_t slotIndex) mutable {
+                return slotIndex != 0 || ++indexZeroWrites <= 1;
+            });
 
         PamManagedPasswordSlotActivationResult result;
         require(
@@ -1112,6 +1120,223 @@ void runRecoveryAccountingTests() {
 }
 } // namespace
 
+namespace {
+
+// P1-5: neutralizeSlotForPreparedCompensation reports its physical-change
+// outcome independently of success/failure. These tests drive the helper
+// through the public activation API and cover, for the Prepared crash-
+// partial recovery phase:
+//   B. failure before any physical commit       -> changedSystemState false
+//   C. installed write + proven exact rollback  -> changedSystemState false
+//   D1. write success + fresh-proof failure     -> changedSystemState true
+//   D2. installed write + failed rollback       -> changedSystemState true
+// (A: successful neutralization changed=true and E: recovery success +
+// fresh failure changed=true are covered by runCrashPartialTests and
+// runRecoveryAccountingTests; F: foreign-id partial changed=false and
+// bytes untouched is covered by runCrashPartialTests too.)
+void runNeutralizationAccountingTests() {
+    std::cout << "PamManagedPasswordSlotWriterTests: neutralization "
+                 "accounting\n";
+    const ManagedPwhistorySlotOptions options = historyOptions(12);
+
+    // B: the before-write fault fires on the recovery neutralization write
+    // (slot index 0) BEFORE any physical commit: the helper must fail with
+    // changedSystemState == false and the entry state must be untouched.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        std::string normalContent;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(prepareHistoryRecord(fixture, id, error), error);
+        require(
+            renderActiveHistoryNormal(id, options, normalContent),
+            "render normal");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+
+        fixture.writer().setBeforeSlotWriteHookForTests(
+            [](std::size_t) { return false; });
+
+        PamManagedPasswordSlotActivationResult result;
+        require(
+            !fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
+            "neutralization before-fault must fail the activation");
+        require(!result.ownershipProven, "no ownership");
+        require(
+            !result.changedSystemState,
+            "B: pre-commit neutralization failure must not report a "
+            "system change");
+        require(
+            readFile(historyNormalPath(fixture.tree())) == normalContent,
+            "B: normal slot entry bytes untouched");
+        require(
+            readFile(historyInitialPath(fixture.tree())) == neutral(),
+            "B: initial slot entry bytes untouched");
+        require(
+            journalStatus(fixture.journal(), id) ==
+                fic::rollback::MutationStatus::Prepared,
+            "B: Prepared record must stay for the existing lifecycle");
+    }
+
+    // C: the after-write fault fires AFTER the neutralization write was
+    // physically installed: the helper rolls the exact prior bytes back
+    // and proves the restoration, so the physical entry state is fully
+    // restored and changedSystemState == false is correct.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        std::string normalContent;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(prepareHistoryRecord(fixture, id, error), error);
+        require(
+            renderActiveHistoryNormal(id, options, normalContent),
+            "render normal");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+
+        fixture.writer().setAfterSlotWriteHookForTests(
+            [](std::size_t) { return false; });
+
+        PamManagedPasswordSlotActivationResult result;
+        require(
+            !fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
+            "neutralization after-fault must fail the activation");
+        require(!result.ownershipProven, "no ownership");
+        require(
+            !result.changedSystemState,
+            "C: installed write with a proven exact rollback must not "
+            "report a system change");
+        require(
+            readFile(historyNormalPath(fixture.tree())) == normalContent,
+            "C: normal slot exactly restored to Active(prepared id)");
+        require(
+            readFile(historyInitialPath(fixture.tree())) == neutral(),
+            "C: initial slot untouched");
+        require(
+            journalStatus(fixture.journal(), id) ==
+                fic::rollback::MutationStatus::Prepared,
+            "C: Prepared record must stay (helper failed before discard)");
+    }
+
+    // D1 (mandatory regression): the compensation write SUCCEEDS
+    // physically, then the fresh post-write proof fails (the after-hook
+    // leaves the write committed but tampers the slot into a Broken
+    // body). The helper must return failure WITH changedSystemState ==
+    // true and the top-level activation must propagate it.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        std::string normalContent;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(prepareHistoryRecord(fixture, id, error), error);
+        require(
+            renderActiveHistoryNormal(id, options, normalContent),
+            "render normal");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+
+        const std::filesystem::path normalPath =
+            historyNormalPath(fixture.tree());
+        const std::string tamperedBody =
+            "# FIC managed password slot: state=active\nmutation=nope\n";
+        fixture.writer().setAfterSlotWriteHookForTests(
+            [normalPath, tamperedBody](std::size_t slotIndex) {
+                if (slotIndex != 0) {
+                    return true;
+                }
+                // The neutralization write is committed: tamper the slot
+                // so the fresh post-write proof fails while the physical
+                // mutation stands.
+                writeFile(normalPath, tamperedBody);
+                return true;
+            });
+
+        PamManagedPasswordSlotActivationResult result;
+        require(
+            !fixture.writer().activateOwnedPasswordHistory(
+                options, result, error),
+            "D1: fresh-proof failure inside neutralization must fail the "
+            "activation");
+        require(!result.ownershipProven, "D1: no ownership");
+        require(
+            result.changedSystemState,
+            "D1: committed neutralization write followed by a failed "
+            "fresh proof must report changedSystemState == true");
+        require(
+            readFile(normalPath) == tamperedBody,
+            "D1: the physically installed (tampered) state must remain "
+            "visible — no silent clean-failure claim");
+        require(
+            journalStatus(fixture.journal(), id) ==
+                fic::rollback::MutationStatus::Prepared,
+            "D1: Prepared record must stay (recovery did not complete)");
+    }
+
+    // D2 (installed write + rollback failure): the after-hook makes the
+    // configuration directory read-only and fails the write AFTER the
+    // atomic replacement was installed. The exact rollback then cannot
+    // write the prior bytes back: the physical change remains and
+    // changedSystemState must be true.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        std::string normalContent;
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(prepareHistoryRecord(fixture, id, error), error);
+        require(
+            renderActiveHistoryNormal(id, options, normalContent),
+            "render normal");
+        writeFile(historyNormalPath(fixture.tree()), normalContent);
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+
+        const std::filesystem::path dirPath = fixture.tree().path();
+        fixture.writer().setAfterSlotWriteHookForTests(
+            [dirPath](std::size_t slotIndex) {
+                if (slotIndex != 0) {
+                    return true;
+                }
+                // The neutralization bytes are installed: make the exact
+                // rollback impossible and fail the write.
+                require(
+                    ::chmod(dirPath.c_str(), 0555) == 0,
+                    "test failed to make the config directory read-only");
+                return false;
+            });
+
+        PamManagedPasswordSlotActivationResult result;
+        const bool failed = !fixture.writer().activateOwnedPasswordHistory(
+            options, result, error);
+        // Restore permissions before the fixture teardown regardless of
+        // the outcome above.
+        require(
+            ::chmod(dirPath.c_str(), 0755) == 0,
+            "test failed to restore the config directory permissions");
+        require(
+            failed,
+            "D2: installed write with failed rollback must fail the "
+            "activation");
+        require(!result.ownershipProven, "D2: no ownership");
+        require(
+            result.changedSystemState,
+            "D2: installed write whose rollback failed must report "
+            "changedSystemState == true");
+        require(
+            readFile(historyNormalPath(fixture.tree())) == neutral(),
+            "D2: the installed neutral bytes remain (rollback failed)");
+        require(
+            readFile(historyInitialPath(fixture.tree())) == neutral(),
+            "D2: initial slot untouched");
+        require(
+            journalStatus(fixture.journal(), id) ==
+                fic::rollback::MutationStatus::Prepared,
+            "D2: Prepared record must stay for the existing lifecycle");
+    }
+}
+
+} // namespace
+
 int main() {
     try {
         runQualityTests();
@@ -1125,6 +1350,7 @@ int main() {
         runJournalLifecycleTests();
         runLegacyPayloadNegativeTests();
         runRecoveryAccountingTests();
+        runNeutralizationAccountingTests();
         std::cout << "PamManagedPasswordSlotWriterTests: OK\n";
         return 0;
     } catch (const std::exception& error) {
