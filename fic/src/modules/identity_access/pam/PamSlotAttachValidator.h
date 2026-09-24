@@ -68,8 +68,8 @@ bool validatePamSlotAttach(
 //     history pair is active, a token producer (pam_pwquality.so, distro
 //     or FIC) must exist in the Primary stack before the FIC history
 //     include point;
-//   - Rule J semantic checks: arg-mode effective remember=0 and
-//     enforce_for_root=false with AllPamSubjects scope fail closed;
+//   - Rule J semantic checks: effective remember must be nonzero;
+//     enforce_for_root is parsed strictly but both valid states are allowed;
 //     conf-mode reads effective remember/enforce_for_root from pwhistory.conf
 //     and requires canonical no-option slot bodies;
 //   - Active domains require exact selected hooks, exactly one password

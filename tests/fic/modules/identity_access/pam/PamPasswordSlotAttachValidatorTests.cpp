@@ -582,24 +582,29 @@ void testRememberZeroFails(const TestTree& tree) {
     requireUnsafe(tree, tree.journalPath(), "remember=0");
 }
 
-// 12. Rule J: enforce_for_root=false with AllPamSubjects scope: fail
-// closed.
-void testEnforceForRootMissingFails(const TestTree& tree) {
-    seedEmptyJournal(tree.journalPath());
-    const std::uint64_t historyId =
-        seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history",
-              activeHistoryNormalSlot(
-                  historyId, ManagedPwhistorySlotOptions{10u, false}));
-    writeFile(tree.root / "pam.d/fic-password-history-initial",
-              activeHistoryInitialSlot(
-                  historyId, ManagedPwhistorySlotOptions{10u, false}));
-    writeStack(tree, "password requisite pam_pwquality.so\n"
-                     "password include fic-password-history\n"
-                     "password required pam_unix.so\n");
-    writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
-    requireUnsafe(tree, tree.journalPath(), "enforce_for_root");
+// 12. Rule J: root enforcement is independent of history effectiveness,
+// including when the capability applies to AllPamSubjects.
+void testHistoryRootOptionMatrix() {
+    for (const bool enforceForRoot : {false, true}) {
+        for (const unsigned remember : {10u, 0u}) {
+            TestTree tree;
+            seedEmptyJournal(tree.journalPath());
+            const auto historyId =
+                seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
+            const ManagedPwhistorySlotOptions options{remember, enforceForRoot};
+            writeFile(tree.slotPaths()[0], neutralSlot());
+            writeFile(tree.slotPaths()[1], activeHistoryNormalSlot(historyId, options));
+            writeFile(tree.slotPaths()[2], activeHistoryInitialSlot(historyId, options));
+            writeStack(tree, "password requisite pam_pwquality.so\n"
+                             "password include fic-password-history\n"
+                             "password required pam_unix.so\n");
+            writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
+            const auto before = snapshot(tree);
+            if (remember > 0) requireSafe(tree, tree.journalPath());
+            else requireUnsafe(tree, tree.journalPath(), "remember=0");
+            requireUnchanged(before, snapshot(tree));
+        }
+    }
 }
 
 void testReadOnlyOnFail(const TestTree& tree) {
@@ -955,8 +960,10 @@ void testConfigModeMatrix() {
         {"remember = 10\nenforce_for_root\n", true, ""},
         {"enforce_for_root\n", true, ""}, // Documented nonzero remember default.
         {"remember = 0\nenforce_for_root\n", false, "remember=0"},
-        {"remember = 10\n", false, "enforce_for_root"},
-        {std::nullopt, false, "enforce_for_root"},
+        {"remember = 10\n", true, ""},
+        {"", true, ""}, // Both options absent: preserve documented defaults.
+        {std::nullopt, true, ""},
+        {"remember = 0\n", false, "remember=0"},
         {"remember\nenforce_for_root\n", false, "malformed"},
         {"remember = ten\nenforce_for_root\n", false, "malformed"},
         {"remember = 4294967296\nenforce_for_root\n", false, "malformed"},
@@ -965,6 +972,7 @@ void testConfigModeMatrix() {
         {"remember = 10\nremember = 10\nenforce_for_root\n", false, "duplicate"},
         {"remember = 10\nenforce_for_root\nenforce_for_root\n", false, "duplicate"},
         {"remember = 10\nenforce_for_root = false\n", false, "malformed"},
+        {"remember = 10\nenforce_for_root extra\n", false, "malformed"},
         {"remember = 10\nenforce_for_root\nretry = 3\ndebug\n", true, ""},
         {std::nullopt, false, "non-regular", 1},
         {std::nullopt, false, "unreadable", 2},
@@ -1051,7 +1059,7 @@ int main() {
         testExternalQualityWithFicActiveFails(tree);
         testSelectedWithoutStackIsNotExternal(tree);
         testRememberZeroFails(tree);
-        testEnforceForRootMissingFails(tree);
+        testHistoryRootOptionMatrix();
         testReadOnlyOnPass(tree);
         testReadOnlyOnFail(tree);
         // P1-4: Neutral ⇔ Unbound journal provenance.

@@ -2,13 +2,14 @@
 
 ## Current base
 
-- Ветка `main`, базовый HEAD `051a6d4e6579023669678a7efb7afdea55b23040`.
-- Финальный узкий hardening Step 4 завершён; изменения включены в коммит
-  по запросу пользователя.
+- Ветка `main`, база исправления `e5735f4db38a9c5e6c41dfbd493c474afbf54f7f`.
+- Финальный узкий fix Step 4 включён в коммит по запросу пользователя:
+  независимость `enforce_for_root` от эффективности PasswordHistory.
 
 ## Current task
 
-- Закрыть P1-A/B/C/D и P2-A read-only password slot attach validator.
+- Исправить последнюю P1: root enforcement — отдельная option policy,
+  а не обязательное условие PasswordHistory attach validation.
   Step 5 не начат; production CLI по-прежнему выполняет только faillock
   validation.
 
@@ -44,8 +45,11 @@
   `PamSlotAttachValidator.cpp` (`readPwhistoryConfigState`), НЕ в writer.
   Existing generic provider verifier не вычисляет эти config values.
 - Config-file default: remember=10, enforce_for_root=false. Отсутствие файла
-  сохраняет defaults, но при AllPamSubjects отсутствие enforce_for_root
-  означает FAIL. Canonical flag — отдельная строка `enforce_for_root`;
+  сохраняет defaults. PasswordHistory capability требует effective remember > 0
+  в обоих storage modes. `enforce_for_root` строго парсится, но enabled/disabled —
+  независимое состояние `password_history_enforce_for_root`; оба валидных
+  состояния attach-safe. `subjectScope` не задаёт desired option value.
+  Canonical flag — отдельная строка `enforce_for_root`;
   boolean assignments не принимаются. remember=0, malformed/overflow,
   любые дубли managed keys, unreadable/non-regular/symlink — FAIL.
   Unrelated syntactically valid keys допустимы.
@@ -66,6 +70,11 @@
 
 ## Completed
 
+- Убрана обязательность root flag в ModuleArguments и ProviderConfigFile;
+  strict grammar/duplicates checks сохранены. Добавлены обе root-option
+  states с remember=10/0 и config defaults, malformed/duplicate regressions,
+  с read-only fingerprints. Option policy и provider verifier не менялись.
+
 - Conditional flow requirements и use_authtok evidence.
 - Exact hook/include/source proof, single history provider и normal-only branch.
 - Configuration-mode split Rule J и strict typed config-file reader.
@@ -75,6 +84,10 @@
   fixture, включая отсутствие J/W и db directory в virgin case.
 
 ## Changed areas
+
+- Текущий узкий fix: `PamSlotAttachValidator.{cpp,h}`,
+  `PamPasswordSlotAttachValidatorTests.cpp`, `docs/HANDOFF.md`.
+- Ниже сохранён scope предыдущего Step 4 hardening (уже в базовом коммите):
 
 - `fic/src/modules/identity_access/pam/PamSlotAttachValidator.{h,cpp}`.
 - `fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.{h,cpp}`.
@@ -86,6 +99,17 @@
 
 ## Validation
 
+- Все приведённые configure/build, targeted и full CTest повторно выполнены
+  для текущего узкого fix 24 сентября; результаты ниже актуальны.
+- Первые параллельные targeted-прогоны столкнулись в общем `/tmp` fixture
+  `grub_rollback_journal_tests`; последовательный повтор обоих наборов —
+  11/11 PASS на каждом. Не запускать эти два набора одновременно.
+- Новая Rule J matrix: arg-mode remember=10 с root flag false/true — SAFE,
+  remember=0 с false/true — UNSAFE. Conf-mode remember=10 с/без flag,
+  пустой/missing config — SAFE; malformed/duplicate flag — UNSAFE.
+  Read-only fingerprints, Rule G, exact attachment, VirginUnbound и symlink
+  regressions прошли в обоих targeted-наборах.
+
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04` — PASS.
 - `cmake --build build-check -j4` — PASS (полная сборка).
 - `ctest --test-dir build-check -R
@@ -95,20 +119,22 @@
   99 passed, 1 skipped (`command_hash_batch_tests`, root-only),
   1 failed (`passwdqc_config_file_tests`: `pwquality policy did not retain
   its topology-dependent state`). Это известный baseline failure.
-  Первый sandbox run дополнительно ограничил Unix socket bind и trusted
-  root-directory checks; вне sandbox соответствующие тесты прошли.
+  В предыдущем hardening sandbox run дополнительно ограничил Unix socket
+  bind и trusted root-directory checks; вне sandbox соответствующие тесты прошли.
 - `cmake -S . -B build-debian12 -DFIC_TARGET_PLATFORM=debian-12` и
   `cmake --build build-debian12 -j4` — PASS (полная сборка).
 - `ctest --test-dir build-debian12 -R
   'pam_password|pam_slot_attach|pam_control_flow|pam_managed_password|pam_configuration|journal|rollback'
   --output-on-failure` — 11/11 PASS (повторно подтверждено 24 сентября).
-- Baseline `051a6d4` экспортирован через git archive в отдельный `/tmp`
+- При предыдущем hardening baseline `051a6d4` экспортирован через git archive в отдельный `/tmp`
   checkout; собран `passwdqc_config_file_tests`, затем
   `ctest --test-dir /tmp/fic-step4-baseline-build -R '^passwdqc_config_file_tests$'
   --output-on-failure` воспроизвёл ровно тот же failure.
 - `git diff --check` — PASS; запрещённые области не имеют diff.
 
 ## Remaining
+
+- Optional empty-services P2 намеренно оставлен для Step 5 integration review.
 
 - Step 5 — следующая отдельная задача: packaging permanent dual-stack hooks,
   conffiles всех трёх slots, guarantees existence, read-only resulting

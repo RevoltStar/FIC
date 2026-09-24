@@ -503,7 +503,6 @@ bool readSlotInspection(
 // enforcement is verified here (fail closed).
 bool verifyHistorySlotOptions(
     const PamManagedPasswordSlotOwnership& ownership,
-    const fic::platform::PamCapabilityConfig& historyCapability,
     PamSlotAttachVerdict& verdict) {
     if (!ownership.historyOptions.has_value()) {
         verdict.detail =
@@ -520,15 +519,7 @@ bool verifyHistorySlotOptions(
             "enforcement; fail closed)";
         return false;
     }
-    if (!slotOptions.enforceForRoot &&
-        historyCapability.subjectScope ==
-            fic::platform::PamIdentitySubjectScope::AllPamSubjects) {
-        verdict.detail =
-            "FIC pwhistory slots omit enforce_for_root while the "
-            "capability scope is AllPamSubjects (root bypasses history "
-            "enforcement; fail closed)";
-        return false;
-    }
+    // Root enforcement is an independent option-policy state.
     return true;
 }
 
@@ -744,8 +735,7 @@ bool validatePamPasswordSlotAttach(
     if (historyActive &&
         historyCapability->configurationMode ==
             fic::platform::PamCapabilityConfigurationMode::ModuleArguments &&
-        !verifyHistorySlotOptions(historyOwnership, *historyCapability,
-                                  verdict)) {
+        !verifyHistorySlotOptions(historyOwnership, verdict)) {
         error.clear();
         return true;
     }
@@ -992,11 +982,6 @@ bool validatePamPasswordSlotAttach(
                     "has duplicate managed keys (Rule J; fail closed)";
             } else if (state.remember == PwhistoryRememberState::Zero) {
                 verdict.detail = "pwhistory.conf enforces remember=0 (Rule J; fail closed)";
-            } else if (historyCapability->subjectScope ==
-                           fic::platform::PamIdentitySubjectScope::AllPamSubjects &&
-                       state.enforceForRoot != PwhistoryFlagState::Enabled) {
-                verdict.detail = "ProviderConfigFile history lacks effective enforce_for_root "
-                    "for AllPamSubjects (Rule J; fail closed)";
             } else {
                 continue;
             }
