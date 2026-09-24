@@ -762,6 +762,19 @@ if [ -x /opt/fic/bin/fic ]; then
 fi
 
 if [ "\${1:-}" = "configure" ]; then
+    # Step 5B: package-side bootstrap of the three managed password slots
+    # (/etc/pam.d/fic-password-quality, fic-password-history,
+    # fic-password-history-initial). The bootstrap exclusively creates a
+    # slot that is genuinely absent as the exact canonical neutral file;
+    # existing regular files (runtime-owned active state included) are
+    # never modified, repaired or removed, and no journal record or
+    # witness is created (package/bootstrap owns existence; runtime
+    # policy + journal own managed state). Failure fails closed before
+    # any validation or pam-auth-update invocation.
+    if ! /opt/fic/bin/fic --maintenance bootstrap-pam-password-slots; then
+        echo "FIC: refusing to continue package configuration: managed password slot bootstrap failed (fail closed)" >&2
+        exit 1
+    fi
     # Package-side pre-attach validation (read-only): preserved
     # /etc/pam.d/fic-faillock-* conffiles must be proven canonical-neutral or
     # journal-bound FIC-owned state BEFORE the permanent hooks may reach the
@@ -978,7 +991,9 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-hook-authsucc \
         fic-faillock-hook-account \
         fic-pwquality \
-        fic-pwhistory; then
+        fic-pwhistory \
+        fic-password-quality-hook \
+        fic-password-history-hook; then
         echo "FIC: failed to detach permanent PAM hooks; restoring the package PAM hook infrastructure while all FIC writers remain stopped" >&2
         # Only the permanent hook infrastructure is restored here. The legacy
         # policy-owned selector profiles are deliberately NOT re-enabled:
@@ -1110,7 +1125,8 @@ install_fic_pam_profiles() {
         fic-faillock-preauth-required fic-faillock-authsucc \
         fic-faillock-hook-preauth fic-faillock-hook-authfail \
         fic-faillock-hook-authsucc fic-faillock-hook-account \
-        fic-pwquality fic-pwhistory; do
+        fic-pwquality fic-pwhistory \
+        fic-password-quality-hook fic-password-history-hook; do
         install -m 0644 \
             "$ROOT_DIR/packaging/deb/pam-configs/$profile" \
             "$profile_dir/$profile"
@@ -1124,7 +1140,9 @@ install_fic_pam_slots() {
 
     mkdir -p "$slot_dir"
     for slot in fic-faillock-preauth fic-faillock-authfail \
-        fic-faillock-authsucc fic-faillock-account; do
+        fic-faillock-authsucc fic-faillock-account \
+        fic-password-quality fic-password-history \
+        fic-password-history-initial; do
         install -m 0644 \
             "$ROOT_DIR/packaging/deb/pam-slots/$slot" \
             "$slot_dir/$slot"
@@ -1134,6 +1152,9 @@ install_fic_pam_slots() {
 /etc/pam.d/fic-faillock-authfail
 /etc/pam.d/fic-faillock-authsucc
 /etc/pam.d/fic-faillock-account
+/etc/pam.d/fic-password-quality
+/etc/pam.d/fic-password-history
+/etc/pam.d/fic-password-history-initial
 EOF
 }
 

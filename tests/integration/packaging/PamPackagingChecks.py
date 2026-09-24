@@ -465,6 +465,21 @@ def main() -> int:
                 "requisite\t\t\tpam_pwhistory.so",
             ),
         },
+        "fic-password-quality-hook": {
+            "Name": "FIC password quality hook",
+            "Priority": "1024",
+            "rules": (
+                "include                     fic-password-quality",
+            ),
+        },
+        "fic-password-history-hook": {
+            "Name": "FIC password history hook",
+            "Priority": "1023",
+            "rules": (
+                "include                     fic-password-history",
+                "include                     fic-password-history-initial",
+            ),
+        },
     }
     prohibited_arguments = (
         "deny=",
@@ -486,6 +501,46 @@ def main() -> int:
             require(rule in profile, f"{name} is missing rule: {rule}")
         for argument in prohibited_arguments:
             require(argument not in profile, f"{name} embeds policy argument: {argument}")
+
+    # Step 5B: managed password slot bootstrap contract. The two permanent
+    # password hook profiles are immutable package infrastructure: Primary
+    # password type, exact priorities, Default: no, and the exact include
+    # targets into the package-owned managed slots. They are never enabled
+    # by the package (attach is a later, explicitly separate step).
+    quality_hook = (profile_dir / "fic-password-quality-hook").read_text(encoding="utf-8")
+    history_hook = (profile_dir / "fic-password-history-hook").read_text(encoding="utf-8")
+    for hook_name, hook in (("fic-password-quality-hook", quality_hook),
+                            ("fic-password-history-hook", history_hook)):
+        require(field(hook, "Password-Type") == "Primary",
+                f"{hook_name} Password-Type is not Primary")
+        require(optional_field(hook, "Auth-Type") == "" and
+                optional_field(hook, "Account-Type") == "",
+                f"{hook_name} must only register password facility rules")
+    require(re.search(r"^Password:\n\s+include\s+fic-password-quality$",
+                      quality_hook, re.MULTILINE) is not None,
+            "quality hook Password section must include fic-password-quality")
+    require(re.search(r"^Password-Initial:\n\s+include\s+fic-password-quality$",
+                      quality_hook, re.MULTILINE) is not None,
+            "quality hook Password-Initial section must include fic-password-quality")
+    require(re.search(r"^Password:\n\s+include\s+fic-password-history$",
+                      history_hook, re.MULTILINE) is not None,
+            "history hook Password section must include fic-password-history")
+    require(re.search(r"^Password-Initial:\n\s+include\s+fic-password-history-initial$",
+                      history_hook, re.MULTILINE) is not None,
+            "history hook Password-Initial section must include "
+            "fic-password-history-initial")
+
+    # The three managed password slots ship as canonical-neutral package
+    # payload: package owns existence, runtime policy + journal own state.
+    slot_payload_dir = root / "packaging/deb/pam-slots"
+    neutral_slot_body = "# FIC managed password slot: state=neutral\n"
+    for slot in ("fic-password-quality", "fic-password-history",
+                 "fic-password-history-initial"):
+        slot_path = slot_payload_dir / slot
+        require(slot_path.is_file() and not slot_path.is_symlink(),
+                f"missing managed password slot payload: {slot}")
+        require(slot_path.read_text(encoding="utf-8") == neutral_slot_body,
+                f"managed password slot {slot} payload is not canonical neutral")
 
     notify = (profile_dir / "fic-faillock-notify").read_text(encoding="utf-8")
     require(field(notify, "Auth-Type") == "Primary", "notify profile Auth-Type is not Primary")
@@ -631,11 +686,35 @@ def main() -> int:
         "fic-faillock-authfail",
         "fic-faillock-authsucc",
         "fic-faillock-account",
+        "fic-password-quality",
+        "fic-password-history",
+        "fic-password-history-initial",
     ):
         require(f"/etc/pam.d/{slot}" in deb_builder,
                 f"Debian conffiles contract misses PAM slot {slot}")
     require("pam-auth-update --package" in fic_postinst,
             "Debian postinst does not register package profiles")
+
+    # Step 5B: the package bootstraps managed password slot existence before
+    # the read-only pre-attach validation and never attaches the password
+    # hook profiles itself (attach is a later, explicitly separate step).
+    bootstrap_pos = fic_postinst.find("--maintenance bootstrap-pam-password-slots")
+    require(bootstrap_pos >= 0,
+            "Debian postinst does not bootstrap the managed password slots")
+    validate_pos = fic_postinst.find("--maintenance validate-pam-slots-before-attach")
+    require(validate_pos > bootstrap_pos,
+            "Debian postinst must bootstrap the managed password slots "
+            "before the pre-attach validation")
+    for password_hook in ("fic-password-quality-hook",
+                          "fic-password-history-hook"):
+        require(f"pam-auth-update --enable \\\n        {password_hook}"
+                not in fic_postinst and
+                f"pam-auth-update --enable {password_hook}" not in fic_postinst,
+                f"Debian postinst must not enable the password hook "
+                f"profile {password_hook} (attach is out of Step 5B scope)")
+    require("common-password" not in fic_postinst,
+            "Debian postinst must not edit the pam-auth-update generated "
+            "common-password stack")
 
     remove_start = fic_prerm.find("pam-auth-update --package --remove")
     remove_end = fic_prerm.find("\nfi", remove_start)
@@ -1216,18 +1295,21 @@ def main() -> int:
             if log.is_file() else []
         validate_calls = [index for index, line in enumerate(calls)
                           if "validate-pam-slots-before-attach" in line]
+        bootstrap_calls = [index for index, line in enumerate(calls)
+                           if "bootstrap-pam-password-slots" in line]
         pam_package_calls = [index for index, line in enumerate(calls)
                              if line.startswith("pam-auth-update --package")]
         pam_enable_calls = [index for index, line in enumerate(calls)
                             if line.startswith("pam-auth-update --enable")]
         daemon_start_calls = [index for index, line in enumerate(calls)
                               if "enable --now fic.service" in line]
-        require(validate_calls and pam_package_calls and pam_enable_calls
-                and daemon_start_calls
+        require(bootstrap_calls and validate_calls and pam_package_calls
+                and pam_enable_calls and daemon_start_calls
+                and max(bootstrap_calls) < min(validate_calls)
                 and max(validate_calls) < min(pam_package_calls)
                 and max(pam_package_calls) < min(pam_enable_calls)
                 and max(pam_enable_calls) < min(daemon_start_calls),
-                "postinst attach-order regression: validation, "
+                "postinst attach-order regression: bootstrap, validation, "
                 "pam-auth-update and daemon start are out of order: " +
                 "\n".join(calls))
         enable_call = calls[min(pam_enable_calls)]
@@ -1238,9 +1320,22 @@ def main() -> int:
                     "in the behavioral check")
 
         # Failure path: the pre-attach validator refuses → exit non-zero,
-        # no pam-auth-update, no daemon start.
+        # no pam-auth-update, no daemon start. The bootstrap maintenance
+        # call is a separate command and still succeeds, mirroring the real
+        # exit semantics of a validation failure.
         log.unlink(missing_ok=True)
-        fake_tool("fic", 1)
+        validator_fails = fake_bin / "fic"
+        validator_fails.write_text(
+            "#!/bin/sh\n"
+            'printf "fic %s\\n" "$*" >> "$FAKE_LOG"\n'
+            'for argument in "$@"; do\n'
+            '    if [ "$argument" = "validate-pam-slots-before-attach" ]; then\n'
+            "        exit 1\n"
+            "    fi\n"
+            "done\n"
+            "exit 0\n",
+            encoding="utf-8")
+        validator_fails.chmod(0o755)
         refused = subprocess.run(
             [str(tail_script), "configure"],
             env={"PATH": str(fake_bin), "FAKE_LOG": str(log)},
@@ -1259,6 +1354,49 @@ def main() -> int:
         require("pre-attach validation" in refused.stderr,
                 "postinst failure diagnostic must mention pre-attach "
                 "validation: " + refused.stderr.strip())
+
+        # Failure path: the managed password slot bootstrap refuses → the
+        # package configuration fails closed before the pre-attach
+        # validation, any pam-auth-update call, and any daemon start.
+        log.unlink(missing_ok=True)
+        bootstrap_fails = fake_bin / "fic"
+        bootstrap_fails.write_text(
+            "#!/bin/sh\n"
+            'printf "fic %s\\n" "$*" >> "$FAKE_LOG"\n'
+            'for argument in "$@"; do\n'
+            '    if [ "$argument" = "bootstrap-pam-password-slots" ]; then\n'
+            "        exit 1\n"
+            "    fi\n"
+            "done\n"
+            "exit 0\n",
+            encoding="utf-8")
+        bootstrap_fails.chmod(0o755)
+        bootstrap_refused = subprocess.run(
+            [str(tail_script), "configure"],
+            env={"PATH": str(fake_bin), "FAKE_LOG": str(log)},
+            text=True,
+            capture_output=True,
+            check=False)
+        require(bootstrap_refused.returncode != 0,
+                "postinst must abort when managed password slot bootstrap "
+                "fails")
+        bootstrap_refused_calls = log.read_text(encoding="utf-8").splitlines() \
+            if log.is_file() else []
+        require(not any(line.startswith("pam-auth-update")
+                        for line in bootstrap_refused_calls),
+                "pam-auth-update ran although the managed password slot "
+                "bootstrap failed")
+        require(not any("validate-pam-slots-before-attach" in line
+                        for line in bootstrap_refused_calls),
+                "pre-attach validation ran although the managed password "
+                "slot bootstrap failed")
+        require(not any("enable --now" in line
+                        for line in bootstrap_refused_calls),
+                "daemon was started although the managed password slot "
+                "bootstrap failed")
+        require("bootstrap" in bootstrap_refused.stderr,
+                "postinst bootstrap failure diagnostic must mention the "
+                "bootstrap: " + bootstrap_refused.stderr.strip())
 
     # Behavioral proof of the abort-remove recovery invariant: run the full
     # generated postinst with `abort-remove` against fake binaries and

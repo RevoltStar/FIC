@@ -33,6 +33,7 @@
 #include "daemon/LogRecordsReader.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
+#include "modules/identity_access/pam/PamManagedPasswordSlotBootstrap.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
@@ -1165,18 +1166,118 @@ int main(int argc, char* argv[]) {
                           << verdict.detail << std::endl;
                 return 1;
             }
-            // Password slot validation (validatePamPasswordSlotAttach) is
-            // NOT wired into the production maintenance command yet: the
-            // current package does not provision the managed password
-            // slots, the FIC password hook profiles or the hook include
-            // lines (that is Step 5). On a fresh installation a missing
-            // slot is Unavailable (never Neutral), so requiring password
-            // slot state here would fail every fresh package
-            // configuration. Step 5 wires the validator back together
-            // with the password hook provisioning. The complete validator
-            // implementation stays available (unit-tested) for tests and
-            // the future Step 5 integration.
+            // Password slots (Step 5B): the managed password slots and the
+            // fic-password-*-hook profiles are now package infrastructure,
+            // so the password PreAttach verdict participates in the same
+            // package-side gate. On pam-auth-update password platforms the
+            // two capabilities are platform-configured; a platform without
+            // a pam-auth-update password topology (ALT) has no managed
+            // password slots and no password hook profiles to attach.
+            const fic::platform::PamCapabilityConfig* qualityCapability =
+                nullptr;
+            const std::vector<std::string>* qualityServices = nullptr;
+            if (fic::identity::pam::resolveCapability(
+                    platform.pam,
+                    fic::platform::PamCapability::PasswordQuality,
+                    qualityCapability, qualityServices,
+                    maintenanceError) &&
+                qualityCapability->topology ==
+                    fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+                fic::identity::pam::PamSlotAttachVerdict passwordVerdict;
+                std::string passwordValidationError;
+                if (!fic::identity::pam::validatePamPasswordSlotAttach(
+                        platform.pam, *qualityServices, executables,
+                        paths.mutationJournalFile, {},
+                        fic::identity::pam::PamAttachmentValidationPhase::
+                            PreAttach,
+                        passwordVerdict, passwordValidationError)) {
+                    std::cerr << "FIC password PAM slot attach validation "
+                                 "failed: "
+                              << passwordValidationError << std::endl;
+                    return 1;
+                }
+                if (!passwordVerdict.safeToAttach) {
+                    std::cerr << "FIC password PAM slots are not safe to "
+                                 "attach permanent hooks (fail closed): "
+                              << passwordVerdict.detail << std::endl;
+                    return 1;
+                }
+            } else if (!qualityCapability &&
+                       fic::identity::pam::resolveCapability(
+                           platform.pam,
+                           fic::platform::PamCapability::PasswordHistory,
+                           qualityCapability, qualityServices,
+                           maintenanceError)) {
+                // A declared PasswordHistory capability without a
+                // PasswordQuality capability still implies a pam-auth-update
+                // password topology that must carry the managed slots.
+                std::cerr << "FIC password PAM platform is configured "
+                             "without a password quality capability; "
+                             "refusing to prove the managed password slot "
+                             "topology"
+                          << std::endl;
+                return 1;
+            }
             std::cout << "safe to attach" << std::endl;
+            return 0;
+        }
+        if (command == "bootstrap-pam-password-slots") {
+            // Step 5B package/bootstrap existence provisioning: exclusively
+            // create every absent managed password slot as the exact
+            // canonical neutral file. Existing regular files are never
+            // touched (bootstrap owns existence only; structural validity
+            // belongs to validate-pam-slots-before-attach). No journal
+            // record, no witness, no pam-auth-update, no common-* access.
+            if (::geteuid() != 0) {
+                std::cerr << "FIC managed password slot bootstrap must be "
+                             "run as root"
+                          << std::endl;
+                return 1;
+            }
+            const fic::platform::PamCapabilityConfig* bootstrapQuality =
+                nullptr;
+            const std::vector<std::string>* bootstrapQualityServices =
+                nullptr;
+            if (!fic::identity::pam::resolveCapability(
+                    platform.pam,
+                    fic::platform::PamCapability::PasswordQuality,
+                    bootstrapQuality, bootstrapQualityServices,
+                    maintenanceError) ||
+                bootstrapQuality->topology !=
+                    fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+                std::cerr << "FIC managed password slot bootstrap requires "
+                             "a pam-auth-update password topology; this "
+                             "platform does not provide one"
+                          << (maintenanceError.empty()
+                                  ? ""
+                                  : (": " + maintenanceError))
+                          << std::endl;
+                return 1;
+            }
+            const std::filesystem::path pamDirectory =
+                platform.pam.configDirectories.empty()
+                    ? std::filesystem::path("/etc/pam.d")
+                    : platform.pam.configDirectories.front();
+            fic::identity::pam::PamManagedPasswordSlotBootstrapResult
+                bootstrapResult;
+            fic::identity::pam::PamManagedPasswordSlotBootstrap bootstrap(
+                pamDirectory);
+            if (!bootstrap.run(bootstrapResult, maintenanceError)) {
+                std::cerr << "FIC managed password slot bootstrap failed "
+                             "(fail closed): "
+                          << maintenanceError << std::endl;
+                for (const auto& slot : bootstrapResult.slots) {
+                    if (slot.failed) {
+                        std::cerr << "FIC managed password slot bootstrap "
+                                     "slot failure: "
+                                  << slot.path.string() << ": "
+                                  << slot.error << std::endl;
+                    }
+                }
+                return 1;
+            }
+            std::cout << "managed password slots are provisioned"
+                      << std::endl;
             return 0;
         }
         if (command == "pam-alt-faillock") {
