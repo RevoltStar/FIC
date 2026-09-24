@@ -283,7 +283,40 @@ void requireSafe(const TestTree& tree, const fs::path& journalPath) {
     std::string error;
     const PamSlotAttachVerdict verdict = validate(tree, journalPath, error);
     require(verdict.safeToAttach,
-            "expected safe verdict, got: " + verdict.detail);
+            "expected safe verdict, got: " + verdict.detail + " | err: " + error);
+}
+
+// Step 5B: run the same validation with the explicit Attached phase.
+PamSlotAttachVerdict validateAttached(const TestTree& tree,
+                                      const fs::path& journalPath) {
+    auto platform = tree.platform();
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    PamSlotAttachVerdict verdict;
+    std::string error;
+    require(
+        fic::identity::pam::validatePamPasswordSlotAttach(
+            platform, {"passwd"}, resolver(), journalPath, options,
+            fic::identity::pam::PamAttachmentValidationPhase::Attached,
+            verdict, error),
+        error);
+    return verdict;
+}
+
+void checkAttachedPhase(const TestTree& tree, bool safe,
+                        const std::string& substring = {}) {
+    const PamSlotAttachVerdict verdict =
+        validateAttached(tree, tree.journalPath());
+    require(safe == verdict.safeToAttach,
+            std::string("expected ") + (safe ? "safe" : "unsafe") +
+                " attached-phase verdict, got: " + verdict.detail +
+                " | safeToAttach=" + (verdict.safeToAttach ? "1" : "0"));
+    if (!safe && !substring.empty()) {
+        require(verdict.detail.find(substring) != std::string::npos,
+                "attached detail \"" + verdict.detail +
+                    "\" does not mention \"" + substring + "\"");
+    }
 }
 
 void requireUnsafe(const TestTree& tree, const fs::path& journalPath,
@@ -914,7 +947,25 @@ void testExactAttachmentMatrix() {
         graph += "password required pam_unix.so\n";
         writeStack(tree, graph.c_str());
         writePasswordState(tree, c.selection);
-        checkReadOnly(tree, false, c.diagnostic);
+        // Step 5B: missing selected hooks / missing generated attachment are
+        // exactly the detached states the PreAttach phase must ACCEPT (Step
+        // 5C attaches the hooks afterwards). Structural live-graph defects
+        // (substack/@include instead of the managed include, duplicate
+        // includes, foreign providers) still fail in both phases.
+        const bool structural =
+            std::string(c.diagnostic).find("requires password include") !=
+                std::string::npos ||
+            std::string(c.diagnostic) == "Rule I" ||
+            std::string(c.diagnostic) == "exactly one password include" ||
+            std::string(c.diagnostic).find("exactly one pam_pwhistory.so") !=
+                std::string::npos ||
+            std::string(c.diagnostic) == "history-initial";
+        if (structural) checkReadOnly(tree, false, c.diagnostic);
+        else {
+            // Detached Active state: PASS in PreAttach, FAIL in Attached.
+            checkReadOnly(tree, true);
+            checkAttachedPhase(tree, false, c.diagnostic);
+        }
     }
     // Exact include filename alone is insufficient: PAM resolves a foreign
     // same-name file from a higher-priority configuration directory.
@@ -1041,40 +1092,71 @@ int main() {
         return EXIT_FAILURE;
     }
     try {
+        std::cerr << "RUN testQualityOnlyMatrix" << std::endl;
         testQualityOnlyMatrix();
+        std::cerr << "RUN testVirginAndJournalMatrix" << std::endl;
         testVirginAndJournalMatrix();
+        std::cerr << "RUN testSlotSymlinks" << std::endl;
         testSlotSymlinks();
+        std::cerr << "RUN testExactAttachmentMatrix" << std::endl;
         testExactAttachmentMatrix();
+        std::cerr << "RUN testConfigModeMatrix" << std::endl;
         testConfigModeMatrix();
+        std::cerr << "RUN testExternalQualityHistoryPass" << std::endl;
         testExternalQualityHistoryPass();
         TestTree tree;
+        std::cerr << "RUN testAllNeutralPass" << std::endl;
         testAllNeutralPass(tree);
+        std::cerr << "RUN testActiveOwnedPass" << std::endl;
         testActiveOwnedPass(tree);
+        std::cerr << "RUN testHistoryOnlyFails" << std::endl;
         testHistoryOnlyFails(tree);
+        std::cerr << "RUN testMissingSlotFails" << std::endl;
         testMissingSlotFails(tree);
+        std::cerr << "RUN testBrokenSlotFails" << std::endl;
         testBrokenSlotFails(tree);
+        std::cerr << "RUN testActiveQualityWithoutJournalFails" << std::endl;
         testActiveQualityWithoutJournalFails(tree);
+        std::cerr << "RUN testWrongPolicyIdentityFails" << std::endl;
         testWrongPolicyIdentityFails(tree);
+        std::cerr << "RUN testDuplicatePwqualityFails" << std::endl;
         testDuplicatePwqualityFails(tree);
+        std::cerr << "RUN testExternalQualityWithFicActiveFails" << std::endl;
         testExternalQualityWithFicActiveFails(tree);
+        std::cerr << "RUN testSelectedWithoutStackIsNotExternal" << std::endl;
         testSelectedWithoutStackIsNotExternal(tree);
+        std::cerr << "RUN testRememberZeroFails" << std::endl;
         testRememberZeroFails(tree);
+        std::cerr << "RUN testHistoryRootOptionMatrix" << std::endl;
         testHistoryRootOptionMatrix();
+        std::cerr << "RUN testReadOnlyOnPass" << std::endl;
         testReadOnlyOnPass(tree);
+        std::cerr << "RUN testReadOnlyOnFail" << std::endl;
         testReadOnlyOnFail(tree);
         // P1-4: Neutral ⇔ Unbound journal provenance.
+        std::cerr << "RUN testNeutralQualityAppliedJournalFails" << std::endl;
         testNeutralQualityAppliedJournalFails(tree);
+        std::cerr << "RUN testNeutralQualityPreparedJournalFails" << std::endl;
         testNeutralQualityPreparedJournalFails(tree);
+        std::cerr << "RUN testNeutralHistoryAppliedJournalFails" << std::endl;
         testNeutralHistoryAppliedJournalFails(tree);
+        std::cerr << "RUN testNeutralHistoryPreparedJournalFails" << std::endl;
         testNeutralHistoryPreparedJournalFails(tree);
+        std::cerr << "RUN testNeutralUnboundJournalPasses" << std::endl;
         testNeutralUnboundJournalPasses(tree);
+        std::cerr << "RUN testMultipleDomainRecordsConflict" << std::endl;
         testMultipleDomainRecordsConflict(tree);
+        std::cerr << "RUN testReadOnlyOnStaleJournalFail" << std::endl;
         testReadOnlyOnStaleJournalFail(tree);
         // P1-2: explicit jump graphs through the validator.
+        std::cerr << "RUN testValidatorRejectsJumpOverHistory" << std::endl;
         testValidatorRejectsJumpOverHistory(tree);
+        std::cerr << "RUN testValidatorRejectsJumpOverProducer" << std::endl;
         testValidatorRejectsJumpOverProducer(tree);
+        std::cerr << "RUN testValidatorRejectsHistoryBeforeProducer" << std::endl;
         testValidatorRejectsHistoryBeforeProducer(tree);
         // P1-3: selection/provider topology matrix.
+        std::cerr << "RUN testProviderWithoutSelectionFails" << std::endl;
         testProviderWithoutSelectionFails(tree);
         // P2-1: conf-mode typed remember semantics.
     } catch (const std::exception& exception) {

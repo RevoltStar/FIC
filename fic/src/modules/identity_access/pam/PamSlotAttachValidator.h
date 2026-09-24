@@ -8,6 +8,16 @@
 
 namespace fic::identity::pam {
 
+// Typed distinction of the two read-only password-slot validation phases
+// (Step 5B). PreAttach proves the existing managed slots + journal state
+// safe for a LATER package attach of the permanent password hooks; it must
+// NOT require already-selected hooks or a generated attachment. Attached
+// additionally requires the live-graph attachment proof.
+enum class PamAttachmentValidationPhase {
+    PreAttach,
+    Attached
+};
+
 // Read-only pre-attach verdict for the permanent fic-faillock-hook-* PAM
 // profiles (package infrastructure on pam-auth-update platforms).
 struct PamSlotAttachVerdict {
@@ -96,6 +106,22 @@ bool validatePamPasswordSlotAttach(
     const fic::platform::PlatformExecutableResolver& executables,
     const std::filesystem::path& mutationJournalFile,
     const PamAuthUpdateTopologyManagerOptions& options,
+    PamSlotAttachVerdict& verdict,
+    std::string& error);
+
+// Step 5B: phase-typed overload of the password pre-attach validation.
+// Semantics are identical to validatePamPasswordSlotAttach for PreAttach
+// (the default for the legacy entry point). Attached additionally requires
+// the live-graph proof: selected permanent hooks, exact managed includes,
+// providers sourced from the managed slots and the Rule G/J topology.
+// Strictly read-only in both phases.
+bool validatePamPasswordSlotAttach(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const std::vector<std::string>& services,
+    const fic::platform::PlatformExecutableResolver& executables,
+    const std::filesystem::path& mutationJournalFile,
+    const PamAuthUpdateTopologyManagerOptions& options,
+    PamAttachmentValidationPhase phase,
     PamSlotAttachVerdict& verdict,
     std::string& error);
 

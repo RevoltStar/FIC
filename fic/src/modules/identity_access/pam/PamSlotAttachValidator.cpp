@@ -524,12 +524,37 @@ bool verifyHistorySlotOptions(
 }
 
 } // namespace
+bool verifyAttachedTopology(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const std::vector<std::string>& services,
+    const std::filesystem::path& stateDirectory,
+    const std::filesystem::path& configDirectory,
+    const ManagedPasswordSlotInspection& qualityInspection,
+    const ManagedHistoryPairInspection& historyPair,
+    const PamManagedPasswordSlotOwnership& historyOwnership,
+    PamSlotAttachVerdict& verdict,
+    std::string& error);
+
 bool validatePamPasswordSlotAttach(
     const fic::platform::PamPlatformConfig& platformConfig,
     const std::vector<std::string>& services,
     const fic::platform::PlatformExecutableResolver& executables,
     const std::filesystem::path& mutationJournalFile,
     const PamAuthUpdateTopologyManagerOptions& options,
+    PamSlotAttachVerdict& verdict,
+    std::string& error) {
+    return validatePamPasswordSlotAttach(
+        platformConfig, services, executables, mutationJournalFile, options,
+        PamAttachmentValidationPhase::PreAttach, verdict, error);
+}
+
+bool validatePamPasswordSlotAttach(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const std::vector<std::string>& services,
+    const fic::platform::PlatformExecutableResolver& executables,
+    const std::filesystem::path& mutationJournalFile,
+    const PamAuthUpdateTopologyManagerOptions& options,
+    PamAttachmentValidationPhase phase,
     PamSlotAttachVerdict& verdict,
     std::string& error) {
     (void)executables;
@@ -740,6 +765,274 @@ bool validatePamPasswordSlotAttach(
         return true;
     }
 
+    // Rule J physical pwhistory.conf state is part of the pre-attach
+    // contract: the slot body itself must be well-formed regardless of the
+    // attach phase.
+    if (historyActive) {
+        const auto pwhistoryState =
+            readPwhistoryConfigState(historyCapability->configPath);
+        if (pwhistoryState.broken) {
+            verdict.detail = "pwhistory.conf is unreadable, non-regular, malformed or "
+                "has duplicate managed keys (Rule J; fail closed)";
+            error.clear();
+            return true;
+        }
+        if (pwhistoryState.remember == PwhistoryRememberState::Zero) {
+            verdict.detail = "pwhistory.conf enforces remember=0 (Rule J; fail closed)";
+            error.clear();
+            return true;
+        }
+    }
+
+    // Phase-agnostic live-graph sanity (cheap, always on): duplicate
+    // managed includes and Rule I provider-count overflows are topology
+    // defects regardless of the attach phase and must never pass.
+    if (phase == PamAttachmentValidationPhase::PreAttach) {
+        std::set<std::string> preSelected;
+        std::string preSelectError;
+        if (!selectedPasswordStateIdentifiers(
+                stateDirectory, preSelected, preSelectError)) {
+            verdict.detail =
+                "cannot read pam-auth-update password state (fail closed): " +
+                preSelectError;
+            error.clear();
+            return true;
+        }
+        PamConfiguration preConfiguration(platformConfig);
+        for (const std::string& service : services) {
+            PamEffectiveStack preStack;
+            std::string preStackError;
+            if (!preConfiguration.buildEffectiveStack(
+                    service, PamManagementGroup::Password, preStack,
+                    preStackError)) {
+                verdict.detail =
+                    "cannot build effective Primary password stack for "
+                    "service " + service + " (fail closed): " + preStackError;
+                error.clear();
+                return true;
+            }
+            ManagedPasswordAttachmentObservation preQuality;
+            ManagedPasswordAttachmentObservation preHistory;
+            ManagedPasswordAttachmentObservation preInitial;
+            if (!observeAttachment(preStack, configDirectory / "fic-password-quality",
+                                   "pam_pwquality.so", preQuality, preStackError) ||
+                !observeAttachment(preStack, configDirectory / "fic-password-history",
+                                   "pam_pwhistory.so", preHistory, preStackError) ||
+                !observeAttachment(preStack, configDirectory / "fic-password-history-initial",
+                                   "pam_pwhistory.so", preInitial, preStackError)) {
+                verdict.detail = "cannot prove password attachment: " + preStackError;
+                error.clear();
+                return true;
+            }
+            if (preQuality.providerCount > 1) {
+                verdict.detail =
+                    "more than one pam_pwquality.so in the Primary password "
+                    "stack of service " + service + " (Rule I; fail closed)";
+                error.clear();
+                return true;
+            }
+            if (preQuality.exactIncludeCount > 1 ||
+                preHistory.exactIncludeCount > 1 ||
+                preInitial.exactIncludeCount > 1) {
+                verdict.detail =
+                    "exactly one password include per managed slot is "
+                    "supported; duplicate managed password include "
+                    "(fail closed)";
+                error.clear();
+                return true;
+            }
+            if (preQuality.wrongIncludeKind || preHistory.wrongIncludeKind ||
+                preInitial.wrongIncludeKind) {
+                verdict.detail =
+                    "managed password slot requires password include, not "
+                    "substack or @include (fail closed)";
+                error.clear();
+                return true;
+            }
+            if (historyActive && (preInitial.exactIncludeCount != 0 ||
+                                  preInitial.providerRulesFromSlot != 0)) {
+                verdict.detail =
+                    "FIC history-initial is the live history branch; only "
+                    "the normal managed history slot is supported (fail closed)";
+                error.clear();
+                return true;
+            }
+            const bool qualityHookSelected =
+                preSelected.count("fic-password-quality-hook") != 0;
+            const bool historyHookSelected =
+                preSelected.count("fic-password-history-hook") != 0;
+            if ((qualityActive && qualityHookSelected &&
+                 preQuality.exactIncludeCount == 0 &&
+                 preQuality.providerCount != 0) ||
+                (historyActive && historyHookSelected &&
+                 preHistory.exactIncludeCount == 0 &&
+                 preHistory.providerCount != 0) ||
+                (qualityActive && preQuality.exactIncludeCount == 1 &&
+                 preQuality.providerRulesFromSlot != 1) ||
+                (historyActive && preHistory.exactIncludeCount == 1 &&
+                 preHistory.providerRulesFromSlot != 1)) {
+                verdict.detail =
+                    "FIC password hook requires exactly one password include "
+                    "of the FIC-owned managed slot; pam_pwquality.so/"
+                    "pam_pwhistory.so source is not the managed slot "
+                    "(fail closed)";
+                error.clear();
+                return true;
+            }
+            const bool externalPwqualitySelected =
+                preSelected.count("pwquality") != 0;
+            if (externalPwqualitySelected && qualityActive) {
+                verdict.detail =
+                    "external distro pwquality is selected in the "
+                    "pam-auth-update password state while the FIC password "
+                    "quality slot is active (Rule I ownership conflict; "
+                    "fail closed)";
+                error.clear();
+                return true;
+            }
+            if (externalPwqualitySelected !=
+                    (preQuality.providerCount == 1) &&
+                !(preQuality.providerCount == 1 && qualityActive)) {
+                verdict.detail =
+                    externalPwqualitySelected
+                    ? "distro pwquality is selected in the pam-auth-update "
+                      "password state but the Primary password stack of "
+                      "service " + service +
+                          " contains no pam_pwquality.so provider (Rule I "
+                          "inconsistent external topology; fail closed)"
+                    : "the Primary password stack of service " + service +
+                          " contains pam_pwquality.so but no distro pwquality "
+                          "profile is selected in the pam-auth-update password "
+                          "state (Rule I unmanaged topology; fail closed)";
+                error.clear();
+                return true;
+            }
+            // Rule G (P1-2): control-flow proof over the live graph is
+            // read-only analysis and applies in both attach phases.
+            const std::size_t prePwqualityCount = preQuality.providerCount;
+            if (historyActive || prePwqualityCount == 1) {
+                PamPasswordFlowAnalysis preFlow;
+                std::string preFlowError;
+                if (!analyzePasswordFlow(preStack, platformConfig,
+                                         {prePwqualityCount == 1, historyActive},
+                                         preFlow, preFlowError)) {
+                    verdict.detail =
+                        "Rule G password control flow of service " + service +
+                        " cannot be analyzed (fail closed): " + preFlowError;
+                    error.clear();
+                    return true;
+                }
+                if (!preFlow.violations.empty()) {
+                    verdict.detail =
+                        "Rule G password control flow of service " + service +
+                        " is not proven safe (fail closed): " +
+                        preFlow.violations.front().message;
+                    error.clear();
+                    return true;
+                }
+                if (prePwqualityCount == 1 && !preFlow.qualityNonBypassable) {
+                    verdict.detail =
+                        "Rule G: a successful password-change path of service " +
+                        service + " bypasses pam_pwquality.so (quality "
+                        "enforcement not proven; fail closed)";
+                    error.clear();
+                    return true;
+                }
+                if (historyActive) {
+                    if (!preFlow.historyAlwaysHasTokenProducer) {
+                        verdict.detail =
+                            "Rule G: a successful password-change path of " +
+                            service + " reaches pam_pwhistory.so without a "
+                            "preceding token producer on the same path "
+                            "(fail closed)";
+                        error.clear();
+                        return true;
+                    }
+                    if (!preFlow.historyNonBypassable) {
+                        verdict.detail =
+                            "Rule G: a successful password-change path of " +
+                            service + " bypasses pam_pwhistory.so use_authtok "
+                            "(history recording not proven; fail closed)";
+                        error.clear();
+                        return true;
+                    }
+                }
+            }
+            if (historyActive && preQuality.providerCount == 0) {
+                verdict.detail =
+                    "Rule G: history-only is unsupported: no quality token "
+                    "producer";
+                error.clear();
+                return true;
+            }
+            if (!historyActive && preHistory.providerCount != 0) {
+                verdict.detail =
+                    "foreign history provider: pam_pwhistory.so source is "
+                    "not the FIC-owned fic-password-history slot (fail closed)";
+                error.clear();
+                return true;
+            }
+            if (historyActive && preHistory.exactIncludeCount != 0 &&
+                preHistory.providerCount != preHistory.providerRulesFromSlot) {
+                verdict.detail =
+                    "exactly one pam_pwhistory.so sourced from the FIC-owned "
+                    "fic-password-history slot is supported (fail closed)";
+                error.clear();
+                return true;
+            }
+        }
+    }
+
+    // Step 5B pre-attach phase: the physical/journal proof above is the
+    // pre-attach contract. When the caller explicitly requested the later
+    // ATTACHED phase, the live-graph attachment proof (selected permanent
+    // hooks, exact includes, providers sourced from the managed slots and
+    // the Rule G/J topology) additionally applies.
+    if (phase == PamAttachmentValidationPhase::Attached) {
+        // The helper owns the Attached-phase verdict completely: it returns
+        // true for BOTH safe and unsafe verdicts (an unsafe verdict is not
+        // an error), so its result must never be overwritten here.
+        if (!verifyAttachedTopology(
+                platformConfig, services, stateDirectory, configDirectory,
+                qualityInspection, historyPair, historyOwnership, verdict,
+                error)) {
+            return false;
+        }
+        return true;
+    }
+    verdict.safeToAttach = true;
+    verdict.detail =
+        "FIC password slots are proven safe for the subsequent attach "
+        "(PreAttach phase)";
+    return true;
+}
+
+// Step 5B Attached-phase topology proof (extracted verbatim from the former
+// monolithic Step 5 block; body identical, only the signature changed). The
+// caller has already proven the physical slots and journal provenance.
+bool verifyAttachedTopology(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const std::vector<std::string>& services,
+    const std::filesystem::path& stateDirectory,
+    const std::filesystem::path& configDirectory,
+    const ManagedPasswordSlotInspection& qualityInspection,
+    const ManagedHistoryPairInspection& historyPair,
+    const PamManagedPasswordSlotOwnership& historyOwnership,
+    PamSlotAttachVerdict& verdict,
+    std::string& error) {
+    const bool qualityActive =
+        qualityInspection.state == ManagedPasswordSlotState::Active;
+    const bool historyActive =
+        historyPair.state == ManagedHistoryPairState::Active;
+    const fic::platform::PamCapabilityConfig* historyCapability =
+        capabilityConfig(
+            platformConfig, fic::platform::PamCapability::PasswordHistory);
+    if (historyCapability == nullptr) {
+        error =
+            "password slot attach validation requires the PasswordHistory "
+            "capability config";
+        return false;
+    }
     std::set<std::string> identifiers;
     std::string stateError;
     if (!selectedPasswordStateIdentifiers(
@@ -752,6 +1045,19 @@ bool validatePamPasswordSlotAttach(
     }
 
     // 5. Effective Primary password stacks across all configured services.
+    // Empty configured services (P2, Step 5): the per-service loop below is
+    // the ONLY place the live topology is examined, so an empty service list
+    // would make every per-service check vacuously true and could turn an
+    // unknown topology into an unproven PASS. Fail closed instead: a pam-
+    // auth-update platform profile without configured password services is
+    // a configuration/profile error, never a safe attach state.
+    if (services.empty()) {
+        verdict.detail =
+            "no configured password services on the pam-auth-update "
+            "platform profile (empty service list; fail closed)";
+        error.clear();
+        return true;
+    }
     PamConfiguration configuration(platformConfig);
     for (const std::string& service : services) {
         PamEffectiveStack stack;
@@ -870,12 +1176,14 @@ bool validatePamPasswordSlotAttach(
             error.clear();
             return true;
         }
+        std::string attachedError;
         if ((qualityActive && !verifyActiveAttachment(
                  qualityAttachment, identifiers, "fic-password-quality",
-                 "pam_pwquality.so", verdict.detail)) ||
+                 "pam_pwquality.so", attachedError)) ||
             (historyActive && !verifyActiveAttachment(
                  historyAttachment, identifiers, "fic-password-history",
-                 "pam_pwhistory.so", verdict.detail))) {
+                 "pam_pwhistory.so", attachedError))) {
+            verdict.detail = attachedError;
             error.clear();
             return true;
         }
@@ -965,26 +1273,26 @@ bool validatePamPasswordSlotAttach(
                 }
             }
         }
+    }
 
-        // Rule J: config-file mode has a single authoritative option source.
-        if (historyActive && historyCapability->configurationMode ==
-                fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
-            const auto& slotOptions = *historyOwnership.historyOptions;
-            if (slotOptions.remember.has_value() || slotOptions.enforceForRoot) {
-                verdict.detail = "ProviderConfigFile history slots contain option overrides "
-                    "instead of canonical no-option bodies (Rule J; fail closed)";
-                error.clear();
-                return true;
-            }
-            const auto state = readPwhistoryConfigState(historyCapability->configPath);
-            if (state.broken) {
-                verdict.detail = "pwhistory.conf is unreadable, non-regular, malformed or "
-                    "has duplicate managed keys (Rule J; fail closed)";
-            } else if (state.remember == PwhistoryRememberState::Zero) {
-                verdict.detail = "pwhistory.conf enforces remember=0 (Rule J; fail closed)";
-            } else {
-                continue;
-            }
+    // Rule J: config-file mode has a single authoritative option source.
+    if (historyActive && historyCapability->configurationMode ==
+            fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
+        const auto& slotOptions = *historyOwnership.historyOptions;
+        if (slotOptions.remember.has_value() || slotOptions.enforceForRoot) {
+            verdict.detail = "ProviderConfigFile history slots contain option overrides "
+                "instead of canonical no-option bodies (Rule J; fail closed)";
+            error.clear();
+            return true;
+        }
+        const auto state = readPwhistoryConfigState(historyCapability->configPath);
+        if (state.broken) {
+            verdict.detail = "pwhistory.conf is unreadable, non-regular, malformed or "
+                "has duplicate managed keys (Rule J; fail closed)";
+            error.clear();
+            return true;
+        } else if (state.remember == PwhistoryRememberState::Zero) {
+            verdict.detail = "pwhistory.conf enforces remember=0 (Rule J; fail closed)";
             error.clear();
             return true;
         }

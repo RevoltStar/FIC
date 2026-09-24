@@ -8,10 +8,39 @@
 
 ## Current task
 
-- Исправить последнюю P1: root enforcement — отдельная option policy,
-  а не обязательное условие PasswordHistory attach validation.
-  Для Step 5A получено isolated include evidence; production CLI по-прежнему
-  выполняет только faillock validation.
+- Step 5B (PAM PasswordQuality/PasswordHistory topology): two permanent hook
+  profiles + three managed password slots, bootstrap primitive, and strictly
+  read-only typed Pre-Attach validation (actual hook attach — Step 5C).
+  Текущий статус: фазовая модель PreAttach/Attached в
+  `validatePamPasswordSlotAttach` реализована, полный набор
+  `pam_password_slot_attach_validator_tests` проходит; instrumentation
+  удалена. Оставшийся scope — bootstrap primitive (`fic --maintenance
+  bootstrap-pam-password-slots`), maintenance CLI wiring, packaging payload
+  (hook profiles 1024/1023, три managed slots как package/conffile paths),
+  новые тесты bootstrap, Ubuntu 24.04 + Debian 12 builds, финальный отчёт.
+
+## Phase-model invariants (Step 5B, accepted)
+
+- `validatePamPasswordSlotAttach` имеет перегрузку с
+  `PamAttachmentValidationPhase` (`PreAttach` по умолчанию через старую
+  сигнатуру). Attached-вердикт полностью принадлежит
+  `verifyAttachedTopology`: она возвращает `true` и для safe, и для unsafe
+  вердикта, поэтому после её вызова запрещено перезаписывать `verdict`
+  (именно это было корневой причиной недавнего бага).
+- PreAttach contract — физическое состояние slots + journal provenance +
+  физический `pwhistory.conf` (Rule J) + phase-agnostic структурные
+  дефекты live-графа: Rule I (>1 provider, selection-vs-active ownership
+  conflict, selected-without-provider / provider-without-selection),
+  duplicate managed includes, wrongIncludeKind (substack/@include),
+  history-initial как live branch, foreign pwhistory provider при
+  неактивной history, history-only без quality producer (Rule G), Rule G
+  control-flow analysis над текущим графом, shadow/foreign source при
+  ровно одном include, active slot + selected hook + отсутствующий include
+  при наличии foreign provider. Detached-Active состояния (hook не
+  selected, include отсутствует без foreign provider) в PreAttach — SAFE
+  (их чинит Step 5C), в Attached — UNSAFE.
+- Дубликаты include и wrongIncludeKind фейлятся в обеих фазах независимо
+  от Active-состояния слота.
 
 ## Accepted architecture / invariants
 
@@ -111,6 +140,14 @@
 
 ## Validation
 
+- `cmake --build build-check --target pam_password_slot_attach_validator_tests`
+  — PASS; `pam_password_slot_attach_validator_tests` (ctest #73) — Passed,
+  весь набор тестов проходит 24 сентября после фазовой модели PreAttach/Attached.
+- В процессе отладки batched line-deletions повредили файл
+  (`PamSlotAttachValidator.cpp`): повреждённый фрагмент в
+  `verifyAttachedTopology` (region duplicate-include check) был восстановлен;
+  итоговый diff против HEAD — только additions (проверено `git diff --numstat`),
+  баланс скобок = 0.
 - Все приведённые configure/build, targeted и full CTest повторно выполнены
   для текущего узкого fix 24 сентября; результаты ниже актуальны.
 - Первые параллельные targeted-прогоны столкнулись в общем `/tmp` fixture
