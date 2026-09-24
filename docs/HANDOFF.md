@@ -14,7 +14,13 @@
   Текущий статус: фазовая модель PreAttach/Attached в
   `validatePamPasswordSlotAttach` реализована, полный набор
   `pam_password_slot_attach_validator_tests` проходит; instrumentation
-  удалена. Оставшийся scope — bootstrap primitive (`fic --maintenance
+  удалена. Empty-services P2 закрыт: `services.empty()` — теперь
+  phase-agnostic fail-closed gate в общем коде
+  `validatePamPasswordSlotAttach` (обе фазы дают unsafe verdict,
+  `error` пуст, строго read-only; дубликат из `verifyAttachedTopology`
+  удалён); regression-тест `testEmptyServicesFailsClosedInBothPhases`
+  прогоняет обе фазы через общий helper с fingerprint-проверкой.
+  Оставшийся scope — bootstrap primitive (`fic --maintenance
   bootstrap-pam-password-slots`), maintenance CLI wiring, packaging payload
   (hook profiles 1024/1023, три managed slots как package/conffile paths),
   новые тесты bootstrap, Ubuntu 24.04 + Debian 12 builds, финальный отчёт.
@@ -183,7 +189,9 @@
 
 ## Remaining
 
-- Optional empty-services P2 намеренно оставлен для Step 5 integration review.
+- Step 5B (кроме закрытого empty-services P2) всё ещё НЕ реализован:
+  bootstrap primitive, maintenance CLI wiring, packaging payload,
+  bootstrap-тесты, финальные full-CTest и Debian 12 build.
 
 - Step 5 — следующая отдельная задача: packaging permanent dual-stack hooks,
   conffiles всех трёх slots, guarantees existence, read-only resulting

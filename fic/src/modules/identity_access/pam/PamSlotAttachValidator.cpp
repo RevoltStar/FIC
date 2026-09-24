@@ -560,6 +560,21 @@ bool validatePamPasswordSlotAttach(
     (void)executables;
     verdict = {};
 
+    // Phase-agnostic services invariant (P2): the per-service loop is the
+    // ONLY place the live password topology is examined in either phase,
+    // so an empty service list would make every per-service check
+    // vacuously true and could turn an unknown topology into an unproven
+    // PASS. Fail closed in BOTH phases: a pam-auth-update platform
+    // profile without configured password services is a
+    // configuration/profile error, never a safe attach state.
+    if (services.empty()) {
+        verdict.detail =
+            "no configured password services on the pam-auth-update "
+            "platform profile (empty service list; fail closed)";
+        error.clear();
+        return true;
+    }
+
     const fic::platform::PamCapabilityConfig* qualityCapability =
         capabilityConfig(
             platformConfig, fic::platform::PamCapability::PasswordQuality);
@@ -1045,19 +1060,8 @@ bool verifyAttachedTopology(
     }
 
     // 5. Effective Primary password stacks across all configured services.
-    // Empty configured services (P2, Step 5): the per-service loop below is
-    // the ONLY place the live topology is examined, so an empty service list
-    // would make every per-service check vacuously true and could turn an
-    // unknown topology into an unproven PASS. Fail closed instead: a pam-
-    // auth-update platform profile without configured password services is
-    // a configuration/profile error, never a safe attach state.
-    if (services.empty()) {
-        verdict.detail =
-            "no configured password services on the pam-auth-update "
-            "platform profile (empty service list; fail closed)";
-        error.clear();
-        return true;
-    }
+    // (The empty-services invariant is enforced phase-agnostically at the
+    // top of validatePamPasswordSlotAttach; see the comment there.)
     PamConfiguration configuration(platformConfig);
     for (const std::string& service : services) {
         PamEffectiveStack stack;

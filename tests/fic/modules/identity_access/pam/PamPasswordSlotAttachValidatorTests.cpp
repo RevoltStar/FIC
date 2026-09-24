@@ -1081,6 +1081,50 @@ void testExternalQualityHistoryPass() {
     requireUnchanged(before, snapshot(tree));
 }
 
+// P2: the empty-services invariant is phase-agnostic. The per-service
+// loop is the only live-topology examination in both phases, so an empty
+// service list must fail closed in PreAttach AND Attached — never
+// produce a vacuous safe verdict. Unsafe is not an error: the validator
+// must return true with an empty error in both phases, and stay strictly
+// read-only.
+void testEmptyServicesFailsClosedInBothPhases(const TestTree& tree) {
+    provisionNeutral(tree);
+    seedEmptyJournal(tree.journalPath());
+    auto platform = tree.platform();
+    PamAuthUpdateTopologyManagerOptions options;
+    options.stateDirectory = tree.stateDir();
+    options.configDirectory = tree.root / "pam.d";
+    const auto runPhase =
+        [&](fic::identity::pam::PamAttachmentValidationPhase phase) {
+            PamSlotAttachVerdict verdict;
+            std::string error;
+            const bool ran = fic::identity::pam::validatePamPasswordSlotAttach(
+                platform, {}, resolver(), tree.journalPath(), options,
+                phase, verdict, error);
+            require(ran && error.empty(),
+                    "empty-services validation must run to a verdict "
+                    "(an unsafe verdict is not an error): " + error);
+            require(!verdict.safeToAttach,
+                    "empty services must fail closed (phase " +
+                        std::to_string(static_cast<int>(phase)) + "): " +
+                        verdict.detail);
+            require(verdict.detail.find("empty service list") !=
+                        std::string::npos,
+                    "empty-services detail should mention the empty "
+                    "service list: " + verdict.detail);
+            return verdict;
+        };
+    const StateFingerprint before = snapshot(tree);
+    const PamSlotAttachVerdict pre =
+        runPhase(fic::identity::pam::PamAttachmentValidationPhase::PreAttach);
+    const PamSlotAttachVerdict attached =
+        runPhase(fic::identity::pam::PamAttachmentValidationPhase::Attached);
+    require(pre.detail == attached.detail,
+            "empty-services verdict must be phase-agnostic: \"" +
+                pre.detail + "\" vs \"" + attached.detail + "\"");
+    requireUnchanged(before, snapshot(tree));
+}
+
 } // namespace
 
 int main() {
@@ -1092,73 +1136,44 @@ int main() {
         return EXIT_FAILURE;
     }
     try {
-        std::cerr << "RUN testQualityOnlyMatrix" << std::endl;
         testQualityOnlyMatrix();
-        std::cerr << "RUN testVirginAndJournalMatrix" << std::endl;
         testVirginAndJournalMatrix();
-        std::cerr << "RUN testSlotSymlinks" << std::endl;
         testSlotSymlinks();
-        std::cerr << "RUN testExactAttachmentMatrix" << std::endl;
         testExactAttachmentMatrix();
-        std::cerr << "RUN testConfigModeMatrix" << std::endl;
         testConfigModeMatrix();
-        std::cerr << "RUN testExternalQualityHistoryPass" << std::endl;
         testExternalQualityHistoryPass();
         TestTree tree;
-        std::cerr << "RUN testAllNeutralPass" << std::endl;
         testAllNeutralPass(tree);
-        std::cerr << "RUN testActiveOwnedPass" << std::endl;
         testActiveOwnedPass(tree);
-        std::cerr << "RUN testHistoryOnlyFails" << std::endl;
         testHistoryOnlyFails(tree);
-        std::cerr << "RUN testMissingSlotFails" << std::endl;
         testMissingSlotFails(tree);
-        std::cerr << "RUN testBrokenSlotFails" << std::endl;
         testBrokenSlotFails(tree);
-        std::cerr << "RUN testActiveQualityWithoutJournalFails" << std::endl;
         testActiveQualityWithoutJournalFails(tree);
-        std::cerr << "RUN testWrongPolicyIdentityFails" << std::endl;
         testWrongPolicyIdentityFails(tree);
-        std::cerr << "RUN testDuplicatePwqualityFails" << std::endl;
         testDuplicatePwqualityFails(tree);
-        std::cerr << "RUN testExternalQualityWithFicActiveFails" << std::endl;
         testExternalQualityWithFicActiveFails(tree);
-        std::cerr << "RUN testSelectedWithoutStackIsNotExternal" << std::endl;
         testSelectedWithoutStackIsNotExternal(tree);
-        std::cerr << "RUN testRememberZeroFails" << std::endl;
         testRememberZeroFails(tree);
-        std::cerr << "RUN testHistoryRootOptionMatrix" << std::endl;
         testHistoryRootOptionMatrix();
-        std::cerr << "RUN testReadOnlyOnPass" << std::endl;
         testReadOnlyOnPass(tree);
-        std::cerr << "RUN testReadOnlyOnFail" << std::endl;
         testReadOnlyOnFail(tree);
         // P1-4: Neutral ⇔ Unbound journal provenance.
-        std::cerr << "RUN testNeutralQualityAppliedJournalFails" << std::endl;
         testNeutralQualityAppliedJournalFails(tree);
-        std::cerr << "RUN testNeutralQualityPreparedJournalFails" << std::endl;
         testNeutralQualityPreparedJournalFails(tree);
-        std::cerr << "RUN testNeutralHistoryAppliedJournalFails" << std::endl;
         testNeutralHistoryAppliedJournalFails(tree);
-        std::cerr << "RUN testNeutralHistoryPreparedJournalFails" << std::endl;
         testNeutralHistoryPreparedJournalFails(tree);
-        std::cerr << "RUN testNeutralUnboundJournalPasses" << std::endl;
         testNeutralUnboundJournalPasses(tree);
-        std::cerr << "RUN testMultipleDomainRecordsConflict" << std::endl;
         testMultipleDomainRecordsConflict(tree);
-        std::cerr << "RUN testReadOnlyOnStaleJournalFail" << std::endl;
         testReadOnlyOnStaleJournalFail(tree);
         // P1-2: explicit jump graphs through the validator.
-        std::cerr << "RUN testValidatorRejectsJumpOverHistory" << std::endl;
         testValidatorRejectsJumpOverHistory(tree);
-        std::cerr << "RUN testValidatorRejectsJumpOverProducer" << std::endl;
         testValidatorRejectsJumpOverProducer(tree);
-        std::cerr << "RUN testValidatorRejectsHistoryBeforeProducer" << std::endl;
         testValidatorRejectsHistoryBeforeProducer(tree);
         // P1-3: selection/provider topology matrix.
-        std::cerr << "RUN testProviderWithoutSelectionFails" << std::endl;
         testProviderWithoutSelectionFails(tree);
         // P2-1: conf-mode typed remember semantics.
+        // P2: empty service list is a phase-agnostic fail-closed invariant.
+        testEmptyServicesFailsClosedInBothPhases(tree);
     } catch (const std::exception& exception) {
         std::cerr << "PamPasswordSlotAttachValidatorTests failed: "
                   << exception.what() << '\n';
