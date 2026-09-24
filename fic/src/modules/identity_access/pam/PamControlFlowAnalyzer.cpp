@@ -459,7 +459,7 @@ void recordEvidence(ExecutionState& state,
                 state.evidence.passwordTokenProduced = true;
             }
         }
-        if (module == "pam_pwhistory.so") {
+        if (module == "pam_pwhistory.so" && hasArgument(rule, "use_authtok")) {
             if (!state.evidence.passwordHistoryReached) {
                 state.evidence.passwordHistoryTokenAvailable =
                     state.evidence.passwordTokenProduced;
@@ -1087,6 +1087,7 @@ enum class PasswordFlowResult {
 PasswordFlowResult analyzePasswordFlowInternal(
     const PamEffectiveStack& stack,
     const fic::platform::PamPlatformConfig& platformConfig,
+    const PamPasswordFlowRequirements& requirements,
     PamPasswordFlowAnalysis& analysis,
     std::string& error) {
     analysis = PamPasswordFlowAnalysis{};
@@ -1165,18 +1166,19 @@ PasswordFlowResult analyzePasswordFlowInternal(
             !producerBeforeHistory) {
             analysis.historyAlwaysHasTokenProducer = false;
         }
-        if (!analysis.qualityNonBypassable ||
-            !analysis.historyNonBypassable ||
-            !analysis.historyAlwaysHasTokenProducer) {
+        if (analysis.violations.empty() &&
+            ((requirements.requireQuality && !qualityOnPath) ||
+             (requirements.requireHistory &&
+              (!historyOnPath || !producerBeforeHistory)))) {
             PamFlowViolation violation;
             violation.kind =
                 PamFlowViolationKind::PasswordEnforcementBypass;
             violation.service = stack.service;
             violation.group = PamManagementGroup::Password;
             violation.message =
-                !analysis.qualityNonBypassable
+                requirements.requireQuality && !qualityOnPath
                 ? "successful password-change path bypasses pam_pwquality.so"
-                : !analysis.historyNonBypassable
+                : !historyOnPath
                 ? "successful password-change path bypasses "
                   "pam_pwhistory.so use_authtok"
                 : "successful password-change path reaches "
@@ -1185,7 +1187,6 @@ PasswordFlowResult analyzePasswordFlowInternal(
             violation.path = state.trace;
             violation.pathTruncated = state.traceTruncated;
             analysis.violations.push_back(std::move(violation));
-            return PasswordFlowResult::Analyzed;
         }
     }
     return PasswordFlowResult::Analyzed;
@@ -1446,13 +1447,14 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
 bool analyzePasswordFlow(
     const PamEffectiveStack& stack,
     const fic::platform::PamPlatformConfig& platformConfig,
+    const PamPasswordFlowRequirements& requirements,
     PamPasswordFlowAnalysis& analysis,
     std::string& error) {
     // The internal analysis reports a bypass by leaving the violated
     // property false AND pushing a violation; an execution error (budget,
     // substack depth, parse-adjacent failures) is the only Error case.
     return analyzePasswordFlowInternal(
-               stack, platformConfig, analysis, error) ==
+               stack, platformConfig, requirements, analysis, error) ==
         PasswordFlowResult::Analyzed;
 }
 

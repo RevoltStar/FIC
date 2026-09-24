@@ -10,6 +10,8 @@
 #include <fic/core/runtime/FicRuntimePaths.h>
 
 #include <array>
+#include <algorithm>
+#include <optional>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -306,11 +308,8 @@ void writePasswordState(const TestTree& tree, const char* content) {
     writeFile(tree.stateFilePath(), content);
 }
 
-// 1. All slots neutral + no external provider: safe (neutral baseline).
-// The journal is seeded as a proven witness-aware persistent state with NO
-// domain records (Unbound provenance) — the read-only validator must fail
-// closed on an un-bootstrapped journal (that is the intended P1-1
-// semantics); tests model a validly initialized runtime state.
+// Initialized Neutral baseline: both domains are Unbound. Virgin pre-attach
+// is covered independently by testVirginAndJournalMatrix.
 void testAllNeutralPass(const TestTree& tree) {
     for (const fs::path& slot : tree.slotPaths()) {
         writeFile(slot, neutralSlot());
@@ -346,30 +345,28 @@ void testActiveOwnedPass(const TestTree& tree) {
     // hook include (Rule G, FIC provider scenario).
     writeStack(
         tree,
-        "password requisite pam_pwquality.so retry=3\n"
+        "password include fic-password-quality\n"
         "password include fic-password-history\n"
         "password required pam_unix.so\n");
-    writePasswordState(tree, kPasswordStateClean);
+    writePasswordState(tree, "Module: fic-password-quality-hook\n"
+                             "Module: fic-password-history-hook\n");
     requireSafe(tree, tree.journalPath());
 }
 
 // 14/15. The validator is strictly read-only on the PASS and FAIL paths.
 StateFingerprint snapshot(const TestTree& tree) {
     StateFingerprint state;
-    std::error_code ignored;
     std::vector<fs::path> paths;
-    for (const fs::path& slot : tree.slotPaths()) {
-        paths.push_back(slot);
+    for (const auto& entry : fs::recursive_directory_iterator(tree.root)) {
+        paths.push_back(entry.path());
     }
-    paths.push_back(tree.journalPath());
-    paths.push_back(MutationJournal(tree.journalPath()).witnessPath());
-    paths.push_back(tree.stackPath());
-    paths.push_back(tree.stateFilePath());
-    paths.push_back(tree.confPath());
-    for (const fs::path& path : paths) {
-        if (fs::is_regular_file(path, ignored)) {
-            state.files.emplace_back(path, readFile(path));
-        }
+    std::sort(paths.begin(), paths.end());
+    for (const auto& path : paths) {
+        const auto status = fs::symlink_status(path);
+        std::string value = std::to_string(static_cast<int>(status.type())) + ":";
+        if (fs::is_symlink(status)) value += fs::read_symlink(path).string();
+        else if (fs::is_regular_file(status)) value += readFile(path);
+        state.files.emplace_back(path, value);
     }
     return state;
 }
@@ -416,8 +413,9 @@ void testHistoryOnlyFails(const TestTree& tree) {
               activeHistoryInitialSlot(
                   reboundHistoryId,
                   ManagedPwhistorySlotOptions{10u, true}));
-    writeStack(tree, TestTree::kPlainStack);
-    writePasswordState(tree, kPasswordStateClean);
+    writeStack(tree, "password include fic-password-history\n"
+                     "password required pam_unix.so\n");
+    writePasswordState(tree, "Module: fic-password-history-hook\n");
     std::string error;
     const PamSlotAttachVerdict verdict =
         validate(tree, tree.journalPath(), error);
@@ -577,8 +575,10 @@ void testRememberZeroFails(const TestTree& tree) {
     writeFile(tree.root / "pam.d/fic-password-history-initial",
               activeHistoryInitialSlot(
                   historyId, ManagedPwhistorySlotOptions{0u, true}));
-    writeStack(tree, TestTree::kDistroQualityStack);
-    writePasswordState(tree, kPasswordStateClean);
+    writeStack(tree, "password requisite pam_pwquality.so\n"
+                     "password include fic-password-history\n"
+                     "password required pam_unix.so\n");
+    writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
     requireUnsafe(tree, tree.journalPath(), "remember=0");
 }
 
@@ -595,54 +595,12 @@ void testEnforceForRootMissingFails(const TestTree& tree) {
     writeFile(tree.root / "pam.d/fic-password-history-initial",
               activeHistoryInitialSlot(
                   historyId, ManagedPwhistorySlotOptions{10u, false}));
-    writeStack(tree, TestTree::kDistroQualityStack);
-    writePasswordState(tree, kPasswordStateClean);
+    writeStack(tree, "password requisite pam_pwquality.so\n"
+                     "password include fic-password-history\n"
+                     "password required pam_unix.so\n");
+    writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
     requireUnsafe(tree, tree.journalPath(), "enforce_for_root");
 }
-
-// 13. Rule J: conf-mode remember=0 in pwhistory.conf: fail closed. The
-// distro pwquality selection is modeled explicitly (selected + effective
-// external provider) so the Rule I topology check passes and the conf-mode
-// verdict is reachable.
-void testConfModeRememberZeroFails(const TestTree& tree) {
-    seedEmptyJournal(tree.journalPath());
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history-initial",
-              neutralSlot());
-    // The distro pwquality provider is selected AND effective, and a
-    // live pwhistory rule is attached through a generated hook-include
-    // file (not a managed slot; the slot files stay canonical neutral),
-    // so the Rule G flow proof passes and the conf-mode verdict is
-    // reachable.
-    writeStack(
-        tree,
-        "password requisite pam_pwquality.so retry=3\n"
-        "password include fic-password-history-live\n"
-        "password required pam_unix.so\n");
-    writeFile(tree.root / "pam.d/fic-password-history-live",
-              "password requisite pam_pwhistory.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
-    auto platform = tree.platform();
-    platform.capabilities[1].configurationMode =
-        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
-    writeFile(tree.confPath(), "remember = 0\nenforce_for_root = true\n");
-    PamAuthUpdateTopologyManagerOptions options;
-    options.stateDirectory = tree.stateDir();
-    options.configDirectory = tree.root / "pam.d";
-    PamSlotAttachVerdict verdict;
-    std::string error;
-    require(
-        fic::identity::pam::validatePamPasswordSlotAttach(
-            platform, {"passwd"}, resolver(), tree.journalPath(), options,
-            verdict, error),
-        error);
-    require(!verdict.safeToAttach,
-            "expected conf-mode remember=0 to fail closed, got safe");
-    require(verdict.detail.find("remember=0") != std::string::npos,
-            "conf-mode detail should mention remember=0: " + verdict.detail);
-}
-
 
 void testReadOnlyOnFail(const TestTree& tree) {
     testRememberZeroFails(tree);
@@ -769,7 +727,7 @@ void testValidatorRejectsJumpOverHistory(const TestTree& tree) {
         "password [success=1 default=ignore] pam_pwquality.so retry=3\n"
         "password include fic-password-history\n"
         "password required pam_unix.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
+    writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
     requireUnsafe(tree, tree.journalPath(), "Rule G");
 }
 
@@ -797,7 +755,7 @@ void testValidatorRejectsJumpOverProducer(const TestTree& tree) {
         "password requisite pam_pwquality.so retry=3\n"
         "password include fic-password-history\n"
         "password required pam_unix.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
+    writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
     requireUnsafe(tree, tree.journalPath(), "Rule G");
 }
 
@@ -819,7 +777,7 @@ void testValidatorRejectsHistoryBeforeProducer(const TestTree& tree) {
         "password include fic-password-history\n"
         "password requisite pam_pwquality.so retry=3\n"
         "password required pam_unix.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
+    writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
     requireUnsafe(tree, tree.journalPath(), "Rule G");
 }
 
@@ -835,184 +793,233 @@ void testProviderWithoutSelectionFails(const TestTree& tree) {
     requireUnsafe(tree, tree.journalPath(), "unmanaged topology");
 }
 
-// ---------------------------------------------------------------------------
-// P2-1 hardening tests: conf-mode typed remember semantics.
-// ---------------------------------------------------------------------------
-
-// remember=10 in pwhistory.conf with a live history branch (conf-mode):
-// pass.
-void testConfModeRememberNonZeroPasses(const TestTree& tree) {
-    seedEmptyJournal(tree.journalPath());
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history-initial",
-              neutralSlot());
-    writeStack(
-        tree,
-        "password requisite pam_pwquality.so retry=3\n"
-        "password include fic-password-history-live\n"
-        "password required pam_unix.so\n");
-    writeFile(tree.root / "pam.d/fic-password-history-live",
-              "password requisite pam_pwhistory.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
-    auto platform = tree.platform();
-    platform.capabilities[1].configurationMode =
-        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
-    writeFile(tree.confPath(), "remember = 10\nenforce_for_root = true\n");
-    PamAuthUpdateTopologyManagerOptions options;
-    options.stateDirectory = tree.stateDir();
-    options.configDirectory = tree.root / "pam.d";
-    PamSlotAttachVerdict verdict;
-    std::string error;
-    require(
-        fic::identity::pam::validatePamPasswordSlotAttach(
-            platform, {"passwd"}, resolver(), tree.journalPath(), options,
-            verdict, error),
-        error);
-    require(verdict.safeToAttach,
-            "conf-mode remember=10 must pass: " + verdict.detail);
+// Fresh fixtures for each case prevent old selection/config/provenance from
+// masking the invariant under test.
+void provisionNeutral(const TestTree& tree) {
+    for (const auto& slot : tree.slotPaths()) writeFile(slot, neutralSlot());
 }
 
-// Missing pwhistory.conf with a live history branch (conf-mode): the
-// documented nonzero module default applies, pass.
-void testConfModeMissingConfigPasses(const TestTree& tree) {
-    seedEmptyJournal(tree.journalPath());
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history-initial",
-              neutralSlot());
-    writeStack(
-        tree,
-        "password requisite pam_pwquality.so retry=3\n"
-        "password include fic-password-history-live\n"
-        "password required pam_unix.so\n");
-    writeFile(tree.root / "pam.d/fic-password-history-live",
-              "password requisite pam_pwhistory.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
-    auto platform = tree.platform();
-    platform.capabilities[1].configurationMode =
-        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
-    // No pwhistory.conf is written: the documented default remember is
-    // nonzero.
-    PamAuthUpdateTopologyManagerOptions options;
-    options.stateDirectory = tree.stateDir();
-    options.configDirectory = tree.root / "pam.d";
-    PamSlotAttachVerdict verdict;
-    std::string error;
-    require(
-        fic::identity::pam::validatePamPasswordSlotAttach(
-            platform, {"passwd"}, resolver(), tree.journalPath(), options,
-            verdict, error),
-        error);
-    require(verdict.safeToAttach,
-            "missing pwhistory.conf (documented nonzero default) must "
-            "pass: " +
-                verdict.detail);
+void provisionHistory(const TestTree& tree, ManagedPwhistorySlotOptions options) {
+    const auto id = seedHistoryJournal(tree.journalPath(), MutationStatus::Applied);
+    writeFile(tree.slotPaths()[1], activeHistoryNormalSlot(id, options));
+    writeFile(tree.slotPaths()[2], activeHistoryInitialSlot(id, options));
 }
 
-// Unreadable pwhistory.conf: fail closed. The capability configPath in
-// this fixture points INTO the (regular-file) path that TestTree already
-// created in its constructor, so this test models the unreadable state
-// with a broken non-numeric remember value + a trailing NUL byte, which
-// the typed reader classifies as Broken.
-void testConfModeUnreadableConfigFails(const TestTree& tree) {
-    seedEmptyJournal(tree.journalPath());
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history-initial",
-              neutralSlot());
-    writeStack(
-        tree,
-        "password requisite pam_pwquality.so retry=3\n"
-        "password include fic-password-history-live\n"
-        "password required pam_unix.so\n");
-    writeFile(tree.root / "pam.d/fic-password-history-live",
-              "password requisite pam_pwhistory.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
-    auto platform = tree.platform();
-    platform.capabilities[1].configurationMode =
-        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
-    writeFile(tree.confPath(), "remember\nremember =\n");
-    PamAuthUpdateTopologyManagerOptions options;
-    options.stateDirectory = tree.stateDir();
-    options.configDirectory = tree.root / "pam.d";
-    PamSlotAttachVerdict verdict;
-    std::string error;
-    require(
-        fic::identity::pam::validatePamPasswordSlotAttach(
-            platform, {"passwd"}, resolver(), tree.journalPath(), options,
-            verdict, error),
-        error);
-    require(!verdict.safeToAttach,
-            "unreadable pwhistory.conf must fail closed: " + verdict.detail);
+void checkReadOnly(const TestTree& tree, bool safe, const std::string& detail = {}) {
+    const auto before = snapshot(tree);
+    if (safe) requireSafe(tree, tree.journalPath());
+    else requireUnsafe(tree, tree.journalPath(), detail);
+    requireUnchanged(before, snapshot(tree));
 }
 
-// Malformed remember value: fail closed.
-void testConfModeMalformedRememberFails(const TestTree& tree) {
-    seedEmptyJournal(tree.journalPath());
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history-initial",
-              neutralSlot());
-    writeStack(
-        tree,
-        "password requisite pam_pwquality.so retry=3\n"
-        "password include fic-password-history-live\n"
-        "password required pam_unix.so\n");
-    writeFile(tree.root / "pam.d/fic-password-history-live",
-              "password requisite pam_pwhistory.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
-    auto platform = tree.platform();
-    platform.capabilities[1].configurationMode =
-        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
-    writeFile(tree.confPath(), "remember = ten\n");
-    PamAuthUpdateTopologyManagerOptions options;
-    options.stateDirectory = tree.stateDir();
-    options.configDirectory = tree.root / "pam.d";
-    PamSlotAttachVerdict verdict;
-    std::string error;
-    require(
-        fic::identity::pam::validatePamPasswordSlotAttach(
-            platform, {"passwd"}, resolver(), tree.journalPath(), options,
-            verdict, error),
-        error);
-    require(!verdict.safeToAttach,
-            "malformed remember value must fail closed: " + verdict.detail);
+void testQualityOnlyMatrix() {
+    {
+        TestTree tree;
+        provisionNeutral(tree);
+        writeStack(tree, "password include fic-password-quality\n"
+                         "password include fic-password-quality\n"
+                         "password required pam_unix.so\n");
+        checkReadOnly(tree, false, "duplicate managed password include");
+    }
+    for (const bool owned : {false, true}) {
+        TestTree tree;
+        provisionNeutral(tree);
+        if (owned) {
+            const auto id = seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
+            writeFile(tree.slotPaths()[0], activeQualitySlot(id));
+            writeStack(tree, "password include fic-password-quality\n"
+                             "password required pam_unix.so\n");
+            writePasswordState(tree, "Module: fic-password-quality-hook\n");
+        } else {
+            writeStack(tree, TestTree::kDistroQualityStack);
+            writePasswordState(tree, "Module: pwquality\n");
+        }
+        checkReadOnly(tree, true);
+    }
 }
 
-// Conflicting duplicate remember directives: fail closed (never last-wins
-// guessing).
-void testConfModeConflictingRememberFails(const TestTree& tree) {
-    seedEmptyJournal(tree.journalPath());
-    writeFile(tree.root / "pam.d/fic-password-quality", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history", neutralSlot());
-    writeFile(tree.root / "pam.d/fic-password-history-initial",
-              neutralSlot());
-    writeStack(
-        tree,
-        "password requisite pam_pwquality.so retry=3\n"
-        "password include fic-password-history-live\n"
-        "password required pam_unix.so\n");
-    writeFile(tree.root / "pam.d/fic-password-history-live",
-              "password requisite pam_pwhistory.so use_authtok\n");
-    writePasswordState(tree, "Module: pwquality\n");
-    auto platform = tree.platform();
-    platform.capabilities[1].configurationMode =
-        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
-    writeFile(tree.confPath(), "remember = 10\nremember = 0\n");
+void testVirginAndJournalMatrix() {
+    TestTree virgin;
+    provisionNeutral(virgin);
+    checkReadOnly(virgin, true); // No state database, hooks, db directory or J/W.
+    require(!fs::exists(virgin.journalPath()) &&
+            !fs::exists(MutationJournal(virgin.journalPath()).witnessPath()) &&
+            !fs::exists(virgin.journalPath().parent_path()), "virgin validation bootstrapped state");
+    writeFile(virgin.slotPaths()[0], activeQualitySlot(1));
+    checkReadOnly(virgin, false, "ownership");
+    for (int scenario = 0; scenario < 6; ++scenario) {
+        TestTree tree;
+        provisionNeutral(tree);
+        seedEmptyJournal(tree.journalPath());
+        const auto witness = MutationJournal(tree.journalPath()).witnessPath();
+        if (scenario == 0) fs::remove(tree.journalPath());
+        if (scenario == 1) fs::remove(witness);
+        if (scenario == 2) writeFile(witness, "invalid\n");
+        if (scenario == 3) writeFile(tree.journalPath(), "invalid\n");
+        if (scenario == 4) {
+            fs::remove(tree.journalPath());
+            fs::remove(witness);
+            fs::create_symlink(tree.root / "missing", witness);
+        }
+        checkReadOnly(tree, scenario == 5);
+    }
+}
+
+void testSlotSymlinks() {
+    for (std::size_t index = 0; index < 3; ++index) {
+        TestTree tree;
+        provisionNeutral(tree);
+        const auto target = tree.root / "neutral-target";
+        writeFile(target, neutralSlot());
+        fs::remove(tree.slotPaths()[index]);
+        fs::create_symlink(target, tree.slotPaths()[index]);
+        checkReadOnly(tree, false, "symlink");
+    }
+}
+
+void testExactAttachmentMatrix() {
+    struct Case { bool history; const char* selection; const char* graph; const char* diagnostic; };
+    const Case cases[] = {
+        {false, "", "password requisite pam_pwquality.so retry=3\n", "not selected"},
+        {false, "Module: fic-password-quality-hook\n", "password requisite pam_pwquality.so retry=3\n", "exactly one password include"},
+        {false, "", "password include fic-password-quality\n", "not selected"},
+        {false, "Module: fic-password-quality-hook-extra\n", "password include fic-password-quality\n", "not selected"},
+        {false, "Module: fic-password-quality-hook\n", "password substack fic-password-quality\n", "requires password include"},
+        {false, "Module: fic-password-quality-hook\n", "@include fic-password-quality\n", "requires password include"},
+        {false, "Module: fic-password-quality-hook\n", "password include fic-password-quality\npassword include fic-password-quality\n", "Rule I"},
+        {true, "Module: pwquality\n", "password include fic-password-history\n", "not selected"},
+        {true, "Module: pwquality\nModule: fic-password-history-hook\n", "password requisite pam_pwhistory.so use_authtok\n", "exactly one password include"},
+        {true, "Module: pwquality\nModule: fic-password-history-hook\n", "password include fic-password-history-initial\n", "history-initial"},
+        {true, "Module: pwquality\nModule: fic-password-history-hook\n", "password substack fic-password-history\n", "requires password include"},
+        {true, "Module: pwquality\nModule: fic-password-history-hook\n", "password include fic-password-history\npassword requisite pam_pwhistory.so use_authtok\n", "exactly one pam_pwhistory.so"},
+        {true, "Module: pwquality\nModule: fic-password-history-hook\n", "password include fic-password-history\npassword include fic-password-history\n", "exactly one password include"},
+    };
+    for (const auto& c : cases) {
+        TestTree tree;
+        provisionNeutral(tree);
+        std::string graph;
+        if (c.history) {
+            provisionHistory(tree, {10u, true});
+            graph = "password requisite pam_pwquality.so retry=3\n";
+        } else {
+            const auto id = seedQualityJournal(tree.journalPath(), MutationStatus::Applied);
+            writeFile(tree.slotPaths()[0], activeQualitySlot(id));
+        }
+        graph += c.graph;
+        graph += "password required pam_unix.so\n";
+        writeStack(tree, graph.c_str());
+        writePasswordState(tree, c.selection);
+        checkReadOnly(tree, false, c.diagnostic);
+    }
+    // Exact include filename alone is insufficient: PAM resolves a foreign
+    // same-name file from a higher-priority configuration directory.
+    for (const bool history : {false, true}) {
+        TestTree tree;
+        provisionNeutral(tree);
+        const auto slot = history ? tree.slotPaths()[1] : tree.slotPaths()[0];
+        if (history) provisionHistory(tree, {10u, true});
+        else writeFile(slot, activeQualitySlot(seedQualityJournal(tree.journalPath(), MutationStatus::Applied)));
+        auto platform = tree.platform();
+        platform.configDirectories.insert(platform.configDirectories.begin(), tree.root / "foreign");
+        writeFile(tree.root / "foreign" / slot.filename(), readFile(slot));
+        writeStack(tree, history
+            ? "password requisite pam_pwquality.so\npassword include fic-password-history\npassword required pam_unix.so\n"
+            : "password include fic-password-quality\npassword required pam_unix.so\n");
+        writePasswordState(tree, history
+            ? "Module: pwquality\nModule: fic-password-history-hook\n"
+            : "Module: fic-password-quality-hook\n");
+        const auto before = snapshot(tree);
+        PamAuthUpdateTopologyManagerOptions options;
+        options.configDirectory = tree.root / "pam.d";
+        options.stateDirectory = tree.stateDir();
+        PamSlotAttachVerdict verdict;
+        std::string error;
+        require(fic::identity::pam::validatePamPasswordSlotAttach(platform, {"passwd"}, resolver(),
+                    tree.journalPath(), options, verdict, error), error);
+        require(!verdict.safeToAttach && verdict.detail.find("source is not") != std::string::npos,
+                "foreign same-name slot accepted: " + verdict.detail);
+        requireUnchanged(before, snapshot(tree));
+    }
+    TestTree foreign;
+    provisionNeutral(foreign);
+    writeStack(foreign, "password requisite pam_pwquality.so\n"
+                       "password requisite pam_pwhistory.so use_authtok\n"
+                       "password required pam_unix.so\n");
+    writePasswordState(foreign, "Module: pwquality\n");
+    checkReadOnly(foreign, false, "foreign history provider");
+}
+
+void testConfigModeMatrix() {
+    struct Case { std::optional<std::string> config; bool safe; const char* detail; int object = 0; };
+    const Case cases[] = {
+        {"remember = 10\nenforce_for_root\n", true, ""},
+        {"enforce_for_root\n", true, ""}, // Documented nonzero remember default.
+        {"remember = 0\nenforce_for_root\n", false, "remember=0"},
+        {"remember = 10\n", false, "enforce_for_root"},
+        {std::nullopt, false, "enforce_for_root"},
+        {"remember\nenforce_for_root\n", false, "malformed"},
+        {"remember = ten\nenforce_for_root\n", false, "malformed"},
+        {"remember = 4294967296\nenforce_for_root\n", false, "malformed"},
+        {"remember = 10\nremember = 0\nenforce_for_root\n", false, "duplicate"},
+        {"remember = 10\nremember = 20\nenforce_for_root\n", false, "duplicate"},
+        {"remember = 10\nremember = 10\nenforce_for_root\n", false, "duplicate"},
+        {"remember = 10\nenforce_for_root\nenforce_for_root\n", false, "duplicate"},
+        {"remember = 10\nenforce_for_root = false\n", false, "malformed"},
+        {"remember = 10\nenforce_for_root\nretry = 3\ndebug\n", true, ""},
+        {std::nullopt, false, "non-regular", 1},
+        {std::nullopt, false, "unreadable", 2},
+        {std::nullopt, false, "non-regular", 3},
+        {std::nullopt, false, "non-regular", 4},
+    };
+    for (const auto& c : cases) {
+        TestTree tree;
+        provisionNeutral(tree);
+        provisionHistory(tree, {}); // Real conf-mode canonical no-argument pair.
+        writeStack(tree, "password requisite pam_pwquality.so\n"
+                         "password include fic-password-history\n"
+                         "password required pam_unix.so\n");
+        writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
+        if (c.config) writeFile(tree.confPath(), *c.config);
+        if (c.object == 1) fs::create_directory(tree.confPath());
+        if (c.object == 2) writeFile(tree.confPath(), "blocking regular parent");
+        if (c.object == 3) fs::create_symlink(tree.root / "missing", tree.confPath());
+        if (c.object == 4) require(::mkfifo(tree.confPath().c_str(), 0600) == 0, "mkfifo");
+        auto platform = tree.platform();
+        if (c.object == 2) platform.capabilities[1].configPath = tree.confPath() / "unreadable";
+        platform.capabilities[1].configurationMode = fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+        PamAuthUpdateTopologyManagerOptions options;
+        options.configDirectory = tree.root / "pam.d";
+        options.stateDirectory = tree.stateDir();
+        const auto before = snapshot(tree);
+        PamSlotAttachVerdict verdict;
+        std::string error;
+        require(fic::identity::pam::validatePamPasswordSlotAttach(platform, {"passwd"}, resolver(),
+                    tree.journalPath(), options, verdict, error), error);
+        require(verdict.safeToAttach == c.safe && (c.safe || verdict.detail.find(c.detail) != std::string::npos),
+                "config-mode verdict: " + verdict.detail);
+        requireUnchanged(before, snapshot(tree));
+    }
+}
+
+void testExternalQualityHistoryPass() {
+    TestTree tree;
+    provisionNeutral(tree);
+    provisionHistory(tree, {10u, true});
+    writeFile(tree.root / "pam.d/passwd", "@include common-password\n");
+    writeFile(tree.stackPath(), "password requisite pam_pwquality.so\n"
+                                "password include fic-password-history\n"
+                                "password required pam_unix.so\n");
+    writePasswordState(tree, "Module: pwquality\nModule: fic-password-history-hook\n");
+    checkReadOnly(tree, true);
+    const auto before = snapshot(tree);
     PamAuthUpdateTopologyManagerOptions options;
-    options.stateDirectory = tree.stateDir();
     options.configDirectory = tree.root / "pam.d";
+    options.stateDirectory = tree.stateDir();
     PamSlotAttachVerdict verdict;
     std::string error;
-    require(
-        fic::identity::pam::validatePamPasswordSlotAttach(
-            platform, {"passwd"}, resolver(), tree.journalPath(), options,
-            verdict, error),
-        error);
-    require(!verdict.safeToAttach,
-            "conflicting remember directives must fail closed: " +
-                verdict.detail);
+    require(fic::identity::pam::validatePamPasswordSlotAttach(tree.platform(), {"passwd", "common-password"}, resolver(),
+                tree.journalPath(), options, verdict, error) && verdict.safeToAttach, verdict.detail + error);
+    requireUnchanged(before, snapshot(tree));
 }
 
 } // namespace
@@ -1026,6 +1033,12 @@ int main() {
         return EXIT_FAILURE;
     }
     try {
+        testQualityOnlyMatrix();
+        testVirginAndJournalMatrix();
+        testSlotSymlinks();
+        testExactAttachmentMatrix();
+        testConfigModeMatrix();
+        testExternalQualityHistoryPass();
         TestTree tree;
         testAllNeutralPass(tree);
         testActiveOwnedPass(tree);
@@ -1039,7 +1052,6 @@ int main() {
         testSelectedWithoutStackIsNotExternal(tree);
         testRememberZeroFails(tree);
         testEnforceForRootMissingFails(tree);
-        testConfModeRememberZeroFails(tree);
         testReadOnlyOnPass(tree);
         testReadOnlyOnFail(tree);
         // P1-4: Neutral ⇔ Unbound journal provenance.
@@ -1057,11 +1069,6 @@ int main() {
         // P1-3: selection/provider topology matrix.
         testProviderWithoutSelectionFails(tree);
         // P2-1: conf-mode typed remember semantics.
-        testConfModeRememberNonZeroPasses(tree);
-        testConfModeMissingConfigPasses(tree);
-        testConfModeUnreadableConfigFails(tree);
-        testConfModeMalformedRememberFails(tree);
-        testConfModeConflictingRememberFails(tree);
     } catch (const std::exception& exception) {
         std::cerr << "PamPasswordSlotAttachValidatorTests failed: "
                   << exception.what() << '\n';

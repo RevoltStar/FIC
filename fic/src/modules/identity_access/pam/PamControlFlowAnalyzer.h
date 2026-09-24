@@ -73,9 +73,16 @@ struct PamControlFlowAnalysis {
         acceptedTrustedAuthenticationExclusions;
 };
 
+// Requirements gate violations; observations are computed independently.
+// Required history also requires a quality token producer before history.
 // Password-specific control-flow analysis (Rule G security proof). All
 // answers come from symbolic execution of the real Linux-PAM control flow
 // over the parsed effective stack — never from textual index ordering.
+struct PamPasswordFlowRequirements {
+    bool requireQuality = false;
+    bool requireHistory = false;
+};
+
 struct PamPasswordFlowAnalysis {
     // No successful password-change path skips pam_pwquality.so.
     bool qualityNonBypassable = false;
@@ -127,6 +134,7 @@ std::string formatPamFlowViolation(const PamFlowViolation& violation);
 // (fail closed).
 bool analyzePasswordFlow(const PamEffectiveStack& stack,
                          const fic::platform::PamPlatformConfig& platformConfig,
+                         const PamPasswordFlowRequirements& requirements,
                          PamPasswordFlowAnalysis& analysis,
                          std::string& error);
 

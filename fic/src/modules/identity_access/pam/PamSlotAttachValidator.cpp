@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -239,164 +240,167 @@ bool selectedPasswordStateIdentifiers(
     return true;
 }
 
-// Flattens an effective stack into one ordered rule sequence. Substacks
-// are expanded in place so ordering guarantees (Rule G token-producer
-// position relative to the FIC history include) can be checked across
-// include boundaries.
-void flattenStackRules(const std::vector<PamStackEntry>& entries,
-                       std::vector<PamRule>& rules) {
-    for (const PamStackEntry& entry : entries) {
-        rules.push_back(entry.rule);
-        flattenStackRules(entry.substack, rules);
+// Observe the expanded provider sources independently from physical include
+// attachment. Includes disappear during expansion; substacks retain scope.
+struct ManagedPasswordAttachmentObservation {
+    std::size_t providerCount = 0;
+    std::size_t providerRulesFromSlot = 0;
+    std::size_t exactIncludeCount = 0;
+    bool wrongIncludeKind = false;
+};
+
+void observeProviders(const std::vector<PamStackEntry>& entries,
+                      const std::filesystem::path& slot,
+                      const std::string& module,
+                      ManagedPasswordAttachmentObservation& observation) {
+    for (const auto& entry : entries) {
+        if (entry.rule.includeKind == PamIncludeKind::None &&
+            std::filesystem::path(entry.rule.module).filename() == module) {
+            ++observation.providerCount;
+            if (entry.rule.source.lexically_normal() == slot.lexically_normal()) {
+                ++observation.providerRulesFromSlot;
+            }
+        }
+        observeProviders(entry.substack, slot, module, observation);
     }
 }
 
-bool stackContainsModule(const std::vector<PamStackEntry>& entries,
-                         const std::string& moduleName) {
-    for (const PamStackEntry& entry : entries) {
-        if (entry.rule.includeKind == PamIncludeKind::None &&
-            std::filesystem::path(entry.rule.module).filename() ==
-                moduleName) {
-            return true;
-        }
-        if (stackContainsModule(entry.substack, moduleName)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool stackCountsModule(const std::vector<PamStackEntry>& entries,
-                       const std::string& moduleName,
-                       std::size_t& count) {
-    for (const PamStackEntry& entry : entries) {
-        if (entry.rule.includeKind == PamIncludeKind::None &&
-            std::filesystem::path(entry.rule.module).filename() ==
-                moduleName) {
-            ++count;
-        }
-        if (!stackCountsModule(entry.substack, moduleName, count)) {
+bool observeAttachment(const PamEffectiveStack& stack,
+                       const std::filesystem::path& slot,
+                       const std::string& module,
+                       ManagedPasswordAttachmentObservation& observation,
+                       std::string& error) {
+    observation = {};
+    observeProviders(stack.entries, slot, module, observation);
+    for (const auto& source : stack.sourceFiles) {
+        PamConfigFileSnapshot snapshot;
+        std::vector<PamRule> rules;
+        if (!PamConfigFileTransaction::capture(source, snapshot, error) ||
+            !snapshot.existed ||
+            !PamConfiguration::parseRulesContent(
+                source, snapshot.content, rules, error)) {
+            if (error.empty()) error = "PAM graph source disappeared: " + source.string();
             return false;
+        }
+        for (const auto& rule : rules) {
+            if (rule.includeKind == PamIncludeKind::None ||
+                std::filesystem::path(rule.includeTarget).filename() != slot.filename() ||
+                (rule.includeKind != PamIncludeKind::IncludeAll &&
+                 rule.group != PamManagementGroup::Password)) {
+                continue;
+            }
+            if (rule.group == PamManagementGroup::Password &&
+                rule.includeKind == PamIncludeKind::Include) {
+                ++observation.exactIncludeCount;
+            } else {
+                observation.wrongIncludeKind = true;
+            }
         }
     }
     return true;
 }
 
-bool isHistorySlotInclude(const PamRule& rule) {
-    if (rule.includeKind == PamIncludeKind::None) {
-        return false;
+bool verifyActiveAttachment(
+    const ManagedPasswordAttachmentObservation& observation,
+    const std::set<std::string>& selected,
+    const std::string& slot,
+    const std::string& module,
+    std::string& error) {
+    const std::string hook = slot + "-hook";
+    if (selected.count(hook) == 0) {
+        error = slot + " is Active+Applied but " + hook + " is not selected";
+    } else if (observation.wrongIncludeKind) {
+        error = slot + " requires password include, not substack or @include";
+    } else if (observation.exactIncludeCount != 1) {
+        error = hook + " requires exactly one password include " + slot +
+            "; observed " + std::to_string(observation.exactIncludeCount);
+    } else if (observation.providerCount != 1) {
+        error = slot + " requires exactly one " + module + " provider";
+    } else if (observation.providerRulesFromSlot != 1) {
+        error = module + " source is not the FIC-owned " + slot + " slot";
+    } else {
+        error.clear();
+        return true;
     }
-    const std::string target =
-        std::filesystem::path(rule.includeTarget).filename().string();
-    return target == PamManagedPasswordSlots::historyNormalSlot().fileName ||
-        target == PamManagedPasswordSlots::historyInitialSlot().fileName;
+    error += " (fail closed)";
+    return false;
 }
 
-bool isQualitySlotInclude(const PamRule& rule) {
-    if (rule.includeKind != PamIncludeKind::Include) {
-        return false;
-    }
-    const std::string target =
-        std::filesystem::path(rule.includeTarget).filename().string();
-    return target == PamManagedPasswordSlots::qualitySlot().fileName;
-}
-
-// Typed pwhistory.conf "remember" classification (P2-1): replaces the
-// inverted-boolean hasOnlyValue("remember", "0") test, which conflated
-// remember=0, option missing, unreadable file and parse ambiguity into one
-// "not remember=0" outcome. pam_pwhistory's documented default remember is
-// NONZERO (the module enforces history by default), so:
-//   DefaultNonZero   — no explicit directive; the documented module default
-//                      applies (nonzero enforcement);
-//   ExplicitNonZero  — remember=<N>, N > 0;
-//   Zero             — remember=0 (no history enforcement);
-//   Broken           — unreadable file, malformed values, or ambiguous
-//                      duplicate directives (fail closed, never guessed).
-// Duplicate remember directives follow the actual underlying semantics:
-// they are NOT resolved by last-wins guessing here — an ambiguous config
-// is Broken and fails closed.
-enum class PwhistoryRememberState {
-    DefaultNonZero,
-    ExplicitNonZero,
-    Zero,
-    Broken
+// The generic provider semantic verifier checks input topology/overrides,
+// not effective pwhistory config values. Keep this read-only typed reader
+// local to the attach validator. Linux-PAM defaults: remember=10 (also
+// encoded by PamPwhistoryArguments), enforce_for_root disabled.
+enum class PwhistoryRememberState { DefaultNonZero, ExplicitNonZero, Zero };
+enum class PwhistoryFlagState { DefaultDisabled, Enabled };
+struct PwhistoryConfigState {
+    PwhistoryRememberState remember = PwhistoryRememberState::DefaultNonZero;
+    PwhistoryFlagState enforceForRoot = PwhistoryFlagState::DefaultDisabled;
+    bool broken = false;
 };
 
-PwhistoryRememberState readPwhistoryConfRememberState(
-    const std::filesystem::path& path) {
-    bool existed = false;
-    std::string content;
+PwhistoryConfigState readPwhistoryConfigState(const std::filesystem::path& path) {
+    PwhistoryConfigState state;
+    PamConfigFileSnapshot snapshot;
     std::string error;
-    // Reuses the validator's own file reader; the TrustedFileReader-backed
-    // PamOptionFile read is used for the write path, this is the strict
-    // read-only classification path. Missing file = documented default.
+    // Reject non-regular objects before capture (in particular a FIFO must
+    // not block a read-only validation waiting for a writer).
     std::error_code statusError;
-    const std::filesystem::file_status status =
-        std::filesystem::symlink_status(path, statusError);
-    if (statusError) {
-        if (statusError ==
-            std::make_error_code(std::errc::no_such_file_or_directory)) {
-            return PwhistoryRememberState::DefaultNonZero;
-        }
-        return PwhistoryRememberState::Broken;
+    const auto status = std::filesystem::symlink_status(path, statusError);
+    if (path.empty() ||
+        (statusError && statusError != std::errc::no_such_file_or_directory) ||
+        (status.type() != std::filesystem::file_type::not_found &&
+         !std::filesystem::is_regular_file(status)) ||
+        !PamConfigFileTransaction::capture(path, snapshot, error)) {
+        state.broken = true;
+        return state;
     }
-    if (!std::filesystem::exists(status)) {
-        return PwhistoryRememberState::DefaultNonZero;
-    }
-    if (!std::filesystem::is_regular_file(status)) {
-        return PwhistoryRememberState::Broken;
-    }
-    if (!readFileIfPresent(path, content)) {
-        return PwhistoryRememberState::Broken;
-    }
-    std::istringstream stream(content);
+    if (!snapshot.existed) return state;
+    std::istringstream stream(snapshot.content);
     std::string line;
-    bool found = false;
-    bool sawZero = false;
-    bool sawNonZero = false;
+    std::set<std::string> managedKeys;
     while (std::getline(stream, line)) {
-        const std::size_t comment = line.find('#');
-        if (comment != std::string::npos) {
-            line.erase(comment);
+        if (line.find('\0') != std::string::npos) {
+            state.broken = true;
+            break;
         }
-        const std::size_t equals = line.find('=');
-        if (equals == std::string::npos) {
-            continue;
+        line = trimSpaces(line.substr(0, line.find('#')));
+        if (line.empty()) continue;
+        const auto equals = line.find('=');
+        const auto key = trimSpaces(line.substr(0, equals));
+        const auto value = equals == std::string::npos
+            ? std::string{} : trimSpaces(line.substr(equals + 1));
+        if (key.empty() || !std::all_of(key.begin(), key.end(), [](unsigned char c) {
+                return std::isalnum(c) || c == '_' || c == '-';
+            }) || (equals != std::string::npos && value.empty())) {
+            state.broken = true;
+            break;
         }
-        const std::string key = trimSpaces(line.substr(0, equals));
-        const std::string value = trimSpaces(line.substr(equals + 1));
-        if (key != "remember") {
-            continue;
+        if (key != "remember" && key != "enforce_for_root") continue;
+        if (!managedKeys.insert(key).second) {
+            state.broken = true; // No duplicate/last-wins assumptions.
+            break;
         }
-        unsigned parsed = 0;
-        if (value.empty() ||
-            std::any_of(value.begin(), value.end(), [](unsigned char c) {
-                return std::isdigit(c) == 0;
-            })) {
-            return PwhistoryRememberState::Broken;
-        }
-        try {
-            parsed = static_cast<unsigned>(std::stoul(value));
-        } catch (...) {
-            return PwhistoryRememberState::Broken;
-        }
-        found = true;
-        if (parsed == 0) {
-            sawZero = true;
+        if (key == "enforce_for_root") {
+            // Canonical native flag grammar; assignments are not booleans.
+            if (equals != std::string::npos) {
+                state.broken = true;
+                break;
+            }
+            state.enforceForRoot = PwhistoryFlagState::Enabled;
         } else {
-            sawNonZero = true;
+            unsigned remember = 0;
+            const auto parsed = std::from_chars(
+                value.data(), value.data() + value.size(), remember);
+            if (value.empty() || parsed.ec != std::errc{} ||
+                parsed.ptr != value.data() + value.size()) {
+                state.broken = true;
+                break;
+            }
+            state.remember = remember == 0 ? PwhistoryRememberState::Zero
+                : PwhistoryRememberState::ExplicitNonZero;
         }
     }
-    if (!found) {
-        return PwhistoryRememberState::DefaultNonZero;
-    }
-    // Ambiguous/conflicting duplicate directives are never silently
-    // resolved (no last-wins guessing): fail closed.
-    if (sawZero && sawNonZero) {
-        return PwhistoryRememberState::Broken;
-    }
-    return sawZero ? PwhistoryRememberState::Zero
-                   : PwhistoryRememberState::ExplicitNonZero;
+    return state;
 }
 
 } // namespace
@@ -482,19 +486,13 @@ bool readSlotInspection(
     const ManagedPasswordSlotSpec& spec,
     ManagedPasswordSlotInspection& inspection,
     std::string& error) {
-    const std::filesystem::path path = configDirectory / spec.fileName;
-    std::optional<std::string> content;
-    std::error_code statusError;
-    if (std::filesystem::is_regular_file(path, statusError)) {
-        std::string fileContent;
-        if (!readFileIfPresent(path, fileContent)) {
-            error = "cannot read managed password slot " + path.string();
-            return false;
-        }
-        content = fileContent;
-    } else {
-        content.reset();
+    PamConfigFileSnapshot snapshot;
+    if (!PamConfigFileTransaction::capture(
+            configDirectory / spec.fileName, snapshot, error)) {
+        return false;
     }
+    const std::optional<std::string> content = snapshot.existed
+        ? std::optional<std::string>(snapshot.content) : std::nullopt;
     return PamManagedPasswordSlots::inspectContent(
         spec, content, inspection, error);
 }
@@ -668,6 +666,7 @@ bool validatePamPasswordSlotAttach(
                 .inspectJournalBindingForDomain(
                     domainMutationId, domainError);
         switch (domainState) {
+        case PasswordDomainJournalState::VirginUnbound:
         case PasswordDomainJournalState::Unbound:
             break;
         case PasswordDomainJournalState::Applied:
@@ -708,6 +707,7 @@ bool validatePamPasswordSlotAttach(
                 .inspectJournalBindingForDomain(
                     domainMutationId, domainError);
         switch (domainState) {
+        case PasswordDomainJournalState::VirginUnbound:
         case PasswordDomainJournalState::Unbound:
             break;
         case PasswordDomainJournalState::Applied:
@@ -742,8 +742,21 @@ bool validatePamPasswordSlotAttach(
 
     // 4. Rule J semantic checks on the FIC-owned active history options.
     if (historyActive &&
+        historyCapability->configurationMode ==
+            fic::platform::PamCapabilityConfigurationMode::ModuleArguments &&
         !verifyHistorySlotOptions(historyOwnership, *historyCapability,
                                   verdict)) {
+        error.clear();
+        return true;
+    }
+
+    std::set<std::string> identifiers;
+    std::string stateError;
+    if (!selectedPasswordStateIdentifiers(
+            stateDirectory, identifiers, stateError)) {
+        verdict.detail =
+            "cannot read pam-auth-update password selection state "
+            "(fail closed): " + stateError;
         error.clear();
         return true;
     }
@@ -764,9 +777,27 @@ bool validatePamPasswordSlotAttach(
         }
 
         // Rule I: at most one pam_pwquality.so in the Primary stack.
-        std::size_t pwqualityCount = 0;
-        stackCountsModule(stack.entries, "pam_pwquality.so",
-                          pwqualityCount);
+        ManagedPasswordAttachmentObservation qualityAttachment;
+        ManagedPasswordAttachmentObservation historyAttachment;
+        ManagedPasswordAttachmentObservation initialAttachment;
+        if (!observeAttachment(stack, configDirectory / "fic-password-quality",
+                               "pam_pwquality.so", qualityAttachment, stackError) ||
+            !observeAttachment(stack, configDirectory / "fic-password-history",
+                               "pam_pwhistory.so", historyAttachment, stackError) ||
+            !observeAttachment(stack, configDirectory / "fic-password-history-initial",
+                               "pam_pwhistory.so", initialAttachment, stackError)) {
+            verdict.detail = "cannot prove password attachment: " + stackError;
+            error.clear();
+            return true;
+        }
+        if ((!qualityActive && qualityAttachment.exactIncludeCount > 1) ||
+            (!historyActive && historyAttachment.exactIncludeCount > 1) ||
+            initialAttachment.exactIncludeCount > 1) {
+            verdict.detail = "duplicate managed password include (fail closed)";
+            error.clear();
+            return true;
+        }
+        const auto pwqualityCount = qualityAttachment.providerCount;
         if (pwqualityCount > 1) {
             verdict.detail =
                 "more than one pam_pwquality.so in the Primary password "
@@ -782,17 +813,6 @@ bool validatePamPasswordSlotAttach(
         // count in the current graph — a temporarily missing provider must
         // not hide a requested distro provider, because a later graph
         // regeneration can reintroduce it.
-        std::set<std::string> identifiers;
-        std::string stateError;
-        if (!selectedPasswordStateIdentifiers(
-                stateDirectory, identifiers, stateError)) {
-            verdict.detail =
-                "cannot read pam-auth-update password selection state "
-                "(fail closed): " +
-                stateError;
-            error.clear();
-            return true;
-        }
         const bool externalPwqualitySelected =
             identifiers.count("pwquality") != 0;
         // EFFECTIVE external provider: selected AND exactly one
@@ -852,6 +872,36 @@ bool validatePamPasswordSlotAttach(
         // quality: its flow semantics are proven by the control-flow
         // analysis below (the effective verdict is consumed there).
 
+        if (historyActive && (initialAttachment.exactIncludeCount != 0 ||
+                              initialAttachment.wrongIncludeKind ||
+                              initialAttachment.providerRulesFromSlot != 0)) {
+            verdict.detail = "FIC history-initial is the live history branch; "
+                "only the normal managed history slot is supported (fail closed)";
+            error.clear();
+            return true;
+        }
+        if ((qualityActive && !verifyActiveAttachment(
+                 qualityAttachment, identifiers, "fic-password-quality",
+                 "pam_pwquality.so", verdict.detail)) ||
+            (historyActive && !verifyActiveAttachment(
+                 historyAttachment, identifiers, "fic-password-history",
+                 "pam_pwhistory.so", verdict.detail))) {
+            error.clear();
+            return true;
+        }
+        if ((!historyActive && historyAttachment.providerCount != 0) ||
+            (externalPwqualityEffective && qualityAttachment.providerRulesFromSlot != 0)) {
+            verdict.detail = "foreign history provider or inconsistent external quality source "
+                "(fail closed; external history adoption is unsupported)";
+            error.clear();
+            return true;
+        }
+        if (historyActive && pwqualityCount == 0) {
+            verdict.detail = "Rule G: history-only is unsupported: no quality token producer";
+            error.clear();
+            return true;
+        }
+
         // Rule G (P1-2): control-flow proof, not textual ordering. The
         // previous flattened index comparison (producerPosition <
         // historyPosition) proved only textual order; a success-action
@@ -875,7 +925,9 @@ bool validatePamPasswordSlotAttach(
         if (historyActive || pwqualityCount == 1) {
             PamPasswordFlowAnalysis flow;
             std::string flowError;
-            if (!analyzePasswordFlow(stack, platformConfig, flow, flowError)) {
+            if (!analyzePasswordFlow(stack, platformConfig,
+                                     {pwqualityCount == 1, historyActive},
+                                     flow, flowError)) {
                 verdict.detail =
                     "Rule G password control flow of service " + service +
                     " cannot be analyzed (fail closed): " + flowError;
@@ -924,38 +976,32 @@ bool validatePamPasswordSlotAttach(
             }
         }
 
-        // Conf-mode semantic check (Rule J, P2-1): typed/effective
-        // semantics of the authoritative pwhistory.conf, never an inverted
-        // boolean. Zero remember and any broken/ambiguous/unreadable state
-        // fail closed; the documented nonzero module default (no explicit
-        // directive) is the only implicit-safe state.
-        if (historyCapability->configurationMode ==
-                fic::platform::PamCapabilityConfigurationMode::
-                    ProviderConfigFile &&
-            !historyCapability->configPath.empty()) {
-            const PwhistoryRememberState rememberState =
-                readPwhistoryConfRememberState(
-                    historyCapability->configPath);
-            switch (rememberState) {
-            case PwhistoryRememberState::Zero:
-                verdict.detail =
-                    historyCapability->configPath.string() +
-                    " enforces remember=0 (no history enforcement; fail "
-                    "closed)";
+        // Rule J: config-file mode has a single authoritative option source.
+        if (historyActive && historyCapability->configurationMode ==
+                fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
+            const auto& slotOptions = *historyOwnership.historyOptions;
+            if (slotOptions.remember.has_value() || slotOptions.enforceForRoot) {
+                verdict.detail = "ProviderConfigFile history slots contain option overrides "
+                    "instead of canonical no-option bodies (Rule J; fail closed)";
                 error.clear();
                 return true;
-            case PwhistoryRememberState::Broken:
-                verdict.detail =
-                    historyCapability->configPath.string() +
-                    " cannot be safely parsed for an effective remember "
-                    "state (unreadable, malformed or ambiguous; fail "
-                    "closed)";
-                error.clear();
-                return true;
-            case PwhistoryRememberState::DefaultNonZero:
-            case PwhistoryRememberState::ExplicitNonZero:
-                break;
             }
+            const auto state = readPwhistoryConfigState(historyCapability->configPath);
+            if (state.broken) {
+                verdict.detail = "pwhistory.conf is unreadable, non-regular, malformed or "
+                    "has duplicate managed keys (Rule J; fail closed)";
+            } else if (state.remember == PwhistoryRememberState::Zero) {
+                verdict.detail = "pwhistory.conf enforces remember=0 (Rule J; fail closed)";
+            } else if (historyCapability->subjectScope ==
+                           fic::platform::PamIdentitySubjectScope::AllPamSubjects &&
+                       state.enforceForRoot != PwhistoryFlagState::Enabled) {
+                verdict.detail = "ProviderConfigFile history lacks effective enforce_for_root "
+                    "for AllPamSubjects (Rule J; fail closed)";
+            } else {
+                continue;
+            }
+            error.clear();
+            return true;
         }
     }
 

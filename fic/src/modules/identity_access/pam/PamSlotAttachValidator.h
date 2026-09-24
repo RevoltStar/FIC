@@ -70,7 +70,16 @@ bool validatePamSlotAttach(
 //     include point;
 //   - Rule J semantic checks: arg-mode effective remember=0 and
 //     enforce_for_root=false with AllPamSubjects scope fail closed;
-//     conf-mode /etc/security/pwhistory.conf remember=0 fails closed.
+//     conf-mode reads effective remember/enforce_for_root from pwhistory.conf
+//     and requires canonical no-option slot bodies;
+//   - Active domains require exact selected hooks, exactly one password
+//     include of the normal managed slot, and exactly one provider whose
+//     source is that slot. Live history-initial/foreign history fail closed;
+//   - quality/history flow requirements are independent; history additionally
+//     requires a successful quality producer before its use_authtok rule;
+//   - Neutral requires Unbound or virgin (both journal and witness absent)
+//     provenance. Virgin validation never bootstraps persistent state;
+//   - every managed slot is read without following symlinks.
 //
 // Strictly read-only: this function never rewrites slot files, never
 // creates or mutates the mutation journal (no bootstrap, no witness

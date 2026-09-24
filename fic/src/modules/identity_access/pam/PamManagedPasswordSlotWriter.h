@@ -75,6 +75,8 @@ enum class PasswordSlotJournalBinding {
 // fails closed (recovering it is the activation/recovery responsibility,
 // never the read-only validator's).
 enum class PasswordDomainJournalState {
+    // Both journal and witness are absent; usable only for Neutral slots.
+    VirginUnbound,
     // No active record of this domain exists.
     Unbound,
     // Exactly one active record of this domain exists and is Prepared.
@@ -183,6 +185,7 @@ public:
     // non-mutating read-only persistent-state gate as the ownership proofs
     // (no bootstrap, no witness creation, no repair).
     //
+    //   VirginUnbound — neither journal nor witness exists (no bootstrap);
     //   Unbound  — no active record exists for the canonical domain
     //              (Neutral provenance);
     //   Prepared — exactly one active record of this domain and it is

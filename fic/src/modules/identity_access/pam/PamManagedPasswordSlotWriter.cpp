@@ -658,6 +658,21 @@ PasswordDomainJournalState
 PamManagedPasswordSlotWriter::inspectJournalBindingForDomain(
     std::uint64_t& mutationId, std::string& error) const {
     mutationId = 0;
+    // witnessPath() contract is <journal path>.initialized. Probe directory
+    // entries without following links: dangling links are not virgin state.
+    const auto witness = journal_.witnessPath();
+    auto journalPath = witness;
+    journalPath.replace_extension();
+    const auto absent = [](const std::filesystem::path& path) {
+        std::error_code ec;
+        const auto status = std::filesystem::symlink_status(path, ec);
+        return status.type() == std::filesystem::file_type::not_found &&
+            (!ec || ec == std::errc::no_such_file_or_directory);
+    };
+    if (!journal_.loaded() && absent(journalPath) && absent(witness)) {
+        error.clear();
+        return PasswordDomainJournalState::VirginUnbound;
+    }
     // Read-only persistent-state gate: exactly the same witness-aware
     // state table as the ownership proofs use, strictly non-mutating.
     if (!ensureJournalReadable(error)) {

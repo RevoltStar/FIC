@@ -609,7 +609,8 @@ fic::platform::PamPlatformConfig makePasswordFlowPlatform(
 }
 
 fic::identity::pam::PamPasswordFlowAnalysis analyzePasswordFlowFixture(
-    const fs::path& root, const std::string& stackContent) {
+    const fs::path& root, const std::string& stackContent,
+    fic::identity::pam::PamPasswordFlowRequirements requirements = {true, true}) {
     writePasswordFlowFixture(root, stackContent);
     auto platform = makePasswordFlowPlatform(root);
     fic::identity::pam::PamConfiguration configuration(platform);
@@ -622,9 +623,39 @@ fic::identity::pam::PamPasswordFlowAnalysis analyzePasswordFlowFixture(
             error);
     fic::identity::pam::PamPasswordFlowAnalysis analysis;
     require(fic::identity::pam::analyzePasswordFlow(
-                stack, platform, analysis, error),
+                stack, platform, requirements, analysis, error),
             error);
     return analysis;
+}
+
+void testConditionalPasswordRequirements(const fs::path& root) {
+    const std::string qualityOnly =
+        "password requisite pam_pwquality.so retry=3\n"
+        "password required pam_unix.so\n";
+    auto analysis = analyzePasswordFlowFixture(root, qualityOnly, {true, false});
+    require(analysis.qualityNonBypassable && !analysis.historyNonBypassable &&
+                analysis.violations.empty(), "quality-only incorrectly requires history");
+    analysis = analyzePasswordFlowFixture(root, qualityOnly, {true, true});
+    require(!analysis.violations.empty(), "required history absence accepted");
+    analysis = analyzePasswordFlowFixture(root,
+        "password requisite pam_pwhistory.so use_authtok\n"
+        "password required pam_unix.so\n", {false, true});
+    require(!analysis.historyAlwaysHasTokenProducer && !analysis.violations.empty(),
+            "history requires a prior producer even when quality is not required");
+    analysis = analyzePasswordFlowFixture(root,
+        "password requisite pam_pwquality.so\n"
+        "password requisite pam_pwhistory.so\n"
+        "password required pam_unix.so\n", {true, true});
+    require(!analysis.historyNonBypassable && !analysis.violations.empty(),
+            "history without use_authtok counted as enforcement");
+    analysis = analyzePasswordFlowFixture(root,
+        "password optional pam_pwquality.so\n"
+        "password required pam_unix.so\n", {true, false});
+    require(!analysis.qualityNonBypassable && !analysis.violations.empty(),
+            "quality-only bypass accepted");
+    analysis = analyzePasswordFlowFixture(root,
+        "password required pam_unix.so\n", {false, false});
+    require(analysis.violations.empty(), "unrequired properties created violations");
 }
 
 // G1 positive: producer proven, history non-bypassable, token produced on
@@ -727,7 +758,7 @@ void testPasswordFlowUnknownControl(const fs::path& root) {
     fic::identity::pam::PamPasswordFlowAnalysis analysis;
     std::string flowError;
     require(!fic::identity::pam::analyzePasswordFlow(
-                stack, platform, analysis, flowError),
+                stack, platform, {true, true}, analysis, flowError),
             "unknown control syntax must not produce a verdict");
     require(!flowError.empty(),
             "unknown control syntax must report an error");
@@ -764,7 +795,7 @@ void testPasswordFlowSubstackJump(const fs::path& root) {
             error);
     fic::identity::pam::PamPasswordFlowAnalysis analysis;
     require(fic::identity::pam::analyzePasswordFlow(
-                stack, platform, analysis, error),
+                stack, platform, {true, true}, analysis, error),
             error);
     require(analysis.violations.empty(),
             "G7: substack-scoped history rule was misjudged: " +
@@ -793,6 +824,7 @@ int main() {
         testSddmRootExclusionWithAuthsucc(root);
         testAuthsuccDenialBypassDetected(root);
         testProviderUnreachableAfterAuthfail(root);
+        testConditionalPasswordRequirements(root);
         testPasswordFlowPositive(root);
         testPasswordFlowProducerBypass(root);
         testPasswordFlowHistoryBypass(root);
