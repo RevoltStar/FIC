@@ -10,14 +10,19 @@
 
 - Исправить последнюю P1: root enforcement — отдельная option policy,
   а не обязательное условие PasswordHistory attach validation.
-  Step 5 не начат; production CLI по-прежнему выполняет только faillock
-  validation.
+  Для Step 5A получено isolated include evidence; production CLI по-прежнему
+  выполняет только faillock validation.
 
 ## Accepted architecture / invariants
 
 - Три managed password slots: `fic-password-quality`,
   `fic-password-history`, `fic-password-history-initial`.
   Canonical Neutral — одна comment-строка; missing никогда не Neutral.
+- Existence каждого managed password slot — обязательный package invariant:
+  permanent hook можно attach'ить только после проверки существования exact
+  target и его structural validation. Missing `password include <target>`
+  приводит к PAM failure, даже если существующий comment-only/success target
+  проходит.
 - Поддерживаются external quality only, FIC quality only,
   external quality + FIC history, FIC quality + FIC history.
   History-only и adoption внешнего pwhistory не поддерживаются.
@@ -70,6 +75,13 @@
 
 ## Completed
 
+- Step 5A isolated include evidence: на Debian 12/13 и Ubuntu 24.04/26.04
+  отдельный `password include <target>` проверен через private PAM service,
+  `pamtester` и deterministic `pam_debug.so`, без `pam-auth-update`,
+  `pam_unix`, `pwquality` и изменения `/etc/shadow`. Existing
+  comment-only/success target проходит; missing target во всех четырёх
+  окружениях даёт PAM failure (`pamtester rc=1`). Старое fixture-утверждение
+  о silent no-op для missing include неверно.
 - Убрана обязательность root flag в ModuleArguments и ProviderConfigFile;
   strict grammar/duplicates checks сохранены. Добавлены обе root-option
   states с remember=10/0 и config defaults, malformed/duplicate regressions,
@@ -146,6 +158,8 @@
 - main.cpp, packaging, platform profiles, PamPolicySupport::ReadOnly,
   activation policies, journal schema, rollback и lockout semantics не менялись.
 - Native PAM/package/runtime enforcement не проверялось этим follow-up:
-  текущие результаты — build, deterministic fixtures, static/contract tests.
+  Step 5A подтверждает только isolated include behavior; package/runtime
+  enforcement остаётся непроверенным. Остальные результаты — build,
+  deterministic fixtures, static/contract tests.
   Межфайловые чтения не являются атомарной транзакцией против concurrent
   административного изменения; mutation/locking lifecycle не расширялся.
