@@ -2,17 +2,17 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `6cf4fb71c76efa60081c879f8b07a5a434a2fbbd`
-  ("Приступаем к шагу Step5B") + `ea3e2145614c9be6d60b14d2a4e338e22f6c9e85`
-  ("Follow-up к Step5B").
+- Ветка `main`. Baseline: `f8892b45a6d0bd0d2d9460b80e3d2eb3b3e4976c`
+  ("Завершаем реализацию Step5B"; включает более ранние Step 5B коммиты).
 
 ## Current task
 
-- Step 5B (PAM PasswordQuality/PasswordHistory package/bootstrap
-  infrastructure) — ЗАВЕРШЁН (uncommitted working tree).
-- Step 5C — следующий этап: actual `pam-auth-update` attach lifecycle,
-  resulting-state proof, partial-failure compensation, remove/reinstall
-  handling.
+- Step 5B follow-up: selection-preserving remove lifecycle для двух
+  password hook profiles в Debian/Ubuntu prerm — РЕАЛИЗОВАН (uncommitted
+  working tree, коммиты по инструкции не создаются).
+- Step 5C — следующий этап: install-time attach lifecycle
+  (`pam-auth-update --enable` в postinst с resulting-state proof и
+  partial-failure compensation) — НЕ реализован и не начинался.
 
 ## Ownership boundary (accepted, core Step 5B invariant)
 
@@ -24,6 +24,36 @@ pam-auth-update owns generated common-* files
 
 Bootstrap/package НЕ является владельцем текущего Active/Neutral policy
 state и никогда его не перезаписывает.
+
+## Remove lifecycle (prerm, selection-preserving, Step 5B follow-up)
+
+Контракт `write_system_integration_symlink_prerm` (Debian/Ubuntu, prerm
+remove): snapshot → remove → восстановление → proof → fail closed.
+
+1. ДО первого `pam-auth-update`: read-only snapshot выбора двух password
+   hook profiles — точный full-line `grep -q "^Module: <profile>$"`
+   грамматикой из `/var/lib/pam/password`
+   (`fic_password_{quality,history}_hook_selected`).
+2. `pam-auth-update --package --remove` всех 8 профилей (4 faillock hooks +
+   4 legacy); при rc=0 — обычное завершение (selected hooks честно сняты).
+3. При rc!=0: обязательное восстановление ВСЕХ 4 faillock hook profiles
+   (инвариант infrastructure-always-restore не изменился) + strict proof
+   `fic_prove_permanent_hooks_attached`.
+4. Затем selection-preserving восстановление password hooks:
+   `--enable` ТОЛЬКО hooks из snapshot-derived `fic_password_hook_restore_list`
+   (unselected hooks восстановление не включает никогда), после чего
+   read-only proof `fic_prove_password_hook_state_restored <q> <h>`:
+   selected → точный `Module:` record + активные include(s) в
+   `common-password` (history — dual-stack: `fic-password-history` и
+   `fic-password-history-initial`); unselected → отсутствие record и
+   includes. rc=0 от `--enable` не трастится никогда.
+5. Любая ошибка recovery/proof → диагностические сообщения
+   ("password hook recovery failed" / "NOT proven restored") + `exit 1`
+   (rc=0 от remove не трастится).
+
+Read-only инварианты: proof-функции никогда не вызывают pam-auth-update и
+не мутируют PAM state; prerm не редактирует `common-password` напрямую —
+writer только pam-auth-update.
 
 ## Step 5B architecture / invariants
 
@@ -106,9 +136,20 @@ FIFO/special      -> FAIL closed
   payload, conffiles contract, bootstrap-before-validate ordering,
   behavioral postinst (success + validator-failure + bootstrap-failure
   paths), запрет password-hook enable и common-password edits.
+- Step 5B follow-up (uncommitted): prerm remove lifecycle стал
+  selection-preserving для password hooks — snapshot до remove,
+  snapshot-derived restore list, `fic_prove_password_hook_state_restored`
+  (read-only, exact Module:/include grammar, dual-stack history includes),
+  fail-closed диагностика. Фейк `pam-auth-update` расширен: password
+  facility, dual-stack history regen, partial mutation в password,
+  инъекции `FAKE_PAU_PASSWORD_ENABLE_FAILS` / `FAKE_PAU_PASSWORD_MALFORMED`.
 - Package build Debian 12 (docker) — успешна; contents `fic_*.deb`
   проверены `dpkg-deb`: оба профиля, три slots, conffiles, postinst/prerm
   без password-hook enable и без common-password.
+  ВНИМАНИЕ: на текущем хосте docker-сборка образа сломана окружением
+  (apt не находит qt6-* пакеты, см. Remaining); вместо полной сборки
+  выполнена artifact-проверка сгенерированного `DEBIAN/prerm`
+  (`write_system_integration_symlink_prerm` → `sh -n` + ручная инспекция).
 
 ## Changed areas
 
@@ -127,28 +168,39 @@ FIFO/special      -> FAIL closed
 
 ## Validation
 
-- Ubuntu 24.04: `cmake -S . -B build-step5b-u2404 -DFIC_TARGET_PLATFORM=ubuntu-24.04 -DBUILD_TESTING=ON`
-  + `cmake --build build-step5b-u2404 -j4` — PASS.
-- Targeted CTest (`pam_password|pam_slot_attach|pam_control_flow|pam_managed_password|pam_configuration|journal|rollback|packaging`):
-  15/15 PASS на обоих build-trees.
-- Full CTest: Ubuntu 24.04 — 101/102 PASS, 1 skipped
-  (`command_hash_batch_tests`, root-only); Debian 12 — 101/102 PASS,
-  1 skipped. Единственный failure на обоих — известный baseline
-  `passwdqc_config_file_tests` (`pwquality policy did not retain its
-  topology-dependent state`), симптом идентичен задокументированному.
-- Debian 12: `cmake -S . -B build-step5b-deb12 -DFIC_TARGET_PLATFORM=debian-12 -DBUILD_TESTING=ON`
-  + build — PASS.
-- Package: `packaging/deb/build-fic-debian12-deb-docker.sh 0.1.0-rc.1` —
-  PASS; contents проверены (см. Completed).
+- `python3 tests/integration/packaging/PamPackagingChecks.py .` — PASS
+  (включая новые static-проверки password snapshot/proof/read-only и
+  behavioral matrix P-A..P-S: none-selected / only-quality / both-selected
+  восстановление, порядок restore, password-enable failure fail-closed,
+  rc=0 + malformed include fail-closed, успешный remove без dangling
+  includes/records).
+- `ctest --test-dir build-check -R pam_packaging` — PASS.
+- `bash -n packaging/deb/build-fic-debian12-deb.sh` — PASS;
+  сгенерированный `DEBIAN/prerm`: `sh -n` PASS, snapshot до первого
+  `pam-auth-update`, условный recovery, read-only proof, отсутствуют
+  прямые правки `common-password`.
 - `git diff --check` — PASS.
+- Docker-сборка Debian 12 пакета НЕ выполнена: `docker build` падает на
+  `apt-get install` (qt6-base-dev-tools, qt6-qpa-plugins, xauth, xvfb —
+  "Unable to locate package"), это проблема окружения/зеркала, не связана
+  с изменениями.
 
 ## Remaining
 
-- Step 5C (next): actual `pam-auth-update` attach lifecycle для
-  `fic-password-quality-hook` / `fic-password-history-hook`,
-  resulting-state attachment proof, partial-failure compensation,
-  remove/reinstall handling. Bootstrap + validate уже wired и НЕ должны
-  смешиваться с attach в один opaque helper.
+- Рабочее дерево содержит незакоммиченные изменения Step 5B follow-up
+  (`packaging/deb/build-fic-debian12-deb.sh`,
+  `tests/integration/packaging/PamPackagingChecks.py`) — закоммитить
+  отдельной задачей (по текущей инструкции коммиты не создаются).
+- Docker-сборка Debian 12 образа сломана окружением: `apt-get install` в
+  `packaging/deb/Dockerfile` не находит qt6-base-dev-tools,
+  qt6-qpa-plugins, xauth, xvfb; полная package-build validation после
+  починки окружения.
+- Step 5C (next): install-time attach lifecycle для
+  `fic-password-quality-hook` / `fic-password-history-hook`
+  (postinst-side `pam-auth-update` attach с resulting-state proof и
+  partial-failure compensation; remove-side уже закрыт этим follow-up).
+  Bootstrap + validate уже wired и НЕ должны смешиваться с attach в один
+  opaque helper.
 - Step 6: Debian 12 ModuleArguments option writer. Step 7: runtime
   activation (`enable_password_quality`/`enable_password_history`),
   lifting `PamPolicySupport::ReadOnly`.
