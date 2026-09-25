@@ -2,25 +2,78 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `23f3df433035ac39ce647b46923c50ec66bc8759`
-  ("Follow-up к последнему коммиту №2"; включает remove/recovery fix для
-  password hook profiles — per-profile enable, proof после каждой
-  native mutation, resulting-state proof (0, 0) после успешного remove).
+- Ветка `main`. Baseline: `bcb496f0d6a3700b78f3e6df05895cb31039b37f`
+  ("Follow-up к последнему коммиту №3"; Step 5B + remove-side follow-ups
+  закоммичены).
 
 ## Current task
 
-- Fail-fast follow-up: password-hook recovery в prerm теперь строго
-  fail-fast — после первой failed/unproven password mutation
-  (enable rc!=0 ИЛИ immediate proof fail) НИКАКОЙ последующий
-  `pam-auth-update` password вызов не выполняется, финальный full-state
-  proof запускается только если все запрошенные мутации выполнены и
-  proven — РЕАЛИЗОВАНО в working tree (коммит отдельной задачей, по
-  текущей инструкции не создаётся).
-- Step 5C — следующий этап: install-time attach lifecycle
-  (`pam-auth-update --enable` в postinst с resulting-state proof и
-  partial-failure compensation) — НЕ реализован и не начинался.
+- **Step 5C (install-time attach password hooks) — ЗАБЛОКИРОВАН failed
+  architecture gate. Production реализация НЕ начата и НЕ должна
+  начинаться до topology-решения** (STOP по контракту gate).
+- Реализован и оставлен в репозитории reusable gate harness:
+  `tests/integration/packaging/PamArchitectureGate.sh` (запуск в disposable
+  podman-контейнере; Docker daemon на хосте недоступен, podman работает).
 
-## Ownership boundary (accepted, core Step 5B invariant)
+## Architecture gate verdict (Debian 12 + Ubuntu 24.04, идентично)
+
+Нейтральный attach password hook profiles ЛОМАЕТ штатный путь смены пароля
+на системах без внешнего token producer:
+
+```text
+baseline (unix-only)                          -> chpasswd OK
+history alone   (Q0=0/H0=1, split stack)      -> chpasswd FAIL
+quality+history (Q0=1/H0=1, Step 5C target)   -> chpasswd FAIL
+detach (baseline restored byte-exact)         -> chpasswd OK
+```
+
+Probe control: dangling include target проваливает chpasswd — проба
+чувствительна к топологии (false negative исключён).
+
+Причина (изолирована чистыми экспериментами, `pam-auth-update` — Perl,
+`lines_for_module_and_type`):
+
+1. `Password-Initial` вариант профиля используется ТОЛЬКО для модуля на
+   modpos 0 Primary блока. Debian/Ubuntu `unix` профиль:
+   Password-Initial = producer (`pam_unix.so obscure yescrypt`, без
+   use_authtok, сам спрашивает и выставляет токен), Password = consumer
+   (`use_authtok try_first_pass`, НИКОГДА не спрашивает). Любой FIC
+   password профиль с priority > 256 (1024/1023) вытесняет unix с modpos 0
+   → unix переключается в consumer-вариант → в стеке нет producer'а →
+   `pam_chauthtok` fails ("Authentication token manipulation error").
+   Воспроизводится БЕЗ FIC: ручное добавление `use_authtok try_first_pass`
+   в stock unix-строку ломает chpasswd так же.
+2. Вариант с priority < 256 (hooks после unix) ломается иначе: comment-only
+   slot включает 0 PAM handlers, но сгенерированный `[success=N]` прыжок
+   считает include-строки как модули → overshoot past `pam_permit` →
+   "Permission denied".
+3. Контрэксперимент: priority < 256 + структурные нейтральные слоты
+   (faillock-стиль: ровно одно инертное правило, напр.
+   `password optional pam_deny.so`) — chpasswd OK в обоих состояниях. НО
+   это ломает Step 7: quality enforcement требует позицию ДО pam_unix
+   (смена пароля), а low-priority include всегда после. Требуется
+   архитектурное решение (см. Remaining).
+4. Faillock hooks это не задевает: их нейтральные слоты уже структурные
+   (`<facility> optional pam_deny.so`) и auth/account стеки не имеют
+   producer/consumer переключения unix-профиля.
+
+## Real pam-auth-update grammar (подтверждено gate, Debian 12 + Ubuntu 24.04)
+
+- Include-строки package-профилей имеют TRAILING SPACE
+  (`password\tinclude<spaces>fic-password-quality `) — anchored `$`-proofs
+  без `[[:space:]]*$` никогда не сходятся с реальной генерацией.
+- `fic-password-history-initial` include генерируется ТОЛЬКО в
+  history-alone split-состоянии. В both-selected состоянии (Step 5C target)
+  генерируются только НОРМАЛЬНЫЕ includes обоих hooks; initial include
+  ОТСУТСТВУЕТ.
+- Следствие — LATENT ДЕФЕКТ Step 5B (не чинить в отрыве от topology-решения):
+  `fic_prove_password_hook_state_restored` в prerm требует оба history
+  includes и не допускает trailing whitespace → на реальной системе prerm
+  recovery proof `(1,1)`/`(d,1)` никогда не сойдётся (fail closed, всегда).
+  Fake в `PamPackagingChecks.py` моделирует dual-include без trailing
+  space — расходится с реальностью в тех же пунктах.
+
+## Ownership boundary (accepted, неизменно)
 
 ```text
 package owns infrastructure/existence  (hook profiles + slot conffiles)
@@ -28,218 +81,69 @@ runtime policy + journal own managed state
 pam-auth-update owns generated common-* files
 ```
 
-Bootstrap/package НЕ является владельцем текущего Active/Neutral policy
-state и никогда его не перезаписывает.
+`PamPolicySupport::ReadOnly` не поднимается; `enable_password_quality` /
+`enable_password_history` не активируются (Step 7). Journal/rollback не
+изменяются. Прямые правки `common-*` запрещены — writer только
+pam-auth-update.
 
-## Remove lifecycle (prerm, selection-preserving, per-profile enable)
+## Step 5B (committed, bcb496f) — коротко
 
-Контракт `write_system_integration_symlink_prerm` (Debian/Ubuntu, prerm
-remove): snapshot → remove → resulting-state proof → восстановление →
-proof → fail closed.
+- Bootstrap: `fic --maintenance bootstrap-pam-password-slots`
+  (existence-only, exclusive durable create, canonical neutral bytes,
+  no journal/witness).
+- PreAttach: `fic --maintenance validate-pam-slots-before-attach`
+  (faillock + password PreAttach verdicts, read-only, fail closed).
+- postinst configure: bootstrap -> validate -> faillock attach (Step 5A).
+  Password attach отсутствует (Step 5C заблокирован).
+- prerm remove: snapshot Q0/H0 -> remove всех profiles -> proof (0,0) ->
+  faillock restore -> selection-preserving fail-fast password restore
+  (per-profile enable, immediate proofs, финальный full-state proof).
+- Валидация Step 5B: `PamPackagingChecks.py`, `ctest -R pam_packaging`,
+  artifact-проверка prerm. Контракт тестов опирается на fake-модель
+  grammar, которая частично расходится с реальной (см. выше) — при переделке
+  payload переделать fake/proofs вместе.
 
-1. ДО первого `pam-auth-update`: read-only snapshot выбора двух password
-   hook profiles — точный full-line `grep -q "^Module: <profile>$"`
-   грамматикой из `/var/lib/pam/password`
-   (`fic_password_{quality,history}_hook_selected`).
-2. `pam-auth-update --package --remove` всех 8 профилей (4 faillock hooks +
-   4 legacy). rc=0 НЕ трастится: сразу после успешного remove выполняется
-   read-only proof `fic_prove_password_hook_state_restored 0 0`
-   (отсутствие обоих Module records И всех generated includes). Если proof
-   (0, 0) fail — remove считается failed/ambiguous и входит в ТОТ ЖЕ
-   recovery path, что и native rc!=0 (общий флаг
-   `fic_pam_remove_failed`); просто `exit 1` без восстановления
-   недопустимо, т.к. native remove уже мог изменить PAM state.
-3. При failed/ambiguous remove: обязательное восстановление ВСЕХ 4
-   faillock hook profiles (инвариант infrastructure-always-restore не
-   изменился) + strict proof `fic_prove_permanent_hooks_attached`.
-4. Затем selection-preserving восстановление password hooks — строго
-   ПО ОДНОМУ profile на `pam-auth-update --enable` invocation
-   (combined `--enable quality history` запрещён; fake проваливает
-   combined password enable детерминированно) и СТРОГО FAIL-FAST:
-   - quality selected → `--enable fic-password-quality-hook` →
-     немедленно `fic_prove_password_hook_state_restored 1 d`;
-   - history selected → `--enable fic-password-history-hook` →
-     немедленно `fic_prove_password_hook_state_restored d 1`
-     (don't-care "d" только в промежуточных per-hook proofs;
-     post-failure state второго hook неизвестен до финального proof);
-   - history enable guarded состоянием recovery: выполняется ТОЛЬКО при
-     `fic_password_hook_recovery_failed = 0` — после failed enable или
-     failed immediate proof quality НИКАКОЙ последующий password
-     `pam-auth-update` вызов не делается (поверх непроверенной топологии
-     мутации запрещены);
-   - финальный full-state proof
-     `fic_prove_password_hook_state_restored <q> <h>` запускается только
-     если ВСЕ запрошенные мутации выполнены и proven, и сверяет оба hook
-     с pre-remove snapshot.
-5. Semantics proof: selected → точный `Module:` record + активные
-   include(s) в `common-password` (history — dual-stack:
-   `fic-password-history` и `fic-password-history-initial`); unselected →
-   НЕТ record И НЕТ exact generated include любого из его targets
-   (stale include без record проваливает proof). rc=0 от любого
-   `--enable` не трастится никогда. Любая ошибка recovery/proof →
-   диагностические сообщения + `exit 1`.
+## Changed areas (этот шаг, uncommitted)
 
-Read-only инварианты: proof-функции никогда не вызывают pam-auth-update и
-не мутируют PAM state; prerm не редактирует `common-password` напрямую —
-writer только pam-auth-update.
-
-## Step 5B architecture / invariants
-
-- Package payload:
-  - `/usr/share/pam-configs/fic-password-quality-hook` — Priority 1024,
-    `Password-Type: Primary`, Password и Password-Initial включают
-    `fic-password-quality`.
-  - `/usr/share/pam-configs/fic-password-history-hook` — Priority 1023,
-    `Password-Type: Primary`, Password включает `fic-password-history`,
-    Password-Initial включает `fic-password-history-initial`.
-  - Оба профиля `Default: no`; profile IDs/priorities/includes — immutable
-    package infrastructure; daemon/runtime их никогда не редактирует.
-  - Три slot paths (`/etc/pam.d/fic-password-quality`,
-    `fic-password-history`, `fic-password-history-initial`) staged как
-    canonical Neutral bytes (`# FIC managed password slot: state=neutral\n`)
-    и защищены dpkg conffiles (upgrade/reinstall не перезаписывает
-    admin/runtime-modified Active slot).
-- Bootstrap primitive `PamManagedPasswordSlotBootstrap`
-  (`fic/src/modules/identity_access/pam/PamManagedPasswordSlotBootstrap.{h,cpp}`):
-  - existence-only контракт; использует существующий
-    `fic-core` `AtomicFileWriter::writeWithResult` (exclusive create,
-    rejectSymlink, file fsync + parent dir fsync, freshness post-write
-    verification) — НЕ создаёт параллельную transaction framework;
-  - физический parent chain check (lstat, no symlink traversal);
-  - O_EXCL-эквивалентный publish, никогда truncate/replacement;
-  - typed result: per-slot `Created/AlreadyPresent/failed/error` +
-    монотонный `changedSystemState` (honest partial-mutation accounting);
-  - НЕ создаёт journal record, witness, Prepared/Applied; не вызывает
-    rollback; НЕ repair existing files.
-- Bootstrap state matrix:
-
-```text
-Absent            -> Created (canonical Neutral, durable, verified)
-Neutral           -> AlreadyPresent, byte/metadata-identical no-op
-Active (+J/W)     -> AlreadyPresent, bytes/journal/witness untouched
-Broken regular    -> AlreadyPresent (no repair); PreAttach validator -> UNSAFE
-Symlink           -> FAIL closed (target untouched)
-Dangling symlink  -> FAIL closed
-Directory         -> FAIL closed
-FIFO/special      -> FAIL closed
-```
-
-- Maintenance CLI (production, root-only, в `fic/src/main.cpp`):
-  - `fic --maintenance bootstrap-pam-password-slots` — требует
-    pam-auth-update password topology (PasswordQuality capability с
-    `PamTopologyStrategyKind::PamAuthUpdate`; ALT -> отказ), default
-    production identity root:root 0644; exit 0 только при полном
-    fail-free bootstrap, иначе nonzero + per-slot diagnostics.
-  - `fic --maintenance validate-pam-slots-before-attach` — теперь включает
-    password PreAttach verdict в общий package-side gate (password-часть
-    раньше была отключена под Step 5; faillock-часть не изменена).
-  - Production sequence: bootstrap -> validate -> STOP. Attach — только
-    Step 5C.
-- Packaging (`packaging/deb/build-fic-debian12-deb.sh`; все platform
-  scripts debian13/ubuntu2404/ubuntu2604 делегируют в него):
-  - postinst configure: bootstrap (fail-closed exit 1) ->
-    validate-pam-slots-before-attach -> faillock attach (Step 5A,
-    неизменён) -> STOP для password hooks; НЕТ
-    `pam-auth-update --enable fic-password-*-hook`; НЕТ common-password
-    mutations.
-  - prerm remove list включает оба password hook profiles (existing
-    framework removes all packaged profiles); recovery re-enable
-    по-прежнему только faillock hooks.
-
-## Completed
-
-- Phase model PreAttach/Attached + empty-services P2 (ранее).
-- Bootstrap primitive + unit tests (`pam_managed_password_slot_bootstrap_tests`,
-  `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotBootstrapTests.cpp`):
-  all-absent, existing-neutral, existing-Active+J/W, corrupt-regular ->
-  validator UNSAFE, symlink, dangling symlink, directory, FIFO,
-  partial-existing-state, repeated-invocation fingerprint no-op,
-  durability-failure (AtomicFileWriter test seam) fail-closed + idempotent
-  retry, fault-injection fail-fast + changedSystemState honesty,
-  bootstrap->validator SAFE read-only separation proof.
-- Maintenance CLI wiring (bootstrap + validator password gate).
-- Packaging payload (2 profiles + 3 slots + conffiles) + postinst/prerm wiring.
-- Packaging contract tests (`tests/integration/packaging/PamPackagingChecks.py`):
-  profile fields/priorities/includes/Password-Type, canonical Neutral slot
-  payload, conffiles contract, bootstrap-before-validate ordering,
-  behavioral postinst (success + validator-failure + bootstrap-failure
-  paths), запрет password-hook enable и common-password edits.
-- Step 5B follow-up (uncommitted): prerm remove lifecycle стал
-  selection-preserving для password hooks — snapshot до remove,
-  snapshot-derived restore list, `fic_prove_password_hook_state_restored`
-  (read-only, exact Module:/include grammar, dual-stack history includes),
-  fail-closed диагностика. Фейк `pam-auth-update` расширен: password
-  facility, dual-stack history regen, partial mutation в password,
-  инъекции `FAKE_PAU_PASSWORD_ENABLE_FAILS` / `FAKE_PAU_PASSWORD_MALFORMED`.
-- Package build Debian 12 (docker) — успешна; contents `fic_*.deb`
-  проверены `dpkg-deb`: оба профиля, три slots, conffiles, postinst/prerm
-  без password-hook enable и без common-password.
-  ВНИМАНИЕ: на текущем хосте docker-сборка образа сломана окружением
-  (apt не находит qt6-* пакеты, см. Remaining); вместо полной сборки
-  выполнена artifact-проверка сгенерированного `DEBIAN/prerm`
-  (`write_system_integration_symlink_prerm` → `sh -n` + ручная инспекция).
-
-## Changed areas
-
-- `fic/src/modules/identity_access/pam/PamManagedPasswordSlotBootstrap.{h,cpp}` (новые).
-- `fic/src/main.cpp` (bootstrap command + password PreAttach gate в validate).
-- `packaging/deb/build-fic-debian12-deb.sh`;
-  `packaging/deb/pam-configs/fic-password-{quality,history}-hook` (новые);
-  `packaging/deb/pam-slots/fic-password-quality`,
-  `packaging/deb/pam-slots/fic-password-history`,
-  `packaging/deb/pam-slots/fic-password-history-initial` (новые).
-- `tests/CMakeLists.txt`; `tests/fic/modules/identity_access/pam/PamManagedPasswordSlotBootstrapTests.cpp` (новый);
-  `tests/integration/packaging/PamPackagingChecks.py`.
-- НЕ изменены: `common-password` access, journal schema, rollback,
-  lockout semantics, `PamPolicySupport::ReadOnly`, runtime activation,
-  ALT implementation, platform profiles.
+- `tests/integration/packaging/PamArchitectureGate.sh` (новый) — reusable
+  gate harness + зафиксированный STATUS verdict в header.
+- `docs/HANDOFF.md` (этот файл).
+- Production code НЕ изменялся.
 
 ## Validation
 
-- `python3 tests/integration/packaging/PamPackagingChecks.py .` — PASS:
-  unit-проверки password proof (canonical / T2 stale quality include / T3
-  stale history includes / commented, wrong-facility, wrong-control,
-  collision / unknown flags fail closed / read-only digest), static-
-  проверки (per-profile enable в snapshot-conditioned ветках, fail-fast
-  guard history enable по `fic_password_hook_recovery_failed`, guard
-  финального full-state proof, отсутствие combined restore list, proof
-  (0, 0) после успешного remove, negative include checks для всех трёх
-  targets, snapshot до первого pam-auth-update) и behavioral matrix
-  P-A..P-E, P-S, T1..T5, T8 + F1 (quality enable rc!=0 → history enable
-  не вызывается) / F2 (rc=0 quality enable с failed immediate proof →
-  history enable не вызывается).
-- `ctest --test-dir build-check -R pam_packaging --output-on-failure` —
-  PASS.
-- `bash -n packaging/deb/build-fic-debian12-deb.sh` — PASS;
-  сгенерированный `DEBIAN/prerm`: `sh -n` PASS, snapshot до первого
-  `pam-auth-update`, fail-fast per-profile enable + промежуточные proofs,
-  read-only proof, отсутствуют прямые правки `common-password`.
-- `git diff --check` — PASS.
-- Docker-сборка Debian 12 пакета НЕ выполнена: `docker build` падает на
-  `apt-get install` (qt6-base-dev-tools, qt6-qpa-plugins, xauth, xvfb —
-  "Unable to locate package"), это проблема окружения/зеркала, не связана
-  с изменениями.
+- `sh -n tests/integration/packaging/PamArchitectureGate.sh` — PASS.
+- Gate прогнан в podman на `debian:12` и `ubuntu:24.04`: детерминированный
+  FAIL (см. verdict), все grammar-проверки PASS, probe control PASS,
+  detach/restore/idempotence PASS.
+- Изолированные эксперименты в контейнерах: use_authtok-воспроизведение,
+  low-priority + comment-only slots, low-priority + структурные slots
+  (chpasswd OK), `-remove` unselected профиля (rc=0, no-op).
+- Build/CTest в этом шаге НЕ запускались (production code не менялся).
+- Docker daemon недоступен на хосте; apt внутри контейнеров debian:12 /
+  ubuntu:24.04 сломан (зеркала) — libpam-pwquality (внешний producer case)
+  установить не удалось, docker-сборка пакета не выполнялась.
 
 ## Remaining
 
-- Рабочее дерево содержит незакоммиченный fail-fast follow-up
-  (`packaging/deb/build-fic-debian12-deb.sh`,
-  `tests/integration/packaging/PamPackagingChecks.py`,
-  `docs/HANDOFF.md`) — закоммитить отдельной задачей (по текущей
-  инструкции коммиты не создаются).
-- Docker-сборка Debian 12 образа сломана окружением: `apt-get install` в
-  `packaging/deb/Dockerfile` не находит qt6-base-dev-tools,
-  qt6-qpa-plugins, xauth, xvfb; полная package-build validation после
-  починки окружения.
-- Step 5C (next): install-time attach lifecycle для
-  `fic-password-quality-hook` / `fic-password-history-hook`
-  (postinst-side `pam-auth-update` attach с resulting-state proof и
-  partial-failure compensation; remove-side закрыт). Bootstrap + validate
-  уже wired и НЕ должны смешиваться с attach в один opaque helper.
-- Step 6: Debian 12 ModuleArguments option writer. Step 7: runtime
-  activation (`enable_password_quality`/`enable_password_history`),
-  lifting `PamPolicySupport::ReadOnly`.
-- Baseline failure `passwdqc_config_file_tests` — вне scope, не чинить без
-  отдельной задачи.
-- Не запускать параллельно `/tmp`-конфликтующие test-наборы
-  (известный конфликт: `grub_rollback_journal_tests`).
+1. АРХИТЕКТУРНОЕ РЕШЕНИЕ (владелец проекта) по password payload topology:
+   - вариант A: структурные нейтральные слоты (faillock-стиль) + priority
+     < 256 — Step 5C безопасен, но Step 7 quality enforcement требует
+     нового механизма позиции (runtime-активируемый producer-профиль или
+     иное);
+   - вариант B: сохранить priority > 256 и найти инертный token producer
+     для нейтрального окна (stock-модуля нет);
+   - вариант C: перенос attach из postinst в момент первой policy
+     activation.
+2. После решения: переделать payload (+ возможно canonical neutral bytes в
+   `PamManagedPasswordSlots`), прогнать gate повторно, и только потом
+   реализовывать Step 5C (attach + compensation + attached validator CLI +
+   tests).
+3. Починить latent Step 5B proof-grammar дефекты (trailing whitespace,
+   initial-include ожидание) вместе с topology-решением; синхронно fake.
+4. Step 6: Debian 12 ModuleArguments option writer. Step 7: runtime
+   activation + lifting ReadOnly.
+5. Среда: docker daemon не запущен; apt-зеркала в контейнерах частично
+   битые (Dockerfile-сборка пакета падает на qt6-*/xauth/xvfb).
+6. Baseline failure `passwdqc_config_file_tests` — вне scope.
+7. Не запускать параллельно `/tmp`-конфликтующие test-наборы.
