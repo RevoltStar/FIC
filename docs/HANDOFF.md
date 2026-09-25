@@ -2,16 +2,20 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `a89315c5593047a0e67d81802777b7a6f6b8a0c6`
-  ("Follow-up к последнему коммиту"; включает более ранние Step 5B коммиты).
+- Ветка `main`. Baseline: `23f3df433035ac39ce647b46923c50ec66bc8759`
+  ("Follow-up к последнему коммиту №2"; включает remove/recovery fix для
+  password hook profiles — per-profile enable, proof после каждой
+  native mutation, resulting-state proof (0, 0) после успешного remove).
 
 ## Current task
 
-- Remove/recovery fix: password hook profiles в Debian/Ubuntu prerm
-  восстанавливаются строго per-profile (ОДИН profile на `--enable`
-  invocation), каждая native мутация сразу подтверждается proof, rc=0 от
-  remove тоже требует resulting-state proof (0, 0) — РЕАЛИЗОВАНО
-  (uncommitted working tree; коммиты по инструкции не создаются).
+- Fail-fast follow-up: password-hook recovery в prerm теперь строго
+  fail-fast — после первой failed/unproven password mutation
+  (enable rc!=0 ИЛИ immediate proof fail) НИКАКОЙ последующий
+  `pam-auth-update` password вызов не выполняется, финальный full-state
+  proof запускается только если все запрошенные мутации выполнены и
+  proven — РЕАЛИЗОВАНО в working tree (коммит отдельной задачей, по
+  текущей инструкции не создаётся).
 - Step 5C — следующий этап: install-time attach lifecycle
   (`pam-auth-update --enable` в postinst с resulting-state proof и
   partial-failure compensation) — НЕ реализован и не начинался.
@@ -51,15 +55,21 @@ proof → fail closed.
 4. Затем selection-preserving восстановление password hooks — строго
    ПО ОДНОМУ profile на `pam-auth-update --enable` invocation
    (combined `--enable quality history` запрещён; fake проваливает
-   combined password enable детерминированно):
+   combined password enable детерминированно) и СТРОГО FAIL-FAST:
    - quality selected → `--enable fic-password-quality-hook` →
      немедленно `fic_prove_password_hook_state_restored 1 d`;
    - history selected → `--enable fic-password-history-hook` →
      немедленно `fic_prove_password_hook_state_restored d 1`
      (don't-care "d" только в промежуточных per-hook proofs;
      post-failure state второго hook неизвестен до финального proof);
+   - history enable guarded состоянием recovery: выполняется ТОЛЬКО при
+     `fic_password_hook_recovery_failed = 0` — после failed enable или
+     failed immediate proof quality НИКАКОЙ последующий password
+     `pam-auth-update` вызов не делается (поверх непроверенной топологии
+     мутации запрещены);
    - финальный full-state proof
-     `fic_prove_password_hook_state_restored <q> <h>` сверяет оба hook
+     `fic_prove_password_hook_state_restored <q> <h>` запускается только
+     если ВСЕ запрошенные мутации выполнены и proven, и сверяет оба hook
      с pre-remove snapshot.
 5. Semantics proof: selected → точный `Module:` record + активные
    include(s) в `common-password` (history — dual-stack:
@@ -187,18 +197,22 @@ FIFO/special      -> FAIL closed
 ## Validation
 
 - `python3 tests/integration/packaging/PamPackagingChecks.py .` — PASS:
-  unit-проверки password proof (canon / T2 stale quality include / T3
+  unit-проверки password proof (canonical / T2 stale quality include / T3
   stale history includes / commented, wrong-facility, wrong-control,
   collision / unknown flags fail closed / read-only digest), static-
-  проверки (per-profile enable в snapshot-conditioned ветках, отсутствие
-  combined restore list, proof (0, 0) после успешного remove, negative
-  include checks для всех трёх targets, snapshot до первого
-  pam-auth-update) и behavioral matrix P-A..P-E, P-S + T1..T5, T8.
+  проверки (per-profile enable в snapshot-conditioned ветках, fail-fast
+  guard history enable по `fic_password_hook_recovery_failed`, guard
+  финального full-state proof, отсутствие combined restore list, proof
+  (0, 0) после успешного remove, negative include checks для всех трёх
+  targets, snapshot до первого pam-auth-update) и behavioral matrix
+  P-A..P-E, P-S, T1..T5, T8 + F1 (quality enable rc!=0 → history enable
+  не вызывается) / F2 (rc=0 quality enable с failed immediate proof →
+  history enable не вызывается).
 - `ctest --test-dir build-check -R pam_packaging --output-on-failure` —
   PASS.
 - `bash -n packaging/deb/build-fic-debian12-deb.sh` — PASS;
   сгенерированный `DEBIAN/prerm`: `sh -n` PASS, snapshot до первого
-  `pam-auth-update`, per-profile enable + промежуточные proofs,
+  `pam-auth-update`, fail-fast per-profile enable + промежуточные proofs,
   read-only proof, отсутствуют прямые правки `common-password`.
 - `git diff --check` — PASS.
 - Docker-сборка Debian 12 пакета НЕ выполнена: `docker build` падает на
@@ -208,7 +222,7 @@ FIFO/special      -> FAIL closed
 
 ## Remaining
 
-- Рабочее дерево содержит незакоммиченные изменения remove/recovery fix
+- Рабочее дерево содержит незакоммиченный fail-fast follow-up
   (`packaging/deb/build-fic-debian12-deb.sh`,
   `tests/integration/packaging/PamPackagingChecks.py`,
   `docs/HANDOFF.md`) — закоммитить отдельной задачей (по текущей

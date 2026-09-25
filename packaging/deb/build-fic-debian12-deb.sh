@@ -1140,9 +1140,12 @@ if [ "\$1" = "remove" ]; then
         # full-state proof. Hooks that were unselected before the removal
         # are never enabled by the recovery, and the mandatory faillock
         # infrastructure above keeps its stronger always-restore invariant.
-        # The final proof compares both hooks against the exact pre-removal
-        # snapshot; any recovery or proof failure fails the package removal
-        # closed.
+        # The recovery is STRICTLY FAIL-FAST: once a password enable or its
+        # immediate resulting-state proof has failed, the PAM topology is
+        # no longer proven, so NO further native password mutation is
+        # attempted on top of it, and the final full-state proof only runs
+        # when every requested mutation succeeded and was proven. The
+        # package removal fails closed on any recovery or proof failure.
         fic_password_hook_recovery_failed=0
         if [ "\$fic_password_quality_hook_selected" = "1" ]; then
             if ! pam-auth-update --enable fic-password-quality-hook; then
@@ -1151,17 +1154,25 @@ if [ "\$1" = "remove" ]; then
                 fic_password_hook_recovery_failed=1
             fi
         fi
-        if [ "\$fic_password_history_hook_selected" = "1" ]; then
+        # Strict fail-fast guard: the history enable runs ONLY while no
+        # password mutation has failed or gone unproven so far.
+        if [ "\$fic_password_hook_recovery_failed" = "0" ] &&
+           [ "\$fic_password_history_hook_selected" = "1" ]; then
             if ! pam-auth-update --enable fic-password-history-hook; then
                 fic_password_hook_recovery_failed=1
             elif ! fic_prove_password_hook_state_restored d 1; then
                 fic_password_hook_recovery_failed=1
             fi
         fi
-        if ! fic_prove_password_hook_state_restored \\
-            "\$fic_password_quality_hook_selected" \\
-            "\$fic_password_history_hook_selected"; then
-            fic_password_hook_recovery_failed=1
+        # The final full-state proof runs only when every requested
+        # mutation succeeded and was proven; the failure flag already
+        # covers any skipped mutation.
+        if [ "\$fic_password_hook_recovery_failed" = "0" ]; then
+            if ! fic_prove_password_hook_state_restored \\
+                "\$fic_password_quality_hook_selected" \\
+                "\$fic_password_history_hook_selected"; then
+                fic_password_hook_recovery_failed=1
+            fi
         fi
         if [ "\$fic_password_hook_recovery_failed" != "0" ]; then
             echo "FIC: password hook recovery failed: the pre-removal password hook selection is NOT proven restored (the PAM topology is not proven restored); no FIC writer may be restarted" >&2

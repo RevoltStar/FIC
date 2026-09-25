@@ -163,8 +163,9 @@ def stateful_pam_auth_update_fake() -> str:
     Failure injection: FAKE_PAU_REMOVE_FAILS (detach failure),
     FAKE_PAU_PARTIAL + FAKE_PAU_PARTIAL_HOOKS (detach fails after a real
     partial mutation), FAKE_PAU_ENABLE_FAILS (faillock hook recovery
-    failure), FAKE_PAU_PASSWORD_ENABLE_FAILS (password hook recovery
-    enable failure after rc=0 for the faillock recovery),
+    failure), FAKE_PAU_PASSWORD_ENABLE_FAILS (quality | history | 1: the
+    named password hook recovery enable fails with rc!=0, or "1" fails
+    every password hook enable, after rc=0 for the faillock recovery),
     FAKE_PAU_PASSWORD_MALFORMED (quality | history | 1: rc=0 but the
     regenerated include(s) of the named password hook are deliberately not
     valid active include rules, to exercise the strict resulting-state
@@ -294,7 +295,11 @@ case "$1" in
         for p in "$@"; do
             case "$p" in
                 fic-password-*)
-                    [ "$FAKE_PAU_PASSWORD_ENABLE_FAILS" = "1" ] && exit 1
+                    case "$FAKE_PAU_PASSWORD_ENABLE_FAILS" in
+                        quality) [ "$p" = "fic-password-quality-hook" ] && exit 1 ;;
+                        history) [ "$p" = "fic-password-history-hook" ] && exit 1 ;;
+                        1) exit 1 ;;
+                    esac
                     add_profile "$state/password" "$p" ;;
                 fic-faillock-hook-account) add_profile "$state/account" "$p" ;;
                 *) add_profile "$state/auth" "$p" ;;
@@ -1080,35 +1085,58 @@ def main() -> int:
             not in fic_prerm,
             "Debian prerm still uses the forbidden combined password hook "
             "restore list")
-    for hook, flag, intermediate_proof in (
+    prerm_normalized = " ".join(fic_prerm.split())
+    for hook, guard, intermediate_proof in (
             ("fic-password-quality-hook",
-             "fic_password_quality_hook_selected",
+             'if [ "\\$fic_password_quality_hook_selected" = "1" ]; then',
              "fic_prove_password_hook_state_restored 1 d"),
             ("fic-password-history-hook",
-             "fic_password_history_hook_selected",
+             'if [ "\\$fic_password_hook_recovery_failed" = "0" ] && '
+             '[ "\\$fic_password_history_hook_selected" = "1" ]; then',
              "fic_prove_password_hook_state_restored d 1")):
-        guard = 'if [ "\\$' + flag + '" = "1" ]; then'
-        require(guard in fic_prerm,
-                f"Debian prerm lost the snapshot-conditioned branch for "
-                f"{hook}")
+        guard = " ".join(guard.split())
+        require(guard in prerm_normalized,
+                f"Debian prerm lost the conditioned branch for {hook}")
         enable_line = f"if ! pam-auth-update --enable {hook}; then"
-        require(enable_line in fic_prerm,
+        require(enable_line in prerm_normalized,
                 f"Debian prerm must restore {hook} with its own "
                 f"single-profile --enable invocation")
-        guard_pos = fic_prerm.find(guard)
-        enable_pos = fic_prerm.find(enable_line)
+        guard_pos = prerm_normalized.find(guard)
+        enable_pos = prerm_normalized.find(enable_line)
         require(enable_pos > guard_pos,
                 f"Debian prerm must enable {hook} only inside its "
-                f"snapshot-conditioned branch")
+                f"conditioned branch")
         stripped_line = next(line.strip() for line in fic_prerm.splitlines()
                              if enable_line in line)
         require(stripped_line == enable_line,
                 f"Debian prerm --enable for {hook} must name exactly one "
                 f"profile: " + stripped_line)
-        intermediate_pos = fic_prerm.find(intermediate_proof, enable_pos)
+        intermediate_pos = prerm_normalized.find(
+            intermediate_proof, enable_pos)
         require(intermediate_pos > enable_pos,
                 f"Debian prerm must prove the resulting state of {hook} "
                 f"immediately after its individual enable")
+    # Strict fail-fast recovery: the history enable must be guarded by the
+    # recovery-failure flag (no further native password mutation after a
+    # failed enable or a failed immediate proof), and the final full-state
+    # proof must run only while every requested mutation is still proven.
+    history_guard = (
+        'if [ "\\$fic_password_hook_recovery_failed" = "0" ] && '
+        '[ "\\$fic_password_history_hook_selected" = "1" ]; then '
+        "if ! pam-auth-update --enable fic-password-history-hook; then")
+    require(history_guard in prerm_normalized,
+            "Debian prerm history enable must be guarded by the "
+            "recovery-failure flag (fail-fast: no password mutation after "
+            "a failed enable/proof)")
+    final_proof_guard = (
+        'if [ "\\$fic_password_hook_recovery_failed" = "0" ]; then '
+        "if ! fic_prove_password_hook_state_restored \\\\ "
+        '"\\$fic_password_quality_hook_selected" \\\\ '
+        '"\\$fic_password_history_hook_selected"; then')
+    require(final_proof_guard in prerm_normalized,
+            "Debian prerm final full-state password proof must run only "
+            "when every requested recovery mutation succeeded and was "
+            "proven")
     # rc=0 from the remove is not trusted either: the prerm must prove the
     # fully-removed password state (0, 0) right after the successful remove
     # and route a proof failure into the same recovery path as a native
@@ -1908,6 +1936,61 @@ def main() -> int:
                 "the failed history proof must not leave an active "
                 "history include in the generated stack (T8): " +
                 repr(stack_t8))
+
+        # F1: strict fail-fast recovery — the quality enable fails with
+        # rc!=0, so the history enable MUST NOT be attempted on top of the
+        # unproven topology; the recovery fails closed immediately.
+        write_attached_pam_state(pam_state, pam_d)
+        write_selected_password_hooks(pam_state, pam_d, True, True)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
+                         "FAKE_PAU_PARTIAL": "1",
+                         "FAKE_PAU_PARTIAL_HOOKS":
+                             "fic-password-quality-hook "
+                             "fic-password-history-hook",
+                         "FAKE_PAU_PASSWORD_ENABLE_FAILS": "quality"})
+        require(ran.returncode != 0,
+                "prerm must fail closed when the quality enable fails (F1)")
+        require("password hook recovery failed" in ran.stderr and
+                "NOT proven restored" in ran.stderr,
+                "prerm must report the failed quality enable as a "
+                "password hook recovery failure (F1): " +
+                ran.stderr.strip())
+        password_enables = [line for line in read_calls()
+                            if line.startswith("pam-auth-update --enable")
+                            and "fic-password-" in line]
+        require(password_enables == [
+            "pam-auth-update --enable fic-password-quality-hook",
+        ], "fail-fast: the history enable must not run after the failed "
+           "quality enable (F1): " + repr(password_enables))
+
+        # F2: strict fail-fast recovery after an UNPROVEN rc=0 mutation —
+        # the quality enable returns rc=0 but regenerates a malformed
+        # quality include, the immediate proof (1, d) fails, and the
+        # history enable MUST NOT be attempted.
+        write_attached_pam_state(pam_state, pam_d)
+        write_selected_password_hooks(pam_state, pam_d, True, True)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
+                         "FAKE_PAU_PARTIAL": "1",
+                         "FAKE_PAU_PARTIAL_HOOKS":
+                             "fic-password-quality-hook "
+                             "fic-password-history-hook",
+                         "FAKE_PAU_PASSWORD_MALFORMED": "1"})
+        require(ran.returncode != 0,
+                "prerm must fail closed when the quality proof fails after "
+                "an rc=0 enable (F2)")
+        require("password hook recovery failed" in ran.stderr and
+                "NOT proven restored" in ran.stderr,
+                "prerm must report the failed quality proof as a password "
+                "hook recovery failure (F2): " + ran.stderr.strip())
+        password_enables = [line for line in read_calls()
+                            if line.startswith("pam-auth-update --enable")
+                            and "fic-password-" in line]
+        require(password_enables == [
+            "pam-auth-update --enable fic-password-quality-hook",
+        ], "fail-fast: the history enable must not run after the failed "
+           "quality immediate proof (F2): " + repr(password_enables))
 
     # Behavioral proof of the attach invariant: run the configure tail of the
     # generated postinst with fake binaries and verify the actual order:
