@@ -2,14 +2,16 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `f8892b45a6d0bd0d2d9460b80e3d2eb3b3e4976c`
-  ("Завершаем реализацию Step5B"; включает более ранние Step 5B коммиты).
+- Ветка `main`. Baseline: `a89315c5593047a0e67d81802777b7a6f6b8a0c6`
+  ("Follow-up к последнему коммиту"; включает более ранние Step 5B коммиты).
 
 ## Current task
 
-- Step 5B follow-up: selection-preserving remove lifecycle для двух
-  password hook profiles в Debian/Ubuntu prerm — РЕАЛИЗОВАН (uncommitted
-  working tree, коммиты по инструкции не создаются).
+- Remove/recovery fix: password hook profiles в Debian/Ubuntu prerm
+  восстанавливаются строго per-profile (ОДИН profile на `--enable`
+  invocation), каждая native мутация сразу подтверждается proof, rc=0 от
+  remove тоже требует resulting-state proof (0, 0) — РЕАЛИЗОВАНО
+  (uncommitted working tree; коммиты по инструкции не создаются).
 - Step 5C — следующий этап: install-time attach lifecycle
   (`pam-auth-update --enable` в postinst с resulting-state proof и
   partial-failure compensation) — НЕ реализован и не начинался.
@@ -25,31 +27,47 @@ pam-auth-update owns generated common-* files
 Bootstrap/package НЕ является владельцем текущего Active/Neutral policy
 state и никогда его не перезаписывает.
 
-## Remove lifecycle (prerm, selection-preserving, Step 5B follow-up)
+## Remove lifecycle (prerm, selection-preserving, per-profile enable)
 
 Контракт `write_system_integration_symlink_prerm` (Debian/Ubuntu, prerm
-remove): snapshot → remove → восстановление → proof → fail closed.
+remove): snapshot → remove → resulting-state proof → восстановление →
+proof → fail closed.
 
 1. ДО первого `pam-auth-update`: read-only snapshot выбора двух password
    hook profiles — точный full-line `grep -q "^Module: <profile>$"`
    грамматикой из `/var/lib/pam/password`
    (`fic_password_{quality,history}_hook_selected`).
 2. `pam-auth-update --package --remove` всех 8 профилей (4 faillock hooks +
-   4 legacy); при rc=0 — обычное завершение (selected hooks честно сняты).
-3. При rc!=0: обязательное восстановление ВСЕХ 4 faillock hook profiles
-   (инвариант infrastructure-always-restore не изменился) + strict proof
-   `fic_prove_permanent_hooks_attached`.
-4. Затем selection-preserving восстановление password hooks:
-   `--enable` ТОЛЬКО hooks из snapshot-derived `fic_password_hook_restore_list`
-   (unselected hooks восстановление не включает никогда), после чего
-   read-only proof `fic_prove_password_hook_state_restored <q> <h>`:
-   selected → точный `Module:` record + активные include(s) в
-   `common-password` (history — dual-stack: `fic-password-history` и
-   `fic-password-history-initial`); unselected → отсутствие record и
-   includes. rc=0 от `--enable` не трастится никогда.
-5. Любая ошибка recovery/proof → диагностические сообщения
-   ("password hook recovery failed" / "NOT proven restored") + `exit 1`
-   (rc=0 от remove не трастится).
+   4 legacy). rc=0 НЕ трастится: сразу после успешного remove выполняется
+   read-only proof `fic_prove_password_hook_state_restored 0 0`
+   (отсутствие обоих Module records И всех generated includes). Если proof
+   (0, 0) fail — remove считается failed/ambiguous и входит в ТОТ ЖЕ
+   recovery path, что и native rc!=0 (общий флаг
+   `fic_pam_remove_failed`); просто `exit 1` без восстановления
+   недопустимо, т.к. native remove уже мог изменить PAM state.
+3. При failed/ambiguous remove: обязательное восстановление ВСЕХ 4
+   faillock hook profiles (инвариант infrastructure-always-restore не
+   изменился) + strict proof `fic_prove_permanent_hooks_attached`.
+4. Затем selection-preserving восстановление password hooks — строго
+   ПО ОДНОМУ profile на `pam-auth-update --enable` invocation
+   (combined `--enable quality history` запрещён; fake проваливает
+   combined password enable детерминированно):
+   - quality selected → `--enable fic-password-quality-hook` →
+     немедленно `fic_prove_password_hook_state_restored 1 d`;
+   - history selected → `--enable fic-password-history-hook` →
+     немедленно `fic_prove_password_hook_state_restored d 1`
+     (don't-care "d" только в промежуточных per-hook proofs;
+     post-failure state второго hook неизвестен до финального proof);
+   - финальный full-state proof
+     `fic_prove_password_hook_state_restored <q> <h>` сверяет оба hook
+     с pre-remove snapshot.
+5. Semantics proof: selected → точный `Module:` record + активные
+   include(s) в `common-password` (history — dual-stack:
+   `fic-password-history` и `fic-password-history-initial`); unselected →
+   НЕТ record И НЕТ exact generated include любого из его targets
+   (stale include без record проваливает proof). rc=0 от любого
+   `--enable` не трастится никогда. Любая ошибка recovery/proof →
+   диагностические сообщения + `exit 1`.
 
 Read-only инварианты: proof-функции никогда не вызывают pam-auth-update и
 не мутируют PAM state; prerm не редактирует `common-password` напрямую —
@@ -168,17 +186,20 @@ FIFO/special      -> FAIL closed
 
 ## Validation
 
-- `python3 tests/integration/packaging/PamPackagingChecks.py .` — PASS
-  (включая новые static-проверки password snapshot/proof/read-only и
-  behavioral matrix P-A..P-S: none-selected / only-quality / both-selected
-  восстановление, порядок restore, password-enable failure fail-closed,
-  rc=0 + malformed include fail-closed, успешный remove без dangling
-  includes/records).
-- `ctest --test-dir build-check -R pam_packaging` — PASS.
+- `python3 tests/integration/packaging/PamPackagingChecks.py .` — PASS:
+  unit-проверки password proof (canon / T2 stale quality include / T3
+  stale history includes / commented, wrong-facility, wrong-control,
+  collision / unknown flags fail closed / read-only digest), static-
+  проверки (per-profile enable в snapshot-conditioned ветках, отсутствие
+  combined restore list, proof (0, 0) после успешного remove, negative
+  include checks для всех трёх targets, snapshot до первого
+  pam-auth-update) и behavioral matrix P-A..P-E, P-S + T1..T5, T8.
+- `ctest --test-dir build-check -R pam_packaging --output-on-failure` —
+  PASS.
 - `bash -n packaging/deb/build-fic-debian12-deb.sh` — PASS;
   сгенерированный `DEBIAN/prerm`: `sh -n` PASS, snapshot до первого
-  `pam-auth-update`, условный recovery, read-only proof, отсутствуют
-  прямые правки `common-password`.
+  `pam-auth-update`, per-profile enable + промежуточные proofs,
+  read-only proof, отсутствуют прямые правки `common-password`.
 - `git diff --check` — PASS.
 - Docker-сборка Debian 12 пакета НЕ выполнена: `docker build` падает на
   `apt-get install` (qt6-base-dev-tools, qt6-qpa-plugins, xauth, xvfb —
@@ -187,10 +208,11 @@ FIFO/special      -> FAIL closed
 
 ## Remaining
 
-- Рабочее дерево содержит незакоммиченные изменения Step 5B follow-up
+- Рабочее дерево содержит незакоммиченные изменения remove/recovery fix
   (`packaging/deb/build-fic-debian12-deb.sh`,
-  `tests/integration/packaging/PamPackagingChecks.py`) — закоммитить
-  отдельной задачей (по текущей инструкции коммиты не создаются).
+  `tests/integration/packaging/PamPackagingChecks.py`,
+  `docs/HANDOFF.md`) — закоммитить отдельной задачей (по текущей
+  инструкции коммиты не создаются).
 - Docker-сборка Debian 12 образа сломана окружением: `apt-get install` в
   `packaging/deb/Dockerfile` не находит qt6-base-dev-tools,
   qt6-qpa-plugins, xauth, xvfb; полная package-build validation после
@@ -198,9 +220,8 @@ FIFO/special      -> FAIL closed
 - Step 5C (next): install-time attach lifecycle для
   `fic-password-quality-hook` / `fic-password-history-hook`
   (postinst-side `pam-auth-update` attach с resulting-state proof и
-  partial-failure compensation; remove-side уже закрыт этим follow-up).
-  Bootstrap + validate уже wired и НЕ должны смешиваться с attach в один
-  opaque helper.
+  partial-failure compensation; remove-side закрыт). Bootstrap + validate
+  уже wired и НЕ должны смешиваться с attach в один opaque helper.
 - Step 6: Debian 12 ModuleArguments option writer. Step 7: runtime
   activation (`enable_password_quality`/`enable_password_history`),
   lifting `PamPolicySupport::ReadOnly`.

@@ -867,18 +867,21 @@ EOF
 write_password_hook_proof_function() {
     # Shared generated-script snippet: read-only proof that the managed
     # password hook profiles (Step 5B package payload) ended up in exactly
-    # the pre-removal selection state. Arguments: $1 = "1" when the quality
-    # hook was selected before the removal, $2 = "1" when the history hook
-    # was selected. Same strict standard-state grammar as
-    # fic_prove_permanent_hooks_attached: an exact full-line
-    # "Module: <profile>" record in the per-facility state file
-    # /var/lib/pam/password plus exact active, correctly facilitated
-    # include rules in the generated common-password stack (the history
-    # hook is a dual-stack profile, so both the fic-password-history and
-    # the fic-password-history-initial generated includes must be present).
-    # A hook that was NOT selected before the removal must also NOT be
-    # selected afterwards: the recovery is selection-preserving and must
-    # never enable a hook on its own. The proof never invokes any PAM tool
+    # the required state. Arguments: $1 = expected quality hook state,
+    # $2 = expected history hook state; each expected state is one of:
+    # "1" = the hook must be selected and attached (an exact full-line
+    # "Module: <profile>" record in /var/lib/pam/password plus exact
+    # active, correctly facilitated include rules in the generated
+    # common-password stack; the history hook is a dual-stack profile, so
+    # both the fic-password-history and the fic-password-history-initial
+    # includes must be present), "0" = the hook must be fully absent (NO
+    # exact selection record AND NO exact generated include of any of its
+    # targets), "d" = don't-care (only valid for intermediate per-hook
+    # proofs right after a single native mutation; the final full-state
+    # proof never uses "d"). Any other value fails closed. Exact grammar
+    # everywhere (anchored "Module: <profile>" records and anchored
+    # "password include <target>" rules); commented or wrong-facility
+    # lines never prove anything. The proof never invokes any PAM tool
     # and never mutates PAM state, managed slots, the mutation journal or
     # its witness.
     cat <<'EOF'
@@ -886,25 +889,50 @@ fic_prove_password_hook_state_restored() {
     if [ ! -d /var/lib/pam ]; then
         return 1
     fi
-    if [ "$1" = "1" ]; then
-        [ -f /etc/pam.d/common-password ] || return 1
-        grep -q "^Module: fic-password-quality-hook$" /var/lib/pam/password 2>/dev/null || return 1
-        grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-quality$" /etc/pam.d/common-password 2>/dev/null || return 1
-    else
-        if [ -f /var/lib/pam/password ] && grep -q "^Module: fic-password-quality-hook$" /var/lib/pam/password 2>/dev/null; then
+    case "$1" in
+        1)
+            [ -f /etc/pam.d/common-password ] || return 1
+            grep -q "^Module: fic-password-quality-hook$" /var/lib/pam/password 2>/dev/null || return 1
+            grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-quality$" /etc/pam.d/common-password 2>/dev/null || return 1
+            ;;
+        0)
+            if [ -f /var/lib/pam/password ] && grep -q "^Module: fic-password-quality-hook$" /var/lib/pam/password 2>/dev/null; then
+                return 1
+            fi
+            if [ -f /etc/pam.d/common-password ] && grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-quality$" /etc/pam.d/common-password 2>/dev/null; then
+                return 1
+            fi
+            ;;
+        d)
+            ;;
+        *)
             return 1
-        fi
-    fi
-    if [ "$2" = "1" ]; then
-        [ -f /etc/pam.d/common-password ] || return 1
-        grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null || return 1
-        grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history$" /etc/pam.d/common-password 2>/dev/null || return 1
-        grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history-initial$" /etc/pam.d/common-password 2>/dev/null || return 1
-    else
-        if [ -f /var/lib/pam/password ] && grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null; then
+            ;;
+    esac
+    case "$2" in
+        1)
+            [ -f /etc/pam.d/common-password ] || return 1
+            grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null || return 1
+            grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history$" /etc/pam.d/common-password 2>/dev/null || return 1
+            grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history-initial$" /etc/pam.d/common-password 2>/dev/null || return 1
+            ;;
+        0)
+            if [ -f /var/lib/pam/password ] && grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null; then
+                return 1
+            fi
+            if [ -f /etc/pam.d/common-password ] && grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history$" /etc/pam.d/common-password 2>/dev/null; then
+                return 1
+            fi
+            if [ -f /etc/pam.d/common-password ] && grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history-initial$" /etc/pam.d/common-password 2>/dev/null; then
+                return 1
+            fi
+            ;;
+        d)
+            ;;
+        *)
             return 1
-        fi
-    fi
+            ;;
+    esac
     return 0
 }
 EOF
@@ -1047,7 +1075,8 @@ if [ "\$1" = "remove" ]; then
             fic_password_history_hook_selected=1
         fi
     fi
-    if ! pam-auth-update --package --remove \
+    fic_pam_remove_failed=1
+    if pam-auth-update --package --remove \
         fic-faillock-notify \
         fic-faillock-authfail \
         fic-faillock-preauth-required \
@@ -1060,6 +1089,20 @@ if [ "\$1" = "remove" ]; then
         fic-pwhistory \
         fic-password-quality-hook \
         fic-password-history-hook; then
+        # rc=0 is not trusted on its own: the resulting password hook state
+        # must be positively proven fully removed (no selection records AND
+        # no generated includes) before the removal is treated as
+        # successful. rc=0 with stale or malformed password state is an
+        # ambiguous removal (the native remove may already have mutated the
+        # PAM state), so it enters the SAME recovery path as a native
+        # failure instead of aborting without any restoration.
+        if fic_prove_password_hook_state_restored 0 0; then
+            fic_pam_remove_failed=0
+        else
+            echo "FIC: pam-auth-update reported a successful removal but the resulting password hook state is NOT proven removed; treating the package removal as failed and restoring the pre-removal PAM state while all FIC writers remain stopped" >&2
+        fi
+    fi
+    if [ "\$fic_pam_remove_failed" = "1" ]; then
         echo "FIC: failed to detach permanent PAM hooks; restoring the package PAM hook infrastructure while all FIC writers remain stopped" >&2
         # Only the permanent hook infrastructure is restored here. The legacy
         # policy-owned selector profiles are deliberately NOT re-enabled:
@@ -1086,24 +1129,32 @@ if [ "\$1" = "remove" ]; then
             exit 1
         fi
         # Restore the managed password hook profiles to their exact
-        # pre-removal selection state while all FIC writers remain stopped:
-        # only hooks that were selected before the removal are re-selected
-        # (the mandatory faillock infrastructure above keeps its stronger
-        # always-restore invariant); hooks that were unselected before the
-        # removal are never enabled by the recovery. rc=0 from
-        # pam-auth-update is never trusted on its own: the resulting state
-        # is proven read-only below, and any recovery or proof failure
-        # fails the package removal closed.
-        fic_password_hook_restore_list=""
+        # pre-removal selection state while all FIC writers remain stopped.
+        # Production-like pam-auth-update contract for these profiles: ONE
+        # profile per --enable invocation; a combined invocation is never
+        # used. Every native mutation is followed IMMEDIATELY by a strict
+        # resulting-state proof of the hook it mutated (rc=0 is never
+        # trusted on its own); the intermediate proof covers only the hook
+        # that was just restored ("d" = don't-care), because the
+        # post-failure state of the other hook is unknown until the final
+        # full-state proof. Hooks that were unselected before the removal
+        # are never enabled by the recovery, and the mandatory faillock
+        # infrastructure above keeps its stronger always-restore invariant.
+        # The final proof compares both hooks against the exact pre-removal
+        # snapshot; any recovery or proof failure fails the package removal
+        # closed.
+        fic_password_hook_recovery_failed=0
         if [ "\$fic_password_quality_hook_selected" = "1" ]; then
-            fic_password_hook_restore_list="fic-password-quality-hook"
+            if ! pam-auth-update --enable fic-password-quality-hook; then
+                fic_password_hook_recovery_failed=1
+            elif ! fic_prove_password_hook_state_restored 1 d; then
+                fic_password_hook_recovery_failed=1
+            fi
         fi
         if [ "\$fic_password_history_hook_selected" = "1" ]; then
-            fic_password_hook_restore_list="\$fic_password_hook_restore_list fic-password-history-hook"
-        fi
-        fic_password_hook_recovery_failed=0
-        if [ -n "\$fic_password_hook_restore_list" ]; then
-            if ! pam-auth-update --enable \$fic_password_hook_restore_list; then
+            if ! pam-auth-update --enable fic-password-history-hook; then
+                fic_password_hook_recovery_failed=1
+            elif ! fic_prove_password_hook_state_restored d 1; then
                 fic_password_hook_recovery_failed=1
             fi
         fi
