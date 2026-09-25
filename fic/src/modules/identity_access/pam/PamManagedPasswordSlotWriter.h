@@ -250,8 +250,28 @@ private:
         std::uint64_t id, PasswordSlotJournalBinding& binding,
         fic::rollback::MutationRecord& record, std::string& error) const;
     bool prepareRecord(fic::rollback::MutationId& id, std::string& error);
+    bool prepareRecordWithIdentifier(
+        const char* activationIdentifier, fic::rollback::MutationId& id,
+        std::string& error);
     bool discardPrepared(fic::rollback::MutationId id, std::string& error);
     bool completePrepared(fic::rollback::MutationId id, std::string& error);
+
+    // C2 role plumbing: the canonical slot spec, the role-specific journal
+    // activation identifier and the role-bound metadata matcher. Role and
+    // writer domain must agree (Quality role only on the Quality writer,
+    // history roles only on the History writer) — mismatches fail closed.
+    static bool c2RoleUsesDomain(
+        ManagedPasswordSlotRole role, PamManagedPasswordDomain domain);
+    static const ManagedPasswordSlotSpec& c2RoleSlot(
+        ManagedPasswordSlotRole role);
+    static const char* c2RoleActivationIdentifier(
+        ManagedPasswordSlotRole role);
+    static std::size_t c2RoleSlotIndex(ManagedPasswordSlotRole role);
+    static fic::rollback::UndoDisablePamCapability expectedUndoWithIdentifier(
+        PamManagedPasswordDomain domain, const char* activationIdentifier);
+    bool journalMetadataMatchesRole(
+        const fic::rollback::MutationRecord& record,
+        ManagedPasswordSlotRole role, std::string& error) const;
 
     fic::rollback::UndoDisablePamCapability expectedUndo() const;
     std::vector<const ManagedPasswordSlotSpec*> domainSlots() const;
@@ -333,6 +353,68 @@ private:
         const ManagedPwhistorySlotOptions& options,
         PamManagedPasswordSlotActivationResult& result, std::string& error);
 
+public:
+    // ---- C2 per-identity lifecycle (activation-time FIC-owned hooks) ----
+    //
+    // Under C2 the two history variants are MUTUALLY EXCLUSIVE single-slot
+    // identities: the history-consumer state keeps the history-normal slot
+    // Active while the history-initial slot is Neutral, and the
+    // history-initial state is the mirror image. The pair-level activation
+    // API above (both slots Active with one shared id) is the legacy
+    // dual-slot domain and is intentionally NOT used by C2 transitions.
+    //
+    // Journal provenance stays domain-bound (one canonical PolicyRef per
+    // domain), but the undo payload carries the ROLE-SPECIFIC activation
+    // identifier: fic-password-quality-hook, fic-password-history-hook or
+    // fic-password-history-initial-hook. Physical ownership of one C2
+    // identity is proven only by an Applied record whose payload carries
+    // exactly that identity's identifier; a record with the other history
+    // variant's identifier never proves this identity.
+
+    // Read-only ownership proof for ONE C2 identity slot: the slot must be
+    // canonical Active and its marker id must match a valid Applied record
+    // of the canonical domain carrying the role-specific activation
+    // identifier. Strictly non-mutating; fails closed otherwise.
+    bool proveOwnedC2Slot(
+        ManagedPasswordSlotRole role,
+        PamManagedPasswordSlotOwnership& ownership, std::string& error) const;
+
+    // Journal-bound activation of ONE C2 identity slot (Neutral -> Active):
+    // one Prepared record (role-specific activation identifier payload),
+    // one physical write of the exact canonical active bytes, fresh durable
+    // re-read proof, then Applied. Idempotent when the slot is already
+    // canonical Active with an exactly matching Applied record. Any other
+    // entry state (Broken, Unavailable, foreign or foreign-id Active) fails
+    // closed — ownership is never adopted and never repaired.
+    bool activateC2Slot(
+        ManagedPasswordSlotRole role,
+        const ManagedPwhistorySlotOptions& options,
+        PamManagedPasswordSlotActivationResult& result, std::string& error);
+
+    // Journal-bound deactivation of ONE C2 identity slot (Active ->
+    // Neutral): the slot must be canonical Active with a MatchingApplied
+    // record whose payload carries the role-specific activation identifier
+    // (exact C2 ownership). The neutral bytes are written through the same
+    // CAS transaction model, proven fresh Neutral, and only then does the
+    // Applied record become RolledBack. Any failure restores the exact
+    // prior Active bytes and leaves the record Applied (changedSystemState
+    // accounting is monotonic, same model as the compensation helper).
+    bool deactivateC2Slot(
+        ManagedPasswordSlotRole role,
+        PamManagedPasswordSlotActivationResult& result, std::string& error);
+
+    // Exact-id compensation primitive of the C2 transition executor:
+    // neutralize a slot whose canonical Active marker carries the EXACT
+    // record id. An Applied record becomes RolledBack after the neutral
+    // state is proven fresh; a Prepared record is discarded. Foreign-id,
+    // non-canonical and Neutral slots fail closed (Neutral is an incoherent
+    // compensation target here: the caller's drift gate must have caught
+    // it). changedSystemState follows the monotonic P1-5 contract.
+    bool compensateC2ActiveSlot(
+        ManagedPasswordSlotRole role, fic::rollback::MutationId id,
+        bool& changedSystemState, std::string& error);
+
+private:
     std::filesystem::path configDirectory_;
     fic::rollback::MutationJournal& journal_;
     // Canonical domain identity derived once from domain_ (P1-2): never

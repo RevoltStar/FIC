@@ -93,6 +93,9 @@ struct PamPasswordSelections {
             ficHistorySelected == other.ficHistorySelected &&
             ficHistoryInitialSelected == other.ficHistoryInitialSelected;
     }
+    bool operator!=(const PamPasswordSelections& other) const {
+        return !(*this == other);
+    }
 };
 
 // FIC-owned-by-provenance state (journal-bound): which FIC password

@@ -32,6 +32,8 @@ constexpr const char* kQualityActivationIdentifier =
     "fic-password-quality-hook";
 constexpr const char* kHistoryActivationIdentifier =
     "fic-password-history-hook";
+constexpr const char* kHistoryInitialActivationIdentifier =
+    "fic-password-history-initial-hook";
 
 } // namespace
 
@@ -1208,6 +1210,545 @@ bool PamManagedPasswordSlotWriter::activateOwnedPasswordQuality(
         return false;
     }
     return finishQualityActivation(snapshots, id, result, error);
+}
+
+// ---- C2 per-identity lifecycle (activation-time FIC-owned hooks) ----
+
+bool PamManagedPasswordSlotWriter::c2RoleUsesDomain(
+    ManagedPasswordSlotRole role, PamManagedPasswordDomain domain) {
+    switch (role) {
+    case ManagedPasswordSlotRole::Quality:
+        return domain == PamManagedPasswordDomain::Quality;
+    case ManagedPasswordSlotRole::HistoryNormal:
+    case ManagedPasswordSlotRole::HistoryInitial:
+        return domain == PamManagedPasswordDomain::History;
+    }
+    return false;
+}
+
+const ManagedPasswordSlotSpec& PamManagedPasswordSlotWriter::c2RoleSlot(
+    ManagedPasswordSlotRole role) {
+    switch (role) {
+    case ManagedPasswordSlotRole::Quality:
+        return PamManagedPasswordSlots::qualitySlot();
+    case ManagedPasswordSlotRole::HistoryNormal:
+        return PamManagedPasswordSlots::historyNormalSlot();
+    case ManagedPasswordSlotRole::HistoryInitial:
+        return PamManagedPasswordSlots::historyInitialSlot();
+    }
+    throw std::runtime_error("unknown ManagedPasswordSlotRole");
+}
+
+const char* PamManagedPasswordSlotWriter::c2RoleActivationIdentifier(
+    ManagedPasswordSlotRole role) {
+    switch (role) {
+    case ManagedPasswordSlotRole::Quality:
+        return kQualityActivationIdentifier;
+    case ManagedPasswordSlotRole::HistoryNormal:
+        return kHistoryActivationIdentifier;
+    case ManagedPasswordSlotRole::HistoryInitial:
+        return kHistoryInitialActivationIdentifier;
+    }
+    throw std::runtime_error("unknown ManagedPasswordSlotRole");
+}
+
+std::size_t PamManagedPasswordSlotWriter::c2RoleSlotIndex(
+    ManagedPasswordSlotRole role) {
+    // Same fault-hook indexing convention as the pair API: 0 = quality or
+    // history-normal, 1 = history-initial.
+    return role == ManagedPasswordSlotRole::HistoryInitial ? 1 : 0;
+}
+
+fic::rollback::UndoDisablePamCapability
+PamManagedPasswordSlotWriter::expectedUndoWithIdentifier(
+    PamManagedPasswordDomain domain, const char* activationIdentifier) {
+    fic::rollback::UndoDisablePamCapability undo;
+    undo.capability = domain == PamManagedPasswordDomain::Quality
+        ? kQualityPolicyRef.policyName
+        : kHistoryPolicyRef.policyName;
+    undo.topology = fic::rollback::PamTopologyKind::PamAuthUpdate;
+    undo.activationIdentifiers = {activationIdentifier};
+    return undo;
+}
+
+bool PamManagedPasswordSlotWriter::journalMetadataMatchesRole(
+    const fic::rollback::MutationRecord& record,
+    ManagedPasswordSlotRole role, std::string& error) const {
+    if (record.policy != policyRef_) {
+        error = "journal record belongs to another policy";
+        return false;
+    }
+    if (record.undo.backend != fic::rollback::MutationBackend::Pam) {
+        error = "journal record does not use the PAM backend";
+        return false;
+    }
+    if (record.resource != "capability/" + policyRef_.policyName) {
+        error = "journal record carries a foreign resource";
+        return false;
+    }
+    const auto* payload = std::get_if<fic::rollback::UndoDisablePamCapability>(
+        &record.undo.payload);
+    if (payload == nullptr) {
+        error = "journal record carries a foreign undo payload";
+        return false;
+    }
+    const fic::rollback::UndoDisablePamCapability expected =
+        expectedUndoWithIdentifier(domain_, c2RoleActivationIdentifier(role));
+    if (payload->capability != expected.capability ||
+        payload->topology != expected.topology ||
+        payload->activationIdentifiers != expected.activationIdentifiers) {
+        error = "journal record does not match the activation identifier of "
+                "this C2 identity";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool PamManagedPasswordSlotWriter::prepareRecordWithIdentifier(
+    const char* activationIdentifier, fic::rollback::MutationId& id,
+    std::string& error) {
+    fic::rollback::MutationRecord record;
+    record.policy = policyRef_;
+    record.resource = "capability/" + policyRef_.policyName;
+    record.undo = {fic::rollback::MutationBackend::Pam,
+        expectedUndoWithIdentifier(domain_, activationIdentifier)};
+    if (!journal_.prepareMutation(record, id, error)) {
+        error = "managed password journal prepare failed: " + error;
+        return false;
+    }
+    if (id == 0) {
+        error = "managed password journal issued a zero mutation id";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool PamManagedPasswordSlotWriter::proveOwnedC2Slot(
+    ManagedPasswordSlotRole role,
+    PamManagedPasswordSlotOwnership& ownership, std::string& error) const {
+    ownership = {};
+    if (!c2RoleUsesDomain(role, domain_)) {
+        error = "C2 identity role does not belong to this managed password "
+                "domain";
+        ownership.error = error;
+        return false;
+    }
+    if (!ensureJournalReadable(error)) {
+        ownership.error = error;
+        return false;
+    }
+    const ManagedPasswordSlotSpec& spec = c2RoleSlot(role);
+    ManagedPasswordSlotInspection inspection;
+    if (!freshInspection(spec, inspection, error)) {
+        ownership.error = error;
+        return false;
+    }
+    if (inspection.state != ManagedPasswordSlotState::Active) {
+        error = inspection.state == ManagedPasswordSlotState::Neutral
+            ? std::string("managed ") + spec.fileName +
+                " slot is neutral: no physical ownership"
+            : std::string("managed ") + spec.fileName +
+                " slot is not canonical Active: " + error;
+        ownership.error = error;
+        return false;
+    }
+    for (const fic::rollback::MutationRecord& candidate :
+         journal_.records()) {
+        if (candidate.id != inspection.mutationId) {
+            continue;
+        }
+        std::string metadataError;
+        if (!journalMetadataMatchesRole(candidate, role, metadataError)) {
+            error = "physical marker id " +
+                std::to_string(inspection.mutationId) +
+                " does not prove this C2 identity: " + metadataError;
+            ownership.error = error;
+            return false;
+        }
+        if (candidate.status != fic::rollback::MutationStatus::Applied) {
+            error = "managed " + std::string(spec.fileName) +
+                " slot is bound to a " +
+                fic::rollback::mutationStatusToString(candidate.status) +
+                " journal record; ownership is not proven";
+            ownership.journal =
+                candidate.status == fic::rollback::MutationStatus::Prepared
+                ? PasswordSlotJournalBinding::MatchingPrepared
+                : PasswordSlotJournalBinding::Unbound;
+            ownership.error = error;
+            return false;
+        }
+        ownership.journal = PasswordSlotJournalBinding::MatchingApplied;
+        ownership.mutationId = candidate.id;
+        ownership.historyOptions = inspection.pwhistoryOptions;
+        error.clear();
+        return true;
+    }
+    error = "physical marker id " +
+        std::to_string(inspection.mutationId) +
+        " has no matching journal record";
+    ownership.error = error;
+    return false;
+}
+
+bool PamManagedPasswordSlotWriter::activateC2Slot(
+    ManagedPasswordSlotRole role,
+    const ManagedPwhistorySlotOptions& options,
+    PamManagedPasswordSlotActivationResult& result, std::string& error) {
+    result = {};
+    if (!c2RoleUsesDomain(role, domain_)) {
+        error = "C2 identity role does not belong to this managed password "
+                "domain";
+        return false;
+    }
+    if (!ensureJournalOperational(error)) {
+        return false;
+    }
+    const ManagedPasswordSlotSpec& spec = c2RoleSlot(role);
+    PamConfigFileSnapshot snapshot;
+    if (!captureSlot(spec, snapshot, error)) {
+        return false;
+    }
+    ManagedPasswordSlotInspection inspection;
+    if (!inspectSnapshot(spec, snapshot, inspection, error)) {
+        return false;
+    }
+    if (inspection.state == ManagedPasswordSlotState::Unavailable) {
+        error = "managed " + std::string(spec.fileName) +
+            " slot is missing (fail closed; packaging must provide the "
+            "infrastructure): " +
+            snapshot.path.string();
+        return false;
+    }
+    if (inspection.state == ManagedPasswordSlotState::Broken) {
+        error = "managed " + std::string(spec.fileName) +
+            " slot is not canonical (fail closed): " + error;
+        return false;
+    }
+    if (inspection.state == ManagedPasswordSlotState::Active) {
+        // Idempotence or refusal. Canonical Active WITH the role-bound
+        // Applied provenance is already the desired state; canonical Active
+        // bound to the exact Prepared record of this domain is an exact
+        // crash-partial of this very activation and is completed;
+        // anything else is foreign state: never overwrite, never
+        // neutralize, never adopt.
+        for (const fic::rollback::MutationRecord& candidate :
+             journal_.records()) {
+            if (candidate.id != inspection.mutationId) {
+                continue;
+            }
+            std::string metadataError;
+            if (!journalMetadataMatchesRole(
+                    candidate, role, metadataError)) {
+                error = "refusing active managed " +
+                    std::string(spec.fileName) +
+                    " slot without matching C2 provenance: " + metadataError;
+                return false;
+            }
+            if (candidate.status == fic::rollback::MutationStatus::Applied) {
+                if (role != ManagedPasswordSlotRole::Quality &&
+                    (!inspection.pwhistoryOptions.has_value() ||
+                        !(*inspection.pwhistoryOptions == options))) {
+                    error = "C2 idempotence check failed: the active " +
+                        std::string(spec.fileName) +
+                        " slot carries different managed options";
+                    return false;
+                }
+                result.success = true;
+                result.ownershipProven = true;
+                result.mutationId = candidate.id;
+                error.clear();
+                return true;
+            }
+            if (candidate.status == fic::rollback::MutationStatus::Prepared) {
+                // Exact crash-partial adoption: the slot is canonical
+                // Active with the exact Prepared id of this domain and the
+                // role-bound payload; completing the record is the same
+                // lifecycle the fresh path would have committed.
+                if (!completePrepared(candidate.id, error)) {
+                    return false;
+                }
+                result.success = true;
+                result.ownershipProven = true;
+                result.mutationId = candidate.id;
+                error.clear();
+                return true;
+            }
+            error = "refusing active managed " + std::string(spec.fileName) +
+                " slot bound to journal mutation " +
+                std::to_string(candidate.id) + " with status " +
+                fic::rollback::mutationStatusToString(candidate.status);
+            return false;
+        }
+        error = "refusing active managed " + std::string(spec.fileName) +
+            " slot without matching journal provenance";
+        return false;
+    }
+
+    // Neutral entry state: one Prepared record with the role-specific
+    // activation identifier, one physical write, fresh durable proof,
+    // then Applied.
+    fic::rollback::MutationId id = 0;
+    if (!prepareRecordWithIdentifier(
+            c2RoleActivationIdentifier(role), id, error)) {
+        return false;
+    }
+    std::string desired;
+    bool rendered = false;
+    switch (role) {
+    case ManagedPasswordSlotRole::Quality:
+        rendered = PamManagedPasswordSlots::renderActiveQuality(
+            id, desired, error);
+        break;
+    case ManagedPasswordSlotRole::HistoryNormal:
+        rendered = PamManagedPasswordSlots::renderActiveHistoryNormal(
+            id, options, desired, error);
+        break;
+    case ManagedPasswordSlotRole::HistoryInitial:
+        rendered = PamManagedPasswordSlots::renderActiveHistoryInitial(
+            id, options, desired, error);
+        break;
+    }
+    if (!rendered) {
+        std::vector<PamConfigFileSnapshot> noSnapshots;
+        compensateFreshFailure(noSnapshots, 0, id, result, error);
+        return false;
+    }
+    std::vector<PamConfigFileSnapshot> snapshots{snapshot};
+    if (!writeSlot(spec, snapshots.front(), desired,
+            c2RoleSlotIndex(role), true, error)) {
+        compensateFreshFailure(snapshots, 1, id, result, error);
+        return false;
+    }
+    ManagedPasswordSlotInspection after;
+    if (!freshInspection(spec, after, error) ||
+        after.state != ManagedPasswordSlotState::Active ||
+        after.mutationId != id) {
+        if (error.empty()) {
+            error = "fresh C2 slot proof did not report the exact prepared "
+                    "mutation";
+        }
+        error = "C2 activation fresh proof failed: " + error;
+        compensateFreshFailure(snapshots, 1, id, result, error);
+        return false;
+    }
+    if (!completePrepared(id, error)) {
+        // The physical mutation persisted; the journal commit failure must
+        // never be reported as a clean failure.
+        result.changedSystemState = true;
+        return false;
+    }
+    result.success = true;
+    result.changedSystemState = true;
+    result.ownershipProven = true;
+    result.mutationId = id;
+    error.clear();
+    return true;
+}
+
+bool PamManagedPasswordSlotWriter::compensateC2ActiveSlot(
+    ManagedPasswordSlotRole role, fic::rollback::MutationId id,
+    bool& changedSystemState, std::string& error) {
+    changedSystemState = false;
+    if (!c2RoleUsesDomain(role, domain_)) {
+        error = "C2 identity role does not belong to this managed password "
+                "domain";
+        return false;
+    }
+    if (id == 0) {
+        error = "C2 slot compensation requires a nonzero mutation id";
+        return false;
+    }
+    if (!ensureJournalOperational(error)) {
+        return false;
+    }
+    const ManagedPasswordSlotSpec& spec = c2RoleSlot(role);
+    PamConfigFileSnapshot snapshot;
+    if (!captureSlot(spec, snapshot, error)) {
+        return false;
+    }
+    ManagedPasswordSlotInspection inspection;
+    if (!inspectSnapshot(spec, snapshot, inspection, error)) {
+        return false;
+    }
+    if (inspection.state != ManagedPasswordSlotState::Active) {
+        error = "refusing C2 compensation of managed " +
+            std::string(spec.fileName) + " slot: the slot is not canonical "
+            "Active (fail closed; an unexpected state must be resolved by "
+            "the caller's drift handling)";
+        return false;
+    }
+    if (inspection.mutationId != id) {
+        error = "refusing C2 compensation of managed " +
+            std::string(spec.fileName) + " slot: the physical marker "
+            "carries foreign mutation id " +
+            std::to_string(inspection.mutationId) + " (expected " +
+            std::to_string(id) + ")";
+        return false;
+    }
+    // P1-6 same-snapshot rule: these exact bytes were proven canonical
+    // Active with the EXACT id; the conditional transaction write below is
+    // allowed only while the target still is exactly this state.
+    if (!writeSlot(spec, snapshot, PamManagedPasswordSlots::neutralBody(),
+            c2RoleSlotIndex(role), true, error)) {
+        if (snapshot.state !=
+            PamConfigFileTransactionState::MutationCommitted) {
+            // No FIC write was committed: no system change to report.
+            return false;
+        }
+        // The write was installed: restore the exact pre-compensation
+        // Active state unconditionally.
+        std::string rollbackError;
+        if (!PamConfigFileTransaction::rollback(snapshot, rollbackError)) {
+            changedSystemState = true;
+            error += "; CRITICAL: exact restoration of the compensated "
+                     "slot failed: " +
+                rollbackError;
+            return false;
+        }
+        ManagedPasswordSlotInspection restored;
+        std::string proofError;
+        if (!freshInspection(spec, restored, proofError) ||
+            restored.state != ManagedPasswordSlotState::Active ||
+            restored.mutationId != id) {
+            changedSystemState = true;
+            error += "; exact restoration of the pre-compensation state "
+                     "could not be proven" +
+                (proofError.empty() ? std::string() : ": " + proofError);
+            return false;
+        }
+        // Installed write, then exact proven restore: no change remains.
+        return false;
+    }
+    changedSystemState = true;
+    ManagedPasswordSlotInspection after;
+    if (!freshInspection(spec, after, error) ||
+        after.state != ManagedPasswordSlotState::Neutral) {
+        if (error.empty()) {
+            error = "managed " + std::string(spec.fileName) +
+                " slot is not neutral after C2 compensation";
+        }
+        return false;
+    }
+    // Resolve the journal record by its exact status: Applied becomes
+    // RolledBack (the activation is undone), Prepared is discarded (exact
+    // crash-partial). Any other status is foreign incoherence.
+    fic::rollback::MutationStatus boundStatus{};
+    bool found = false;
+    for (const fic::rollback::MutationRecord& candidate :
+         journal_.records()) {
+        if (candidate.id != id) {
+            continue;
+        }
+        boundStatus = candidate.status;
+        found = true;
+        break;
+    }
+    if (!found) {
+        error = "compensated managed " + std::string(spec.fileName) +
+            " slot has no journal record for mutation id " +
+            std::to_string(id) + " (fail closed)";
+        return false;
+    }
+    if (boundStatus == fic::rollback::MutationStatus::Applied) {
+        if (!journal_.setStatus(
+                id, fic::rollback::MutationStatus::RolledBack, error)) {
+            error = "managed password journal rollback commit failed: " +
+                error;
+            return false;
+        }
+    } else if (boundStatus == fic::rollback::MutationStatus::Prepared) {
+        if (!discardPrepared(id, error)) {
+            return false;
+        }
+    } else {
+        error = "compensated managed " + std::string(spec.fileName) +
+            " slot is bound to a journal record with status " +
+            fic::rollback::mutationStatusToString(boundStatus) +
+            " (fail closed)";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool PamManagedPasswordSlotWriter::deactivateC2Slot(
+    ManagedPasswordSlotRole role,
+    PamManagedPasswordSlotActivationResult& result, std::string& error) {
+    result = {};
+    if (!c2RoleUsesDomain(role, domain_)) {
+        error = "C2 identity role does not belong to this managed password "
+                "domain";
+        return false;
+    }
+    if (!ensureJournalOperational(error)) {
+        return false;
+    }
+    const ManagedPasswordSlotSpec& spec = c2RoleSlot(role);
+    ManagedPasswordSlotInspection inspection;
+    if (!freshInspection(spec, inspection, error)) {
+        return false;
+    }
+    if (inspection.state != ManagedPasswordSlotState::Active) {
+        error = inspection.state == ManagedPasswordSlotState::Neutral
+            ? std::string("managed ") + spec.fileName +
+                " slot is already neutral: nothing to deactivate"
+            : std::string("managed ") + spec.fileName +
+                " slot is not canonical Active (fail closed): " + error;
+        return false;
+    }
+    // Exact C2 ownership gate: only an Applied record whose payload carries
+    // this identity's activation identifier may be deactivated.
+    {
+        bool roleBound = false;
+        fic::rollback::MutationStatus status{};
+        for (const fic::rollback::MutationRecord& candidate :
+             journal_.records()) {
+            if (candidate.id != inspection.mutationId) {
+                continue;
+            }
+            std::string metadataError;
+            if (!journalMetadataMatchesRole(candidate, role, metadataError)) {
+                error = "refusing deactivation of managed " +
+                    std::string(spec.fileName) +
+                    " slot: the physical marker does not prove this C2 "
+                    "identity: " +
+                    metadataError;
+                return false;
+            }
+            status = candidate.status;
+            roleBound = true;
+            break;
+        }
+        if (!roleBound) {
+            error = "refusing deactivation of managed " +
+                std::string(spec.fileName) +
+                " slot: the physical marker id " +
+                std::to_string(inspection.mutationId) +
+                " has no matching journal record";
+            return false;
+        }
+        if (status != fic::rollback::MutationStatus::Applied) {
+            error = "refusing deactivation of managed " +
+                std::string(spec.fileName) + " slot: the bound record has "
+                "status " +
+                fic::rollback::mutationStatusToString(status) +
+                "; ownership is not proven";
+            return false;
+        }
+    }
+    bool changed = false;
+    if (!compensateC2ActiveSlot(
+            role, inspection.mutationId, changed, error)) {
+        result.changedSystemState = changed;
+        return false;
+    }
+    result.success = true;
+    result.changedSystemState = true;
+    result.mutationId = 0;
+    error.clear();
+    return true;
 }
 
 

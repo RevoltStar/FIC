@@ -911,6 +911,28 @@ target_link_libraries(pam_password_topology_planner_tests PRIVATE
 add_test(NAME pam_password_topology_planner_tests
          COMMAND pam_password_topology_planner_tests)
 
+# C2 runtime transition executor: typed state inspection + proof +
+# transition state machine over a fake native pam-auth-update mutator.
+add_executable(pam_password_topology_executor_tests
+    fic/modules/identity_access/pam/PamPasswordTopologyTransitionExecutorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+)
+target_include_directories(pam_password_topology_executor_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_password_topology_executor_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(NAME pam_password_topology_executor_tests
+         COMMAND pam_password_topology_executor_tests)
+
 
 add_executable(pam_disable_nopasswdlogin_policy_tests
     fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp

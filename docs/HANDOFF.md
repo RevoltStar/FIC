@@ -2,29 +2,70 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `c84e5652daa4112cf0cbd7a0145ca2001803eae1`
-  ("Принимает новую архитектуру Step5C") — C/C2 architecture model +
-  planner + three-profile payload УЖЕ ЗАКОММИЧЕНЫ.
-- Текущий шаг (uncommitted): узкий safety follow-up к legacy Debian/Ubuntu
-  `prerm` remove lifecycle — fail-closed preflight против destructive
-  mutation `fic-password-history-initial-hook` (см. Temporary invariant
-  ниже). Commit НЕ создавался (не запрошен).
+- Ветка `main`. Baseline: `8b53bc9fc272bd0c7dbe64ce10b208917502ab58`
+  ("Follow-up к последнему коммиту") — C/C2 architecture + planner +
+  three-profile payload + legacy prerm preflight ЗАКОММИЧЕНЫ.
+- Текущий шаг (uncommitted): **C2 runtime transition executor COMPLETE**
+  (runtime implementation — см. ниже). Commit НЕ создавался (не запрошен).
 
 ## Current task
 
-- Step 5C-архитектура принята и закоммичена: **C/C2 — activation-time
-  FIC-owned password hooks** (DECISION ниже). Runtime-реализация
-  attach/detach НЕ начата — это следующий этап (C2 runtime transition
-  executor).
-- Выполнено в этом шаге (narrow safety follow-up, без C2 executor):
-  legacy `prerm` (`write_system_integration_symlink_prerm()`) получил
-  fail-closed preflight: если `fic-password-history-initial-hook` ещё
-  selected — removal отказывается ДО любого побочного эффекта (до остановки
-  сервисов и до первого pam-auth-update), diagnostic называет профиль;
-  профиль убран из `pam-auth-update --package --remove` списка; мёртвая
-  переменная snapshot `fic_password_history_initial_hook_selected`
-  удалена. Behavioral/static тесты F1/F2 + preflight-ordering добавлены в
-  `PamPackagingChecks.py`.
+C2 runtime transition executor + three-profile resulting-state proof +
+partial-failure compensation — реализовано как production runtime layer:
+
+- `PamPasswordTopologyState.{h,cpp}` (новый): production read-only typed
+  snapshot — selections из state-файла (`Module:` records), три managed
+  slot states, generated-stack evidence (`common-password`) с
+  trailing-whitespace-толерантной грамматикой, foreign producer discovery
+  (Rule I: stock `pwquality` profile XOR direct `pam_pwquality.so` rule —
+  несогласованность = coherence error), ownership per identity (payload
+  contract writer'а: Applied + role-specific activation identifier),
+  семантическая модель + `classifyPamPasswordTopology` +
+  `evaluatePamPasswordC2SelectionSafety`; плюс
+  `provePamPasswordTopologySemantics` — three-profile proof с effective
+  ordering (producer < history consumer < pam_unix; initial < pam_unix;
+  foreign producer < history).
+- `PamManagedPasswordSlotWriter`: C2 per-identity lifecycle (public):
+  `proveOwnedC2Slot(role)`, `activateC2Slot(role)` (Prepared → write →
+  fresh proof → Applied; idempotent; exact crash-partial Prepared
+  adoption), `deactivateC2Slot(role)` (Applied-owned → CAS-neutralize →
+  fresh Neutral → RolledBack), `compensateC2ActiveSlot(id)` (exact-id;
+  Applied → RolledBack, Prepared → discard; foreign-id/Neutral fail
+  closed). Payload record'а несёт ROLE-SPECIFIC activation identifier
+  (quality/history/history-initial hook).
+- `PamPasswordTopologyTransitionExecutor.{h,cpp}` (новый): transition =
+  inspect → validate → `planPamPasswordTopology` (planner — единственный
+  semantic decision source) → no-op fresh desired proof → per action:
+  drift gate → slot mutation (attach: Active slot FIRST; detach:
+  selection removal FIRST) → ровно ОДИН профиль на pam-auth-update
+  invocation → immediate fresh resulting-state proof → финальный полный
+  proof → success. Failure → semantic-inverse compensation (reverse of
+  proven mutations + pending attempt), fail-fast ("C2 PAM topology NOT
+  proven restored"), foreign drift aborts the stale plan (one plan per
+  transition), foreign preserved, selected-but-unowned никогда не
+  мутируется. rc native никогда не доверяется: rc=0 + malformed =
+  failure, rc!=0 + exactly proven = ok.
+- Тесты `PamPasswordTopologyTransitionExecutorTests.cpp` (target
+  `pam_password_topology_executor_tests`): fake native mutator (fake
+  /var/lib/pam + /etc/pam.d, trailing-space grammar,
+  one-profile-per-invocation assertion) — E1–E12 (все success
+  transitions, включая variant switching Q+H↔H-only, foreign
+  pre-existing no-op, foreign+H, foreign-added-during-FIC disable) и
+  F1–F10 (failure matrix).
+
+## Accepted architecture / invariants
+
+- Physical selection != FIC ownership; detach только journal-proven
+  FIC-owned identities; foreign producer никогда не claimed/removed.
+- Attach ordering: Active slot → proof → selection. Detach — обратный.
+- `changedSystemState` monotonic/honest; Prepared/Applied lifecycle per
+  slot activation (existing MutationJournal semantics, без изменения
+  schema); common-password никогда не копируется/не snapshot'ится.
+- **`PamPolicySupport::ReadOnly` для password capabilities СОЗНАТЕЛЬНО
+  НЕ поднят**: executor/proof/compensation proven на unit-уровне, но
+  functional gates на реальных Debian 12 / Ubuntu 24.04 недоступны
+  (docker daemon не работает) — lift отложен до них (§35).
+- Legacy prerm preflight (Temporary invariant ниже) СОХРАНЁН.
 
 ## Temporary invariant (legacy prerm, до C2 three-profile redesign)
 
@@ -325,50 +366,39 @@ package-removal integration:
 
 ## Validation (этот шаг, фактически выполнено)
 
-- `bash -n packaging/deb/build-fic-debian12-deb.sh` — OK.
-- Фактический `DEBIAN/prerm` сгенерирован из билдера; `sh -n` — OK; grep
-  прерм подтвердил: preflight до stop/remove, remove-вызов не содержит
-  `fic-password-history-initial-hook`, proof-функция не изменена.
-- `python3 tests/integration/packaging/PamPackagingChecks.py .` — PASS
-  (включая новые F1 preflight-refusal и F2 two-profile success, все
-  существующие P-A…F2/T4/T5/T8 fail-fast recovery тесты без изменений).
-- `ctest --test-dir build-c2 -R pam_packaging --output-on-failure` —
-  PASS (`pam_packaging_static_checks`).
-- `git diff --check` — PASS. Негативные сканы: нет C2 planner/model
-  изменений, нет runtime executor / journal / compensation / ReadOnly
-  изменений, payload initial-профиля не тронут.
-- Validation committed baseline (C/C2 groundwork, pre-commit): full build
-  ubuntu-24.04 + full `ctest` 103/104 (baseline failure
-  `passwdqc_config_file_tests`) — зафиксировано ранее, не повторялось.
+- `cmake -S . -B build-c2 -DFIC_TARGET_PLATFORM=ubuntu-24.04
+  -DBUILD_TESTING=ON`; targeted build executor tests — OK.
+- `pam_password_topology_executor_tests`: 22/22 PASS (E1–E12, F1–F10).
+- `ctest -R 'pam_managed_password|pam_password_topology|pam_slot_attach'`
+  — 7/7 PASS (writer extension обратно совместим).
+- Full build + full CTest (ubuntu-24.04) — запущены; baseline failure
+  `passwdqc_config_file_tests` вне scope.
+- Debian 12 build/CTest, packaging checks и functional gates — НЕ
+  выполнялись (среда недоступна; docker daemon не работает).
 
 ## Explicitly NOT implemented (scope boundary этого шага)
 
-- Никакого half-baked three-profile recovery (restore/prove для
-  history-initial) — только preflight refusal.
-- Runtime `pam-auth-update --enable/--remove` attach/detach lifecycle
-  (C2 runtime executor).
-- Lifting `PamPolicySupport::ReadOnly`; wiring daemon runtime activation.
-- Applied journal records для topology mutation; compensation; Step 7.
-- Полный three-profile prerm redesign; trailing whitespace grammar;
-  Attached-фаза валидатора.
+- ReadOnly lift + daemon/runtime policy wiring + rollback integration
+  (PamRollback deactivateC2Slot путь).
+- Three-profile prerm redesign; maintenance CLI (`fic --maintenance
+  inspect-pam-password-topology` — candidate).
+- Step 6 (Debian 12 ModuleArguments option writer) — не требовался
+  механике executor'а; canonical writer behavior использован как есть.
+- Functional gates на реальных Debian 12 / Ubuntu 24.04.
 
 ## Remaining
 
-1. **C2 runtime transition executor** (следующий этап):
-   pam-auth-update mutation + resulting-state proof + journal + partial
-   failure compensation, на основе `planPamPasswordTopology` (ordered
-   actions уже отражают корректный порядок producer/consumer переходов).
-   Тогда же: переработка Attached-фазы валидатора на
-   `evaluatePamPasswordC2SelectionSafety` + provenance, lift ReadOnly,
-   Step 7 activation.
-2. **Three-profile prerm redesign**: snapshot/restore/proof всех трёх
-   identity + trailing-whitespace-толерантная грамматика + синхронная
-   правка fake grammar и behavioral тестов; тогда же снимается
-   preflight (Temporary invariant выше).
-3. Step 6: Debian 12 ModuleArguments option writer.
+1. **ReadOnly lift + daemon wiring** (после functional gates):
+   `pamPolicySupport` → RequiresTopologyActivation для password
+   capabilities на PamAuthUpdate platforms; password activation policy
+   поверх executor'а (joint Q/H request: чужая capability выводится из
+   физического состояния — selected или foreign producer); rollback
+   интеграция.
+2. **Three-profile prerm redesign**: снимает preflight и Temporary
+   invariant; trailing-whitespace уже решён на C++-стороне — prerm proof
+   либо идёт через maintenance CLI (один source of truth), либо чинит
+   anchored-`$` грамматику в shell.
+3. Step 6 ModuleArguments option writer; Step 7 activation.
 4. Среда: docker daemon не запущен; apt-зеркала в контейнерах частично
-   битые (Dockerfile-сборка пакета падает на qt6-*/xauth/xvfb).
-5. Baseline failure `passwdqc_config_file_tests` — вне scope, не чинить
-   без отдельной задачи.
-6. Не запускать параллельно `/tmp`-конфликтующие test-наборы (известный
-   конфликт `grub_rollback_journal_tests`).
+   битые; baseline failure `passwdqc_config_file_tests` — вне scope;
+   не запускать параллельно /tmp-конфликтующие test-наборы.
