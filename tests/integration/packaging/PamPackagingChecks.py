@@ -58,6 +58,13 @@ PASSWORD_HOOKS = ("fic-password-quality-hook", "fic-password-history-hook",
                   "fic-password-history-initial-hook")
 PASSWORD_HOOK_TARGETS = ("fic-password-quality", "fic-password-history",
                          "fic-password-history-initial")
+# Legacy prerm removal/snapshot/recovery framework: ONLY the password hook
+# identities it can snapshot/restore/prove. The history-initial hook is
+# deliberately excluded: it is a mutually exclusive semantic variant the
+# legacy framework can neither restore nor prove, so the prerm instead
+# refuses the whole removal while it is selected (fail-closed preflight).
+PRERM_MANAGED_PASSWORD_HOOKS = ("fic-password-quality-hook",
+                                "fic-password-history-hook")
 
 
 def hook_target(hook: str) -> str:
@@ -104,15 +111,17 @@ def write_attached_pam_state(pam_state: Path, pam_d: Path) -> None:
 
 
 def write_selected_password_hooks(pam_state: Path, pam_d: Path,
-                                  quality: bool, history: bool) -> None:
+                                  quality: bool, history: bool,
+                                  initial: bool = False) -> None:
     """Seed the sandbox with an arbitrary administrator selection of the
     C2 password hook profiles (package payload): exact "Module:
     <profile>" records in the per-facility password state file plus the
     active, correctly facilitated include in the generated common-password
     stack (under C2 each profile has ONE semantic include target; the
     fic-password-history-initial include only appears when the separate
-    initial-producer profile is selected, which these fixtures never
-    select)."""
+    initial-producer profile is selected — the behavioral fixtures select
+    it only to prove the prerm preflight refuses the removal without any
+    mutation)."""
     lines = ""
     stack_lines = ""
     if quality:
@@ -121,6 +130,11 @@ def write_selected_password_hooks(pam_state: Path, pam_d: Path,
     if history:
         lines += "Module: fic-password-history-hook\ninclude fic-password-history\n"
         stack_lines += canonical_include("password", "fic-password-history")
+    if initial:
+        lines += ("Module: fic-password-history-initial-hook\n"
+                  "include fic-password-history-initial\n")
+        stack_lines += canonical_include("password",
+                                         "fic-password-history-initial")
     (pam_state / "password").write_text(lines, encoding="utf-8")
     (pam_d / "common-password").write_text(stack_lines, encoding="utf-8")
 
@@ -161,7 +175,8 @@ def stateful_pam_auth_update_fake() -> str:
     generates "password include fic-password-quality", the history
     consumer hook generates "password include fic-password-history" in
     both Password variants; the initial-producer profile is never
-    selected by these fixtures.
+    selected by the prerm recovery (the preflight refuses the removal
+    while it is selected), so regen() never has to render it.
     Failure injection: FAKE_PAU_REMOVE_FAILS (detach failure),
     FAKE_PAU_PARTIAL + FAKE_PAU_PARTIAL_HOOKS (detach fails after a real
     partial mutation), FAKE_PAU_ENABLE_FAILS (faillock hook recovery
@@ -1051,8 +1066,18 @@ def main() -> int:
     require(remove_start >= 0 and remove_end > remove_start,
             "Debian prerm has no bounded PAM profile removal block")
     remove_block = fic_prerm[remove_start:remove_end]
+    # C2 safety invariant: the legacy two-profile removal framework must
+    # never name the history-initial hook in its destructive remove call —
+    # it cannot restore/prove that profile (the prerm refuses the whole
+    # removal first via the preflight checked below).
     for name in expected:
-        require(name in remove_block, f"Debian prerm does not remove {name}")
+        if name == "fic-password-history-initial-hook":
+            require(name not in remove_block,
+                    "legacy Debian prerm must not destructively remove the "
+                    "history-initial hook it cannot restore/prove")
+        else:
+            require(name in remove_block,
+                    f"Debian prerm does not remove {name}")
 
     # Lifecycle invariant: package removal first stops all FIC PAM writers
     # (the daemon can mutate PAM or re-activate infrastructure while alive)
@@ -1070,6 +1095,32 @@ def main() -> int:
     require("is-active --quiet" in stop_block,
             "Debian prerm does not verify that FIC services stopped before "
             "detaching PAM hooks")
+
+    # C2 preflight ordering invariant: while the history-initial hook is
+    # still selected, the legacy prerm must refuse the whole removal BEFORE
+    # any side effect — before stopping services and before any
+    # pam-auth-update mutation (fail-closed preflight, no partial
+    # mutation), because the two-profile recovery can neither restore nor
+    # prove that profile.
+    preflight_pos = fic_prerm.find(
+        "Module: fic-password-history-initial-hook\\$")
+    require(preflight_pos >= 0,
+            "Debian prerm lacks the history-initial selected preflight check")
+    require(preflight_pos < stop_pos,
+            "the history-initial preflight must run before any service is "
+            "stopped (fail closed with zero side effects)")
+    require(preflight_pos < remove_pos,
+            "the history-initial preflight must run before the first "
+            "pam-auth-update mutation")
+    require("fic_password_history_initial_hook_selected" not in fic_prerm,
+            "the dead history-initial snapshot variable must not remain in "
+            "the legacy prerm")
+    # The history-initial profile stays package payload: only its removal
+    # lifecycle is out of the legacy framework's scope, not the file itself.
+    staged_profiles = function_body(deb_builder, "install_fic_pam_profiles")
+    require("fic-password-history-initial-hook" in staged_profiles,
+            "the history-initial profile must remain in the package "
+            "payload (only its removal lifecycle is out of scope)")
 
     # Lifecycle invariant: a failing `pam-auth-update --remove` must be
     # contained inside the prerm while every FIC writer is still stopped.
@@ -1115,7 +1166,7 @@ def main() -> int:
     # snapshotted read-only from the standard per-facility state file with
     # the exact full-line "Module: <profile>" grammar BEFORE the first
     # pam-auth-update call.
-    for hook in PASSWORD_HOOKS:
+    for hook in PRERM_MANAGED_PASSWORD_HOOKS:
         snapshot_grep = f'grep -q "^Module: {hook}\\$" /var/lib/pam/password'
         require(snapshot_grep in fic_prerm,
                 f"Debian prerm does not snapshot the pre-removal selection "
@@ -2054,6 +2105,59 @@ def main() -> int:
             "pam-auth-update --enable fic-password-quality-hook",
         ], "fail-fast: the history enable must not run after the failed "
            "quality immediate proof (F2): " + repr(password_enables))
+
+        # F1 (C2 preflight): the history-initial hook selected, the two
+        # legacy-managed password hooks unselected. The prerm must refuse
+        # the whole removal BEFORE any side effect: no systemctl call, no
+        # pam-auth-update call at all, the sandbox PAM state byte-identical
+        # (no destructive initial-hook mutation without recovery), and a
+        # diagnostic that clearly names the initial hook as not yet safely
+        # removable.
+        write_attached_pam_state(pam_state, pam_d)
+        write_selected_password_hooks(pam_state, pam_d, False, False,
+                                      initial=True)
+        log.unlink(missing_ok=True)
+        before_digest = pam_state_digest(pam_state, pam_d)
+        ran = run_prerm()
+        require(ran.returncode != 0,
+                "prerm must refuse the removal while the history-initial "
+                "hook is still selected (F1)")
+        require("fic-password-history-initial-hook" in ran.stderr and
+                "cannot safely remove or restore" in ran.stderr,
+                "the preflight diagnostic must clearly state that the "
+                "history-initial hook cannot yet be safely removed (F1): " +
+                ran.stderr.strip())
+        f1_calls = read_calls()
+        require(not any(line.startswith(("pam-auth-update", "systemctl"))
+                        for line in f1_calls),
+                "the refused removal must perform NO mutation at all "
+                "(F1): " + repr(f1_calls))
+        require(pam_state_digest(pam_state, pam_d) == before_digest,
+                "the refused removal must leave the sandbox PAM state "
+                "untouched (F1)")
+
+        # F2: the ordinary two-profile removal is unaffected: quality and
+        # history consumer selected, initial unselected — the successful
+        # removal must deselect/prove exactly the two profiles, and its
+        # destructive remove call must never name the history-initial hook.
+        write_attached_pam_state(pam_state, pam_d)
+        write_selected_password_hooks(pam_state, pam_d, True, True)
+        log.unlink(missing_ok=True)
+        ran = run_prerm()
+        require(ran.returncode == 0,
+                "the ordinary two-profile removal must succeed (F2): " +
+                ran.stderr.strip())
+        remove_calls = [line for line in read_calls()
+                        if line.startswith(
+                            "pam-auth-update --package --remove")]
+        require(len(remove_calls) == 1 and
+                "fic-password-quality-hook" in remove_calls[0] and
+                "fic-password-history-hook" in remove_calls[0] and
+                "fic-password-history-initial-hook" not in remove_calls[0],
+                "the destructive remove call must keep the two-profile "
+                "contract and must never name the history-initial hook "
+                "(F2): " + repr(remove_calls))
+        require_password_hook_state(False, False)
 
     # Behavioral proof of the attach invariant: run the configure tail of the
     # generated postinst with fake binaries and verify the actual order:

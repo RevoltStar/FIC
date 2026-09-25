@@ -2,23 +2,47 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `3756e560b48c0405543d5529054a4ac870b84908`
-  ("Приступаем к Step5C"; architecture-gate commit).
-- Текущий шаг (uncommitted): архитектурное решение C/C2 + semantic topology
-  model + pure planner + payload/validator groundwork. Commit НЕ создавался
-  (по явному требованию задачи).
+- Ветка `main`. Baseline: `c84e5652daa4112cf0cbd7a0145ca2001803eae1`
+  ("Принимает новую архитектуру Step5C") — C/C2 architecture model +
+  planner + three-profile payload УЖЕ ЗАКОММИЧЕНЫ.
+- Текущий шаг (uncommitted): узкий safety follow-up к legacy Debian/Ubuntu
+  `prerm` remove lifecycle — fail-closed preflight против destructive
+  mutation `fic-password-history-initial-hook` (см. Temporary invariant
+  ниже). Commit НЕ создавался (не запрошен).
 
 ## Current task
 
-- Step 5C-архитектура решена: принят вариант **C/C2 — activation-time
-  FIC-owned password hooks** (см. DECISION ниже). Runtime-реализация
+- Step 5C-архитектура принята и закоммичена: **C/C2 — activation-time
+  FIC-owned password hooks** (DECISION ниже). Runtime-реализация
   attach/detach НЕ начата — это следующий этап (C2 runtime transition
   executor).
-- Реализовано в этом шаге: typed semantic topology model
-  (`PamPasswordTopologyModel.{h,cpp}`), pure planner
-  (`PamPasswordTopologyPlanner.{h,cpp}`), три activation-профиля в payload,
-  C2-валидатор groundwork (structural safety), unit/static тесты
-  (planner P1–P12, model, packaging).
+- Выполнено в этом шаге (narrow safety follow-up, без C2 executor):
+  legacy `prerm` (`write_system_integration_symlink_prerm()`) получил
+  fail-closed preflight: если `fic-password-history-initial-hook` ещё
+  selected — removal отказывается ДО любого побочного эффекта (до остановки
+  сервисов и до первого pam-auth-update), diagnostic называет профиль;
+  профиль убран из `pam-auth-update --package --remove` списка; мёртвая
+  переменная snapshot `fic_password_history_initial_hook_selected`
+  удалена. Behavioral/static тесты F1/F2 + preflight-ordering добавлены в
+  `PamPackagingChecks.py`.
+
+## Temporary invariant (legacy prerm, до C2 three-profile redesign)
+
+```text
+legacy prerm does NOT mutate fic-password-history-initial-hook
+until three-profile C2 removal/rollback exists.
+```
+
+Обоснование (проверено по фактическому libpam-runtime на хосте): пакет не
+имеет postrm; dpkg удаляет `/usr/share/pam-configs/<profile>` сразу после
+успешного `prerm remove`; `pam-auth-update` (строка `@enabled = grep
+{ $profiles{$_} } @enabled`) молча отбрасывает осиротевший selected-профиль
+только при СЛЕДУЮЩЕЙ внешней регенерации — без FIC provenance/proof; а на
+purge удаляется conffile `/etc/pam.d/fic-password-history-initial`, и
+generated include повисает (broken password stack). Поэтому skip-from-remove
+(Strategy A) оставлял production-reachable dangling topology — выбрана
+Strategy B (preflight fail-closed). Профиль остаётся в package payload.
+
 
 ## Architecture gate verdict (историческое evidence, НЕ переписывать)
 
@@ -301,33 +325,32 @@ package-removal integration:
 
 ## Validation (этот шаг, фактически выполнено)
 
-- `cmake -S . -B build-c2 -DFIC_TARGET_PLATFORM=ubuntu-24.04
-  -DBUILD_TESTING=ON` + full `cmake --build build-c2 -j4`: OK, без
-  errors/warnings.
-- Full `ctest --test-dir build-c2`: **103/104 passed** (1 skipped
-  `command_hash_batch_tests`), единственный failure — известный baseline
-  `passwdqc_config_file_tests` ("pwquality policy did not retain its
-  topology-dependent state"), вне scope.
-- Целевые: `ctest -R 'pam_password|pam_slot_attach|pam_managed_password|pam_packaging|pam_configuration'`
-  — 10/10, включая новые `pam_password_topology_model_tests` и
-  `pam_password_topology_planner_tests` (P1–P12).
+- `bash -n packaging/deb/build-fic-debian12-deb.sh` — OK.
+- Фактический `DEBIAN/prerm` сгенерирован из билдера; `sh -n` — OK; grep
+  прерм подтвердил: preflight до stop/remove, remove-вызов не содержит
+  `fic-password-history-initial-hook`, proof-функция не изменена.
 - `python3 tests/integration/packaging/PamPackagingChecks.py .` — PASS
-  (three-profile contracts, priorities ordering, proof unit checks,
-  prerm/postinst behavioral tests с fake pam-auth-update).
-- `git diff --check` — PASS. Негативные сканы diff: нет journal/rollback/
-  lockout/`--enable`/common-password/ReadOnly изменений; production
-  runtime policy executor НЕ изменён (`main.cpp`,
-  `PamPolicySupport::ReadOnly` не тронуты); `PamArchitectureGate.sh`
-  не переписан.
+  (включая новые F1 preflight-refusal и F2 two-profile success, все
+  существующие P-A…F2/T4/T5/T8 fail-fast recovery тесты без изменений).
+- `ctest --test-dir build-c2 -R pam_packaging --output-on-failure` —
+  PASS (`pam_packaging_static_checks`).
+- `git diff --check` — PASS. Негативные сканы: нет C2 planner/model
+  изменений, нет runtime executor / journal / compensation / ReadOnly
+  изменений, payload initial-профиля не тронут.
+- Validation committed baseline (C/C2 groundwork, pre-commit): full build
+  ubuntu-24.04 + full `ctest` 103/104 (baseline failure
+  `passwdqc_config_file_tests`) — зафиксировано ранее, не повторялось.
 
 ## Explicitly NOT implemented (scope boundary этого шага)
 
-- Runtime `pam-auth-update --enable/--remove` attach/detach lifecycle.
+- Никакого half-baked three-profile recovery (restore/prove для
+  history-initial) — только preflight refusal.
+- Runtime `pam-auth-update --enable/--remove` attach/detach lifecycle
+  (C2 runtime executor).
 - Lifting `PamPolicySupport::ReadOnly`; wiring daemon runtime activation.
 - Applied journal records для topology mutation; compensation; Step 7.
-- Slot Active-запись / Neutral-restore lifecycle (runtime executor).
-- Переработка Attached-фазы `validatePamPasswordSlotAttach` на
-  C2-классификацию (PreAttach-семантика и production-путь не менялись).
+- Полный three-profile prerm redesign; trailing whitespace grammar;
+  Attached-фаза валидатора.
 
 ## Remaining
 
@@ -338,9 +361,10 @@ package-removal integration:
    Тогда же: переработка Attached-фазы валидатора на
    `evaluatePamPasswordC2SelectionSafety` + provenance, lift ReadOnly,
    Step 7 activation.
-2. Prerm three-profile redesign: snapshot/restore/proof всех трёх
+2. **Three-profile prerm redesign**: snapshot/restore/proof всех трёх
    identity + trailing-whitespace-толерантная грамматика + синхронная
-   правка fake grammar и behavioral тестов.
+   правка fake grammar и behavioral тестов; тогда же снимается
+   preflight (Temporary invariant выше).
 3. Step 6: Debian 12 ModuleArguments option writer.
 4. Среда: docker daemon не запущен; apt-зеркала в контейнерах частично
    битые (Dockerfile-сборка пакета падает на qt6-*/xauth/xvfb).

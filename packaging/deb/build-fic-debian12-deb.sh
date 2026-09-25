@@ -1026,6 +1026,25 @@ EOF
     cat >> "$package_root/DEBIAN/prerm" <<EOF
 
 if [ "\$1" = "remove" ]; then
+    # Temporary C2 safety invariant (pre-remove preflight): the legacy
+    # two-profile password hook removal/recovery framework can
+    # snapshot/restore/prove ONLY the quality and history-consumer hooks.
+    # The history-initial hook is a mutually exclusive semantic variant
+    # this framework can neither restore (a blind re-enable next to a
+    # foreign quality producer would be wrong) nor prove. The profile
+    # definition file is deleted from disk as soon as the removal
+    # succeeds, so a still-selected history-initial hook would keep its
+    # selection record and its generated include (dangling after a later
+    # purge), and any later native regeneration would silently drop the
+    # orphaned profile outside any FIC provenance. Therefore the removal
+    # fails closed BEFORE any side effect: no service is stopped, no PAM
+    # state is mutated, and the package stays installed. This preflight
+    # is retired only by the C2 three-profile removal/rollback framework.
+    if [ -f /var/lib/pam/password ] &&
+       grep -q "^Module: fic-password-history-initial-hook\$" /var/lib/pam/password; then
+        echo "FIC: fic-password-history-initial-hook is still selected; the legacy package removal framework cannot safely remove or restore this profile yet, so the removal is refused before any PAM mutation; deselect the profile first via pam-auth-update or wait for the C2 three-profile removal framework" >&2
+        exit 1
+    fi
     # Invariant: package removal first stops all FIC PAM writers and only
     # then detaches the permanent hooks. A live daemon could still perform
     # PAM mutations or re-activate the infrastructure concurrently with the
@@ -1071,16 +1090,12 @@ if [ "\$1" = "remove" ]; then
     # unselected hooks are never enabled by the recovery.
     fic_password_quality_hook_selected=0
     fic_password_history_hook_selected=0
-    fic_password_history_initial_hook_selected=0
     if [ -f /var/lib/pam/password ]; then
         if grep -q "^Module: fic-password-quality-hook\$" /var/lib/pam/password; then
             fic_password_quality_hook_selected=1
         fi
         if grep -q "^Module: fic-password-history-hook\$" /var/lib/pam/password; then
             fic_password_history_hook_selected=1
-        fi
-        if grep -q "^Module: fic-password-history-initial-hook\$" /var/lib/pam/password; then
-            fic_password_history_initial_hook_selected=1
         fi
     fi
     fic_pam_remove_failed=1
@@ -1096,8 +1111,7 @@ if [ "\$1" = "remove" ]; then
         fic-pwquality \
         fic-pwhistory \
         fic-password-quality-hook \
-        fic-password-history-hook \
-        fic-password-history-initial-hook; then
+        fic-password-history-hook; then
         # rc=0 is not trusted on its own: the resulting password hook state
         # must be positively proven fully removed (no selection records AND
         # no generated includes) before the removal is treated as
