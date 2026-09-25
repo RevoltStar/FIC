@@ -870,11 +870,13 @@ write_password_hook_proof_function() {
     # the required state. Arguments: $1 = expected quality hook state,
     # $2 = expected history hook state; each expected state is one of:
     # "1" = the hook must be selected and attached (an exact full-line
-    # "Module: <profile>" record in /var/lib/pam/password plus exact
-    # active, correctly facilitated include rules in the generated
-    # common-password stack; the history hook is a dual-stack profile, so
-    # both the fic-password-history and the fic-password-history-initial
-    # includes must be present), "0" = the hook must be fully absent (NO
+    # "Module: <profile>" record in /var/lib/pam/password plus the exact
+    # active, correctly facilitated include rule of the profile's own
+    # managed slot target in the generated common-password stack; under
+    # the C2 payload each profile has ONE semantic include target: the
+    # quality hook includes fic-password-quality, the history consumer
+    # hook includes fic-password-history in both Password variants),
+    # "0" = the hook must be fully absent (NO
     # exact selection record AND NO exact generated include of any of its
     # targets), "d" = don't-care (only valid for intermediate per-hook
     # proofs right after a single native mutation; the final full-state
@@ -883,7 +885,10 @@ write_password_hook_proof_function() {
     # "password include <target>" rules); commented or wrong-facility
     # lines never prove anything. The proof never invokes any PAM tool
     # and never mutates PAM state, managed slots, the mutation journal or
-    # its witness.
+    # its witness. NOTE (C2 groundwork): this proof still knows nothing
+    # about the fic-password-history-initial-hook profile — the
+    # three-profile snapshot/restore/proof redesign happens together with
+    # the C2 runtime transition executor (docs/HANDOFF.md).
     cat <<'EOF'
 fic_prove_password_hook_state_restored() {
     if [ ! -d /var/lib/pam ]; then
@@ -914,7 +919,6 @@ fic_prove_password_hook_state_restored() {
             [ -f /etc/pam.d/common-password ] || return 1
             grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null || return 1
             grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history$" /etc/pam.d/common-password 2>/dev/null || return 1
-            grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history-initial$" /etc/pam.d/common-password 2>/dev/null || return 1
             ;;
         0)
             if [ -f /var/lib/pam/password ] && grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null; then
@@ -1067,12 +1071,16 @@ if [ "\$1" = "remove" ]; then
     # unselected hooks are never enabled by the recovery.
     fic_password_quality_hook_selected=0
     fic_password_history_hook_selected=0
+    fic_password_history_initial_hook_selected=0
     if [ -f /var/lib/pam/password ]; then
         if grep -q "^Module: fic-password-quality-hook\$" /var/lib/pam/password; then
             fic_password_quality_hook_selected=1
         fi
         if grep -q "^Module: fic-password-history-hook\$" /var/lib/pam/password; then
             fic_password_history_hook_selected=1
+        fi
+        if grep -q "^Module: fic-password-history-initial-hook\$" /var/lib/pam/password; then
+            fic_password_history_initial_hook_selected=1
         fi
     fi
     fic_pam_remove_failed=1
@@ -1088,7 +1096,8 @@ if [ "\$1" = "remove" ]; then
         fic-pwquality \
         fic-pwhistory \
         fic-password-quality-hook \
-        fic-password-history-hook; then
+        fic-password-history-hook \
+        fic-password-history-initial-hook; then
         # rc=0 is not trusted on its own: the resulting password hook state
         # must be positively proven fully removed (no selection records AND
         # no generated includes) before the removal is treated as
@@ -1285,7 +1294,8 @@ install_fic_pam_profiles() {
         fic-faillock-hook-preauth fic-faillock-hook-authfail \
         fic-faillock-hook-authsucc fic-faillock-hook-account \
         fic-pwquality fic-pwhistory \
-        fic-password-quality-hook fic-password-history-hook; do
+        fic-password-quality-hook fic-password-history-hook \
+        fic-password-history-initial-hook; do
         install -m 0644 \
             "$ROOT_DIR/packaging/deb/pam-configs/$profile" \
             "$profile_dir/$profile"

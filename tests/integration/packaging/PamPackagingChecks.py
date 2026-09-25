@@ -49,11 +49,13 @@ LEGACY_POLICY_PROFILES = (
     "fic-pwhistory",
 )
 
-# Step 5B managed password hook profiles: package payload, attached only
+# C2 managed password hook profiles: package payload, attached only
 # through an explicit administrator pam-auth-update selection, never by the
-# package itself. The history hook is a dual-stack profile: one selection
-# record, two generated includes (Password and Password-Initial).
-PASSWORD_HOOKS = ("fic-password-quality-hook", "fic-password-history-hook")
+# package itself. Three distinct activation identities: the quality
+# producer, the history consumer (use_authtok) and the history initial
+# producer — each with ONE semantic include target.
+PASSWORD_HOOKS = ("fic-password-quality-hook", "fic-password-history-hook",
+                  "fic-password-history-initial-hook")
 PASSWORD_HOOK_TARGETS = ("fic-password-quality", "fic-password-history",
                          "fic-password-history-initial")
 
@@ -104,11 +106,13 @@ def write_attached_pam_state(pam_state: Path, pam_d: Path) -> None:
 def write_selected_password_hooks(pam_state: Path, pam_d: Path,
                                   quality: bool, history: bool) -> None:
     """Seed the sandbox with an arbitrary administrator selection of the
-    Step 5B password hook profiles (package payload): exact "Module:
+    C2 password hook profiles (package payload): exact "Module:
     <profile>" records in the per-facility password state file plus the
-    active, correctly facilitated includes in the generated common-password
-    stack (the history hook is dual-stack, so its selection regenerates
-    both includes)."""
+    active, correctly facilitated include in the generated common-password
+    stack (under C2 each profile has ONE semantic include target; the
+    fic-password-history-initial include only appears when the separate
+    initial-producer profile is selected, which these fixtures never
+    select)."""
     lines = ""
     stack_lines = ""
     if quality:
@@ -116,9 +120,7 @@ def write_selected_password_hooks(pam_state: Path, pam_d: Path,
         stack_lines += canonical_include("password", "fic-password-quality")
     if history:
         lines += "Module: fic-password-history-hook\ninclude fic-password-history\n"
-        stack_lines += (canonical_include("password", "fic-password-history") +
-                        canonical_include("password",
-                                          "fic-password-history-initial"))
+        stack_lines += canonical_include("password", "fic-password-history")
     (pam_state / "password").write_text(lines, encoding="utf-8")
     (pam_d / "common-password").write_text(stack_lines, encoding="utf-8")
 
@@ -155,11 +157,11 @@ def stateful_pam_auth_update_fake() -> str:
     $FAKE_PAM_STATE/{auth,account,password} as "Module: <profile>" blocks;
     each run regenerates active, correctly facilitated include lines into
     $FAKE_PAM_D/common-{auth,account,password}. The password facility
-    models the Step 5B dual-stack hook profiles: the quality hook
-    generates "password include fic-password-quality", the history hook
-    generates both "password include fic-password-history" and the
-    Password-Initial equivalent "password include
-    fic-password-history-initial".
+    models the C2 single-identity hook profiles: the quality hook
+    generates "password include fic-password-quality", the history
+    consumer hook generates "password include fic-password-history" in
+    both Password variants; the initial-producer profile is never
+    selected by these fixtures.
     Failure injection: FAKE_PAU_REMOVE_FAILS (detach failure),
     FAKE_PAU_PARTIAL + FAKE_PAU_PARTIAL_HOOKS (detach fails after a real
     partial mutation), FAKE_PAU_ENABLE_FAILS (faillock hook recovery
@@ -238,11 +240,9 @@ regen() {
         *"Module: fic-password-history-hook"*)
             case "$FAKE_PAU_PASSWORD_MALFORMED" in
                 history)
-                    printf "# password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password.new"
-                    printf "# password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history-initial\\n" >> "$pam_d/common-password.new" ;;
+                    printf "# password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password.new" ;;
                 *)
-                    printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password.new"
-                    printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history-initial\\n" >> "$pam_d/common-password.new" ;;
+                    printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password.new" ;;
             esac ;;
     esac
     mv "$pam_d/common-password.new" "$pam_d/common-password"
@@ -272,8 +272,7 @@ case " $* " in
             quality)
                 printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-quality\\n" >> "$pam_d/common-password" ;;
             history)
-                printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password"
-                printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history-initial\\n" >> "$pam_d/common-password" ;;
+                printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password" ;;
         esac
         exit 0
         ;;
@@ -538,10 +537,14 @@ def password_proof_unit_tests() -> None:
                           "include fic-password-history\n")
         quality_include = canonical_include("password",
                                             "fic-password-quality")
-        history_includes = (canonical_include("password",
-                                              "fic-password-history") +
-                            canonical_include("password",
-                                              "fic-password-history-initial"))
+        # C2: the history consumer profile has ONE semantic include
+        # target; the initial-producer include is only generated by the
+        # separate initial profile and is guarded by the proof's absence
+        # checks.
+        history_include = canonical_include("password",
+                                            "fic-password-history")
+        history_initial_include = canonical_include(
+            "password", "fic-password-history-initial")
 
         def run_proof(quality_expected: str, history_expected: str,
                       state_password, common_password
@@ -593,11 +596,11 @@ def password_proof_unit_tests() -> None:
         # Canonical topologies must pass.
         expect_pass("both attached (1, 1)", "1", "1",
                     quality_record + history_record,
-                    quality_include + history_includes)
+                    quality_include + history_include)
         expect_pass("quality only attached (1, 0)", "1", "0",
                     quality_record, quality_include)
         expect_pass("intermediate history proof (d, 1)", "d", "1",
-                    history_record, history_includes)
+                    history_record, history_include)
         expect_pass("both fully absent (0, 0)", "0", "0", "", "")
         expect_fail("missing /var/lib/pam fails closed", "0", "0", None,
                     None)
@@ -607,18 +610,16 @@ def password_proof_unit_tests() -> None:
 
         # T2 / T3: unselected must mean fully absent — a stale exact
         # include WITHOUT a selection record must defeat the proof, and
-        # both dual-stack history targets must be checked individually.
+        # every history identity (consumer and initial-producer) must be
+        # checked individually by the absence guards.
         expect_fail("stale quality include without record (T2)", "0", "0",
                     "", quality_include)
         expect_fail("stale quality record with include removed", "0", "0",
                     quality_record, "")
         expect_fail("stale history include without record (T3)", "0", "0",
-                    "", canonical_include("password",
-                                          "fic-password-history"))
+                    "", history_include)
         expect_fail("stale history-initial include without record (T3)",
-                    "0", "0", "",
-                    canonical_include("password",
-                                      "fic-password-history-initial"))
+                    "0", "0", "", history_initial_include)
         expect_fail("stale history record without includes", "0", "0",
                     history_record, "")
 
@@ -629,15 +630,15 @@ def password_proof_unit_tests() -> None:
                                             "# password\t", 1))
         expect_fail("wrong-facility history include", "d", "1",
                     history_record,
-                    history_includes.replace("password\t",
-                                             "account\t", 1))
+                    history_include.replace("password\t",
+                                            "account\t", 1))
         expect_fail("non-include control word for history", "d", "1",
                     history_record,
                     "password\t\t\t\toptional\t\t\t\t"
                     "fic-password-history\n")
         expect_fail("history-initial suffix collision", "d", "1",
                     history_record,
-                    history_includes.replace(
+                    history_include.replace(
                         "fic-password-history\n",
                         "fic-password-history-backup\n", 1))
         expect_fail("Module suffix collision for quality", "1", "d",
@@ -657,7 +658,7 @@ def password_proof_unit_tests() -> None:
             quality_record + history_record, encoding="utf-8")
         pam_d.mkdir(parents=True, exist_ok=True)
         (pam_d / "common-password").write_text(
-            quality_include + history_includes, encoding="utf-8")
+            quality_include + history_include, encoding="utf-8")
         proof_script.write_text(
             "#!/bin/sh\n" +
             sandbox_pam_paths(proof_function, pam_state, pam_d) +
@@ -756,6 +757,12 @@ def main() -> int:
             "Priority": "1023",
             "rules": (
                 "include                     fic-password-history",
+            ),
+        },
+        "fic-password-history-initial-hook": {
+            "Name": "FIC password history initial hook",
+            "Priority": "1022",
+            "rules": (
                 "include                     fic-password-history-initial",
             ),
         },
@@ -781,15 +788,21 @@ def main() -> int:
         for argument in prohibited_arguments:
             require(argument not in profile, f"{name} embeds policy argument: {argument}")
 
-    # Step 5B: managed password slot bootstrap contract. The two permanent
-    # password hook profiles are immutable package infrastructure: Primary
-    # password type, exact priorities, Default: no, and the exact include
-    # targets into the package-owned managed slots. They are never enabled
-    # by the package (attach is a later, explicitly separate step).
+    # C2: three distinct activation identities for the FIC-owned password
+    # hooks. They are immutable package infrastructure: Primary password
+    # type, exact priorities, Default: no, and the exact include targets
+    # into the package-owned managed slots. They are never enabled by the
+    # package (activation-time attach is a later, explicitly separate
+    # step), and the initial producer and the consumer are two separate
+    # explicit identities — no Password-Initial switching of a single
+    # history profile.
     quality_hook = (profile_dir / "fic-password-quality-hook").read_text(encoding="utf-8")
     history_hook = (profile_dir / "fic-password-history-hook").read_text(encoding="utf-8")
+    history_initial_hook = (profile_dir / "fic-password-history-initial-hook").read_text(encoding="utf-8")
     for hook_name, hook in (("fic-password-quality-hook", quality_hook),
-                            ("fic-password-history-hook", history_hook)):
+                            ("fic-password-history-hook", history_hook),
+                            ("fic-password-history-initial-hook",
+                             history_initial_hook)):
         require(field(hook, "Password-Type") == "Primary",
                 f"{hook_name} Password-Type is not Primary")
         require(optional_field(hook, "Auth-Type") == "" and
@@ -803,11 +816,49 @@ def main() -> int:
             "quality hook Password-Initial section must include fic-password-quality")
     require(re.search(r"^Password:\n\s+include\s+fic-password-history$",
                       history_hook, re.MULTILINE) is not None,
-            "history hook Password section must include fic-password-history")
-    require(re.search(r"^Password-Initial:\n\s+include\s+fic-password-history-initial$",
+            "history consumer hook Password section must include "
+            "fic-password-history")
+    require(re.search(r"^Password-Initial:\n\s+include\s+fic-password-history$",
                       history_hook, re.MULTILINE) is not None,
-            "history hook Password-Initial section must include "
+            "history consumer hook Password-Initial section must include "
+            "fic-password-history")
+    require("fic-password-history-initial" not in history_hook,
+            "the history consumer hook must not reference the "
+            "history-initial identity (separate explicit profile)")
+    require(re.search(r"^Password:\n\s+include\s+"
+                      r"fic-password-history-initial$",
+                      history_initial_hook, re.MULTILINE) is not None,
+            "history initial hook Password section must include "
             "fic-password-history-initial")
+    require(re.search(r"^Password-Initial:\n\s+include\s+"
+                      r"fic-password-history-initial$",
+                      history_initial_hook, re.MULTILINE) is not None,
+            "history initial hook Password-Initial section must include "
+            "fic-password-history-initial")
+    require("fic-password-history\n" not in history_initial_hook,
+            "the history initial hook must not reference the consumer "
+            "identity (separate explicit profile)")
+
+    # C2 priority ordering (pam-auth-update sorts Primary password
+    # profiles by descending priority; the stock Debian/Ubuntu `unix`
+    # profile has priority 256). The v7-verified stack order is
+    # quality producer < history consumer < pam_unix ("<" = earlier in
+    # the generated stack). The initial producer profile is never
+    # co-selected with the consumer profile, so it only has to keep its
+    # producer position before pam_unix.
+    quality_priority = int(field(quality_hook, "Priority"))
+    history_priority = int(field(history_hook, "Priority"))
+    history_initial_priority = int(field(history_initial_hook, "Priority"))
+    stock_unix_password_priority = 256
+    require(quality_priority > history_priority > stock_unix_password_priority,
+            "C2 ordering violated: quality producer must sort before the "
+            "history consumer, both before stock unix (256)")
+    require(stock_unix_password_priority < history_initial_priority,
+            "the history initial producer must sort before stock unix "
+            "(256) to keep the producer position")
+    require(history_initial_priority != history_priority,
+            "the history initial and consumer identities must have "
+            "distinct deterministic priorities")
 
     # The three managed password slots ship as canonical-neutral package
     # payload: package owns existence, runtime policy + journal own state.
@@ -984,13 +1035,13 @@ def main() -> int:
     require(validate_pos > bootstrap_pos,
             "Debian postinst must bootstrap the managed password slots "
             "before the pre-attach validation")
-    for password_hook in ("fic-password-quality-hook",
-                          "fic-password-history-hook"):
+    for password_hook in PASSWORD_HOOKS:
         require(f"pam-auth-update --enable \\\n        {password_hook}"
                 not in fic_postinst and
                 f"pam-auth-update --enable {password_hook}" not in fic_postinst,
                 f"Debian postinst must not enable the password hook "
-                f"profile {password_hook} (attach is out of Step 5B scope)")
+                f"profile {password_hook} (C2 attach is out of install "
+                f"scope)")
     require("common-password" not in fic_postinst,
             "Debian postinst must not edit the pam-auth-update generated "
             "common-password stack")
@@ -1175,13 +1226,14 @@ def main() -> int:
                 f"password hook proof lacks {state_element}")
     # Same strict grammar as the permanent hook proof: exact full-line
     # "Module: <profile>" selection records plus exact active, correctly
-    # facilitated include rules, with the history hook proven on both of its
-    # dual-stack physical includes.
+    # facilitated include rules. Under the C2 payload the history consumer
+    # hook has ONE semantic include target; the
+    # fic-password-history-initial include is guarded only by the
+    # absence checks (the initial-producer profile has no restore/proof
+    # branch until the C2 runtime transition executor redesigns it).
     for include_pattern in (
             "^password[[:space:]]+include[[:space:]]+fic-password-quality$",
-            "^password[[:space:]]+include[[:space:]]+fic-password-history$",
-            "^password[[:space:]]+include[[:space:]]+"
-            "fic-password-history-initial$"):
+            "^password[[:space:]]+include[[:space:]]+fic-password-history$"):
         require(f'grep -Eq "{include_pattern}" /etc/pam.d/common-password'
                 in password_proof,
                 f"password hook proof lacks the exact include proof for "
@@ -1200,6 +1252,17 @@ def main() -> int:
                 f"and one negative exact include check for "
                 f"{include_pattern} (unselected means no record AND no "
                 f"generated include)")
+    initial_include_pattern = ("^password[[:space:]]+include[[:space:]]+"
+                               "fic-password-history-initial$")
+    require(f'grep -Eq "{initial_include_pattern}" '
+            f"/etc/pam.d/common-password" in password_proof,
+            "password hook proof lacks the absence guard for the "
+            "fic-password-history-initial include")
+    require(password_proof.count(
+                f'grep -Eq "{initial_include_pattern}" '
+                f"/etc/pam.d/common-password") == 1,
+            "the fic-password-history-initial include guard must be "
+            "absence-only until the C2 three-profile prerm redesign")
     for module_grep in ('grep -q "^Module: fic-password-quality-hook$" '
                         "/var/lib/pam/password",
                         'grep -q "^Module: fic-password-history-hook$" '
@@ -1716,7 +1779,7 @@ def main() -> int:
             for target, present in (("fic-password-quality", quality),
                                     ("fic-password-history", history),
                                     ("fic-password-history-initial",
-                                     history)):
+                                     False)):
                 if present:
                     require(canonical_include("password", target)
                             in password_stack,

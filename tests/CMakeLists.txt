@@ -882,6 +882,35 @@ target_link_libraries(pam_managed_password_slot_bootstrap_tests PRIVATE
 add_test(NAME pam_managed_password_slot_bootstrap_tests
          COMMAND pam_managed_password_slot_bootstrap_tests)
 
+# C2 password topology model + planner: pure components, no filesystem
+# or pam-auth-update dependencies.
+add_executable(pam_password_topology_model_tests
+    fic/modules/identity_access/pam/PamPasswordTopologyModelTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+)
+target_include_directories(pam_password_topology_model_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_password_topology_model_tests PRIVATE
+    fic-core Threads::Threads
+)
+add_test(NAME pam_password_topology_model_tests
+         COMMAND pam_password_topology_model_tests)
+
+add_executable(pam_password_topology_planner_tests
+    fic/modules/identity_access/pam/PamPasswordTopologyPlannerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+)
+target_include_directories(pam_password_topology_planner_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_password_topology_planner_tests PRIVATE
+    fic-core Threads::Threads
+)
+add_test(NAME pam_password_topology_planner_tests
+         COMMAND pam_password_topology_planner_tests)
+
 
 add_executable(pam_disable_nopasswdlogin_policy_tests
     fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp
