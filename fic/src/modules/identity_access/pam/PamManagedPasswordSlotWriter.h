@@ -134,6 +134,16 @@ struct PamManagedPasswordSlotActivationResult {
     // ownership (physical proof + matching Applied journal record).
     bool ownershipProven = false;
     // Journal mutation id of the resulting state (0 when none).
+    //
+    // Failure contract (C2 partial-state propagation): on a FAILED
+    // activation, mutationId is nonzero ONLY when an exact outstanding C2
+    // activation state remains physically/journal-present and MUST be
+    // compensated by the caller through compensateC2ActiveSlot() (e.g. the
+    // journal Prepared -> Applied commit failed after the physical slot
+    // write already persisted). When the writer fully compensated the
+    // failure internally (exact physical restore + Prepared discard), or
+    // nothing was mutated at all, mutationId is 0. It is NOT a historical
+    // "id once allocated" value.
     std::uint64_t mutationId = 0;
     std::string error;
 };
@@ -231,6 +241,15 @@ public:
     using SlotFaultHook = std::function<bool(std::size_t slotIndex)>;
     void setBeforeSlotWriteHookForTests(SlotFaultHook hook);
     void setAfterSlotWriteHookForTests(SlotFaultHook hook);
+
+    // Test-only deterministic seam of the journal Prepared -> Applied
+    // completion (completePrepared). Returning false injects a journal
+    // commit failure AFTER the physical slot write has already persisted,
+    // exercising the caller-visible partial-state propagation. Production
+    // code must never set this hook.
+    using JournalCompletionFaultHook = std::function<bool()>;
+    void setJournalCompletionFaultHookForTests(
+        JournalCompletionFaultHook hook);
 
 private:
     bool ensureJournalOperational(std::string& error) const;
@@ -423,6 +442,7 @@ private:
     PamManagedPasswordDomain domain_;
     SlotFaultHook beforeWriteHook_;
     SlotFaultHook afterWriteHook_;
+    JournalCompletionFaultHook journalCompletionHook_;
 };
 
 } // namespace fic::identity::pam

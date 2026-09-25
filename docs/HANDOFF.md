@@ -2,11 +2,54 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `8b53bc9fc272bd0c7dbe64ce10b208917502ab58`
-  ("Follow-up к последнему коммиту") — C/C2 architecture + planner +
-  three-profile payload + legacy prerm preflight ЗАКОММИЧЕНЫ.
-- Текущий шаг (uncommitted): **C2 runtime transition executor COMPLETE**
-  (runtime implementation — см. ниже). Commit НЕ создавался (не запрошен).
+- Ветка `main`. Baseline: `999505dc11068009037044ca6615966024009291`
+  ("Создаем исполнитель runtime-перехода C2 + доказательство итогового
+  состояния для трёх профилей + компенсация частичного сбоя") — C2
+  runtime transition executor ЗАКОММИЧЕН.
+- Поверх него выполнен narrow follow-up fix (uncommitted, commit не
+  запрошен): **C2 attach partial-state propagation** — executor теперь
+  получает exact outstanding slot mutation id, когда активация slot'а
+  упала ПОСЛЕ физической записи, но до Applied-коммита, чтобы
+  compensation могла нейтрализовать точный slot и разрешить Prepared
+  provenance.
+
+### C2 attach partial-state propagation fix (этот шаг)
+
+- Writer контракт `PamManagedPasswordSlotActivationResult.mutationId`
+  (формализован в комментарии): на failure nonzero ТОЛЬКО когда exact
+  outstanding C2 activation остаётся физически/journal-present и требует
+  caller-side compensation через `compensateC2ActiveSlot()`; при полной
+  внутренней компенсации writer'а (exact restore + Prepared discard) — 0.
+  Это НЕ historical "id once allocated".
+- `PamManagedPasswordSlotWriter::activateC2Slot()`: ветка
+  `completePrepared(id)` failure теперь выставляет
+  `result.mutationId = id` (при сохранённом honest
+  `changedSystemState = true`); `compensateFreshFailure()` при
+  неудавшемся внутреннем restore тоже пропагирует id (Active exact-id
+  slot + Prepared остаются caller-compensatable). Ветви render/write/proof
+  с успешной внутренней компенсацией остаются с mutationId == 0 —
+  executor не пытается neutralize уже Neutral slot (нет двойной
+  compensation).
+- `PamPasswordTopologyTransitionExecutor::executeAction()` (attach):
+  `attempt.slotMutationId = activation.mutationId` копируется НЕЗАВИСИМО
+  от bool return'а `activateC2Slot()` (раньше — только после success, из-
+  за чего failure после physical write оставлял Active slot + Prepared
+  record без компенсации).
+- Test seam: `setJournalCompletionFaultHookForTests` (writer) +
+  passthrough'ы executor'а — инжект failure journal
+  Prepared→Applied commit после успешной физической записи; production
+  никогда hook не ставит.
+- Тесты: **F11** `journalCompletionFailsAfterSlotWrite` (None → Quality,
+  fault = completePrepared; expects: failure, native invocations == 0,
+  compensated + compensatedStateProven, slot Neutral, Prepared record
+  discarded, no Applied ownership, topology == None, diagnostic БЕЗ
+  "NOT proven restored"); writer-тесты **W-C2** (failure после записи →
+  changedSystemState=true, mutationId=exact id, record Prepared, затем
+  успешная exact-id caller compensation) и **W-C2-clean** (внутренне
+  полностью скомпенсированный failure → mutationId=0, no physical
+  change). F11 проверен на воспроизведение бага: без executor-фикса
+  тест падает с "C2 PAM topology NOT proven restored".
+
 
 ## Current task
 
@@ -368,11 +411,14 @@ package-removal integration:
 
 - `cmake -S . -B build-c2 -DFIC_TARGET_PLATFORM=ubuntu-24.04
   -DBUILD_TESTING=ON`; targeted build executor tests — OK.
-- `pam_password_topology_executor_tests`: 22/22 PASS (E1–E12, F1–F10).
+- `pam_password_topology_executor_tests`: 23/23 PASS (E1–E12, F1–F11;
+  F11 — partial-state propagation regression).
 - `ctest -R 'pam_managed_password|pam_password_topology|pam_slot_attach'`
-  — 7/7 PASS (writer extension обратно совместим).
-- Full build + full CTest (ubuntu-24.04) — запущены; baseline failure
-  `passwdqc_config_file_tests` вне scope.
+  — PASS (writer extension обратно совместим).
+- Follow-up fix: full build OK; `ctest -R
+  'pam_password_topology_executor|pam_managed_password'` — 4/4 PASS;
+  full CTest 104/105 (baseline failure `passwdqc_config_file_tests`
+  вне scope); `git diff --check` — clean.
 - Debian 12 build/CTest, packaging checks и functional gates — НЕ
   выполнялись (среда недоступна; docker daemon не работает).
 

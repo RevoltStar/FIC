@@ -122,6 +122,16 @@ public:
     void setHistorySlotFaultHooksForTests(
         SlotFaultHook beforeWrite, SlotFaultHook afterWrite);
 
+    // Test-only deterministic seam of the journal Prepared -> Applied
+    // completion of the underlying slot writers (see
+    // PamManagedPasswordSlotWriter). Production code must never set it.
+    using JournalCompletionFaultHook =
+        PamManagedPasswordSlotWriter::JournalCompletionFaultHook;
+    void setQualityJournalCompletionFaultHookForTests(
+        JournalCompletionFaultHook hook);
+    void setHistoryJournalCompletionFaultHookForTests(
+        JournalCompletionFaultHook hook);
+
     // Executes the transition from the current physical topology to the
     // semantic topology requested by (qualityRequested, historyRequested).
     bool transition(

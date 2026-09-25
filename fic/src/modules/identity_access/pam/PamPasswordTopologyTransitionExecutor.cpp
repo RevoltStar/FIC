@@ -82,6 +82,18 @@ void PamPasswordTopologyTransitionExecutor::
     historyWriter_.setAfterSlotWriteHookForTests(std::move(afterWrite));
 }
 
+void PamPasswordTopologyTransitionExecutor::
+    setQualityJournalCompletionFaultHookForTests(
+        JournalCompletionFaultHook hook) {
+    qualityWriter_.setJournalCompletionFaultHookForTests(std::move(hook));
+}
+
+void PamPasswordTopologyTransitionExecutor::
+    setHistoryJournalCompletionFaultHookForTests(
+        JournalCompletionFaultHook hook) {
+    historyWriter_.setJournalCompletionFaultHookForTests(std::move(hook));
+}
+
 bool PamPasswordTopologyTransitionExecutor::runPamAuthUpdateOne(
     const char* flag, const char* profileId, std::string& error) {
     // Hard contract: exactly ONE profile per pam-auth-update invocation.
@@ -230,11 +242,19 @@ bool PamPasswordTopologyTransitionExecutor::executeAction(
                 ? ManagedPasswordSlotRole::HistoryInitial
                 : ManagedPasswordSlotRole::HistoryNormal);
         PamManagedPasswordSlotActivationResult activation;
-        if (!writer.activateC2Slot(
-                role, options_.historyOptions, activation, error)) {
+        const bool activated = writer.activateC2Slot(
+            role, options_.historyOptions, activation, error);
+        // Partial-state propagation: the activation may fail AFTER the
+        // physical slot write persisted (e.g. journal Prepared -> Applied
+        // commit failure). In that case the result carries the exact
+        // outstanding mutation id that compensation must neutralize,
+        // regardless of the bool return. A fully (internally) compensated
+        // failure reports 0: no caller-side compensation is needed or
+        // allowed.
+        attempt.slotMutationId = activation.mutationId;
+        if (!activated) {
             return false;
         }
-        attempt.slotMutationId = activation.mutationId;
         // The native call result is NEVER trusted alone: the resulting
         // physical state is freshly inspected by the transition loop.
         attempt.nativeAttempted = true;

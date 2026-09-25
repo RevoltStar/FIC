@@ -67,6 +67,11 @@ void PamManagedPasswordSlotWriter::setAfterSlotWriteHookForTests(
     afterWriteHook_ = std::move(hook);
 }
 
+void PamManagedPasswordSlotWriter::setJournalCompletionFaultHookForTests(
+    JournalCompletionFaultHook hook) {
+    journalCompletionHook_ = std::move(hook);
+}
+
 std::vector<const ManagedPasswordSlotSpec*>
 PamManagedPasswordSlotWriter::domainSlots() const {
     switch (domain_) {
@@ -296,6 +301,11 @@ bool PamManagedPasswordSlotWriter::discardPrepared(
 
 bool PamManagedPasswordSlotWriter::completePrepared(
     fic::rollback::MutationId id, std::string& error) {
+    if (journalCompletionHook_ && !journalCompletionHook_()) {
+        error = "injected managed password journal completion failure "
+                "(test seam)";
+        return false;
+    }
     if (!journal_.setStatus(
             id, fic::rollback::MutationStatus::Applied, error)) {
         error = "managed password journal commit failed: " + error;
@@ -425,8 +435,12 @@ void PamManagedPasswordSlotWriter::compensateFreshFailure(
     if (!restored) {
         // The physical mutation happened and could not be compensated.
         // The Prepared record stays for the existing lifecycle recovery;
-        // never report a clean failure or claim ownership.
+        // never report a clean failure or claim ownership. The exact
+        // outstanding activation (Active slot with the prepared id +
+        // Prepared record) remains caller-compensatable through
+        // compensateC2ActiveSlot(): propagate the exact mutation id.
         result.changedSystemState = true;
+        result.mutationId = id;
         error += "; " + rollbackError;
         return;
     }
@@ -1535,8 +1549,12 @@ bool PamManagedPasswordSlotWriter::activateC2Slot(
     }
     if (!completePrepared(id, error)) {
         // The physical mutation persisted; the journal commit failure must
-        // never be reported as a clean failure.
+        // never be reported as a clean failure. The exact outstanding C2
+        // activation (canonical Active slot + Prepared record) remains
+        // caller-compensatable: propagate the exact mutation id so the
+        // executor can neutralize it through compensateC2ActiveSlot().
         result.changedSystemState = true;
+        result.mutationId = id;
         return false;
     }
     result.success = true;

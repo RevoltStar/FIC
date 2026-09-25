@@ -1,6 +1,6 @@
 // C2 runtime transition executor tests: deterministic fake native
 // pam-auth-update mutator + fake /var/lib/pam + /etc/pam.d tree.
-// Coverage: E1-E12 success transitions, F1-F10 failure matrix.
+// Coverage: E1-E12 success transitions, F1-F11 failure matrix.
 #include "modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.h"
 
 #include "modules/identity_access/pam/PamManagedPasswordSlots.h"
@@ -898,6 +898,46 @@ void testF10_noOpDesiredButPhysicalProofFails() {
     require(!result.changedSystemState, "F10: no system change");
 }
 
+void testF11_journalCompletionFailsAfterSlotWrite() {
+    // Partial-state propagation regression: the journal Prepared ->
+    // Applied commit fails AFTER the physical slot write persisted and
+    // was freshly proven. Before the fix the executor never learned the
+    // exact outstanding mutation id, skipped compensateC2ActiveSlot() and
+    // left "Active slot + Prepared record" behind. The compensation must
+    // neutralize the exact slot, discard the exact Prepared record and
+    // prove the pre-transition state again.
+    TestEnvironment env;
+    env.executor->setQualityJournalCompletionFaultHookForTests(
+        [] { return false; });
+    std::string error;
+    const auto result = env.run(true, false, error);
+    require(!result.success, "F11: failure expected");
+    // Invariant: no native call before journal ownership proof — the
+    // slot activation never reached a caller-visible valid state.
+    require(env.mutator.invocations.empty(),
+        "F11: no native pam-auth-update call may happen");
+    require(result.compensated && result.compensatedStateProven,
+        "F11: compensation proves the pre-transition state: " + error);
+    require(error.find("C2 PAM topology NOT proven restored") ==
+            std::string::npos,
+        "F11: diagnostic must be a normal compensated failure");
+    // The exact Prepared activation must be resolved: no Applied
+    // ownership, no outstanding record, no outstanding marker id.
+    require(env.appliedCount() == 0, "F11: no Applied record remains");
+    const auto snapshot = env.inspect();
+    require(snapshot.qualitySlotState == ManagedPasswordSlotState::Neutral,
+        "F11: quality slot neutralized by the exact-id compensation");
+    require(snapshot.qualitySlotMutationId == 0,
+        "F11: no outstanding quality mutation id");
+    require(!snapshot.selections.ficQualitySelected,
+        "F11: quality profile unselected");
+    require(!snapshot.ownership.ficQualityOwned,
+        "F11: no Applied ownership remains");
+    require(snapshot.classification.topologyClass ==
+            PamPasswordTopologyClass::None,
+        "F11: final topology restored to the original None class");
+}
+
 } // namespace
 
 int main() {
@@ -944,6 +984,8 @@ int main() {
             testF9_selectedButUnownedIdentityIsNeverTouched},
         {"F10_noOpDesiredButPhysicalProofFails",
             testF10_noOpDesiredButPhysicalProofFails},
+        {"F11_journalCompletionFailsAfterSlotWrite",
+            testF11_journalCompletionFailsAfterSlotWrite},
     };
     for (const NamedTest& test : tests) {
         try {

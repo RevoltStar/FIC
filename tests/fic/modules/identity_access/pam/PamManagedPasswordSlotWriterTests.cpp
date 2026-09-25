@@ -1409,6 +1409,76 @@ void runNeutralizationAccountingTests() {
     }
 }
 
+// C2 per-identity lifecycle: partial-state propagation contract of
+// activateC2Slot() (see the PamManagedPasswordSlotActivationResult
+// mutationId failure contract).
+void runC2LifecycleTests() {
+    std::cout << "PamManagedPasswordSlotWriterTests: C2 lifecycle\n";
+
+    // W-C2: the journal Prepared -> Applied completion fails AFTER the
+    // physical slot write persisted and was freshly proven. The failure
+    // must be honest (changedSystemState) and must propagate the exact
+    // outstanding Prepared activation id to the caller; the caller then
+    // compensates it through compensateC2ActiveSlot().
+    {
+        Fixture fixture(PamManagedPasswordDomain::Quality);
+        writeFile(qualityPath(fixture.tree()), neutral());
+        fixture.writer().setJournalCompletionFaultHookForTests(
+            [] { return false; });
+        PamManagedPasswordSlotActivationResult result;
+        std::string error;
+        require(!fixture.writer().activateC2Slot(
+                ManagedPasswordSlotRole::Quality, historyOptions(3),
+                result, error),
+            "W-C2: journal completion failure must fail the activation");
+        require(result.changedSystemState,
+            "W-C2: the physical mutation persisted — honest accounting");
+        require(!result.ownershipProven, "W-C2: no ownership");
+        require(result.mutationId != 0,
+            "W-C2: exact outstanding mutation id propagated");
+        const std::uint64_t id = result.mutationId;
+        const auto* record = findRecord(fixture.journal(), id);
+        require(record != nullptr, "W-C2: journal record exists");
+        require(record->status == fic::rollback::MutationStatus::Prepared,
+            "W-C2: the record stays Prepared for the caller compensation");
+        // Caller-side exact-id compensation.
+        bool changed = false;
+        require(fixture.writer().compensateC2ActiveSlot(
+                ManagedPasswordSlotRole::Quality, id, changed, error),
+            "W-C2: exact-id caller compensation: " + error);
+        require(changed, "W-C2: compensation changed the system state");
+        require(readFile(qualityPath(fixture.tree())) == neutral(),
+            "W-C2: slot neutralized");
+        require(findRecord(fixture.journal(), id) == nullptr,
+            "W-C2: exact Prepared record discarded");
+    }
+
+    // W-C2-clean: a failure that the writer fully compensated internally
+    // (no physical write committed, Prepared discarded) must report NO
+    // caller-compensatable state (mutationId == 0), so the executor never
+    // attempts to neutralize an already Neutral slot.
+    {
+        Fixture fixture(PamManagedPasswordDomain::Quality);
+        writeFile(qualityPath(fixture.tree()), neutral());
+        fixture.writer().setBeforeSlotWriteHookForTests(
+            [](std::size_t) { return false; });
+        PamManagedPasswordSlotActivationResult result;
+        std::string error;
+        require(!fixture.writer().activateC2Slot(
+                ManagedPasswordSlotRole::Quality, historyOptions(3),
+                result, error),
+            "W-C2-clean: write failure must fail the activation");
+        require(!result.changedSystemState,
+            "W-C2-clean: fully compensated internal failure");
+        require(result.mutationId == 0,
+            "W-C2-clean: no caller-compensatable state remains");
+        require(journalActiveCount(fixture.journal()) == 0,
+            "W-C2-clean: Prepared record discarded");
+        require(readFile(qualityPath(fixture.tree())) == neutral(),
+            "W-C2-clean: slot stays Neutral");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1425,6 +1495,7 @@ int main() {
         runLegacyPayloadNegativeTests();
         runRecoveryAccountingTests();
         runNeutralizationAccountingTests();
+        runC2LifecycleTests();
         std::cout << "PamManagedPasswordSlotWriterTests: OK\n";
         return 0;
     } catch (const std::exception& error) {
