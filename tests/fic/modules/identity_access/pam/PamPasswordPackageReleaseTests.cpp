@@ -716,6 +716,151 @@ void testP13b_unselectedOwnedSlotFailsClosed() {
     requireRefusedBeforeMutation(env, "P13b", "not selected");
 }
 
+// ---- P22/P23: mixed Owned + Prepared package-release recovery ----
+
+// Creates an exact canonical Prepared crash-leftover for the given role
+// through the REAL production slot writer and journal contract: the
+// journal completion is faulted after the durable Active slot write, so
+// the exact-id Prepared record and the canonical Active slot remain with
+// NO native pam-auth-update invocation.
+void createPreparedCrashLeftover(
+    ReleaseEnvironment& env, fic::identity::pam::ManagedPasswordSlotRole role,
+    fic::identity::pam::PamManagedPasswordDomain domain,
+    const std::string& why) {
+    fic::identity::pam::PamManagedPasswordSlotWriter writer(
+        env.tree.pamd(), env.journal, domain);
+    writer.setJournalCompletionFaultHookForTests([]() { return false; });
+    fic::identity::pam::PamManagedPasswordSlotActivationResult activation;
+    std::string writerError;
+    require(!writer.activateC2Slot(
+                role,
+                fic::identity::pam::ManagedPwhistorySlotOptions{
+                    std::optional<unsigned>(3), false},
+                activation, writerError),
+        why + ": the faulted activation must fail");
+    require(activation.mutationId != 0,
+        why + ": the outstanding partial activation must carry the exact "
+              "mutation id");
+}
+
+void testP22_mixedOwnedPlusPreparedRelease() {
+    ReleaseEnvironment env;
+    // 1. A normal owned Quality through the production coordinator:
+    //    FicQuality selected, quality slot Active, Applied ownership.
+    env.applyOk(true, false);
+    const std::size_t invocationsAfterApply =
+        env.mutator.invocations.size();
+    // 2. An exact canonical Prepared history-consumer crash-leftover
+    //    (crash between the slot activation and the Prepared commit).
+    createPreparedCrashLeftover(env,
+        fic::identity::pam::ManagedPasswordSlotRole::HistoryNormal,
+        fic::identity::pam::PamManagedPasswordDomain::History, "P22");
+    const auto before = env.inspect();
+    require(before.selections.ficQualitySelected &&
+            before.ownership.ficQualityOwned &&
+            before.qualitySlotState == ManagedPasswordSlotState::Active,
+        "P22 fixture: the owned quality identity must stay intact");
+    require(!before.selections.ficHistorySelected &&
+            before.ownership.ficHistoryPrepared &&
+            !before.ownership.ficHistoryOwned &&
+            before.historySlotState == ManagedPasswordSlotState::Active,
+        "P22 fixture: exact-id Prepared history crash-leftover expected");
+    require(env.mutator.invocations.size() == invocationsAfterApply,
+        "P22 fixture: the slot-level leftover creation must not invoke "
+        "the native mutator");
+    std::string error;
+    PamPasswordPackageRelease::Report report;
+    // Preflight: strictly read-only over the mixed state.
+    require(env.runPreflight(report, error),
+        "P22 preflight: the mixed Owned+Prepared state must be eligible: " +
+            error);
+    require(env.mutator.invocations.size() == invocationsAfterApply,
+        "P22: the preflight must not invoke the native mutator");
+    const auto afterPreflight = env.inspect();
+    require(afterPreflight.selections.ficQualitySelected &&
+            afterPreflight.ownership.ficQualityOwned &&
+            afterPreflight.qualitySlotState ==
+                ManagedPasswordSlotState::Active &&
+            afterPreflight.ownership.ficHistoryPrepared &&
+            afterPreflight.historySlotState ==
+                ManagedPasswordSlotState::Active,
+        "P22: the preflight must not touch the mixed state");
+    // Release: recover the history Prepared leftover, then the NORMAL
+    // transition(false, false) releases the still-owned quality.
+    require(env.runRelease(report, error), "P22 release: " + error);
+    require(report.recoveredCrashLeftovers ==
+            std::vector<std::string>{kFicPasswordHistoryHookProfileId},
+        "P22: exactly the history Prepared leftover must be recovered");
+    require(report.detachedIdentities ==
+            std::vector<std::string>{kFicPasswordQualityHookProfileId},
+        "P22: the still-owned quality must be released by the normal "
+        "transition");
+    require(env.mutator.invocations.size() ==
+                invocationsAfterApply + 1 &&
+            env.mutator.invocations[invocationsAfterApply].flag ==
+                "--disable" &&
+            env.mutator.invocations[invocationsAfterApply].profileId ==
+                kFicPasswordQualityHookProfileId,
+        "P22: exactly one --disable fic-password-quality-hook expected; "
+        "the recovery itself must not invoke the native mutator");
+    require(env.activeRecordCount() == 0,
+        "P22: no Prepared or Applied journal record may remain");
+    requireFullyReleased(env, false);
+}
+
+void testP23_mixedForeignPlusOwnedPlusPrepared() {
+    ReleaseEnvironment env;
+    // Foreign stock pwquality producer + owned FIC history consumer
+    // (ForeignQualityPlusFicHistory, the P6 owned part).
+    env.mutator.forceSelect(kStockPwqualityProfileId);
+    env.applyOk(false, true);
+    require(env.inspect().classification.topologyClass ==
+            PamPasswordTopologyClass::ForeignQualityPlusFicHistory,
+        "P23 fixture: ForeignQualityPlusFicHistory expected");
+    const std::size_t invocationsAfterApply =
+        env.mutator.invocations.size();
+    // An exact canonical Prepared quality crash-leftover on top.
+    createPreparedCrashLeftover(env,
+        fic::identity::pam::ManagedPasswordSlotRole::Quality,
+        fic::identity::pam::PamManagedPasswordDomain::Quality, "P23");
+    const auto before = env.inspect();
+    require(before.selections.ficHistorySelected &&
+            before.ownership.ficHistoryOwned &&
+            before.ownership.ficQualityPrepared &&
+            !before.selections.ficQualitySelected &&
+            before.qualitySlotState == ManagedPasswordSlotState::Active,
+        "P23 fixture: foreign + owned history + Prepared quality "
+        "expected");
+    std::string error;
+    PamPasswordPackageRelease::Report report;
+    require(env.runPreflight(report, error),
+        "P23 preflight: the mixed foreign+owned+Prepared state must be "
+        "eligible: " +
+            error);
+    require(env.mutator.invocations.size() == invocationsAfterApply,
+        "P23: the preflight must not invoke the native mutator");
+    require(env.runRelease(report, error), "P23 release: " + error);
+    require(report.recoveredCrashLeftovers ==
+            std::vector<std::string>{kFicPasswordQualityHookProfileId},
+        "P23: exactly the quality Prepared leftover must be recovered");
+    require(report.detachedIdentities ==
+            std::vector<std::string>{kFicPasswordHistoryHookProfileId},
+        "P23: only the FIC history consumer must be detached");
+    require(env.mutator.invocations.size() ==
+                invocationsAfterApply + 1 &&
+            env.mutator.invocations[invocationsAfterApply].flag ==
+                "--disable" &&
+            env.mutator.invocations[invocationsAfterApply].profileId ==
+                kFicPasswordHistoryHookProfileId,
+        "P23: exactly one --disable fic-password-history-hook expected; "
+        "the foreign producer must never be touched");
+    require(env.mutator.isSelected(kStockPwqualityProfileId),
+        "P23: the Prepared recovery must not remove the foreign producer");
+    require(env.activeRecordCount() == 0,
+        "P23: no Prepared or Applied journal record may remain");
+    requireFullyReleased(env, true);
+}
+
 // ---- PF1-PF8: release failure matrix ----
 
 void testPF1_firstDetachFailsNoChange() {
@@ -948,6 +1093,10 @@ int main() {
             testP13_preparedCrashLeftoverRecoveredByRelease},
         {"P13b_unselectedOwnedFailClosed",
             testP13b_unselectedOwnedSlotFailsClosed},
+        {"P22_mixedOwnedPlusPreparedRelease",
+            testP22_mixedOwnedPlusPreparedRelease},
+        {"P23_mixedForeignPlusOwnedPlusPrepared",
+            testP23_mixedForeignPlusOwnedPlusPrepared},
         {"PF1_firstDetachFails", testPF1_firstDetachFailsNoChange},
         {"PF3_rcZeroMalformedFailClosed",
             testPF3_rcZeroMalformedResultFailsClosed},

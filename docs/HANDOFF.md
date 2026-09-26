@@ -2,9 +2,8 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `82af579c72f475886529c1d9ca46db90e3abdb3f`.
-- Поверх HEAD — незакоммиченная реализация three-profile C2 prerm
-  redesign (см. ниже); commit не запрошен.
+- Ветка `main`, HEAD `4b6b603452b2344426eee6816d53f038981544fb`.
+- Three-profile C2 prerm redesign реализован и закоммичен в этом baseline.
 
 ## Current task
 
@@ -13,6 +12,13 @@ Three-profile C2 package-release prerm redesign — **ЗАВЕРШЕНА ПОЛ�
 Ubuntu 24.04 prerm gates — всё зелёное.
 
 ## Joint password topology domain (главный инвариант)
+
+**Mixed Applied+Prepared package-release recovery:** `recoverCrashLeftovers`
+now proves only the identities it actually recovered, then re-validates the
+fresh remaining topology and lets the normal C2 `transition(false,false)`
+release still-owned identities. Recoverable остаются только existing
+exact-id canonical Prepared crash-leftovers; unselected-owned /
+selected-but-unowned по-прежнему fail closed (P13b, P8–P12).
 
 **Password Quality + Password History form ONE joint runtime topology
 domain.** Физическое состояние — joint (Q, H) topology. Запрещено и
@@ -57,13 +63,10 @@ package scripts/maintenance tools); вывод desired state из физичес
 
 ## Validation (фактически выполнено)
 
-- C++: `pam_password_package_release_tests` — 21/21 PASS (P1–P13b matrix,
-  fail-closed, crash-leftover recovery, PF1–PF8 fault matrix).
+- C++: `pam_password_package_release_tests` — 23/23 PASS (P1–P13b, P22/P23
+  mixed Owned+Prepared и foreign+owned+Prepared recovery, PF1–PF8).
 - Packaging: `python3 tests/integration/packaging/PamPackagingChecks.py .`
-  — PASS (включая новый `prerm_release_wiring_tests` static contract и
-  behavioral PR1–PR6: owned history-initial / Q+H / ForeignQ+History success,
-  unowned refuse с zero mutation, fail-compensated restore, fail-critical
-  no-silent-restore).
+  — PASS.
 - Full build `build-check` (ubuntu-24.04): EXIT=0 (дважды: до и после
   регистрации нового теста).
 - ctest targeted (`pam_password|pam_packaging|rollback|package_release`) —

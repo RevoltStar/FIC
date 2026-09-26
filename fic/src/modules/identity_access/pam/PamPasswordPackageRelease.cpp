@@ -246,24 +246,58 @@ bool PamPasswordPackageRelease::recoverCrashLeftovers(
     if (leftovers.empty()) {
         return true;
     }
-    // Fresh proof of the recovered state: every leftover slot must now be
-    // canonical Neutral with no prepared binding left.
+    // Fresh proof of the recovered state, scoped to the identities this
+    // recovery actually touched: every recovered leftover must now be
+    // canonical Neutral with no Prepared binding and no ownership left.
+    // Unrelated valid Applied/owned identities (e.g. still-owned quality
+    // in a mixed Owned+Prepared release) are NOT required to be Neutral
+    // here; they are released by the normal transition(false, false) and
+    // proven by proveFinalState().
     PamPasswordTopologySnapshot recovered;
-    std::vector<IdentityView> none;
-    if (!inspectAndCheckStructure(recovered, none, error)) {
+    std::vector<IdentityView> remainingLeftovers;
+    if (!inspectAndCheckStructure(recovered, remainingLeftovers, error)) {
         error = "the recovered post-crash-leftover state failed the fresh "
                 "structural proof: " +
             error;
         return false;
     }
-    for (const IdentityView& identity : identityViews(recovered)) {
-        if (identity.slotState != ManagedPasswordSlotState::Neutral) {
-            error = std::string("the managed password slot of ") +
-                identity.profileId +
-                " is not canonical Neutral after the crash-leftover "
-                "recovery (fail closed)";
+    const std::vector<IdentityView> recoveredViews =
+        identityViews(recovered);
+    for (const IdentityView& leftover : leftovers) {
+        const IdentityView* current = nullptr;
+        for (const IdentityView& view : recoveredViews) {
+            if (view.role == leftover.role) {
+                current = &view;
+                break;
+            }
+        }
+        if (current == nullptr) {
+            error = std::string("the recovered identity ") +
+                leftover.profileId +
+                " is missing from the fresh post-recovery inspection "
+                "(fail closed)";
             return false;
         }
+        if (current->selected || current->owned || current->prepared ||
+            current->slotState != ManagedPasswordSlotState::Neutral ||
+            current->slotMutationId != 0) {
+            error = std::string("the managed password slot of ") +
+                current->profileId +
+                " is not canonical Neutral without any Prepared binding "
+                "after the crash-leftover recovery (fail closed)";
+            return false;
+        }
+    }
+    // Full structural/safety/semantic gate of the fresh remaining state:
+    // once the Prepared leftovers are recovered, the remaining topology
+    // (e.g. still-owned FicQuality) must be a valid releasable state on
+    // its own; the package-release transition then neutralizes it through
+    // the normal planner/executor path (no manual neutralization here).
+    if (!checkSafetyAndSemantics(recovered, remainingLeftovers, error)) {
+        error = "the remaining topology after the crash-leftover recovery "
+                "is not a valid releasable state (fail closed): " +
+            error;
+        return false;
     }
     return true;
 }

@@ -161,7 +161,10 @@ private:
         const PamPasswordTopologySnapshot& snapshot,
         const std::vector<IdentityView>& leftovers, std::string& error);
     // Release-stage recovery of exact-id Prepared crash-leftovers through
-    // the production compensation primitive, followed by a fresh proof.
+    // the production compensation primitive, followed by a fresh proof
+    // scoped to the recovered identities plus a full structural/safety/
+    // semantic gate of the fresh remaining topology (still-owned
+    // identities are released by the normal transition, not here).
     bool recoverCrashLeftovers(
         const std::vector<IdentityView>& leftovers, Report& report,
         std::string& error);
