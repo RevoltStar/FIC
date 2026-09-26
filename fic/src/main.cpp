@@ -34,6 +34,7 @@
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "modules/identity_access/pam/PamManagedPasswordSlotBootstrap.h"
+#include "modules/identity_access/pam/PamPasswordPackageRelease.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
@@ -1278,6 +1279,108 @@ int main(int argc, char* argv[]) {
             }
             std::cout << "managed password slots are provisioned"
                       << std::endl;
+            return 0;
+        }
+        if (command == "pam-password-prerm-prepare") {
+            // Package-removal release of the C2 password topology domain
+            // (three-profile prerm redesign). Narrow package-maintenance
+            // entrypoint: root-only, fixed target (Q=false, H=false), no
+            // policy names accepted. Mode argument: "preflight" (Stage A,
+            // strictly read-only, BEFORE any prerm side effect) or
+            // "release" (Stage B, after every FIC writer has been
+            // stopped).
+            if (::geteuid() != 0) {
+                std::cerr << "FIC package password release maintenance "
+                             "must be run as root"
+                          << std::endl;
+                return 1;
+            }
+            using fic::identity::pam::PamPasswordPackageRelease;
+            const std::string releaseMode = get_arg_value(argc, argv, 3);
+            PamPasswordPackageRelease::Mode mode;
+            if (releaseMode == "preflight") {
+                mode = PamPasswordPackageRelease::Mode::Preflight;
+            } else if (releaseMode == "release") {
+                mode = PamPasswordPackageRelease::Mode::Release;
+            } else {
+                std::cerr << "unknown FIC package password release mode: "
+                          << releaseMode
+                          << " (expected \"preflight\" or \"release\")"
+                          << std::endl;
+                return 1;
+            }
+            const fic::platform::PamCapabilityConfig* releaseQuality =
+                nullptr;
+            const std::vector<std::string>* releaseQualityServices =
+                nullptr;
+            const fic::platform::PamCapabilityConfig* releaseHistory =
+                nullptr;
+            const std::vector<std::string>* releaseHistoryServices =
+                nullptr;
+            const bool qualityResolved =
+                fic::identity::pam::resolveCapability(
+                    platform.pam,
+                    fic::platform::PamCapability::PasswordQuality,
+                    releaseQuality, releaseQualityServices,
+                    maintenanceError);
+            const bool historyResolved =
+                fic::identity::pam::resolveCapability(
+                    platform.pam,
+                    fic::platform::PamCapability::PasswordHistory,
+                    releaseHistory, releaseHistoryServices,
+                    maintenanceError);
+            const bool authUpdateTopology =
+                (qualityResolved &&
+                 releaseQuality->topology ==
+                     fic::platform::PamTopologyStrategyKind::
+                         PamAuthUpdate) ||
+                (historyResolved &&
+                 releaseHistory->topology ==
+                     fic::platform::PamTopologyStrategyKind::
+                         PamAuthUpdate);
+            if (!authUpdateTopology) {
+                std::cerr << "FIC package password release requires a "
+                             "pam-auth-update password topology; this "
+                             "platform does not provide one"
+                          << std::endl;
+                return 1;
+            }
+            std::string journalError;
+            fic::rollback::MutationJournal* releaseJournal =
+                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                    journalError);
+            if (releaseJournal == nullptr) {
+                std::cerr << "FIC mutation journal unavailable (fail "
+                             "closed): "
+                          << journalError << std::endl;
+                return 1;
+            }
+            const fic::platform::PlatformExecutableResolver
+                releaseExecutables(platform.executables);
+            PamPasswordPackageRelease::Options releaseOptions;
+            releaseOptions.lockFilePath =
+                paths.runtimeDir / "pam-password-package-release.lock";
+            releaseOptions.lockDebugLogPath = paths.lockDebugLogFile;
+            PamPasswordPackageRelease packageRelease(
+                *releaseJournal, releaseExecutables, releaseOptions);
+            PamPasswordPackageRelease::Report releaseReport;
+            if (!packageRelease.run(mode, releaseReport, maintenanceError)) {
+                std::cerr << "FIC package password release ("
+                          << releaseMode << ") failed: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "FIC package password release (" << releaseMode
+                      << ") proven";
+            for (const std::string& identity :
+                 releaseReport.detachedIdentities) {
+                std::cout << " released:" << identity;
+            }
+            for (const std::string& identity :
+                 releaseReport.recoveredCrashLeftovers) {
+                std::cout << " recovered:" << identity;
+            }
+            std::cout << std::endl;
             return 0;
         }
         if (command == "pam-alt-faillock") {

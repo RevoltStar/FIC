@@ -21,6 +21,7 @@
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -109,10 +110,21 @@ int main(int argc, char** argv) {
         return 2;
     }
     // The daemon journal with the gate path: the SAME journal the C2
-    // slot writers and the rollback backend use.
-    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
-        std::filesystem::path("/var/lib/fic/pam-c2-gate") /
-        "mutation-journal.json");
+    // slot writers and the rollback backend use. FIC_PAM_C2_JOURNAL_PATH
+    // (prerm release gate) overrides even the gate path: the installed
+    // `fic --maintenance pam-password-prerm-prepare` binary reads the
+    // PRODUCTION journal path, so the topology provenance for a real
+    // package removal must live exactly there.
+    {
+        const char* journalOverride = std::getenv("FIC_PAM_C2_JOURNAL_PATH");
+        std::filesystem::path journalPath =
+            journalOverride != nullptr && *journalOverride != '\\0'
+                ? std::filesystem::path(journalOverride)
+                : std::filesystem::path("/var/lib/fic/pam-c2-gate") /
+                      "mutation-journal.json";
+        fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+            journalPath);
+    }
 
     if (command == "bootstrap") {
         // Package bootstrap of the canonical neutral managed slots (same
@@ -254,6 +266,16 @@ int main(int argc, char** argv) {
                                                   ForeignQuality
                                       ? "ForeignQuality"
                                       : snapshot.classification.topologyClass ==
+                                              fic::identity::pam::
+                                                  PamPasswordTopologyClass::
+                                                      ForeignQualityPlusFicHistory
+                                          ? "ForeignQualityPlusFicHistory"
+                                          : snapshot.classification.topologyClass ==
+                                                  fic::identity::pam::
+                                                      PamPasswordTopologyClass::
+                                                          ForeignQualityPlusFicQuality
+                                              ? "ForeignQualityPlusFicQuality"
+                                              : snapshot.classification.topologyClass ==
                                               fic::identity::pam::
                                                   PamPasswordTopologyClass::None
                                           ? "None"

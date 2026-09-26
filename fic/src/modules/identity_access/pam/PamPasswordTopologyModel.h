@@ -101,15 +101,29 @@ struct PamPasswordSelections {
 // FIC-owned-by-provenance state (journal-bound): which FIC password
 // mutations FIC can PROVE it owns and is therefore allowed to detach.
 // Ownership never follows physical selection automatically.
+//
+// The *Prepared flags mark crash-leftover compensation bindings: the
+// identity's slot is canonical Active with a marker id that matches a
+// valid Prepared journal record of the canonical domain carrying the
+// role-specific activation identifier. A Prepared binding is NEVER
+// ownership: it only identifies the exact-id crash-partial state the
+// production compensation primitive is allowed to neutralize (package
+// release recovery; runtime recovery belongs to the activation matrix).
 struct PamPasswordOwnership {
     bool ficQualityOwned = false;
     bool ficHistoryOwned = false;
     bool ficHistoryInitialOwned = false;
+    bool ficQualityPrepared = false;
+    bool ficHistoryPrepared = false;
+    bool ficHistoryInitialPrepared = false;
 
     bool operator==(const PamPasswordOwnership& other) const {
         return ficQualityOwned == other.ficQualityOwned &&
             ficHistoryOwned == other.ficHistoryOwned &&
-            ficHistoryInitialOwned == other.ficHistoryInitialOwned;
+            ficHistoryInitialOwned == other.ficHistoryInitialOwned &&
+            ficQualityPrepared == other.ficQualityPrepared &&
+            ficHistoryPrepared == other.ficHistoryPrepared &&
+            ficHistoryInitialPrepared == other.ficHistoryInitialPrepared;
     }
 };
 

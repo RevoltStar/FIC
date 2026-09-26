@@ -58,13 +58,6 @@ PASSWORD_HOOKS = ("fic-password-quality-hook", "fic-password-history-hook",
                   "fic-password-history-initial-hook")
 PASSWORD_HOOK_TARGETS = ("fic-password-quality", "fic-password-history",
                          "fic-password-history-initial")
-# Legacy prerm removal/snapshot/recovery framework: ONLY the password hook
-# identities it can snapshot/restore/prove. The history-initial hook is
-# deliberately excluded: it is a mutually exclusive semantic variant the
-# legacy framework can neither restore nor prove, so the prerm instead
-# refuses the whole removal while it is selected (fail-closed preflight).
-PRERM_MANAGED_PASSWORD_HOOKS = ("fic-password-quality-hook",
-                                "fic-password-history-hook")
 
 
 def hook_target(hook: str) -> str:
@@ -166,6 +159,119 @@ def read_pam_state(pam_state: Path, pam_d: Path) -> tuple[str, str]:
     return state, stack
 
 
+def fake_maintenance_helper() -> str:
+    """POSIX-sh fake of `fic --maintenance pam-password-prerm-prepare`
+    for the generated-prerm sandbox runs. The preflight mode performs the
+    read-only eligibility decision; the release mode proves the fixture
+    ownership provenance (Active slot marker id + matching Applied journal
+    record + role-specific activation identifier), detaches every selected
+    FIC password identity through the sandboxed pam-auth-update fake (ONE
+    profile per invocation), neutralizes the detached managed slots and
+    exits 0 only when the resulting state is proven. Failure injection via
+    FIC_FAKE_HELPER_MODE: fail (the release fails before any mutation);
+    fail-compensated (the release detaches, compensates back to the exact
+    fixture state and fails); fail-critical (the release detaches and
+    fails WITHOUT any compensation, CRITICAL diagnostic)."""
+    return r"""#!/bin/sh
+printf "fic-maintenance %s\n" "$*" >> "$FAKE_LOG"
+mode="$FIC_FAKE_HELPER_MODE"
+st="$FAKE_PAM_STATE/password"
+owned="$FAKE_PAM_STATE/fic-owned-fixtures"
+pam_d="$FAKE_PAM_D"
+journal="$FAKE_PAM_STATE/mutation-journal.json"
+neutral="# FIC managed password slot: state=neutral
+"
+prove_owned() {
+    p="$1"
+    slot_target="${p%-hook}"
+    marker_id=$(sed -n "s/^#@FIC_PAM_SLOT_BEGIN version=1 capability=[^ ]* mutation=\([0-9]*\) slot=.*/\1/p" "$pam_d/$slot_target" 2>/dev/null | head -1)
+    if [ -z "$marker_id" ]; then
+        echo "FIC: selected FIC PAM profile $p is not proven FIC-owned; package removal cannot safely continue" >&2
+        return 1
+    fi
+    grep -q "\"id\": $marker_id" "$journal" 2>/dev/null || {
+        echo "FIC: selected FIC PAM profile $p is not proven FIC-owned; package removal cannot safely continue" >&2
+        return 1
+    }
+    grep -q "\"activationIdentifiers\": \[\"$p\"\]" "$journal" 2>/dev/null || {
+        echo "FIC: selected FIC PAM profile $p has no role-specific activation identifier in the journal provenance" >&2
+        return 1
+    }
+    grep -q "^$p " "$owned" 2>/dev/null || {
+        echo "FIC: selected FIC PAM profile $p is not proven FIC-owned; package removal cannot safely continue" >&2
+        return 1
+    }
+    return 0
+}
+detach_selected() {
+    # Planner order: the history consumer detaches before its producers.
+    for p in fic-password-history-hook fic-password-quality-hook fic-password-history-initial-hook; do
+        case "$(cat "$st" 2>/dev/null)" in
+            *"Module: $p"*)
+                pam-auth-update --disable "$p" || return 1
+                cp "$pam_d/${p%-hook}" "$FAKE_PAM_STATE/.slot-backup-${p%-hook}" 2>/dev/null
+                printf "%s" "$neutral" > "$pam_d/${p%-hook}"
+                ;;
+        esac
+    done
+    return 0
+}
+attach_back() {
+    for p in fic-password-history-hook fic-password-quality-hook fic-password-history-initial-hook; do
+        case "$(cat "$st" 2>/dev/null)" in
+            *"Module: $p"*) ;;
+            *) grep -q "^$p " "$owned" 2>/dev/null || continue
+               pam-auth-update --enable "$p" || return 1
+               [ -f "$FAKE_PAM_STATE/.slot-backup-${p%-hook}" ] &&
+                   cp "$FAKE_PAM_STATE/.slot-backup-${p%-hook}" "$pam_d/${p%-hook}"
+               rm -f "$FAKE_PAM_STATE/.slot-backup-${p%-hook}"
+               ;;
+        esac
+    done
+    return 0
+}
+case " $* " in
+    *" preflight "*)
+        for p in fic-password-quality-hook fic-password-history-hook fic-password-history-initial-hook; do
+            case "$(cat "$st" 2>/dev/null)" in
+                *"Module: $p"*) prove_owned "$p" || exit 1 ;;
+            esac
+        done
+        exit 0
+        ;;
+    *" release "*)
+        for p in fic-password-quality-hook fic-password-history-hook fic-password-history-initial-hook; do
+            case "$(cat "$st" 2>/dev/null)" in
+                *"Module: $p"*) prove_owned "$p" || exit 1 ;;
+            esac
+        done
+        case "$mode" in
+            fail)
+                echo "FIC: package password release transition failed (injected)" >&2
+                exit 1
+                ;;
+            fail-compensated)
+                detach_selected || exit 1
+                attach_back || exit 1
+                echo "FIC: package password release transition failed (attempted changes compensated; pre-release topology proven restored; a retry may succeed)" >&2
+                exit 1
+                ;;
+            fail-critical)
+                detach_selected || exit 1
+                echo "FIC: package password release transition failed; CRITICAL: C2 password topology NOT proven restored; compensation stopped; package removal must stay blocked until explicit recovery" >&2
+                exit 1
+                ;;
+            *)
+                detach_selected || exit 1
+                exit 0
+                ;;
+        esac
+        ;;
+esac
+exit 1
+"""
+
+
 def stateful_pam_auth_update_fake() -> str:
     """POSIX-sh simulator of pam-auth-update. Selection state lives in
     $FAKE_PAM_STATE/{auth,account,password} as "Module: <profile>" blocks;
@@ -253,12 +359,15 @@ regen() {
     esac
     case "$(cat "$state/password" 2>/dev/null)" in
         *"Module: fic-password-history-hook"*)
-            case "$FAKE_PAU_PASSWORD_MALFORMED" in
-                history)
-                    printf "# password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password.new" ;;
-                *)
-                    printf "password\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-password-history\\n" >> "$pam_d/common-password.new" ;;
-            esac ;;
+            printf "password\t\t\t\tinclude\t\t\t\tfic-password-history\n" >> "$pam_d/common-password.new" ;;
+    esac
+    case "$(cat "$state/password" 2>/dev/null)" in
+        *"Module: fic-password-history-initial-hook"*)
+            printf "password\t\t\t\tinclude\t\t\t\tfic-password-history-initial\n" >> "$pam_d/common-password.new" ;;
+    esac
+    case "$(cat "$state/password" 2>/dev/null)" in
+        *"Module: pwquality"*)
+            printf "password requisite pam_pwquality.so retry=3 \n" >> "$pam_d/common-password.new" ;;
     esac
     mv "$pam_d/common-password.new" "$pam_d/common-password"
 }
@@ -293,6 +402,16 @@ case " $* " in
         ;;
 esac
 case "$1" in
+    --disable)
+        shift
+        for p in "$@"; do
+            remove_profile "$state/auth" "$p"
+            remove_profile "$state/account" "$p"
+            remove_profile "$state/password" "$p"
+        done
+        regen
+        exit 0
+        ;;
     --enable)
         shift
         [ "$FAKE_PAU_ENABLE_FAILS" = "1" ] && exit 1
@@ -516,189 +635,121 @@ def proof_unit_tests() -> None:
     print("permanent hook proof unit checks passed")
 
 
-def password_proof_unit_tests() -> None:
-    """Behavioral unit proof of the read-only password hook proof
-    (fic_prove_password_hook_state_restored): the generated function is
-    executed against sandboxed /var/lib/pam and /etc/pam.d states and must
-    accept only the exact expected states. Unselected must mean fully
-    absent: NO exact Module: record AND NO exact generated include of any
-    target (T2: stale quality include; T3: stale history includes); any
-    unknown expected flag fails closed."""
+def prerm_release_wiring_tests() -> None:
+    """Static wiring contract of the three-profile C2 prerm redesign: the
+    generated prerm must run ONLY the two narrow package-release
+    maintenance commands (read-only preflight BEFORE any side effect;
+    release transition after the batch remove, with every FIC writer
+    stopped) through the exact installed absolute path, and must contain
+    NO legacy shell password snapshot/restore/proof grammar: the C2
+    maintenance helper owns the whole password topology decision."""
     builder_path = (Path(__file__).resolve().parents[3] /
                     "packaging/deb/build-fic-debian12-deb.sh")
-    generated = subprocess.run(
-        ["bash", "-c",
-         'set -- 0.1.0; FIC_PRODUCT_VERSION=0.1.0 FIC_BUILD_COMMIT=test '
-         'FIC_RELEASE_TAG=test FIC_RELEASE_BUILD=0; '
-         'source "$BUILDER" >/dev/null 2>&1; '
-         'write_password_hook_proof_function'],
-        env={"PATH": "/usr/bin:/bin",
-             "BUILDER": str(builder_path)},
-        text=True, capture_output=True, check=False)
-    require(generated.returncode == 0,
-            "could not generate the password hook proof function: " +
-            generated.stderr.strip())
-    proof_function = generated.stdout
+    deb_builder = builder_path.read_text(encoding="utf-8")
+    fic_prerm = function_body(deb_builder,
+                              "write_system_integration_symlink_prerm")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        pam_state = tmp_path / "var-lib-pam"
-        pam_d = tmp_path / "etc-pam.d"
-        proof_script = tmp_path / "password-proof-sandboxed.sh"
+    # The temporary history-initial blocker is retired: the three-profile
+    # C2 release safely detaches ALL THREE identities.
+    require("cannot safely remove or restore" not in fic_prerm,
+            "the retired temporary history-initial prerm blocker text "
+            "must be gone")
 
-        quality_record = ("Module: fic-password-quality-hook\n"
-                          "include fic-password-quality\n")
-        history_record = ("Module: fic-password-history-hook\n"
-                          "include fic-password-history\n")
-        quality_include = canonical_include("password",
-                                            "fic-password-quality")
-        # C2: the history consumer profile has ONE semantic include
-        # target; the initial-producer include is only generated by the
-        # separate initial profile and is guarded by the proof's absence
-        # checks.
-        history_include = canonical_include("password",
-                                            "fic-password-history")
-        history_initial_include = canonical_include(
-            "password", "fic-password-history-initial")
+    # Exactly the two narrow maintenance commands, absolute path only.
+    maintenance_lines = [line.strip() for line in fic_prerm.splitlines()
+                         if "--maintenance" in line]
+    require(len(maintenance_lines) == 2,
+            "the prerm must run exactly the two package-release "
+            "maintenance commands: " + repr(maintenance_lines))
+    preflight_line = ("/opt/fic/bin/fic --maintenance "
+                      "pam-password-prerm-prepare preflight")
+    release_line = ("/opt/fic/bin/fic --maintenance "
+                    "pam-password-prerm-prepare release")
+    require(any(line.startswith("if ! " + preflight_line)
+                for line in maintenance_lines),
+            "the Stage A preflight must run through the exact installed "
+            "absolute maintenance path: " + repr(maintenance_lines))
+    require(any(line.startswith("if ! " + release_line)
+                for line in maintenance_lines),
+            "the Stage B release must run through the exact installed "
+            "absolute maintenance path: " + repr(maintenance_lines))
+    require(all("pam-password-prerm-prepare" in line
+                for line in maintenance_lines),
+            "no generic or unrelated FIC maintenance command may run in "
+            "the prerm: " + repr(maintenance_lines))
 
-        def run_proof(quality_expected: str, history_expected: str,
-                      state_password, common_password
-                      ) -> subprocess.CompletedProcess:
-            for directory in (pam_state, pam_d):
-                if directory.is_dir():
-                    shutil.rmtree(directory)
-            if state_password is not None:
-                pam_state.mkdir(parents=True, exist_ok=True)
-                (pam_state / "password").write_text(state_password,
-                                                    encoding="utf-8")
-            if common_password is not None:
-                pam_d.mkdir(parents=True, exist_ok=True)
-                (pam_d / "common-password").write_text(common_password,
-                                                       encoding="utf-8")
-            proof_script.write_text(
-                "#!/bin/sh\n" +
-                sandbox_pam_paths(proof_function, pam_state, pam_d) +
-                f"\nfic_prove_password_hook_state_restored "
-                f"{quality_expected} {history_expected}\n",
-                encoding="utf-8")
-            proof_script.chmod(0o755)
-            return subprocess.run(
-                [str(proof_script)],
-                env={"PATH": "/usr/bin:/bin"},
-                text=True, capture_output=True, check=False)
+    # Stage A ordering: the read-only preflight runs BEFORE any side
+    # effect — before the service stop and before any pam-auth-update.
+    stop_pos = fic_prerm.find("systemctl disable --now fic-notify.service")
+    require(stop_pos >= 0, "Debian prerm has no service stop block")
+    preflight_pos = fic_prerm.find(preflight_line)
+    require(preflight_pos >= 0 and preflight_pos < stop_pos,
+            "the read-only preflight must run BEFORE the service stop "
+            "(zero side effects on refusal)")
+    first_pam_call = next(
+        (index for index, line in enumerate(fic_prerm.splitlines())
+         if line.strip().startswith("pam-auth-update") or
+         line.strip().startswith("if pam-auth-update") or
+         line.strip().startswith("if ! pam-auth-update")),
+        -1)
+    require(first_pam_call >= 0,
+            "Debian prerm has no pam-auth-update call")
+    require(fic_prerm.splitlines()[first_pam_call].strip().find(
+                "pam-auth-update") > -1 and
+            fic_prerm.find(fic_prerm.splitlines()[first_pam_call]) >
+            preflight_pos,
+            "the read-only preflight must run BEFORE the first "
+            "pam-auth-update call")
 
-        def expect_pass(name: str, quality_expected: str,
-                        history_expected: str, state_password,
-                        common_password) -> None:
-            ran = run_proof(quality_expected, history_expected,
-                            state_password, common_password)
-            require(ran.returncode == 0,
-                    f"password proof must PASS for {name}: rc="
-                    f"{ran.returncode} {ran.stderr.strip()}")
+    # Stage B ordering: the release transition runs after the batch
+    # remove, while every FIC writer is stopped.
+    remove_pos = fic_prerm.find("pam-auth-update --package --remove")
+    release_pos = fic_prerm.find(release_line)
+    require(release_pos > remove_pos,
+            "the C2 password release must run after the batch remove of "
+            "the permanent hook and legacy policy profiles")
 
-        def expect_fail(name: str, quality_expected: str,
-                        history_expected: str, state_password,
-                        common_password) -> None:
-            ran = run_proof(quality_expected, history_expected,
-                            state_password, common_password)
-            require(ran.returncode != 0,
-                    f"password proof must FAIL for {name} "
-                    f"(false-positive accepted)")
+    # The batch remove must NEVER name a managed password hook profile:
+    # all three identities are released by the helper through the C2
+    # transition executor (planner order, ONE profile per invocation).
+    for hook in PASSWORD_HOOKS:
+        require(hook not in fic_prerm[remove_pos:release_pos],
+                f"the batch remove must not name the managed password "
+                f"hook profile {hook}")
 
+    # The legacy two-profile shell password framework must be fully gone:
+    # no selection snapshots, no shell recovery, no shell password proof.
+    for legacy_grammar in ("fic_password_quality_hook_selected",
+                           "fic_password_history_hook_selected",
+                           "fic_password_hook_recovery_failed",
+                           "fic_prove_password_hook_state_restored",
+                           "Module: fic-password-quality-hook",
+                           "Module: fic-password-history-hook"):
+        require(legacy_grammar not in fic_prerm,
+                f"the legacy shell password grammar must be gone from the "
+                f"prerm: {legacy_grammar}")
+    require("write_password_hook_proof_function" not in deb_builder,
+            "the obsolete shell password proof function must be removed "
+            "from the Debian builder")
 
+    # Failure-path diagnostics: the prerm must distinguish the helper
+    # release failure from the faillock infrastructure recovery, and the
+    # faillock recovery keeps its stronger always-restore invariant.
+    for diagnostic in ("the C2 password package release failed",
+                       "restoring the package PAM hook infrastructure",
+                       "PAM infrastructure recovery failed",
+                       "restored and proven attached",
+                       "NOT proven restored"):
+        require(diagnostic in fic_prerm,
+                f"Debian prerm diagnostic missing: {diagnostic}")
 
-
-        # Canonical topologies must pass.
-        expect_pass("both attached (1, 1)", "1", "1",
-                    quality_record + history_record,
-                    quality_include + history_include)
-        expect_pass("quality only attached (1, 0)", "1", "0",
-                    quality_record, quality_include)
-        expect_pass("intermediate history proof (d, 1)", "d", "1",
-                    history_record, history_include)
-        expect_pass("both fully absent (0, 0)", "0", "0", "", "")
-        expect_fail("missing /var/lib/pam fails closed", "0", "0", None,
-                    None)
-        expect_pass("don't-care on both sides never checks anything",
-                    "d", "d", "", "")
-
-
-        # T2 / T3: unselected must mean fully absent — a stale exact
-        # include WITHOUT a selection record must defeat the proof, and
-        # every history identity (consumer and initial-producer) must be
-        # checked individually by the absence guards.
-        expect_fail("stale quality include without record (T2)", "0", "0",
-                    "", quality_include)
-        expect_fail("stale quality record with include removed", "0", "0",
-                    quality_record, "")
-        expect_fail("stale history include without record (T3)", "0", "0",
-                    "", history_include)
-        expect_fail("stale history-initial include without record (T3)",
-                    "0", "0", "", history_initial_include)
-        expect_fail("stale history record without includes", "0", "0",
-                    history_record, "")
-
-        # Selected proofs stay strict: commented, wrong-facility,
-        # non-include control and collision shapes never prove attachment.
-        expect_fail("commented quality include", "1", "d", quality_record,
-                    quality_include.replace("password\t",
-                                            "# password\t", 1))
-        expect_fail("wrong-facility history include", "d", "1",
-                    history_record,
-                    history_include.replace("password\t",
-                                            "account\t", 1))
-        expect_fail("non-include control word for history", "d", "1",
-                    history_record,
-                    "password\t\t\t\toptional\t\t\t\t"
-                    "fic-password-history\n")
-        expect_fail("history-initial suffix collision", "d", "1",
-                    history_record,
-                    history_include.replace(
-                        "fic-password-history\n",
-                        "fic-password-history-backup\n", 1))
-        expect_fail("Module suffix collision for quality", "1", "d",
-                    quality_record.replace(
-                        "Module: fic-password-quality-hook\n",
-                        "Module: fic-password-quality-hook-old\n", 1),
-                    quality_include)
-
-        # Unknown expected flags fail closed.
-        expect_fail("unknown quality flag", "x", "d", "", "")
-        expect_fail("unknown history flag", "d", "x", "", "")
-
-        # Read-only guarantee: the proof must not change any state element
-        # it reads.
-        pam_state.mkdir(parents=True, exist_ok=True)
-        (pam_state / "password").write_text(
-            quality_record + history_record, encoding="utf-8")
-        pam_d.mkdir(parents=True, exist_ok=True)
-        (pam_d / "common-password").write_text(
-            quality_include + history_include, encoding="utf-8")
-        proof_script.write_text(
-            "#!/bin/sh\n" +
-            sandbox_pam_paths(proof_function, pam_state, pam_d) +
-            "\nfic_prove_password_hook_state_restored 1 1\n",
-            encoding="utf-8")
-        proof_script.chmod(0o755)
-        before = pam_state_digest(pam_state, pam_d)
-        ran = subprocess.run(
-            [str(proof_script)],
-            env={"PATH": "/usr/bin:/bin"},
-            text=True, capture_output=True, check=False)
-        require(ran.returncode == 0,
-                "password proof unexpectedly failed on the canonical "
-                "state: " + ran.stderr.strip())
-        require(before == pam_state_digest(pam_state, pam_d),
-                "the password hook proof mutated the PAM state")
-
-    print("password hook proof unit checks passed")
-
+    print("prerm C2 release wiring checks passed")
 
 
 def main() -> int:
     root = Path(sys.argv[1])
     proof_unit_tests()
-    password_proof_unit_tests()
+    prerm_release_wiring_tests()
     profile_dir = root / "packaging/deb/pam-configs"
     expected = {
         "fic-faillock-notify": {
@@ -1066,15 +1117,17 @@ def main() -> int:
     require(remove_start >= 0 and remove_end > remove_start,
             "Debian prerm has no bounded PAM profile removal block")
     remove_block = fic_prerm[remove_start:remove_end]
-    # C2 safety invariant: the legacy two-profile removal framework must
-    # never name the history-initial hook in its destructive remove call —
-    # it cannot restore/prove that profile (the prerm refuses the whole
-    # removal first via the preflight checked below).
+    # Three-profile C2 release contract: the destructive batch remove
+    # must NEVER name a managed password hook profile — all three
+    # identities are released by the C2 maintenance helper through the
+    # production transition executor (planner order, ONE profile per
+    # native pam-auth-update invocation, per-action proofs, C2
+    # compensation on failure).
     for name in expected:
-        if name == "fic-password-history-initial-hook":
+        if name in PASSWORD_HOOKS:
             require(name not in remove_block,
-                    "legacy Debian prerm must not destructively remove the "
-                    "history-initial hook it cannot restore/prove")
+                    f"the batch remove must not name the managed password "
+                    f"hook profile {name} (C2 helper release only)")
         else:
             require(name in remove_block,
                     f"Debian prerm does not remove {name}")
@@ -1096,39 +1149,38 @@ def main() -> int:
             "Debian prerm does not verify that FIC services stopped before "
             "detaching PAM hooks")
 
-    # C2 preflight ordering invariant: while the history-initial hook is
-    # still selected, the legacy prerm must refuse the whole removal BEFORE
-    # any side effect — before stopping services and before any
-    # pam-auth-update mutation (fail-closed preflight, no partial
-    # mutation), because the two-profile recovery can neither restore nor
-    # prove that profile.
-    preflight_pos = fic_prerm.find(
-        "Module: fic-password-history-initial-hook\\$")
-    require(preflight_pos >= 0,
-            "Debian prerm lacks the history-initial selected preflight check")
-    require(preflight_pos < stop_pos,
-            "the history-initial preflight must run before any service is "
+    # Stage A ordering (read-only early preflight): the maintenance
+    # preflight MUST run before ANY side effect — before the service stop
+    # and before the first pam-auth-update call — so a refusal (selected-
+    # but-unowned identity, unsupported topology) happens with ZERO side
+    # effects. Stage B (release) must run after the batch remove while
+    # every FIC writer is proven stopped. Both stages use the exact
+    # installed absolute path (no PATH dependency).
+    preflight_call = ("/opt/fic/bin/fic --maintenance "
+                      "pam-password-prerm-prepare preflight")
+    release_call = ("/opt/fic/bin/fic --maintenance "
+                    "pam-password-prerm-prepare release")
+    preflight_pos = fic_prerm.find(preflight_call)
+    require(preflight_pos >= 0 and preflight_pos < stop_pos,
+            "the read-only preflight must run BEFORE any service is "
             "stopped (fail closed with zero side effects)")
-    require(preflight_pos < remove_pos,
-            "the history-initial preflight must run before the first "
+    first_pam_mutation_pos = fic_prerm.find(
+        "systemctl disable --now fic-notify.service")
+    require(first_pam_mutation_pos > preflight_pos,
+            "the read-only preflight must run BEFORE the first "
             "pam-auth-update mutation")
-    require("fic_password_history_initial_hook_selected" not in fic_prerm,
-            "the dead history-initial snapshot variable must not remain in "
-            "the legacy prerm")
-    # The history-initial profile stays package payload: only its removal
-    # lifecycle is out of the legacy framework's scope, not the file itself.
-    staged_profiles = function_body(deb_builder, "install_fic_pam_profiles")
-    require("fic-password-history-initial-hook" in staged_profiles,
-            "the history-initial profile must remain in the package "
-            "payload (only its removal lifecycle is out of scope)")
+    release_pos = fic_prerm.find(release_call)
+    require(release_pos > remove_pos,
+            "the C2 password package release must run after the batch "
+            "remove, while every FIC writer is stopped")
 
     # Lifecycle invariant: a failing `pam-auth-update --remove` must be
     # contained inside the prerm while every FIC writer is still stopped.
     # The prerm restores ONLY the permanent hook infrastructure (never the
-    # legacy policy-owned selector profiles), proves the restoration with the
-    # read-only standard-state proof, and always exits non-zero, so dpkg's
-    # later abort-remove path never has to restart a writer on top of a
-    # partially detached PAM graph.
+    # legacy policy-owned selector profiles), proves the restoration with
+    # the read-only standard-state proof, and always exits non-zero, so
+    # dpkg's later abort-remove path never has to restart a writer on top
+    # of a partially detached PAM graph.
     require("pam-auth-update --package --remove" in fic_prerm and
             "fic_pam_remove_failed=1" in fic_prerm and
             'if [ "\\$fic_pam_remove_failed" = "1" ]; then' in fic_prerm,
@@ -1161,172 +1213,6 @@ def main() -> int:
                 f"Debian prerm PAM detach-failure diagnostic missing: "
                 f"{diagnostic}")
 
-    # Step 5B selection-preserving password hook removal contract: the exact
-    # pre-removal selection of the managed password hook profiles is
-    # snapshotted read-only from the standard per-facility state file with
-    # the exact full-line "Module: <profile>" grammar BEFORE the first
-    # pam-auth-update call.
-    for hook in PRERM_MANAGED_PASSWORD_HOOKS:
-        snapshot_grep = f'grep -q "^Module: {hook}\\$" /var/lib/pam/password'
-        require(snapshot_grep in fic_prerm,
-                f"Debian prerm does not snapshot the pre-removal selection "
-                f"of {hook} with the exact Module: grammar")
-        require(fic_prerm.find(snapshot_grep) < remove_pos,
-                f"Debian prerm must snapshot the {hook} selection before "
-                f"the first pam-auth-update call")
-    require("password hook recovery failed" in fic_prerm,
-            "Debian prerm lacks the selection-preserving password hook "
-            "recovery failure diagnostic")
-    # The password hook recovery must be selection-preserving AND use the
-    # production-like ONE-PROFILE-PER-ENABLE pam-auth-update contract: a
-    # combined restore list is forbidden; each snapshot-selected hook gets
-    # its own single-profile --enable invocation inside its own
-    # snapshot-conditioned branch, immediately followed by a strict
-    # resulting-state proof of that hook.
-    require("pam-auth-update --enable \\$fic_password_hook_restore_list"
-            not in fic_prerm,
-            "Debian prerm still uses the forbidden combined password hook "
-            "restore list")
-    prerm_normalized = " ".join(fic_prerm.split())
-    for hook, guard, intermediate_proof in (
-            ("fic-password-quality-hook",
-             'if [ "\\$fic_password_quality_hook_selected" = "1" ]; then',
-             "fic_prove_password_hook_state_restored 1 d"),
-            ("fic-password-history-hook",
-             'if [ "\\$fic_password_hook_recovery_failed" = "0" ] && '
-             '[ "\\$fic_password_history_hook_selected" = "1" ]; then',
-             "fic_prove_password_hook_state_restored d 1")):
-        guard = " ".join(guard.split())
-        require(guard in prerm_normalized,
-                f"Debian prerm lost the conditioned branch for {hook}")
-        enable_line = f"if ! pam-auth-update --enable {hook}; then"
-        require(enable_line in prerm_normalized,
-                f"Debian prerm must restore {hook} with its own "
-                f"single-profile --enable invocation")
-        guard_pos = prerm_normalized.find(guard)
-        enable_pos = prerm_normalized.find(enable_line)
-        require(enable_pos > guard_pos,
-                f"Debian prerm must enable {hook} only inside its "
-                f"conditioned branch")
-        stripped_line = next(line.strip() for line in fic_prerm.splitlines()
-                             if enable_line in line)
-        require(stripped_line == enable_line,
-                f"Debian prerm --enable for {hook} must name exactly one "
-                f"profile: " + stripped_line)
-        intermediate_pos = prerm_normalized.find(
-            intermediate_proof, enable_pos)
-        require(intermediate_pos > enable_pos,
-                f"Debian prerm must prove the resulting state of {hook} "
-                f"immediately after its individual enable")
-    # Strict fail-fast recovery: the history enable must be guarded by the
-    # recovery-failure flag (no further native password mutation after a
-    # failed enable or a failed immediate proof), and the final full-state
-    # proof must run only while every requested mutation is still proven.
-    history_guard = (
-        'if [ "\\$fic_password_hook_recovery_failed" = "0" ] && '
-        '[ "\\$fic_password_history_hook_selected" = "1" ]; then '
-        "if ! pam-auth-update --enable fic-password-history-hook; then")
-    require(history_guard in prerm_normalized,
-            "Debian prerm history enable must be guarded by the "
-            "recovery-failure flag (fail-fast: no password mutation after "
-            "a failed enable/proof)")
-    final_proof_guard = (
-        'if [ "\\$fic_password_hook_recovery_failed" = "0" ]; then '
-        "if ! fic_prove_password_hook_state_restored \\\\ "
-        '"\\$fic_password_quality_hook_selected" \\\\ '
-        '"\\$fic_password_history_hook_selected"; then')
-    require(final_proof_guard in prerm_normalized,
-            "Debian prerm final full-state password proof must run only "
-            "when every requested recovery mutation succeeded and was "
-            "proven")
-    # rc=0 from the remove is not trusted either: the prerm must prove the
-    # fully-removed password state (0, 0) right after the successful remove
-    # and route a proof failure into the same recovery path as a native
-    # failure (shared fic_pam_remove_failed flag).
-    remove_proof_pos = fic_prerm.find(
-        "fic_prove_password_hook_state_restored 0 0")
-    require(remove_proof_pos > remove_pos,
-            "Debian prerm must prove the removed password state (0, 0) "
-            "after the successful remove call")
-    require("fic_pam_remove_failed" in fic_prerm and
-            fic_prerm.find("fic_pam_remove_failed") < remove_pos,
-            "Debian prerm must share the remove-failure/recovery decision "
-            "through the fic_pam_remove_failed flag")
-    recovery_pos = fic_prerm.find("fic_pam_remove_failed\" = \"1")
-    require(recovery_pos > remove_proof_pos,
-            "Debian prerm must route an ambiguous rc=0 removal into the "
-            "same recovery path as a native failure")
-    password_proof_pos = fic_prerm.find(
-        "fic_prove_password_hook_state_restored \\")
-    require(password_proof_pos > recovery_pos,
-            "Debian prerm must prove the password hook state after the "
-            "selection-preserving recovery enable")
-    require('"\\$fic_password_quality_hook_selected" \\\\' in fic_prerm and
-            '"\\$fic_password_history_hook_selected"; then' in fic_prerm,
-            "Debian prerm must pass the exact pre-removal selection flags "
-            "to the password hook proof")
-    password_proof = function_body(
-        deb_builder, "write_password_hook_proof_function")
-    for state_element in ("/var/lib/pam/password",
-                          "/etc/pam.d/common-password",
-                          'grep -q "^Module: fic-password-quality-hook$" '
-                          '/var/lib/pam/password',
-                          'grep -q "^Module: fic-password-history-hook$" '
-                          '/var/lib/pam/password'):
-        require(state_element in password_proof,
-                f"password hook proof lacks {state_element}")
-    # Same strict grammar as the permanent hook proof: exact full-line
-    # "Module: <profile>" selection records plus exact active, correctly
-    # facilitated include rules. Under the C2 payload the history consumer
-    # hook has ONE semantic include target; the
-    # fic-password-history-initial include is guarded only by the
-    # absence checks (the initial-producer profile has no restore/proof
-    # branch until the C2 runtime transition executor redesigns it).
-    for include_pattern in (
-            "^password[[:space:]]+include[[:space:]]+fic-password-quality$",
-            "^password[[:space:]]+include[[:space:]]+fic-password-history$"):
-        require(f'grep -Eq "{include_pattern}" /etc/pam.d/common-password'
-                in password_proof,
-                f"password hook proof lacks the exact include proof for "
-                f"{include_pattern}")
-        # Unselected proof strengthening: an unselected hook must be proven
-        # fully absent — NO exact Module record AND NO exact generated
-        # include for EVERY of its targets. Each exact include grep must
-        # therefore appear exactly twice in the proof: once positively
-        # (selected) and once as an inverted absence check (unselected).
-        # A stale generated include without a Module record must fail the
-        # proof, and substring greps are forbidden.
-        pattern = (f'grep -Eq "{include_pattern}" '
-                   f"/etc/pam.d/common-password")
-        require(password_proof.count(pattern) == 2,
-                f"password hook proof must contain exactly one positive "
-                f"and one negative exact include check for "
-                f"{include_pattern} (unselected means no record AND no "
-                f"generated include)")
-    initial_include_pattern = ("^password[[:space:]]+include[[:space:]]+"
-                               "fic-password-history-initial$")
-    require(f'grep -Eq "{initial_include_pattern}" '
-            f"/etc/pam.d/common-password" in password_proof,
-            "password hook proof lacks the absence guard for the "
-            "fic-password-history-initial include")
-    require(password_proof.count(
-                f'grep -Eq "{initial_include_pattern}" '
-                f"/etc/pam.d/common-password") == 1,
-            "the fic-password-history-initial include guard must be "
-            "absence-only until the C2 three-profile prerm redesign")
-    for module_grep in ('grep -q "^Module: fic-password-quality-hook$" '
-                        "/var/lib/pam/password",
-                        'grep -q "^Module: fic-password-history-hook$" '
-                        "/var/lib/pam/password"):
-        require(password_proof.count(module_grep) == 2,
-                f"password hook proof must contain exactly one positive "
-                f"and one negative Module record check for a hook: "
-                f"{module_grep}")
-    for forbidden in ("pam-auth-update", "rm ", "mv ", ">>", "> ",
-                      "tee ", "chmod", "chown"):
-        require(forbidden not in password_proof,
-                f"password hook proof must stay read-only but contains "
-                f"{forbidden}")
     pam_proof = function_body(deb_builder, "write_pam_hook_proof_function")
     for state_element in ("/var/lib/pam", "/etc/pam.d/common-auth",
                           "/etc/pam.d/common-account", '"Module: '):
@@ -1367,9 +1253,11 @@ def main() -> int:
         require(forbidden not in pam_proof,
                 f"read-only permanent hook proof must not contain: "
                 f"{forbidden}")
-    # The prerm itself never touches managed slots, journal or witness:
-    # it has no reason to run any FIC maintenance command.
-    for forbidden in ("fic --maintenance", "fic-dick", "mutation-journal"):
+    # The prerm runs EXACTLY the two narrow package-release maintenance
+    # commands (proven above) and nothing else; it never touches managed
+    # slots, journal or witness directly.
+    for forbidden in ("fic-dick", "mutation-journal", "pam-alt-faillock",
+                      "pam-alt-pwhistory", "bootstrap-pam-password-slots"):
         require(forbidden not in fic_prerm,
                 f"Debian prerm must not touch FIC runtime state: {forbidden}")
     # Final stop proof: after the bounded wait the prerm must POSITIVELY
@@ -1509,18 +1397,23 @@ def main() -> int:
         require(generated.returncode == 0 and prerm_path.is_file(),
                 "could not generate Debian prerm for the behavioral check: " +
                 generated.stderr.strip())
-        # The prerm now proves the resulting password hook state (0, 0) even
-        # on the successful remove path, so the run must be sandboxed away
-        # from the host /var/lib/pam and /etc/pam.d paths (read-only, empty
-        # sandbox states prove full removal).
+        # The run must be sandboxed away from the host /var/lib/pam and
+        # /etc/pam.d paths, and the exact installed maintenance path must
+        # point at a fake helper (the empty sandbox state is proven fully
+        # released, so the release stage is a proven no-op success).
         pam_state_dir = tmp_path / "var-lib-pam"
         pam_d_dir = tmp_path / "etc-pam.d"
         pam_state_dir.mkdir()
         pam_d_dir.mkdir()
+        fake_helper_bin = tmp_path / "fic-maintenance-fake"
+        fake_helper_bin.write_text(fake_maintenance_helper(),
+                                   encoding="utf-8")
+        fake_helper_bin.chmod(0o755)
         sandboxed_prerm = tmp_path / "prerm-sandboxed.sh"
         sandboxed_prerm.write_text(
             sandbox_pam_paths(prerm_path.read_text(encoding="utf-8"),
-                              pam_state_dir, pam_d_dir),
+                              pam_state_dir, pam_d_dir).replace(
+                "/opt/fic/bin/fic", str(fake_helper_bin)),
             encoding="utf-8")
         sandboxed_prerm.chmod(0o755)
         ran = subprocess.run(
@@ -1558,8 +1451,9 @@ def main() -> int:
         fake_systemctl.chmod(0o755)
         log.unlink(missing_ok=True)
         stuck = subprocess.run(
-            [str(prerm_path), "remove"],
-            env={"PATH": f"{fake_bin}:/usr/bin:/bin", "FAKE_LOG": str(log)},
+            [str(sandboxed_prerm), "remove"],
+            env={"PATH": f"{fake_bin}:/usr/bin:/bin", "FAKE_LOG": str(log),
+                 "FIC_FAKE_HELPER_MODE": "ok"},
             text=True,
             capture_output=True,
             check=False)
@@ -1636,23 +1530,28 @@ def main() -> int:
                         "Debian prerm must never edit the generated "
                         "common-password stack directly: " + stripped)
         prerm_script = tmp_path / "prerm-sandboxed.sh"
+        fake_helper = fake_bin / "fic-maintenance-fake"
+        fake_helper.write_text(fake_maintenance_helper(), encoding="utf-8")
+        fake_helper.chmod(0o755)
 
         # detach-failure scenario helpers follow
         def run_prerm(env_extra=None) -> subprocess.CompletedProcess:
-            prerm_script.write_text(
-                sandbox_pam_paths(prerm_text, pam_state, pam_d),
-                encoding="utf-8")
+            sandboxed = sandbox_pam_paths(prerm_text, pam_state, pam_d)
+            # The prerm calls the maintenance helper through the exact
+            # installed absolute path; the sandbox redirects that path to
+            # the scenario-driven fake helper.
+            sandboxed = sandboxed.replace("/opt/fic/bin/fic",
+                                          str(fake_helper))
+            prerm_script.write_text(sandboxed, encoding="utf-8")
             prerm_script.chmod(0o755)
             env = {"PATH": f"{fake_bin}:/usr/bin:/bin",
                    "FAKE_LOG": str(log),
                    "FAKE_PAM_STATE": str(pam_state),
                    "FAKE_PAM_D": str(pam_d),
+                   "FIC_FAKE_HELPER_MODE": "ok",
                    "FAKE_PAU_REMOVE_FAILS": "", "FAKE_PAU_PARTIAL": "",
                    "FAKE_PAU_PARTIAL_HOOKS": "",
-                   "FAKE_PAU_ENABLE_FAILS": "",
-                   "FAKE_PAU_PASSWORD_ENABLE_FAILS": "",
-                   "FAKE_PAU_PASSWORD_MALFORMED": "",
-                   "FAKE_PAU_REMOVE_STALE": ""}
+                   "FAKE_PAU_ENABLE_FAILS": ""}
             if env_extra:
                 env.update(env_extra)
             return subprocess.run(
@@ -1715,7 +1614,8 @@ def main() -> int:
         require("restored and proven attached" in ran.stderr,
                 "prerm must report the proven restoration: " +
                 ran.stderr.strip())
-        require(all(line.startswith(("systemctl ", "pam-auth-update "))
+        require(all(line.startswith(("systemctl ", "pam-auth-update ",
+                                     "fic-maintenance "))
                     for line in calls),
                 "prerm detach-failure path touched non-systemd, non-PAM "
                 "state (managed slots, journal or witness must stay "
@@ -1801,318 +1701,203 @@ def main() -> int:
                     f"({malformed}) as an unproven PAM restoration: " +
                     ran.stderr.strip())
 
-        # Step 5B matrix: the managed password hook profiles are package
-        # payload with an administrator-controlled pam-auth-update selection.
-        # A remove run must never change that selection, and a failed removal
-        # must restore ONLY the hooks that were selected before the removal,
-        # proven against the resulting standard state (rc=0 is never
-        # trusted). The mandatory faillock infrastructure restore keeps its
-        # stronger always-restore invariant.
-        def require_password_hook_state(quality: bool,
-                                        history: bool) -> None:
-            password_state = (pam_state / "password").read_text(
-                encoding="utf-8") if (pam_state / "password").is_file() \
-                else ""
-            password_stack = (pam_d / "common-password").read_text(
-                encoding="utf-8") if (pam_d / "common-password").is_file() \
-                else ""
-            for hook, selected in (("fic-password-quality-hook", quality),
-                                   ("fic-password-history-hook", history)):
-                record = f"Module: {hook}"
-                if selected:
-                    require(record in password_state,
-                            f"selected password hook lost its selection "
-                            f"record after the recovery: {hook}")
-                else:
-                    require(record not in password_state,
-                            f"unselected password hook must not gain a "
-                            f"selection record: {hook}")
-            for target, present in (("fic-password-quality", quality),
-                                    ("fic-password-history", history),
-                                    ("fic-password-history-initial",
-                                     False)):
-                if present:
-                    require(canonical_include("password", target)
-                            in password_stack,
-                            f"selected password hook include missing from "
-                            f"the generated stack: {target}")
-                else:
-                    require(target not in password_stack,
-                            f"unselected password hook include must not "
-                            f"appear in the generated stack: {target}")
+        # ---- Three-profile C2 package-release behavioral matrix ----
+        # The C2 maintenance helper owns the whole password decision; the
+        # prerm orchestrates: preflight (before ANY side effect) -> stop
+        # writers -> batch remove (permanent hooks + legacy policy
+        # profiles) -> helper release -> faillock recovery on failure. The
+        # owned fixtures carry REAL provenance elements: canonical Active
+        # slot bytes with a marker mutation id, a matching Applied journal
+        # record with the role-specific activation identifier and the
+        # owned-fixture declaration; an unowned fixture has the selection
+        # but no provenance.
 
-        # P-A: nothing selected; a failed removal must not enable any
-        # password hook (only the mandatory faillock restore runs).
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, False, False)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS": partial_hooks})
-        require(ran.returncode != 0,
-                "prerm must report the failed removal (P-A)")
-        require_hooks_attached()
-        require_password_hook_state(False, False)
-        require(not any(line.startswith("pam-auth-update --enable") and
-                        "fic-password-" in line for line in read_calls()),
-                "recovery must not enable password hooks that were "
-                "unselected before the removal: " + repr(read_calls()))
+        NEUTRAL_SLOT = "# FIC managed password slot: state=neutral\n"
 
-        # P-B: only the quality hook was selected and the partial mutation
-        # detached it: recovery must re-select exactly that hook (and never
-        # the history hook), after the mandatory faillock restore.
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, False)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS":
-                             "fic-faillock-hook-preauth "
-                             "fic-password-quality-hook"})
-        require(ran.returncode != 0,
-                "prerm must report the failed removal (P-B)")
-        require_hooks_attached()
-        require_password_hook_state(True, False)
-        password_enables = [line for line in read_calls()
-                            if line.startswith("pam-auth-update --enable")
-                            and "fic-password-" in line]
-        require(len(password_enables) == 1 and
-                "fic-password-quality-hook" in password_enables[0] and
-                "fic-password-history-hook" not in password_enables[0],
-                "recovery must re-enable exactly the pre-removal password "
-                "hook selection: " + repr(password_enables))
-        enable_calls = [line for line in read_calls()
-                        if line.startswith("pam-auth-update --enable")]
-        faillock_enable_pos = next(
-            i for i, line in enumerate(enable_calls)
-            if "fic-faillock-hook-preauth" in line)
-        password_enable_pos = next(
-            i for i, line in enumerate(enable_calls)
-            if "fic-password-" in line)
-        require(faillock_enable_pos < password_enable_pos,
-                "the mandatory faillock infrastructure restore must run "
-                "before the selection-preserving password hook restore")
+        def write_active_slot(pam_d_path, slot_name, mutation_id) -> None:
+            capability = ("enable_password_quality" if slot_name ==
+                          "fic-password-quality" else
+                          "enable_password_history")
+            body = {"fic-password-quality":
+                    "password requisite pam_pwquality.so retry=3",
+                    "fic-password-history":
+                    "password requisite pam_pwhistory.so use_authtok "
+                    "remember=3",
+                    "fic-password-history-initial":
+                    "password requisite pam_pwhistory.so remember=3",
+                    }[slot_name]
+            (pam_d_path / slot_name).write_text(
+                f"#@FIC_PAM_SLOT_BEGIN version=1 capability={capability} "
+                f"mutation={mutation_id} slot={slot_name}\n"
+                f"{body}\n"
+                f"#@FIC_PAM_SLOT_END capability={capability} "
+                f"mutation={mutation_id} slot={slot_name}\n",
+                encoding="utf-8")
 
-        # P-C / T1: both hooks selected and the partial mutation detached
-        # both: recovery must restore exactly both with TWO SEPARATE
-        # single-profile --enable calls (the production-like one-profile
-        # contract; a combined invocation is forbidden and the fake would
-        # fail it), with both dual-stack history includes proven in the
-        # generated stack.
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, True)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS":
-                             "fic-faillock-hook-authsucc "
-                             "fic-password-quality-hook "
-                             "fic-password-history-hook"})
-        require(ran.returncode != 0,
-                "prerm must report the failed removal (P-C)")
-        require_hooks_attached()
-        require_password_hook_state(True, True)
-        password_enables = [line for line in read_calls()
-                            if line.startswith("pam-auth-update --enable")
-                            and "fic-password-" in line]
-        require(password_enables == [
-            "pam-auth-update --enable fic-password-quality-hook",
-            "pam-auth-update --enable fic-password-history-hook",
-        ], "recovery must use two separate single-profile --enable calls "
-           "in quality-then-history order: " + repr(password_enables))
-        require(not any("FAKE-PAU-COMBINED-PASSWORD-ENABLE" in line
-                        for line in read_calls()),
-                "fake must never see a combined password hook enable: " +
-                repr(read_calls()))
+        def write_owned_fixture(pam_state_path, profiles) -> None:
+            # One Applied journal record with the role-specific activation
+            # identifier per owned identity, plus the owned-fixture
+            # declaration consumed by the fake helper.
+            records = []
+            for index, profile in enumerate(sorted(profiles)):
+                mutation_id = 77000 + index
+                policy = ("enable_password_quality" if profile ==
+                          "fic-password-quality-hook" else
+                          "enable_password_history")
+                slot_name = profile.replace("-hook", "")
+                write_active_slot(pam_d, slot_name, mutation_id)
+                records.append(
+                    '{"id": %d, "status": "applied", '
+                    '"policy": {"moduleName": "IDENTITY_ACCESS", '
+                    '"submoduleName": "PAM", "policyName": "%s"}, '
+                    '"resource": "capability/%s", '
+                    '"undo": {"backend": "pam", "payload": {'
+                    '"capability": "%s", "topology": "pam_auth_update", '
+                    '"activationIdentifiers": ["%s"]}}}'
+                    % (mutation_id, policy, policy, policy, profile))
+            (pam_state_path / "mutation-journal.json").write_text(
+                "[" + ",\n".join(records) + "]\n", encoding="utf-8")
+            (pam_state_path / "fic-owned-fixtures").write_text(
+                "".join(f"{profile} owned\n"
+                        for profile in sorted(profiles)),
+                encoding="utf-8")
 
-        # P-D: the selection-preserving recovery itself fails (the
-        # pam-auth-update --enable of the password hooks returns rc!=0 after
-        # the faillock restore succeeded): the prerm must fail closed and
-        # must not claim that the selection was restored.
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, True)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS":
-                             "fic-password-quality-hook "
-                             "fic-password-history-hook",
-                         "FAKE_PAU_PASSWORD_ENABLE_FAILS": "1"})
-        require(ran.returncode != 0,
-                "prerm must fail when the password hook recovery fails (P-D)")
-        require("password hook recovery failed" in ran.stderr and
-                "NOT proven restored" in ran.stderr,
-                "prerm must state explicitly that the password hook "
-                "selection is not proven restored: " + ran.stderr.strip())
-        require_password_hook_state(False, False)
+        def write_foreign_quality(pam_state_path, pam_d_path) -> None:
+            # Stock distro pwquality producer: profile selection in the
+            # password state plus the direct pam_pwquality.so rule in the
+            # generated stack (Rule I agreement).
+            state_file = pam_state_path / "password"
+            state_file.write_text(
+                state_file.read_text(encoding="utf-8") +
+                "Module: pwquality\ninclude pwquality\n",
+                encoding="utf-8")
+            stack_file = pam_d_path / "common-password"
+            stack_file.write_text(
+                "password requisite pam_pwquality.so retry=3 \n" +
+                stack_file.read_text(encoding="utf-8"),
+                encoding="utf-8")
 
-        # P-E: rc=0 is not trusted: the enable "succeeds" but regenerates a
-        # malformed (commented) quality include, so the strict
-        # resulting-state proof must fail the removal closed.
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, False)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS":
-                             "fic-password-quality-hook",
-                         "FAKE_PAU_PASSWORD_MALFORMED": "1"})
-        require(ran.returncode != 0,
-                "prerm must not trust rc=0 from the recovery enable without "
-                "the resulting-state proof (P-E)")
-        require("password hook recovery failed" in ran.stderr,
-                "prerm must report the failed proof as a password hook "
-                "recovery failure: " + ran.stderr.strip())
+        def require_fully_detached() -> None:
+            state, stack = read_pam_state(pam_state, pam_d)
+            for hook in PASSWORD_HOOKS:
+                require(f"Module: {hook}" not in state,
+                        f"the detached identity must have no selection "
+                        f"record: {hook}")
+                require(hook.replace("-hook", "") not in stack,
+                        f"the detached identity must have no generated "
+                        f"include: {hook}")
+                require((pam_d / hook.replace("-hook", "")).read_text(
+                            encoding="utf-8") == NEUTRAL_SLOT,
+                        f"the detached identity slot must be canonical "
+                        f"neutral: {hook}")
 
-        # P-S / T6: the normal removal path with both hooks selected: the
-        # removal succeeds and the resulting state is proven fully removed,
-        # so no recovery of any kind (no faillock and no password hook
-        # enable) may run, and no dangling includes or dangling selection
-        # records remain.
+        def require_maintenance_ordering(calls) -> None:
+            preflights = [index for index, line in enumerate(calls)
+                          if line.startswith("fic-maintenance")
+                          and " preflight" in line]
+            releases = [index for index, line in enumerate(calls)
+                        if line.startswith("fic-maintenance")
+                        and " release" in line]
+            stops = [index for index, line in enumerate(calls)
+                     if "disable --now" in line]
+            removes = [index for index, line in enumerate(calls)
+                       if line.startswith(
+                           "pam-auth-update --package --remove")]
+            require(preflights and releases and stops and removes,
+                    "the prerm must call the helper preflight and release, "
+                    "stop the writers and run the batch remove: " +
+                    "\n".join(calls))
+            require(max(preflights) < min(stops),
+                    "the preflight must run BEFORE the service stop")
+            require(max(preflights) < min(removes),
+                    "the preflight must run BEFORE the batch remove")
+            require(min(releases) > max(removes),
+                    "the release must run AFTER the batch remove "
+                    "(writers stopped)")
+
+        # The installed package payload ships all three managed password
+        # slots; identities that are not applied rest in the canonical
+        # Neutral state.
+        for slot in ("fic-password-quality", "fic-password-history",
+                     "fic-password-history-initial"):
+            (pam_d / slot).write_text(NEUTRAL_SLOT, encoding="utf-8")
+
+        # PR1: the history-initial identity is selected and OWNED — the
+        # temporary blocker semantics are retired: the removal succeeds,
+        # the helper is called (preflight before any side effect, release
+        # after the batch remove), the initial identity is detached, its
+        # slot is canonical Neutral and no FIC include remains.
         write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, True)
+        write_selected_password_hooks(pam_state, pam_d, False, False,
+                                      initial=True)
+        write_owned_fixture(pam_state,
+                            {"fic-password-history-initial-hook"})
         log.unlink(missing_ok=True)
         ran = run_prerm()
         require(ran.returncode == 0,
-                "prerm remove must succeed when pam-auth-update succeeds: " +
+                "PR1: the owned history-initial removal must succeed: " +
                 ran.stderr.strip())
-        require_password_hook_state(False, False)
-        require(not any(line.startswith("pam-auth-update --enable")
-                        for line in read_calls()),
-                "a proven successful removal must not run any recovery "
-                "enable: " + repr(read_calls()))
+        require_maintenance_ordering(read_calls())
+        require_fully_detached()
+        state, stack = read_pam_state(pam_state, pam_d)
+        for hook in PERMANENT_HOOKS:
+            require(f"Module: {hook}" not in state and
+                    hook_target(hook) not in stack,
+                    f"PR1: the batch remove must detach {hook}")
 
-        # T4: the remove reports rc=0 but leaves a stale quality include in
-        # the generated stack: the successful-remove resulting-state proof
-        # must fail, the prerm must treat the removal as ambiguous and enter
-        # the SAME recovery path as a native failure (faillock restore +
-        # per-profile password restore + final proof), then abort.
+        # PR2: quality + history consumer owned: both identities detach in
+        # one helper release, both slots end canonical Neutral.
         write_attached_pam_state(pam_state, pam_d)
         write_selected_password_hooks(pam_state, pam_d, True, True)
+        write_owned_fixture(pam_state, {"fic-password-quality-hook",
+                                        "fic-password-history-hook"})
         log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_STALE": "quality"})
-        require(ran.returncode != 0,
-                "prerm must not treat an rc=0 remove with a stale password "
-                "include as successful (T4)")
-        require("NOT proven removed" in ran.stderr and
-                "treating the package removal as failed" in ran.stderr,
-                "prerm must report the ambiguous rc=0 removal explicitly "
-                "(T4): " + ran.stderr.strip())
-        require_hooks_attached()
-        require_password_hook_state(True, True)
-        password_enables = [line for line in read_calls()
-                            if line.startswith("pam-auth-update --enable")
-                            and "fic-password-" in line]
-        require(password_enables == [
-            "pam-auth-update --enable fic-password-quality-hook",
-            "pam-auth-update --enable fic-password-history-hook",
-        ], "the ambiguous-removal recovery must use two separate "
-           "single-profile enable calls (T4): " + repr(password_enables))
+        ran = run_prerm()
+        require(ran.returncode == 0,
+                "PR2: the owned quality+history removal must succeed: " +
+                ran.stderr.strip())
+        require_maintenance_ordering(read_calls())
+        require_fully_detached()
+        state, stack = read_pam_state(pam_state, pam_d)
+        for hook in PERMANENT_HOOKS:
+            require(f"Module: {hook}" not in state and
+                    hook_target(hook) not in stack,
+                    f"PR2: the batch remove must detach {hook}")
+        disable_calls = [line for line in read_calls()
+                         if line.startswith("pam-auth-update --disable")]
+        require(disable_calls == [
+            "pam-auth-update --disable fic-password-history-hook",
+            "pam-auth-update --disable fic-password-quality-hook",
+        ], "PR2: the release must use one profile per invocation in "
+           "consumer-before-producer order: " + repr(disable_calls))
 
-        # T5: the same ambiguity for a stale history include (both
-        # dual-stack targets left behind).
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, True)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_STALE": "history"})
-        require(ran.returncode != 0,
-                "prerm must not treat an rc=0 remove with a stale history "
-                "include as successful (T5)")
-        require("NOT proven removed" in ran.stderr,
-                "prerm must report the ambiguous rc=0 removal explicitly "
-                "(T5): " + ran.stderr.strip())
-        require_hooks_attached()
-        require_password_hook_state(True, True)
-
-        # T8: proof failure after the individual history enable: the
-        # enable "succeeds" but regenerates both history includes as
-        # commented lines, so the immediate per-hook proof (d, 1) must fail
-        # the recovery closed.
+        # PR3: foreign stock pwquality + FIC history consumer owned: the
+        # FIC history detaches, the foreign producer is preserved.
         write_attached_pam_state(pam_state, pam_d)
         write_selected_password_hooks(pam_state, pam_d, False, True)
+        write_foreign_quality(pam_state, pam_d)
+        write_owned_fixture(pam_state, {"fic-password-history-hook"})
         log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS":
-                             "fic-password-history-hook",
-                         "FAKE_PAU_PASSWORD_MALFORMED": "history"})
-        require(ran.returncode != 0,
-                "prerm must not trust rc=0 from the individual history "
-                "enable without the resulting-state proof (T8)")
-        require("password hook recovery failed" in ran.stderr and
-                "NOT proven restored" in ran.stderr,
-                "prerm must report the failed history proof as a password "
-                "hook recovery failure (T8): " + ran.stderr.strip())
-        state_t8, stack_t8 = read_pam_state(pam_state, pam_d)
-        require(not any(line.startswith("password") and
-                        "fic-password-history" in line
-                        for line in stack_t8.splitlines()),
-                "the failed history proof must not leave an active "
-                "history include in the generated stack (T8): " +
-                repr(stack_t8))
-
-        # F1: strict fail-fast recovery — the quality enable fails with
-        # rc!=0, so the history enable MUST NOT be attempted on top of the
-        # unproven topology; the recovery fails closed immediately.
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, True)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS":
-                             "fic-password-quality-hook "
-                             "fic-password-history-hook",
-                         "FAKE_PAU_PASSWORD_ENABLE_FAILS": "quality"})
-        require(ran.returncode != 0,
-                "prerm must fail closed when the quality enable fails (F1)")
-        require("password hook recovery failed" in ran.stderr and
-                "NOT proven restored" in ran.stderr,
-                "prerm must report the failed quality enable as a "
-                "password hook recovery failure (F1): " +
+        ran = run_prerm()
+        require(ran.returncode == 0,
+                "PR3: the foreign+history removal must succeed: " +
                 ran.stderr.strip())
-        password_enables = [line for line in read_calls()
-                            if line.startswith("pam-auth-update --enable")
-                            and "fic-password-" in line]
-        require(password_enables == [
-            "pam-auth-update --enable fic-password-quality-hook",
-        ], "fail-fast: the history enable must not run after the failed "
-           "quality enable (F1): " + repr(password_enables))
+        require_maintenance_ordering(read_calls())
+        require_fully_detached()
+        state, stack = read_pam_state(pam_state, pam_d)
+        for hook in PERMANENT_HOOKS:
+            require(f"Module: {hook}" not in state and
+                    hook_target(hook) not in stack,
+                    f"PR3: the batch remove must detach {hook}")
+        state, stack = read_pam_state(pam_state, pam_d)
+        require("Module: pwquality" in state and
+                "password requisite pam_pwquality.so" in stack,
+                "PR3: the foreign pwquality producer must be preserved")
 
-        # F2: strict fail-fast recovery after an UNPROVEN rc=0 mutation —
-        # the quality enable returns rc=0 but regenerates a malformed
-        # quality include, the immediate proof (1, d) fails, and the
-        # history enable MUST NOT be attempted.
-        write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, True)
-        log.unlink(missing_ok=True)
-        ran = run_prerm({"FAKE_PAU_REMOVE_FAILS": "1",
-                         "FAKE_PAU_PARTIAL": "1",
-                         "FAKE_PAU_PARTIAL_HOOKS":
-                             "fic-password-quality-hook "
-                             "fic-password-history-hook",
-                         "FAKE_PAU_PASSWORD_MALFORMED": "1"})
-        require(ran.returncode != 0,
-                "prerm must fail closed when the quality proof fails after "
-                "an rc=0 enable (F2)")
-        require("password hook recovery failed" in ran.stderr and
-                "NOT proven restored" in ran.stderr,
-                "prerm must report the failed quality proof as a password "
-                "hook recovery failure (F2): " + ran.stderr.strip())
-        password_enables = [line for line in read_calls()
-                            if line.startswith("pam-auth-update --enable")
-                            and "fic-password-" in line]
-        require(password_enables == [
-            "pam-auth-update --enable fic-password-quality-hook",
-        ], "fail-fast: the history enable must not run after the failed "
-           "quality immediate proof (F2): " + repr(password_enables))
-
-        # F1 (C2 preflight): the history-initial hook selected, the two
-        # legacy-managed password hooks unselected. The prerm must refuse
-        # the whole removal BEFORE any side effect: no systemctl call, no
-        # pam-auth-update call at all, the sandbox PAM state byte-identical
-        # (no destructive initial-hook mutation without recovery), and a
-        # diagnostic that clearly names the initial hook as not yet safely
-        # removable.
+        # PR4: the history-initial identity is selected but NOT owned (no
+        # provenance fixture): the prerm must refuse the removal BEFORE
+        # any side effect — no systemctl call, no pam-auth-update, sandbox
+        # PAM state byte-identical.
         write_attached_pam_state(pam_state, pam_d)
         write_selected_password_hooks(pam_state, pam_d, False, False,
                                       initial=True)
@@ -2120,44 +1905,66 @@ def main() -> int:
         before_digest = pam_state_digest(pam_state, pam_d)
         ran = run_prerm()
         require(ran.returncode != 0,
-                "prerm must refuse the removal while the history-initial "
-                "hook is still selected (F1)")
-        require("fic-password-history-initial-hook" in ran.stderr and
-                "cannot safely remove or restore" in ran.stderr,
-                "the preflight diagnostic must clearly state that the "
-                "history-initial hook cannot yet be safely removed (F1): " +
+                "PR4: the unowned selected identity must block the removal")
+        require("not proven FIC-owned" in ran.stderr,
+                "PR4: the unowned-identity diagnostic must be explicit: " +
                 ran.stderr.strip())
-        f1_calls = read_calls()
+        pr4_calls = read_calls()
         require(not any(line.startswith(("pam-auth-update", "systemctl"))
-                        for line in f1_calls),
-                "the refused removal must perform NO mutation at all "
-                "(F1): " + repr(f1_calls))
+                        for line in pr4_calls),
+                "PR4: the refused removal must perform NO mutation at "
+                "all: " + repr(pr4_calls))
         require(pam_state_digest(pam_state, pam_d) == before_digest,
-                "the refused removal must leave the sandbox PAM state "
-                "untouched (F1)")
+                "PR4: the refused removal must leave the sandbox PAM "
+                "state untouched")
 
-        # F2: the ordinary two-profile removal is unaffected: quality and
-        # history consumer selected, initial unselected — the successful
-        # removal must deselect/prove exactly the two profiles, and its
-        # destructive remove call must never name the history-initial hook.
+        # PR5: the helper release fails AFTER a mutation but the C2
+        # compensation is proven (the fake helper restores the exact
+        # fixture state before failing): the prerm must exit non-zero,
+        # restore the permanent hook infrastructure and the pre-prerm
+        # topology must be intact (a retry may succeed).
         write_attached_pam_state(pam_state, pam_d)
-        write_selected_password_hooks(pam_state, pam_d, True, True)
+        write_selected_password_hooks(pam_state, pam_d, True, False)
+        write_owned_fixture(pam_state, {"fic-password-quality-hook"})
         log.unlink(missing_ok=True)
-        ran = run_prerm()
-        require(ran.returncode == 0,
-                "the ordinary two-profile removal must succeed (F2): " +
+        ran = run_prerm({"FIC_FAKE_HELPER_MODE": "fail-compensated"})
+        require(ran.returncode != 0,
+                "PR5: the failed helper release must fail the removal")
+        require("the C2 password package release failed" in ran.stderr,
+                "PR5: the release-failure diagnostic must be explicit: " +
                 ran.stderr.strip())
-        remove_calls = [line for line in read_calls()
-                        if line.startswith(
-                            "pam-auth-update --package --remove")]
-        require(len(remove_calls) == 1 and
-                "fic-password-quality-hook" in remove_calls[0] and
-                "fic-password-history-hook" in remove_calls[0] and
-                "fic-password-history-initial-hook" not in remove_calls[0],
-                "the destructive remove call must keep the two-profile "
-                "contract and must never name the history-initial hook "
-                "(F2): " + repr(remove_calls))
-        require_password_hook_state(False, False)
+        require("pre-release topology proven restored" in ran.stderr,
+                "PR5: the proven compensation must be visible in the "
+                "diagnostic: " + ran.stderr.strip())
+        require_hooks_attached()
+        state, stack = read_pam_state(pam_state, pam_d)
+        require("Module: fic-password-quality-hook" in state,
+                "PR5: the compensated state must keep the owned FIC "
+                "selection")
+        require((pam_d / "fic-password-quality").read_text(
+                    encoding="utf-8") != NEUTRAL_SLOT,
+                "PR5: the compensated quality slot must stay Active")
+
+        # PR6: the helper release fails and the compensation is NOT proven
+        # (the fake helper detaches and gives up): the prerm must exit
+        # non-zero with a CRITICAL diagnostic, restore the permanent hook
+        # infrastructure and must NOT hide the unproven password state.
+        write_attached_pam_state(pam_state, pam_d)
+        write_selected_password_hooks(pam_state, pam_d, True, False)
+        write_owned_fixture(pam_state, {"fic-password-quality-hook"})
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FIC_FAKE_HELPER_MODE": "fail-critical"})
+        require(ran.returncode != 0,
+                "PR6: the unproven compensation must fail the removal")
+        require("CRITICAL" in ran.stderr and
+                "NOT proven restored" in ran.stderr,
+                "PR6: a CRITICAL fail-closed diagnostic is required: " +
+                ran.stderr.strip())
+        require_hooks_attached()
+        state, stack = read_pam_state(pam_state, pam_d)
+        require("Module: fic-password-quality-hook" not in state,
+                "PR6: the prerm must not silently restore the unproven "
+                "password state")
 
     # Behavioral proof of the attach invariant: run the configure tail of the
     # generated postinst with fake binaries and verify the actual order:

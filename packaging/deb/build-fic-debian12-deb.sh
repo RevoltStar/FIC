@@ -864,83 +864,6 @@ fic_prove_permanent_hooks_attached() {
 EOF
 }
 
-write_password_hook_proof_function() {
-    # Shared generated-script snippet: read-only proof that the managed
-    # password hook profiles (Step 5B package payload) ended up in exactly
-    # the required state. Arguments: $1 = expected quality hook state,
-    # $2 = expected history hook state; each expected state is one of:
-    # "1" = the hook must be selected and attached (an exact full-line
-    # "Module: <profile>" record in /var/lib/pam/password plus the exact
-    # active, correctly facilitated include rule of the profile's own
-    # managed slot target in the generated common-password stack; under
-    # the C2 payload each profile has ONE semantic include target: the
-    # quality hook includes fic-password-quality, the history consumer
-    # hook includes fic-password-history in both Password variants),
-    # "0" = the hook must be fully absent (NO
-    # exact selection record AND NO exact generated include of any of its
-    # targets), "d" = don't-care (only valid for intermediate per-hook
-    # proofs right after a single native mutation; the final full-state
-    # proof never uses "d"). Any other value fails closed. Exact grammar
-    # everywhere (anchored "Module: <profile>" records and anchored
-    # "password include <target>" rules); commented or wrong-facility
-    # lines never prove anything. The proof never invokes any PAM tool
-    # and never mutates PAM state, managed slots, the mutation journal or
-    # its witness. NOTE (C2 groundwork): this proof still knows nothing
-    # about the fic-password-history-initial-hook profile — the
-    # three-profile snapshot/restore/proof redesign happens together with
-    # the C2 runtime transition executor (docs/HANDOFF.md).
-    cat <<'EOF'
-fic_prove_password_hook_state_restored() {
-    if [ ! -d /var/lib/pam ]; then
-        return 1
-    fi
-    case "$1" in
-        1)
-            [ -f /etc/pam.d/common-password ] || return 1
-            grep -q "^Module: fic-password-quality-hook$" /var/lib/pam/password 2>/dev/null || return 1
-            grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-quality$" /etc/pam.d/common-password 2>/dev/null || return 1
-            ;;
-        0)
-            if [ -f /var/lib/pam/password ] && grep -q "^Module: fic-password-quality-hook$" /var/lib/pam/password 2>/dev/null; then
-                return 1
-            fi
-            if [ -f /etc/pam.d/common-password ] && grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-quality$" /etc/pam.d/common-password 2>/dev/null; then
-                return 1
-            fi
-            ;;
-        d)
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-    case "$2" in
-        1)
-            [ -f /etc/pam.d/common-password ] || return 1
-            grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null || return 1
-            grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history$" /etc/pam.d/common-password 2>/dev/null || return 1
-            ;;
-        0)
-            if [ -f /var/lib/pam/password ] && grep -q "^Module: fic-password-history-hook$" /var/lib/pam/password 2>/dev/null; then
-                return 1
-            fi
-            if [ -f /etc/pam.d/common-password ] && grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history$" /etc/pam.d/common-password 2>/dev/null; then
-                return 1
-            fi
-            if [ -f /etc/pam.d/common-password ] && grep -Eq "^password[[:space:]]+include[[:space:]]+fic-password-history-initial$" /etc/pam.d/common-password 2>/dev/null; then
-                return 1
-            fi
-            ;;
-        d)
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-    return 0
-}
-EOF
-}
 
 write_fic_dick_postinst() {
     local package_root="$1"
@@ -1022,27 +945,25 @@ set -e
 
 EOF
     write_pam_hook_proof_function >> "$package_root/DEBIAN/prerm"
-    write_password_hook_proof_function >> "$package_root/DEBIAN/prerm"
     cat >> "$package_root/DEBIAN/prerm" <<EOF
 
 if [ "\$1" = "remove" ]; then
-    # Temporary C2 safety invariant (pre-remove preflight): the legacy
-    # two-profile password hook removal/recovery framework can
-    # snapshot/restore/prove ONLY the quality and history-consumer hooks.
-    # The history-initial hook is a mutually exclusive semantic variant
-    # this framework can neither restore (a blind re-enable next to a
-    # foreign quality producer would be wrong) nor prove. The profile
-    # definition file is deleted from disk as soon as the removal
-    # succeeds, so a still-selected history-initial hook would keep its
-    # selection record and its generated include (dangling after a later
-    # purge), and any later native regeneration would silently drop the
-    # orphaned profile outside any FIC provenance. Therefore the removal
-    # fails closed BEFORE any side effect: no service is stopped, no PAM
-    # state is mutated, and the package stays installed. This preflight
-    # is retired only by the C2 three-profile removal/rollback framework.
-    if [ -f /var/lib/pam/password ] &&
-       grep -q "^Module: fic-password-history-initial-hook\$" /var/lib/pam/password; then
-        echo "FIC: fic-password-history-initial-hook is still selected; the legacy package removal framework cannot safely remove or restore this profile yet, so the removal is refused before any PAM mutation; deselect the profile first via pam-auth-update or wait for the C2 three-profile removal framework" >&2
+    # Three-profile C2 package release (Stage A): strictly read-only early
+    # preflight BEFORE any side effect. The FIC maintenance binary owns
+    # the whole C2 password topology decision: it proves the current
+    # physical topology inspectable and package-release eligible (no
+    # selected-but-unowned FIC password identity, no ambiguous/unsafe
+    # state, no unsupported topology) without stopping any service and
+    # without touching any PAM state. A failure exits before ANY mutation
+    # (no systemctl call, no pam-auth-update, no slot write) and the
+    # package stays installed. The exact installed absolute path is used:
+    # the prerm never depends on PATH.
+    if [ ! -x /opt/fic/bin/fic ]; then
+        echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the C2 password topology state cannot be proven and the removal is refused before any mutation" >&2
+        exit 1
+    fi
+    if ! /opt/fic/bin/fic --maintenance pam-password-prerm-prepare preflight; then
+        echo "FIC: the read-only password package preflight refused the removal BEFORE any PAM mutation (see the classified diagnostic above); the package stays installed" >&2
         exit 1
     fi
     # Invariant: package removal first stops all FIC PAM writers and only
@@ -1079,25 +1000,19 @@ if [ "\$1" = "remove" ]; then
     # infrastructure is restored and proven right here while no FIC writer
     # can interfere, and dpkg's later abort-remove path never has to restart
     # a writer on top of a partially detached PAM graph.
-    # Step 5B selection-preserving removal contract for the managed password
-    # hook profiles: the profiles are package-installed ("Default: no") and
-    # the package never attaches them itself, but an administrator may have
-    # selected them via pam-auth-update. Snapshot the exact pre-removal
-    # password hook selection (read-only, exact full-line
-    # "Module: <profile>" grammar in the standard per-facility state file)
-    # BEFORE the first pam-auth-update call, so a failed removal can restore
-    # exactly that selection: selected hooks are re-selected and proven,
-    # unselected hooks are never enabled by the recovery.
-    fic_password_quality_hook_selected=0
-    fic_password_history_hook_selected=0
-    if [ -f /var/lib/pam/password ]; then
-        if grep -q "^Module: fic-password-quality-hook\$" /var/lib/pam/password; then
-            fic_password_quality_hook_selected=1
-        fi
-        if grep -q "^Module: fic-password-history-hook\$" /var/lib/pam/password; then
-            fic_password_history_hook_selected=1
-        fi
-    fi
+    # Three-profile C2 package release contract: the three managed
+    # password hook profiles (fic-password-quality-hook,
+    # fic-password-history-hook, fic-password-history-initial-hook) are
+    # NEVER touched by a batch native mutation here. Their detach is ONE
+    # C2 semantic transition performed by the FIC maintenance helper
+    # through the production transition executor: planner-ordered
+    # detaches (the history variant before its producer), ONE profile per
+    # pam-auth-update invocation, per-action resulting-state proofs,
+    # ownership-aware (selected-but-unowned identities are never
+    # detached), C2 compensation on failure, and an independent final
+    # proof of None/ForeignQuality with all managed slots Neutral. The
+    # pre-removal password selection is never snapshotted or restored in
+    # shell: pam-auth-update stays the owner of the generated stack.
     fic_pam_remove_failed=1
     if pam-auth-update --package --remove \
         fic-faillock-notify \
@@ -1109,20 +1024,17 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-hook-authsucc \
         fic-faillock-hook-account \
         fic-pwquality \
-        fic-pwhistory \
-        fic-password-quality-hook \
-        fic-password-history-hook; then
-        # rc=0 is not trusted on its own: the resulting password hook state
-        # must be positively proven fully removed (no selection records AND
-        # no generated includes) before the removal is treated as
-        # successful. rc=0 with stale or malformed password state is an
-        # ambiguous removal (the native remove may already have mutated the
-        # PAM state), so it enters the SAME recovery path as a native
-        # failure instead of aborting without any restoration.
-        if fic_prove_password_hook_state_restored 0 0; then
-            fic_pam_remove_failed=0
+        fic-pwhistory; then
+        # Stage B: the C2 password package release runs while every FIC
+        # writer is proven stopped. The helper exit status alone is never
+        # trusted: it returns 0 only when the final resulting state is
+        # positively proven (no FIC password selection, no FIC generated
+        # include, all three managed slots Neutral, final semantic
+        # topology None/ForeignQuality, foreign producer preserved).
+        if ! /opt/fic/bin/fic --maintenance pam-password-prerm-prepare release; then
+            echo "FIC: the C2 password package release failed; any attempted change is compensated by the C2 executor when provable (see the classified diagnostic above); treating the package removal as failed while all FIC writers remain stopped" >&2
         else
-            echo "FIC: pam-auth-update reported a successful removal but the resulting password hook state is NOT proven removed; treating the package removal as failed and restoring the pre-removal PAM state while all FIC writers remain stopped" >&2
+            fic_pam_remove_failed=0
         fi
     fi
     if [ "\$fic_pam_remove_failed" = "1" ]; then
@@ -1151,57 +1063,13 @@ if [ "\$1" = "remove" ]; then
             echo "FIC: PAM infrastructure recovery failed: the re-enabled permanent hook profiles could not be proven attached; the permanent hook state is NOT proven restored and no FIC writer may be restarted" >&2
             exit 1
         fi
-        # Restore the managed password hook profiles to their exact
-        # pre-removal selection state while all FIC writers remain stopped.
-        # Production-like pam-auth-update contract for these profiles: ONE
-        # profile per --enable invocation; a combined invocation is never
-        # used. Every native mutation is followed IMMEDIATELY by a strict
-        # resulting-state proof of the hook it mutated (rc=0 is never
-        # trusted on its own); the intermediate proof covers only the hook
-        # that was just restored ("d" = don't-care), because the
-        # post-failure state of the other hook is unknown until the final
-        # full-state proof. Hooks that were unselected before the removal
-        # are never enabled by the recovery, and the mandatory faillock
-        # infrastructure above keeps its stronger always-restore invariant.
-        # The recovery is STRICTLY FAIL-FAST: once a password enable or its
-        # immediate resulting-state proof has failed, the PAM topology is
-        # no longer proven, so NO further native password mutation is
-        # attempted on top of it, and the final full-state proof only runs
-        # when every requested mutation succeeded and was proven. The
-        # package removal fails closed on any recovery or proof failure.
-        fic_password_hook_recovery_failed=0
-        if [ "\$fic_password_quality_hook_selected" = "1" ]; then
-            if ! pam-auth-update --enable fic-password-quality-hook; then
-                fic_password_hook_recovery_failed=1
-            elif ! fic_prove_password_hook_state_restored 1 d; then
-                fic_password_hook_recovery_failed=1
-            fi
-        fi
-        # Strict fail-fast guard: the history enable runs ONLY while no
-        # password mutation has failed or gone unproven so far.
-        if [ "\$fic_password_hook_recovery_failed" = "0" ] &&
-           [ "\$fic_password_history_hook_selected" = "1" ]; then
-            if ! pam-auth-update --enable fic-password-history-hook; then
-                fic_password_hook_recovery_failed=1
-            elif ! fic_prove_password_hook_state_restored d 1; then
-                fic_password_hook_recovery_failed=1
-            fi
-        fi
-        # The final full-state proof runs only when every requested
-        # mutation succeeded and was proven; the failure flag already
-        # covers any skipped mutation.
-        if [ "\$fic_password_hook_recovery_failed" = "0" ]; then
-            if ! fic_prove_password_hook_state_restored \\
-                "\$fic_password_quality_hook_selected" \\
-                "\$fic_password_history_hook_selected"; then
-                fic_password_hook_recovery_failed=1
-            fi
-        fi
-        if [ "\$fic_password_hook_recovery_failed" != "0" ]; then
-            echo "FIC: password hook recovery failed: the pre-removal password hook selection is NOT proven restored (the PAM topology is not proven restored); no FIC writer may be restarted" >&2
-            exit 1
-        fi
-        echo "FIC: permanent PAM hook infrastructure restored and proven attached and the pre-removal password hook selection restored and proven; the package removal failed" >&2
+        # The C2 password topology is NEVER restored by shell selection
+        # snapshots here: a failed password package release is compensated
+        # exclusively by the C2 executor inside the maintenance helper
+        # (proven pre-release topology restoration), or the removal stays
+        # blocked with a CRITICAL diagnostic. The faillock infrastructure
+        # above keeps its stronger always-restore invariant.
+        echo "FIC: permanent PAM hook infrastructure restored and proven attached; the package removal failed" >&2
         exit 1
     fi
 fi

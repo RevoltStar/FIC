@@ -1030,6 +1030,33 @@ target_link_libraries(pam_password_wiring_tests PRIVATE
 add_test(NAME pam_password_wiring_tests
          COMMAND pam_password_wiring_tests)
 
+# C2 package-release helper tests: fic --maintenance
+# pam-password-prerm-prepare (preflight/release) over the REAL transition
+# executor, planner, slot writers and mutation journal. Same fake native
+# mutator model as the executor/wiring tests.
+add_executable(pam_password_package_release_tests
+    fic/modules/identity_access/pam/PamPasswordPackageReleaseTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordPackageRelease.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+)
+target_include_directories(pam_password_package_release_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_password_package_release_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(NAME pam_password_package_release_tests
+         COMMAND pam_password_package_release_tests)
+
 # C2 functional gate driver (NOT a CTest): the production topology
 # components against the REAL /etc/pam.d and /var/lib/pam with the real
 # pam-auth-update. Built on demand INSIDE a disposable container by

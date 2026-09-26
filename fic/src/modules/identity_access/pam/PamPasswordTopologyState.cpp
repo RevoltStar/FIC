@@ -398,55 +398,98 @@ bool inspectPamPasswordTopologyOwnershipTail(
                 ? ManagedPasswordCapability::PasswordQuality
                 : ManagedPasswordCapability::PasswordHistory;
         };
-        const auto owned = [&](ManagedPasswordSlotRole role,
-                               ManagedPasswordSlotState state,
-                               std::uint64_t markerId) {
+        const auto recordMatches = [&](ManagedPasswordSlotRole role,
+                                       const fic::rollback::MutationRecord&
+                                           candidate) {
+            // Exact payload contract of PamManagedPasswordSlotWriter.
+            const auto* payload = std::get_if<
+                fic::rollback::UndoDisablePamCapability>(
+                &candidate.undo.payload);
+            const std::string policyName =
+                passwordDomainPolicyName(capabilityOf(role));
+            return candidate.policy.moduleName == "IDENTITY_ACCESS" &&
+                candidate.policy.submoduleName == "PAM" &&
+                candidate.policy.policyName == policyName &&
+                candidate.undo.backend ==
+                    fic::rollback::MutationBackend::Pam &&
+                candidate.resource ==
+                    std::string("capability/") + policyName &&
+                payload != nullptr &&
+                payload->topology ==
+                    fic::rollback::PamTopologyKind::PamAuthUpdate &&
+                payload->capability == policyName;
+        };
+        enum class IdentityBinding {
+            None,
+            Prepared,
+            Owned
+        };
+        const auto binding = [&](ManagedPasswordSlotRole role,
+                                 ManagedPasswordSlotState state,
+                                 std::uint64_t markerId) {
             if (state != ManagedPasswordSlotState::Active ||
                 markerId == 0) {
-                return false;
+                return IdentityBinding::None;
             }
             for (const fic::rollback::MutationRecord& candidate :
                  journal.records()) {
                 if (candidate.id != markerId) {
                     continue;
                 }
-                // Exact payload contract of PamManagedPasswordSlotWriter.
+                if (!recordMatches(role, candidate)) {
+                    return IdentityBinding::None;
+                }
                 const auto* payload = std::get_if<
                     fic::rollback::UndoDisablePamCapability>(
                     &candidate.undo.payload);
-                const std::string policyName =
-                    passwordDomainPolicyName(capabilityOf(role));
-                if (candidate.policy.moduleName != "IDENTITY_ACCESS" ||
-                    candidate.policy.submoduleName != "PAM" ||
-                    candidate.policy.policyName != policyName ||
-                    candidate.undo.backend !=
-                        fic::rollback::MutationBackend::Pam ||
-                    candidate.resource !=
-                        std::string("capability/") + policyName ||
-                    payload == nullptr ||
-                    payload->topology !=
-                        fic::rollback::PamTopologyKind::PamAuthUpdate ||
-                    payload->capability != policyName) {
-                    return false;
-                }
-                return candidate.status ==
-                           fic::rollback::MutationStatus::Applied &&
+                if (candidate.status ==
+                        fic::rollback::MutationStatus::Applied &&
                     payload->activationIdentifiers ==
                         std::vector<std::string>{
-                            slotProfileIdentifier(role)};
+                            slotProfileIdentifier(role)}) {
+                    return IdentityBinding::Owned;
+                }
+                if (candidate.status ==
+                        fic::rollback::MutationStatus::Prepared &&
+                    payload->activationIdentifiers ==
+                        std::vector<std::string>{
+                            slotProfileIdentifier(role)}) {
+                    return IdentityBinding::Prepared;
+                }
+                return IdentityBinding::None;
             }
-            return false;
+            return IdentityBinding::None;
         };
-        snapshot.ownership.ficQualityOwned = owned(
-            ManagedPasswordSlotRole::Quality,
-            snapshot.qualitySlotState, snapshot.qualitySlotMutationId);
-        snapshot.ownership.ficHistoryOwned = owned(
-            ManagedPasswordSlotRole::HistoryNormal,
-            snapshot.historySlotState, snapshot.historySlotMutationId);
-        snapshot.ownership.ficHistoryInitialOwned = owned(
-            ManagedPasswordSlotRole::HistoryInitial,
-            snapshot.historyInitialSlotState,
-            snapshot.historyInitialSlotMutationId);
+        snapshot.ownership.ficQualityOwned =
+            binding(ManagedPasswordSlotRole::Quality,
+                    snapshot.qualitySlotState,
+                    snapshot.qualitySlotMutationId) ==
+            IdentityBinding::Owned;
+        snapshot.ownership.ficHistoryOwned =
+            binding(ManagedPasswordSlotRole::HistoryNormal,
+                    snapshot.historySlotState,
+                    snapshot.historySlotMutationId) ==
+            IdentityBinding::Owned;
+        snapshot.ownership.ficHistoryInitialOwned =
+            binding(ManagedPasswordSlotRole::HistoryInitial,
+                    snapshot.historyInitialSlotState,
+                    snapshot.historyInitialSlotMutationId) ==
+            IdentityBinding::Owned;
+        snapshot.ownership.ficQualityPrepared =
+            binding(ManagedPasswordSlotRole::Quality,
+                    snapshot.qualitySlotState,
+                    snapshot.qualitySlotMutationId) ==
+            IdentityBinding::Prepared;
+        snapshot.ownership.ficHistoryPrepared =
+            binding(ManagedPasswordSlotRole::HistoryNormal,
+                    snapshot.historySlotState,
+                    snapshot.historySlotMutationId) ==
+            IdentityBinding::Prepared;
+        snapshot.ownership.ficHistoryInitialPrepared =
+            binding(ManagedPasswordSlotRole::HistoryInitial,
+                    snapshot.historyInitialSlotState,
+                    snapshot.historyInitialSlotMutationId) ==
+            IdentityBinding::Prepared;
     }
 
     // 7. Semantic model, classification and C2 structural safety.

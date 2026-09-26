@@ -1087,6 +1087,51 @@ durability proof. Это не даёт транзакционной атомар
 известной topology: такие случаи требуют отдельной проверки профиля/ручного
 recovery, а не восстановления historical snapshot.
 
+## Package-removal C2 domain release (prerm)
+
+Rollback политик (раздел выше) и удаление пакета — разные операции с разными
+целевыми состояниями. Runtime disable возвращает joint password topology
+к предыдущему desired состоянию; **package removal всегда освобождает весь
+C2 домен**: целевое состояние — `Q=false, H=false` (все три FIC password
+identity detached, все три managed slot'а canonical Neutral, final semantic
+класс `None` или `ForeignQuality`). Частичный «остаточный» topology при
+удалении пакета не допускается.
+
+Механика (Debian/Ubuntu prerm):
+
+* сгенерированный prerm не содержит shell-логики паролей: он вызывает
+  узкую maintenance-команду `fic --maintenance pam-password-prerm-prepare
+  preflight|release` (единственный вызов pam-auth-update над password
+  identity выполняет production transition executor внутри daemon binary);
+* Stage A (`preflight`) — строго read-only: инспекция топологии + coherence;
+  selected-but-unowned, unselected-owned и оба history-варианта с нарушением
+  инвариантов — fail closed ДО любой мутации (prerm отказывает в удалении
+  до остановки сервисов и любого pam-auth-update); Prepared-leftovers
+  допускаются через виртуальное recovery с пересчётом классификации;
+* Stage B (`release`) выполняется prerm'ом после остановки всех FIC writer'ов
+  и batch remove'а постоянных hook-профилей: `ExclusivePidLock` на
+  runtime lock-файл → recovery exact-id `Prepared` через
+  `compensateC2ActiveSlot` + свежее структурное доказательство → ОДИН
+  `executor.transition(false, false)` → независимый финальный proof
+  (нет selections, слоты Neutral, нет generated includes, foreign producer
+  сохранён);
+* неудача release классифицируется: компенсация доказана —
+  «pre-release topology proven restored» (retry возможен); компенсация
+  недоказуема — CRITICAL «NOT proven restored», молчаливое восстановление
+  запрещено;
+* prerm всегда восстанавливает permanent hook infrastructure
+  (`pam-auth-update --enable` четырёх постоянных hook-профилей) и НЕ делает
+  shell-snapshot и shell-restore password selection: pam-auth-update
+  остаётся владельцем generated stack, а C2 executor — владельцем joint
+  перехода.
+
+Код: `fic/src/modules/identity_access/pam/PamPasswordPackageRelease.{h,cpp}`;
+wiring — `fic/src/main.cpp` (`pam-password-prerm-prepare`); генерация prerm —
+`packaging/deb/build-fic-debian12-deb.sh`. Поведенческие и packaging-тесты —
+`PamPasswordPackageReleaseTests.cpp` и `tests/integration/packaging/
+PamPackagingChecks.py`.
+
+## Enrollment и результаты
 ## Enrollment и результаты
 
 `rollbackEnrollment(PolicyRef)` возвращает:
