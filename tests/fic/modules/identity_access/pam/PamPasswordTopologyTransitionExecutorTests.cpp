@@ -1,6 +1,6 @@
 // C2 runtime transition executor tests: deterministic fake native
 // pam-auth-update mutator + fake /var/lib/pam + /etc/pam.d tree.
-// Coverage: E1-E12 success transitions, F1-F11 failure matrix.
+// Coverage: E1-E12 success transitions, F1-F12 failure matrix.
 #include "modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.h"
 
 #include "modules/identity_access/pam/PamManagedPasswordSlots.h"
@@ -938,6 +938,120 @@ void testF11_journalCompletionFailsAfterSlotWrite() {
         "F11: final topology restored to the original None class");
 }
 
+void testF12_detachInversePartialActivationCleaned() {
+    // F12 hardening: a detach-inverse re-attach inside compensation can
+    // itself hit the partial activation path (slot write persisted, then
+    // the Prepared -> Applied completion fails). Before the fix the
+    // compensation returned false and left a NEW orphaned Active slot +
+    // Prepared record behind. The compensation must clean its own exact
+    // partial activation BEFORE the fail-fast STOP.
+    // Scenario: Q+H active; disable-to-None; the second native detach
+    // (quality) fails, so compensation re-attaches the already-detached
+    // history consumer — and THAT re-attach fails after the slot write.
+    TestEnvironment env;
+    env.runOk(true, true);
+    env.executor->setHistoryJournalCompletionFaultHookForTests(
+        [] { return false; });
+    std::size_t disableCount = 0;
+    env.mutator.behavior =
+        [&disableCount](std::size_t, const auto& invocation) {
+        if (invocation.flag == "--disable" && ++disableCount == 2) {
+            return 5;  // quality detach fails without mutation
+        }
+        return 0;
+    };
+    std::string error;
+    const auto result = env.run(false, false, error);
+    require(!result.success, "F12: failure expected");
+    require(result.compensated && !result.compensatedStateProven,
+        "F12: compensation did NOT prove the restoration");
+    require(error.find("C2 PAM topology NOT proven restored") !=
+            std::string::npos,
+        "F12: diagnostic must name the unproven restoration");
+    require(error.find("partial slot activation was cleaned") !=
+            std::string::npos,
+        "F12: diagnostic must distinguish the cleaned partial "
+        "activation: " + error);
+    // No new orphaned partial state from the inverse re-attach.
+    const auto snapshot = env.inspect();
+    require(snapshot.historySlotState == ManagedPasswordSlotState::Neutral,
+        "F12: history slot neutralized by the exact-id cleanup");
+    require(snapshot.historySlotMutationId == 0,
+        "F12: no outstanding history mutation id");
+    require(!snapshot.selections.ficHistorySelected,
+        "F12: history profile unselected");
+    require(!snapshot.ownership.ficHistoryOwned,
+        "F12: no Applied history ownership");
+    // The untouched identity is preserved.
+    require(env.mutator.isSelected(kFicPasswordQualityHookProfileId) &&
+            snapshot.qualitySlotState == ManagedPasswordSlotState::Active &&
+            snapshot.ownership.ficQualityOwned,
+        "F12: quality identity untouched by the stopped compensation");
+    // Journal provenance: the partial Prepared record was discarded.
+    for (const auto& record : env.journal.records()) {
+        require(record.status != MutationStatus::Prepared,
+            "F12: no outstanding Prepared record may remain");
+    }
+    require(env.appliedCount() == 1,
+        "F12: only the untouched quality ownership stays Applied");
+    // The inverse re-attach never reached a native enable: two setup
+    // enables + two detach calls, nothing else.
+    require(env.mutator.invocations.size() == 4,
+        "F12: no compensation enable call expected");
+}
+
+void testF12b_detachInversePartialCleanupFails() {
+    // F12b (optional variant): the exact-id cleanup of the partial
+    // inverse activation itself fails. The executor must STOP with the
+    // CRITICAL diagnostic and HONESTLY leave the outstanding partial
+    // state (Active slot + Prepared record) instead of hiding it.
+    TestEnvironment env;
+    env.runOk(true, true);
+    env.executor->setHistoryJournalCompletionFaultHookForTests(
+        [] { return false; });
+    std::size_t disableCount = 0;
+    env.mutator.behavior =
+        [&](std::size_t, const auto& invocation) {
+        if (invocation.flag == "--disable" && ++disableCount == 2) {
+            // The compensation will run after this failed action:
+            // inject the compensation failure from now on (the hook
+            // must not affect the normal deactivation above).
+            env.executor->setHistoryC2CompensationFaultHookForTests(
+                [] { return false; });
+            return 5;
+        }
+        return 0;
+    };
+    std::string error;
+    const auto result = env.run(false, false, error);
+    require(!result.success, "F12b: failure expected");
+    require(result.compensated && !result.compensatedStateProven,
+        "F12b: compensation did NOT prove the restoration");
+    require(error.find("C2 PAM topology NOT proven restored") !=
+            std::string::npos,
+        "F12b: diagnostic must name the unproven restoration");
+    require(error.find("could NOT be cleaned") != std::string::npos,
+        "F12b: diagnostic must distinguish the uncleanable partial "
+        "activation: " + error);
+    // The outstanding partial state honestly remains.
+    const auto snapshot = env.inspect();
+    require(snapshot.historySlotState == ManagedPasswordSlotState::Active,
+        "F12b: the partial Active slot remains honestly visible");
+    require(snapshot.historySlotMutationId != 0,
+        "F12b: the outstanding mutation id remains visible");
+    require(!snapshot.selections.ficHistorySelected,
+        "F12b: the profile was never enabled");
+    bool preparedFound = false;
+    for (const auto& record : env.journal.records()) {
+        if (record.status == MutationStatus::Prepared) {
+            preparedFound = true;
+        }
+    }
+    require(preparedFound, "F12b: the Prepared record remains honestly");
+    require(env.mutator.invocations.size() == 4,
+        "F12b: no compensation enable call expected");
+}
+
 } // namespace
 
 int main() {
@@ -986,6 +1100,10 @@ int main() {
             testF10_noOpDesiredButPhysicalProofFails},
         {"F11_journalCompletionFailsAfterSlotWrite",
             testF11_journalCompletionFailsAfterSlotWrite},
+        {"F12_detachInversePartialActivationCleaned",
+            testF12_detachInversePartialActivationCleaned},
+        {"F12b_detachInversePartialCleanupFails",
+            testF12b_detachInversePartialCleanupFails},
     };
     for (const NamedTest& test : tests) {
         try {

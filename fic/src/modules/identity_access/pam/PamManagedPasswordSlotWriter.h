@@ -250,6 +250,10 @@ public:
     using JournalCompletionFaultHook = std::function<bool()>;
     void setJournalCompletionFaultHookForTests(
         JournalCompletionFaultHook hook);
+    // Test-only seam: injects a failure at the very top of
+    // compensateC2ActiveSlot(). Production never installs this hook.
+    using C2CompensationFaultHook = std::function<bool()>;
+    void setC2CompensationFaultHookForTests(C2CompensationFaultHook hook);
 
 private:
     bool ensureJournalOperational(std::string& error) const;
@@ -443,6 +447,7 @@ private:
     SlotFaultHook beforeWriteHook_;
     SlotFaultHook afterWriteHook_;
     JournalCompletionFaultHook journalCompletionHook_;
+    C2CompensationFaultHook c2CompensationHook_;
 };
 
 } // namespace fic::identity::pam

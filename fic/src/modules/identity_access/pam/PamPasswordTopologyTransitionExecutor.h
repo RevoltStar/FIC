@@ -131,6 +131,12 @@ public:
         JournalCompletionFaultHook hook);
     void setHistoryJournalCompletionFaultHookForTests(
         JournalCompletionFaultHook hook);
+    // Test-only passthrough: injects a failure into history-writer C2
+    // slot compensation (F12b). Production never installs this hook.
+    using C2CompensationFaultHook =
+        PamManagedPasswordSlotWriter::C2CompensationFaultHook;
+    void setHistoryC2CompensationFaultHookForTests(
+        C2CompensationFaultHook hook);
 
     // Executes the transition from the current physical topology to the
     // semantic topology requested by (qualityRequested, historyRequested).

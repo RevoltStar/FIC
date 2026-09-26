@@ -2,16 +2,13 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `999505dc11068009037044ca6615966024009291`
-  ("Создаем исполнитель runtime-перехода C2 + доказательство итогового
-  состояния для трёх профилей + компенсация частичного сбоя") — C2
-  runtime transition executor ЗАКОММИЧЕН.
-- Поверх него выполнен narrow follow-up fix (uncommitted, commit не
-  запрошен): **C2 attach partial-state propagation** — executor теперь
-  получает exact outstanding slot mutation id, когда активация slot'а
-  упала ПОСЛЕ физической записи, но до Applied-коммита, чтобы
-  compensation могла нейтрализовать точный slot и разрешить Prepared
-  provenance.
+- Ветка `main`. Baseline: `068b6338c491cae8e6ec3f62b0d7def00ed2fb10`
+  ("Follow-up к последнему коммиту") — C2 runtime transition executor
+  (999505d) + follow-up fix attach partial-state propagation (F11)
+  ЗАКОММИЧЕНЫ.
+- Поверх baseline выполнен **F12 hardening** (uncommitted, commit не
+  запрошен) + real functional gates G1–G11 на Debian 12 и Ubuntu 24.04
+  (см. ниже).
 
 ### C2 attach partial-state propagation fix (этот шаг)
 
@@ -50,6 +47,32 @@
   change). F11 проверен на воспроизведение бага: без executor-фикса
   тест падает с "C2 PAM topology NOT proven restored".
 
+### F12 compensation-of-compensation hardening (этот шаг, uncommitted)
+
+- Проблема: detach-inverse compensation (`compensateAttempt`, ветка
+  re-attach) при `activateC2Slot() == false` просто делала
+  `return false` — при partial path (slot write persisted, fresh proof
+  OK, Prepared→Applied commit FAIL) это оставляло НОВЫЙ orphaned
+  Active slot + Prepared record поверх несостоявшегося восстановления.
+- Fix: в detach-inverse при неудаче активации executor различает
+  Case A (`mutationId == 0` — writer полностью скомпенсировал внутри,
+  fail-fast без cleanup) и Case B (`mutationId != 0` — exact-id локальный
+  cleanup через `compensateC2ActiveSlot()` ДО fail-fast STOP, без
+  рекурсивного compensation engine). Диагностик различает
+  "its partial slot activation was cleaned" vs "could NOT be cleaned".
+- Test seam: `setC2CompensationFaultHookForTests` (writer,
+  `!hook()` → fail в начале `compensateC2ActiveSlot`) + passthrough
+  `setHistoryC2CompensationFaultHookForTests` (executor); production
+  никогда hook не ставит. Внимание: `deactivateC2Slot()` ВНУТРЕННЕ
+  вызывает `compensateC2ActiveSlot()` — hook нельзя ставить до начала
+  compensation (F12b ставит его в момент неудачного native disable).
+- Тесты: **F12** (Q+H→None; второй disable падает; compensation
+  re-attach consumer'а ломается completion fault'ом → exact cleanup →
+  STOP: transition false, compensated, "NOT proven restored" +
+  "partial slot activation was cleaned", history slot Neutral, no
+  Prepared, appliedCount==1, ровно 4 native invocation'а) и **F12b**
+  (cleanup сам падает → честный остаток: Active slot + Prepared record +
+  "could NOT be cleaned"). Без фикса F12 падает (проверено).
 
 ## Current task
 
@@ -105,9 +128,9 @@ partial-failure compensation — реализовано как production runtim
   slot activation (existing MutationJournal semantics, без изменения
   schema); common-password никогда не копируется/не snapshot'ится.
 - **`PamPolicySupport::ReadOnly` для password capabilities СОЗНАТЕЛЬНО
-  НЕ поднят**: executor/proof/compensation proven на unit-уровне, но
-  functional gates на реальных Debian 12 / Ubuntu 24.04 недоступны
-  (docker daemon не работает) — lift отложен до них (§35).
+  НЕ поднят**: executor/proof/compensation proven на unit-уровне И
+  real functional gates G1–G11 прошли на Debian 12 + Ubuntu 24.04 —
+  lift разрешён, следующий отдельный этап (§ Remaining).
 - Legacy prerm preflight (Temporary invariant ниже) СОХРАНЁН.
 
 ## Temporary invariant (legacy prerm, до C2 three-profile redesign)
@@ -407,20 +430,84 @@ package-removal integration:
 - Password-Initial вариант профиля используется только для модуля на
   modpos 0 Primary блока.
 
+## C2 REAL functional gates (этот шаг, docker, disposable, root)
+
+Харнес: `tests/integration/pam-c2/pam_c2_gate.sh` +
+`pam_c2_gate_driver.cpp` (production-компоненты: bootstrap, inspect,
+transition через `VerifiedProcessExecutor` + реальный pam-auth-update) +
+`fic_pam_probe.c` (setuid-root probe, исполняется AS gate user —
+`getuid() != 0`, поэтому pam_pwhistory/pam_pwquality enforce; модель
+passwd(1)). Payload — exact `packaging/deb/pam-configs/fic-*` профили.
+Evidence: `/tmp/gate-ev-deb12`, `/tmp/gate-ev-u2404` (common-password,
+slots, /var/lib/pam/password, journal, pam-auth-update invocation log,
+shadow digest'ы; реальные пароли не сохраняются).
+
+Уроки среды (зафиксировать в harness-инварианты):
+
+- `libpam-pwhistory` не существует — pam_pwhistory в libpam-modules.
+- pwquality/pwhistory по умолчанию НЕ enforce для root: нужен
+  `enforce_for_root` (pwquality.conf) и запуск probe от пользователя
+  (setuid-модель) — иначе даже stock oracle невалиден.
+- Пароли gate не должны содержать имя пользователя (pwquality
+  usercheck).
+- Debian 12/Ubuntu 24.04 (Linux-PAM 1.5.x): `enforce_for_root` для
+  pam_pwhistory НЕ поддерживается (появился в 1.6.x) — потому
+  self-change probe обязателен.
+- Native failure injection — через wrapper `/usr/sbin/pam-auth-update`
+  (лог + one-failure flag), тот же wrapper доказывает G10
+  (one-profile-per-invocation, $# == 2).
+
+### Debian 12 (bookworm)
+
+| Gate | Verdict |
+| --- | --- |
+| G1 None baseline | PASS |
+| G2 None→Quality (+disable) | PASS |
+| G3 None→History-only (+disable, reuse reject) | PASS |
+| G4 None→Q+H (strong/weak/reuse) | PASS |
+| G5 Q+H→H-only (detach consumer, detach quality, attach initial) | PASS |
+| G6 H-only→Q+H | PASS |
+| G7 Foreign stock pwquality pre-existing | PASS |
+| G8 Foreign added during FIC (FIC-only removal, stock-only structural match) | PASS |
+| G9 Trailing-whitespace grammar (реальная генерация принята proof'ом) | PASS |
+| G10 One-profile-per-invocation | PASS |
+| G11 Real native failure probe (injected pam-auth-update failure → compensation → working path → recovery) | PASS |
+
+C2 REAL FUNCTIONAL GATE: PASS.
+
+### Ubuntu 24.04.5 LTS
+
+| Gate | Verdict |
+| --- | --- |
+| G1 | PASS |
+| G2 | PASS |
+| G3 | PASS |
+| G4 | PASS |
+| G5 | PASS |
+| G6 | PASS |
+| G7 | PASS |
+| G8 | PASS |
+| G9 | PASS |
+| G10 | PASS |
+| G11 | PASS |
+
+C2 REAL FUNCTIONAL GATE: PASS.
+
 ## Validation (этот шаг, фактически выполнено)
 
-- `cmake -S . -B build-c2 -DFIC_TARGET_PLATFORM=ubuntu-24.04
-  -DBUILD_TESTING=ON`; targeted build executor tests — OK.
-- `pam_password_topology_executor_tests`: 23/23 PASS (E1–E12, F1–F11;
-  F11 — partial-state propagation regression).
-- `ctest -R 'pam_managed_password|pam_password_topology|pam_slot_attach'`
-  — PASS (writer extension обратно совместим).
-- Follow-up fix: full build OK; `ctest -R
-  'pam_password_topology_executor|pam_managed_password'` — 4/4 PASS;
-  full CTest 104/105 (baseline failure `passwdqc_config_file_tests`
-  вне scope); `git diff --check` — clean.
-- Debian 12 build/CTest, packaging checks и functional gates — НЕ
-  выполнялись (среда недоступна; docker daemon не работает).
+- `cmake --build build-c2 -j4` — OK; targeted ctest
+  `pam_password_topology_executor|pam_managed_password` — 4/4 PASS;
+  executor tests **25/25** (E1–E12, F1–F12 + F12b).
+- Full CTest: только известный baseline failure
+  `passwdqc_config_file_tests` (вне scope) + 1 skip; `git diff --check`
+  — clean.
+- **Real functional gates** (`tests/integration/pam-c2/pam_c2_gate.sh`
+  в disposable docker-контейнерах as root; evidence в `/tmp/gate-ev-deb12`
+  и `/tmp/gate-ev-u2404`): **Debian 12 — G1–G11 PASS**,
+  **Ubuntu 24.04.5 — G1–G11 PASS**, stock pwquality oracle PASS на
+  обеих. C2 REAL FUNCTIONAL GATE: PASS.
+- Debian 12 build/CTest и packaging checks — НЕ выполнялись в этом шаге
+  (gate собирал только gate-driver target внутри контейнеров).
 
 ## Explicitly NOT implemented (scope boundary этого шага)
 
@@ -430,11 +517,12 @@ package-removal integration:
   inspect-pam-password-topology` — candidate).
 - Step 6 (Debian 12 ModuleArguments option writer) — не требовался
   механике executor'а; canonical writer behavior использован как есть.
-- Functional gates на реальных Debian 12 / Ubuntu 24.04.
+- Functional gates на реальных Debian 12 / Ubuntu 24.04 — ВЫПОЛНЕНЫ
+  (этот шаг, см. таблицы выше).
 
 ## Remaining
 
-1. **ReadOnly lift + daemon wiring** (после functional gates):
+1. **ReadOnly lift + daemon wiring** (gates пройдены — разрешено):
    `pamPolicySupport` → RequiresTopologyActivation для password
    capabilities на PamAuthUpdate platforms; password activation policy
    поверх executor'а (joint Q/H request: чужая capability выводится из
@@ -445,6 +533,6 @@ package-removal integration:
    либо идёт через maintenance CLI (один source of truth), либо чинит
    anchored-`$` грамматику в shell.
 3. Step 6 ModuleArguments option writer; Step 7 activation.
-4. Среда: docker daemon не запущен; apt-зеркала в контейнерах частично
-   битые; baseline failure `passwdqc_config_file_tests` — вне scope;
-   не запускать параллельно /tmp-конфликтующие test-наборы.
+4. Заметки среды: proxy в docker-контейнерах нестабилен (apt retries
+   в gate harness); baseline failure `passwdqc_config_file_tests` — вне
+   scope; не запускать параллельно /tmp-конфликтующие test-наборы.

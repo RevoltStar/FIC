@@ -72,6 +72,11 @@ void PamManagedPasswordSlotWriter::setJournalCompletionFaultHookForTests(
     journalCompletionHook_ = std::move(hook);
 }
 
+void PamManagedPasswordSlotWriter::setC2CompensationFaultHookForTests(
+    C2CompensationFaultHook hook) {
+    c2CompensationHook_ = std::move(hook);
+}
+
 std::vector<const ManagedPasswordSlotSpec*>
 PamManagedPasswordSlotWriter::domainSlots() const {
     switch (domain_) {
@@ -1569,6 +1574,12 @@ bool PamManagedPasswordSlotWriter::compensateC2ActiveSlot(
     ManagedPasswordSlotRole role, fic::rollback::MutationId id,
     bool& changedSystemState, std::string& error) {
     changedSystemState = false;
+    // Test-only seam (F12b): inject a failure before any compensation
+    // step; production never installs this hook.
+    if (c2CompensationHook_ && !c2CompensationHook_()) {
+        error = "injected C2 compensation failure (test seam)";
+        return false;
+    }
     if (!c2RoleUsesDomain(role, domain_)) {
         error = "C2 identity role does not belong to this managed password "
                 "domain";

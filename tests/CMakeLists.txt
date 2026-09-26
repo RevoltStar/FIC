@@ -933,6 +933,32 @@ target_link_libraries(pam_password_topology_executor_tests PRIVATE
 add_test(NAME pam_password_topology_executor_tests
          COMMAND pam_password_topology_executor_tests)
 
+# C2 functional gate driver (NOT a CTest): the production topology
+# components against the REAL /etc/pam.d and /var/lib/pam with the real
+# pam-auth-update. Built on demand INSIDE a disposable container by
+# tests/integration/pam-c2/pam_c2_gate.sh (real-environment functional
+# gates). Excluded from the default build and from CTest on purpose: it
+# mutates real system PAM state and must only ever run in the disposable
+# gate harness.
+add_executable(fic-pam-c2-gate-driver EXCLUDE_FROM_ALL
+    integration/pam-c2/pam_c2_gate_driver.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotBootstrap.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+)
+target_include_directories(fic-pam-c2-gate-driver PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(fic-pam-c2-gate-driver PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+
 
 add_executable(pam_disable_nopasswdlogin_policy_tests
     fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp

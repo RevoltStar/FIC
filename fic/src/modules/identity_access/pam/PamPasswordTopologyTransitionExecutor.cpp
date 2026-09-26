@@ -94,6 +94,12 @@ void PamPasswordTopologyTransitionExecutor::
     historyWriter_.setJournalCompletionFaultHookForTests(std::move(hook));
 }
 
+void PamPasswordTopologyTransitionExecutor::
+    setHistoryC2CompensationFaultHookForTests(
+        C2CompensationFaultHook hook) {
+    historyWriter_.setC2CompensationFaultHookForTests(std::move(hook));
+}
+
 bool PamPasswordTopologyTransitionExecutor::runPamAuthUpdateOne(
     const char* flag, const char* profileId, std::string& error) {
     // Hard contract: exactly ONE profile per pam-auth-update invocation.
@@ -406,8 +412,44 @@ bool PamPasswordTopologyTransitionExecutor::compensateAttempt(
         ? qualityWriter_
         : historyWriter_;
     PamManagedPasswordSlotActivationResult activation;
-    if (!writer.activateC2Slot(
-            role, options_.historyOptions, activation, error)) {
+    const bool activated = writer.activateC2Slot(
+        role, options_.historyOptions, activation, error);
+    if (!activated) {
+        // F12 hardening: the inverse re-attach itself can fail AFTER the
+        // physical slot write persisted (the known partial activation
+        // path). Such a failure carries the exact outstanding mutation
+        // id; stopping here without cleanup would leave a NEW orphaned
+        // Active slot + Prepared record behind on top of the failed
+        // restoration.
+        compensatedChanged =
+            compensatedChanged || activation.changedSystemState;
+        if (activation.mutationId == 0) {
+            // No caller-compensatable outstanding state remains: the
+            // writer fully compensated internally (or nothing was
+            // mutated). Fail fast.
+            error = "inverse re-attach of " + std::string(profileId) +
+                " failed without an outstanding partial activation: " +
+                error;
+            return false;
+        }
+        // Exact-id local cleanup (no recursive compensation engine):
+        // neutralize the partial slot activation before the fail-fast
+        // STOP so the compensation does not create new orphaned state.
+        bool cleaned = false;
+        std::string cleanupError;
+        const bool cleanedOk = writer.compensateC2ActiveSlot(
+            role, activation.mutationId, cleaned, cleanupError);
+        compensatedChanged = compensatedChanged || (cleanedOk && cleaned);
+        if (cleanedOk) {
+            error = "inverse re-attach of " + std::string(profileId) +
+                " failed (" + error +
+                "); its partial slot activation was cleaned";
+        } else {
+            error = "inverse re-attach of " + std::string(profileId) +
+                " failed (" + error +
+                "); partial inverse activation could NOT be cleaned: " +
+                cleanupError;
+        }
         return false;
     }
     compensatedChanged =
