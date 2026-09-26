@@ -485,6 +485,10 @@ void testProviderCatalogAndSupport() {
         PamScope::LocalPasswordChange, "/etc/security/pwquality.conf",
         PamTopologyStrategyKind::PamAuthUpdate, {}};
     require(pamPolicySupport(platform, PamPolicyFeature::PasswordMinLength) ==
+                PamPolicySupport::ReadOnly,
+            "pwquality policy became mutable without the validated lift");
+    platform.passwordTopologyRuntimeMutable = true;
+    require(pamPolicySupport(platform, PamPolicyFeature::PasswordMinLength) ==
                 PamPolicySupport::RequiresTopologyActivation,
             "pwquality policy did not retain its topology-dependent state");
     require(pamPolicySupport(platform, PamPolicyFeature::PasswdqcRetryCount) ==

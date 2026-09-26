@@ -2,19 +2,14 @@
 
 ## Current base
 
-- Ветка `main`. Baseline:
-  `d4790029b2f13ba9fa931c9491643b2374390312` ("Follow-up к последнему
-  коммиту №2") — C2 runtime transition executor, three-profile proof,
-  compensation, F11/F12 hardening и real functional gates G1-G11
-  (Debian 12 + Ubuntu 24.04) ЗАКОММИЧЕНЫ.
-- Поверх baseline выполнен **первый production wiring этап** (uncommitted,
-  commit не запрошен): ReadOnly lift, joint daemon wiring, C2 rollback
-  integration, E2E runtime coverage.
+- Ветка `main`, HEAD `82af579c72f475886529c1d9ca46db90e3abdb3f`.
+- Поверх HEAD не закоммичен CI-fix synthetic support fixture и это
+  обновление HANDOFF; commit не запрошен.
 
 ## Current task
 
-Production wiring парольного домена C2 — ВЫПОЛНЕНА (см. Completed).
-Следующий этап — three-profile prerm redesign (Remaining).
+Исправление CI run `36237012929`: `passwdqc_config_file_tests` должен
+учитывать evidence-gated `passwordTopologyRuntimeMutable`. Выполнено.
 
 ## Joint password topology domain (главный инвариант)
 
@@ -533,8 +528,14 @@ C2 REAL FUNCTIONAL GATE: PASS.
 - Build: `cmake -S . -B build-runtime-wire -DFIC_TARGET_PLATFORM=ubuntu-24.04
   -DBUILD_TESTING=ON` + full build — OK; debian-12 и debian-13 конфигурации
   собраны, wiring-тесты зелёные на всех трёх.
-- Full CTest: 105/106 PASS (+1 skip); единственный failure — известный
-  baseline `passwdqc_config_file_tests` (вне scope, не чинить).
+- CI follow-up для run `36237012929`: synthetic pwquality fixture в
+  `passwdqc_config_file_tests` теперь явно проверяет обе стороны нового
+  evidence-gated контракта: без `passwordTopologyRuntimeMutable` —
+  `ReadOnly`, с поднятым флагом — `RequiresTopologyActivation`.
+- В checkout `/home/admsys/FIC`: fresh configure
+  `/tmp/fic-home-ci-36237012929-fix`, сборка targets
+  `passwdqc_config_file_tests` и `pam_password_wiring_tests`, затем оба
+  теста — успешно; `git diff --check` — clean.
 - `pam_password_wiring_tests`: 21/21 PASS (R1-R16 apply/rollback/restart,
   rollback failure fail-closed, selected-but-unowned, unsafe state,
   policy-level joint intent, support contract) на ubuntu-24.04, debian-12
@@ -590,8 +591,7 @@ C2 REAL FUNCTIONAL GATE: PASS.
 3. Broader distro gates (Debian 13 / Ubuntu 26.04) если требуются — их
    платформы остаются ReadOnly до прохождения gates.
 4. Заметки среды: proxy в docker-контейнерах нестабилен (apt retries
-   в gate harness); baseline failure `passwdqc_config_file_tests` — вне
-   scope; не запускать параллельно /tmp-конфликтующие test-наборы
+   в gate harness); не запускать параллельно /tmp-конфликтующие test-наборы
    (wiring gate использует СВОЙ evidence dir
    /tmp/fic-wiring-gate-evidence, но /usr/sbin/pam-auth-update wrapper —
    общий: executor-гейт и wiring-гейт не запускать в одном контейнере
