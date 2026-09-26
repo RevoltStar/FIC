@@ -702,19 +702,25 @@ void testExternalPwquality(const std::filesystem::path& root) {
             fic::identity::pam::PamEnforcementState::Effective;
         return true;
     };
+    // Joint C2 password topology contract: a password capability on a
+    // PamAuthUpdate platform NEVER runs the legacy single-capability
+    // activation path. Without the production coordinator factory the
+    // apply fails closed WITHOUT adopting, rewriting or disabling the
+    // foreign stock pwquality producer and without creating provenance
+    // (the foreign-satisfaction no-op itself is covered end-to-end by
+    // pam_password_wiring_tests / R11).
     PamCapabilityActivationPolicy policy(platform,
         fic::platform::PamCapability::PasswordQuality,
         std::move(policyOptions));
-    require(policy.apply(),
-            "preselected distro pwquality must be external no-op");
+    require(!policy.apply() && writerCalls == 0,
+            "password apply without the joint coordinator must fail closed");
     std::string error;
     auto* journal = fic::rollback::DaemonMutationJournal::instance()
         .tryGet(error);
     require(journal != nullptr &&
                 journal->activeRecords({"IDENTITY_ACCESS", "PAM",
-                    "enable_password_quality"}).empty() &&
-                writerCalls == 0,
-            "external pwquality was adopted or rewritten");
+                    "enable_password_quality"}).empty(),
+            "foreign pwquality was adopted or rewritten");
     auto manager = factory(platform.capabilities[2],
                            std::vector<std::string>{"passwd"}, error);
     fic::identity::pam::PamTopologyStatus status;
@@ -924,84 +930,35 @@ int main() {
             "enable_password_quality.status=DISABLE\n"
             "enable_password_quality.value=ENABLE\n");
 
+        // Joint C2 password topology contract: password capabilities NEVER
+        // reach the legacy single-capability manager path. Without the
+        // production coordinator factory the apply fails closed BEFORE any
+        // manager interaction. (The activation success/failure matrix of
+        // the joint path is covered by pam_password_wiring_tests; the
+        // legacy manager path below stays exercised by the authentication
+        // lockout cases.)
         state = std::make_shared<ManagerState>();
         state->inspectResult = false;
         verifierCalls = 0;
         auto inspectionFailure = makePolicy(
             platform, fic::platform::PamCapability::PasswordHistory,
             state, {}, verifierCalls, factoryCapability);
-        require(!inspectionFailure.apply() && state->inspectCalls == 1 &&
+        require(!inspectionFailure.apply() && state->inspectCalls == 0 &&
                     state->canEnableCalls == 0 && state->enableCalls == 0 &&
-                    verifierCalls == 0,
-                "topology inspection failure was not fail-closed");
-
-        state = std::make_shared<ManagerState>();
-        verifierCalls = 0;
-        auto activated = makePolicy(
-            platform, fic::platform::PamCapability::PasswordHistory,
-            state, {true}, verifierCalls, factoryCapability);
-        require(activated.policyName == "enable_password_history" &&
-                    activated.apply() && verifierCalls == 1 &&
-                    factoryCapability ==
-                        fic::platform::PamCapability::PasswordHistory &&
-                    state->inspectCalls == 3 && state->canEnableCalls == 2 &&
-                    state->enableCalls == 1 && state->disableCalls == 0,
-                "disabled topology was not activated and freshly verified");
-
-        state = std::make_shared<ManagerState>();
-        verifierCalls = 0;
-        auto invalidPostcondition = makePolicy(
-            platform, fic::platform::PamCapability::PasswordHistory,
-            state, {false}, verifierCalls, factoryCapability);
-        require(!invalidPostcondition.apply() && state->inspectCalls == 3 &&
-                    state->enableCalls == 1 && state->disableCalls == 0 &&
-                    verifierCalls == 1,
-                "invalid post-activation topology was accepted or disabled");
-
-        state = std::make_shared<ManagerState>();
-        state->enableResult = false;
-        verifierCalls = 0;
-        auto failedEnable = makePolicy(
-            platform, fic::platform::PamCapability::PasswordHistory,
-            state, {}, verifierCalls, factoryCapability);
-        require(!failedEnable.apply() && state->inspectCalls == 2 &&
-                    state->enableCalls == 1 && verifierCalls == 0,
-                "native activation failure was accepted");
+                    state->disableCalls == 0 && verifierCalls == 0,
+                "password capability reached the legacy manager path");
 
         state = std::make_shared<ManagerState>();
         state->topologyState =
             fic::identity::pam::PamTopologyState::Broken;
         verifierCalls = 0;
         auto broken = makePolicy(
-            platform, fic::platform::PamCapability::PasswordHistory,
+            platform, fic::platform::PamCapability::PasswordQuality,
             state, {}, verifierCalls, factoryCapability);
-        require(!broken.apply() && state->inspectCalls == 1 &&
+        require(!broken.apply() && state->inspectCalls == 0 &&
                     state->canEnableCalls == 0 && state->enableCalls == 0 &&
                     verifierCalls == 0,
-                "broken topology was mutated");
-
-        state = std::make_shared<ManagerState>();
-        state->topologyState =
-            fic::identity::pam::PamTopologyState::Unavailable;
-        verifierCalls = 0;
-        auto unavailable = makePolicy(
-            platform, fic::platform::PamCapability::PasswordHistory,
-            state, {}, verifierCalls, factoryCapability);
-        require(!unavailable.apply() && state->inspectCalls == 1 &&
-                    state->canEnableCalls == 0 && state->enableCalls == 0 &&
-                    verifierCalls == 0,
-                "unavailable topology was mutated");
-
-        state = std::make_shared<ManagerState>();
-        state->transitionToEnabled = false;
-        verifierCalls = 0;
-        auto ownershipNotEstablished = makePolicy(
-            platform, fic::platform::PamCapability::PasswordHistory,
-            state, {}, verifierCalls, factoryCapability);
-        require(!ownershipNotEstablished.apply() &&
-                    state->inspectCalls == 3 && state->enableCalls == 1 &&
-                    verifierCalls == 0,
-                "post-enable non-enabled ownership state was accepted");
+                "password capability mutated a broken topology");
 
         state = std::make_shared<ManagerState>();
         verifierCalls = 0;

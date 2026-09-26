@@ -79,7 +79,10 @@ fic::platform::PamPolicySupport pamPolicySupport(
             fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
         return capability->capability == Capability::AuthenticationLockout
             ? fic::platform::PamPolicySupport::RequiresTopologyActivation
-            : fic::platform::PamPolicySupport::ReadOnly;
+            : (platform.passwordTopologyRuntimeMutable &&
+                       capability->capability != Capability::AuthenticationLockout
+                   ? fic::platform::PamPolicySupport::RequiresTopologyActivation
+                   : fic::platform::PamPolicySupport::ReadOnly);
     }
     if (capability->topology ==
             fic::platform::PamTopologyStrategyKind::AltTcbManaged) {

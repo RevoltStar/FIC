@@ -1043,6 +1043,40 @@ reconciliation.
 ALT password-history BEFORE при отсутствии managed topology не требует ещё
 не созданного history storage.
 
+### C2 joint password topology rollback (Debian 12 / Ubuntu 24.04)
+
+Password Quality и Password History образуют ОДИН joint runtime topology
+domain. Записи managed password slot writer'а (activation identifiers
+`fic-password-quality-hook` / `fic-password-history-hook` /
+`fic-password-history-initial-hook`, payload `UndoDisablePamCapability`,
+topology `PamAuthUpdate`) распознаются как C2 password domain и
+обрабатываются ДО legacy per-profile path. Rollback такой записи — это
+ОДИН joint semantic transition через planner/executor к целевому joint
+состоянию: освобождаемая capability → `false`, выжившая capability → её
+текущий configuration intent (читается из `IDENTITY_ACCESS.conf` в момент
+rollback — в disable-флоу конфигурация ещё не переключена). Никогда не
+выполняется «удаление activation identifier'ов одной записи» и никогда не
+используется old two-profile disable: это осиротило бы выживший history
+consumer (invalid topology). Variant switch (например Q+H → H-only при
+release quality) выполняется нормальной planner-последовательностью
+(DetachHistoryConsumer → DetachQuality → AttachHistoryInitial), повторный
+запрос quality — DetachInitial → AttachQuality → AttachConsumer.
+
+Отсутствие joint wiring (`RollbackExecutorDeps::
+pamPasswordTopologyTransition` / `.pamPasswordRequestedState`) — fail
+closed (`Conflict`). Failure перехода или компенсации →
+`RollbackFailed` (запись НИКОГДА не помечается `RolledBack`); повторный
+rollback после `RollbackFailed` остаётся fail closed до ручного
+recovery provenance. Foreign stock pwquality не удаляется и не
+претендуется: release FIC quality при появившемся stock producer даёт
+итоговую semantic topology `ForeignQuality`. Whole-file restore
+`common-password` не выполняется (pam-auth-update остаётся владельцем
+generated stack). Передача desired state и provenance (which record owns
+what): slot-записи — physical slot provenance; отдельного policy-level
+undo record нет — joint requested-state target восстанавливается из
+детекта домена + configuration intent.
+
+
 `pam-auth-update` — внешний multi-file writer, не атомарный вместе с journal.
 FIC перед переводом записи в `Applied` захватывает и подтверждает durable
 состояние известного набора state/generated files (file fsync, parent fsync,

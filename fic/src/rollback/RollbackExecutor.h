@@ -5,6 +5,7 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/identity_access/kerberos/KerberosRollback.h"
 #include "modules/identity_access/pam/PamTopologyManager.h"
+#include "rollback/PamRollback.h"
 #include "modules/identity_access/sssd/SssdRollback.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/oss/grub/GrubRollback.h"
@@ -74,6 +75,18 @@ struct RollbackExecutorDeps {
     std::function<std::unique_ptr<fic::identity::pam::PamTopologyManager>(
         const fic::platform::PamCapabilityConfig&,
         const std::vector<std::string>&, std::string&)> pamManagerFactory;
+    // C2 joint password topology rollback wiring (production: coordinator
+    // over PamPasswordTopologyTransitionExecutor with the daemon mutation
+    // journal). See PamRollbackOptions for the semantic contract: ONE
+    // joint semantic transition, honest partial-mutation reporting.
+    std::function<PamRollbackOptions::JointTransitionOutcome(
+        bool qualityRequested, bool historyRequested, std::string& error)>
+        pamPasswordTopologyTransition;
+    // Joint password configuration intent (the surviving capability's
+    // requested state) used to compute the C2 rollback target.
+    std::function<bool(
+        bool& qualityRequested, bool& historyRequested, std::string& error)>
+        pamPasswordRequestedState;
     // SYSCTL backend configuration (managed file layout etc.).
     std::function<SysctlConfigurationOptions()> sysctlOptions;
     // Runtime /proc/sys root override for tests; production default is used when empty.

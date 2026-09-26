@@ -58,8 +58,18 @@ PamPasswordTopologyTransitionExecutor::PamPasswordTopologyTransitionExecutor(
     : journal_(journal),
       executables_(executables),
       options_(std::move(options)),
-      configDirectory_(std::move(configDirectory)),
-      stateDirectory_(std::move(stateDirectory)),
+      // Empty paths mean the platform defaults (/etc/pam.d and
+      // /var/lib/pam) — the documented contract of this constructor AND of
+      // PamPasswordStateInspectionOptions. The slot writers and the
+      // native runner resolve these paths directly, so the default MUST be
+      // normalized here (an empty path would otherwise resolve slot files
+      // against the process working directory).
+      configDirectory_(configDirectory.empty()
+                           ? std::filesystem::path("/etc/pam.d")
+                           : std::move(configDirectory)),
+      stateDirectory_(stateDirectory.empty()
+                           ? std::filesystem::path("/var/lib/pam")
+                           : std::move(stateDirectory)),
       qualityWriter_(configDirectory_, journal_,
                      PamManagedPasswordDomain::Quality),
       historyWriter_(configDirectory_, journal_,

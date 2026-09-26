@@ -316,6 +316,15 @@ struct PamPlatformConfig {
         std::vector<std::string> pamBypassNssServices;
     };
     std::optional<PasswordlessLoginControl> passwordlessLoginControl;
+    // Joint C2 password topology (quality + history) runtime mutation is
+    // VALIDATED on this platform profile: the PamAuthUpdate C2 path passed
+    // the real functional gates (executor + policy wiring) on this exact
+    // distro. This flag is evidence-based, never set from compile support
+    // alone. When false, password quality/history stay PamPolicySupport::
+    // ReadOnly on PamAuthUpdate platforms. Quality and history form ONE
+    // joint runtime topology domain: the flag is domain-level, not
+    // per-capability.
+    bool passwordTopologyRuntimeMutable = false;
 };
 
 enum class LocalShadowKind {

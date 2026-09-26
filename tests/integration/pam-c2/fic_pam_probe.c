@@ -13,15 +13,18 @@
  * Exit 0 + "RESULT ok ..." on success; exit 1 + "RESULT fail ..." on
  * PAM rejection. The passwords are NEVER printed.
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* strcasestr */
+#endif
 #include <security/pam_appl.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static const char *candidate_password = NULL;
 static const char *current_password = NULL;
-static int current_used = 0;
 
 static int gate_conversation(int num_msg,
         const struct pam_message **messages,
@@ -37,13 +40,19 @@ static int gate_conversation(int num_msg,
     }
     for (int i = 0; i < num_msg; ++i) {
         const char *token = candidate_password;
-        if (current_password != NULL && !current_used &&
+        /* Deterministic prompt routing by TEXT (the first-prompt
+         * heuristic breaks on stacks where pam_pwquality prompts for the
+         * NEW password before pam_unix prompts for the current one):
+         * a "current"/"old" password prompt gets the CURRENT password,
+         * everything else (new/retype prompts) gets the candidate. */
+        if (current_password != NULL &&
             messages[i]->msg_style == PAM_PROMPT_ECHO_OFF) {
-            /* First authtok prompt in a self-change: the current
-             * password (pam_unix "Current password:" in the preliminary
-             * phase). */
-            token = current_password;
-            current_used = 1;
+            const char *text = messages[i]->msg;
+            if (text != NULL &&
+                (strcasestr(text, "current") != NULL ||
+                 strcasestr(text, "old") != NULL)) {
+                token = current_password;
+            }
         }
         reply[i].resp = strdup(token);
         reply[i].resp_retcode = 0;

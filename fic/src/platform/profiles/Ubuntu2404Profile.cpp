@@ -121,6 +121,11 @@ PlatformProfile makeBuildPlatformProfile() {
          "/etc/security/pwhistory.conf",
          PamTopologyStrategyKind::PamAuthUpdate, {}}
     };
+    // Evidence-based lift (real functional gates G1-G11 + production wiring
+    // gates passed on Ubuntu 24.04): the joint C2 password topology is
+    // runtime mutable here. Ubuntu 26.04 and other PamAuthUpdate platforms
+    // stay ReadOnly until their own gates pass.
+    profile.pam.passwordTopologyRuntimeMutable = true;
     profile.pam.capabilities[0].supportedFaillockStrategies = {
         PamFaillockStrategy::PreauthRequired,
         PamFaillockStrategy::PreauthRequisite,

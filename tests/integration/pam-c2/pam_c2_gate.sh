@@ -204,7 +204,10 @@ shadow_digest() {
 }
 
 strong_password() { # unique per phase
-    echo "Fg!$(date +%s%N | sha256sum | head -c 12)qW7z"
+    # Random mixed-case+digits+special shape; verified against the REAL
+    # stock pwquality+cracklib (the previous hex-suffix shape was flaky:
+    # cracklib rejects some hex runs, which surfaced as G11 flakiness).
+    echo "Fg!$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 10)Aa1!"
 }
 
 try_change() { # candidate -> rc; REAL self-change via pam_chauthtok

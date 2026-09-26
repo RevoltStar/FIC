@@ -3,6 +3,7 @@
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
+#include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
 #include "modules/net/ssh/Ssh.h"
 #include "modules/sysctl/Sysctl.h"
@@ -512,6 +513,15 @@ bool initPolicyRegistry(
                 platform.pam, capability, services, executables,
                 managerError);
         };
+    // Joint C2 password topology wiring: password quality and history form
+    // ONE joint runtime topology domain driven by the IDENTITY_ACCESS
+    // configuration intent through the C2 transition executor (validated
+    // platforms only — the support lift is evidence-based).
+    activationOptions.passwordCoordinatorFactory = [&executables]() {
+        std::string coordinatorError;
+        return fic::identity::pam::PamPasswordTopologyCoordinator::
+            makeProduction(executables, coordinatorError);
+    };
     const auto registerPamActivationPolicy =
         [&](fic::platform::PamCapability capability,
             fic::platform::PamPolicyFeature representativeFeature) {

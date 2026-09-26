@@ -2,6 +2,7 @@
 #define FIC_PAM_CAPABILITY_ACTIVATION_POLICY_H
 
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
+#include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "modules/identity_access/pam/PamPolicy.h"
 #include "modules/identity_access/pam/PamTopologyManager.h"
 
@@ -35,6 +36,17 @@ struct PamCapabilityActivationPolicyOptions {
 
     ManagerFactory managerFactory;
     Verifier verifier;
+
+    // Joint C2 password topology coordinator factory. Used ONLY for the
+    // PasswordQuality/PasswordHistory activation policies on platforms
+    // where the joint C2 path is validated (evidence-based support lift).
+    // When set for those capabilities, applyPam delegates to ONE joint
+    // topology transition (configuration intent of the pair) and never
+    // uses the legacy single-capability manager path below — the physical
+    // state is a joint (Q, H) topology, not two independent mutations.
+    std::function<std::unique_ptr<
+        fic::identity::pam::PamPasswordTopologyCoordinator>()>
+        passwordCoordinatorFactory;
 };
 
 class PamCapabilityActivationPolicy final : public PamPolicy {

@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace fic::rollback {
 
@@ -14,6 +15,32 @@ struct PamRollbackOptions {
     std::function<std::unique_ptr<fic::identity::pam::PamTopologyManager>(
         const fic::platform::PamCapabilityConfig&,
         const std::vector<std::string>&, std::string&)> managerFactory;
+
+    // Joint C2 password topology rollback wiring (quality + history form
+    // ONE joint topology domain; never rolled back profile-identifier by
+    // profile-identifier):
+    //  - jointTransition performs ONE semantic C2 topology transition to
+    //    the requested joint target through the planner/executor
+    //    (fresh inspect -> plan -> mutate -> proof);
+    //  - jointRequestedState supplies the joint configuration intent of
+    //    the surviving password capability for the rollback target.
+    // Both must be wired for C2 password domains; without them the C2
+    // password rollback fails closed (Conflict), never falls back to the
+    // legacy per-profile disable path.
+    struct JointTransitionOutcome {
+        bool success = false;
+        // Monotonic/honest: true iff the physical state may differ from
+        // the entry state of this call (including unproven partial
+        // changes). Never collapsed into a clean failure.
+        bool changedSystemState = false;
+        std::string error;
+    };
+    std::function<JointTransitionOutcome(
+        bool qualityRequested, bool historyRequested, std::string& error)>
+        jointTransition;
+    std::function<bool(
+        bool& qualityRequested, bool& historyRequested, std::string& error)>
+        jointRequestedState;
 };
 
 enum class PamRollbackState { Released, AlreadyReleased, Conflict, Failed };

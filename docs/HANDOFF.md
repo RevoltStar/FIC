@@ -2,122 +2,124 @@
 
 ## Current base
 
-- Ветка `main`. Baseline: `068b6338c491cae8e6ec3f62b0d7def00ed2fb10`
-  ("Follow-up к последнему коммиту") — C2 runtime transition executor
-  (999505d) + follow-up fix attach partial-state propagation (F11)
-  ЗАКОММИЧЕНЫ.
-- Поверх baseline выполнен **F12 hardening** (uncommitted, commit не
-  запрошен) + real functional gates G1–G11 на Debian 12 и Ubuntu 24.04
-  (см. ниже).
-
-### C2 attach partial-state propagation fix (этот шаг)
-
-- Writer контракт `PamManagedPasswordSlotActivationResult.mutationId`
-  (формализован в комментарии): на failure nonzero ТОЛЬКО когда exact
-  outstanding C2 activation остаётся физически/journal-present и требует
-  caller-side compensation через `compensateC2ActiveSlot()`; при полной
-  внутренней компенсации writer'а (exact restore + Prepared discard) — 0.
-  Это НЕ historical "id once allocated".
-- `PamManagedPasswordSlotWriter::activateC2Slot()`: ветка
-  `completePrepared(id)` failure теперь выставляет
-  `result.mutationId = id` (при сохранённом honest
-  `changedSystemState = true`); `compensateFreshFailure()` при
-  неудавшемся внутреннем restore тоже пропагирует id (Active exact-id
-  slot + Prepared остаются caller-compensatable). Ветви render/write/proof
-  с успешной внутренней компенсацией остаются с mutationId == 0 —
-  executor не пытается neutralize уже Neutral slot (нет двойной
-  compensation).
-- `PamPasswordTopologyTransitionExecutor::executeAction()` (attach):
-  `attempt.slotMutationId = activation.mutationId` копируется НЕЗАВИСИМО
-  от bool return'а `activateC2Slot()` (раньше — только после success, из-
-  за чего failure после physical write оставлял Active slot + Prepared
-  record без компенсации).
-- Test seam: `setJournalCompletionFaultHookForTests` (writer) +
-  passthrough'ы executor'а — инжект failure journal
-  Prepared→Applied commit после успешной физической записи; production
-  никогда hook не ставит.
-- Тесты: **F11** `journalCompletionFailsAfterSlotWrite` (None → Quality,
-  fault = completePrepared; expects: failure, native invocations == 0,
-  compensated + compensatedStateProven, slot Neutral, Prepared record
-  discarded, no Applied ownership, topology == None, diagnostic БЕЗ
-  "NOT proven restored"); writer-тесты **W-C2** (failure после записи →
-  changedSystemState=true, mutationId=exact id, record Prepared, затем
-  успешная exact-id caller compensation) и **W-C2-clean** (внутренне
-  полностью скомпенсированный failure → mutationId=0, no physical
-  change). F11 проверен на воспроизведение бага: без executor-фикса
-  тест падает с "C2 PAM topology NOT proven restored".
-
-### F12 compensation-of-compensation hardening (этот шаг, uncommitted)
-
-- Проблема: detach-inverse compensation (`compensateAttempt`, ветка
-  re-attach) при `activateC2Slot() == false` просто делала
-  `return false` — при partial path (slot write persisted, fresh proof
-  OK, Prepared→Applied commit FAIL) это оставляло НОВЫЙ orphaned
-  Active slot + Prepared record поверх несостоявшегося восстановления.
-- Fix: в detach-inverse при неудаче активации executor различает
-  Case A (`mutationId == 0` — writer полностью скомпенсировал внутри,
-  fail-fast без cleanup) и Case B (`mutationId != 0` — exact-id локальный
-  cleanup через `compensateC2ActiveSlot()` ДО fail-fast STOP, без
-  рекурсивного compensation engine). Диагностик различает
-  "its partial slot activation was cleaned" vs "could NOT be cleaned".
-- Test seam: `setC2CompensationFaultHookForTests` (writer,
-  `!hook()` → fail в начале `compensateC2ActiveSlot`) + passthrough
-  `setHistoryC2CompensationFaultHookForTests` (executor); production
-  никогда hook не ставит. Внимание: `deactivateC2Slot()` ВНУТРЕННЕ
-  вызывает `compensateC2ActiveSlot()` — hook нельзя ставить до начала
-  compensation (F12b ставит его в момент неудачного native disable).
-- Тесты: **F12** (Q+H→None; второй disable падает; compensation
-  re-attach consumer'а ломается completion fault'ом → exact cleanup →
-  STOP: transition false, compensated, "NOT proven restored" +
-  "partial slot activation was cleaned", history slot Neutral, no
-  Prepared, appliedCount==1, ровно 4 native invocation'а) и **F12b**
-  (cleanup сам падает → честный остаток: Active slot + Prepared record +
-  "could NOT be cleaned"). Без фикса F12 падает (проверено).
+- Ветка `main`. Baseline:
+  `d4790029b2f13ba9fa931c9491643b2374390312` ("Follow-up к последнему
+  коммиту №2") — C2 runtime transition executor, three-profile proof,
+  compensation, F11/F12 hardening и real functional gates G1-G11
+  (Debian 12 + Ubuntu 24.04) ЗАКОММИЧЕНЫ.
+- Поверх baseline выполнен **первый production wiring этап** (uncommitted,
+  commit не запрошен): ReadOnly lift, joint daemon wiring, C2 rollback
+  integration, E2E runtime coverage.
 
 ## Current task
 
-C2 runtime transition executor + three-profile resulting-state proof +
-partial-failure compensation — реализовано как production runtime layer:
+Production wiring парольного домена C2 — ВЫПОЛНЕНА (см. Completed).
+Следующий этап — three-profile prerm redesign (Remaining).
 
-- `PamPasswordTopologyState.{h,cpp}` (новый): production read-only typed
-  snapshot — selections из state-файла (`Module:` records), три managed
-  slot states, generated-stack evidence (`common-password`) с
-  trailing-whitespace-толерантной грамматикой, foreign producer discovery
-  (Rule I: stock `pwquality` profile XOR direct `pam_pwquality.so` rule —
-  несогласованность = coherence error), ownership per identity (payload
-  contract writer'а: Applied + role-specific activation identifier),
-  семантическая модель + `classifyPamPasswordTopology` +
-  `evaluatePamPasswordC2SelectionSafety`; плюс
-  `provePamPasswordTopologySemantics` — three-profile proof с effective
-  ordering (producer < history consumer < pam_unix; initial < pam_unix;
-  foreign producer < history).
-- `PamManagedPasswordSlotWriter`: C2 per-identity lifecycle (public):
-  `proveOwnedC2Slot(role)`, `activateC2Slot(role)` (Prepared → write →
-  fresh proof → Applied; idempotent; exact crash-partial Prepared
-  adoption), `deactivateC2Slot(role)` (Applied-owned → CAS-neutralize →
-  fresh Neutral → RolledBack), `compensateC2ActiveSlot(id)` (exact-id;
-  Applied → RolledBack, Prepared → discard; foreign-id/Neutral fail
-  closed). Payload record'а несёт ROLE-SPECIFIC activation identifier
-  (quality/history/history-initial hook).
-- `PamPasswordTopologyTransitionExecutor.{h,cpp}` (новый): transition =
-  inspect → validate → `planPamPasswordTopology` (planner — единственный
-  semantic decision source) → no-op fresh desired proof → per action:
-  drift gate → slot mutation (attach: Active slot FIRST; detach:
-  selection removal FIRST) → ровно ОДИН профиль на pam-auth-update
-  invocation → immediate fresh resulting-state proof → финальный полный
-  proof → success. Failure → semantic-inverse compensation (reverse of
-  proven mutations + pending attempt), fail-fast ("C2 PAM topology NOT
-  proven restored"), foreign drift aborts the stale plan (one plan per
-  transition), foreign preserved, selected-but-unowned никогда не
-  мутируется. rc native никогда не доверяется: rc=0 + malformed =
-  failure, rc!=0 + exactly proven = ok.
-- Тесты `PamPasswordTopologyTransitionExecutorTests.cpp` (target
-  `pam_password_topology_executor_tests`): fake native mutator (fake
-  /var/lib/pam + /etc/pam.d, trailing-space grammar,
-  one-profile-per-invocation assertion) — E1–E12 (все success
-  transitions, включая variant switching Q+H↔H-only, foreign
-  pre-existing no-op, foreign+H, foreign-added-during-FIC disable) и
-  F1–F10 (failure matrix).
+## Joint password topology domain (главный инвариант)
+
+**Password Quality + Password History form ONE joint runtime topology
+domain.** Физическое состояние — joint (Q, H) topology (None / FicQuality /
+FicHistoryInitial / FicQualityPlusFicHistory / ForeignQuality /
+ForeignQualityPlusFicHistory). Запрещено и отсутствует:
+
+- два независимых PAM activation mutation (per-policy enable/disable);
+- вызов pam-auth-update вне `PamPasswordTopologyTransitionExecutor`
+  (unit-seam + package scripts/maintenance tools);
+- вывод desired state из физической топологии — desired = configuration
+  intent (`IDENTITY_ACCESS.conf`: статусы `enable_password_quality` /
+  `enable_password_history`).
+
+## ReadOnly lift
+
+- `PamPlatformConfig.passwordTopologyRuntimeMutable` — evidence-based
+  флаг: true ТОЛЬКО на платформах с пройденными real gates + wiring gates.
+  Установлен в Debian12Profile и Ubuntu2404Profile; Debian 13 / Ubuntu
+  26.04 / ALT остаются ReadOnly.
+- `pamPolicySupport()`: PamAuthUpdate + password capability →
+  `RequiresTopologyActivation` при поднятой поддержке, иначе прежний
+  `ReadOnly`. Lockout и StaticVerifyOnly (ALT passwdqc) не затронуты.
+- Контракт-тест `supportContract` (pam_password_wiring_tests): по build
+  platform Debian12/U2404 ⇒ lifted, остальные ⇒ ReadOnly; сброс флага
+  возвращает ReadOnly; флаг не действует вне PamAuthUpdate.
+
+## Joint daemon wiring
+
+- `PamPasswordTopologyCoordinator` (новый): read joint config intent →
+  ОДИН `executor.transition(Q, H)`. Production construction —
+  `makeProduction(resolver)` поверх `DaemonMutationJournal` и дефолтного
+  reader'а (`readJointPasswordConfigIntent`). Contract: caller держит
+  identity configuration mutex; coordinator сам не локает (нет рекурсии
+  с PamPolicy::apply).
+- `PamCapabilityActivationPolicy`: password capabilities на PamAuthUpdate
+  платформах идут через `passwordCoordinatorFactory`; legacy
+  single-capability manager path для них недостижим (без factory — fail
+  closed; StaticVerifyOnly — прежний verify-only путь).
+- Daemon (`initPolicyRegistry`): activation policies
+  enable_password_quality/history регистрируются на поднятых платформах;
+  option-политики качества/истории автоматически получают recommended
+  dependency на activation policy (PamOptionPolicy).
+- Startup reconcile (`applyAllPoliciesExceptModule`) идёт через тот же
+  coordinator: proven topology = no-op, drift = fail closed.
+- **Исправлен production blocker в executor'е** (пойман wiring-гейтом):
+  `PamPasswordTopologyTransitionExecutor` НЕ нормализовал пустые
+  configDirectory/stateDirectory к `/etc/pam.d` и `/var/lib/pam`, хотя его
+  контракт это декларирует — writer искал слоты относительно CWD процесса.
+  Теперь пустые пути нормализуются в конструкторе (даунстрим-контракты
+  инспекции уже нормализовали; writer/runner — нет). Явные пути (тесты,
+  executor-гейт) не изменены.
+
+## Transaction semantics / crash consistency
+
+- Config persistence предшествует apply (`policy enable` → saveConfig →
+  apply). Crash между persist и transition: Prepared-записи writer'а +
+  recovery matrix при следующей activation. Crash после физического
+  успеха: startup reconcile доказывает desired topology (no-op) или
+  честно падает (drift/unsafe). Новый crash-recovery subsystem не строился.
+
+## C2 rollback integration
+
+- Schema journal НЕ менялась: slot-записи writer'а (payload
+  `UndoDisablePamCapability` с identifiers `fic-password-*-hook`)
+  остаются physical provenance; отдельный policy-level undo record не
+  вводился — существующей информации достаточно.
+- Детект C2-домена в `undoPamCapability` (`managedPasswordSlotDomain`):
+  точный набор identifier'ов + capability quality/history + PamAuthUpdate.
+  Обрабатывается ДО legacy manager path; без wiring — fail closed
+  (Conflict); legacy two-profile path для C2-записей не используется.
+- Rollback target: освобождаемая capability → false, ВЫЖИВШАЯ → текущий
+  config intent. Rollback = ОДИН joint C2 transition (planner sequence).
+  Q+H → disable quality → H-only (DetachConsumer/DetachQuality/
+  AttachInitial); повторный запрос Q → variant switch DetachInitial/
+  AttachQuality/AttachConsumer. Наивное «disable identifier'ов одной
+  записи» осиротило бы выживший consumer.
+- Wiring: `RollbackExecutorDeps.pamPasswordTopologyTransition` +
+  `.pamPasswordRequestedState` (productionRollbackDeps). Совместимость
+  SSH/SYSCTL/SUDO/FIREWALL/DC/faillock записей не затронута.
+- Failure: transition/compensation failure → Failed → framework ставит
+  RollbackFailed (НЕ RolledBack); повторный rollback после RollbackFailed
+  — fail closed.
+- Foreign preservation: rollback убирает только FIC-owned attach; stock
+  pwquality остаётся (итог — ForeignQuality). Selected-but-unowned и
+  unsafe состояния — fail closed executor'а.
+
+## Concurrency / TOCTOU
+
+- Semantic transition (inspect/plan/mutate/proof) сериализуется общим
+  identity mutex: policy apply (PamPolicy::apply) и rollback
+  (`undoPamPasswordTopology` блокирует `IdentityAccessPolicy::
+  configurationMutex()` — accessor теперь public). Executor driftGate
+  остаётся обязательным (external pam-auth-update); coordinator не
+  кэширует физическую топологию.
+
+## Diagnostics
+
+Coordinator классифицирует failure: native mutation failure /
+compensation ("pre-transition topology proven restored" vs "COMPENSATION
+STOPPED: NOT proven restored") / partial mutation ("partial mutation may
+be installed") + список proven actions. Политики пробрасывают текст без
+обезличивания; unsupported platform / unsafe topology / ownership missing
+различаются executor'ом.
 
 ## Accepted architecture / invariants
 
@@ -127,10 +129,12 @@ partial-failure compensation — реализовано как production runtim
 - `changedSystemState` monotonic/honest; Prepared/Applied lifecycle per
   slot activation (existing MutationJournal semantics, без изменения
   schema); common-password никогда не копируется/не snapshot'ится.
-- **`PamPolicySupport::ReadOnly` для password capabilities СОЗНАТЕЛЬНО
-  НЕ поднят**: executor/proof/compensation proven на unit-уровне И
-  real functional gates G1–G11 прошли на Debian 12 + Ubuntu 24.04 —
-  lift разрешён, следующий отдельный этап (§ Remaining).
+- **ReadOnly lift ВЫПОЛНЕН** (evidence-based): password capabilities на
+  PamAuthUpdate платформах Debian 12 / Ubuntu 24.04 —
+  `RequiresTopologyActivation` (gates G1-G11 + wiring gates W1-W9
+  пройдены); Debian 13 / Ubuntu 26.04 / ALT — по-прежнему `ReadOnly` до
+  своих gates. Политики доходят до физики ТОЛЬКО через
+  `PamPasswordTopologyCoordinator` → C2 executor.
 - Legacy prerm preflight (Temporary invariant ниже) СОХРАНЁН.
 
 ## Temporary invariant (legacy prerm, до C2 three-profile redesign)
@@ -493,46 +497,102 @@ C2 REAL FUNCTIONAL GATE: PASS.
 
 C2 REAL FUNCTIONAL GATE: PASS.
 
+## Completed (этот шаг)
+
+- Substage 1: ReadOnly lift (Debian 12 + Ubuntu 24.04) + support contract
+  tests.
+- Substage 2: `PamPasswordTopologyCoordinator` + joint policy mode +
+  daemon wiring (apply, startup reconcile, idempotence, foreign
+  satisfaction).
+- Substage 3: C2 rollback integration (`rollbackPolicyBeforeDisable` →
+  `undoPamCapability` → joint transition), без изменения schema journal.
+- Substage 4: wiring E2E тесты R1-R16 + failure/unsafe/foreign матрица;
+  real wiring gates Debian 12 + Ubuntu 24.04.
+
+## Changed areas
+
+- `fic/src/platform`: PlatformProfile.h (новый флаг),
+  profiles/{Debian12,Ubuntu2404}Profile.cpp.
+- `fic/src/modules/identity_access/pam`: PamPasswordTopologyCoordinator.*
+  (новый), PamProviderCatalog.cpp,
+  policies/PamCapabilityActivationPolicy.{h,cpp}.
+- `fic/src/rollback`: PamRollback.{h,cpp}, RollbackExecutor.{h,cpp},
+  IdentityAccessPolicy.h (public mutex accessor).
+- `fic/src/daemon/main_function.cpp` (activation + rollback wiring).
+- `tests/`: PamPasswordWiringTests.cpp (новый, 21 тест), CMake-таргеты
+  (pam_password_wiring_tests, fic-pam-c2-wiring-driver), обновлённые
+  legacy-кейсы PamCapabilityActivationPolicyTests (password capabilities
+  больше не идут через legacy manager path), integration gate
+  pam_c2_wiring_gate.sh + pam_c2_wiring_driver.cpp (новые),
+  fic_pam_probe.c (детерминированная текстовая маршрутизация промптов
+  current/new вместо first-prompt эвристики — behavior-preserving для
+  executor-гейта, см. Validation).
+
 ## Validation (этот шаг, фактически выполнено)
 
-- `cmake --build build-c2 -j4` — OK; targeted ctest
-  `pam_password_topology_executor|pam_managed_password` — 4/4 PASS;
-  executor tests **25/25** (E1–E12, F1–F12 + F12b).
-- Full CTest: только известный baseline failure
-  `passwdqc_config_file_tests` (вне scope) + 1 skip; `git diff --check`
-  — clean.
-- **Real functional gates** (`tests/integration/pam-c2/pam_c2_gate.sh`
-  в disposable docker-контейнерах as root; evidence в `/tmp/gate-ev-deb12`
-  и `/tmp/gate-ev-u2404`): **Debian 12 — G1–G11 PASS**,
-  **Ubuntu 24.04.5 — G1–G11 PASS**, stock pwquality oracle PASS на
-  обеих. C2 REAL FUNCTIONAL GATE: PASS.
-- Debian 12 build/CTest и packaging checks — НЕ выполнялись в этом шаге
-  (gate собирал только gate-driver target внутри контейнеров).
+- Build: `cmake -S . -B build-runtime-wire -DFIC_TARGET_PLATFORM=ubuntu-24.04
+  -DBUILD_TESTING=ON` + full build — OK; debian-12 и debian-13 конфигурации
+  собраны, wiring-тесты зелёные на всех трёх.
+- Full CTest: 105/106 PASS (+1 skip); единственный failure — известный
+  baseline `passwdqc_config_file_tests` (вне scope, не чинить).
+- `pam_password_wiring_tests`: 21/21 PASS (R1-R16 apply/rollback/restart,
+  rollback failure fail-closed, selected-but-unowned, unsafe state,
+  policy-level joint intent, support contract) на ubuntu-24.04, debian-12
+  (lift подтверждён) и debian-13 (ReadOnly подтверждён).
+- `git diff --check` — clean. Static scan: pam-auth-update упоминается
+  только в executor/writer (+комментарии); common-password не редактируется
+  вне C2 writer stack; ReadOnly снят только на целевых платформах;
+  mutable-флаг не включён на неподдерживаемых.
+- **Real wiring gates** (`tests/integration/pam-c2/pam_c2_wiring_gate.sh`
+  в disposable docker-контейнерах as root, драйвер через PRODUCTION
+  coordinator API): **Debian 12 — W1-W9 PASS**,
+  **Ubuntu 24.04 — W1-W9 PASS** (C2 PRODUCTION WIRING GATE: PASS на обеих;
+  evidence /tmp/wg-deb12, /tmp/wg-u2404 на хосте).
+- Executor-level gates G1-G11 (`pam_c2_gate.sh`) перезапущены после фикса
+  executor'а и probe'а: **Debian 12 — PASS, Ubuntu 24.04 — PASS**
+  (evidence /tmp/eg-deb12b, /tmp/eg-u2404). Единственный сбой первого
+  прогона deb12 — G11 "strong change failed after recovery" — тот же
+  flaky hex-генератор паролей executor-гейта против cracklib; генератор
+  заменён на проверенный base64-вариант (probe text-routing
+  behavior-preserving).
+- Harness lessons (wiring gate): Debian 12 pwquality default minlen=8 —
+  'weakpass' (8 lowercase) ПРОХОДИТ (использовать 'password1', как в
+  executor-гейте); генератор strong-паролей — random base64-средник
+  (hex-суффикс flaky против cracklib); probe маршрутизирует промпты по
+  тексту (current/old vs new); reuse-проверка истории возможна только
+  после успешного изменения ПОД pwhistory (pre-FIC пароль в opasswd не
+  попадает); distro-контейнеры могут автoselect stock pwquality при
+  установке libpam-pwquality — гейт нормализует baseline.
+- Executor-гейт и wiring-гейт используют разные evidence dir, но ОБА
+  оборачивают /usr/sbin/pam-auth-update wrapper'ом — в ОДНОМ контейнере
+  их не запускать.
+- Executor-level gates G1-G11 (предыдущий шаг) — по-прежнему PASS на
+  обеих платформах (baseline).
 
-## Explicitly NOT implemented (scope boundary этого шага)
+## Explicitly NOT done (scope boundary этого шага)
 
-- ReadOnly lift + daemon/runtime policy wiring + rollback integration
-  (PamRollback deactivateC2Slot путь).
-- Three-profile prerm redesign; maintenance CLI (`fic --maintenance
-  inspect-pam-password-topology` — candidate).
-- Step 6 (Debian 12 ModuleArguments option writer) — не требовался
-  механике executor'а; canonical writer behavior использован как есть.
-- Functional gates на реальных Debian 12 / Ubuntu 24.04 — ВЫПОЛНЕНЫ
-  (этот шаг, см. таблицы выше).
+- Three-profile prerm redesign; удаление временного prerm preflight.
+- Step 6 ModuleArguments option writer — pwhistory module arguments в
+  слотах сейчас фиксированы на wiring call sites ({remember=3,
+  enforce_for_root=false}); depth/enforce как policy values — следующий
+  этап.
+- Прямое редактирование /etc/pam.d/common-password — НЕ появилось.
+- Новый topology planner — НЕ создавался (planner остаётся единственным
+  semantic source).
 
 ## Remaining
 
-1. **ReadOnly lift + daemon wiring** (gates пройдены — разрешено):
-   `pamPolicySupport` → RequiresTopologyActivation для password
-   capabilities на PamAuthUpdate platforms; password activation policy
-   поверх executor'а (joint Q/H request: чужая capability выводится из
-   физического состояния — selected или foreign producer); rollback
-   интеграция.
-2. **Three-profile prerm redesign**: снимает preflight и Temporary
-   invariant; trailing-whitespace уже решён на C++-стороне — prerm proof
-   либо идёт через maintenance CLI (один source of truth), либо чинит
-   anchored-`$` грамматику в shell.
-3. Step 6 ModuleArguments option writer; Step 7 activation.
+1. **Three-profile prerm redesign**: снимает preflight и Temporary
+   invariant ниже; trailing-whitespace уже решён на C++-стороне — prerm
+   proof либо идёт через maintenance CLI (один source of truth), либо
+   чинит anchored-`$` грамматику в shell.
+2. **Step 6 ModuleArguments option writer** (см. Explicitly NOT done).
+3. Broader distro gates (Debian 13 / Ubuntu 26.04) если требуются — их
+   платформы остаются ReadOnly до прохождения gates.
 4. Заметки среды: proxy в docker-контейнерах нестабилен (apt retries
    в gate harness); baseline failure `passwdqc_config_file_tests` — вне
-   scope; не запускать параллельно /tmp-конфликтующие test-наборы.
+   scope; не запускать параллельно /tmp-конфликтующие test-наборы
+   (wiring gate использует СВОЙ evidence dir
+   /tmp/fic-wiring-gate-evidence, но /usr/sbin/pam-auth-update wrapper —
+   общий: executor-гейт и wiring-гейт не запускать в одном контейнере
+   одновременно).

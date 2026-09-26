@@ -1,5 +1,6 @@
 #include "rollback/PamRollback.h"
 
+#include "modules/identity_access/IdentityAccessPolicy.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 
 #include <set>
@@ -8,6 +9,96 @@ namespace fic::rollback {
 namespace {
 
 using fic::identity::pam::PamTopologyState;
+
+// C2 joint password topology journal domain: the managed password slot
+// writers journal with the FIC-owned activation PROFILE identifiers
+// (fic-password-*-hook), never with the legacy platform activation
+// identifiers and never with the physical slot filenames. The identity set
+// is closed: quality, history consumer (dual-stack hook) and history
+// initial.
+bool managedPasswordSlotDomain(const UndoDisablePamCapability& undo) {
+    if (undo.topology != PamTopologyKind::PamAuthUpdate ||
+        (undo.capability != "enable_password_quality" &&
+         undo.capability != "enable_password_history")) {
+        return false;
+    }
+    static const std::set<std::string> c2Identifiers{
+        "fic-password-quality-hook",
+        "fic-password-history-hook",
+        "fic-password-history-initial-hook"};
+    if (undo.activationIdentifiers.size() != 1) {
+        return false;
+    }
+    return c2Identifiers.count(undo.activationIdentifiers.front()) == 1;
+}
+
+// Rollback of one C2 password-domain journal record: ONE joint semantic
+// topology transition to the rollback target joint state.
+//
+// Rollback target semantics: the released capability's request becomes
+// false; the SURVIVING password capability keeps its CURRENT configuration
+// intent (the rollback runs while the disabled policy is still ENABLE in
+// the configuration, so the intent is read as "which password capability
+// remains requested"). A joint transition — never a raw removal of the
+// single recorded activation identifier — is what keeps the surviving
+// domain valid (e.g. releasing quality under a requested history performs
+// the planner variant switch instead of orphaning the history consumer).
+//
+// Invariants:
+//  - no generated common-password restore, no foreign producer removal
+//    (C2 executor semantics);
+//  - selected-but-unowned identities are never detached and unsafe states
+//    fail closed (C2 executor semantics);
+//  - the whole semantic transition serializes with policy apply through
+//    the shared identity configuration mutex;
+//  - failure is reported honestly (including unproven partial changes) so
+//    the originating journal record is NEVER marked RolledBack on a
+//    transition or compensation failure.
+PamRollbackResult undoPamPasswordTopology(
+    const PamRollbackOptions& options, MutationId mutationId,
+    const UndoDisablePamCapability& undo) {
+    if (mutationId == 0) {
+        return {PamRollbackState::Conflict,
+                "C2 password slot rollback requires a non-zero journal id"};
+    }
+    if (!options.jointTransition || !options.jointRequestedState) {
+        return {PamRollbackState::Conflict,
+                "C2 password rollback wiring (joint transition / joint "
+                "requested state) is unavailable: fail closed"};
+    }
+    const bool releasedQuality = undo.capability == "enable_password_quality";
+    bool survivorQuality = false;
+    bool survivorHistory = false;
+    std::string error;
+    if (!options.jointRequestedState(
+            survivorQuality, survivorHistory, error)) {
+        return {PamRollbackState::Conflict,
+                "joint password requested state is unknown: " + error};
+    }
+    const bool targetQuality = releasedQuality ? false : survivorQuality;
+    const bool targetHistory = releasedQuality ? survivorHistory : false;
+    {
+        // Serialize with policy apply: inspect/plan/mutate/proof of the
+        // whole semantic transition under the same identity mutex.
+        const std::lock_guard<std::mutex> lock(
+            IdentityAccessPolicy::configurationMutex());
+        const PamRollbackOptions::JointTransitionOutcome outcome =
+            options.jointTransition(targetQuality, targetHistory, error);
+        if (!outcome.success) {
+            return {PamRollbackState::Failed,
+                    "C2 joint password topology rollback transition failed "
+                    "(topology NOT proven restored): " +
+                        (outcome.error.empty() ? error : outcome.error)};
+        }
+        if (outcome.changedSystemState) {
+            return {PamRollbackState::Released,
+                    "FIC joint password topology released through the C2 "
+                    "joint transition"};
+        }
+    }
+    return {PamRollbackState::AlreadyReleased,
+            "joint password topology already matches the rollback target"};
+}
 
 bool managedFaillockSlotDomain(const UndoDisablePamCapability& undo) {
     if (undo.capability != "enable_authentication_lockout" ||
@@ -49,6 +140,14 @@ PamRollbackResult undoPamCapability(
     const PamRollbackOptions& options,
     MutationId mutationId,
     const UndoDisablePamCapability& undo) {
+    // C2 joint password topology domain: the rollback is ONE joint
+    // semantic transition through the C2 planner/executor, never the
+    // legacy per-profile disable path and never the old two-profile
+    // manager. Checked before the legacy manager factory gate: the C2
+    // path never uses the legacy topology manager.
+    if (managedPasswordSlotDomain(undo)) {
+        return undoPamPasswordTopology(options, mutationId, undo);
+    }
     if (!options.managerFactory)
         return {PamRollbackState::Failed, "PAM manager factory unavailable"};
     const fic::platform::PamCapabilityConfig* capability = nullptr;

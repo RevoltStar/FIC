@@ -583,7 +583,16 @@ add_executable(rollback_executor_tests
     fic/rollback/RollbackExecutorTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
@@ -933,6 +942,94 @@ target_link_libraries(pam_password_topology_executor_tests PRIVATE
 add_test(NAME pam_password_topology_executor_tests
          COMMAND pam_password_topology_executor_tests)
 
+# Production wiring E2E: configuration intent -> coordinator -> C2
+# executor -> journal -> RollbackExecutor dispatch (undoPamCapability ->
+# joint C2 transition). Same fake native mutator model as the executor
+# tests; the rollback path is the REAL rollbackPolicyBeforeDisable entry.
+add_executable(pam_password_wiring_tests
+    fic/modules/identity_access/pam/PamPasswordWiringTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamFaillockTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamAuthUpdateTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManagerFactory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamCapabilityActivationPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
+)
+target_include_directories(pam_password_wiring_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_password_wiring_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+add_test(NAME pam_password_wiring_tests
+         COMMAND pam_password_wiring_tests)
+
 # C2 functional gate driver (NOT a CTest): the production topology
 # components against the REAL /etc/pam.d and /var/lib/pam with the real
 # pam-auth-update. Built on demand INSIDE a disposable container by
@@ -956,6 +1053,53 @@ target_include_directories(fic-pam-c2-gate-driver PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
 target_link_libraries(fic-pam-c2-gate-driver PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads
+)
+
+# C2 production WIRING gate driver (NOT a CTest): the full production
+# wiring path (IDENTITY_ACCESS configuration intent -> PamPasswordTopology
+# Coordinator -> C2 transition executor -> daemon mutation journal) plus the
+# production PAM rollback backend (undoPamCapability with the joint C2
+# transition), against the REAL /etc/pam.d, /var/lib/pam and pam-auth-update.
+# Built on demand INSIDE a disposable container by
+# tests/integration/pam-c2/pam_c2_wiring_gate.sh. Excluded from the default
+# build and CTest on purpose (mutates real system PAM state).
+add_executable(fic-pam-c2-wiring-driver EXCLUDE_FROM_ALL
+    integration/pam-c2/pam_c2_wiring_driver.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotBootstrap.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamAuthUpdateTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+)
+target_include_directories(fic-pam-c2-wiring-driver PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(fic-pam-c2-wiring-driver PRIVATE
     fic-core fic-policy fic-platform Threads::Threads
 )
 
@@ -1023,6 +1167,13 @@ add_executable(pam_capability_activation_policy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamCapabilityActivationPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
 )
@@ -1265,6 +1416,15 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
@@ -1341,6 +1501,15 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp

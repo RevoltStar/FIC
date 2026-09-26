@@ -11,6 +11,7 @@
 #include "modules/sysctl/SysctlKey.h"
 #include "modules/sysctl/SysctlRuntime.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "rollback/PamRollback.h"
 
 #include <algorithm>
@@ -94,7 +95,10 @@ bool isSupportedPamPolicy(const std::string& policyName) {
 }
 
 PamRollbackOptions pamOptions(const RollbackExecutorDeps& deps) {
-    return {deps.pamPlatform, deps.pamManagerFactory};
+    PamRollbackOptions options{deps.pamPlatform, deps.pamManagerFactory};
+    options.jointTransition = deps.pamPasswordTopologyTransition;
+    options.jointRequestedState = deps.pamPasswordRequestedState;
+    return options;
 }
 
 MutationRollbackOutcome outcomeFromOperation(
@@ -1069,6 +1073,44 @@ RollbackExecutorDeps productionRollbackDeps(
         };
 
     deps.disableDeviceFeature = std::move(disableDeviceFeature);
+
+    // C2 joint password topology rollback wiring (see PamRollbackOptions):
+    // the rollback transition goes through the production coordinator over
+    // the daemon mutation journal — the C2 planner/executor stays the only
+    // semantic source; the joint requested state comes from the
+    // IDENTITY_ACCESS configuration intent.
+    deps.pamPasswordTopologyTransition =
+        [&executables](bool qualityRequested, bool historyRequested,
+                       std::string& error) {
+            PamRollbackOptions::JointTransitionOutcome outcome;
+            std::unique_ptr<fic::identity::pam::PamPasswordTopologyCoordinator>
+                coordinator = fic::identity::pam::
+                    PamPasswordTopologyCoordinator::makeProduction(
+                        executables, error);
+            if (!coordinator) {
+                outcome.error = error;
+                return outcome;
+            }
+            const fic::identity::pam::PamPasswordRequestedState requested{
+                qualityRequested, historyRequested};
+            outcome.success = coordinator->transition(requested, error);
+            outcome.changedSystemState =
+                coordinator->lastResult().changedSystemState;
+            outcome.error = error;
+            return outcome;
+        };
+    deps.pamPasswordRequestedState =
+        [](bool& qualityRequested, bool& historyRequested,
+           std::string& error) {
+            fic::identity::pam::PamPasswordRequestedState requested;
+            if (!fic::identity::pam::readJointPasswordConfigIntent(
+                    requested, error)) {
+                return false;
+            }
+            qualityRequested = requested.qualityRequested;
+            historyRequested = requested.historyRequested;
+            return true;
+        };
     return deps;
 }
 

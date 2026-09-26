@@ -146,6 +146,55 @@ bool PamCapabilityActivationPolicy::applyPam(
         return false;
     }
 
+    // Joint C2 password topology mode. Password Quality and Password
+    // History form ONE joint runtime topology domain: the coordinator reads
+    // the joint requested state from the configuration intent (both
+    // activation policies) and performs ONE semantic transition. The legacy
+    // single-capability manager path below must never run for password
+    // capabilities in this mode (no direct native profile mutations here,
+    // no separate per-capability journal ownership). StaticVerifyOnly
+    // password capabilities (e.g. ALT passwdqc) are NOT part of the joint
+    // runtime domain and keep the verify-only path.
+    if ((capability->capability ==
+                fic::platform::PamCapability::PasswordQuality ||
+            capability->capability ==
+                fic::platform::PamCapability::PasswordHistory) &&
+        capability->topology ==
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+        if (!options_.passwordCoordinatorFactory) {
+            log("PAM joint password topology coordinator factory is "
+                "unavailable",
+                logLevel::ERROR);
+            return false;
+        }
+        std::unique_ptr<fic::identity::pam::PamPasswordTopologyCoordinator>
+            coordinator = options_.passwordCoordinatorFactory();
+        if (!coordinator) {
+            log("Could not create the PAM joint password topology "
+                "coordinator: the daemon mutation journal is unavailable "
+                "(fail closed)",
+                logLevel::ERROR);
+            return false;
+        }
+        if (!coordinator->applyJointRequestedState(error)) {
+            log("PAM joint password topology transition failed for " +
+                    policyName + ": " + error,
+                logLevel::ERROR);
+            return false;
+        }
+        const fic::identity::pam::PamPasswordTransitionResult& result =
+            coordinator->lastResult();
+        log("PAM joint password topology is proven for the requested "
+                "configuration intent" +
+                (result.executedActions.empty()
+                     ? std::string(" (already proven; no mutation)")
+                     : " (" +
+                           std::to_string(result.executedActions.size()) +
+                           " planner action(s) executed)"),
+            logLevel::INFO);
+        return true;
+    }
+
     if (!options_.managerFactory) {
         log("PAM topology activation manager factory is unavailable",
             logLevel::ERROR);
