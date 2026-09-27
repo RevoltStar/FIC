@@ -47,12 +47,16 @@ protected:
     bool applyPam(const std::string& expectedValue) override;
 
 private:
+    PasswordCoordinatorFactory passwordCoordinatorFactory_;
+
+protected:
     // True when the platform governs the history capability through FIC
     // module arguments of the C2 joint topology (PamAuthUpdate topology +
-    // ModuleArguments configuration mode).
+    // ModuleArguments configuration mode). Protected for the routing
+    // contract tests: on provider-config-file platforms (e.g. the Ubuntu
+    // 24.04 production profile) this MUST stay false so the option
+    // policies keep the classic path.
     bool c2ManagedHistoryDomain() const;
-
-    PasswordCoordinatorFactory passwordCoordinatorFactory_;
 };
 
 #endif // FIC_IDENTITY_ACCESS_PAM_PASSWORD_HISTORY_OPTION_POLICY_H

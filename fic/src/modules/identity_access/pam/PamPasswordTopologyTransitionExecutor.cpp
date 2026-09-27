@@ -495,6 +495,107 @@ bool PamPasswordTopologyTransitionExecutor::compensateAttempt(
     return true;
 }
 
+// Step 6 follow-up (P1): classify the ONE recoverable pre-planner state —
+// a history identity physically selected with its slot canonical Active
+// bound to the exact Prepared record of the domain (the journal completion
+// failure crash state of a previous option update), the sibling history
+// identity fully neutral and the quality identity free of Prepared
+// bindings. Everything else is NOT recovery business: the normal
+// fail-closed path (usability gates, planner, selected-but-unowned
+// invariant) applies unchanged.
+std::optional<ManagedPasswordSlotRole>
+PamPasswordTopologyTransitionExecutor::classifyExactPreparedSelectedHistory(
+    const PamPasswordTopologySnapshot& snapshot) const {
+    const auto exactState = [](
+        ManagedPasswordSlotState slot, bool prepared, bool owned,
+        bool selected, ManagedPasswordSlotState siblingSlot,
+        bool siblingSelected, bool siblingPrepared, bool siblingOwned) {
+        return slot == ManagedPasswordSlotState::Active && prepared &&
+            !owned && selected &&
+            siblingSlot == ManagedPasswordSlotState::Neutral &&
+            !siblingSelected && !siblingPrepared && !siblingOwned;
+    };
+    // A quality Prepared binding is package-release recovery territory,
+    // never this runtime path (Step 6 follow-up scope discipline).
+    if (snapshot.ownership.ficQualityPrepared) {
+        return std::nullopt;
+    }
+    if (exactState(
+            snapshot.historySlotState, snapshot.ownership.ficHistoryPrepared,
+            snapshot.ownership.ficHistoryOwned,
+            snapshot.selections.ficHistorySelected,
+            snapshot.historyInitialSlotState,
+            snapshot.selections.ficHistoryInitialSelected,
+            snapshot.ownership.ficHistoryInitialPrepared,
+            snapshot.ownership.ficHistoryInitialOwned)) {
+        return ManagedPasswordSlotRole::HistoryNormal;
+    }
+    if (exactState(
+            snapshot.historyInitialSlotState,
+            snapshot.ownership.ficHistoryInitialPrepared,
+            snapshot.ownership.ficHistoryInitialOwned,
+            snapshot.selections.ficHistoryInitialSelected,
+            snapshot.historySlotState, snapshot.selections.ficHistorySelected,
+            snapshot.ownership.ficHistoryPrepared,
+            snapshot.ownership.ficHistoryOwned)) {
+        return ManagedPasswordSlotRole::HistoryInitial;
+    }
+    return std::nullopt;
+}
+
+bool PamPasswordTopologyTransitionExecutor::
+    recoverExactPreparedSelectedHistoryIfNeeded(
+        PamPasswordTopologySnapshot& snapshot,
+        PamPasswordTransitionResult& result, std::string& error) {
+    error.clear();
+    const std::optional<ManagedPasswordSlotRole> recoverable =
+        classifyExactPreparedSelectedHistory(snapshot);
+    if (!recoverable.has_value()) {
+        return true;
+    }
+    // The recovery phase runs only on an otherwise structurally usable
+    // topology (the same coherence/classification/safety/semantics gates
+    // as the normal transition entry).
+    if (!requireUsableCurrentState(snapshot, error)) {
+        return false;
+    }
+    // Exact role-bound proof + journal lifecycle completion inside the
+    // writer; the physical slot bytes are never rewritten here.
+    PamManagedPasswordSlotActivationResult completion;
+    if (!historyWriter_.completeExactPreparedC2Slot(
+            *recoverable, completion, error)) {
+        result.changedSystemState =
+            result.changedSystemState || completion.changedSystemState;
+        error = "the exact selected Prepared history state could not be "
+                "completed (fail closed; the state stays recoverable and "
+                "the next apply may retry): " +
+            error;
+        return false;
+    }
+    result.changedSystemState =
+        result.changedSystemState || completion.changedSystemState;
+    // The recovered topology must prove the NORMAL owned coherent state
+    // before any planner decision is made on top of it.
+    if (!inspectFresh(snapshot, error)) {
+        error = "the post-recovery topology inspection failed: " + error;
+        return false;
+    }
+    if (!requireUsableCurrentState(snapshot, error)) {
+        return false;
+    }
+    const bool owned =
+        *recoverable == ManagedPasswordSlotRole::HistoryInitial
+        ? snapshot.ownership.ficHistoryInitialOwned
+        : snapshot.ownership.ficHistoryOwned;
+    if (!owned) {
+        error = "the completed exact Prepared history state did not prove "
+                "the normal journal ownership (fail closed)";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool PamPasswordTopologyTransitionExecutor::reconcileHistoryOptions(
     const PamPasswordTopologyPlan& plan,
     const ManagedPwhistorySlotOptions& historyOptions,
@@ -537,6 +638,20 @@ bool PamPasswordTopologyTransitionExecutor::transition(
         error = "transition inspection failed: " + error;
         return false;
     }
+
+    // 1.5 Step 6 follow-up (P1): the exact selected+Active+Prepared
+    // option-update completion-failure crash state is a recoverable
+    // lifecycle binding, not ownership and not a planner decision. It is
+    // completed BEFORE the usability/planner/selected-but-unowned gates,
+    // so the recovery is never blocked by the unowned-selection invariant
+    // and never reaches the option reconcile phase. The recovery is
+    // topology-neutral (no pam-auth-update, no slot rewrite) and never
+    // compensates: a completion failure leaves the exact recoverable state
+    // for the next apply.
+    if (!recoverExactPreparedSelectedHistoryIfNeeded(pre, result, error)) {
+        return false;
+    }
+
     if (!requireUsableCurrentState(pre, error)) {
         return false;
     }

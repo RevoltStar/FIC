@@ -2,115 +2,106 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `fcfd3266a99e7b09c93b6c6c04d4a85bf3d2471b`.
-- Three-profile C2 prerm redesign и Step 6 (ModuleArguments option writer
-  для pam_pwhistory) — в working tree, НЕ закоммичено.
+- Ветка `main`, HEAD `17593ccef3dbb0c968a6521efe2bd826885cc2bf` (Step 6
+  закоммичен).
+- Step 6 follow-up (P1 recovery / P2 Ubuntu semantics / P3 remember
+  evidence) — в working tree, НЕ закоммичено.
 
 ## Current task
 
-**Step 6 — production ModuleArguments option writer для pam_pwhistory** —
-реализация завершена, real Debian 12 + Ubuntu 24.04 gates запускались
-(см. Validation / Remaining).
+**Step 6 follow-up** — три узких исправления:
 
-## Joint password topology domain (главный инвариант)
+- **P1 (runtime recovery):** failure journal completion'а option update
+  оставляет *selected + canonical Active + exact Prepared*. Раньше
+  production executor рвал это состояние на planner-гейте F9
+  (unownedSelectionsPreserved: Prepared != ownership) ДО reconcile.
+  Теперь executor в `transition()` сразу после первой свежей инспекции
+  (`recoverExactPreparedSelectedHistoryIfNeeded`, ДО
+  requireUsableCurrentState/planner) классифицирует ровно одно
+  recoverable-состояние (role selected, свой слот Active с exact
+  role-bound Prepared binding, sibling history Neutral, quality без
+  Prepared) и завершает lifecycle через новый writer-примитив
+  `completeExactPreparedC2Slot` (только journal, тело слота НЕ переписывается,
+  без pam-auth-update, тот же mutation id, без новых записей;
+  Applied-вариант — идемпотентный no-op; конкурирующие active records
+  домена — fail closed). После recovery — свежая инспекция + требование
+  нормального owned-состояния; обычные selected-but-unowned состояния
+  по-прежнему fail closed (тест F6c). Сбой completion оставляет exact
+  recoverable Prepared — retry возможен. Coordinator seam:
+  `setHistoryJournalCompletionFaultHookForTests` (passthrough в executor).
+- **P2 (Ubuntu, Variant A):** Ubuntu 24.04 остаётся
+  `ProviderConfigFile` (`/etc/security/pwhistory.conf`) с
+  `moduleArgumentSupport={false,false}`; классический option-policy path —
+  production. `pam_pwhistory_options_gate.sh` на Ubuntu — CAPABILITY
+  EVIDENCE PROBE (гейт заголовком и verdict'ом явно это помечает);
+  production ModuleArguments wiring gate обязателен только Debian 12.
+  Routing-тест `optionPolicyRoutingMatchesProfileMode` + пиннинг профиля в
+  PlatformProfileTests. `c2ManagedHistoryDomain()` теперь protected
+  (для routing-теста).
+- **P3 (remember evidence):** `pwhistoryRemember` — обязательный evidence
+  gate reader'а: ModuleArguments без него → desired-state read fail closed,
+  ВКЛЮЧАЯ default depth (никогда не рендерить молча). enforce_for_root —
+  без изменений. `pamPolicySupport`: на ModuleArguments history capability
+  Depth мутабелен только при `pwhistoryRemember`, EnforceForRoot — только
+  при `pwhistoryEnforceForRoot` (иначе ReadOnly). Тесты P3a/P3b/P3c в
+  `jointDesiredStateReaderOptions` + `optionEvidenceSupportContract`.
 
-**Mixed Applied+Prepared package-release recovery:** `recoverCrashLeftovers`
-proves only the identities it actually recovered, then re-validates the
-fresh remaining topology and lets the normal C2 `transition(false,false)`
-release still-owned identities.
+## Joint password topology domain (главные инварианты, без изменений)
 
-**Topology и option configuration — разные уровни.** Topology отвечает за
-History disabled / HistoryInitial / History consumer. Option writer —
-только за `remember=N` + bare `enforce_for_root` в телах FIC слотов.
+- **Applied = ownership; Prepared = exact lifecycle recovery binding**
+  (документировано в `docs/rollback.md`, раздел «Managed history module
+  arguments (Step 6)»): Prepared никогда не авторизует detach — только
+  точное завершение lifecycle. Selected-but-unowned (нет записи / чужой id /
+  чужой role payload / malformed body / RollbackFailed) — fail closed.
+- Mixed Applied+Prepared package-release recovery (`recoverCrashLeftovers`)
+  не изменялся; unselected Prepared — зона package-release recovery.
+- **Quality selected+Prepared недостижим** (проверено): attach завершает
+  journal до native selection; сбой completion компенсируется (neutralize +
+  discard) до выбора профиля → runtime-механизм recovery для Quality не
+  нужен.
 
-## Step 6 architecture (принятые решения)
+## Step 6 architecture (см. коммит 17593cc)
 
-- `PamPasswordRequestedState` расширен `historyOptions`
-  (`ManagedPwhistorySlotOptions`); авторитетный источник — configuration
-  intent. НОВЫЙ reader `readJointPasswordDesiredState(requested, pam,
-  error, confDir)` читает Q/H + depth (1..50, default
-  `kPasswordHistoryDepthDefault`=5 из
-  `policies/PamPasswordHistoryDepthPolicy.h`) + enforce (yes/no) из ОДНОГО
-  config snapshot. Provider-config platforms (Ubuntu 24.04 —
-  pwhistory.conf) оставляют options пустыми (тела слотов без аргументов).
-- Executor `transition(q, h, historyOptions, ...)`: attach рендерит слот
-  из requested options; после плана (и на no-op path) — in-place reconcile
-  активного варианта через `historyWriter_.updateC2HistoryOptions(...)`
-  ПЕРЕД финальным proof. `PamPasswordTopologyExecutorOptions::historyOptions`
-  УДАЛЁН (хардкод-значений в production нет).
-- Writer `updateC2HistoryOptions`: ownership gate (Active + MatchingApplied
-  + role payload), идемпотентный no-op при равных опциях, Prepared
-  crash-partial adoption; journal **refresh** единственной активной записи
-  домена (mutation id СОХРАНЯЕТСЯ — `prepareMutation` идемпотентен по
-  policy/backend/resource!). Компенсация неудач — `compensateUpdateSnapshots`:
-  восстановить прежние Active байты и вернуть запись в Applied (НЕ
-  discard). Completion failure после durable write — honest
-  changedSystemState + exact id (следующий apply завершает).
-- Option policies (`PamPasswordHistoryDepthPolicy`,
-  `PamPasswordHistoryEnforceForRootPolicy`) унаследованы от новой базы
-  `PamPasswordHistoryOptionPolicy` (policies/): на ModuleArguments+PamAuthUpdate
-  платформах apply идёт через `PamPasswordTopologyCoordinator::
-  applyJointRequestedState()` (единственный writer опций); иначе legacy
-  PamOptionPolicy path. `PamOptionPolicy::platformConfig_/feature_` теперь
-  protected. Wiring в `main_function.cpp` передаёт coordinator factory.
-- Platform metadata: `PamModuleArgumentSupport {pwhistoryRemember,
-  pwhistoryEnforceForRoot}` в `PamCapabilityConfig` (evidence-based;
-  debian-12 = {true,true}, остальные — unsupported по умолчанию; reader
-  fail-closed на configured `enforce_for_root=yes` без evidence).
-- Rollback wiring (`RollbackExecutor`) читает ПОЛНЫЙ desired state (опции
-  включительно) — rollback variant switch реаттачит history с актуальными
-  configured options. Семантика задокументирована в
-  `docs/rollback.md` («Managed history module arguments (Step 6)»).
-- makeProduction сигнатура: `makeProduction(executables, platform, error)`.
+- Reader `readJointPasswordDesiredState` — Q/H + depth + enforce из ОДНОГО
+  config snapshot; теперь также remember-evidence gate (P3).
+- Executor: attach рендерит слот из requested options; post-plan in-place
+  reconcile через `updateC2HistoryOptions` ПЕРЕД финальным proof; НОВОЕ:
+  pre-planner exact-Prepared recovery (P1, шаг 1.5).
+- Writer: `updateC2HistoryOptions` (refresh той же записи, id
+  сохраняется, record count не растёт; компенсации без изменений) + НОВЫЙ
+  `completeExactPreparedC2Slot` (journal-only, changedSystemState=false).
+- Option policies на ModuleArguments+PamAuthUpdate идут через coordinator;
+  иначе classic path. Wiring в `main_function.cpp` без изменений.
 
 ## ReadOnly lift / wiring (без изменений)
 
-- `passwordTopologyRuntimeMutable` = true только Debian 12 / Ubuntu 24.04;
-  Debian 13 / Ubuntu 26.04 / ALT — ReadOnly.
+- `passwordTopologyRuntimeMutable` = true только Debian 12 / Ubuntu 24.04.
 
 ## Validation (фактически выполнено)
 
-- Full build `build-pwhistory-options` (ubuntu-24.04): EXIT=0.
-- Full CTest: **107/107 PASS** (единственный env-зависимый skip:
-  `command_hash_batch_tests`).
-- Новые unit-тесты: writer W-U1..U7 + W-F1/W-F3 (option update lifecycle);
-  executor M9–M17 (option change via transition: in-place update, no
-  pam-auth-update, variant switch, idempotence, drift fail-closed, unowned
-  fail-closed); wiring `jointDesiredStateReaderOptions` (reader + evidence
-  gate + provider-config empty options).
-- **Real Docker gates — все зелёные:**
-  - `pam_pwhistory_options_gate.sh` — **PASS debian-12** и **PASS
-    ubuntu-24.04** (O1–O6, включая функциональное доказательство
-    enforce_for_root: root reuse rejected на ОБОИХ дистрибутивах).
-  - `pam_c2_gate.sh` (debian-12) — PASS (нет регрессии от смены сигнатуры
-    драйвера).
-  - `pam_c2_wiring_gate.sh` (debian-12) — PASS W1–W9.
-- `git diff --check` — clean; `bash -n` gate-скрипта — OK.
-
-## Gate-уроки (важно для будущих real-gate сценариев)
-
-1. Новый gate-скрипт ОБЯЗАН копировать production pam-configs профили
-   (`packaging/deb/pam-configs/fic-*-hook`) в `/usr/share/pam-configs/` —
-   без них `pam-auth-update --enable` молча не меняет selection, и drift
-   gate корректно рвёт attach. (Уже встроено в скрипт.)
-2. Тестовые пароли НЕ должны содержать алфавитных последовательностей и
-   систематических паттернов: stock pwquality при user-run отклоняет
-   ("too simplistic/systematic", retry=3 → PAM_MAXTRIES), при root-run —
-   только предупреждает. Также избегать `$` в паролях (ломается на слоях
-   shell-экранирования su/env).
-3. Planner-семантика: СВЕЖИЙ history attach из no-FIC-topology идёт
-   СРАЗУ в consumer-вариант (ForeignQualityPlusFicHistory); initial-вариант
-   достигается только variant switch при release quality. opasswd window:
-   запись старого пароля происходит при каждой успешной смене; при
-   remember=N граничный reuse «выпадает» через N записей ПОСЛЕ текущей.
-4. pam_pwhistory на Ubuntu 24.04 в gate-окружении тоже несёт
-   module-argument опции в FIC слотах и функционально исполняет
-   enforce_for_root — фактическое поведение шире прежнего предположения
-   «Ubuntu = только pwhistory.conf»; координатор рендерит опции на обеих
-   платформах (подтверждено гейтом).
+- Full build `build-step6-followup` (debian-12, BUILD_TESTING=ON): EXIT=0.
+- Full CTest: **107/107 PASS** (env-skip `command_hash_batch_tests`).
+- Новые regression-тесты: executor `F6_optionRetryPreparedCompletion`
+  (fault → exact Prepared crash state → retry ЧЕРЕЗ executor → completion,
+  same id, no extra record, no pam-auth-update) +
+  `F6c_foreignSelectedBindingStillFailsClosed`; wiring
+  `jointOptionRetryPreparedCompletion` (координатор,
+  `applyJointRequestedState`) + `jointRestartRecoveryPreparedCompletion`
+  (reconstruction journal+coordinator из persistent state);
+  `jointDesiredStateReaderOptions` P3a/P3b/P3c;
+  `optionEvidenceSupportContract`; `optionPolicyRoutingMatchesProfileMode`;
+  PlatformProfileTests — moduleArgumentSupport пиннинг.
+- `git diff --check` — clean.
+- Real Docker gates (Step 6 follow-up):
+  - `pam_pwhistory_options_gate.sh` debian-12 — PASS (production wiring);
+  - `pam_c2_gate.sh` debian-12 — PASS;
+  - `pam_c2_wiring_gate.sh` debian-12 — PASS;
+  - `pam_pwhistory_options_gate.sh` ubuntu-24.04 — PASS (capability
+    evidence probe, НЕ production wiring).
 
 ## Remaining
 
-1. Опционально: явные renderer-тесты M1–M8 coverage-проверка, M19
-   rollback-option тест, F2/F4/F5 аналоги для update-пути.
+1. Опционально: renderer-тесты M1–M8 coverage, M19 rollback-option тест,
+   F2/F4/F5 аналоги update-пути, Debian 13 / Ubuntu 26.04 gates
+   (платформы ReadOnly — низкий риск).
 2. Не коммитить без явного запроса.

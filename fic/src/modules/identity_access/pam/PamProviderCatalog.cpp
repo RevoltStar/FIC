@@ -77,6 +77,23 @@ fic::platform::PamPolicySupport pamPolicySupport(
     }
     if (capability->topology ==
             fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+        // Step 6 follow-up: per-option module-argument evidence. On a
+        // module-arguments history capability an option is
+        // production-mutable ONLY when the platform profile evidences that
+        // exact argument; the capability-wide ModuleArguments mode is
+        // never sufficient for both options.
+        if (capability->capability == Capability::PasswordHistory &&
+            capability->configurationMode ==
+                fic::platform::PamCapabilityConfigurationMode::
+                    ModuleArguments) {
+            const bool evidence =
+                feature == Feature::PasswordHistoryDepth
+                ? capability->moduleArgumentSupport.pwhistoryRemember
+                : capability->moduleArgumentSupport.pwhistoryEnforceForRoot;
+            if (!evidence) {
+                return fic::platform::PamPolicySupport::ReadOnly;
+            }
+        }
         return capability->capability == Capability::AuthenticationLockout
             ? fic::platform::PamPolicySupport::RequiresTopologyActivation
             : (platform.passwordTopologyRuntimeMutable &&

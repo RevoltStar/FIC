@@ -99,6 +99,13 @@ public:
         return lastResult_;
     }
 
+    // Test-only deterministic seam: inject a journal completion failure
+    // into the underlying executor's history slot writer (the same seam
+    // the executor exposes; used by the coordinator-level regression of
+    // the option-update completion retry).
+    void setHistoryJournalCompletionFaultHookForTests(
+        PamManagedPasswordSlotWriter::JournalCompletionFaultHook hook);
+
     // Production wiring: coordinator over the daemon mutation journal
     // (DaemonMutationJournal) and the platform executable resolver with
     // the production desired-state reader (joint Q/H intent + managed

@@ -94,6 +94,20 @@ bool readJointPasswordDesiredState(
         return true;
     }
 
+    // Step 6 follow-up (P3): the pwhistoryRemember evidence flag is the
+    // mandatory gate of the module-arguments remember rendering. Without
+    // the platform evidence the reader must NEVER silently render a
+    // default or configured remember=N token (the platform profile itself
+    // asserts the absence of the supporting evidence), so the whole
+    // module-arguments desired state fails closed.
+    if (!historyCapability->moduleArgumentSupport.pwhistoryRemember) {
+        error = "the platform profile does not evidence the pam_pwhistory "
+                "`remember` module-argument support for the "
+                "module-arguments configuration mode: the joint password "
+                "desired state is unknown (fail closed)";
+        return false;
+    }
+
     // remember=N. An unconfigured depth uses the explicit POLICY default
     // (kPasswordHistoryDepthDefault — the same value the policy type
     // reports as effective); a configured value must satisfy the existing
@@ -211,6 +225,12 @@ bool PamPasswordTopologyCoordinator::applyJointRequestedState(
         return false;
     }
     return transition(requested, error);
+}
+
+void PamPasswordTopologyCoordinator::
+    setHistoryJournalCompletionFaultHookForTests(
+        PamManagedPasswordSlotWriter::JournalCompletionFaultHook hook) {
+    executor_.setHistoryJournalCompletionFaultHookForTests(std::move(hook));
 }
 
 std::unique_ptr<PamPasswordTopologyCoordinator>

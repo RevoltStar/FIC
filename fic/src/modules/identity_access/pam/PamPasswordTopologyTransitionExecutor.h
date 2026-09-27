@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -154,6 +155,32 @@ public:
         PamPasswordTransitionResult& result, std::string& error);
 
 private:
+    // Step 6 follow-up (P1): classify the ONE recoverable pre-planner
+    // state — a history identity physically selected, its slot canonical
+    // Active bound to the exact Prepared record of the domain (the
+    // option-update completion failure crash state), the sibling history
+    // identity fully neutral and the quality identity not carrying a
+    // Prepared binding. Returns the recoverable role, or nullopt when the
+    // snapshot is not this exact state (the normal fail-closed path then
+    // applies unchanged). This is a lifecycle recovery binding, NEVER
+    // ownership.
+    std::optional<ManagedPasswordSlotRole>
+    classifyExactPreparedSelectedHistory(
+        const PamPasswordTopologySnapshot& snapshot) const;
+
+    // Step 6 follow-up (P1): when the fresh snapshot IS the exact
+    // selected+Active+Prepared option-update crash state, complete its
+    // journal lifecycle (Prepared -> Applied) through the writer's exact
+    // role-bound proof, then re-inspect and require the normal owned
+    // coherent state. Runs BEFORE requireUsableCurrentState/planner and
+    // NEVER compensates: a completion failure leaves the exact recoverable
+    // state intact for the next apply. Topology-neutral: no
+    // pam-auth-update, no slot rewrite, no option changes here (option
+    // reconciliation stays the post-plan phase).
+    bool recoverExactPreparedSelectedHistoryIfNeeded(
+        PamPasswordTopologySnapshot& snapshot,
+        PamPasswordTransitionResult& result, std::string& error);
+
     struct ActionAttempt {
         PamPasswordPlanActionKind kind =
             PamPasswordPlanActionKind::AttachFicQuality;

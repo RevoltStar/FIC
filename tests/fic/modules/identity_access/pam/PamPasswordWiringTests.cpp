@@ -8,6 +8,7 @@
 #include "modules/identity_access/pam/PamManagedPasswordSlots.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "modules/identity_access/pam/PamPasswordTopologyState.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.h"
@@ -18,6 +19,7 @@
 #include <fic/core/process/ProcessExecutor.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -264,6 +266,9 @@ private:
 struct WiringEnvironment {
     TemporaryDirectory tree;
     FakeNativeMutator mutator{tree};
+    // Managed history depth served by the fixture desired-state reader
+    // (read at call time, so scenarios can change it between applies).
+    unsigned optionDepth = 3;
     fic::platform::PlatformExecutableResolver resolver{
         fic::platform::PlatformExecutables{}};
     std::unique_ptr<PamPasswordTopologyCoordinator> coordinator;
@@ -298,8 +303,8 @@ struct WiringEnvironment {
         options.identityConfigDirectory = tree.conf();
         // Step 6 fixture reader: the joint intent comes from the test
         // config; the managed history options stay at the legacy test
-        // fixture (remember=3, no root enforcement) unless a scenario
-        // overrides the reader.
+        // fixture depth (remember=N, no root enforcement) unless a
+        // scenario changes optionDepth.
         options.desiredStateReader =
             [this](PamPasswordRequestedState& requested,
                    std::string& readerError) {
@@ -308,7 +313,7 @@ struct WiringEnvironment {
                     return false;
                 }
                 requested.historyOptions = ManagedPwhistorySlotOptions{
-                    std::optional<unsigned>(3), false};
+                    std::optional<unsigned>(optionDepth), false};
                 return true;
             };
         options.executorOptions.runner =
@@ -837,6 +842,10 @@ void testPolicyLayerUsesJointIntent() {
          fic::platform::PamTopologyStrategyKind::PamAuthUpdate, {},
          std::nullopt, fic::platform::PamIdentitySubjectScope::AllPamSubjects,
          fic::platform::PamCapabilityConfigurationMode::ModuleArguments}};
+    // Step 6 follow-up (P3): the ModuleArguments test platform carries the
+    // full per-option evidence (the production reader fail-closes on a
+    // remember rendering without it).
+    platform.capabilities[1].moduleArgumentSupport = {true, true};
     platform.passwordTopologyRuntimeMutable = true;
     PamCapabilityActivationPolicyOptions options;
     const fic::platform::PamPlatformConfig readerPlatform = platform;
@@ -879,6 +888,118 @@ void testPolicyLayerUsesJointIntent() {
     require(qualityPolicy.apply(), "idempotent policy-layer apply failed");
     require(env.mutator.invocations.size() == invocations,
         "policy-layer idempotent reapply must not mutate");
+}
+
+// ---- Step 6 follow-up (P1): coordinator-level retry of the option-update
+// completion failure. The production daemon goes through
+// PamPasswordTopologyCoordinator::applyJointRequestedState(), so the
+// recovery of the exact selected+Active+Prepared crash state MUST work at
+// this layer, not only at the raw writer/executor layer.
+
+void testJointOptionRetryPreparedCompletion() {
+    WiringEnvironment env;
+    // 1. Normal joint activation (Q + history consumer): selected + Active
+    // + Applied, remember=3.
+    env.setIntent(true, true);
+    env.applyOk();
+    const auto before = env.inspect();
+    require(before.selections.ficHistorySelected &&
+            before.ownership.ficHistoryOwned,
+        "joint retry: normal owned activation expected");
+    const std::uint64_t appliedId = before.historySlotMutationId;
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+    const std::size_t recordCount = env.journal().records().size();
+
+    // 2./3. remember=7 through the coordinator with an injected journal
+    // completion failure AFTER the durable slot write.
+    env.optionDepth = 7;
+    env.coordinator->setHistoryJournalCompletionFaultHookForTests(
+        [] { return false; });
+    env.applyFail("joint retry: the completion failure must fail the apply");
+    const auto crash = env.inspect();
+    require(crash.selections.ficHistorySelected,
+        "joint retry: the identity stays selected");
+    require(crash.ownership.ficHistoryPrepared &&
+                !crash.ownership.ficHistoryOwned,
+        "joint retry: the exact Prepared binding stays");
+    require(crash.historySlotMutationId == appliedId,
+        "joint retry: same mutation id (journal refresh)");
+    require(env.journal().records().size() == recordCount,
+        "joint retry: no extra journal record");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "joint retry: no pam-auth-update call from the failed option update");
+    std::string expected;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+                appliedId,
+                ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+                expected, error),
+        "joint retry: render");
+    require(readFile(env.tree.pamd() / "fic-password-history") == expected,
+        "joint retry: the new option bytes stay durable");
+
+    // 4. Retry through the coordinator: the exact Prepared state is
+    // recovered and the joint apply succeeds with the same mutation id.
+    env.coordinator->setHistoryJournalCompletionFaultHookForTests(nullptr);
+    env.applyOk();
+    const auto after = env.inspect();
+    require(after.selections.ficHistorySelected &&
+            after.ownership.ficHistoryOwned,
+        "joint retry: normal ownership after recovery");
+    require(after.historySlotMutationId == appliedId,
+        "joint retry: the exact same mutation id is preserved");
+    require(env.journal().records().size() == recordCount,
+        "joint retry: still no extra journal record");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "joint retry: no pam-auth-update call during recovery");
+    require(readFile(env.tree.pamd() / "fic-password-history") == expected,
+        "joint retry: remember=7 proven on the slot");
+}
+
+// ---- Step 6 follow-up (P1, restart semantics): the journal object and the
+// coordinator are reconstructed from the persistent state (daemon
+// crash/restart shape) and the SAME config is applied: the exact Prepared
+// option-update state is still recovered.
+
+void testJointRestartRecoveryPreparedCompletion() {
+    WiringEnvironment env;
+    env.setIntent(true, true);
+    env.applyOk();
+    const auto before = env.inspect();
+    require(before.ownership.ficHistoryOwned,
+        "restart recovery: normal owned activation expected");
+    const std::uint64_t appliedId = before.historySlotMutationId;
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+    const std::size_t recordCount = env.journal().records().size();
+
+    env.optionDepth = 7;
+    env.coordinator->setHistoryJournalCompletionFaultHookForTests(
+        [] { return false; });
+    env.applyFail("restart recovery: completion failure expected");
+    const auto crash = env.inspect();
+    require(crash.ownership.ficHistoryPrepared &&
+                !crash.ownership.ficHistoryOwned &&
+                crash.historySlotMutationId == appliedId,
+        "restart recovery: exact Prepared crash state expected");
+
+    // Process restart: drop and reconstruct the journal object from the
+    // SAME persistent path, then rebuild the coordinator over it.
+    fic::rollback::DaemonMutationJournal::instance().resetOverride();
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+        env.tree.path() / "mutation-journal.json");
+    env.rebuildCoordinator();
+    env.coordinator->setHistoryJournalCompletionFaultHookForTests(nullptr);
+    env.applyOk();
+    const auto after = env.inspect();
+    require(after.selections.ficHistorySelected &&
+            after.ownership.ficHistoryOwned &&
+            after.historySlotMutationId == appliedId,
+        "restart recovery: the reconstructed apply completed the exact "
+        "Prepared state with the same id");
+    require(env.journal().records().size() == recordCount,
+        "restart recovery: no extra journal record");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "restart recovery: no pam-auth-update call during recovery");
 }
 
 // ---- Support contract (ReadOnly lift) ----
@@ -961,6 +1082,117 @@ void testSupportContract() {
         "the flag must not lift non-PamAuthUpdate topologies");
 }
 
+// ---- Step 6 follow-up (P3/§20): per-option module-argument evidence gates
+// the support classification on ModuleArguments history platforms. The
+// capability-wide ModuleArguments mode is never sufficient for both
+// options: Depth follows pwhistoryRemember, EnforceForRoot follows
+// pwhistoryEnforceForRoot.
+
+void testOptionEvidenceSupportContract() {
+    fic::platform::PamPlatformConfig platform =
+        fic::platform::makeBuildPlatformProfile().pam;
+    auto historyIt = std::find_if(
+        platform.capabilities.begin(), platform.capabilities.end(),
+        [](const fic::platform::PamCapabilityConfig& capability) {
+            return capability.capability ==
+                fic::platform::PamCapability::PasswordHistory;
+        });
+    require(historyIt != platform.capabilities.end(),
+        "option evidence contract: history capability expected");
+    fic::platform::PamCapabilityConfig& history = *historyIt;
+    history.topology = fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+    history.configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
+    const bool mutableDomain = platform.passwordTopologyRuntimeMutable;
+    const auto mutableSupport =
+        mutableDomain
+        ? fic::platform::PamPolicySupport::RequiresTopologyActivation
+        : fic::platform::PamPolicySupport::ReadOnly;
+
+    history.moduleArgumentSupport = {false, true};
+    require(fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordHistoryDepth) ==
+            fic::platform::PamPolicySupport::ReadOnly,
+        "depth must be ReadOnly without the pwhistoryRemember evidence");
+    require(fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot) ==
+            mutableSupport,
+        "enforce_for_root must follow its own evidence flag");
+
+    history.moduleArgumentSupport = {true, false};
+    require(fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordHistoryDepth) ==
+            mutableSupport,
+        "depth must follow its own evidence flag");
+    require(fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot) ==
+            fic::platform::PamPolicySupport::ReadOnly,
+        "enforce_for_root must be ReadOnly without its evidence flag");
+
+    history.moduleArgumentSupport = {true, true};
+    require(fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordHistoryDepth) ==
+            mutableSupport,
+        "depth mutable with the full evidence");
+    require(fic::identity::pam::pamPolicySupport(
+                platform,
+                fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot) ==
+            mutableSupport,
+        "enforce_for_root mutable with the full evidence");
+}
+
+// ---- Step 6 follow-up (P2, Variant A): the option policies route through
+// the C2 joint coordinator ONLY on ModuleArguments platforms. On
+// provider-config-file production profiles (Ubuntu 24.04) the option
+// policies MUST keep the classic path, and the profile must carry no
+// module-argument evidence.
+
+class HistoryOptionRoutingProbe final
+    : public PamPasswordHistoryOptionPolicy {
+public:
+    explicit HistoryOptionRoutingProbe(
+        fic::platform::PamPlatformConfig config)
+        : PamPasswordHistoryOptionPolicy(
+              std::move(config),
+              fic::platform::PamPolicyFeature::PasswordHistoryDepth) {}
+    bool c2RoutingProbe() const { return c2ManagedHistoryDomain(); }
+};
+
+void testOptionPolicyRoutingMatchesProfileMode() {
+    const fic::platform::PlatformProfile profile =
+        fic::platform::makeBuildPlatformProfile();
+    const auto* history = fic::identity::pam::capabilityConfig(
+        profile.pam, fic::platform::PamCapability::PasswordHistory);
+    require(history != nullptr,
+        "routing contract: history capability expected");
+    HistoryOptionRoutingProbe probe(profile.pam);
+    require(probe.c2RoutingProbe() ==
+                (history->configurationMode ==
+                    fic::platform::PamCapabilityConfigurationMode::
+                        ModuleArguments),
+        "the option-policy routing must match the profile configuration "
+        "mode");
+    if (profile.id == "ubuntu-24.04") {
+        require(!probe.c2RoutingProbe(),
+            "Ubuntu 24.04 production option policies must keep the classic "
+            "path (Variant A: the pwhistory options gate on Ubuntu is a "
+            "capability evidence probe, NOT production ModuleArguments "
+            "wiring)");
+        require(!history->moduleArgumentSupport.pwhistoryRemember &&
+                    !history->moduleArgumentSupport.pwhistoryEnforceForRoot,
+            "Ubuntu 24.04 must carry no module-argument evidence");
+    } else if (profile.id == "debian-12") {
+        require(probe.c2RoutingProbe(),
+            "Debian 12 production option policies must route through the "
+            "C2 joint coordinator");
+    }
+}
+
 } // namespace
 
 // ---- Step 6: joint desired-state reader (Q/H intent + history options) ----
@@ -1006,8 +1238,37 @@ void testJointDesiredStateReaderOptions() {
         writeFile(confPath, content);
     };
 
-    // Module-arguments platform: options from the SAME config snapshot;
-    // unconfigured depth uses the explicit policy default.
+    // Module-arguments platform WITHOUT the pwhistoryRemember evidence
+    // (P3a): the reader fails closed EVEN for an unconfigured depth — it
+    // must never silently render a remember token the platform profile
+    // does not evidence.
+    writeConfig(
+        "enable_password_quality.status=DISABLE\n"
+        "enable_password_history.status=ENABLE\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(!readJointPasswordDesiredState(
+                    requested, moduleArgumentsPlatform, error, tree.path()),
+            "reader: un-evidenced remember must fail closed even for the "
+            "default depth");
+    }
+    // P3a (configured): a configured depth without the remember evidence
+    // fails closed as well.
+    writeConfig(
+        "enable_password_history.status=ENABLE\n"
+        "password_history_depth.value=7\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(!readJointPasswordDesiredState(
+                    requested, moduleArgumentsPlatform, error, tree.path()),
+            "reader: a configured depth without the remember evidence must "
+            "fail closed");
+    }
+    // P3c: evidenced module-arguments platform — options from the SAME
+    // config snapshot; an unconfigured depth uses the explicit policy
+    // default.
     writeConfig(
         "enable_password_quality.status=DISABLE\n"
         "enable_password_history.status=ENABLE\n");
@@ -1015,7 +1276,7 @@ void testJointDesiredStateReaderOptions() {
         PamPasswordRequestedState requested;
         std::string error;
         require(readJointPasswordDesiredState(
-                    requested, moduleArgumentsPlatform, error, tree.path()),
+                    requested, evidencedPlatform, error, tree.path()),
             "reader: baseline read failed: " + error);
         require(requested.qualityRequested == false &&
                 requested.historyRequested == true,
@@ -1026,21 +1287,13 @@ void testJointDesiredStateReaderOptions() {
         require(!requested.historyOptions.enforceForRoot,
             "reader: unconfigured enforce token stays absent");
     }
-    // Configured depth is honored; enforce_for_root=yes WITHOUT the
-    // platform evidence flag fails closed.
+    // P3c (configured): the configured depth is honored and the evidenced
+    // enforce token is rendered.
     writeConfig(
         "enable_password_quality.status=ENABLE\n"
         "enable_password_history.status=ENABLE\n"
         "password_history_depth.value=7\n"
         "password_history_enforce_for_root.value=yes\n");
-    {
-        PamPasswordRequestedState requested;
-        std::string error;
-        require(!readJointPasswordDesiredState(
-                    requested, moduleArgumentsPlatform, error, tree.path()),
-            "reader: enforce token without platform evidence must fail "
-            "closed");
-    }
     {
         PamPasswordRequestedState requested;
         std::string error;
@@ -1051,6 +1304,21 @@ void testJointDesiredStateReaderOptions() {
             "reader: configured depth honored");
         require(requested.historyOptions.enforceForRoot,
             "reader: enforce token present with platform evidence");
+    }
+    // P3b: remember evidenced but enforce_for_root NOT evidenced — a
+    // configured enforce=yes fails closed (per-option evidence gates).
+    {
+        auto halfEvidenced = moduleArgumentsPlatform;
+        halfEvidenced.capabilities[0].moduleArgumentSupport = {true, false};
+        writeConfig(
+            "enable_password_history.status=ENABLE\n"
+            "password_history_enforce_for_root.value=yes\n");
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(!readJointPasswordDesiredState(
+                    requested, halfEvidenced, error, tree.path()),
+            "reader: enforce token without the enforce evidence must fail "
+            "closed");
     }
     // no -> token absent.
     writeConfig(
@@ -1067,7 +1335,8 @@ void testJointDesiredStateReaderOptions() {
         require(!requested.historyOptions.enforceForRoot,
             "reader: no means the bare token is absent");
     }
-    // Malformed depth fails closed.
+    // Malformed depth fails closed (parser gate, on the evidenced
+    // platform so the remember evidence gate is not the reason).
     writeConfig(
         "enable_password_history.status=ENABLE\n"
         "password_history_depth.value=51\n");
@@ -1075,7 +1344,7 @@ void testJointDesiredStateReaderOptions() {
         PamPasswordRequestedState requested;
         std::string error;
         require(!readJointPasswordDesiredState(
-                    requested, moduleArgumentsPlatform, error, tree.path()),
+                    requested, evidencedPlatform, error, tree.path()),
             "reader: out-of-range depth must fail closed");
     }
     writeConfig(
@@ -1085,7 +1354,7 @@ void testJointDesiredStateReaderOptions() {
         PamPasswordRequestedState requested;
         std::string error;
         require(!readJointPasswordDesiredState(
-                    requested, moduleArgumentsPlatform, error, tree.path()),
+                    requested, evidencedPlatform, error, tree.path()),
             "reader: malformed depth must fail closed");
     }
     // Malformed enforce value fails closed.
@@ -1096,7 +1365,7 @@ void testJointDesiredStateReaderOptions() {
         PamPasswordRequestedState requested;
         std::string error;
         require(!readJointPasswordDesiredState(
-                    requested, moduleArgumentsPlatform, error, tree.path()),
+                    requested, evidencedPlatform, error, tree.path()),
             "reader: malformed enforce value must fail closed");
     }
     // Provider-config-file platform: slot bodies carry no optional
@@ -1148,6 +1417,13 @@ int main() {
         {"policyLayerJointIntent", testPolicyLayerUsesJointIntent},
         {"jointDesiredStateReaderOptions",
             testJointDesiredStateReaderOptions},
+        {"jointOptionRetryPreparedCompletion",
+            testJointOptionRetryPreparedCompletion},
+        {"jointRestartRecoveryPreparedCompletion",
+            testJointRestartRecoveryPreparedCompletion},
+        {"optionEvidenceSupportContract", testOptionEvidenceSupportContract},
+        {"optionPolicyRoutingMatchesProfileMode",
+            testOptionPolicyRoutingMatchesProfileMode},
         {"supportContract", testSupportContract},
     };
 

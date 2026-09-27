@@ -1345,6 +1345,146 @@ void testM17_unownedActiveSlotFailsClosed() {
         "M17: the unowned body is never rewritten");
 }
 
+// ---- Step 6 follow-up (P1): the exact selected+Active+Prepared
+// option-update completion-failure crash state is recovered by the NEXT
+// executor transition (pre-planner lifecycle completion), never by
+// compensating the slot away and never through a planner ownership
+// decision.
+
+void testF6_optionRetryPreparedCompletion() {
+    TestEnvironment env;
+    // 1. Normal HistoryNormal activation (producer exists -> consumer
+    // variant): selected + canonical Active + Applied, remember=3.
+    env.runOk(true, true);
+    const auto before = env.inspect();
+    require(before.selections.ficHistorySelected &&
+            before.historySlotState == ManagedPasswordSlotState::Active &&
+            before.ownership.ficHistoryOwned,
+        "F6: normal owned consumer activation expected");
+    const std::uint64_t appliedId = before.historySlotMutationId;
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+    const std::size_t recordCount = env.journal.records().size();
+
+    // 2./3. Option update remember=7 with a journal completion failure
+    // injected AFTER the durable slot write.
+    env.executor->setHistoryJournalCompletionFaultHookForTests(
+        [] { return false; });
+    std::string error;
+    PamPasswordTransitionResult failed;
+    require(!env.executor->transition(
+                true, true,
+                ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+                failed, error),
+        "F6: the completion failure must fail the transition");
+    require(failed.changedSystemState,
+        "F6: the durable option rewrite is honestly accounted");
+    // 4. The exact recoverable crash state.
+    const auto crash = env.inspect();
+    require(crash.selections.ficHistorySelected,
+        "F6: the identity stays selected");
+    require(crash.historySlotState == ManagedPasswordSlotState::Active &&
+                crash.historyInitialSlotState ==
+                    ManagedPasswordSlotState::Neutral,
+        "F6: canonical Active slot + neutral sibling");
+    require(crash.ownership.ficHistoryPrepared &&
+                !crash.ownership.ficHistoryOwned,
+        "F6: the exact Prepared binding stays (NOT ownership)");
+    const std::uint64_t outstandingId = crash.historySlotMutationId;
+    require(outstandingId == appliedId,
+        "F6: the journal record is refreshed, same mutation id");
+    require(env.journal.records().size() == recordCount,
+        "F6: no extra journal record");
+    const auto recordStatus = [&](std::uint64_t id) {
+        for (const auto& candidate : env.journal.records()) {
+            if (candidate.id == id) {
+                return candidate.status;
+            }
+        }
+        throw std::runtime_error("F6: no journal record for the id");
+    };
+    require(recordStatus(outstandingId) == MutationStatus::Prepared,
+        "F6: the record stays Prepared");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "F6: no pam-auth-update call from the failed option update");
+    std::string expected;
+    require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+                outstandingId,
+                ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+                expected, error),
+        "F6: render");
+    require(readFile(executorHistoryNormalPath(env)) == expected,
+        "F6: the new option bytes stay durable");
+
+    // 5./6. Remove the fault and retry THROUGH the executor (not the
+    // writer): the exact Prepared binding is completed pre-planner, then
+    // the normal flow proves the desired state.
+    env.executor->setHistoryJournalCompletionFaultHookForTests(nullptr);
+    PamPasswordTransitionResult retry;
+    require(env.executor->transition(
+                true, true,
+                ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+                retry, error),
+        "F6: the recovery retry failed: " + error);
+    // 7. Expected end state.
+    require(retry.success && !retry.changedSystemState,
+        "F6: journal-only recovery changes no physical bytes");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "F6: no pam-auth-update call during recovery");
+    const auto after = env.inspect();
+    require(after.selections.ficHistorySelected &&
+            after.ownership.ficHistoryOwned,
+        "F6: normal ownership proven after recovery");
+    require(after.historySlotState == ManagedPasswordSlotState::Active &&
+                after.historyInitialSlotState ==
+                    ManagedPasswordSlotState::Neutral,
+        "F6: topology unchanged");
+    require(after.historySlotMutationId == outstandingId,
+        "F6: the exact same mutation id is preserved");
+    require(env.journal.records().size() == recordCount,
+        "F6: still no extra journal record");
+    require(recordStatus(outstandingId) == MutationStatus::Applied,
+        "F6: the exact Prepared record was completed to Applied");
+    require(readFile(executorHistoryNormalPath(env)) == expected,
+        "F6: remember=7 proven on the slot");
+}
+
+// O-F6 (Step 6 follow-up): NON-exact selected Prepared-ish states are NOT
+// recovered. A selected canonical Active slot whose marker id has no
+// journal record (foreign binding) stays fail-closed at the
+// selected-but-unowned gate — recovery never adopts or rewrites it.
+void testF6c_foreignSelectedBindingStillFailsClosed() {
+    TestEnvironment env;
+    env.runOk(true, true);
+    env.executor->setHistoryJournalCompletionFaultHookForTests(
+        [] { return false; });
+    std::string error;
+    PamPasswordTransitionResult failed;
+    require(!env.executor->transition(
+                true, true,
+                ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+                failed, error),
+        "O-F6: setup completion failure expected");
+    // Replace the exact binding with a foreign one (wrong id, no record).
+    std::string foreign;
+    require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+                999,
+                ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+                foreign, error),
+        "O-F6: render");
+    writeFile(executorHistoryNormalPath(env), foreign);
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+    PamPasswordTransitionResult result;
+    require(!env.executor->transition(
+                true, true,
+                ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+                result, error),
+        "O-F6: a selected non-exact binding must stay fail closed");
+    require(readFile(executorHistoryNormalPath(env)) == foreign,
+        "O-F6: the foreign body is never rewritten");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "O-F6: no native call");
+}
+
 int main() {
     struct NamedTest {
         const char* name;
@@ -1412,6 +1552,10 @@ int main() {
             testM16_malformedOwnedSlotFailsClosed},
         {"M17_unownedActiveSlotFailsClosed",
             testM17_unownedActiveSlotFailsClosed},
+        {"F6_optionRetryPreparedCompletion",
+            testF6_optionRetryPreparedCompletion},
+        {"F6c_foreignSelectedBindingStillFailsClosed",
+            testF6c_foreignSelectedBindingStillFailsClosed},
     };
     for (const NamedTest& test : tests) {
         try {

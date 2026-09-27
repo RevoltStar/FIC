@@ -1120,6 +1120,48 @@ configuration intent при следующем attach (новый attach все�
 pwhistory.conf`, `common-password`, stock profile, чужие строки
 `pam_pwhistory.so`) option writer и его rollback НИКОГДА не изменяют.
 
+**Applied = ownership; Prepared = exact lifecycle recovery binding.** Для
+option update (и только для него) это различие имеет самостоятельную
+семантику:
+
+* journal-запись в состоянии Applied — это ownership: слот можно
+  ре-рендерить, деактивировать, доказывать владельцем в planner'е;
+* journal-запись в состоянии Prepared (exact binding: canonical Active
+  слот + marker id = id записи + role-bound provenance) — это НЕ владение
+  и НЕ авторизация detach. Prepared никогда не авторизует отсоединение
+  identity; он авторизует ТОЛЬКО точное завершение lifecycle
+  (`Prepared → Applied`) — recovery.
+
+Runtime recovery (Step 6 follow-up, P1): сбой journal completion после
+durable записи новых опций оставляет состояние *selected + canonical Active
++ exact Prepared*. Executor классифицирует это состояние ДО planner'а
+(`recoverExactPreparedSelectedHistoryIfNeeded`) и завершает lifecycle через
+writer-примитив `completeExactPreparedC2Slot` (role-bound proof + complete,
+без перезаписи тела слота, без pam-auth-update, тот же mutation id, без
+новых записей), затем требует свежее нормальное owned-состояние и только
+после этого продолжает planner/transition. Любой другой selected-but-unowned
+state (нет записи, чужой id, чужой role payload, malformed Active body,
+RollbackFailed) по-прежнему fail closed ДО деструктивных мутаций. Сбой
+самого completion оставляет состояние exact recoverable Prepared без
+изменений topology — следующий apply может повторить recovery. Качество
+(FicQuality) аналогичного runtime-состояния не имеет: attach завершает
+journal до native selection, а сбой completion компенсируется (neutralize +
+discard) до выбора профиля; unselected Prepared — зона package-release
+recovery.
+
+Platform-семантика (P2, Variant A): ModuleArguments option writer —
+production wiring ТОЛЬКО Debian 12 (profile:
+`configurationMode=ModuleArguments`, evidence `pwhistoryRemember` +
+`pwhistoryEnforceForRoot`). Ubuntu 24.04 остаётся на
+`ProviderConfigFile` (`/etc/security/pwhistory.conf`, classic option-policy
+path): real Ubuntu gate `pam_pwhistory_options_gate.sh` — это CAPABILITY
+EVIDENCE PROBE модуля (низкоуровневая acceptance), а не production wiring
+gate; production wiring gate обязателен только для Debian 12.
+`pwhistoryRemember`/`pwhistoryEnforceForRoot` — обязательные per-option
+evidence gates: без соответствующего флага reader'а desired-state fail
+closed (в том числе на default depth), а support classification держит
+опцию ReadOnly.
+
 Package-release (prerm) игнорирует желаемые значения опций: он освобождает
 весь домен, финальные слоты — Neutral без pwhistory опций; proof владения
 не зависит от конкретных `remember`/`enforce_for_root` значений.

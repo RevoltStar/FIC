@@ -2,7 +2,24 @@
 # Step 6 REAL functional gate: managed pam_pwhistory module-argument
 # options (remember=N, enforce_for_root) through the production C2
 # transition path (pam-c2 gate driver) inside a DISPOSABLE container as
-# root. Proves:
+# root.
+#
+# Platform semantics (Step 6 follow-up, P2 — Variant A):
+#   - Debian 12: the PRODUCTION platform for the ModuleArguments option
+#     wiring. Its profile sets configurationMode=ModuleArguments with
+#     pwhistoryRemember/pwhistoryEnforceForRoot evidence, so the gate
+#     results here double as production Step 6 wiring validation.
+#   - Ubuntu 24.04 (and any other distro run): this gate is a CAPABILITY
+#     EVIDENCE PROBE of the pam_pwhistory module binary only. The Ubuntu
+#     production profile deliberately KEEPS
+#     configurationMode=ProviderConfigFile with NO module-argument
+#     evidence: the low-level module accepting the options does NOT mean
+#     FIC renders module arguments on that platform, and this gate bypasses
+#     the production desired-state/policy wiring (it drives the executor
+#     directly). Do not treat a PASS here as "Ubuntu production uses
+#     ModuleArguments".
+#
+# Proves:
 #   O1  fresh H-only attach renders remember=N into the FIC-owned consumer
 #       slot (initial slot stays canonical Neutral);
 #   O2  the functional history-reuse window follows the configured depth;
@@ -333,7 +350,11 @@ inspect > "$EVID/final-inspect.txt" 2>&1
 cp "$EVID/pam-auth-update.log" "$EVID/" 2>/dev/null
 
 if [ "$FAILED" -eq 0 ]; then
-    verdict "PWHISTORY OPTIONS REAL GATE: PASS ($DISTRO_ID)"
+    if [ "$DISTRO_ID" = "debian-12" ]; then
+        verdict "PWHISTORY OPTIONS REAL GATE: PASS ($DISTRO_ID) — production ModuleArguments wiring validated"
+    else
+        verdict "PWHISTORY OPTIONS REAL GATE: PASS ($DISTRO_ID) — CAPABILITY EVIDENCE PROBE only (NOT production ModuleArguments wiring; production keeps the provider-config strategy)"
+    fi
 else
     verdict "PWHISTORY OPTIONS REAL GATE: FAIL ($DISTRO_ID)"
 fi

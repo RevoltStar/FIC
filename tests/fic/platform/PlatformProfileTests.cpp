@@ -427,6 +427,21 @@ void testSelectedProfile() {
                            history->configurationMode ==
                                fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile),
             "password-history capability composition is incorrect");
+    // Step 6 follow-up (P2, Variant A): module-argument evidence must
+    // EXACTLY match the configuration mode — ModuleArguments platforms
+    // carry the evidenced flags, provider-config-file platforms (Ubuntu
+    // 24.04 included) carry none. The Ubuntu pwhistory options gate
+    // results are a capability evidence probe, not production wiring.
+    require(history != nullptr &&
+                (legacyHistory
+                     ? history->moduleArgumentSupport.pwhistoryRemember &&
+                           history->moduleArgumentSupport
+                               .pwhistoryEnforceForRoot
+                     : !history->moduleArgumentSupport.pwhistoryRemember &&
+                           !history->moduleArgumentSupport
+                               .pwhistoryEnforceForRoot),
+            "password-history module-argument evidence must match the "
+            "configuration mode");
     const std::filesystem::path expectedLocalPamStack =
         profile.id == "alt-p11"
             ? std::filesystem::path("/etc/pam.d/system-auth-local-only")

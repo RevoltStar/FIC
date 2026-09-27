@@ -1768,6 +1768,113 @@ bool PamManagedPasswordSlotWriter::updateOwnedC2HistorySlotOptions(
     return true;
 }
 
+bool PamManagedPasswordSlotWriter::completeExactPreparedC2Slot(
+    ManagedPasswordSlotRole role,
+    PamManagedPasswordSlotActivationResult& result, std::string& error) {
+    result = {};
+    if (role != ManagedPasswordSlotRole::HistoryNormal &&
+        role != ManagedPasswordSlotRole::HistoryInitial) {
+        // Step 6 follow-up scope: the selected+Prepared runtime crash
+        // state is produced by the managed history option update (the
+        // quality identity has no option-update path; its attach
+        // completion failure is compensated before the native selection).
+        error = "the exact Prepared recovery primitive is defined for "
+                "history roles only";
+        return false;
+    }
+    if (!ensureJournalOperational(error)) {
+        return false;
+    }
+    const ManagedPasswordSlotSpec& spec = c2RoleSlot(role);
+    PamConfigFileSnapshot snapshot;
+    if (!captureSlot(spec, snapshot, error)) {
+        return false;
+    }
+    ManagedPasswordSlotInspection inspection;
+    if (!inspectSnapshot(spec, snapshot, inspection, error)) {
+        error = "managed " + std::string(spec.fileName) +
+            " slot Prepared recovery refused: the slot is not canonical "
+            "(fail closed): " + error;
+        return false;
+    }
+    if (inspection.state != ManagedPasswordSlotState::Active) {
+        error = "managed " + std::string(spec.fileName) +
+            " slot Prepared recovery requires a canonical Active slot "
+            "(fail closed)";
+        return false;
+    }
+    for (const fic::rollback::MutationRecord& candidate :
+         journal_.records()) {
+        if (candidate.id != inspection.mutationId) {
+            continue;
+        }
+        std::string metadataError;
+        if (!journalMetadataMatchesRole(candidate, role, metadataError)) {
+            error = "managed " + std::string(spec.fileName) +
+                " slot Prepared recovery refused: the physical marker id " +
+                std::to_string(inspection.mutationId) +
+                " does not prove this C2 identity: " + metadataError;
+            return false;
+        }
+        if (candidate.status == fic::rollback::MutationStatus::Applied) {
+            // Idempotence: the exact binding is already complete.
+            result.success = true;
+            result.ownershipProven = true;
+            result.mutationId = candidate.id;
+            error.clear();
+            return true;
+        }
+        if (candidate.status != fic::rollback::MutationStatus::Prepared) {
+            error = "managed " + std::string(spec.fileName) +
+                " slot is bound to journal mutation " +
+                std::to_string(candidate.id) + " with status " +
+                fic::rollback::mutationStatusToString(candidate.status) +
+                ": the exact Prepared recovery does not apply (fail closed)";
+            return false;
+        }
+        // No competing active record of the managed history domain (either
+        // history role, any other id) may coexist with the exact binding.
+        for (const fic::rollback::MutationRecord& other :
+             journal_.records()) {
+            if (other.id == candidate.id ||
+                (other.status != fic::rollback::MutationStatus::Prepared &&
+                 other.status != fic::rollback::MutationStatus::Applied)) {
+                continue;
+            }
+            std::string otherError;
+            if (journalMetadataMatchesRole(
+                    other, ManagedPasswordSlotRole::HistoryNormal,
+                    otherError) ||
+                journalMetadataMatchesRole(
+                    other, ManagedPasswordSlotRole::HistoryInitial,
+                    otherError)) {
+                error = "managed history domain carries a competing active "
+                        "journal record " +
+                    std::to_string(other.id) +
+                    "; the exact Prepared recovery fails closed";
+                return false;
+            }
+        }
+        if (!completePrepared(candidate.id, error)) {
+            // Journal-only completion failure: the exact recoverable state
+            // (canonical Active slot + Prepared record) stays intact and
+            // the next call may retry. No physical bytes were mutated by
+            // this call.
+            return false;
+        }
+        result.success = true;
+        result.ownershipProven = true;
+        result.mutationId = candidate.id;
+        error.clear();
+        return true;
+    }
+    error = "managed " + std::string(spec.fileName) +
+        " slot Prepared recovery refused: the physical marker id " +
+        std::to_string(inspection.mutationId) +
+        " has no matching journal record (fail closed)";
+    return false;
+}
+
 void PamManagedPasswordSlotWriter::compensateUpdateSnapshots(
     std::vector<PamConfigFileSnapshot>& snapshots,
     std::size_t attemptedCount, fic::rollback::MutationId id,

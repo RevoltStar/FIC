@@ -473,6 +473,32 @@ public:
         const ManagedPwhistorySlotOptions& options,
         PamManagedPasswordSlotActivationResult& result, std::string& error);
 
+    // Runtime crash-partial recovery primitive (Step 6 follow-up, P1):
+    // complete the journal lifecycle of ONE history identity whose slot is
+    // canonical Active and bound to the EXACT Prepared record of this
+    // domain and role (the state an option-update/activation completion
+    // failure leaves behind: new durable slot bytes + the refreshed
+    // Prepared record, selected by the caller). This is a lifecycle
+    // completion phase, NOT ownership and NOT an option reconcile: the
+    // physical slot bytes are never rewritten here and the desired options
+    // are never consulted. Proof requirements (fail closed otherwise):
+    //   - the slot is canonical Active (never Broken/Neutral/missing);
+    //   - the slot marker id matches a journal record of this policy
+    //     domain with the exact role-bound provenance payload (policy,
+    //     backend, resource, capability/topology, activation identifiers);
+    //   - that record is Prepared (an Applied record with the exact
+    //     binding is an idempotent no-op success — already complete);
+    //   - no competing ACTIVE record of the managed history domain exists
+    //     (either history role, any other id).
+    // Journal-only change: the Prepared -> Applied status commit does not
+    // touch physical disk bytes, so changedSystemState stays false (same
+    // accounting model as the crash-partial adoption in
+    // updateC2HistoryOptions). A completion failure propagates and leaves
+    // the exact recoverable state intact for the next call.
+    bool completeExactPreparedC2Slot(
+        ManagedPasswordSlotRole role,
+        PamManagedPasswordSlotActivationResult& result, std::string& error);
+
     // Journal-bound deactivation of ONE C2 identity slot (Active ->
     // Neutral): the slot must be canonical Active with a MatchingApplied
     // record whose payload carries the role-specific activation identifier
