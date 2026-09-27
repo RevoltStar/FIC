@@ -517,10 +517,10 @@ bool initPolicyRegistry(
     // ONE joint runtime topology domain driven by the IDENTITY_ACCESS
     // configuration intent through the C2 transition executor (validated
     // platforms only — the support lift is evidence-based).
-    activationOptions.passwordCoordinatorFactory = [&executables]() {
+    activationOptions.passwordCoordinatorFactory = [&executables, &platform]() {
         std::string coordinatorError;
         return fic::identity::pam::PamPasswordTopologyCoordinator::
-            makeProduction(executables, coordinatorError);
+            makeProduction(executables, platform, coordinatorError);
     };
     const auto registerPamActivationPolicy =
         [&](fic::platform::PamCapability capability,
@@ -593,12 +593,25 @@ bool initPolicyRegistry(
     registerPamPolicy(
         fic::platform::PamPolicyFeature::PasswdqcRetryCount,
         std::make_unique<PamPasswdqcRetryCountPolicy>(platform.pam));
+    // Step 6 wiring: the managed pwhistory option policies route through
+    // the SAME production joint coordinator on module-arguments platforms
+    // (the coordinator is the only writer of the managed history slot
+    // options); provider-config-file platforms keep the classic
+    // PamOptionPolicy path.
+    const auto passwordOptionCoordinatorFactory =
+        [&executables, &platform]()
+        -> std::unique_ptr<fic::identity::pam::PamPasswordTopologyCoordinator> {
+        std::string coordinatorError;
+        return fic::identity::pam::PamPasswordTopologyCoordinator::
+            makeProduction(executables, platform, coordinatorError);
+    };
     registerPamPolicy(fic::platform::PamPolicyFeature::PasswordHistoryDepth,
-        std::make_unique<PamPasswordHistoryDepthPolicy>(platform.pam));
+        std::make_unique<PamPasswordHistoryDepthPolicy>(
+            platform.pam, passwordOptionCoordinatorFactory));
     registerPamPolicy(
         fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot,
         std::make_unique<PamPasswordHistoryEnforceForRootPolicy>(
-            platform.pam));
+            platform.pam, passwordOptionCoordinatorFactory));
     if (platform.pam.passwordlessLoginControl.has_value()) {
         cafArr.push_back(std::make_unique<PamDisableNopasswdloginPolicy>(
             platform.pam, executables));

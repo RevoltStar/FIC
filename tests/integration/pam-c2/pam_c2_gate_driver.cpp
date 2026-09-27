@@ -175,8 +175,6 @@ int runExecutorCommand(const std::string& command, int argc, char** argv) {
     }
 
     PamPasswordTopologyExecutorOptions options;
-    options.historyOptions =
-        ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
     PamPasswordTopologyTransitionExecutor executor(
         journal, resolver, options, configDirectory, stateDirectory);
 
@@ -234,14 +232,27 @@ int runExecutorCommand(const std::string& command, int argc, char** argv) {
 
     if (command == "transition") {
         if (argc < 4) {
-            std::cerr << "transition requires <quality> <history>\n";
+            std::cerr << "transition requires <quality> <history> "
+                         "[remember] [enforce_for_root]\n";
             return 2;
         }
         const bool quality = std::string(argv[2]) == "1";
         const bool history = std::string(argv[3]) == "1";
+        // Step 6: managed pwhistory options are part of the requested
+        // state. Defaults keep the pre-Step-6 gate physical contract
+        // (remember=3, no enforce_for_root) when not overridden.
+        ManagedPwhistorySlotOptions historyOptions;
+        historyOptions.remember = 3;
+        if (argc >= 5) {
+            historyOptions.remember =
+                static_cast<unsigned>(std::stoul(argv[4]));
+        }
+        if (argc >= 6) {
+            historyOptions.enforceForRoot = std::string(argv[5]) == "1";
+        }
         PamPasswordTransitionResult result;
-        const bool success =
-            executor.transition(quality, history, result, error);
+        const bool success = executor.transition(
+            quality, history, historyOptions, result, error);
         std::cout << "success=" << (result.success ? 1 : 0) << "\n";
         std::cout << "changedSystemState="
                   << (result.changedSystemState ? 1 : 0) << "\n";

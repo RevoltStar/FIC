@@ -1080,19 +1080,33 @@ RollbackExecutorDeps productionRollbackDeps(
     // semantic source; the joint requested state comes from the
     // IDENTITY_ACCESS configuration intent.
     deps.pamPasswordTopologyTransition =
-        [&executables](bool qualityRequested, bool historyRequested,
+        [&executables, &platform](bool qualityRequested, bool historyRequested,
                        std::string& error) {
             PamRollbackOptions::JointTransitionOutcome outcome;
             std::unique_ptr<fic::identity::pam::PamPasswordTopologyCoordinator>
                 coordinator = fic::identity::pam::
                     PamPasswordTopologyCoordinator::makeProduction(
-                        executables, error);
+                        executables, platform, error);
             if (!coordinator) {
                 outcome.error = error;
                 return outcome;
             }
-            const fic::identity::pam::PamPasswordRequestedState requested{
-                qualityRequested, historyRequested};
+            // Step 6: the rollback target keeps the SURVIVING capability's
+            // current configuration intent INCLUDING the managed history
+            // options, so a rollback variant switch re-attaches the
+            // history slot rendered from the current configured options,
+            // never from a stale default.
+            fic::identity::pam::PamPasswordRequestedState requested;
+            if (!fic::identity::pam::readJointPasswordDesiredState(
+                    requested, platform.pam, error)) {
+                outcome.error =
+                    "joint password desired state (options included) is "
+                    "unknown: " +
+                    error;
+                return outcome;
+            }
+            requested.qualityRequested = qualityRequested;
+            requested.historyRequested = historyRequested;
             outcome.success = coordinator->transition(requested, error);
             outcome.changedSystemState =
                 coordinator->lastResult().changedSystemState;

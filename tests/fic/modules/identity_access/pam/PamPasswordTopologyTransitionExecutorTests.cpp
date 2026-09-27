@@ -338,8 +338,6 @@ struct TestEnvironment {
         require(journal.initializeOrLoad(journalError),
             "journal initialization failed: " + journalError);
         PamPasswordTopologyExecutorOptions options;
-        options.historyOptions =
-            ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
         options.runner =
             [this](const std::string& executable,
                 const std::vector<std::string>& arguments,
@@ -351,18 +349,46 @@ struct TestEnvironment {
                 journal, resolver, options, tree.pamd(), tree.state());
     }
 
+    // Legacy fixture options (tests only): remember=3 without root
+    // enforcement, the pre-Step-6 physical contract of these scenarios.
+    static ManagedPwhistorySlotOptions defaultHistoryOptions() {
+        return ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
+    }
+
     PamPasswordTransitionResult run(bool quality, bool history,
                                     std::string& error) {
+        return run(quality, history, defaultHistoryOptions(), error);
+    }
+
+    PamPasswordTransitionResult run(
+        bool quality, bool history,
+        const ManagedPwhistorySlotOptions& historyOptions,
+        std::string& error) {
         PamPasswordTransitionResult result;
-        require(!executor->transition(quality, history, result, error),
+        require(!executor->transition(quality, history, historyOptions,
+                    result, error),
             "transition unexpectedly succeeded: " + error);
         return result;
     }
 
+    PamPasswordTransitionResult run(
+        bool quality, bool history,
+        const ManagedPwhistorySlotOptions& historyOptions) {
+        std::string error;
+        return run(quality, history, historyOptions, error);
+    }
+
     PamPasswordTransitionResult runOk(bool quality, bool history) {
+        return runOk(quality, history, defaultHistoryOptions());
+    }
+
+    PamPasswordTransitionResult runOk(
+        bool quality, bool history,
+        const ManagedPwhistorySlotOptions& historyOptions) {
         PamPasswordTransitionResult result;
         std::string error;
-        require(executor->transition(quality, history, result, error),
+        require(executor->transition(quality, history, historyOptions,
+                    result, error),
             "transition failed: " + error);
         return result;
     }
@@ -1054,6 +1080,271 @@ void testF12b_detachInversePartialCleanupFails() {
 
 } // namespace
 
+// ---- Step 6 M-series: managed pwhistory option writer through the ----
+// ---- joint transition executor (options = configuration intent)     ----
+
+std::filesystem::path executorHistoryNormalPath(TestEnvironment& env) {
+    return env.tree.pamd() /
+        PamManagedPasswordSlots::historyNormalSlot().fileName;
+}
+
+std::filesystem::path executorHistoryInitialPath(TestEnvironment& env) {
+    return env.tree.pamd() /
+        PamManagedPasswordSlots::historyInitialSlot().fileName;
+}
+
+// M9: with history disabled, an option change never mutates PAM state;
+// the NEXT activation renders the slot with the new options.
+void testM9_optionChangeWithHistoryDisabled() {
+    TestEnvironment env;
+    const auto before = env.runOk(false, false);
+    require(before.success && !before.changedSystemState,
+        "M9: None baseline is a no-op");
+    const auto result = env.runOk(false, false,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    require(result.success && !result.changedSystemState,
+        "M9: disabled history option change must not activate anything");
+    require(env.mutator.invocations.empty(),
+        "M9: no pam-auth-update call for an option change");
+    const auto snapshot = env.inspect();
+    require(snapshot.historyInitialSlotState ==
+                ManagedPasswordSlotState::Neutral &&
+            snapshot.historySlotState == ManagedPasswordSlotState::Neutral,
+        "M9: both history variants stay Neutral");
+    // The next activation is born with the configured options.
+    env.runOk(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    std::string expected;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryInitial(
+            env.inspect().historyInitialSlotMutationId,
+            ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+            expected, error),
+        "M9: render");
+    require(readFile(executorHistoryInitialPath(env)) == expected,
+        "M9: next activation carries the configured depth");
+}
+
+// M10/M18: an Active history-initial slot is reconciled in place toward
+// the configured options: same selection, same topology class, zero
+// pam-auth-update calls (restart reconcile after an offline config change).
+void testM10_activeInitialOptionUpdateInPlace() {
+    TestEnvironment env;
+    env.runOk(false, true);
+    const auto before = env.inspect();
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+
+    const auto result = env.runOk(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    require(result.success, "M10: option reconcile success expected");
+    require(result.topologyAfter == PamPasswordTopologyClass::FicHistoryInitial,
+        "M10: topology class unchanged");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "M10: no pam-auth-update call for a pure option change");
+    const auto after = env.inspect();
+    require(after.selections.ficHistoryInitialSelected &&
+            !after.selections.ficHistorySelected,
+        "M10: same variant still selected");
+    require(after.historyInitialSlotMutationId ==
+            before.historyInitialSlotMutationId,
+        "M10: the domain journal record is refreshed (same id)");
+    std::string expected;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryInitial(
+            after.historyInitialSlotMutationId,
+            ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+            expected, error),
+        "M10: render");
+    require(readFile(executorHistoryInitialPath(env)) == expected,
+        "M10: slot rewritten to the configured depth");
+}
+
+// M11: active consumer update — quality untouched, consumer rewritten.
+void testM11_activeConsumerOptionUpdateInPlace() {
+    TestEnvironment env;
+    env.runOk(true, true);
+    const std::string qualityBefore =
+        readFile(env.tree.pamd() / "fic-password-quality");
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+
+    const auto result = env.runOk(true, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    require(result.success, "M11: option reconcile success expected");
+    require(result.topologyAfter ==
+            PamPasswordTopologyClass::FicQualityPlusFicHistory,
+        "M11: topology class unchanged");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "M11: no pam-auth-update call for a pure option change");
+    const auto snapshot = env.inspect();
+    require(snapshot.selections.ficQualitySelected &&
+            snapshot.selections.ficHistorySelected,
+        "M11: consumer remains selected");
+    require(readFile(env.tree.pamd() / "fic-password-quality") ==
+            qualityBefore,
+        "M11: quality slot body untouched");
+    std::string expected;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+            snapshot.historySlotMutationId,
+            ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+            expected, error),
+        "M11: render");
+    require(readFile(executorHistoryNormalPath(env)) == expected,
+        "M11: consumer rewritten to the configured depth");
+}
+
+// M12: foreign quality producer + FIC history consumer; option update
+// rewrites only the FIC-owned consumer slot.
+void testM12_foreignConsumerOptionUpdate() {
+    TestEnvironment env;
+    env.mutator.forceSelect(kStockPwqualityProfileId);
+    env.runOk(true, true);
+    require(env.inspect().foreignQualityProducer,
+        "M12: foreign producer state expected");
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+
+    const auto result = env.runOk(true, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(8), false});
+    require(result.success, "M12: option reconcile success expected");
+    require(result.topologyAfter ==
+            PamPasswordTopologyClass::ForeignQualityPlusFicHistory,
+        "M12: foreign topology preserved");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "M12: no pam-auth-update call");
+    require(env.inspect().foreignQualityProducer,
+        "M12: stock producer still proven");
+    const auto snapshot = env.inspect();
+    std::string expected;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+            snapshot.historySlotMutationId,
+            ManagedPwhistorySlotOptions{std::optional<unsigned>(8), false},
+            expected, error),
+        "M12: render");
+    require(readFile(executorHistoryNormalPath(env)) == expected,
+        "M12: consumer rewritten to the configured depth");
+}
+
+// M13/M14: variant switches preserve the configured options — the newly
+// active variant is born from the current configuration intent.
+void testM13_variantSwitchInitialToConsumer() {
+    TestEnvironment env;
+    env.runOk(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    const auto result = env.runOk(true, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    require(result.success, "M13: switch success expected");
+    const auto snapshot = env.inspect();
+    require(snapshot.selections.ficQualitySelected &&
+            snapshot.selections.ficHistorySelected,
+        "M13: consumer selected after the switch");
+    std::string expected;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+            snapshot.historySlotMutationId,
+            ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false},
+            expected, error),
+        "M13: render");
+    require(readFile(executorHistoryNormalPath(env)) == expected,
+        "M13: consumer carries remember=7 (configured options preserved)");
+    require(snapshot.historyInitialSlotState ==
+                ManagedPasswordSlotState::Neutral,
+        "M13: the inactive variant stays canonical Neutral");
+}
+
+void testM14_variantSwitchConsumerToInitial() {
+    TestEnvironment env;
+    env.runOk(true, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(9), false});
+    const auto result = env.runOk(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(9), false});
+    require(result.success, "M14: switch success expected");
+    const auto snapshot = env.inspect();
+    require(snapshot.selections.ficHistoryInitialSelected &&
+            !snapshot.selections.ficHistorySelected,
+        "M14: initial selected after the switch");
+    std::string expected;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryInitial(
+            snapshot.historyInitialSlotMutationId,
+            ManagedPwhistorySlotOptions{std::optional<unsigned>(9), false},
+            expected, error),
+        "M14: render");
+    require(readFile(executorHistoryInitialPath(env)) == expected,
+        "M14: initial carries remember=9 (configured options preserved)");
+    require(snapshot.historySlotState == ManagedPasswordSlotState::Neutral,
+        "M14: the inactive consumer variant stays canonical Neutral");
+}
+
+// M15: an idempotent option reapply is a proven no-op.
+void testM15_idempotentOptionReapply() {
+    TestEnvironment env;
+    env.runOk(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    const std::string bodyBefore =
+        readFile(executorHistoryInitialPath(env));
+    const std::size_t nativeCalls = env.mutator.invocations.size();
+    const std::size_t applied = env.appliedCount();
+
+    const auto result = env.runOk(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    require(result.success && !result.changedSystemState,
+        "M15: idempotent reapply is a proven no-op");
+    require(env.mutator.invocations.size() == nativeCalls,
+        "M15: no native call");
+    require(env.appliedCount() == applied, "M15: no new journal record");
+    require(readFile(executorHistoryInitialPath(env)) == bodyBefore,
+        "M15: no slot write");
+}
+
+// M16: an FIC-owned slot with unexpected module arguments is drift —
+// the option apply fails closed and never normalizes the body.
+void testM16_malformedOwnedSlotFailsClosed() {
+    TestEnvironment env;
+    env.runOk(false, true);
+    const auto snapshot = env.inspect();
+    const std::uint64_t id = snapshot.historyInitialSlotMutationId;
+    const std::string drifted =
+        "#@FIC_PAM_SLOT_BEGIN version=1 "
+        "capability=enable_password_history mutation=" +
+        std::to_string(id) +
+        " slot=fic-password-history-initial\n"
+        "password requisite pam_pwhistory.so remember=3 foo=bar\n"
+        "#@FIC_PAM_SLOT_END capability=enable_password_history mutation=" +
+        std::to_string(id) +
+        " slot=fic-password-history-initial\n";
+    writeFile(executorHistoryInitialPath(env), drifted);
+
+    const auto result = env.run(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    require(!result.success && !result.changedSystemState,
+        "M16: unexpected argument in an owned slot must fail closed");
+    require(readFile(executorHistoryInitialPath(env)) == drifted,
+        "M16: the drifted body is never rewritten");
+}
+
+// M17: a physically Active history slot without matching Applied
+// provenance fails closed on option changes.
+void testM17_unownedActiveSlotFailsClosed() {
+    TestEnvironment env;
+    env.runOk(false, true);
+    // Replace the owned body with a canonical body carrying a foreign id
+    // (no journal record): Active but unowned.
+    std::string foreignBody;
+    std::string error;
+    require(PamManagedPasswordSlots::renderActiveHistoryInitial(
+            999, ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false},
+            foreignBody, error),
+        "M17: render");
+    writeFile(executorHistoryInitialPath(env), foreignBody);
+
+    const auto result = env.run(false, true,
+        ManagedPwhistorySlotOptions{std::optional<unsigned>(7), false});
+    require(!result.success, "M17: unowned Active slot must fail closed");
+    require(readFile(executorHistoryInitialPath(env)) == foreignBody,
+        "M17: the unowned body is never rewritten");
+}
+
 int main() {
     struct NamedTest {
         const char* name;
@@ -1104,6 +1395,23 @@ int main() {
             testF12_detachInversePartialActivationCleaned},
         {"F12b_detachInversePartialCleanupFails",
             testF12b_detachInversePartialCleanupFails},
+        {"M9_optionChangeWithHistoryDisabled",
+            testM9_optionChangeWithHistoryDisabled},
+        {"M10_activeInitialOptionUpdateInPlace",
+            testM10_activeInitialOptionUpdateInPlace},
+        {"M11_activeConsumerOptionUpdateInPlace",
+            testM11_activeConsumerOptionUpdateInPlace},
+        {"M12_foreignConsumerOptionUpdate",
+            testM12_foreignConsumerOptionUpdate},
+        {"M13_variantSwitchInitialToConsumer",
+            testM13_variantSwitchInitialToConsumer},
+        {"M14_variantSwitchConsumerToInitial",
+            testM14_variantSwitchConsumerToInitial},
+        {"M15_idempotentOptionReapply", testM15_idempotentOptionReapply},
+        {"M16_malformedOwnedSlotFailsClosed",
+            testM16_malformedOwnedSlotFailsClosed},
+        {"M17_unownedActiveSlotFailsClosed",
+            testM17_unownedActiveSlotFailsClosed},
     };
     for (const NamedTest& test : tests) {
         try {

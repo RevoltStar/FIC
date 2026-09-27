@@ -1570,6 +1570,235 @@ bool PamManagedPasswordSlotWriter::activateC2Slot(
     return true;
 }
 
+bool PamManagedPasswordSlotWriter::updateC2HistoryOptions(
+    ManagedPasswordSlotRole role,
+    const ManagedPwhistorySlotOptions& options,
+    PamManagedPasswordSlotActivationResult& result, std::string& error) {
+    result = {};
+    if (role != ManagedPasswordSlotRole::HistoryNormal &&
+        role != ManagedPasswordSlotRole::HistoryInitial) {
+        error = "C2 history option update is defined for history roles only";
+        return false;
+    }
+    if (!c2RoleUsesDomain(role, domain_)) {
+        error = "C2 identity role does not belong to this managed password "
+                "domain";
+        return false;
+    }
+    if (!ensureJournalOperational(error)) {
+        return false;
+    }
+    const ManagedPasswordSlotSpec& spec = c2RoleSlot(role);
+    PamConfigFileSnapshot snapshot;
+    if (!captureSlot(spec, snapshot, error)) {
+        return false;
+    }
+    ManagedPasswordSlotInspection inspection;
+    if (!inspectSnapshot(spec, snapshot, inspection, error)) {
+        error = "managed " + std::string(spec.fileName) +
+            " slot option update refused: the slot is not canonical "
+            "(fail closed; drift is never normalized): " + error;
+        return false;
+    }
+    if (inspection.state == ManagedPasswordSlotState::Unavailable) {
+        error = "managed " + std::string(spec.fileName) +
+            " slot is missing (fail closed; packaging must provide the "
+            "infrastructure)";
+        return false;
+    }
+    if (inspection.state == ManagedPasswordSlotState::Neutral) {
+        // Step 6 invariant: option configuration never activates the
+        // topology. A Neutral slot has no FIC-owned active history state
+        // to re-render; the next topology activation renders it from the
+        // current configuration intent instead.
+        error = "managed " + std::string(spec.fileName) +
+            " slot is neutral: the option update never activates the "
+            "topology (fail closed)";
+        return false;
+    }
+    // Active entry state: the marker id must bind to a journal record of
+    // this domain with the exact role payload. Foreign ids, records of the
+    // other history variant and unbound slots fail closed.
+    for (const fic::rollback::MutationRecord& candidate :
+         journal_.records()) {
+        if (candidate.id != inspection.mutationId) {
+            continue;
+        }
+        std::string metadataError;
+        if (!journalMetadataMatchesRole(candidate, role, metadataError)) {
+            error = "refusing active managed " +
+                std::string(spec.fileName) +
+                " slot without matching C2 provenance: " + metadataError;
+            return false;
+        }
+        if (candidate.status == fic::rollback::MutationStatus::Applied) {
+            if (inspection.pwhistoryOptions.has_value() &&
+                *inspection.pwhistoryOptions == options) {
+                // Idempotence: the desired logical options are already the
+                // proven physical state. No write, no new journal record,
+                // no native call.
+                result.success = true;
+                result.ownershipProven = true;
+                result.mutationId = candidate.id;
+                error.clear();
+                return true;
+            }
+            return updateOwnedC2HistorySlotOptions(
+                role, options, inspection, result, error);
+        }
+        if (candidate.status == fic::rollback::MutationStatus::Prepared) {
+            // Exact crash-partial of a previous update/activation of this
+            // very identity: the slot is canonical Active with the exact
+            // Prepared id. Completing the record is the same lifecycle the
+            // interrupted fresh path would have committed; afterwards the
+            // normal update path runs when the logical options still
+            // differ.
+            if (!completePrepared(candidate.id, error)) {
+                return false;
+            }
+            if (inspection.pwhistoryOptions.has_value() &&
+                *inspection.pwhistoryOptions == options) {
+                result.success = true;
+                result.ownershipProven = true;
+                result.mutationId = candidate.id;
+                error.clear();
+                return true;
+            }
+            return updateOwnedC2HistorySlotOptions(
+                role, options, inspection, result, error);
+        }
+        error = "refusing active managed " + std::string(spec.fileName) +
+            " slot bound to journal mutation " +
+            std::to_string(candidate.id) + " with status " +
+            fic::rollback::mutationStatusToString(candidate.status);
+        return false;
+    }
+    error = "refusing active managed " + std::string(spec.fileName) +
+        " slot without matching journal provenance";
+    return false;
+}
+
+bool PamManagedPasswordSlotWriter::updateOwnedC2HistorySlotOptions(
+    ManagedPasswordSlotRole role,
+    const ManagedPwhistorySlotOptions& options,
+    const ManagedPasswordSlotInspection& ownedInspection,
+    PamManagedPasswordSlotActivationResult& result, std::string& error) {
+    const ManagedPasswordSlotSpec& spec = c2RoleSlot(role);
+    // Same-snapshot ownership proof (P1-6 model): re-capture and re-prove
+    // the owned state, then mutate through the SAME snapshot, so a
+    // concurrent replacement fails the transaction precondition before any
+    // install.
+    PamConfigFileSnapshot snapshot;
+    if (!captureSlot(spec, snapshot, error)) {
+        return false;
+    }
+    ManagedPasswordSlotInspection current;
+    if (!inspectSnapshot(spec, snapshot, current, error) ||
+        current.state != ManagedPasswordSlotState::Active ||
+        current.mutationId != ownedInspection.mutationId ||
+        !current.pwhistoryOptions.has_value() ||
+        !ownedInspection.pwhistoryOptions.has_value() ||
+        !(*current.pwhistoryOptions == *ownedInspection.pwhistoryOptions)) {
+        error = "the owned " + std::string(spec.fileName) +
+            " slot changed while the option update was being prepared "
+            "(fail closed)" +
+            (error.empty() ? std::string() : ": " + error);
+        return false;
+    }
+    fic::rollback::MutationId id = 0;
+    if (!prepareRecordWithIdentifier(
+            c2RoleActivationIdentifier(role), id, error)) {
+        return false;
+    }
+    std::string desired;
+    bool rendered = false;
+    switch (role) {
+    case ManagedPasswordSlotRole::HistoryNormal:
+        rendered = PamManagedPasswordSlots::renderActiveHistoryNormal(
+            id, options, desired, error);
+        break;
+    case ManagedPasswordSlotRole::HistoryInitial:
+        rendered = PamManagedPasswordSlots::renderActiveHistoryInitial(
+            id, options, desired, error);
+        break;
+    default:
+        error = "C2 history option update is defined for history roles only";
+        break;
+    }
+    if (!rendered) {
+        std::vector<PamConfigFileSnapshot> noSnapshots;
+        compensateUpdateSnapshots(noSnapshots, 0, id, result, error);
+        return false;
+    }
+    std::vector<PamConfigFileSnapshot> snapshots{snapshot};
+    if (!writeSlot(spec, snapshots.front(), desired,
+            c2RoleSlotIndex(role), true, error)) {
+        compensateUpdateSnapshots(snapshots, 1, id, result, error);
+        return false;
+    }
+    ManagedPasswordSlotInspection after;
+    if (!freshInspection(spec, after, error) ||
+        after.state != ManagedPasswordSlotState::Active ||
+        after.mutationId != id ||
+        !after.pwhistoryOptions.has_value() ||
+        !(*after.pwhistoryOptions == options)) {
+        if (error.empty()) {
+            error = "fresh proof did not report the exact prepared mutation "
+                    "with the desired logical options";
+        }
+        error = "C2 history option update fresh proof failed: " + error;
+        compensateUpdateSnapshots(snapshots, 1, id, result, error);
+        return false;
+    }
+    if (!completePrepared(id, error)) {
+        // The physical mutation persisted; the journal commit failure must
+        // never be reported as a clean failure. The exact outstanding C2
+        // option mutation (canonical Active slot + Prepared record) remains
+        // caller-visible crash state, completed by the next
+        // activation/update call.
+        result.changedSystemState = true;
+        result.mutationId = id;
+        return false;
+    }
+    result.success = true;
+    result.changedSystemState = true;
+    result.ownershipProven = true;
+    result.mutationId = id;
+    error.clear();
+    return true;
+}
+
+void PamManagedPasswordSlotWriter::compensateUpdateSnapshots(
+    std::vector<PamConfigFileSnapshot>& snapshots,
+    std::size_t attemptedCount, fic::rollback::MutationId id,
+    PamManagedPasswordSlotActivationResult& result, std::string& error) {
+    // Update-specific compensation: the refreshed domain record existed as
+    // Applied BEFORE this call, so the exact prior Active bytes must be
+    // restored AND the record returned to Applied — never discarded. An
+    // unproven restore is reported honestly; the record then stays
+    // Prepared as the exact outstanding crash state (canonical Active slot
+    // with the prepared id), completed by the next activation/update call.
+    std::string rollbackError;
+    const bool restored =
+        compensateSnapshots(snapshots, attemptedCount, rollbackError);
+    if (!restored) {
+        result.changedSystemState = true;
+        result.mutationId = id;
+        error += "; " + rollbackError;
+        return;
+    }
+    std::string applyError;
+    if (!journal_.setStatus(
+            id, fic::rollback::MutationStatus::Applied, applyError)) {
+        result.changedSystemState = true;
+        result.mutationId = id;
+        error += "; " + applyError;
+        return;
+    }
+    // Exact proven restore + Applied provenance: no outstanding change
+    // remains relative to the entry state (monotonic P1-5 accounting).
+}
+
 bool PamManagedPasswordSlotWriter::compensateC2ActiveSlot(
     ManagedPasswordSlotRole role, fic::rollback::MutationId id,
     bool& changedSystemState, std::string& error) {

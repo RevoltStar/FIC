@@ -4,6 +4,7 @@
 #include "modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.h"
 
 #include <platform/PlatformExecutableResolver.h>
+#include <platform/PlatformProfile.h>
 
 #include <rollback/MutationJournal.h>
 
@@ -24,6 +25,17 @@ namespace fic::identity::pam {
 struct PamPasswordRequestedState {
     bool qualityRequested = false;
     bool historyRequested = false;
+    // Step 6: desired managed pwhistory module arguments of the history
+    // slot identities, read from the SAME configuration snapshot as the
+    // joint (Q, H) request (never from the physical slots and never from
+    // one policy's apply argument alone). On module-arguments platforms
+    // (Debian 12) this is remember=N + enforce_for_root from the
+    // IDENTITY_ACCESS configuration intent; on provider-config-file
+    // platforms (e.g. Ubuntu 24.04 via /etc/security/pwhistory.conf) the
+    // slot bodies carry no optional arguments and this stays default
+    // (empty). Attachments render the slot from these options; an active
+    // owned slot is reconciled in place toward them by the executor.
+    ManagedPwhistorySlotOptions historyOptions{};
 };
 
 // Production coordinator of the joint password topology domain.
@@ -89,10 +101,13 @@ public:
 
     // Production wiring: coordinator over the daemon mutation journal
     // (DaemonMutationJournal) and the platform executable resolver with
-    // the production desired-state reader. Returns nullptr with a
-    // diagnostic when the daemon journal is unavailable (fail closed).
+    // the production desired-state reader (joint Q/H intent + managed
+    // history options from one configuration snapshot, per the platform
+    // pwhistory capability mode). Returns nullptr with a diagnostic when
+    // the daemon journal is unavailable (fail closed).
     static std::unique_ptr<PamPasswordTopologyCoordinator> makeProduction(
         const fic::platform::PlatformExecutableResolver& executables,
+        const fic::platform::PlatformProfile& platform,
         std::string& error);
 
 private:
@@ -112,6 +127,25 @@ private:
 // statuses count as NOT requested.
 bool readJointPasswordConfigIntent(
     PamPasswordRequestedState& requested, std::string& error,
+    std::filesystem::path identityConfigDirectory = {});
+
+// Step 6: full joint desired state from ONE configuration snapshot — the
+// joint (Q, H) request PLUS the managed history module options. On
+// module-arguments platforms (Debian 12) the options come from the
+// IDENTITY_ACCESS policy values:
+//   password_history_depth            1..50; absent value uses the policy
+//                                     default (kPasswordHistoryDepthDefault)
+//   password_history_enforce_for_root yes -> token present, no/absent -> token
+//                                     absent (bare option grammar)
+// Malformed or out-of-range configured values fail closed (the coordinator
+// never applies a partially known intent). On provider-config-file
+// platforms the slot bodies carry no optional arguments: historyOptions
+// stays default and the options are governed by the provider config file
+// path through the classic option-policy path.
+bool readJointPasswordDesiredState(
+    PamPasswordRequestedState& requested,
+    const fic::platform::PamPlatformConfig& platform,
+    std::string& error,
     std::filesystem::path identityConfigDirectory = {});
 
 } // namespace fic::identity::pam

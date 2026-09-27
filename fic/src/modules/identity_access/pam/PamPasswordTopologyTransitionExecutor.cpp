@@ -233,7 +233,9 @@ PamPasswordTopologyTransitionExecutor::desiredTopologyClass(
 }
 
 bool PamPasswordTopologyTransitionExecutor::executeAction(
-    const PamPasswordPlanAction& action, ActionAttempt& attempt,
+    const PamPasswordPlanAction& action,
+    const ManagedPwhistorySlotOptions& historyOptions,
+    ActionAttempt& attempt,
     std::string& error) {
     attempt = {};
     attempt.kind = action.kind;
@@ -259,7 +261,7 @@ bool PamPasswordTopologyTransitionExecutor::executeAction(
                 : ManagedPasswordSlotRole::HistoryNormal);
         PamManagedPasswordSlotActivationResult activation;
         const bool activated = writer.activateC2Slot(
-            role, options_.historyOptions, activation, error);
+            role, historyOptions, activation, error);
         // Partial-state propagation: the activation may fail AFTER the
         // physical slot write persisted (e.g. journal Prepared -> Applied
         // commit failure). In that case the result carries the exact
@@ -332,7 +334,9 @@ bool PamPasswordTopologyTransitionExecutor::executeAction(
 }
 
 bool PamPasswordTopologyTransitionExecutor::compensateAttempt(
-    const ActionAttempt& attempt, bool& compensatedChanged,
+    const ActionAttempt& attempt,
+    const ManagedPwhistorySlotOptions& historyOptions,
+    bool& compensatedChanged,
     std::string& error) {
     // Semantic inverse of one action. Fail-fast: the first failed or
     // unproven inverse mutation stops the caller's compensation loop.
@@ -421,49 +425,61 @@ bool PamPasswordTopologyTransitionExecutor::compensateAttempt(
         attempt.kind == PamPasswordPlanActionKind::DetachFicQuality
         ? qualityWriter_
         : historyWriter_;
-    PamManagedPasswordSlotActivationResult activation;
-    const bool activated = writer.activateC2Slot(
-        role, options_.historyOptions, activation, error);
-    if (!activated) {
-        // F12 hardening: the inverse re-attach itself can fail AFTER the
-        // physical slot write persisted (the known partial activation
-        // path). Such a failure carries the exact outstanding mutation
-        // id; stopping here without cleanup would leave a NEW orphaned
-        // Active slot + Prepared record behind on top of the failed
-        // restoration.
-        compensatedChanged =
-            compensatedChanged || activation.changedSystemState;
-        if (activation.mutationId == 0) {
-            // No caller-compensatable outstanding state remains: the
-            // writer fully compensated internally (or nothing was
-            // mutated). Fail fast.
-            error = "inverse re-attach of " + std::string(profileId) +
-                " failed without an outstanding partial activation: " +
-                error;
+    // Inverse re-attach (Step 6 options awareness): if the slot still
+    // carries its exact prior canonical Active state (the neutral write of
+    // the detach never happened), only the selection must be restored —
+    // rewriting the slot is neither needed nor allowed here, and an options
+    // mismatch must never fail the compensation. Only a proven-neutralized
+    // slot is re-attached (rendered from the requested configuration-intent
+    // options, since the exact prior logical options are no longer
+    // recoverable from the topology).
+    PamManagedPasswordSlotOwnership owned;
+    std::string ownershipError;
+    if (!writer.proveOwnedC2Slot(role, owned, ownershipError)) {
+        PamManagedPasswordSlotActivationResult activation;
+        const bool activated = writer.activateC2Slot(
+            role, historyOptions, activation, error);
+        if (!activated) {
+            // F12 hardening: the inverse re-attach itself can fail AFTER the
+            // physical slot write persisted (the known partial activation
+            // path). Such a failure carries the exact outstanding mutation
+            // id; stopping here without cleanup would leave a NEW orphaned
+            // Active slot + Prepared record behind on top of the failed
+            // restoration.
+            compensatedChanged =
+                compensatedChanged || activation.changedSystemState;
+            if (activation.mutationId == 0) {
+                // No caller-compensatable outstanding state remains: the
+                // writer fully compensated internally (or nothing was
+                // mutated). Fail fast.
+                error = "inverse re-attach of " + std::string(profileId) +
+                    " failed without an outstanding partial activation: " +
+                    error;
+                return false;
+            }
+            // Exact-id local cleanup (no recursive compensation engine):
+            // neutralize the partial slot activation before the fail-fast
+            // STOP so the compensation does not create new orphaned state.
+            bool cleaned = false;
+            std::string cleanupError;
+            const bool cleanedOk = writer.compensateC2ActiveSlot(
+                role, activation.mutationId, cleaned, cleanupError);
+            compensatedChanged = compensatedChanged || (cleanedOk && cleaned);
+            if (cleanedOk) {
+                error = "inverse re-attach of " + std::string(profileId) +
+                    " failed (" + error +
+                    "); its partial slot activation was cleaned";
+            } else {
+                error = "inverse re-attach of " + std::string(profileId) +
+                    " failed (" + error +
+                    "); partial inverse activation could NOT be cleaned: " +
+                    cleanupError;
+            }
             return false;
         }
-        // Exact-id local cleanup (no recursive compensation engine):
-        // neutralize the partial slot activation before the fail-fast
-        // STOP so the compensation does not create new orphaned state.
-        bool cleaned = false;
-        std::string cleanupError;
-        const bool cleanedOk = writer.compensateC2ActiveSlot(
-            role, activation.mutationId, cleaned, cleanupError);
-        compensatedChanged = compensatedChanged || (cleanedOk && cleaned);
-        if (cleanedOk) {
-            error = "inverse re-attach of " + std::string(profileId) +
-                " failed (" + error +
-                "); its partial slot activation was cleaned";
-        } else {
-            error = "inverse re-attach of " + std::string(profileId) +
-                " failed (" + error +
-                "); partial inverse activation could NOT be cleaned: " +
-                cleanupError;
-        }
-        return false;
+        compensatedChanged =
+            compensatedChanged || activation.changedSystemState;
     }
-    compensatedChanged =
-        compensatedChanged || activation.changedSystemState;
     if (!runPamAuthUpdateOne("--enable", profileId, error)) {
         error = "compensation enable of " + std::string(profileId) +
             " failed: " + error;
@@ -479,8 +495,39 @@ bool PamPasswordTopologyTransitionExecutor::compensateAttempt(
     return true;
 }
 
+bool PamPasswordTopologyTransitionExecutor::reconcileHistoryOptions(
+    const PamPasswordTopologyPlan& plan,
+    const ManagedPwhistorySlotOptions& historyOptions,
+    PamPasswordTransitionResult& result, std::string& error) {
+    if (!plan.wantFicHistoryInitial && !plan.wantFicHistoryConsumer) {
+        // The desired topology has no FIC history identity: option
+        // configuration never activates the topology.
+        error.clear();
+        return true;
+    }
+    const ManagedPasswordSlotRole role = plan.wantFicHistoryInitial
+        ? ManagedPasswordSlotRole::HistoryInitial
+        : ManagedPasswordSlotRole::HistoryNormal;
+    PamManagedPasswordSlotActivationResult update;
+    if (!historyWriter_.updateC2HistoryOptions(
+            role, historyOptions, update, error)) {
+        error = "the managed history option reconcile failed: " + error;
+        // Monotonic honest accounting: the update primitive owns its own
+        // crash compensation; any physical change it installed (or could
+        // not prove away) is propagated here.
+        result.changedSystemState =
+            result.changedSystemState || update.changedSystemState;
+        return false;
+    }
+    result.changedSystemState =
+        result.changedSystemState || update.changedSystemState;
+    error.clear();
+    return true;
+}
+
 bool PamPasswordTopologyTransitionExecutor::transition(
     bool qualityRequested, bool historyRequested,
+    const ManagedPwhistorySlotOptions& historyOptions,
     PamPasswordTransitionResult& result, std::string& error) {
     result = {};
 
@@ -539,6 +586,13 @@ bool PamPasswordTopologyTransitionExecutor::transition(
                 "topology does not prove the desired semantic state";
             return false;
         }
+        // Step 6: the topology already proves the desired semantic state;
+        // the active history slot's managed options may still lag the
+        // configuration intent (e.g. an option change while the daemon was
+        // down). Reconcile them in place, then report success.
+        if (!reconcileHistoryOptions(plan, historyOptions, result, error)) {
+            return false;
+        }
         result.topologyAfter = fresh.classification.topologyClass;
         result.success = true;
         error.clear();
@@ -555,7 +609,8 @@ bool PamPasswordTopologyTransitionExecutor::transition(
         std::string compensationError;
         if (pendingAttempt != nullptr &&
             !compensateAttempt(
-                *pendingAttempt, compensatedChanged, compensationError)) {
+                *pendingAttempt, historyOptions, compensatedChanged,
+                compensationError)) {
             // Fail-fast (F6/F7): STOP on the first unproven inverse
             // mutation; never mutate further on an unknown topology.
             result.changedSystemState = true;
@@ -567,7 +622,7 @@ bool PamPasswordTopologyTransitionExecutor::transition(
         }
         for (std::size_t index = proven.size(); index > 0; --index) {
             if (!compensateAttempt(
-                    proven[index - 1], compensatedChanged,
+                    proven[index - 1], historyOptions, compensatedChanged,
                     compensationError)) {
                 result.changedSystemState = true;
                 error = failure +
@@ -632,7 +687,7 @@ bool PamPasswordTopologyTransitionExecutor::transition(
                 nullptr);
         }
         ActionAttempt attempt;
-        if (!executeAction(action, attempt, error)) {
+        if (!executeAction(action, historyOptions, attempt, error)) {
             return failWithCompensation(
                 "action " + std::string(action.profileId()) +
                     " failed: " + error,
@@ -684,6 +739,15 @@ bool PamPasswordTopologyTransitionExecutor::transition(
         }
         proven.push_back(attempt);
         result.executedActions.push_back(action.profileId());
+    }
+
+    // Step 6 (4.5): the topology mutations are proven; reconcile the active
+    // history slot's managed options with the configuration intent BEFORE
+    // the final proof, so a newly attached history slot is born correct and
+    // a stale-options slot is brought to the desired state without a
+    // variant switch or pam-auth-update call.
+    if (!reconcileHistoryOptions(plan, historyOptions, result, error)) {
+        return false;
     }
 
     // 5. Final full three-profile topology proof (Applied).

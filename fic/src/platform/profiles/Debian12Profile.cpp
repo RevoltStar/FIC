@@ -133,6 +133,14 @@ PlatformProfile makeBuildPlatformProfile() {
     // mutable here. Debian 13 and other PamAuthUpdate platforms stay
     // ReadOnly until their own gates pass.
     profile.pam.passwordTopologyRuntimeMutable = true;
+    // Step 6 module-argument support (evidence-based, Debian 12 ships
+    // Linux-PAM 1.5.2 whose pam_pwhistory accepts `remember=N` and the bare
+    // `enforce_for_root` token — re-proven by the real pwhistory options
+    // gate on this exact distro before the flag was lifted).
+    profile.pam.capabilities[2].moduleArgumentSupport = {
+        true,   // pwhistoryRemember
+        true    // pwhistoryEnforceForRoot
+    };
     profile.pam.capabilities[0].supportedFaillockStrategies = {
         PamFaillockStrategy::PreauthRequired,
         PamFaillockStrategy::PreauthRequisite,

@@ -14,6 +14,7 @@
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "modules/identity_access/pam/PamPasswordTopologyState.h"
 #include "platform/PlatformExecutableResolver.h"
+#include "platform/PlatformProfile.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/PamRollback.h"
 
@@ -41,8 +42,9 @@ namespace {
 std::unique_ptr<PamPasswordTopologyCoordinator> makeGateCoordinator(
     std::string& error) {
     // Same journal as the production rollback path (daemon journal with the
-    // gate override path); executor options carry the managed pwhistory
-    // module arguments (the Step 6 option writer is a later stage).
+    // gate override path); the desired-state reader is the production Step 6
+    // reader (joint Q/H intent + managed history options from ONE config
+    // snapshot of the compile-time gate platform profile).
     auto& daemonJournal = fic::rollback::DaemonMutationJournal::instance();
     fic::rollback::MutationJournal* journal = daemonJournal.tryGet(error);
     if (journal == nullptr) {
@@ -59,8 +61,12 @@ std::unique_ptr<PamPasswordTopologyCoordinator> makeGateCoordinator(
     executables.entries.push_back(spec);
     static fic::platform::PlatformExecutableResolver resolver(executables);
     PamPasswordTopologyCoordinator::Options options;
-    options.executorOptions.historyOptions =
-        ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
+    options.desiredStateReader =
+        [](PamPasswordRequestedState& requested, std::string& readerError) {
+            return fic::identity::pam::readJointPasswordDesiredState(
+                requested, fic::platform::makeBuildPlatformProfile().pam,
+                readerError);
+        };
     return std::unique_ptr<PamPasswordTopologyCoordinator>(
         new PamPasswordTopologyCoordinator(*journal, resolver, options));
 }

@@ -74,10 +74,11 @@ struct PamPasswordTopologyExecutorOptions {
         const std::string& executable,
         const std::vector<std::string>& arguments,
         const ProcessOptions&)> runner;
-    // Managed pwhistory module arguments of the history slot activations
-    // (physical slot fields; the semantic enforcement is proven at the
-    // proof layer).
-    ManagedPwhistorySlotOptions historyOptions;
+    // Managed pwhistory module arguments of the history slot activations.
+    // Step 6: the desired logical options are part of the joint REQUESTED
+    // STATE (configuration intent) and are passed per transition call; they
+    // are no longer executor construction options (no production fallback
+    // values exist).
 };
 
 struct PamPasswordTransitionResult {
@@ -140,8 +141,16 @@ public:
 
     // Executes the transition from the current physical topology to the
     // semantic topology requested by (qualityRequested, historyRequested).
+    // historyOptions carries the desired managed pwhistory module arguments
+    // from the joint configuration intent: every history slot activation
+    // renders its canonical body from them, and an already active owned
+    // history slot whose logical options differ is reconciled in place
+    // (journal-safe updateC2HistoryOptions lifecycle) BEFORE the final
+    // proof. Pure option changes therefore never call pam-auth-update and
+    // never change the topology class.
     bool transition(
         bool qualityRequested, bool historyRequested,
+        const ManagedPwhistorySlotOptions& historyOptions,
         PamPasswordTransitionResult& result, std::string& error);
 
 private:
@@ -167,10 +176,23 @@ private:
     bool driftGate(
         const PamPasswordTopologySnapshot& expected, std::string& error);
     bool executeAction(
-        const PamPasswordPlanAction& action, ActionAttempt& attempt,
+        const PamPasswordPlanAction& action,
+        const ManagedPwhistorySlotOptions& historyOptions,
+        ActionAttempt& attempt,
         std::string& error);
+    // Step 6: reconcile the managed module arguments of the ACTIVE history
+    // variant slot with the desired options of the requested state. Only
+    // the active variant is touched (the inactive one stays canonical
+    // Neutral); a matching active slot is a no-op. Never runs when the
+    // desired topology has no FIC history identity.
+    bool reconcileHistoryOptions(
+        const PamPasswordTopologyPlan& plan,
+        const ManagedPwhistorySlotOptions& historyOptions,
+        PamPasswordTransitionResult& result, std::string& error);
     bool compensateAttempt(
-        const ActionAttempt& attempt, bool& compensatedChanged,
+        const ActionAttempt& attempt,
+        const ManagedPwhistorySlotOptions& historyOptions,
+        bool& compensatedChanged,
         std::string& error);
     static PamPasswordTopologyClass desiredTopologyClass(
         const PamPasswordTopologyPlan& plan, bool foreignProducer);

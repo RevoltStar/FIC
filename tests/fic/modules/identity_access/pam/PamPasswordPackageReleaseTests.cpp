@@ -320,8 +320,6 @@ struct ReleaseEnvironment {
         options.configDirectory = tree.pamd();
         options.stateDirectory = tree.state();
         options.identityConfigDirectory = tree.conf();
-        options.executorOptions.historyOptions =
-            ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
         options.executorOptions.runner =
             [this](const std::string& executable,
                 const std::vector<std::string>& arguments,
@@ -351,8 +349,6 @@ struct ReleaseEnvironment {
         PamPasswordPackageRelease::Options options;
         options.configDirectory = tree.pamd();
         options.stateDirectory = tree.state();
-        options.executorOptions.historyOptions =
-            ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
         options.executorOptions.runner =
             [this](const std::string& executable,
                 const std::vector<std::string>& arguments,

@@ -1087,6 +1087,43 @@ durability proof. Это не даёт транзакционной атомар
 известной topology: такие случаи требуют отдельной проверки профиля/ручного
 recovery, а не восстановления historical snapshot.
 
+### Managed history module arguments (Step 6) — topology ownership vs option values
+
+C2 password domain владеет двумя РАЗНЫМИ уровнями состояния, и rollback их
+не смешивает:
+
+1. **Topology ownership** — journal-записи managed password slot writer'а
+   (Prepared → Applied → RolledBack) доказывают владение FIC-owned PAM
+   identity (selection + canonical Active slot + mutation id). Rollback
+   такой записи — joint semantic transition (раздел выше).
+2. **Managed history module arguments** — `remember=N` и bare
+   `enforce_for_root` в телах FIC-owned слотов `fic-password-history` /
+   `fic-password-history-initial` (только platform mode = ModuleArguments,
+   Debian 12). Authoritative источник значений — configuration intent
+   (`password_history_depth`, `password_history_enforce_for_root` в
+   `IDENTITY_ACCESS.conf`), НИКОГДА текущее тело слота.
+
+Обновление опций активного слота (`updateC2HistoryOptions`) использует ТОТ
+ЖЕ journal lifecycle: `prepareMutation` **обновляет (refresh) единственную
+активную запись домена** (policy, backend, resource) — mutation id
+сохраняется, тело слота переписывается с тем же id, но с новыми опциями,
+fresh proof, запись возвращается в Applied. Отдельная запись на option
+change не создаётся.
+
+Rollback семантика option change следует существующему framework-контракту:
+у FIC нет per-value «восстановить произвольное предыдущее значение» —
+rollback записи домена выполняет joint transition к целевому состоянию
+(освобождаемая capability → `false`). Тела FIC слотов при этом уходят в
+canonical Neutral без опций; выжившая capability перечитывает опции из
+configuration intent при следующем attach (новый attach всегда рендерится
+из актуальных configured options). Foreign PAM state (`/etc/security/
+pwhistory.conf`, `common-password`, stock profile, чужие строки
+`pam_pwhistory.so`) option writer и его rollback НИКОГДА не изменяют.
+
+Package-release (prerm) игнорирует желаемые значения опций: он освобождает
+весь домен, финальные слоты — Neutral без pwhistory опций; proof владения
+не зависит от конкретных `remember`/`enforce_for_root` значений.
+
 ## Package-removal C2 domain release (prerm)
 
 Rollback политик (раздел выше) и удаление пакета — разные операции с разными

@@ -1481,6 +1481,301 @@ void runC2LifecycleTests() {
 
 } // namespace
 
+// ---- Step 6: updateC2HistoryOptions (in-place managed option update) ----
+
+// W-U1/W-U2: an owned Active history slot is re-rendered in place with the
+// desired logical options through the full journal lifecycle (Prepared ->
+// CAS write -> fresh proof -> Applied). The topology is untouched: the
+// slot stays Active, the selection is never rewritten.
+void runC2HistoryOptionsUpdateTests() {
+    std::cout << "PamManagedPasswordSlotWriterTests: C2 history option "
+                 "update\n";
+
+    // W-U1: history-initial remember=3 -> remember=7.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult activation;
+        std::string error;
+        require(fixture.writer().activateC2Slot(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(3), activation, error),
+            "W-U1: activation failed: " + error);
+        const std::uint64_t firstId = activation.mutationId;
+
+        const ManagedPwhistorySlotOptions desired{
+            std::optional<unsigned>(7), false};
+        PamManagedPasswordSlotActivationResult update;
+        require(fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial, desired,
+                    update, error),
+            "W-U1: option update failed: " + error);
+        require(update.success && update.ownershipProven, "W-U1: proof");
+        require(update.changedSystemState, "W-U1: physical rewrite happened");
+        // The journal refreshes the ONE active (policy, backend, resource)
+        // record in place: the update keeps the SAME mutation id (the
+        // canonical slot body carries the same id with the new options).
+        require(update.mutationId == firstId,
+            "W-U1: the domain mutation record is refreshed, not duplicated");
+        std::string expected;
+        require(PamManagedPasswordSlots::renderActiveHistoryInitial(
+                update.mutationId, desired, expected, error),
+            "W-U1: render");
+        require(readFile(historyInitialPath(fixture.tree())) == expected,
+            "W-U1: exact canonical body with the new options");
+        require(journalStatus(fixture.journal(), firstId) ==
+                fic::rollback::MutationStatus::Applied,
+            "W-U1: prior record stays Applied (domain provenance)");
+        require(journalStatus(fixture.journal(), update.mutationId) ==
+                fic::rollback::MutationStatus::Applied,
+            "W-U1: update record Applied");
+        // The neutral sibling was never touched (single-variant update).
+        require(readFile(historyNormalPath(fixture.tree())) == neutral(),
+            "W-U1: inactive sibling stays canonical Neutral");
+    }
+
+    // W-U2: history-consumer remember=3 -> remember=5 + enforce_for_root
+    // (bare token grammar).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult activation;
+        std::string error;
+        require(fixture.writer().activateC2Slot(
+                    ManagedPasswordSlotRole::HistoryNormal, historyOptions(3),
+                    activation, error),
+            "W-U2: activation failed: " + error);
+
+        const ManagedPwhistorySlotOptions desired{
+            std::optional<unsigned>(5), true};
+        PamManagedPasswordSlotActivationResult update;
+        require(fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryNormal, desired,
+                    update, error),
+            "W-U2: option update failed: " + error);
+        std::string expected;
+        require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+                update.mutationId, desired, expected, error),
+            "W-U2: render");
+        require(readFile(historyNormalPath(fixture.tree())) == expected,
+            "W-U2: exact canonical consumer body (use_authtok first)");
+    }
+
+    // W-U3: idempotence — the same options are a proven no-op (no write,
+    // no new journal record).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult activation;
+        std::string error;
+        require(fixture.writer().activateC2Slot(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(7), activation, error),
+            "W-U3: activation failed: " + error);
+        const std::string bodyBefore =
+            readFile(historyInitialPath(fixture.tree()));
+        const std::size_t recordsBefore =
+            journalActiveCount(fixture.journal());
+
+        const ManagedPwhistorySlotOptions desired{
+            std::optional<unsigned>(7), false};
+        PamManagedPasswordSlotActivationResult update;
+        require(fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial, desired,
+                    update, error),
+            "W-U3: idempotent update failed: " + error);
+        require(update.success, "W-U3: proven success");
+        require(!update.changedSystemState,
+            "W-U3: no physical change on the idempotent reapply");
+        require(update.mutationId == activation.mutationId,
+            "W-U3: no new journal record");
+        require(journalActiveCount(fixture.journal()) == recordsBefore,
+            "W-U3: record count unchanged");
+        require(readFile(historyInitialPath(fixture.tree())) == bodyBefore,
+            "W-U3: no slot write");
+    }
+
+    // W-U4: a Neutral slot fails closed — the option update never
+    // activates the topology.
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult update;
+        std::string error;
+        require(!fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(7), update, error),
+            "W-U4: neutral slot must fail closed");
+        require(!update.changedSystemState && update.mutationId == 0,
+            "W-U4: nothing installed");
+        require(journalActiveCount(fixture.journal()) == 0,
+            "W-U4: no journal record");
+        require(readFile(historyInitialPath(fixture.tree())) == neutral(),
+            "W-U4: slot stays neutral");
+    }
+
+    // W-U5: a broken owned slot fails closed — drift is never normalized
+    // (including unexpected module arguments).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult activation;
+        std::string error;
+        require(fixture.writer().activateC2Slot(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(3), activation, error),
+            "W-U5: activation failed: " + error);
+        const std::string drifted =
+            "#@FIC_PAM_SLOT_BEGIN version=1 "
+            "capability=enable_password_history mutation=" +
+            std::to_string(activation.mutationId) +
+            " slot=fic-password-history-initial\n"
+            "password requisite pam_pwhistory.so remember=3 debug\n"
+            "#@FIC_PAM_SLOT_END capability=enable_password_history "
+            "mutation=" + std::to_string(activation.mutationId) +
+            " slot=fic-password-history-initial\n";
+        writeFile(historyInitialPath(fixture.tree()), drifted);
+        PamManagedPasswordSlotActivationResult update;
+        require(!fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(7), update, error),
+            "W-U5: unexpected argument must fail closed");
+        require(!update.changedSystemState && update.mutationId == 0,
+            "W-U5: nothing installed");
+        require(readFile(historyInitialPath(fixture.tree())) == drifted,
+            "W-U5: broken body never rewritten");
+    }
+
+    // W-U6: an Active slot without matching journal provenance fails
+    // closed (ownership is never adopted).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        std::string foreignBody;
+        std::string error;
+        require(PamManagedPasswordSlots::renderActiveHistoryInitial(
+                999, historyOptions(3), foreignBody, error),
+            "W-U6: render");
+        writeFile(historyInitialPath(fixture.tree()), foreignBody);
+        PamManagedPasswordSlotActivationResult update;
+        require(!fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(7), update, error),
+            "W-U6: unowned active slot must fail closed");
+        require(!update.changedSystemState && update.mutationId == 0,
+            "W-U6: nothing installed");
+        require(readFile(historyInitialPath(fixture.tree())) == foreignBody,
+            "W-U6: foreign body untouched");
+    }
+
+    // W-U7: a record with the OTHER history variant's activation
+    // identifier never proves this identity (role payload mismatch).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        // Journal record bound to the history-INITIAL identity payload.
+        std::string error;
+        fic::rollback::MutationId id = 0;
+        require(prepareDomainRecord(
+                fixture.journal(), historyPolicy(),
+                {"fic-password-history-initial-hook"}, id, error),
+            "W-U7: record prepare failed: " + error);
+        std::string body;
+        require(PamManagedPasswordSlots::renderActiveHistoryNormal(
+                id, historyOptions(3), body, error),
+            "W-U7: render");
+        writeFile(historyNormalPath(fixture.tree()), body);
+        PamManagedPasswordSlotActivationResult update;
+        require(!fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryNormal,
+                    historyOptions(7), update, error),
+            "W-U7: role payload mismatch must fail closed");
+        require(!update.changedSystemState && update.mutationId == 0,
+            "W-U7: nothing installed");
+    }
+
+    // W-F1: write failure before the mutation — fully compensated
+    // internally (no caller-compensatable state, no record, no write).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult activation;
+        std::string error;
+        require(fixture.writer().activateC2Slot(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(3), activation, error),
+            "W-F1: activation failed: " + error);
+        const std::string bodyBefore =
+            readFile(historyInitialPath(fixture.tree()));
+        fixture.writer().setBeforeSlotWriteHookForTests(
+            [](std::size_t) { return false; });
+        PamManagedPasswordSlotActivationResult update;
+        require(!fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(7), update, error),
+            "W-F1: write failure must fail the update");
+        require(!update.changedSystemState && update.mutationId == 0,
+            "W-F1: fully compensated internal failure");
+        require(journalActiveCount(fixture.journal()) == 1,
+            "W-F1: only the prior Applied record remains");
+        require(readFile(historyInitialPath(fixture.tree())) == bodyBefore,
+            "W-F1: prior body untouched");
+    }
+
+    // W-F3: journal completion fails AFTER the durable slot update —
+    // honest changedSystemState + exact outstanding mutation id; the
+    // canonical Active slot + Prepared record are completed by the next
+    // update call (crash-safe adoption).
+    {
+        Fixture fixture(PamManagedPasswordDomain::History);
+        writeFile(historyNormalPath(fixture.tree()), neutral());
+        writeFile(historyInitialPath(fixture.tree()), neutral());
+        PamManagedPasswordSlotActivationResult activation;
+        std::string error;
+        require(fixture.writer().activateC2Slot(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(3), activation, error),
+            "W-F3: activation failed: " + error);
+        fixture.writer().setJournalCompletionFaultHookForTests(
+            [] { return false; });
+        PamManagedPasswordSlotActivationResult update;
+        require(!fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(7), update, error),
+            "W-F3: completion failure must fail the update");
+        require(update.changedSystemState,
+            "W-F3: the physical mutation persisted — honest accounting");
+        require(update.mutationId != 0,
+            "W-F3: exact outstanding mutation id propagated");
+        const std::uint64_t outstandingId = update.mutationId;
+        const auto* record = findRecord(fixture.journal(), outstandingId);
+        require(record != nullptr &&
+                record->status == fic::rollback::MutationStatus::Prepared,
+            "W-F3: the record stays Prepared");
+        // Next apply (no fault): the exact Prepared crash-partial is
+        // completed and the update succeeds with the SAME id.
+        fixture.writer().setJournalCompletionFaultHookForTests(nullptr);
+        PamManagedPasswordSlotActivationResult retry;
+        require(fixture.writer().updateC2HistoryOptions(
+                    ManagedPasswordSlotRole::HistoryInitial,
+                    historyOptions(7), retry, error),
+            "W-F3: retry failed: " + error);
+        require(retry.success, "W-F3: retry proof");
+        require(retry.mutationId == outstandingId,
+            "W-F3: the outstanding Prepared mutation was completed");
+        require(!retry.changedSystemState,
+            "W-F3: the retry itself changed nothing new");
+    }
+}
+
 int main() {
     try {
         runQualityTests();
@@ -1496,6 +1791,7 @@ int main() {
         runRecoveryAccountingTests();
         runNeutralizationAccountingTests();
         runC2LifecycleTests();
+        runC2HistoryOptionsUpdateTests();
         std::cout << "PamManagedPasswordSlotWriterTests: OK\n";
         return 0;
     } catch (const std::exception& error) {

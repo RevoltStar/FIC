@@ -29,7 +29,9 @@ protected:
         std::size_t& verifiedServiceCount,
         std::string& error) const;
 
-private:
+    // Platform composition and feature of this option policy; visible to
+    // the derived policy strategy layers (Step 6 history option policies
+    // re-derive the C2 capability decision from it).
     fic::platform::PamPlatformConfig platformConfig_;
     fic::platform::PamPolicyFeature feature_;
 };

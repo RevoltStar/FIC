@@ -434,7 +434,10 @@ bool PamPasswordPackageRelease::run(
     PamPasswordTransitionResult transitionResult;
     if (!executor_.transition(
             /*qualityRequested=*/false, /*historyRequested=*/false,
-            transitionResult, error)) {
+            // Package-release ignores desired option values (the release
+            // target is the no-FIC topology; every history slot ends
+            // Neutral without pwhistory options).
+            ManagedPwhistorySlotOptions{}, transitionResult, error)) {
         report.changedSystemState = transitionResult.changedSystemState;
         report.compensated = transitionResult.compensated;
         report.compensatedStateProven =

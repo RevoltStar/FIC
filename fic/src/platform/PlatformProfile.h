@@ -262,6 +262,16 @@ struct PamFaillockStrategyActivation {
     std::vector<std::string> activationIdentifiers;
 };
 
+// Evidence-based support of the FIC-managed pam_pwhistory module
+// arguments on this platform (Step 6). A bare option token is rendered
+// into the managed history slots and made production-mutable ONLY when
+// the platform profile carries this evidence; support is never assumed
+// from the writer's rendering ability alone.
+struct PamModuleArgumentSupport {
+    bool pwhistoryRemember = false;
+    bool pwhistoryEnforceForRoot = false;
+};
+
 struct PamCapabilityConfig {
     PamCapability capability = PamCapability::AuthenticationLockout;
     PamProviderKind provider = PamProviderKind::PamFaillock;
@@ -286,6 +296,12 @@ struct PamCapabilityConfig {
     // a set of platform recipes (pam-auth-update profiles). Strategies
     // without a recipe cannot be activated on such platforms.
     std::vector<PamFaillockStrategyActivation> strategyActivations;
+    // Evidence-based FIC-managed module-argument support of this
+    // capability on this platform (Step 6; meaningful for the pwhistory
+    // module-arguments capability). Defaults to unsupported: the joint
+    // desired-state reader fails closed on configured option values that
+    // the platform does not evidence.
+    PamModuleArgumentSupport moduleArgumentSupport{};
 };
 
 struct PamPlatformConfig {

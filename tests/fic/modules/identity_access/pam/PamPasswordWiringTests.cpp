@@ -10,6 +10,7 @@
 #include "modules/identity_access/pam/PamPasswordTopologyState.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
+#include "modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.h"
 #include "platform/PlatformProfile.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
@@ -295,8 +296,21 @@ struct WiringEnvironment {
         options.configDirectory = tree.pamd();
         options.stateDirectory = tree.state();
         options.identityConfigDirectory = tree.conf();
-        options.executorOptions.historyOptions =
-            ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
+        // Step 6 fixture reader: the joint intent comes from the test
+        // config; the managed history options stay at the legacy test
+        // fixture (remember=3, no root enforcement) unless a scenario
+        // overrides the reader.
+        options.desiredStateReader =
+            [this](PamPasswordRequestedState& requested,
+                   std::string& readerError) {
+                if (!readJointPasswordConfigIntent(
+                        requested, readerError, tree.conf())) {
+                    return false;
+                }
+                requested.historyOptions = ManagedPwhistorySlotOptions{
+                    std::optional<unsigned>(3), false};
+                return true;
+            };
         options.executorOptions.runner =
             [this](const std::string& executable,
                 const std::vector<std::string>& arguments,
@@ -416,8 +430,19 @@ struct WiringEnvironment {
         options.configDirectory = tree.pamd();
         options.stateDirectory = tree.state();
         options.identityConfigDirectory = tree.conf();
-        options.executorOptions.historyOptions =
-            ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
+        // Same Step 6 fixture reader as rebuildCoordinator (see above):
+        // legacy test fixture options for the managed history slots.
+        options.desiredStateReader =
+            [this](PamPasswordRequestedState& requested,
+                   std::string& readerError) {
+                if (!readJointPasswordConfigIntent(
+                        requested, readerError, tree.conf())) {
+                    return false;
+                }
+                requested.historyOptions = ManagedPwhistorySlotOptions{
+                    std::optional<unsigned>(3), false};
+                return true;
+            };
         options.executorOptions.runner =
             [this](const std::string& executable,
                 const std::vector<std::string>& arguments,
@@ -814,12 +839,21 @@ void testPolicyLayerUsesJointIntent() {
          fic::platform::PamCapabilityConfigurationMode::ModuleArguments}};
     platform.passwordTopologyRuntimeMutable = true;
     PamCapabilityActivationPolicyOptions options;
-    options.passwordCoordinatorFactory = [&env]() {
+    const fic::platform::PamPlatformConfig readerPlatform = platform;
+    options.passwordCoordinatorFactory = [&env, readerPlatform]() {
         PamPasswordTopologyCoordinator::Options coordinatorOptions;
         coordinatorOptions.configDirectory = env.tree.pamd();
         coordinatorOptions.stateDirectory = env.tree.state();
-        coordinatorOptions.executorOptions.historyOptions =
-            ManagedPwhistorySlotOptions{std::optional<unsigned>(3), false};
+        // Step 6: the REAL production desired-state reader (joint Q/H
+        // intent + managed history options from ONE config snapshot) over
+        // the ModuleArguments test platform.
+        coordinatorOptions.desiredStateReader =
+            [&env, readerPlatform](PamPasswordRequestedState& requested,
+                                   std::string& readerError) {
+                return fic::identity::pam::readJointPasswordDesiredState(
+                    requested, readerPlatform, readerError,
+                    env.tree.conf());
+            };
         coordinatorOptions.executorOptions.runner =
             [&env](const std::string& executable,
                 const std::vector<std::string>& arguments,
@@ -929,6 +963,160 @@ void testSupportContract() {
 
 } // namespace
 
+// ---- Step 6: joint desired-state reader (Q/H intent + history options) ----
+
+void testJointDesiredStateReaderOptions() {
+    const fic::platform::PamPlatformConfig moduleArgumentsPlatform = [] {
+        fic::platform::PamPlatformConfig config;
+        config.capabilities = {
+            {fic::platform::PamCapability::PasswordHistory,
+             fic::platform::PamProviderKind::PamPwhistory,
+             fic::platform::PamScope::EffectivePasswordStack, {},
+             fic::platform::PamTopologyStrategyKind::PamAuthUpdate, {},
+             std::nullopt,
+             fic::platform::PamIdentitySubjectScope::AllPamSubjects,
+             fic::platform::PamCapabilityConfigurationMode::ModuleArguments}};
+        return config;
+    }();
+    const fic::platform::PamPlatformConfig evidencedPlatform = [] {
+        fic::platform::PamPlatformConfig config;
+        config.capabilities = {
+            {fic::platform::PamCapability::PasswordHistory,
+             fic::platform::PamProviderKind::PamPwhistory,
+             fic::platform::PamScope::EffectivePasswordStack, {},
+             fic::platform::PamTopologyStrategyKind::PamAuthUpdate, {},
+             std::nullopt,
+             fic::platform::PamIdentitySubjectScope::AllPamSubjects,
+             fic::platform::PamCapabilityConfigurationMode::ModuleArguments}};
+        config.capabilities[0].moduleArgumentSupport = {true, true};
+        return config;
+    }();
+    const fic::platform::PamPlatformConfig providerConfigPlatform = [] {
+        fic::platform::PamPlatformConfig config;
+        config.capabilities = {
+            {fic::platform::PamCapability::PasswordHistory,
+             fic::platform::PamProviderKind::PamPwhistory,
+             fic::platform::PamScope::EffectivePasswordStack, {},
+             fic::platform::PamTopologyStrategyKind::PamAuthUpdate}};
+        return config;
+    }();
+    TemporaryDirectory tree;
+    const auto confPath = tree.path() / "IDENTITY_ACCESS.conf";
+    const auto writeConfig = [&](const std::string& content) {
+        writeFile(confPath, content);
+    };
+
+    // Module-arguments platform: options from the SAME config snapshot;
+    // unconfigured depth uses the explicit policy default.
+    writeConfig(
+        "enable_password_quality.status=DISABLE\n"
+        "enable_password_history.status=ENABLE\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(readJointPasswordDesiredState(
+                    requested, moduleArgumentsPlatform, error, tree.path()),
+            "reader: baseline read failed: " + error);
+        require(requested.qualityRequested == false &&
+                requested.historyRequested == true,
+            "reader: joint request");
+        require(requested.historyOptions.remember ==
+                    std::optional<unsigned>(kPasswordHistoryDepthDefault),
+            "reader: unconfigured depth uses the policy default");
+        require(!requested.historyOptions.enforceForRoot,
+            "reader: unconfigured enforce token stays absent");
+    }
+    // Configured depth is honored; enforce_for_root=yes WITHOUT the
+    // platform evidence flag fails closed.
+    writeConfig(
+        "enable_password_quality.status=ENABLE\n"
+        "enable_password_history.status=ENABLE\n"
+        "password_history_depth.value=7\n"
+        "password_history_enforce_for_root.value=yes\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(!readJointPasswordDesiredState(
+                    requested, moduleArgumentsPlatform, error, tree.path()),
+            "reader: enforce token without platform evidence must fail "
+            "closed");
+    }
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(readJointPasswordDesiredState(
+                    requested, evidencedPlatform, error, tree.path()),
+            "reader: configured read failed: " + error);
+        require(requested.historyOptions.remember == std::optional<unsigned>(7),
+            "reader: configured depth honored");
+        require(requested.historyOptions.enforceForRoot,
+            "reader: enforce token present with platform evidence");
+    }
+    // no -> token absent.
+    writeConfig(
+        "enable_password_history.status=ENABLE\n"
+        "password_history_enforce_for_root.value=no\n");
+    {
+        auto evidenced = moduleArgumentsPlatform;
+        evidenced.capabilities[0].moduleArgumentSupport = {true, true};
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(readJointPasswordDesiredState(
+                    requested, evidenced, error, tree.path()),
+            "reader: no-value read failed: " + error);
+        require(!requested.historyOptions.enforceForRoot,
+            "reader: no means the bare token is absent");
+    }
+    // Malformed depth fails closed.
+    writeConfig(
+        "enable_password_history.status=ENABLE\n"
+        "password_history_depth.value=51\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(!readJointPasswordDesiredState(
+                    requested, moduleArgumentsPlatform, error, tree.path()),
+            "reader: out-of-range depth must fail closed");
+    }
+    writeConfig(
+        "enable_password_history.status=ENABLE\n"
+        "password_history_depth.value=abc\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(!readJointPasswordDesiredState(
+                    requested, moduleArgumentsPlatform, error, tree.path()),
+            "reader: malformed depth must fail closed");
+    }
+    // Malformed enforce value fails closed.
+    writeConfig(
+        "enable_password_history.status=ENABLE\n"
+        "password_history_enforce_for_root.value=maybe\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(!readJointPasswordDesiredState(
+                    requested, moduleArgumentsPlatform, error, tree.path()),
+            "reader: malformed enforce value must fail closed");
+    }
+    // Provider-config-file platform: slot bodies carry no optional
+    // arguments; the reader leaves the options empty (options live in
+    // pwhistory.conf via the classic option-policy path).
+    writeConfig(
+        "enable_password_history.status=ENABLE\n"
+        "password_history_depth.value=7\n");
+    {
+        PamPasswordRequestedState requested;
+        std::string error;
+        require(readJointPasswordDesiredState(
+                    requested, providerConfigPlatform, error, tree.path()),
+            "reader: provider-config read failed: " + error);
+        require(!requested.historyOptions.remember.has_value() &&
+                !requested.historyOptions.enforceForRoot,
+            "reader: provider-config platform keeps empty slot options");
+    }
+}
+
 int main() {
     const std::vector<std::pair<const char*, void (*)()>> tests = {
         {"R1_noneToQuality", testR1_noneToQuality},
@@ -958,6 +1146,8 @@ int main() {
         {"selectedButUnowned", testSelectedButUnownedFailsClosed},
         {"unsafeState", testUnsafeStateFailsBeforeMutation},
         {"policyLayerJointIntent", testPolicyLayerUsesJointIntent},
+        {"jointDesiredStateReaderOptions",
+            testJointDesiredStateReaderOptions},
         {"supportContract", testSupportContract},
     };
 

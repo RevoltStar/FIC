@@ -1038,6 +1038,7 @@ add_executable(pam_password_package_release_tests
     fic/modules/identity_access/pam/PamPasswordPackageReleaseTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordPackageRelease.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
@@ -1305,6 +1306,17 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    # Step 6: the history option policies route through the joint
+    # coordinator on module-arguments platforms, so its closure is linked.
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
@@ -1325,6 +1337,7 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamFailedAuthenticationUnlockTimePolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryOptionPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswdqcPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordQualityPolicies.cpp

@@ -375,6 +375,29 @@ private:
     bool activateFreshHistory(
         const ManagedPwhistorySlotOptions& options,
         PamManagedPasswordSlotActivationResult& result, std::string& error);
+    // Step 6 update lifecycle core: the entry state was already proven an
+    // owned Active history slot (exact role-bound Applied provenance) with
+    // logical options different from the request. One Prepared record, one
+    // CAS write of the desired canonical active body, fresh durable proof
+    // (exact id AND desired options), then Applied. Failure compensation
+    // and crash accounting follow the same monotonic P1-5 contract as the
+    // activation paths.
+    bool updateOwnedC2HistorySlotOptions(
+        ManagedPasswordSlotRole role,
+        const ManagedPwhistorySlotOptions& options,
+        const ManagedPasswordSlotInspection& ownedInspection,
+        PamManagedPasswordSlotActivationResult& result, std::string& error);
+    // Update-specific failure compensation: the refreshed domain record
+    // existed as Applied BEFORE this call (the update lifecycle only runs
+    // from an exactly-proven Applied ownership state, and the journal
+    // refreshes the ONE active (policy, backend, resource) record in
+    // place), so a failed update must restore the prior Active bytes AND
+    // return the record to Applied — never discard it. An unproven restore
+    // is reported honestly with the exact outstanding mutation id.
+    void compensateUpdateSnapshots(
+        std::vector<PamConfigFileSnapshot>& snapshots,
+        std::size_t attemptedCount, fic::rollback::MutationId id,
+        PamManagedPasswordSlotActivationResult& result, std::string& error);
 
 public:
     // ---- C2 per-identity lifecycle (activation-time FIC-owned hooks) ----
@@ -410,6 +433,42 @@ public:
     // entry state (Broken, Unavailable, foreign or foreign-id Active) fails
     // closed — ownership is never adopted and never repaired.
     bool activateC2Slot(
+        ManagedPasswordSlotRole role,
+        const ManagedPwhistorySlotOptions& options,
+        PamManagedPasswordSlotActivationResult& result, std::string& error);
+
+    // Step 6: in-place managed module-argument update of ONE owned C2
+    // history identity slot (Active -> Active, same role, new logical
+    // options). This is the option-configuration level of the history
+    // capability; it NEVER changes the topology: the slot must already be
+    // canonical Active with exact role-bound Applied provenance, and the
+    // method never activates a Neutral slot and never detaches or
+    // re-attaches the profile selection.
+    //
+    // Lifecycle (same journal contract as activateC2Slot): one Prepared
+    // record with the role-specific activation identifier payload, one CAS
+    // physical write of the exact canonical active bytes rendered with the
+    // desired options, fresh durable re-read proof (exact id AND desired
+    // logical options parsed back from the body), then Applied.
+    //
+    // Idempotence: an owned Active slot already carrying exactly the
+    // desired options is a proven no-op success (no write, no new journal
+    // record). A canonical Active slot bound to the exact Prepared record
+    // of this domain and role is an exact crash-partial of a previous
+    // update/activation and is completed first (adopting its state), after
+    // which the normal update path runs when its logical options differ
+    // from the request.
+    //
+    // Fail-closed contract: Broken/Unavailable/Neutral slots, foreign
+    // mutation ids, records without exact role-bound payload and records in
+    // any other lifecycle state are never adopted, repaired or overwritten.
+    // A failure after the physical write compensates back to the exact
+    // prior Active bytes and discards the Prepared record; a journal
+    // completion failure after the durable write propagates the exact
+    // outstanding mutation id (the canonical Active slot + Prepared record
+    // remain caller-visible crash state, completed by the next
+    // activation/update call) and never reports a clean failure.
+    bool updateC2HistoryOptions(
         ManagedPasswordSlotRole role,
         const ManagedPwhistorySlotOptions& options,
         PamManagedPasswordSlotActivationResult& result, std::string& error);
