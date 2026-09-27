@@ -12,6 +12,7 @@
 #include "modules/identity_access/IdentityAccessPolicy.h"
 #include "modules/identity_access/pam/PamManagedPasswordSlotBootstrap.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
+#include "modules/identity_access/pam/policies/PamPasswordHistoryOptionPolicy.h"
 #include "modules/identity_access/pam/PamPasswordTopologyState.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -158,6 +159,78 @@ int main(int argc, char** argv) {
                   << (result.changedSystemState ? "true" : "false")
                   << "\n";
         return result.complete() ? 0 : 1;
+    }
+
+    if (command == "platform-mode") {
+        // Compile-time platform evidence report used by the gates to pick
+        // the production-appropriate option strategy assertions.
+        const fic::platform::PlatformProfile profile =
+            fic::platform::makeBuildPlatformProfile();
+        const fic::platform::PamCapabilityConfig* history = nullptr;
+        for (const auto& capability : profile.pam.capabilities) {
+            if (capability.capability ==
+                fic::platform::PamCapability::PasswordHistory) {
+                history = &capability;
+                break;
+            }
+        }
+        if (history == nullptr) {
+            std::cerr << "platform has no history capability\n";
+            return 2;
+        }
+        std::cout << "profileId=" << profile.id << "\n";
+        std::cout << "historyMode="
+                  << (history->configurationMode ==
+                              fic::platform::PamCapabilityConfigurationMode::
+                                  ModuleArguments
+                          ? "ModuleArguments"
+                          : "ProviderConfigFile")
+                  << "\n";
+        std::cout << "rememberEvidence="
+                  << (history->moduleArgumentSupport.pwhistoryRemember ? 1
+                                                                       : 0)
+                  << "\n";
+        std::cout << "enforceEvidence="
+                  << (history->moduleArgumentSupport.pwhistoryEnforceForRoot
+                          ? 1
+                          : 0)
+                  << "\n";
+        std::cout << "topologyMutable="
+                  << (profile.pam.passwordTopologyRuntimeMutable ? 1 : 0)
+                  << "\n";
+        return 0;
+    }
+
+    if (command == "provider-option") {
+        // PRODUCTION classic option-policy path (PamOptionPolicy::applyPam
+        // through PamPasswordHistoryOptionPolicy): on a ProviderConfigFile
+        // platform this writes the real provider config (e.g.
+        // /etc/security/pwhistory.conf) exactly like the daemon policy
+        // would, including the full post-mutation semantic verification.
+        if (argc < 4) {
+            std::cerr << "provider-option requires <depth|enforce> <value>\n";
+            return 2;
+        }
+        class GateHistoryOptionPolicy
+            : public PamPasswordHistoryOptionPolicy {
+        public:
+            GateHistoryOptionPolicy(
+                fic::platform::PamPlatformConfig config,
+                fic::platform::PamPolicyFeature feature)
+                : PamPasswordHistoryOptionPolicy(
+                      std::move(config), feature) {}
+            using PamPasswordHistoryOptionPolicy::applyPam;
+        };
+        const bool isDepth = std::string(argv[2]) == "depth";
+        GateHistoryOptionPolicy policy(
+            fic::platform::makeBuildPlatformProfile().pam,
+            isDepth
+                ? fic::platform::PamPolicyFeature::PasswordHistoryDepth
+                : fic::platform::PamPolicyFeature::
+                      PasswordHistoryEnforceForRoot);
+        const bool ok = policy.applyPam(argv[3]);
+        std::cout << "success=" << (ok ? 1 : 0) << "\n";
+        return ok ? 0 : 1;
     }
 
     if (command == "intent") {

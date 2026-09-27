@@ -4,20 +4,16 @@
 # transition path (pam-c2 gate driver) inside a DISPOSABLE container as
 # root.
 #
-# Platform semantics (Step 6 follow-up, P2 — Variant A):
-#   - Debian 12: the PRODUCTION platform for the ModuleArguments option
-#     wiring. Its profile sets configurationMode=ModuleArguments with
-#     pwhistoryRemember/pwhistoryEnforceForRoot evidence, so the gate
-#     results here double as production Step 6 wiring validation.
-#   - Ubuntu 24.04 (and any other distro run): this gate is a CAPABILITY
-#     EVIDENCE PROBE of the pam_pwhistory module binary only. The Ubuntu
-#     production profile deliberately KEEPS
-#     configurationMode=ProviderConfigFile with NO module-argument
-#     evidence: the low-level module accepting the options does NOT mean
-#     FIC renders module arguments on that platform, and this gate bypasses
-#     the production desired-state/policy wiring (it drives the executor
-#     directly). Do not treat a PASS here as "Ubuntu production uses
-#     ModuleArguments".
+# Platform semantics (evidence-based; the compiled-in profile decides the
+# flow via the driver "platform-mode" report, never the distro name):
+#   - ModuleArguments mode (Debian 12, Debian 13): the O-flow IS production
+#     Step 6 wiring evidence (the C2 coordinator renders the managed
+#     options into the FIC-owned slot bodies).
+#   - ProviderConfigFile mode (Ubuntu 24.04, Ubuntu 26.04): the PC-flow is
+#     the PRODUCTION evidence (classic option-policy path writing the real
+#     /etc/security/pwhistory.conf + functional reuse/root differentials).
+#     A ModuleArguments capability probe alone is NEVER production
+#     evidence for these platforms.
 #
 # Proves:
 #   O1  fresh H-only attach renders remember=N into the FIC-owned consumer
@@ -34,6 +30,10 @@
 #   docker run --rm -v "$PWD":/src:ro debian:12 \
 #       bash /src/tests/integration/pam-c2/pam_pwhistory_options_gate.sh
 #   docker run --rm -v "$PWD":/src:ro ubuntu:24.04 \
+#       bash /src/tests/integration/pam-c2/pam_pwhistory_options_gate.sh
+#   docker run --rm -v "$PWD":/src:ro debian:13 \
+#       bash /src/tests/integration/pam-c2/pam_pwhistory_options_gate.sh
+#   docker run --rm -v "$PWD":/src:ro ubuntu:26.04 \
 #       bash /src/tests/integration/pam-c2/pam_pwhistory_options_gate.sh
 set -u
 
@@ -75,7 +75,7 @@ chown root:root "$PROBE"
 chmod 4755 "$PROBE"
 
 GATE_PLATFORM="$(case "$DISTRO_ID" in
-    debian-12|ubuntu-24.04) echo "$DISTRO_ID" ;;
+    debian-12|debian-13|ubuntu-24.04|ubuntu-26.04) echo "$DISTRO_ID" ;;
     *) die_environment "unsupported distro for the pwhistory options gate" ;;
 esac)"
 cmake -S "$REPO" -B /tmp/fic-gate-build -DCMAKE_BUILD_TYPE=Release \
@@ -86,6 +86,14 @@ cmake --build /tmp/fic-gate-build --target fic-pam-c2-gate-driver -j2 \
 DRIVER_BIN="$(find /tmp/fic-gate-build -name fic-pam-c2-gate-driver -type f | head -1)"
 [ -n "$DRIVER_BIN" ] || die_environment "driver binary not found"
 cp "$DRIVER_BIN" "$DRIVER"
+
+# The compiled-in production platform state decides which flow is
+# production evidence and which is a capability probe (never the distro
+# name itself).
+MODE="$($DRIVER platform-mode)" || die_environment "platform-mode failed"
+echo "$MODE" > "$EVID/platform-mode.txt"
+HISTORY_MODE="$(sed -n 's/^historyMode=//p' <<< "$MODE")"
+note "history configuration mode: $HISTORY_MODE"
 
 # pam-auth-update wrapper: traces every invocation (the "no native call"
 # assertions compare the line count of this log).
@@ -161,6 +169,13 @@ change_rejected() { # user candidate current (proves hash unchanged)
 slot_argument_line() { # slot-file -> the pam_pwhistory.so rule line
     grep 'pam_pwhistory.so' "/etc/pam.d/$1" | head -1
 }
+
+if [ "$HISTORY_MODE" = "ModuleArguments" ]; then
+# =====================================================================
+# PRODUCTION ModuleArguments flow (configurationMode=ModuleArguments:
+# the C2 coordinator renders the managed options into the slot bodies,
+# so this flow IS production wiring evidence).
+# =====================================================================
 
 # ---- O1: fresh H-only attach renders remember=N into the consumer slot ----
 # Planner semantics: from a no-FIC-history topology the fresh history
@@ -340,6 +355,137 @@ else
     gate_pass "O6: no enforce_for_root evidence in the module binary; support stays Unsupported on $DISTRO_ID (policy remains evidence-gated)"
 fi
 
+else
+# =====================================================================
+# PRODUCTION ProviderConfigFile flow (configurationMode=ProviderConfigFile
+# e.g. /etc/security/pwhistory.conf): the production option policies keep
+# the classic path (PamOptionPolicy -> provider config writer), the slot
+# bodies carry NO module arguments. This flow IS production evidence for
+# the provider-config strategy. The option writes run through the
+# production wiring driver (PamPasswordHistoryOptionPolicy::applyPam with
+# the full post-mutation semantic verification).
+# =====================================================================
+
+cmake --build /tmp/fic-gate-build --target fic-pam-c2-wiring-driver -j2     >> "$EVID/cmake-build.log" 2>&1 || die_environment "wiring driver build failed"
+WD_BIN="$(find /tmp/fic-gate-build -name fic-pam-c2-wiring-driver -type f | head -1)"
+[ -n "$WD_BIN" ] || die_environment "wiring driver binary not found"
+WIRING_DRIVER=/tmp/fic-gate-bin/fic-pam-c2-wiring-driver
+cp "$WD_BIN" "$WIRING_DRIVER"
+
+# ---- PC1: bare H-only attach renders NO module arguments ----
+transition 0 1 - || die_environment "PC1: bare H-only attach failed"
+consumer_line="$(slot_argument_line fic-password-history)"
+if [ "$consumer_line" = "password requisite pam_pwhistory.so use_authtok" ]; then
+    gate_pass "PC1: bare H-only attach renders a slot without module arguments"
+else
+    gate_fail "PC1: expected bare 'password requisite pam_pwhistory.so use_authtok', got '$consumer_line'"
+fi
+if grep -q 'remember=' "/etc/pam.d/fic-password-history"; then
+    gate_fail "PC1: slot unexpectedly carries module-argument options"
+fi
+
+conf_active() { # regex -> matched line(s) of the ACTIVE pwhistory.conf
+    grep -Ev '^\s*#|^\s*$' /etc/security/pwhistory.conf 2>/dev/null | grep -E "$1"
+}
+
+provider_option() { # depth|enforce value
+    "$WIRING_DRIVER" provider-option "$1" "$2" > "$EVID/provider-option-$1-$2.txt" 2>&1
+}
+
+# ---- PC2: production depth write into pwhistory.conf (remember=2) ----
+provider_option depth 2 || die_environment "PC2: provider depth write failed"
+if conf_active '^remember[[:space:]]*=[[:space:]]*2\s*$' >/dev/null; then
+    gate_pass "PC2: production provider-config write set remember=2"
+else
+    gate_fail "PC2: pwhistory.conf does not carry remember=2"
+fi
+
+# ---- PC3: functional reuse window follows conf remember=2 ----
+PW1='Vq7#mZx2KpLw!9d'
+PW2='Wn4%gTq8LdSv!3x'
+PW3='Xj2&bRn5FkHz!7m'
+PW4='Yk9!cWs6PqRt#4n'
+change_ok "$GATE_USER" "$PW1" "$CURRENT_PW" || die_environment "PC3: P1 change failed"
+change_ok "$GATE_USER" "$PW2" "$PW1" || die_environment "PC3: P2 change failed"
+if change_rejected "$GATE_USER" "$PW1" "$PW2"; then
+    gate_pass "PC3: reuse rejected within the conf remember=2 window"
+else
+    gate_fail "PC3: recent reuse was NOT rejected at conf remember=2"
+fi
+
+# ---- PC4: production depth update (2 -> 4); window grows ----
+provider_option depth 4 || die_environment "PC4: provider depth update failed"
+if conf_active '^remember[[:space:]]*=[[:space:]]*4\s*$' >/dev/null; then
+    gate_pass "PC4: production provider-config update set remember=4"
+else
+    gate_fail "PC4: pwhistory.conf does not carry remember=4"
+fi
+change_ok "$GATE_USER" "$PW3" "$PW2" || die_environment "PC4: P3 change failed"
+change_ok "$GATE_USER" "$PW4" "$PW3" || die_environment "PC4: P4 change failed"
+if change_rejected "$GATE_USER" "$PW1" "$PW4"; then
+    gate_pass "PC4: functional reuse window grew to the configured depth 4"
+else
+    gate_fail "PC4: depth=4 conf window is not functionally active"
+fi
+PW5='Zh3@dNx8VmGw$5q'
+change_ok "$GATE_USER" "$PW5" "$PW4" || die_environment "PC4: P5 change failed"
+PW6='Tm5!rVz7QkWc#8h'
+change_ok "$GATE_USER" "$PW6" "$PW5" || die_environment "PC4: P6 change failed"
+try_change "$GATE_USER" "$PW1" "$PW6"
+if grep -q '^RESULT ok' "$EVID/last-probe.txt"; then
+    CURRENT_PW="$PW1"; PREV_PW="$PW6"
+    gate_pass "PC4: older-than-depth reuse still allowed (conf window bound)"
+else
+    gate_fail "PC4: conf history window must not reject older-than-depth reuse"
+fi
+
+# ---- PC5: production enforce_for_root write + functional differential ----
+ENFORCE_EVIDENCE=no
+for module in /lib/*/security/pam_pwhistory.so /usr/lib/*/security/pam_pwhistory.so; do
+    if [ -f "$module" ] && strings "$module" | grep -q 'enforce_for_root'; then
+        ENFORCE_EVIDENCE=yes
+        echo "$module" > "$EVID/enforce-for-root-module.txt"
+        break
+    fi
+ done
+echo "$ENFORCE_EVIDENCE" > "$EVID/enforce-for-root-evidence.txt"
+
+ROOT_PW1='R00t!vXm7#qZb4'
+ROOT_PW2='R00t%wYn8@kJc5'
+root_try_change "$ROOT_PW1" || die_environment "PC5: root P1 change failed"
+root_try_change "$ROOT_PW2" || die_environment "PC5: root P2 change failed"
+if root_try_change "$ROOT_PW2" && grep -q '^RESULT ok' "$EVID/last-probe.txt"; then
+    gate_pass "PC5: root bypasses history without enforce_for_root (baseline)"
+else
+    note "PC5: root reuse without the directive was rejected (distro baseline differs)"
+fi
+if [ "$ENFORCE_EVIDENCE" = yes ]; then
+    provider_option enforce yes || die_environment "PC5: provider enforce write failed"
+    if conf_active '^enforce_for_root\s*$' >/dev/null; then
+        gate_pass "PC5: production provider-config write set enforce_for_root"
+    else
+        gate_fail "PC5: pwhistory.conf does not carry enforce_for_root"
+    fi
+    ROOT_PW3='R00t%xZo9#lAd6'
+    root_try_change "$ROOT_PW3" || die_environment "PC5: root P3 change failed"
+    if root_try_change "$ROOT_PW3" && grep -q '^RESULT ok' "$EVID/last-probe.txt"; then
+        gate_pass "PC5: root self-reuse STILL allowed with enforce_for_root — directive not enforced by this module (support stays Unsupported on $DISTRO_ID)"
+    else
+        gate_pass "PC5: root reuse rejected with enforce_for_root (functional support proven on $DISTRO_ID)"
+    fi
+    # ---- PC6: production enforce removal restores the baseline ----
+    provider_option enforce no || die_environment "PC6: provider enforce removal failed"
+    if conf_active '^enforce_for_root\s*$' >/dev/null; then
+        gate_fail "PC6: enforce_for_root still active after the removal"
+    else
+        gate_pass "PC6: production provider-config removal cleared enforce_for_root"
+    fi
+else
+    gate_pass "PC5: no enforce_for_root evidence in the module binary; support stays Unsupported on $DISTRO_ID (policy remains evidence-gated)"
+fi
+
+fi # HISTORY_MODE branch
+
 # ---- artifacts ----
 for slot in fic-password-quality fic-password-history fic-password-history-initial; do
     cp "/etc/pam.d/$slot" "$EVID/" 2>/dev/null
@@ -350,13 +496,13 @@ inspect > "$EVID/final-inspect.txt" 2>&1
 cp "$EVID/pam-auth-update.log" "$EVID/" 2>/dev/null
 
 if [ "$FAILED" -eq 0 ]; then
-    if [ "$DISTRO_ID" = "debian-12" ]; then
+    if [ "$HISTORY_MODE" = "ModuleArguments" ]; then
         verdict "PWHISTORY OPTIONS REAL GATE: PASS ($DISTRO_ID) — production ModuleArguments wiring validated"
     else
-        verdict "PWHISTORY OPTIONS REAL GATE: PASS ($DISTRO_ID) — CAPABILITY EVIDENCE PROBE only (NOT production ModuleArguments wiring; production keeps the provider-config strategy)"
+        verdict "PWHISTORY OPTIONS REAL GATE: PASS ($DISTRO_ID) — production ProviderConfigFile option path validated (pwhistory.conf); ModuleArguments wiring NOT claimed"
     fi
 else
-    verdict "PWHISTORY OPTIONS REAL GATE: FAIL ($DISTRO_ID)"
+    verdict "PWHISTORY OPTIONS REAL GATE: FAIL ($DISTRO_ID) (mode: $HISTORY_MODE)"
 fi
 cat "$EVID/verdicts.txt"
 exit "$FAILED"

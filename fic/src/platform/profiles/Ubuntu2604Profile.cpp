@@ -149,6 +149,14 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.pam.capabilities[1].activationIdentifiers = {"fic-pwquality"};
     profile.pam.capabilities[2].activationIdentifiers = {"fic-pwhistory"};
+    // Evidence-based lift (real disposable-container gates on Ubuntu
+    // 26.04.1 LTS, libpam 1.7.0): C2 topology G1-G11 PASS, production
+    // wiring W1-W9 PASS, and the pwhistory options gate PASS with the
+    // production ProviderConfigFile option path (pwhistory.conf remember=N
+    // window and enforce_for_root proven functionally). Like Ubuntu 24.04,
+    // the platform keeps configurationMode=ProviderConfigFile with NO
+    // module-argument evidence.
+    profile.pam.passwordTopologyRuntimeMutable = true;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {

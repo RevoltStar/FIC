@@ -1149,18 +1149,23 @@ journal до native selection, а сбой completion компенсируетс
 discard) до выбора профиля; unselected Prepared — зона package-release
 recovery.
 
-Platform-семантика (P2, Variant A): ModuleArguments option writer —
-production wiring ТОЛЬКО Debian 12 (profile:
-`configurationMode=ModuleArguments`, evidence `pwhistoryRemember` +
-`pwhistoryEnforceForRoot`). Ubuntu 24.04 остаётся на
-`ProviderConfigFile` (`/etc/security/pwhistory.conf`, classic option-policy
-path): real Ubuntu gate `pam_pwhistory_options_gate.sh` — это CAPABILITY
-EVIDENCE PROBE модуля (низкоуровневая acceptance), а не production wiring
-gate; production wiring gate обязателен только для Debian 12.
+Platform-семантика: ModuleArguments option writer — production wiring
+ТОЛЬКО Debian 12 (profile: `configurationMode=ModuleArguments`, evidence
+`pwhistoryRemember` + `pwhistoryEnforceForRoot`). Остальные
+PamAuthUpdate-платформы — Debian 13, Ubuntu 24.04, Ubuntu 26.04 — остаются
+на `ProviderConfigFile` (`/etc/security/pwhistory.conf`, classic
+option-policy path); joint password topology на всех четырёх lifted по
+реальному gate evidence (Debian 13 и Ubuntu 26.04 — после их собственных
+real C2/wiring/prerm/options gates). Real gate
+`pam_pwhistory_options_gate.sh` выбирает flow по compiled-in platform
+mode: ModuleArguments — production wiring (Debian 12); ProviderConfigFile —
+production provider-config evidence (production option-policy write в
+pwhistory.conf + functional reuse-window и enforce_for_root differentials);
+ModuleArguments wiring на ProviderConfigFile-платформах НЕ заявляется.
 `pwhistoryRemember`/`pwhistoryEnforceForRoot` — обязательные per-option
-evidence gates: без соответствующего флага reader'а desired-state fail
-closed (в том числе на default depth), а support classification держит
-опцию ReadOnly.
+evidence gates на ModuleArguments-платформах: без соответствующего флага
+reader'а desired-state fail closed (в том числе на default depth), а
+support classification держит опцию ReadOnly.
 
 Package-release (prerm) игнорирует желаемые значения опций: он освобождает
 весь домен, финальные слоты — Neutral без pwhistory опций; proof владения

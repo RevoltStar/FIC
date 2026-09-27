@@ -787,6 +787,20 @@ void testSelectedProfile() {
                 "Debian 13 ip command symlink target is incorrect");
         require(profile.grub.rebuildArguments.empty(),
                 "Debian 13 update-grub must not receive arguments");
+        // Evidence-based lift (real Debian 13 gates: C2 G1-G11 PASS,
+        // production wiring W1-W9 PASS, pwhistory options gate PASS with
+        // the production ProviderConfigFile option path).
+        require(profile.pam.passwordTopologyRuntimeMutable,
+                "Debian 13 password topology must be lifted after the "
+                "passed real Debian 13 gates");
+        require(history != nullptr &&
+                    history->configurationMode ==
+                        fic::platform::PamCapabilityConfigurationMode::
+                            ProviderConfigFile &&
+                    !history->moduleArgumentSupport.pwhistoryRemember &&
+                    !history->moduleArgumentSupport.pwhistoryEnforceForRoot,
+                "Debian 13 keeps the provider-config option strategy with "
+                "NO module-argument evidence");
     } else if (profile.id == "ubuntu-24.04" ||
                profile.id == "ubuntu-26.04") {
         require(!profile.dac.tcbCredentialStorage.has_value(),
@@ -805,6 +819,27 @@ void testSelectedProfile() {
                 "Ubuntu df command path is incorrect");
         require(profile.grub.rebuildArguments.empty(),
                 "Ubuntu update-grub must not receive arguments");
+        if (profile.id == "ubuntu-26.04") {
+            // Evidence-based lift (real Ubuntu 26.04 gates: C2 G1-G11
+            // PASS, production wiring W1-W9 PASS, pwhistory options gate
+            // PASS with the production ProviderConfigFile option path).
+            require(profile.pam.passwordTopologyRuntimeMutable,
+                    "Ubuntu 26.04 password topology must be lifted after "
+                    "the passed real Ubuntu 26.04 gates");
+            require(history != nullptr &&
+                        history->configurationMode ==
+                            fic::platform::PamCapabilityConfigurationMode::
+                                ProviderConfigFile &&
+                        !history->moduleArgumentSupport.pwhistoryRemember &&
+                        !history->moduleArgumentSupport
+                             .pwhistoryEnforceForRoot,
+                    "Ubuntu 26.04 keeps the provider-config option "
+                    "strategy with NO module-argument evidence");
+        }
+        if (profile.id == "ubuntu-24.04") {
+            require(profile.pam.passwordTopologyRuntimeMutable,
+                    "Ubuntu 24.04 password topology must stay lifted");
+        }
     } else {
         throw std::runtime_error("unexpected selected platform profile: " + profile.id);
     }

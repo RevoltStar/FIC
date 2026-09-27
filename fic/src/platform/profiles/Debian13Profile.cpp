@@ -149,6 +149,16 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.pam.capabilities[1].activationIdentifiers = {"fic-pwquality"};
     profile.pam.capabilities[2].activationIdentifiers = {"fic-pwhistory"};
+    // Evidence-based lift (real disposable-container gates on Debian 13
+    // trixie, libpam 1.7.0): C2 topology G1-G11 PASS, production wiring
+    // W1-W9 PASS, and the pwhistory options gate PASS with the production
+    // ProviderConfigFile option path (pwhistory.conf remember=N window and
+    // enforce_for_root proven functionally). The joint C2 password topology
+    // is runtime mutable here. Like Ubuntu, Debian 13 keeps the
+    // ProviderConfigFile configuration mode: the package ships
+    // /etc/security/pwhistory.conf and the option policies use the classic
+    // path, so NO module-argument evidence is claimed.
+    profile.pam.passwordTopologyRuntimeMutable = true;
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {

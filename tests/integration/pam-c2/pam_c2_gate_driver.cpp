@@ -10,6 +10,7 @@
 #include "modules/identity_access/pam/PamManagedPasswordSlotBootstrap.h"
 #include "modules/identity_access/pam/PamPasswordTopologyState.h"
 #include "modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.h"
+#include "platform/PlatformProfile.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "rollback/MutationJournal.h"
 #include <fic/core/integrity/CommandHashStore.h>
@@ -123,6 +124,46 @@ int main(int argc, char** argv) {
                   << (result.changedSystemState ? "true" : "false")
                   << "\n";
         return result.complete() ? 0 : 1;
+    }
+
+    if (command == "platform-mode") {
+        // Compile-time platform evidence report used by the gates to pick
+        // the production-appropriate option strategy assertions.
+        const fic::platform::PlatformProfile profile =
+            fic::platform::makeBuildPlatformProfile();
+        const fic::platform::PamCapabilityConfig* history = nullptr;
+        for (const auto& capability : profile.pam.capabilities) {
+            if (capability.capability ==
+                fic::platform::PamCapability::PasswordHistory) {
+                history = &capability;
+                break;
+            }
+        }
+        if (history == nullptr) {
+            std::cerr << "platform has no history capability\n";
+            return 2;
+        }
+        std::cout << "profileId=" << profile.id << "\n";
+        std::cout << "historyMode="
+                  << (history->configurationMode ==
+                              fic::platform::PamCapabilityConfigurationMode::
+                                  ModuleArguments
+                          ? "ModuleArguments"
+                          : "ProviderConfigFile")
+                  << "\n";
+        std::cout << "rememberEvidence="
+                  << (history->moduleArgumentSupport.pwhistoryRemember ? 1
+                                                                       : 0)
+                  << "\n";
+        std::cout << "enforceEvidence="
+                  << (history->moduleArgumentSupport.pwhistoryEnforceForRoot
+                          ? 1
+                          : 0)
+                  << "\n";
+        std::cout << "topologyMutable="
+                  << (profile.pam.passwordTopologyRuntimeMutable ? 1 : 0)
+                  << "\n";
+        return 0;
     }
     return runExecutorCommand(command, argc, argv);
 }
@@ -243,9 +284,15 @@ int runExecutorCommand(const std::string& command, int argc, char** argv) {
         // (remember=3, no enforce_for_root) when not overridden.
         ManagedPwhistorySlotOptions historyOptions;
         historyOptions.remember = 3;
-        if (argc >= 5) {
+        if (argc >= 5 && std::string(argv[4]) != "-") {
             historyOptions.remember =
                 static_cast<unsigned>(std::stoul(argv[4]));
+        }
+        // "-" selects the EMPTY options set (the pre-Step-6 slot bodies
+        // without module arguments) used by the provider-config-file
+        // production option flow.
+        if (argc >= 5 && std::string(argv[4]) == "-") {
+            historyOptions.remember.reset();
         }
         if (argc >= 6) {
             historyOptions.enforceForRoot = std::string(argv[5]) == "1";

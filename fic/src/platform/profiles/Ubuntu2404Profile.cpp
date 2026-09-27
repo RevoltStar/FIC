@@ -123,8 +123,9 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     // Evidence-based lift (real functional gates G1-G11 + production wiring
     // gates passed on Ubuntu 24.04): the joint C2 password topology is
-    // runtime mutable here. Ubuntu 26.04 and other PamAuthUpdate platforms
-    // stay ReadOnly until their own gates pass.
+    // runtime mutable here. Other PamAuthUpdate platforms stay ReadOnly
+    // until their own gates pass (Ubuntu 26.04 was lifted the same way
+    // after its own real gates passed).
     profile.pam.passwordTopologyRuntimeMutable = true;
     profile.pam.capabilities[0].supportedFaillockStrategies = {
         PamFaillockStrategy::PreauthRequired,

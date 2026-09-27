@@ -1010,9 +1010,11 @@ void testSupportContract() {
     const bool mutableDomain = profile.pam.passwordTopologyRuntimeMutable;
     // Evidence-based acceptance: exactly the gate-validated platforms are
     // lifted; every other platform keeps the safe state.
-    if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {
+    if (profile.id == "debian-12" || profile.id == "ubuntu-24.04" ||
+        profile.id == "debian-13" || profile.id == "ubuntu-26.04") {
         require(mutableDomain,
-            "Debian 12 / Ubuntu 24.04 must be lifted (gates passed)");
+            "Debian 12 / Debian 13 / Ubuntu 24.04 / Ubuntu 26.04 must be "
+                "lifted (real gates passed on each)");
     } else {
         require(!mutableDomain,
             "non-validated platform " + profile.id +
@@ -1177,15 +1179,18 @@ void testOptionPolicyRoutingMatchesProfileMode() {
                         ModuleArguments),
         "the option-policy routing must match the profile configuration "
         "mode");
-    if (profile.id == "ubuntu-24.04") {
+    if (profile.id == "ubuntu-24.04" || profile.id == "debian-13" ||
+        profile.id == "ubuntu-26.04") {
         require(!probe.c2RoutingProbe(),
-            "Ubuntu 24.04 production option policies must keep the classic "
-            "path (Variant A: the pwhistory options gate on Ubuntu is a "
-            "capability evidence probe, NOT production ModuleArguments "
-            "wiring)");
+            "ProviderConfigFile-platform production option policies "
+                "(Ubuntu 24.04 / Ubuntu 26.04 / Debian 13) must keep the "
+                "classic path (the pwhistory options gate proves the "
+                "production provider-config option path there, NOT "
+                "ModuleArguments wiring)");
         require(!history->moduleArgumentSupport.pwhistoryRemember &&
                     !history->moduleArgumentSupport.pwhistoryEnforceForRoot,
-            "Ubuntu 24.04 must carry no module-argument evidence");
+            "ProviderConfigFile platforms must carry no module-argument "
+                "evidence");
     } else if (profile.id == "debian-12") {
         require(probe.c2RoutingProbe(),
             "Debian 12 production option policies must route through the "

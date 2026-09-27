@@ -2,106 +2,76 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `17593ccef3dbb0c968a6521efe2bd826885cc2bf` (Step 6
-  закоммичен).
-- Step 6 follow-up (P1 recovery / P2 Ubuntu semantics / P3 remember
-  evidence) — в working tree, НЕ закоммичено.
+- Ветка `main`, рабочее дерево содержит НЕ закоммиченные изменения
+  (lift Debian 13 / Ubuntu 26.04 + gate-инфраструктура + тесты + docs).
+- Baseline до задачи: `9f6137d173cc75d607f8dbdefcfb619bb060f345`
+  (Step 6 follow-up и более ранние шаги — в нём).
+- Коммит НЕ делать без явного запроса пользователя.
 
 ## Current task
 
-**Step 6 follow-up** — три узких исправления:
+**ReadOnly lift Debian 13 / Ubuntu 26.04 password topology** на базе real
+functional evidence, полученной в одноразовых Docker-контейнерах
+(`debian:13`, `ubuntu:26.04`; образы через `mirror.gcr.io` из-за Docker Hub
+rate-limit). Без редизайнов: topology/Step 6/prerm/abstraction не менялись.
 
-- **P1 (runtime recovery):** failure journal completion'а option update
-  оставляет *selected + canonical Active + exact Prepared*. Раньше
-  production executor рвал это состояние на planner-гейте F9
-  (unownedSelectionsPreserved: Prepared != ownership) ДО reconcile.
-  Теперь executor в `transition()` сразу после первой свежей инспекции
-  (`recoverExactPreparedSelectedHistoryIfNeeded`, ДО
-  requireUsableCurrentState/planner) классифицирует ровно одно
-  recoverable-состояние (role selected, свой слот Active с exact
-  role-bound Prepared binding, sibling history Neutral, quality без
-  Prepared) и завершает lifecycle через новый writer-примитив
-  `completeExactPreparedC2Slot` (только journal, тело слота НЕ переписывается,
-  без pam-auth-update, тот же mutation id, без новых записей;
-  Applied-вариант — идемпотентный no-op; конкурирующие active records
-  домена — fail closed). После recovery — свежая инспекция + требование
-  нормального owned-состояния; обычные selected-but-unowned состояния
-  по-прежнему fail closed (тест F6c). Сбой completion оставляет exact
-  recoverable Prepared — retry возможен. Coordinator seam:
-  `setHistoryJournalCompletionFaultHookForTests` (passthrough в executor).
-- **P2 (Ubuntu, Variant A):** Ubuntu 24.04 остаётся
-  `ProviderConfigFile` (`/etc/security/pwhistory.conf`) с
-  `moduleArgumentSupport={false,false}`; классический option-policy path —
-  production. `pam_pwhistory_options_gate.sh` на Ubuntu — CAPABILITY
-  EVIDENCE PROBE (гейт заголовком и verdict'ом явно это помечает);
-  production ModuleArguments wiring gate обязателен только Debian 12.
-  Routing-тест `optionPolicyRoutingMatchesProfileMode` + пиннинг профиля в
-  PlatformProfileTests. `c2ManagedHistoryDomain()` теперь protected
-  (для routing-теста).
-- **P3 (remember evidence):** `pwhistoryRemember` — обязательный evidence
-  gate reader'а: ModuleArguments без него → desired-state read fail closed,
-  ВКЛЮЧАЯ default depth (никогда не рендерить молча). enforce_for_root —
-  без изменений. `pamPolicySupport`: на ModuleArguments history capability
-  Depth мутабелен только при `pwhistoryRemember`, EnforceForRoot — только
-  при `pwhistoryEnforceForRoot` (иначе ReadOnly). Тесты P3a/P3b/P3c в
-  `jointDesiredStateReaderOptions` + `optionEvidenceSupportContract`.
+### Результаты (evidence matrix)
 
-## Joint password topology domain (главные инварианты, без изменений)
+| Платформа | libpam | C2 G1–G11 | Wiring W1–W9 | Prerm (4 сцен.) | Options gate | Режим | Lift |
+|---|---|---|---|---|---|---|---|
+| Debian 12 | 1.5.2 | PASS | PASS | PASS (истор.) | PASS (O-flow) | ModuleArguments | был |
+| Debian 13 | 1.7.0 | PASS | PASS | PASS 4/4 (28 PASS) | PASS (PC-flow) | ProviderConfigFile | ДА |
+| Ubuntu 24.04 | 1.7.0 | PASS | PASS | PASS (истор.) | PASS (probe) | ProviderConfigFile | был |
+| Ubuntu 26.04.1 | 1.7.0 | PASS | PASS | PASS 4/4 (28 PASS) | PASS (PC-flow) | ProviderConfigFile | ДА |
 
-- **Applied = ownership; Prepared = exact lifecycle recovery binding**
-  (документировано в `docs/rollback.md`, раздел «Managed history module
-  arguments (Step 6)»): Prepared никогда не авторизует detach — только
-  точное завершение lifecycle. Selected-but-unowned (нет записи / чужой id /
-  чужой role payload / malformed body / RollbackFailed) — fail closed.
-- Mixed Applied+Prepared package-release recovery (`recoverCrashLeftovers`)
-  не изменялся; unselected Prepared — зона package-release recovery.
-- **Quality selected+Prepared недостижим** (проверено): attach завершает
-  journal до native selection; сбой completion компенсируется (neutralize +
-  discard) до выбора профиля → runtime-механизм recovery для Quality не
-  нужен.
+Ключевой факт: Debian 13 (в отличие от Debian 12) поставляет
+`/etc/security/pwhistory.conf` — обе новые платформы остаются
+`configurationMode=ProviderConfigFile`, БЕЗ module-argument evidence.
+Lift = только `passwordTopologyRuntimeMutable = true` в профилях.
 
-## Step 6 architecture (см. коммит 17593cc)
+## Changed areas
 
-- Reader `readJointPasswordDesiredState` — Q/H + depth + enforce из ОДНОГО
-  config snapshot; теперь также remember-evidence gate (P3).
-- Executor: attach рендерит слот из requested options; post-plan in-place
-  reconcile через `updateC2HistoryOptions` ПЕРЕД финальным proof; НОВОЕ:
-  pre-planner exact-Prepared recovery (P1, шаг 1.5).
-- Writer: `updateC2HistoryOptions` (refresh той же записи, id
-  сохраняется, record count не растёт; компенсации без изменений) + НОВЫЙ
-  `completeExactPreparedC2Slot` (journal-only, changedSystemState=false).
-- Option policies на ModuleArguments+PamAuthUpdate идут через coordinator;
-  иначе classic path. Wiring в `main_function.cpp` без изменений.
-
-## ReadOnly lift / wiring (без изменений)
-
-- `passwordTopologyRuntimeMutable` = true только Debian 12 / Ubuntu 24.04.
+- `fic/src/platform/profiles/Debian13Profile.cpp` — lift + evidence-комментарий.
+- `fic/src/platform/profiles/Ubuntu2604Profile.cpp` — lift + evidence-комментарий.
+- `fic/src/platform/profiles/Ubuntu2404Profile.cpp` — только комментарий
+  (ссылка на lift 26.04).
+- `tests/fic/platform/PlatformProfileTests.cpp` — пиннинги Debian 13 /
+  Ubuntu 26.04 / Ubuntu 24.04 (mutable, ProviderConfigFile, no module-arg).
+- `tests/fic/modules/identity_access/pam/PamPasswordWiringTests.cpp` —
+  support contract для новых платформ (classic path, no module-arg evidence).
+- `tests/integration/pam-c2/pam_c2_gate_driver.cpp` — команда `platform-mode`,
+  `"-"` для empty options.
+- `tests/integration/pam-c2/pam_c2_wiring_driver.cpp` — `platform-mode`,
+  `provider-option` (перенесён из c2-драйвера).
+- `tests/integration/pam-c2/pam_pwhistory_options_gate.sh` — distro case,
+  mode-branch: O-flow (ModuleArguments) vs новый PC-flow (ProviderConfigFile:
+  PC1–PC6 — production option-policy write в pwhistory.conf через
+  `PamPasswordHistoryOptionPolicy::applyPam` + функциональные
+  remember-window/enforce_for_root differentials).
+- `tests/integration/pam-c2/pam_prerm_release_gate.sh` — debian-13 /
+  ubuntu-26.04 distro cases.
+- `tests/CMakeLists.txt` — источники wiring-драйвера (PamOptionPolicy,
+  PamProviderConfigFile, PamPasswordHistoryOptionPolicy).
+- `docs/rollback.md` — обновлён блок platform-семантики (4 lifted-платформы,
+  PC-flow options gate как production provider-config evidence).
 
 ## Validation (фактически выполнено)
 
-- Full build `build-step6-followup` (debian-12, BUILD_TESTING=ON): EXIT=0.
-- Full CTest: **107/107 PASS** (env-skip `command_hash_batch_tests`).
-- Новые regression-тесты: executor `F6_optionRetryPreparedCompletion`
-  (fault → exact Prepared crash state → retry ЧЕРЕЗ executor → completion,
-  same id, no extra record, no pam-auth-update) +
-  `F6c_foreignSelectedBindingStillFailsClosed`; wiring
-  `jointOptionRetryPreparedCompletion` (координатор,
-  `applyJointRequestedState`) + `jointRestartRecoveryPreparedCompletion`
-  (reconstruction journal+coordinator из persistent state);
-  `jointDesiredStateReaderOptions` P3a/P3b/P3c;
-  `optionEvidenceSupportContract`; `optionPolicyRoutingMatchesProfileMode`;
-  PlatformProfileTests — moduleArgumentSupport пиннинг.
+- Unit: `cmake -DFIC_TARGET_PLATFORM=debian-13` и `=ubuntu-26.04`
+  (BUILD_TESTING=ON): build EXIT=0; CTest **107/107 PASS** на обеих
+  (env-skip `command_hash_batch_tests`).
+- Real Docker gates на ship-state (lift уже применён к профилям):
+  - Debian 13: C2 PASS, wiring PASS, prerm 4/4 RC=0, options PC-flow PASS
+    (включая функциональный enforce_for_root).
+  - Ubuntu 26.04: C2 PASS, wiring PASS, prerm 4/4 RC=0, options PC-flow PASS.
+- Regression (после изменений): Debian 12 C2 PASS, wiring PASS, options
+  O-flow PASS; Ubuntu 24.04 C2 PASS.
+- Пакеты: `dist/fic*0.1.0~rc.1_{debian13,ubuntu2604}_amd64.deb` собраны
+  (нужны для prerm gates; staging-скрипты packaging/deb без изменений).
 - `git diff --check` — clean.
-- Real Docker gates (Step 6 follow-up):
-  - `pam_pwhistory_options_gate.sh` debian-12 — PASS (production wiring);
-  - `pam_c2_gate.sh` debian-12 — PASS;
-  - `pam_c2_wiring_gate.sh` debian-12 — PASS;
-  - `pam_pwhistory_options_gate.sh` ubuntu-24.04 — PASS (capability
-    evidence probe, НЕ production wiring).
 
 ## Remaining
 
-1. Опционально: renderer-тесты M1–M8 coverage, M19 rollback-option тест,
-   F2/F4/F5 аналоги update-пути, Debian 13 / Ubuntu 26.04 gates
-   (платформы ReadOnly — низкий риск).
+1. Опционально: ubuntu-24.04 options gate (исторически PASS, не
+   перегонялся).
 2. Не коммитить без явного запроса.

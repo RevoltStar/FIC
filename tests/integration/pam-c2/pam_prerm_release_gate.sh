@@ -60,7 +60,9 @@ note "distro: $DISTRO"
 
 DISTRO_TAG="$(case "$(. /etc/os-release && echo "$ID-$VERSION_ID")" in
     debian-12) echo debian12 ;;
+    debian-13) echo debian13 ;;
     ubuntu-24.04) echo ubuntu2404 ;;
+    ubuntu-26.04) echo ubuntu2604 ;;
     *) die_environment "unsupported distro for the prerm gate" ;;
 esac)"
 
@@ -113,7 +115,9 @@ command -v pam-auth-update >/dev/null || die_environment "package install broke 
 # ------------------------------------------------- build the gate drivers
 GATE_PLATFORM="$(case "$(. /etc/os-release && echo "$ID-$VERSION_ID")" in
     debian-12) echo debian-12 ;;
+    debian-13) echo debian-13 ;;
     ubuntu-24.04) echo ubuntu-24.04 ;;
+    ubuntu-26.04) echo ubuntu-26.04 ;;
     *) die_environment "unsupported distro for the driver build" ;;
 esac)"
 cmake -S "$REPO" -B /tmp/fic-prerm-build \
