@@ -348,6 +348,69 @@ void runAllFilesystemTests() {
 
 
 
+void runAllMetadataTests() {
+    // 52b. Pre-existing administrator metadata is PRESERVED: a hardened
+    // 0600 file must never be silently rewritten to 0644 by a FIC
+    // mutation; uid/gid stay untouched as well.
+    {
+        TemporaryDirectory temp;
+        const auto path = temp.path / "faillock.conf";
+        const std::string pre = "a = 1\n";
+        {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << pre;
+        }
+        require(::chmod(path.c_str(), 0600) == 0, "chmod fixture failed");
+        struct ::stat before {};
+        require(::stat(path.c_str(), &before) == 0, "stat fixture failed");
+
+        const auto read = readContainer(
+            path, PamProviderAbsentContainerDecision::FailClosed);
+        require(read.ok, "metadata snapshot read failed");
+        const auto mutation = setPamProviderManagedEntry(
+            pre, testSpec(42, "5"), PamProviderBlockPlacementRequest::End);
+        require(mutation.ok, "metadata mutation build failed");
+        const auto write =
+            writeContainer(path, false, read.snapshot, mutation.content);
+        require(write.ok, "metadata mutation write failed");
+        struct ::stat after {};
+        require(::stat(path.c_str(), &after) == 0, "post-write stat failed");
+        require((after.st_mode & 07777) == (before.st_mode & 07777),
+                "pre-existing file mode must be preserved (0600 stays 0600)");
+        require(after.st_uid == before.st_uid && after.st_gid == before.st_gid,
+                "pre-existing file owner must be preserved");
+        require(readFile(path) == mutation.content,
+                "metadata-preserving write content mismatch");
+    }
+    // 52c. Metadata changes between snapshot and write are stale-snapshot
+    // replacements: refused exactly like content changes.
+    {
+        TemporaryDirectory temp;
+        const auto path = temp.path / "faillock.conf";
+        const std::string pre = "a = 1\n";
+        {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            output << pre;
+        }
+        const auto read = readContainer(
+            path, PamProviderAbsentContainerDecision::FailClosed);
+        require(read.ok, "metadata stale read failed");
+        // External metadata-only change after the snapshot.
+        require(::chmod(path.c_str(), 0640) == 0, "external chmod failed");
+        const auto mutation = setPamProviderManagedEntry(
+            pre, testSpec(42, "5"), PamProviderBlockPlacementRequest::End);
+        require(mutation.ok, "metadata stale mutation build failed");
+        const auto write =
+            writeContainer(path, false, read.snapshot, mutation.content);
+        require(!write.ok && write.stale,
+                "metadata-only change must be detected as stale");
+        struct ::stat st {};
+        require(::stat(path.c_str(), &st) == 0, "post-refusal stat failed");
+        require((st.st_mode & 07777) == 0640,
+                "refused stale write must not touch the file metadata");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -355,6 +418,7 @@ int main() {
         runAllContainerTests();
         runAllContainerTests2();
         runAllFilesystemTests();
+        runAllMetadataTests();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderManagedBlockFileTests failed: "
                   << error.what() << '\n';

@@ -22,14 +22,21 @@ AtomicWriteOptions writeOptions(bool containerWasAbsent) {
         // Atomically refuse creation if any object appeared at the target
         // between the proven ENOENT and the write.
         options.exclusiveCreate = true;
+        // A FIC-created container is 0644 with the current euid/egid
+        // (root:root for the daemon).
+        options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+        options.fileMode = 0644;
+        options.fileOwner = ::geteuid();
+        options.fileGroup = ::getegid();
     }
-    // The same metadata policy as the existing PAM option file writers:
-    // an existing file keeps its uid/gid/mode, a FIC-created container is
-    // 0644 with the current euid/egid (root:root for the daemon).
-    options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
-    options.fileMode = 0644;
-    options.fileOwner = ::geteuid();
-    options.fileGroup = ::getegid();
+    // For a PRE-EXISTING shared provider configuration the administrator's
+    // metadata is foreign state FIC does not own: the file keeps its exact
+    // uid/gid/mode (FileMetadataPolicy::PreserveExisting). Forcing
+    // EnforceProvided 0644 here would silently rewrite administrator
+    // security metadata (e.g. a hardened 0600 file) on every FIC mutation.
+    // Stale-snapshot replacement protection is unaffected: the captured
+    // AtomicTargetState includes mode/uid/gid, so a metadata change between
+    // readForMutation() and the write is detected like any other change.
     return options;
 }
 

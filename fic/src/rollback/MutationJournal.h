@@ -51,7 +51,7 @@ enum class JournalHealth {
 
 class MutationJournal {
 public:
-    static constexpr std::uint32_t kSchemaVersion = 1;
+    static constexpr std::uint32_t kSchemaVersion = 2;
     // Independent version identifier of the initialization witness document;
     // the journal JSON schema itself is unchanged.
     static constexpr std::uint32_t kWitnessSchemaVersion = 1;

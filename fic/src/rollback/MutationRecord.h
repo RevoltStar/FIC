@@ -157,6 +157,20 @@ struct UndoDisablePamCapability {
 // re-proved from the physical file.
 enum class PamProviderBlockPlacementContract { Beginning, End };
 
+// Durable container-level FIC ownership record for a shared PAM provider
+// primary configuration file (Step 7A). The record proves ONLY that FIC
+// created the previously ABSENT container file after an explicitly proven
+// safe-creation decision; it is completely independent of the lifecycle of
+// the entry record that happened to trigger the creation: losing the
+// creator entry (its rollback, detach or refresh) must never invalidate the
+// container provenance. This is the only accepted proof for unlinking the
+// container after the last FIC entry is released; a pre-existing file is
+// never proven by this payload (fail closed on lost or corrupt provenance).
+struct UndoOwnPamProviderContainer {
+    std::string providerName; // PAM provider identity (physical block marker)
+    std::string configPath;   // primary provider configuration resource
+};
+
 // PAM shared provider configuration ownership-release payload (Step 7A).
 // The record proves ONLY FIC ownership of ONE managed entry inside the FIC
 // managed block: the physical entry must carry this record's id as its
@@ -164,16 +178,19 @@ enum class PamProviderBlockPlacementContract { Beginning, End };
 // exact canonical applied body and the correct provider identity. No
 // previous foreign value, no whole-file snapshot, no foreign block copy:
 // rollback releases the FIC entry, it never reconstructs pre-FIC state.
+// previousAppliedBody carries the durable previous→target FIC-owned
+// transition of an in-place refresh (crash-safe ownership recovery):
+// empty = fresh create; non-empty = the exact previous canonical body of
+// the SAME managed key that was FIC-owned immediately before this
+// transition (recovery: previous present → continue; target present →
+// adopt/complete; neither → fail closed).
 struct UndoRemovePamProviderManagedEntry {
     std::string policyName;   // FIC policy identity (physical entry marker)
     std::string providerName; // PAM provider identity (physical block marker)
     std::string configPath;   // primary provider configuration resource
     std::string managedKey;   // managed key inside the canonical body
     std::string appliedBody;  // exact canonical body "<key> = <value>"
-    // True only when THIS mutation created a previously absent primary
-    // configuration file after an explicitly proven safe-creation decision
-    // (FIC-created container provenance for the release logic).
-    bool containerCreated = false;
+    std::string previousAppliedBody; // empty = fresh create
     PamProviderBlockPlacementContract placement =
         PamProviderBlockPlacementContract::End;
 };
@@ -188,7 +205,8 @@ using UndoPayload = std::variant<
     UndoRemoveSssdManagedSetting,
     UndoRestoreKerberosScalar,
     UndoDisablePamCapability,
-    UndoRemovePamProviderManagedEntry>;
+    UndoRemovePamProviderManagedEntry,
+    UndoOwnPamProviderContainer>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

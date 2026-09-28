@@ -63,13 +63,15 @@ public:
         std::string& error);
 
     // Snapshot-bound atomic install of the mutated content (temp file +
-    // rename + directory fsync, file mode 0644, current euid/egid — the
-    // same metadata policy as the existing PAM option file writers). For a
-    // PreExisting file the captured snapshot is enforced as the replacement
-    // precondition: a file that changed between read and write is detected
-    // (stale=true) and never silently overwritten. For an absent container
-    // the creation is exclusive (a concurrently appearing object refuses
-    // the write).
+    // rename + directory fsync). Metadata policy: a FIC-CREATED container is
+    // 0644 with the current euid/egid; a PRE-EXISTING file keeps its exact
+    // administrator uid/gid/mode (PreserveExisting) — FIC does not own
+    // foreign metadata. For a PreExisting file the captured snapshot is
+    // enforced as the replacement precondition: a file that changed between
+    // read and write — in content OR in metadata (mode/uid/gid) — is
+    // detected (stale=true) and never silently overwritten. For an absent
+    // container the creation is exclusive (a concurrently appearing object
+    // refuses the write).
     static PamProviderContainerWriteResult writeMutation(
         const std::filesystem::path& path,
         bool containerWasAbsent,
@@ -80,9 +82,9 @@ public:
 
 // Pure release-time decision for the FIC-CREATED container provenance
 // (Step 7A foundation; the actual unlink belongs to the Step 7F release
-// executor). The journal payload flag `containerCreated` of the record that
-// created the absent primary file is the only accepted proof of FIC
-// container creation; a pre-existing file is NEVER classified FIC-created.
+// executor). The durable `own_pam_provider_container` journal record
+// (independent of any entry record lifecycle) is the only accepted proof of
+// FIC container creation; a pre-existing file is NEVER classified FIC-created.
 //   * RemovableFicOwned    — container creation proven AND the content left
 //                            after the block removal is empty: the file
 //                            consists only of FIC serialization, so the

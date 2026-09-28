@@ -3,7 +3,7 @@
 ## Current base
 
 - Ветка `main`, рабочее дерево содержит НЕ закоммиченные изменения
-  (Step 7A PAM provider managed block + тесты).
+  (Step 7A PAM provider managed block + fixed six architectural defects + тесты).
 - Baseline до задачи: `f54530d` (lift Debian 13 / Ubuntu 26.04 — в нём).
 - Коммит НЕ делать без явного запроса пользователя.
 
@@ -42,7 +42,7 @@ configuration.** Реализован reusable primitive, ownership/provenance m
 ### Физический grammar (version=1)
 
 ```text
-# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 provider=<provider>
+# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 provider=<provider> lead=<none|newline>
 # FIC_PAM_ENTRY_BEGIN version=1 policy=<policy> mutation=<id>
 <key> = <value>
 # FIC_PAM_ENTRY_END
@@ -60,7 +60,24 @@ configuration.** Реализован reusable primitive, ownership/provenance m
 * body — строго `key = value`, value без CR/LF/NUL/'#'/trim-пробелов;
 * внутри canonical structural portion ничего лишнего (никаких пустых
   строк/комментариев); duplicate (policy,key), duplicate physical
-  mutation id, nested/duplicate blocks — fail closed.
+  mutation id, nested/duplicate blocks — fail closed;
+* STRUCTURAL LEAD (граница разделителя): поле `lead=` объявляет
+  принадлежность РОВНО ОДНОГО LF непосредственно перед BEGIN:
+  `lead=newline` — LF вставлен FIC (EOF-размещение после непустых foreign
+  байтов), декодер снимает ровно его, парсер fail-closed, если байт перед
+  BEGIN не LF или BEGIN в offset 0; `lead=none` — ничего перед BEGIN не
+  принадлежит FIC (ничего не снимается). Благодаря этому round-trip
+  `foreign → блок → append X → relocate → remove == foreign+X`
+  байт-точен по построению (без эвристик).
+
+### Общий канонический валидатор
+
+`parseCanonicalPamProviderEntryBody(body, key, value)` в
+`PamProviderManagedBlock.h` — ЕДИНСТВЕННЫЙ валидатор тела; используют
+physical parser, spec-валидация (`isValidPamProviderEntryValue`), journal
+payload-валидация и ownership expectations. Ключ из тела обязан ТОЧНО
+совпадать с `managedKey` (exact match; prefix-compare «deny_extra» vs
+«deny» устранён).
 
 ### Ownership proof / ABA
 
@@ -106,19 +123,37 @@ durability failure → не success. `containerCreated=true` только ког
 контейнер создан из proven-absent. Release-decision (pure, unlink — Step 7F):
 `RetainUnproven` (проверка provenance ВЫШЕ foreign content) →
 `RetainForeignContent` (только блок удалить) → `RemovableFicOwned`
-(проверено containerCreated + после удаления блока пусто). Provenance
-выражен флагом `containerCreated` в payload'е записи, СОЗДАВШЕЙ файл
-(без отдельной journal mutation); известное ограничение: если запись-
-создатель ушла, доказательство пропадает — консервативно RetainUnproven.
+(проверено provenance + после удаления блока пусто).
+
+**Container provenance (Variant A, durable typed record):** provenance
+выражен ОТДЕЛЬНОЙ journal записью с typed payload
+`UndoOwnPamProviderContainer{providerName, configPath}` (action
+`own_pam_provider_container`, submodule `PAM_CONTAINER`, backend Pam) —
+она НЕЗАВИСИМА от lifecycle записи-создателя entry (уход создателя больше
+не теряет доказательство). Guard'ы prepareMutation: Applied-provenance не
+re-Prepare; вторая активная container-запись на тот же configPath (другой
+provider) — fail closed; Prepared → Prepared refresh разрешён (тот же id).
+Schema journal: `kSchemaVersion = 2` (без migration code).
+
+**Metadata (P1):** pre-existing файл — `FileMetadataPolicy::PreserveExisting`
+(uid/gid/mode администратора не переписываются; раньше форсировалось
+EnforceProvided 0644); FIC-created — EnforceProvided 0644/euid/egid.
+Stale-детекция `AtomicFileWriter::matchesExpectedState` сравнивает
+mode/uid/gid — метаданные-изменения между snapshot и write дают stale=true.
 
 ### Journal binding / crash states
 
-`classifyPamProviderJournalBinding(status, parse, expectation)` →
-A `PreparedNoPhysicalEntry`, B `PreparedExactEntry` (exact recovery для
-того же id возможна — foundation для 7B), C `PreparedConflictingEntry`,
-D `AppliedExact`, E `AppliedMissing`, F `AppliedDrifted`. Primitive не
-зависит от rollback layer (`PamProviderJournalMutationStatus` — локальный
-enum, caller маппит `MutationStatus`).
+`classifyPamProviderJournalBinding(status, parse, expectation)` — матрица
+recoveries с durable previous→target переходом:
+`PreparedFreshAbsent` (fresh, entry отсутствует — запись (пере)пишется,
+тот же id), `PreparedFreshTargetPresent` (ADOPT: crash после физической
+записи до завершения journal — без нового mutation id), 
+`PreparedUpdatePreviousPresent` (продолжить переход), 
+`PreparedUpdateTargetPresent` (завершить как Applied), 
+`PreparedConflict` (update+absent / lookalike id / drift / foreign
+provider — fail closed), `AppliedExact`, `AppliedMissing`, `AppliedDrifted`.
+Primitive не зависит от rollback layer (`PamProviderJournalMutationStatus`
+— локальный enum, caller маппит `MutationStatus`).
 
 ### Concurrency contract
 
@@ -134,27 +169,42 @@ docs/rollback.md). Локальный `std::mutex` на instance не созда
 ### Rollback payload (Step 7B–7F contract)
 
 `UndoRemovePamProviderManagedEntry{policyName, providerName, configPath,
-managedKey, appliedBody, containerCreated, placement}`; mutation id = сам
-`record.id` (не дублируется). Валидация write+read parity: identity
-tokens, absolute configPath без CR/LF/NUL, managed key, canonical applied
-body (= physical serialization), placement beginning/end. Identity в
-prepareMutation/load: resource == configPath, policy == policyName,
-module IDENTITY_ACCESS/PAM.
+managedKey, appliedBody, previousAppliedBody, placement}`; mutation id =
+сам `record.id` (не дублируется). `previousAppliedBody` — durable
+previous→target переход in-place refresh: пусто = fresh create; иначе
+точный canonical previous body того же managed key (≠ appliedBody).
+Refresh guard'ы prepareMutation: fresh-запись с previous body — отказ;
+Applied/RollbackFailed refresh обязан нести текущий applied body как
+previous; Prepared refresh обязан нести ТОТ ЖЕ previous (иначе отказ);
+refresh сохраняет id и re-arms Prepared. `own_pam_provider_container` —
+отдельный payload (см. Container provenance). Валидация write+read
+parity: identity tokens, absolute configPath без CR/LF/NUL, managed key,
+canonical applied body exact key, previous body, placement beginning/end;
+поле `previous_applied_body` пишется ВСЕГДА, при загрузке обязательно
+(fail closed). Identity: entry — resource == configPath, policy ==
+policyName, module IDENTITY_ACCESS/PAM; container —
+IDENTITY_ACCESS/PAM_CONTAINER/policy == providerName.
 
 ## Validation (фактически выполнено)
 
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=debian-13 -DBUILD_TESTING=ON`
   EXIT=0.
-- Новые targeted: `ctest -R pam_provider_managed` → **3/3 PASS**.
-- Полный build + полный CTest: `/tmp/fic-full-build.log`,
-  `/tmp/fic-full-ctest.log` — см. фактический итог ниже (заполняется по
-  завершении прогона).
+- Новые targeted: `ctest -R pam_provider_managed` → **3/3 PASS**
+  (после фиксов: grammar lead, refresh guards, container provenance,
+  metadata preservation).
+- Targeted build `fic` (daemon, включает MutationJournal) — PASS.
+- Полный CTest (`build-check`): **110/110 PASS** (1 skip:
+  `command_hash_batch_tests`, окружение).
 - `git diff --check`: выполнен, чисто.
 
 ## Remaining (Step 7B+)
 
-1. 7B: перевод `pam_faillock` scalar-политик на primitive (Prepared →
-   physical mutation → fresh proof → Applied + exact recovery состояния B).
+1. 7B: перевод `pam_faillock` scalar-политик на primitive: caller должен
+   на Prepared-состояниях использовать новую матрицу recoveries
+   (PreparedFreshTargetPresent → adopt без нового id,
+   PreparedUpdatePreviousPresent → продолжить переход, остальное → fail
+   closed); fresh container-создание сопровождать подготовкой
+   `own_pam_provider_container` provenance записи.
 2. 7C: pwquality; 7D: pwhistory BOF; 7E: suppress/wrapper set-only false;
    7F: rollback executor wiring + package release + inter-process lock
    решение (если потребуется) + unlink FIC-created container.

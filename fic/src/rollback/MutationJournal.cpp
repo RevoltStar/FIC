@@ -112,12 +112,18 @@ json serializeUndoAction(const UndoAction& action) {
         value["config_path"] = pamEntry->configPath;
         value["managed_key"] = pamEntry->managedKey;
         value["applied_body"] = pamEntry->appliedBody;
-        value["container_created"] = pamEntry->containerCreated;
+        // Always written (write/read parity): the loader requires the field
+        // and fails closed when it is missing. Empty string = fresh create.
+        value["previous_applied_body"] = pamEntry->previousAppliedBody;
         value["placement"] =
             pamEntry->placement ==
                     PamProviderBlockPlacementContract::Beginning
                 ? "beginning"
                 : "end";
+    } else if (const auto* pamContainer = std::get_if<
+                   UndoOwnPamProviderContainer>(&action.payload)) {
+        value["provider"] = pamContainer->providerName;
+        value["config_path"] = pamContainer->configPath;
     }
     return value;
 }
@@ -271,16 +277,35 @@ bool validatePamProviderManagedEntryUndoPayload(
                 "managed key";
         return false;
     }
-    if (!isCanonicalPamProviderEntryBody(payload.appliedBody)) {
+    // EXACT key match via the shared canonical validator — never a prefix
+    // compare: "deny_extra = 5" must never validate against managedKey
+    // "deny" (the write path must never persist what the loader/ownership
+    // proof would reject).
+    std::string appliedKey;
+    std::string appliedValue;
+    if (!parseCanonicalPamProviderEntryBody(payload.appliedBody, appliedKey,
+                                            appliedValue) ||
+        appliedKey != payload.managedKey) {
         error = "remove_pam_provider_managed_entry undo requires a "
-                "canonical applied body";
+                "canonical applied body of exactly the managed key";
         return false;
     }
-    if (payload.appliedBody.compare(
-            0, payload.managedKey.size(), payload.managedKey) != 0) {
-        error = "remove_pam_provider_managed_entry undo applied body does "
-                "not start with the managed key";
-        return false;
+    // Durable previous→target transition of an in-place refresh: either a
+    // fresh create (empty previous body) or the exact previous canonical
+    // body of the SAME managed key, different from the new applied body.
+    if (!payload.previousAppliedBody.empty()) {
+        std::string previousKey;
+        std::string previousValue;
+        if (!parseCanonicalPamProviderEntryBody(
+                payload.previousAppliedBody, previousKey, previousValue) ||
+            previousKey != payload.managedKey ||
+            payload.previousAppliedBody == payload.appliedBody) {
+            error = "remove_pam_provider_managed_entry undo requires an "
+                    "empty (fresh create) or canonical previous applied "
+                    "body of the same managed key, different from the "
+                    "applied body";
+            return false;
+        }
     }
     switch (payload.placement) {
         case PamProviderBlockPlacementContract::Beginning:
@@ -290,6 +315,28 @@ bool validatePamProviderManagedEntryUndoPayload(
     error = "remove_pam_provider_managed_entry undo has an unknown "
             "placement contract";
     return false;
+}
+
+// Shared PAM provider container-ownership undo-payload validation (write +
+// read parity). The container provenance record proves that FIC created the
+// previously absent primary configuration file; it carries only the
+// provider identity and the absolute config path.
+bool validatePamProviderContainerUndoPayload(
+    const UndoOwnPamProviderContainer& payload,
+    std::string& error) {
+    if (!isValidPamProviderIdentityToken(payload.providerName)) {
+        error = "own_pam_provider_container undo requires a valid PAM "
+                "provider identity token";
+        return false;
+    }
+    if (payload.configPath.empty() || payload.configPath.front() != '/' ||
+        payload.configPath.find_first_of("\r\n") != std::string::npos ||
+        payload.configPath.find('\0') != std::string::npos) {
+        error = "own_pam_provider_container undo requires an absolute "
+                "config path free of CR/LF/NUL";
+        return false;
+    }
+    return true;
 }
 
 bool validKerberosSectionName(const std::string& section) {
@@ -636,13 +683,13 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
             !readString("applied_body", payload.appliedBody)) {
             return false;
         }
-        const auto containerIt = value.find("container_created");
-        if (containerIt == value.end() || !containerIt->is_boolean()) {
-            error = "remove_pam_provider_managed_entry undo requires a "
-                    "boolean container_created";
+        // Write/read parity: the field is ALWAYS written by
+        // serializeUndoAction; a document without it is malformed (fail
+        // closed). Empty string = fresh create.
+        if (!readString("previous_applied_body",
+                        payload.previousAppliedBody)) {
             return false;
         }
-        payload.containerCreated = containerIt->get<bool>();
         const auto placementIt = value.find("placement");
         if (placementIt == value.end() || !placementIt->is_string()) {
             error = "remove_pam_provider_managed_entry undo requires a "
@@ -661,6 +708,34 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
             return false;
         }
         if (!validatePamProviderManagedEntryUndoPayload(payload, error)) {
+            return false;
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
+    if (actionName == "own_pam_provider_container" &&
+        backend == MutationBackend::Pam) {
+        // Durable container-level FIC ownership provenance, independent of
+        // any entry record lifecycle.
+        UndoOwnPamProviderContainer payload;
+        const auto readString = [&](const char* field,
+                                    std::string& target) -> bool {
+            const auto it = value.find(field);
+            if (it == value.end() || !it->is_string()) {
+                error = std::string(
+                            "own_pam_provider_container undo requires a "
+                            "string ") +
+                    field;
+                return false;
+            }
+            target = it->get<std::string>();
+            return true;
+        };
+        if (!readString("provider", payload.providerName) ||
+            !readString("config_path", payload.configPath)) {
+            return false;
+        }
+        if (!validatePamProviderContainerUndoPayload(payload, error)) {
             return false;
         }
         action.payload = std::move(payload);
@@ -769,6 +844,19 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
                 record.resource != pamEntry->configPath) {
                 error = "PAM journal resource/policy does not match the "
                         "managed-entry undo payload";
+                return false;
+            }
+        } else if (const auto* pamContainer = std::get_if<
+                       UndoOwnPamProviderContainer>(&record.undo.payload)) {
+            // The container provenance identity is the dedicated
+            // PAM_CONTAINER submodule: it can never collide with an entry
+            // record (policy, backend, resource) for the same config path.
+            if (record.policy.moduleName != "IDENTITY_ACCESS" ||
+                record.policy.submoduleName != "PAM_CONTAINER" ||
+                record.policy.policyName != pamContainer->providerName ||
+                record.resource != pamContainer->configPath) {
+                error = "PAM journal resource/policy does not match the "
+                        "container-ownership undo payload";
                 return false;
             }
         } else {
@@ -883,6 +971,9 @@ std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoRemovePamProviderManagedEntry>(
             action.payload)) {
         return "remove_pam_provider_managed_entry";
+    }
+    if (std::holds_alternative<UndoOwnPamProviderContainer>(action.payload)) {
+        return "own_pam_provider_container";
     }
     return "unknown";
 }
@@ -1695,6 +1786,23 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                                                             error)) {
                 return false;
             }
+        } else if (const auto* pamContainer = std::get_if<
+                       UndoOwnPamProviderContainer>(&record.undo.payload)) {
+            // Container provenance lives under the dedicated PAM_CONTAINER
+            // submodule: one logical identity per (provider, config path),
+            // structurally disjoint from entry and capability records.
+            if (record.policy.moduleName != "IDENTITY_ACCESS" ||
+                record.policy.submoduleName != "PAM_CONTAINER" ||
+                record.policy.policyName != pamContainer->providerName ||
+                record.resource != pamContainer->configPath) {
+                error = "PAM provider container-ownership mutation record "
+                        "identity does not match undo payload (fail closed)";
+                return false;
+            }
+            if (!validatePamProviderContainerUndoPayload(*pamContainer,
+                                                         error)) {
+                return false;
+            }
         } else {
             const auto* pam =
                 std::get_if<UndoDisablePamCapability>(&record.undo.payload);
@@ -1709,6 +1817,52 @@ bool MutationJournal::prepareMutation(MutationRecord record,
         }
     }
 
+    // PAM provider lifecycle guards: provenance must never be silently
+    // created, lost or duplicated by a prepare/refresh.
+    if (record.undo.backend == MutationBackend::Pam) {
+        bool refreshesActiveRecord = false;
+        for (const MutationRecord& existing : records_) {
+            if (existing.isActive() &&
+                existing.policy == record.policy &&
+                existing.undo.backend == record.undo.backend &&
+                existing.resource == record.resource) {
+                refreshesActiveRecord = true;
+            }
+        }
+        if (const auto* pamEntry = std::get_if<
+                UndoRemovePamProviderManagedEntry>(&record.undo.payload)) {
+            if (!refreshesActiveRecord &&
+                !pamEntry->previousAppliedBody.empty()) {
+                // A previous applied body is durable provenance of an
+                // EXISTING FIC-owned entry: a fresh record without an
+                // active predecessor cannot legally claim it.
+                error = "remove_pam_provider_managed_entry fresh record "
+                        "must not claim a previous applied body (fail "
+                        "closed): refresh the active record instead";
+                return false;
+            }
+        } else if (const auto* newContainer = std::get_if<
+                       UndoOwnPamProviderContainer>(&record.undo.payload)) {
+            for (const MutationRecord& other : records_) {
+                const auto* container =
+                    std::get_if<UndoOwnPamProviderContainer>(
+                        &other.undo.payload);
+                if (other.isActive() && container != nullptr &&
+                    container->configPath == newContainer->configPath &&
+                    other.policy != record.policy) {
+                    // Only one FIC-created container provenance can exist
+                    // per physical file; a second provider claim is false
+                    // provenance (fail closed).
+                    error = "an active own_pam_provider_container record "
+                            "for another provider already exists for this "
+                            "config path (fail closed): '" +
+                        newContainer->configPath + "'";
+                    return false;
+                }
+            }
+        }
+    }
+
     // Idempotency: an active record for the same (policy, backend, resource)
     // is refreshed instead of duplicated (repeated apply).
     for (MutationRecord& existing : records_) {
@@ -1716,6 +1870,57 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             existing.policy == record.policy &&
             existing.undo.backend == record.undo.backend &&
             existing.resource == record.resource) {
+            // PAM provider refresh guards: deterministic transition
+            // semantics, no provenance loss on an in-place refresh.
+            if (record.undo.backend == MutationBackend::Pam) {
+                if (const auto* newEntry = std::get_if<
+                        UndoRemovePamProviderManagedEntry>(
+                        &record.undo.payload)) {
+                    const auto* oldEntry = std::get_if<
+                        UndoRemovePamProviderManagedEntry>(
+                        &existing.undo.payload);
+                    if (oldEntry == nullptr ||
+                        oldEntry->providerName != newEntry->providerName) {
+                        error = "PAM provider managed-entry refresh changed "
+                                "the undo payload identity (fail closed)";
+                        return false;
+                    }
+                    if (existing.status == MutationStatus::Prepared) {
+                        // An unresolved Prepared transition must be
+                        // recovered/completed first: silently replacing its
+                        // previous body would lose the durable recovery
+                        // provenance.
+                        if (oldEntry->previousAppliedBody !=
+                            newEntry->previousAppliedBody) {
+                            error = "PAM provider managed-entry refresh "
+                                    "conflicts with an unresolved Prepared "
+                                    "transition (fail closed): recover or "
+                                    "complete the existing transaction first";
+                            return false;
+                        }
+                    } else if (newEntry->previousAppliedBody !=
+                               oldEntry->appliedBody) {
+                        // Applied/RollbackFailed provenance: a refresh must
+                        // carry the currently FIC-owned body as the previous
+                        // state of the new transition.
+                        error = "PAM provider managed-entry refresh does "
+                                "not carry the currently owned applied body "
+                                "as its previous state (fail closed)";
+                        return false;
+                    }
+                } else if (std::get_if<UndoOwnPamProviderContainer>(
+                               &record.undo.payload) != nullptr) {
+                    if (existing.status == MutationStatus::Applied) {
+                        // Container provenance is already durably Applied
+                        // (the container physically exists): re-Preparing
+                        // it would falsify the lifecycle.
+                        error = "own_pam_provider_container provenance is "
+                                "already Applied and must not be re-Prepared "
+                                "(fail closed)";
+                        return false;
+                    }
+                }
+            }
             const MutationRecord previous = existing;
             existing.undo = record.undo;
             existing.status = MutationStatus::Prepared;

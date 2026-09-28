@@ -106,16 +106,42 @@ bool parseEntryBeginMarker(const std::string& line,
     return parsePhysicalMutationId(idText, mutationId, error);
 }
 
-// Extracts the strict "<provider>" suffix of a canonical block BEGIN marker.
+// Extracts the strict "<provider> lead=<none|newline>" suffix of a canonical
+// block BEGIN marker and reports the structural separator boundary
+// provenance (lead contract). A BEGIN marker without the lead field or with
+// an unknown lead value is a non-canonical FIC-like marker: fail closed.
 bool parseBlockBeginMarker(const std::string& line,
                            std::string& provider,
+                           bool& leadOwnedNewline,
                            std::string& error) {
     const std::string prefix = kPamProviderBlockBeginMarkerPrefix;
     if (line.size() <= prefix.size() ||
         line.compare(0, prefix.size(), prefix) != 0) {
         return false;
     }
-    provider = line.substr(prefix.size());
+    const std::string rest = line.substr(prefix.size());
+    const std::size_t lead = rest.find(kPamProviderBlockLeadField);
+    if (lead == std::string::npos ||
+        rest.find(kPamProviderBlockLeadField, lead + 1) !=
+            std::string::npos) {
+        error = "foreign FIC-подобный block BEGIN marker без однозначного "
+                "поля lead=: " +
+            line;
+        return false;
+    }
+    provider = rest.substr(0, lead);
+    const std::string leadValue = rest.substr(
+        lead + std::strlen(kPamProviderBlockLeadField));
+    if (leadValue == kPamProviderBlockLeadNone) {
+        leadOwnedNewline = false;
+    } else if (leadValue == kPamProviderBlockLeadOwnedNewline) {
+        leadOwnedNewline = true;
+    } else {
+        error = "неизвестное значение lead= внутри FIC PAM provider block "
+                "BEGIN: " +
+            leadValue;
+        return false;
+    }
     if (!isValidPamProviderIdentityToken(provider)) {
         error = "invalid provider identity inside FIC PAM provider block: " +
             provider;
@@ -124,30 +150,18 @@ bool parseBlockBeginMarker(const std::string& line,
     return true;
 }
 
-// Canonical entry body parse: EXACTLY "<key> = <value>" with a valid key
-// and a trimmed value. Anything deviating from the canonical serialization
+// Canonical entry body parse via the SINGLE shared canonical validator
+// (exact "<key> = <value>" with a valid key and a trimmed value free of
+// '#', CR, LF and NUL). Anything deviating from the canonical serialization
 // FIC renders fails closed.
 bool parseEntryBody(const std::string& line,
                     std::string& key,
                     std::string& body,
                     std::string& error) {
-    const std::size_t separator = line.find(" = ");
-    if (separator == std::string::npos) {
+    std::string value;
+    if (!parseCanonicalPamProviderEntryBody(line, key, value)) {
         error = "строка внутри FIC PAM provider entry не является canonical "
                 "assignment: " + line;
-        return false;
-    }
-    key = line.substr(0, separator);
-    const std::string value = line.substr(separator + 3);
-    if (!isValidPamProviderManagedKey(key)) {
-        error = "недопустимый ключ внутри FIC PAM provider entry: " + key;
-        return false;
-    }
-    if (value.empty() || !pamProviderValueFreeOfControls(value) ||
-        std::isspace(static_cast<unsigned char>(value.front())) != 0 ||
-        std::isspace(static_cast<unsigned char>(value.back())) != 0) {
-        error = "неканоническое значение внутри FIC PAM provider entry: " +
-            line;
         return false;
     }
     body = line;
@@ -165,11 +179,26 @@ bool parseEntryBody(const std::string& line,
 //     foreign bytes without a trailing newline survive byte-exact;
 //   * misplaced block: the separator position is no longer identifiable,
 //     so nothing is stripped and foreign bytes are kept verbatim.
+// Foreign bytes = everything except the proven block, in the original
+// order. Ownership of the FIC-owned serialization boundaries is STRUCTURAL
+// (the lead contract), never heuristic:
+//   * block at BOF: the block span starts at byte 0 and the block render
+//     ALWAYS ends with '\n' after the END marker; that terminator belongs
+//     to the block span, so foreign bytes are exactly everything after it —
+//     restored byte-exact on removal;
+//   * lead=newline: the EXACTLY ONE LF immediately before the BEGIN marker
+//     was inserted by FIC as the foreign/block separator, so decode strips
+//     exactly that one byte — foreign bytes without a trailing newline
+//     survive byte-exact (the parser has already proven the byte IS an LF);
+//   * lead=none with foreign bytes before BEGIN: nothing before BEGIN is
+//     FIC-owned, so nothing is ever stripped;
+//   * displaced block: foreign bytes on both sides are kept verbatim, and
+//     the lead side still follows the lead contract.
 std::string foreignBytes(const std::string& content,
                          std::size_t beginIndex,
                          std::size_t endIndex,
                          bool atBeginning,
-                         bool atEnd) {
+                         bool leadOwnedNewline) {
     const std::vector<std::string> lines = physicalLines(content);
     if (atBeginning) {
         // Block span: bytes 0 through the END marker line's newline
@@ -184,15 +213,12 @@ std::string foreignBytes(const std::string& content,
     for (std::size_t index = 0; index < beginIndex; ++index) {
         before += lines[index];
     }
+    if (leadOwnedNewline && !before.empty() && before.back() == '\n') {
+        before.pop_back();
+    }
     std::string after;
     for (std::size_t index = endIndex + 1; index < lines.size(); ++index) {
         after += lines[index];
-    }
-    if (atEnd) {
-        if (!before.empty() && before.back() == '\n') {
-            before.pop_back();
-        }
-        return before;
     }
     return before + after;
 }
@@ -221,8 +247,10 @@ std::string assembleAtEnd(const std::string& foreign,
 }
 
 std::string renderBlock(const std::string& provider,
-                        const std::vector<PamProviderManagedEntry>& entries) {
-    std::string block = pamProviderBlockBeginMarker(provider);
+                        const std::vector<PamProviderManagedEntry>& entries,
+                        bool leadOwnedNewline) {
+    std::string block =
+        pamProviderBlockBeginMarker(provider, leadOwnedNewline);
     block.push_back('\n');
     for (const PamProviderManagedEntry& entry : entries) {
         block += pamProviderEntryBeginMarker(entry.policy, entry.mutationId);
@@ -283,10 +311,9 @@ bool validateEntrySpec(const PamProviderEntrySpec& spec,
         error = "FIC PAM managed entry requires a non-zero mutation id";
         return false;
     }
-    if (spec.value.empty() || !pamProviderValueFreeOfControls(spec.value) ||
-        std::isspace(static_cast<unsigned char>(spec.value.front())) != 0 ||
-        std::isspace(static_cast<unsigned char>(spec.value.back())) != 0 ||
-        spec.value.find('#') != std::string::npos) {
+    // Shared canonical value rule (same validator the physical parser and
+    // the journal payload validation use).
+    if (!isValidPamProviderEntryValue(spec.value)) {
         error = "invalid managed value for FIC PAM managed entry " +
             spec.managedKey;
         return false;
@@ -324,16 +351,30 @@ bool validateOwnershipExpectation(
         error = "invalid FIC PAM ownership expectation";
         return false;
     }
-    if (!isCanonicalPamProviderEntryBody(expectation.body)) {
+    // EXACT key match via the shared canonical validator — never a prefix
+    // compare: "deny_extra = 5" must never validate against managedKey
+    // "deny".
+    std::string parsedKey;
+    std::string parsedValue;
+    if (!parseCanonicalPamProviderEntryBody(expectation.body, parsedKey,
+                                            parsedValue) ||
+        parsedKey != expectation.managedKey) {
         error = "FIC PAM ownership expectation requires a canonical "
-                "applied body";
+                "applied body of exactly the managed key";
         return false;
     }
-    if (expectation.body.compare(
-            0, expectation.managedKey.size(), expectation.managedKey) != 0) {
-        error = "FIC PAM ownership expectation body does not start with "
-                "the managed key";
-        return false;
+    if (!expectation.previousBody.empty()) {
+        std::string previousKey;
+        std::string previousValue;
+        if (!parseCanonicalPamProviderEntryBody(expectation.previousBody,
+                                                previousKey, previousValue) ||
+            previousKey != expectation.managedKey ||
+            expectation.previousBody == expectation.body) {
+            error = "FIC PAM ownership expectation requires a canonical "
+                    "previous body of the same managed key, different from "
+                    "the applied body";
+            return false;
+        }
     }
     return true;
 }
@@ -352,6 +393,7 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
     bool entryBodySeen = false;
     std::size_t entryCount = 0;
     std::string provider;
+    bool leadOwnedNewline = false;
     std::vector<PamProviderManagedEntry> entries;
     PamProviderManagedEntry current;
 
@@ -380,7 +422,10 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
             std::string markerPolicy;
             std::uint64_t markerMutation = 0;
             std::string markerProvider;
-            if (parseBlockBeginMarker(line, markerProvider, result.error)) {
+            bool markerLeadOwnedNewline = false;
+            if (parseBlockBeginMarker(line, markerProvider,
+                                      markerLeadOwnedNewline,
+                                      result.error)) {
                 if (insideBlock) {
                     result.error =
                         "дублированный или вложенный FIC PAM provider "
@@ -393,6 +438,7 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
                 }
                 beginIndex = index;
                 provider = markerProvider;
+                leadOwnedNewline = markerLeadOwnedNewline;
                 continue;
             }
             if (parseEntryBeginMarker(
@@ -488,6 +534,23 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
         PamProviderBlockView& view = result.view;
         view.present = true;
         view.provider = provider;
+        // Structural separator boundary provenance: lead=newline declares
+        // the LF byte immediately before the BEGIN marker as FIC-owned
+        // serialization. An impossible declaration (BEGIN at offset 0, or
+        // the preceding byte is not LF) is a parse failure: the decoder
+        // must never silently strip a byte it does not provably own.
+        std::size_t beginOffset = 0;
+        for (std::size_t index = 0; index < beginIndex; ++index) {
+            beginOffset += lines[index].size();
+        }
+        if (leadOwnedNewline &&
+            (beginOffset == 0 || content[beginOffset - 1] != '\n')) {
+            result.error = "FIC PAM provider block объявляет lead=newline, "
+                           "но байт непосредственно перед BEGIN не LF "
+                           "(fail closed)";
+            return result;
+        }
+        view.leadOwnedNewline = leadOwnedNewline;
         // Typed placement: atBeginning means NO bytes before the BEGIN
         // marker; atEnd means NO foreign physical lines after the END
         // marker (the canonical renderer emits exactly one FIC-owned
@@ -567,38 +630,73 @@ PamProviderJournalBindingResult classifyPamProviderJournalBinding(
     const PamProviderBlockParseResult& parse,
     const PamProviderOwnershipExpectation& expectation) {
     PamProviderJournalBindingResult result;
-    const PamProviderEntryProofResult proof =
-        provePamProviderEntryOwnership(parse, expectation);
-    if (proof.proof == PamProviderEntryProof::MalformedState) {
-        result.error = proof.error;
+    std::string validationError;
+    if (!validateOwnershipExpectation(expectation, validationError)) {
+        result.error = validationError;
         return result;
     }
-    result.ok = true;
-    switch (proof.proof) {
-        case PamProviderEntryProof::Owned:
-            result.state =
-                status == PamProviderJournalMutationStatus::Prepared
-                ? PamProviderJournalBindingState::PreparedExactEntry
-                : PamProviderJournalBindingState::AppliedExact;
-            return result;
-        case PamProviderEntryProof::Absent:
-            result.state =
-                status == PamProviderJournalMutationStatus::Prepared
-                ? PamProviderJournalBindingState::PreparedNoPhysicalEntry
-                : PamProviderJournalBindingState::AppliedMissing;
-            return result;
-        case PamProviderEntryProof::Lookalike:
-        case PamProviderEntryProof::Drifted:
-        case PamProviderEntryProof::ForeignProvider:
-            result.state =
-                status == PamProviderJournalMutationStatus::Prepared
-                ? PamProviderJournalBindingState::PreparedConflictingEntry
-                : PamProviderJournalBindingState::AppliedDrifted;
-            return result;
-        case PamProviderEntryProof::MalformedState:
-            break;
+    if (!parse.ok) {
+        result.error = parse.error;
+        return result;
     }
-    result.error = "unreachable ownership classification";
+    const bool prepared =
+        status == PamProviderJournalMutationStatus::Prepared;
+    const bool fresh = expectation.previousBody.empty();
+    if (parse.view.present &&
+        parse.view.provider != expectation.provider) {
+        result.ok = true;
+        result.state = prepared
+            ? PamProviderJournalBindingState::PreparedConflict
+            : PamProviderJournalBindingState::AppliedDrifted;
+        return result;
+    }
+    const PamProviderManagedEntry* entry = parse.view.present
+        ? findEntry(parse.view.entries, expectation.policy,
+                    expectation.managedKey)
+        : nullptr;
+    result.ok = true;
+    if (entry == nullptr) {
+        // fresh + absent → the mutation has not happened yet; update +
+        // absent → the previous FIC-owned body vanished: neither the
+        // previous nor the target state is provable — fail closed.
+        result.state = prepared
+            ? (fresh ? PamProviderJournalBindingState::PreparedFreshAbsent
+                     : PamProviderJournalBindingState::PreparedConflict)
+            : PamProviderJournalBindingState::AppliedMissing;
+        return result;
+    }
+    if (entry->mutationId != expectation.mutationId) {
+        // ABA protection: (policy, key) present with a different physical
+        // mutation id — never adopt, never rewrite.
+        result.state = prepared
+            ? PamProviderJournalBindingState::PreparedConflict
+            : PamProviderJournalBindingState::AppliedDrifted;
+        return result;
+    }
+    if (entry->body == expectation.body) {
+        // Crash after the physical write, before journal completion: the
+        // exact target body is present under the SAME record id — adopt.
+        result.state = prepared
+            ? (fresh
+                   ? PamProviderJournalBindingState::PreparedFreshTargetPresent
+                   : PamProviderJournalBindingState::
+                         PreparedUpdateTargetPresent)
+            : PamProviderJournalBindingState::AppliedExact;
+        return result;
+    }
+    if (!fresh && entry->body == expectation.previousBody) {
+        // Crash after recording the previous→target transition but before
+        // writing the target: the previous FIC-owned body is still
+        // physically present — continue the transition.
+        result.state =
+            PamProviderJournalBindingState::PreparedUpdatePreviousPresent;
+        return result;
+    }
+    // Exact id, but the body is neither the target nor the previous body:
+    // manual drift — conflict, never rewrite or remove blindly.
+    result.state = prepared
+        ? PamProviderJournalBindingState::PreparedConflict
+        : PamProviderJournalBindingState::AppliedDrifted;
     return result;
 }
 
@@ -663,17 +761,25 @@ PamProviderMutationResult setPamProviderManagedEntry(
         canonicalSort(entries);
     }
 
-    const std::string block = renderBlock(spec.provider, entries);
     std::string foreign;
     if (parse.view.present) {
         std::size_t beginIndex = std::string::npos;
         std::size_t endIndex = std::string::npos;
         findBlockLineIndices(content, beginIndex, endIndex);
         foreign = foreignBytes(content, beginIndex, endIndex,
-                               parse.view.atBeginning, parse.view.atEnd);
+                               parse.view.atBeginning,
+                               parse.view.leadOwnedNewline);
     } else {
         foreign = content;
     }
+    // Structural lead contract: an EOF placement after non-empty foreign
+    // bytes owns exactly one separator LF (lead=newline); a BOF placement
+    // and a block with no foreign bytes at all own nothing before BEGIN
+    // (lead=none).
+    const bool leadOwnedNewline =
+        request == PamProviderBlockPlacementRequest::End && !foreign.empty();
+    const std::string block = renderBlock(spec.provider, entries,
+                                          leadOwnedNewline);
     result.content =
         request == PamProviderBlockPlacementRequest::Beginning
         ? assembleAtBeginning(foreign, block)
@@ -755,7 +861,7 @@ PamProviderRemovalResult removePamProviderManagedEntry(
     findBlockLineIndices(content, beginIndex, endIndex);
     const std::string foreign =
         foreignBytes(content, beginIndex, endIndex,
-                     parse.view.atBeginning, parse.view.atEnd);
+                     parse.view.atBeginning, parse.view.leadOwnedNewline);
 
     if (remaining.empty()) {
         // Remove the whole block: never leave an empty BEGIN/END artifact.
@@ -766,7 +872,10 @@ PamProviderRemovalResult removePamProviderManagedEntry(
         result.ok = true;
         return result;
     }
-    const std::string block = renderBlock(expectation.provider, remaining);
+    const bool leadOwnedNewline =
+        request == PamProviderBlockPlacementRequest::End && !foreign.empty();
+    const std::string block = renderBlock(expectation.provider, remaining,
+                                          leadOwnedNewline);
     result.content =
         request == PamProviderBlockPlacementRequest::Beginning
         ? assembleAtBeginning(foreign, block)

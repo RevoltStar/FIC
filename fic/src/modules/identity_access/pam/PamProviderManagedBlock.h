@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 // Canonical grammar (version 1), fail-closed.
 //
-//   # FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 provider=<provider>
+//   # FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 provider=<provider> lead=<none|newline>
 //   # FIC_PAM_ENTRY_BEGIN version=1 policy=<policy> mutation=<id>
 //   <key> = <value>
 //   # FIC_PAM_ENTRY_END
@@ -42,6 +42,22 @@
 //   namespace in a non-canonical form is a conflict, never an ordinary
 //   foreign comment.
 //
+// STRUCTURAL SEPARATOR BOUNDARY OWNERSHIP (lead contract): the BEGIN marker
+// carries an explicit `lead=` field declaring whether the single LF byte
+// immediately before the BEGIN marker belongs to the FIC-owned serialization:
+//   * lead=none    — the block span starts at the BEGIN marker byte itself;
+//                    no FIC byte exists before it (block at BOF, or the file
+//                    had no foreign bytes);
+//   * lead=newline — the EXACTLY ONE LF immediately before BEGIN was inserted
+//                    by FIC as the foreign/block separator (block appended at
+//                    EOF after non-empty foreign bytes). Decoding strips
+//                    exactly that one LF, so foreign bytes without a trailing
+//                    newline survive byte-exact; the parser fails closed when
+//                    lead=newline is declared but the byte before BEGIN is
+//                    not LF (or BEGIN sits at offset 0).
+// This makes `foreign → FIC block → append foreign X → relocate → remove`
+// restore `foreign + X` byte-exactly by construction — no heuristics.
+//
 // The foreign part of the file is opaque bytes and is never interpreted.
 // ---------------------------------------------------------------------------
 
@@ -57,8 +73,16 @@ constexpr const char* kPamProviderEntryEndMarker = "# FIC_PAM_ENTRY_END";
 // exactly canonical marker forms is fail-closed conflict.
 constexpr const char* kPamProviderReservedMarkerNamespace = "FIC_PAM_";
 
-inline std::string pamProviderBlockBeginMarker(const std::string& provider) {
-    return std::string(kPamProviderBlockBeginMarkerPrefix) + provider;
+constexpr const char* kPamProviderBlockLeadField = " lead=";
+constexpr const char* kPamProviderBlockLeadNone = "none";
+constexpr const char* kPamProviderBlockLeadOwnedNewline = "newline";
+
+inline std::string pamProviderBlockBeginMarker(const std::string& provider,
+                                               bool leadOwnedNewline) {
+    return std::string(kPamProviderBlockBeginMarkerPrefix) + provider +
+        kPamProviderBlockLeadField +
+        (leadOwnedNewline ? kPamProviderBlockLeadOwnedNewline
+                          : kPamProviderBlockLeadNone);
 }
 
 inline std::string pamProviderEntryBeginMarker(const std::string& policy,
@@ -103,29 +127,45 @@ inline bool pamProviderValueFreeOfControls(const std::string& value) {
         value.find('\0') == std::string::npos;
 }
 
-// Canonical entry body: "<key> = <value>". The value must be non-empty,
-// trimmed, free of CR/LF/NUL and must not contain '#' (PAM key-value
-// providers truncate at '#': such a value could never be proven effective).
+// Canonical entry body: "<key> = <value>". The single shared canonical
+// validator of the body grammar: used by the physical parser, the mutation
+// spec validation, the journal undo-payload validation and the ownership
+// expectations, so that no path can accept a body any other path would
+// reject. The value must be non-empty, trimmed and free of '#', CR, LF and
+// NUL ('#' truncates PAM key-value parsing: such a value could never be
+// proven effective).
 inline std::string pamProviderEntryBody(const std::string& key,
                                         const std::string& value) {
     return key + " = " + value;
 }
 
-inline bool isCanonicalPamProviderEntryBody(const std::string& body) {
-    const std::size_t separator = body.find(" = ");
-    if (separator == std::string::npos) {
-        return false;
-    }
-    const std::string key = body.substr(0, separator);
-    const std::string value = body.substr(separator + 3);
-    if (!isValidPamProviderManagedKey(key) || value.empty() ||
-        !pamProviderValueFreeOfControls(value) ||
+inline bool isValidPamProviderEntryValue(const std::string& value) {
+    if (value.empty() || !pamProviderValueFreeOfControls(value) ||
         value.find('#') != std::string::npos) {
         return false;
     }
     const unsigned char first = static_cast<unsigned char>(value.front());
     const unsigned char last = static_cast<unsigned char>(value.back());
     return std::isspace(first) == 0 && std::isspace(last) == 0;
+}
+
+inline bool parseCanonicalPamProviderEntryBody(const std::string& body,
+                                               std::string& key,
+                                               std::string& value) {
+    const std::size_t separator = body.find(" = ");
+    if (separator == std::string::npos) {
+        return false;
+    }
+    key = body.substr(0, separator);
+    value = body.substr(separator + 3);
+    return isValidPamProviderManagedKey(key) &&
+        isValidPamProviderEntryValue(value);
+}
+
+inline bool isCanonicalPamProviderEntryBody(const std::string& body) {
+    std::string key;
+    std::string value;
+    return parseCanonicalPamProviderEntryBody(body, key, value);
 }
 
 namespace fic::identity::pam {
@@ -164,6 +204,10 @@ struct PamProviderBlockView {
     bool atBeginning = false;
     // No bytes after the block beyond the FIC-owned terminator newline.
     bool atEnd = false;
+    // Structural separator boundary provenance: true when the single LF
+    // byte immediately before the BEGIN marker is FIC-owned serialization
+    // (stripped on decode). See the lead contract in the grammar comment.
+    bool leadOwnedNewline = false;
     PamProviderBlockPlacement effectivePlacement =
         PamProviderBlockPlacement::Absent;
     std::string provider; // proven provider identity of the block
@@ -202,11 +246,18 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
 // Ownership expectation derived from a journal record: policy identity,
 // managed key, the canonical applied body (drift fingerprint) and the
 // journal mutation id, which the physical entry must carry verbatim.
+// previousBody carries the durable previous→target FIC-owned transition of
+// an in-place refresh (crash-safe ownership recovery): empty means the
+// record is a fresh create (no previous FIC-owned body exists); non-empty
+// must be the exact previous canonical body of the SAME managed key and is
+// used to classify Prepared crash states (previous present → continue the
+// transition; target present → adopt; neither → fail closed).
 struct PamProviderOwnershipExpectation {
     std::string provider;    // provider identity token of the block
     std::string policy;      // FIC policy identity token
     std::string managedKey;  // managed key
     std::string body;        // canonical applied body "<key> = <value>"
+    std::string previousBody; // canonical previous body; empty = fresh create
     std::uint64_t mutationId = 0; // journal MutationRecord.id
 };
 
@@ -240,23 +291,38 @@ enum class PamProviderJournalMutationStatus {
     Applied
 };
 
-// Prepared crash semantics (states A-F of the Step 7A contract):
-//   A PreparedNoPhysicalEntry   — mutation not yet (fully) happened;
-//                                 never treat as Applied ownership.
-//   B PreparedExactEntry        — crash after the physical write, before
-//                                 journal completion: EXACT recovery/
-//                                 adoption is possible for the SAME id.
-//   C PreparedConflictingEntry  — a similar but non-exact entry exists:
-//                                 fail closed.
-//   D AppliedExact              — normal owned state.
-//   E AppliedMissing            — ownership cannot be reconstructed from
-//                                 the journal alone.
-//   F AppliedDrifted            — the physical entry was modified: conflict,
-//                                 never rewrite or remove blindly.
+// Prepared crash semantics with the durable previous→target FIC-owned
+// transition (the journal payload carries previousBody; empty = fresh
+// create). Recovery matrix:
+//   fresh (no previousBody):
+//     absent physical entry            → PreparedFreshAbsent
+//         (mutation not yet happened: safe to (re)write the target, the
+//          record keeps its id);
+//     exact target body present        → PreparedFreshTargetPresent
+//         (crash after the physical write, before journal completion:
+//          ADOPT the entry, complete the record as Applied — no new
+//          mutation id, no rewrite);
+//     anything else (other body with the same id, lookalike id, drift,
+//     foreign provider)               → PreparedConflict (fail closed).
+//   update (previousBody present):
+//     exact previous body present      → PreparedUpdatePreviousPresent
+//         (continue the transition: write the target body under the SAME
+//          record id);
+//     exact target body present        → PreparedUpdateTargetPresent
+//         (crash after the physical write: complete the record as Applied);
+//     anything else                    → PreparedConflict (fail closed).
+//   Applied:
+//     AppliedExact  — normal owned state (physical == target);
+//     AppliedMissing— the owned entry disappeared: ownership cannot be
+//                     reconstructed from the journal alone;
+//     AppliedDrifted— the physical entry was modified or belongs to another
+//                     identity: conflict, never rewrite or remove blindly.
 enum class PamProviderJournalBindingState {
-    PreparedNoPhysicalEntry,
-    PreparedExactEntry,
-    PreparedConflictingEntry,
+    PreparedFreshAbsent,
+    PreparedFreshTargetPresent,
+    PreparedUpdatePreviousPresent,
+    PreparedUpdateTargetPresent,
+    PreparedConflict,
     AppliedExact,
     AppliedMissing,
     AppliedDrifted

@@ -26,9 +26,10 @@ std::string renderEntry(const std::string& policy,
         "\n" + kPamProviderEntryEndMarker + "\n";
 }
 
-std::string renderBlock(const std::string& entries) {
-    return pamProviderBlockBeginMarker(kProvider) + "\n" + entries +
-        kPamProviderBlockEndMarker + "\n";
+std::string renderBlock(const std::string& entries,
+                        bool leadOwnedNewline = false) {
+    return pamProviderBlockBeginMarker(kProvider, leadOwnedNewline) + "\n" +
+        entries + kPamProviderBlockEndMarker + "\n";
 }
 
 PamProviderEntrySpec specA(std::uint64_t id, const std::string& value) {
@@ -105,7 +106,7 @@ void runAllParsingTests() {
         // Trailing whitespace after markers is tolerated (CR/LF and
         // trailing spaces/tabs only).
         const auto tolerant = parsePamProviderManagedBlock(
-            pamProviderBlockBeginMarker(kProvider) + "   \r\n" +
+            pamProviderBlockBeginMarker(kProvider, false) + "   \r\n" +
             renderEntry(kPolicyA, 42, "deny = 5") +
             kPamProviderBlockEndMarker + "\t\r\n");
         require(tolerant.ok && tolerant.view.present,
@@ -153,12 +154,12 @@ void runAllParsingNegativeTests() {
     // 6. nested block fails.
     require(!parsePamProviderManagedBlock(
                 renderBlock(renderEntry(kPolicyA, 42, "deny = 5") +
-                            pamProviderBlockBeginMarker(kProvider) + "\n"))
+                            pamProviderBlockBeginMarker(kProvider, false) + "\n"))
                 .ok,
             "nested block accepted");
     // 7. missing END fails.
     require(!parsePamProviderManagedBlock(
-                pamProviderBlockBeginMarker(kProvider) + "\n" +
+                pamProviderBlockBeginMarker(kProvider, false) + "\n" +
                 renderEntry(kPolicyA, 42, "deny = 5"))
                 .ok,
             "block without END accepted");
@@ -174,9 +175,37 @@ void runAllParsingNegativeTests() {
                 .ok,
             "BEGIN without provider accepted");
     require(!parsePamProviderManagedBlock(
-                pamProviderBlockBeginMarker("pam faillock") + "\n")
+                pamProviderBlockBeginMarker("pam faillock", false) + "\n")
                 .ok,
             "provider token with space accepted");
+    // 9b. STRUCTURAL lead contract: the BEGIN marker must declare the
+    // separator boundary provenance; impossible declarations fail closed.
+    require(!parsePamProviderManagedBlock(
+                pamProviderBlockBeginMarker(kProvider, true) + "\n")
+                .ok,
+            "lead=newline without any preceding byte accepted");
+    require(parsePamProviderManagedBlock(
+                "a = 1\n" + pamProviderBlockBeginMarker(kProvider, true) +
+                    "\n" + renderEntry(kPolicyA, 42, "deny = 5") +
+                    kPamProviderBlockEndMarker + "\n")
+                .ok,
+            "lead=newline with a preceding LF must parse");
+    require(!parsePamProviderManagedBlock(
+                "a = 1" + pamProviderBlockBeginMarker(kProvider, true) +
+                    "\n" + renderEntry(kPolicyA, 42, "deny = 5") +
+                    kPamProviderBlockEndMarker + "\n")
+                .ok,
+            "lead=newline with a non-LF byte before BEGIN accepted");
+    require(!parsePamProviderManagedBlock(
+                std::string(kPamProviderBlockBeginMarkerPrefix) + kProvider +
+                " lead=space\n")
+                .ok,
+            "unknown lead= value accepted");
+    require(!parsePamProviderManagedBlock(
+                std::string(kPamProviderBlockBeginMarkerPrefix) + kProvider +
+                " lead=\n")
+                .ok,
+            "empty lead= value accepted");
     require(!parsePamProviderManagedBlock(
                 std::string(
                     "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=2 provider=") +
@@ -433,7 +462,7 @@ void runAllEofTests() {
     require(add.ok, "EOF add (no trailing newline) failed");
     require(add.content ==
                 foreignNoNewline + "\n" +
-                    renderBlock(renderEntry(kPolicyA, 42, "deny = 5")),
+                    renderBlock(renderEntry(kPolicyA, 42, "deny = 5"), true),
             "EOF add must append exactly one FIC-owned separator newline");
     {
         const auto parse = parsePamProviderManagedBlock(add.content);
@@ -517,7 +546,8 @@ void runAllEofTests() {
         // newline; the appended foreign bytes keep their exact order.
         require(mutation.content ==
                     "before\nextra = 1\n" + std::string("\n") +
-                        renderBlock(renderEntry(kPolicyA, 42, "deny = 5")),
+                        renderBlock(renderEntry(kPolicyA, 42, "deny = 5"),
+                                    true),
                 "EOF relocation must keep foreign bytes in order");
         const auto parse = parsePamProviderManagedBlock(mutation.content);
         require(parse.ok && parse.view.atEnd,
@@ -527,6 +557,104 @@ void runAllEofTests() {
             PamProviderBlockPlacementRequest::End);
         require(removal.ok && removal.content == "before\nextra = 1\n",
                 "EOF relocation removal did not restore foreign bytes");
+    }
+}
+
+void runAllSeparatorBoundaryTests() {
+    // 29b. EXACT displacement round-trip: foreign -> FIC EOF block ->
+    // append foreign X -> relocate -> remove == foreign + X, byte-exact by
+    // CONSTRUCTION (structural lead ownership), no heuristics.
+    {
+        const std::string foreign = "a = 1\n# c\n";
+        const std::string appended = "extra = 1\n";
+        const auto add = setPamProviderManagedEntry(
+            foreign, specA(42, "5"), PamProviderBlockPlacementRequest::End);
+        require(add.ok, "round-trip add failed");
+        const auto afterAppend = add.content + appended;
+        const auto relocate = setPamProviderManagedEntry(
+            afterAppend, specA(42, "5"),
+            PamProviderBlockPlacementRequest::End);
+        require(relocate.ok, "round-trip relocation failed");
+        require(relocate.content ==
+                    foreign + appended + "\n" +
+                        renderBlock(renderEntry(kPolicyA, 42, "deny = 5"),
+                                    true),
+                "relocation must restore foreign+X exactly, in order");
+        const auto removal = removePamProviderManagedEntry(
+            relocate.content, expectationA(42, "deny = 5"),
+            PamProviderBlockPlacementRequest::End);
+        require(removal.ok &&
+                    removal.outcome ==
+                        PamProviderRemovalResult::Outcome::BlockRemoved,
+                "round-trip removal outcome wrong");
+        require(removal.content == foreign + appended,
+                "displacement round-trip must restore foreign+X byte-exact");
+    }
+    // 29c. Same round-trip with foreign bytes WITHOUT a trailing newline:
+    // the FIC-owned separator LF must be reconstructed exactly once and
+    // stripped exactly once.
+    {
+        const std::string foreign = "a = 1";
+        const auto add = setPamProviderManagedEntry(
+            foreign, specA(42, "5"), PamProviderBlockPlacementRequest::End);
+        require(add.ok &&
+                    add.content ==
+                        foreign + "\n" +
+                            renderBlock(renderEntry(kPolicyA, 42, "deny = 5"),
+                                        true),
+                "EOF add must own exactly one separator LF (lead=newline)");
+        const auto displaced = add.content + "extra = 1";
+        const auto relocate = setPamProviderManagedEntry(
+            displaced, specA(42, "5"), PamProviderBlockPlacementRequest::End);
+        require(relocate.ok, "no-trailing-newline relocation failed");
+        const auto removal = removePamProviderManagedEntry(
+            relocate.content, expectationA(42, "deny = 5"),
+            PamProviderBlockPlacementRequest::End);
+        require(removal.ok && removal.content == foreign + "extra = 1",
+                "no-trailing-newline foreign bytes must survive byte-exact");
+    }
+    // 29d. BOF block followed by an appended foreign tail: relocation to
+    // BOF keeps the tail byte-exact.
+    {
+        const std::string foreign = "a = 1\n";
+        const auto add = setPamProviderManagedEntry(
+            foreign, specA(42, "5"),
+            PamProviderBlockPlacementRequest::Beginning);
+        require(add.ok, "BOF round-trip add failed");
+        const auto displaced = add.content + "extra = 1\n";
+        const auto relocate = setPamProviderManagedEntry(
+            displaced, specA(42, "5"),
+            PamProviderBlockPlacementRequest::Beginning);
+        require(relocate.ok, "BOF relocation failed");
+        const auto removal = removePamProviderManagedEntry(
+            relocate.content, expectationA(42, "deny = 5"),
+            PamProviderBlockPlacementRequest::Beginning);
+        require(removal.ok &&
+                    removal.content == foreign + "extra = 1\n",
+                "BOF displacement round-trip must restore foreign+X "
+                "byte-exact");
+    }
+    // 29e. CRLF displacement round-trip.
+    {
+        const std::string foreign = "a = 1\r\n# c\r\n";
+        const auto add = setPamProviderManagedEntry(
+            foreign, specA(42, "5"), PamProviderBlockPlacementRequest::End);
+        require(add.ok, "CRLF round-trip add failed");
+        const auto displaced = add.content + "extra = 1\r\n";
+        const auto relocate = setPamProviderManagedEntry(
+            displaced, specA(42, "5"), PamProviderBlockPlacementRequest::End);
+        require(relocate.ok, "CRLF relocation failed");
+        require(relocate.content.substr(0, foreign.size()) == foreign &&
+                    relocate.content.find("extra = 1\r\n") ==
+                        foreign.size(),
+                "CRLF foreign bytes damaged by relocation");
+        const auto removal = removePamProviderManagedEntry(
+            relocate.content, expectationA(42, "deny = 5"),
+            PamProviderBlockPlacementRequest::End);
+        require(removal.ok &&
+                    removal.content == foreign + "extra = 1\r\n",
+                "CRLF displacement round-trip must restore foreign+X "
+                "byte-exact");
     }
 }
 
@@ -694,7 +822,8 @@ void runAllMultiPolicyTests() {
 
         // 39. removing B (the last FIC entry) removes the block.
         const PamProviderOwnershipExpectation expectationB{
-            kProvider, kPolicyB, "fail_interval", "fail_interval = 900", 7};
+            kProvider, kPolicyB, "fail_interval", "fail_interval = 900", "",
+            7};
         const auto removalB = removePamProviderManagedEntry(
             removal.content, expectationB,
             PamProviderBlockPlacementRequest::End);
@@ -733,28 +862,66 @@ void runAllJournalBindingTests() {
     const auto ownedParse = parsePamProviderManagedBlock(owned);
     const auto foreignParse = parsePamProviderManagedBlock(foreignOnly);
 
-    // 41. Prepared + no physical entry (A).
+    // 41. Prepared + fresh + no physical entry: mutation not happened yet.
     {
         const auto binding = classifyPamProviderJournalBinding(
             PamProviderJournalMutationStatus::Prepared, foreignParse,
             expectationA(42, "deny = 5"));
         require(binding.ok &&
                     binding.state ==
-                        PamProviderJournalBindingState::
-                            PreparedNoPhysicalEntry,
-                "state A misclassified");
+                        PamProviderJournalBindingState::PreparedFreshAbsent,
+                "fresh absent state misclassified");
     }
-    // 42. Prepared + exact physical entry (B: exact recovery/adoption).
+    // 42. Prepared + exact target body (fresh): crash after the physical
+    // write, before journal completion — adopt.
     {
         const auto binding = classifyPamProviderJournalBinding(
             PamProviderJournalMutationStatus::Prepared, ownedParse,
             expectationA(42, "deny = 5"));
         require(binding.ok &&
                     binding.state ==
-                        PamProviderJournalBindingState::PreparedExactEntry,
-                "state B misclassified");
+                        PamProviderJournalBindingState::
+                            PreparedFreshTargetPresent,
+                "fresh target-present state misclassified");
     }
-    // 43. Prepared + wrong physical id (C: fail closed).
+    // 43. Prepared + update + exact previous body: continue the transition.
+    {
+        PamProviderOwnershipExpectation update = expectationA(42, "deny = 9");
+        update.previousBody = "deny = 5";
+        const auto binding = classifyPamProviderJournalBinding(
+            PamProviderJournalMutationStatus::Prepared, ownedParse, update);
+        require(binding.ok &&
+                    binding.state ==
+                        PamProviderJournalBindingState::
+                            PreparedUpdatePreviousPresent,
+                "update previous-present state misclassified");
+    }
+    // 44. Prepared + update + exact target body: complete as Applied.
+    {
+        PamProviderOwnershipExpectation update = expectationA(42, "deny = 9");
+        update.previousBody = "deny = 5";
+        const auto targetParse = parsePamProviderManagedBlock(
+            renderBlock(renderEntry(kPolicyA, 42, "deny = 9")));
+        const auto binding = classifyPamProviderJournalBinding(
+            PamProviderJournalMutationStatus::Prepared, targetParse, update);
+        require(binding.ok &&
+                    binding.state ==
+                        PamProviderJournalBindingState::
+                            PreparedUpdateTargetPresent,
+                "update target-present state misclassified");
+    }
+    // 45. Prepared + update + neither previous nor target: fail closed.
+    {
+        PamProviderOwnershipExpectation update = expectationA(42, "deny = 9");
+        update.previousBody = "deny = 5";
+        const auto binding = classifyPamProviderJournalBinding(
+            PamProviderJournalMutationStatus::Prepared, foreignParse, update);
+        require(binding.ok &&
+                    binding.state ==
+                        PamProviderJournalBindingState::PreparedConflict,
+                "update absent state must be a conflict");
+    }
+    // 46. Prepared + wrong physical id: fail closed.
     {
         const auto driftedParse = parsePamProviderManagedBlock(
             renderBlock(renderEntry(kPolicyA, 99, "deny = 5")));
@@ -763,11 +930,10 @@ void runAllJournalBindingTests() {
             expectationA(42, "deny = 5"));
         require(binding.ok &&
                     binding.state ==
-                        PamProviderJournalBindingState::
-                            PreparedConflictingEntry,
-                "state C misclassified");
+                        PamProviderJournalBindingState::PreparedConflict,
+                "lookalike id must be a Prepared conflict");
     }
-    // 44. Applied + exact (D).
+    // 47. Applied + exact target body.
     {
         const auto binding = classifyPamProviderJournalBinding(
             PamProviderJournalMutationStatus::Applied, ownedParse,
@@ -777,7 +943,7 @@ void runAllJournalBindingTests() {
                         PamProviderJournalBindingState::AppliedExact,
                 "state D misclassified");
     }
-    // 45. Applied + missing (E).
+    // 48. Applied + missing entry.
     {
         const auto binding = classifyPamProviderJournalBinding(
             PamProviderJournalMutationStatus::Applied, foreignParse,
@@ -787,7 +953,7 @@ void runAllJournalBindingTests() {
                         PamProviderJournalBindingState::AppliedMissing,
                 "state E misclassified");
     }
-    // 46. Applied + drifted body (F).
+    // 49. Applied + drifted body.
     {
         const auto driftedParse = parsePamProviderManagedBlock(
             renderBlock(renderEntry(kPolicyA, 42, "deny = 7")));
@@ -821,6 +987,18 @@ void runAllJournalBindingTests() {
                         PamProviderJournalBindingState::AppliedDrifted,
                 "foreign provider must be a conflict");
     }
+    // An invalid expectation (previous body of another managed key) is
+    // refused outright: EXACT key match, never a prefix compare.
+    {
+        PamProviderOwnershipExpectation badPrevious =
+            expectationA(42, "deny = 5");
+        badPrevious.previousBody = "deny_extra = 5";
+        const auto binding = classifyPamProviderJournalBinding(
+            PamProviderJournalMutationStatus::Prepared, foreignParse,
+            badPrevious);
+        require(!binding.ok,
+                "previous body of another key must fail validation");
+    }
 }
 
 
@@ -839,6 +1017,7 @@ int main() {
         runAllBofTests();
         runAllBofTests2();
         runAllEofTests();
+        runAllSeparatorBoundaryTests();
         runAllOwnershipTests();
         runAllMultiPolicyTests();
         runAllJournalBindingTests();
