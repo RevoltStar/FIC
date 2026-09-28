@@ -3,75 +3,161 @@
 ## Current base
 
 - Ветка `main`, рабочее дерево содержит НЕ закоммиченные изменения
-  (lift Debian 13 / Ubuntu 26.04 + gate-инфраструктура + тесты + docs).
-- Baseline до задачи: `9f6137d173cc75d607f8dbdefcfb619bb060f345`
-  (Step 6 follow-up и более ранние шаги — в нём).
+  (Step 7A PAM provider managed block + тесты).
+- Baseline до задачи: `f54530d` (lift Debian 13 / Ubuntu 26.04 — в нём).
 - Коммит НЕ делать без явного запроса пользователя.
 
 ## Current task
 
-**ReadOnly lift Debian 13 / Ubuntu 26.04 password topology** на базе real
-functional evidence, полученной в одноразовых Docker-контейнерах
-(`debian:13`, `ubuntu:26.04`; образы через `mirror.gcr.io` из-за Docker Hub
-rate-limit). Без редизайнов: topology/Step 6/prerm/abstraction не менялись.
+**Step 7A — generic precedence-aware managed block для shared PAM provider
+configuration.** Реализован reusable primitive, ownership/provenance model
+и exhaustive unit tests. Реальные политики (faillock/pwquality/pwhistory)
+на primitive НЕ переведены — это Step 7B/7C/7D.
 
-### Результаты (evidence matrix)
+### Что реализовано (Step 7A)
 
-| Платформа | libpam | C2 G1–G11 | Wiring W1–W9 | Prerm (4 сцен.) | Options gate | Режим | Lift |
-|---|---|---|---|---|---|---|---|
-| Debian 12 | 1.5.2 | PASS | PASS | PASS (истор.) | PASS (O-flow) | ModuleArguments | был |
-| Debian 13 | 1.7.0 | PASS | PASS | PASS 4/4 (28 PASS) | PASS (PC-flow) | ProviderConfigFile | ДА |
-| Ubuntu 24.04 | 1.7.0 | PASS | PASS | PASS (истор.) | PASS (probe) | ProviderConfigFile | был |
-| Ubuntu 26.04.1 | 1.7.0 | PASS | PASS | PASS 4/4 (28 PASS) | PASS (PC-flow) | ProviderConfigFile | ДА |
+Новые файлы:
 
-Ключевой факт: Debian 13 (в отличие от Debian 12) поставляет
-`/etc/security/pwhistory.conf` — обе новые платформы остаются
-`configurationMode=ProviderConfigFile`, БЕЗ module-argument evidence.
-Lift = только `passwordTopologyRuntimeMutable = true` в профилях.
+- `fic/src/modules/identity_access/pam/PamProviderManagedBlock.{h,cpp}` —
+  string-level primitive: strict grammar, parse/proof/mutations,
+  journal-binding classification.
+- `fic/src/modules/identity_access/pam/PamProviderManagedBlockFile.{h,cpp}` —
+  file-фасад: trusted read, typed container state, snapshot-bound atomic
+  write, container release decision (pure).
+- `tests/fic/modules/identity_access/pam/PamProviderManagedBlockTests.cpp`
+  (плюс `...FileTests.cpp`), `tests/fic/rollback/PamProviderManagedEntryJournalTests.cpp`.
+- `tests/CMakeLists.txt` — 3 новых unit-таргета.
 
-## Changed areas
+Изменённые:
 
-- `fic/src/platform/profiles/Debian13Profile.cpp` — lift + evidence-комментарий.
-- `fic/src/platform/profiles/Ubuntu2604Profile.cpp` — lift + evidence-комментарий.
-- `fic/src/platform/profiles/Ubuntu2404Profile.cpp` — только комментарий
-  (ссылка на lift 26.04).
-- `tests/fic/platform/PlatformProfileTests.cpp` — пиннинги Debian 13 /
-  Ubuntu 26.04 / Ubuntu 24.04 (mutable, ProviderConfigFile, no module-arg).
-- `tests/fic/modules/identity_access/pam/PamPasswordWiringTests.cpp` —
-  support contract для новых платформ (classic path, no module-arg evidence).
-- `tests/integration/pam-c2/pam_c2_gate_driver.cpp` — команда `platform-mode`,
-  `"-"` для empty options.
-- `tests/integration/pam-c2/pam_c2_wiring_driver.cpp` — `platform-mode`,
-  `provider-option` (перенесён из c2-драйвера).
-- `tests/integration/pam-c2/pam_pwhistory_options_gate.sh` — distro case,
-  mode-branch: O-flow (ModuleArguments) vs новый PC-flow (ProviderConfigFile:
-  PC1–PC6 — production option-policy write в pwhistory.conf через
-  `PamPasswordHistoryOptionPolicy::applyPam` + функциональные
-  remember-window/enforce_for_root differentials).
-- `tests/integration/pam-c2/pam_prerm_release_gate.sh` — debian-13 /
-  ubuntu-26.04 distro cases.
-- `tests/CMakeLists.txt` — источники wiring-драйвера (PamOptionPolicy,
-  PamProviderConfigFile, PamPasswordHistoryOptionPolicy).
-- `docs/rollback.md` — обновлён блок platform-семантики (4 lifted-платформы,
-  PC-flow options gate как production provider-config evidence).
+- `fic/src/rollback/MutationRecord.h` — новый typed payload
+  `UndoRemovePamProviderManagedEntry` (backend `Pam`, enum
+  `PamProviderBlockPlacementContract`) в `UndoPayload` variant.
+- `fic/src/rollback/MutationJournal.cpp` — serialize/deserialize +
+  write/read-parity валидация (`remove_pam_provider_managed_entry`),
+  расширены Pam-ветки `prepareMutation` и record-level load-валидации
+  (новый payload или существующий `UndoDisablePamCapability`);
+  существующие payload'ы не изменены.
+
+### Физический grammar (version=1)
+
+```text
+# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 provider=<provider>
+# FIC_PAM_ENTRY_BEGIN version=1 policy=<policy> mutation=<id>
+<key> = <value>
+# FIC_PAM_ENTRY_END
+# FIC_PAM_PROVIDER_BLOCK_END
+```
+
+* маркеры — строго canonical, с колонки 0 (допустимы только trailing
+  CR/LF/spaces/tabs); reserved namespace `FIC_PAM_` детектится
+  case-SENSITIVE (как в GRUB): любое упоминание вне canonical-формы —
+  fail-closed conflict;
+* `<provider>`/`<policy>` — identity tokens `[a-z0-9_-]+`;
+* `<id>` — canonical decimal > 0 (leading zeros/знак/переполнение →
+  fail closed); РОВНО `MutationRecord.id` записи journal, которая писала
+  entry (физическая мутация identity в самом entry — ABA protection);
+* body — строго `key = value`, value без CR/LF/NUL/'#'/trim-пробелов;
+* внутри canonical structural portion ничего лишнего (никаких пустых
+  строк/комментариев); duplicate (policy,key), duplicate physical
+  mutation id, nested/duplicate blocks — fail closed.
+
+### Ownership proof / ABA
+
+Ownership одного entry = exact (provider, policy, managedKey, canonical
+body, physical mutation id == journal id) + валидный блок + отсутствие
+structural ambiguity. Совпадение `key=value` ownership'ом НЕ является.
+Typed proof: `Owned / Absent / Lookalike / Drifted / ForeignProvider /
+MalformedState`. Удаление: absent → idempotent no-op; lookalike (другой
+physical id) или drifted body → typed refusal. `set...` отказывает при
+существующем entry с другим mutation id; same id + новый body — легальный
+refresh (journal refresh переиспользует тот же id).
+
+### Placement / relocation
+
+`view.atBeginning` (BEGIN в offset 0) и `view.atEnd` (END — последняя
+физическая строка, trailing '\n' — FIC-owned terminator) независимы;
+effectivePlacement enum: Absent/AtBeginning/AtEnd/Misplaced. Валидный блок
+при displacement остаётся parse-valid и OWNED; контракт
+`PamProviderBlockPlacementRequest{Beginning, End}` отдельный. Все мутации
+переразмещают блок в запрошенную позицию (relocation = удалить proven
+блок, сохранить foreign байты, канонически переставить).
+
+### Byte-exact foreign preservation
+
+BOF: block span включает trailing '\n' после END (renderer всегда его
+пишет) → foreign = всё после блока. EOF: ровно ОДИН separator '\n' перед
+BEGIN — FIC-owned (append'ится всегда при непустом foreign), на decode
+стрипается один → foreign без trailing newline восстанавливается точно.
+Misplaced: foreign до+после verbatim (позиция separator неидентифицируема).
+CRLF/без-trailing-newline/пустой/whitespace-only — покрыты тестами
+(add/update/remove/relocation round-trip).
+
+### Container creation / provenance
+
+`PamProviderManagedBlockFile::readForMutation(path,
+PamProviderAbsentContainerDecision{FailClosed, CreateFicOwned}, ...)` —
+typed ENOENT-classification через `inspectTrustedFile`; absent+FailClosed
+→ отказ (файл НЕ создаётся; vendor fallback модуля не подавляется
+случайно). `writeMutation` — atomic (temp+rename+dir fsync), 0644,
+euid/egid (как PamOptionFile), для pre-existing — snapshot CAS
+(`expectedTargetState`); stale → `stale=true`, ничего не заменяется;
+durability failure → не success. `containerCreated=true` только когда
+контейнер создан из proven-absent. Release-decision (pure, unlink — Step 7F):
+`RetainUnproven` (проверка provenance ВЫШЕ foreign content) →
+`RetainForeignContent` (только блок удалить) → `RemovableFicOwned`
+(проверено containerCreated + после удаления блока пусто). Provenance
+выражен флагом `containerCreated` в payload'е записи, СОЗДАВШЕЙ файл
+(без отдельной journal mutation); известное ограничение: если запись-
+создатель ушла, доказательство пропадает — консервативно RetainUnproven.
+
+### Journal binding / crash states
+
+`classifyPamProviderJournalBinding(status, parse, expectation)` →
+A `PreparedNoPhysicalEntry`, B `PreparedExactEntry` (exact recovery для
+того же id возможна — foundation для 7B), C `PreparedConflictingEntry`,
+D `AppliedExact`, E `AppliedMissing`, F `AppliedDrifted`. Primitive не
+зависит от rollback layer (`PamProviderJournalMutationStatus` — локальный
+enum, caller маппит `MutationStatus`).
+
+### Concurrency contract
+
+In-process сериализация домена: callers обязаны держать
+`IdentityAccessPolicy::configurationMutex()` на весь read-prove-write
+(тот же контракт, что у C2 coordinator). Межпроцессный lock для provider
+config домена сознательно НЕ введён в 7A; stale-overwrite исключён
+уровнем файла: snapshot CAS через `AtomicWriteOptions::expectedTargetState`
+(optimistic precondition, residual window как в GRUB/SSH, см.
+docs/rollback.md). Локальный `std::mutex` на instance не создавался
+(не сериализует процессы).
+
+### Rollback payload (Step 7B–7F contract)
+
+`UndoRemovePamProviderManagedEntry{policyName, providerName, configPath,
+managedKey, appliedBody, containerCreated, placement}`; mutation id = сам
+`record.id` (не дублируется). Валидация write+read parity: identity
+tokens, absolute configPath без CR/LF/NUL, managed key, canonical applied
+body (= physical serialization), placement beginning/end. Identity в
+prepareMutation/load: resource == configPath, policy == policyName,
+module IDENTITY_ACCESS/PAM.
 
 ## Validation (фактически выполнено)
 
-- Unit: `cmake -DFIC_TARGET_PLATFORM=debian-13` и `=ubuntu-26.04`
-  (BUILD_TESTING=ON): build EXIT=0; CTest **107/107 PASS** на обеих
-  (env-skip `command_hash_batch_tests`).
-- Real Docker gates на ship-state (lift уже применён к профилям):
-  - Debian 13: C2 PASS, wiring PASS, prerm 4/4 RC=0, options PC-flow PASS
-    (включая функциональный enforce_for_root).
-  - Ubuntu 26.04: C2 PASS, wiring PASS, prerm 4/4 RC=0, options PC-flow PASS.
-- Regression (после изменений): Debian 12 C2 PASS, wiring PASS, options
-  O-flow PASS; Ubuntu 24.04 C2 PASS.
-- Пакеты: `dist/fic*0.1.0~rc.1_{debian13,ubuntu2604}_amd64.deb` собраны
-  (нужны для prerm gates; staging-скрипты packaging/deb без изменений).
-- `git diff --check` — clean.
+- `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=debian-13 -DBUILD_TESTING=ON`
+  EXIT=0.
+- Новые targeted: `ctest -R pam_provider_managed` → **3/3 PASS**.
+- Полный build + полный CTest: `/tmp/fic-full-build.log`,
+  `/tmp/fic-full-ctest.log` — см. фактический итог ниже (заполняется по
+  завершении прогона).
+- `git diff --check`: выполнен, чисто.
 
-## Remaining
+## Remaining (Step 7B+)
 
-1. Опционально: ubuntu-24.04 options gate (исторически PASS, не
-   перегонялся).
-2. Не коммитить без явного запроса.
+1. 7B: перевод `pam_faillock` scalar-политик на primitive (Prepared →
+   physical mutation → fresh proof → Applied + exact recovery состояния B).
+2. 7C: pwquality; 7D: pwhistory BOF; 7E: suppress/wrapper set-only false;
+   7F: rollback executor wiring + package release + inter-process lock
+   решение (если потребуется) + unlink FIC-created container.
+3. Не трогали: C2 topology, PamOptionFile semantics, Step 6 option
+   reconciliation, Debian 12 pwhistory ModuleArguments.
+4. Не коммитить без явного запроса.

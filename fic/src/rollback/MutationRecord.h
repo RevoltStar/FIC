@@ -151,6 +151,33 @@ struct UndoDisablePamCapability {
     std::string previousError;
 };
 
+// Requested placement contract of the FIC managed block inside a shared
+// PAM provider configuration (Step 7A). Placement is an ownership-release
+// contract, not stored history: the CURRENT effective placement is always
+// re-proved from the physical file.
+enum class PamProviderBlockPlacementContract { Beginning, End };
+
+// PAM shared provider configuration ownership-release payload (Step 7A).
+// The record proves ONLY FIC ownership of ONE managed entry inside the FIC
+// managed block: the physical entry must carry this record's id as its
+// physical mutation id (ABA protection), the exact policy identity, the
+// exact canonical applied body and the correct provider identity. No
+// previous foreign value, no whole-file snapshot, no foreign block copy:
+// rollback releases the FIC entry, it never reconstructs pre-FIC state.
+struct UndoRemovePamProviderManagedEntry {
+    std::string policyName;   // FIC policy identity (physical entry marker)
+    std::string providerName; // PAM provider identity (physical block marker)
+    std::string configPath;   // primary provider configuration resource
+    std::string managedKey;   // managed key inside the canonical body
+    std::string appliedBody;  // exact canonical body "<key> = <value>"
+    // True only when THIS mutation created a previously absent primary
+    // configuration file after an explicitly proven safe-creation decision
+    // (FIC-created container provenance for the release logic).
+    bool containerCreated = false;
+    PamProviderBlockPlacementContract placement =
+        PamProviderBlockPlacementContract::End;
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoRemoveSshManagedPolicy,
@@ -160,7 +187,8 @@ using UndoPayload = std::variant<
     UndoRemoveGrubManagedSetting,
     UndoRemoveSssdManagedSetting,
     UndoRestoreKerberosScalar,
-    UndoDisablePamCapability>;
+    UndoDisablePamCapability,
+    UndoRemovePamProviderManagedEntry>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

@@ -568,6 +568,44 @@ target_include_directories(sysctl_configuration_tests PRIVATE
 target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
 add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
 
+add_executable(pam_provider_managed_block_tests
+    fic/modules/identity_access/pam/PamProviderManagedBlockTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlock.cpp
+)
+target_include_directories(pam_provider_managed_block_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+add_test(NAME pam_provider_managed_block_tests
+         COMMAND pam_provider_managed_block_tests)
+
+add_executable(pam_provider_managed_block_file_tests
+    fic/modules/identity_access/pam/PamProviderManagedBlockFileTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlockFile.cpp
+)
+target_include_directories(pam_provider_managed_block_file_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_provider_managed_block_file_tests PRIVATE
+    fic-core Threads::Threads
+)
+add_test(NAME pam_provider_managed_block_file_tests
+         COMMAND pam_provider_managed_block_file_tests)
+
+add_executable(pam_provider_managed_entry_journal_tests
+    fic/rollback/PamProviderManagedEntryJournalTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlock.cpp
+)
+target_include_directories(pam_provider_managed_entry_journal_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(pam_provider_managed_entry_journal_tests PRIVATE
+    fic-core fic-policy Threads::Threads
+)
+add_test(NAME pam_provider_managed_entry_journal_tests
+         COMMAND pam_provider_managed_entry_journal_tests)
+
 add_executable(mutation_journal_tests
     fic/rollback/MutationJournalTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
@@ -1799,6 +1837,9 @@ set(FIC_UNIT_TESTS
     trusted_file_reader_tests
     sysctl_configuration_tests
     mutation_journal_tests
+    pam_provider_managed_block_tests
+    pam_provider_managed_block_file_tests
+    pam_provider_managed_entry_journal_tests
     rollback_executor_tests
     grub_policy_tests
     pam_configuration_tests

@@ -1,6 +1,7 @@
 #include "rollback/MutationJournal.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <modules/identity_access/pam/PamProviderManagedBlock.h>
 #include <modules/oss/grub/GrubManagedBlock.h>
 
 #include <nlohmann/json.hpp>
@@ -104,6 +105,19 @@ json serializeUndoAction(const UndoAction& action) {
             ? nlohmann::json(*pam->targetStrategy)
             : nlohmann::json(nullptr);
         value["previous_error"] = pam->previousError;
+    } else if (const auto* pamEntry = std::get_if<
+                   UndoRemovePamProviderManagedEntry>(&action.payload)) {
+        value["policy"] = pamEntry->policyName;
+        value["provider"] = pamEntry->providerName;
+        value["config_path"] = pamEntry->configPath;
+        value["managed_key"] = pamEntry->managedKey;
+        value["applied_body"] = pamEntry->appliedBody;
+        value["container_created"] = pamEntry->containerCreated;
+        value["placement"] =
+            pamEntry->placement ==
+                    PamProviderBlockPlacementContract::Beginning
+                ? "beginning"
+                : "end";
     }
     return value;
 }
@@ -220,6 +234,62 @@ bool validatePamUndoPayload(const UndoDisablePamCapability& payload,
         }
     }
     return true;
+}
+
+// Shared PAM provider managed-entry undo-payload validation (write + read
+// parity). Used by BOTH the write path (MutationJournal::prepareMutation)
+// and the read path (deserializeUndoAction) so that the writer can never
+// persist a record the loader would reject. The payload must describe a
+// provable FIC-owned entry: identity tokens follow the physical marker
+// grammar, the applied body is the exact canonical serialization of the
+// managed key, and no field may carry CR/LF/NUL.
+bool validatePamProviderManagedEntryUndoPayload(
+    const UndoRemovePamProviderManagedEntry& payload,
+    std::string& error) {
+    const auto validToken = [](const std::string& token) {
+        return isValidPamProviderIdentityToken(token);
+    };
+    if (!validToken(payload.policyName)) {
+        error = "remove_pam_provider_managed_entry undo requires a valid "
+                "FIC policy identity token";
+        return false;
+    }
+    if (!validToken(payload.providerName)) {
+        error = "remove_pam_provider_managed_entry undo requires a valid "
+                "PAM provider identity token";
+        return false;
+    }
+    if (payload.configPath.empty() || payload.configPath.front() != '/' ||
+        payload.configPath.find_first_of("\r\n") != std::string::npos ||
+        payload.configPath.find('\0') != std::string::npos) {
+        error = "remove_pam_provider_managed_entry undo requires an "
+                "absolute config path free of CR/LF/NUL";
+        return false;
+    }
+    if (!isValidPamProviderManagedKey(payload.managedKey)) {
+        error = "remove_pam_provider_managed_entry undo requires a valid "
+                "managed key";
+        return false;
+    }
+    if (!isCanonicalPamProviderEntryBody(payload.appliedBody)) {
+        error = "remove_pam_provider_managed_entry undo requires a "
+                "canonical applied body";
+        return false;
+    }
+    if (payload.appliedBody.compare(
+            0, payload.managedKey.size(), payload.managedKey) != 0) {
+        error = "remove_pam_provider_managed_entry undo applied body does "
+                "not start with the managed key";
+        return false;
+    }
+    switch (payload.placement) {
+        case PamProviderBlockPlacementContract::Beginning:
+        case PamProviderBlockPlacementContract::End:
+            return true;
+    }
+    error = "remove_pam_provider_managed_entry undo has an unknown "
+            "placement contract";
+    return false;
 }
 
 bool validKerberosSectionName(const std::string& section) {
@@ -539,6 +609,63 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
+    if (actionName == "remove_pam_provider_managed_entry" &&
+        backend == MutationBackend::Pam) {
+        UndoRemovePamProviderManagedEntry payload;
+        // Fail-closed STRUCTURAL parsing: every field MUST be present and
+        // MUST be a JSON string of the expected kind. Semantic constraints
+        // (identity tokens, canonical applied body, absolute path) stay in
+        // validatePamProviderManagedEntryUndoPayload.
+        const auto readString = [&](const char* field,
+                                    std::string& target) -> bool {
+            const auto it = value.find(field);
+            if (it == value.end() || !it->is_string()) {
+                error = std::string(
+                            "remove_pam_provider_managed_entry undo "
+                            "requires a string ") +
+                    field;
+                return false;
+            }
+            target = it->get<std::string>();
+            return true;
+        };
+        if (!readString("policy", payload.policyName) ||
+            !readString("provider", payload.providerName) ||
+            !readString("config_path", payload.configPath) ||
+            !readString("managed_key", payload.managedKey) ||
+            !readString("applied_body", payload.appliedBody)) {
+            return false;
+        }
+        const auto containerIt = value.find("container_created");
+        if (containerIt == value.end() || !containerIt->is_boolean()) {
+            error = "remove_pam_provider_managed_entry undo requires a "
+                    "boolean container_created";
+            return false;
+        }
+        payload.containerCreated = containerIt->get<bool>();
+        const auto placementIt = value.find("placement");
+        if (placementIt == value.end() || !placementIt->is_string()) {
+            error = "remove_pam_provider_managed_entry undo requires a "
+                    "string placement";
+            return false;
+        }
+        if (*placementIt == "beginning") {
+            payload.placement =
+                PamProviderBlockPlacementContract::Beginning;
+        } else if (*placementIt == "end") {
+            payload.placement = PamProviderBlockPlacementContract::End;
+        } else {
+            error = "remove_pam_provider_managed_entry undo has unknown "
+                    "placement: " +
+                placementIt->get<std::string>();
+            return false;
+        }
+        if (!validatePamProviderManagedEntryUndoPayload(payload, error)) {
+            return false;
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
     error = "unknown or inconsistent undo action: " + actionName +
             " for backend " + backendName;
     return false;
@@ -634,17 +761,29 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
         }
     }
     if (record.undo.backend == MutationBackend::Pam) {
-        const auto* pam =
-            std::get_if<UndoDisablePamCapability>(&record.undo.payload);
-        const auto backendIt = value.find("backend");
-        if (backendIt == value.end() || !backendIt->is_string() ||
-            *backendIt != "pam" || pam == nullptr ||
-            record.policy.moduleName != "IDENTITY_ACCESS" ||
-            record.policy.submoduleName != "PAM" ||
-            record.policy.policyName != pam->capability ||
-            record.resource != "capability/" + pam->capability) {
-            error = "PAM journal resource/policy does not match undo capability";
-            return false;
+        if (const auto* pamEntry = std::get_if<
+                UndoRemovePamProviderManagedEntry>(&record.undo.payload)) {
+            if (record.policy.moduleName != "IDENTITY_ACCESS" ||
+                record.policy.submoduleName != "PAM" ||
+                record.policy.policyName != pamEntry->policyName ||
+                record.resource != pamEntry->configPath) {
+                error = "PAM journal resource/policy does not match the "
+                        "managed-entry undo payload";
+                return false;
+            }
+        } else {
+            const auto* pam =
+                std::get_if<UndoDisablePamCapability>(&record.undo.payload);
+            const auto backendIt = value.find("backend");
+            if (backendIt == value.end() || !backendIt->is_string() ||
+                *backendIt != "pam" || pam == nullptr ||
+                record.policy.moduleName != "IDENTITY_ACCESS" ||
+                record.policy.submoduleName != "PAM" ||
+                record.policy.policyName != pam->capability ||
+                record.resource != "capability/" + pam->capability) {
+                error = "PAM journal resource/policy does not match undo capability";
+                return false;
+            }
         }
     }
 
@@ -740,6 +879,10 @@ std::string undoActionTypeName(const UndoAction& action) {
     }
     if (std::holds_alternative<UndoDisablePamCapability>(action.payload)) {
         return "disable_pam_capability";
+    }
+    if (std::holds_alternative<UndoRemovePamProviderManagedEntry>(
+            action.payload)) {
+        return "remove_pam_provider_managed_entry";
     }
     return "unknown";
 }
@@ -1533,16 +1676,37 @@ bool MutationJournal::prepareMutation(MutationRecord record,
         }
     }
     if (record.undo.backend == MutationBackend::Pam) {
-        const auto* pam =
-            std::get_if<UndoDisablePamCapability>(&record.undo.payload);
-        if (pam == nullptr || record.policy.moduleName != "IDENTITY_ACCESS" ||
-            record.policy.submoduleName != "PAM" ||
-            record.policy.policyName != pam->capability ||
-            record.resource != "capability/" + pam->capability) {
-            error = "PAM mutation record identity does not match undo";
-            return false;
+        if (const auto* pamEntry = std::get_if<
+                UndoRemovePamProviderManagedEntry>(&record.undo.payload)) {
+            // The logical identity carries the managed-entry ownership
+            // tuple: resource == provider config path, policy name ==
+            // payload policy identity. The mutation id of this record IS
+            // the physical mutation id written into the managed entry.
+            const std::string expectedModule = "IDENTITY_ACCESS";
+            if (record.policy.moduleName != expectedModule ||
+                record.policy.submoduleName != "PAM" ||
+                record.policy.policyName != pamEntry->policyName ||
+                record.resource != pamEntry->configPath) {
+                error = "PAM provider managed-entry mutation record identity "
+                        "does not match undo payload (fail closed)";
+                return false;
+            }
+            if (!validatePamProviderManagedEntryUndoPayload(*pamEntry,
+                                                            error)) {
+                return false;
+            }
+        } else {
+            const auto* pam =
+                std::get_if<UndoDisablePamCapability>(&record.undo.payload);
+            if (pam == nullptr || record.policy.moduleName != "IDENTITY_ACCESS" ||
+                record.policy.submoduleName != "PAM" ||
+                record.policy.policyName != pam->capability ||
+                record.resource != "capability/" + pam->capability) {
+                error = "PAM mutation record identity does not match undo";
+                return false;
+            }
+            if (!validatePamUndoPayload(*pam, error)) return false;
         }
-        if (!validatePamUndoPayload(*pam, error)) return false;
     }
 
     // Idempotency: an active record for the same (policy, backend, resource)
