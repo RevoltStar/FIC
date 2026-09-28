@@ -2,12 +2,20 @@
 
 ## Current base
 
-- Ветка `main`, рабочее дерево содержит НЕ закоммиченные изменения
-  (Step 7A PAM provider managed block + fixed six architectural defects + тесты).
-- Baseline до задачи: `f54530d` (lift Debian 13 / Ubuntu 26.04 — в нём).
+- Ветка `main`; цепочка: `f54530d` → `aa3f8b6` → `98cf8e7` (Step 7A +
+  follow-up №1 закоммичены).
+- Рабочее дерево содержит follow-up №2 Step 7A (base commit = `98cf8e7`,
+  изменения НЕ закоммичены).
 - Коммит НЕ делать без явного запроса пользователя.
 
 ## Current task
+
+**Follow-up №2 Step 7A** (закрыт): immutability unresolved Prepared
+transition (exact idempotent re-prepare, helper
+`samePamProviderPreparedTransition`), load-time container-ownership
+invariant (≤ 1 active `own_pam_provider_container` на configPath,
+writer+loader parity), load-path regression на tampered identity
+(PAM_CONTAINER↔PAM submodule), контракт snapshot-bound unlink для Step 7F.
 
 **Step 7A — generic precedence-aware managed block для shared PAM provider
 configuration.** Реализован reusable primitive, ownership/provenance model
@@ -106,7 +114,8 @@ BOF: block span включает trailing '\n' после END (renderer всег
 пишет) → foreign = всё после блока. EOF: ровно ОДИН separator '\n' перед
 BEGIN — FIC-owned (append'ится всегда при непустом foreign), на decode
 стрипается один → foreign без trailing newline восстанавливается точно.
-Misplaced: foreign до+после verbatim (позиция separator неидентифицируема).
+Misplaced: `lead=none|newline` структурно несёт separator provenance даже
+при displacement — separator-позиция всегда идентифицируема.
 CRLF/без-trailing-newline/пустой/whitespace-only — покрыты тестами
 (add/update/remove/relocation round-trip).
 
@@ -134,6 +143,15 @@ durability failure → не success. `containerCreated=true` только ког
 re-Prepare; вторая активная container-запись на тот же configPath (другой
 provider) — fail closed; Prepared → Prepared refresh разрешён (тот же id).
 Schema journal: `kSchemaVersion = 2` (без migration code).
+
+**Container-ownership invariant (writer+loader parity):** на один physical
+configPath — не более ОДНОЙ active container provenance независимо от
+provider. Проверяется И writer'ом (prepareMutation), И loader'ом
+(loadImpl; generic (policy,backend,resource) invariant не ловит разных
+provider'ов). Historical RolledBack/Detached не конфликтуют с active
+claim. Container provenance — authorization foundation будущего unlink,
+НО она НЕ является достаточной filesystem-object identity: RemovableFicOwned
+— только логическая eligibility, см. Step 7F contract.
 
 **Metadata (P1):** pre-existing файл — `FileMetadataPolicy::PreserveExisting`
 (uid/gid/mode администратора не переписываются; раньше форсировалось
@@ -175,7 +193,11 @@ previous→target переход in-place refresh: пусто = fresh create; и
 точный canonical previous body того же managed key (≠ appliedBody).
 Refresh guard'ы prepareMutation: fresh-запись с previous body — отказ;
 Applied/RollbackFailed refresh обязан нести текущий applied body как
-previous; Prepared refresh обязан нести ТОТ ЖЕ previous (иначе отказ);
+previous; Prepared refresh допускает ТОЛЬКО exact idempotent re-prepare
+того же unresolved transition (`samePamProviderPreparedTransition`:
+policyName, providerName, configPath, managedKey, previousAppliedBody,
+appliedBody, placement — все поля должны совпасть; любое отличие — отказ,
+существующий transition остаётся byte-exact на диске);
 refresh сохраняет id и re-arms Prepared. `own_pam_provider_container` —
 отдельный payload (см. Container provenance). Валидация write+read
 parity: identity tokens, absolute configPath без CR/LF/NUL, managed key,
@@ -190,8 +212,14 @@ IDENTITY_ACCESS/PAM_CONTAINER/policy == providerName.
 - `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=debian-13 -DBUILD_TESTING=ON`
   EXIT=0.
 - Новые targeted: `ctest -R pam_provider_managed` → **3/3 PASS**
-  (после фиксов: grammar lead, refresh guards, container provenance,
-  metadata preservation).
+  (включая новые `testPreparedTransitionImmutability` и
+  `testContainerLoadInvariants`).
+- Follow-up №2: обнаружены ПРЕД-СУЩЕСТВОВАВШИЕ падения
+  `mutation_journal_tests` (4 кейса) — fixture'ы hand-crafted журналов
+  остались на `schema_version: 1` после bump 1→2 в follow-up №1 (v1
+  fail-closed по принятому no-migration контракту). Исправлены fixture'ы
+  валидных документов на schema 2 (`MutationJournalTests.cpp`); тест
+  «unknown schema_version 999» оставлен как есть.
 - Targeted build `fic` (daemon, включает MutationJournal) — PASS.
 - Полный CTest (`build-check`): **110/110 PASS** (1 skip:
   `command_hash_batch_tests`, окружение).
@@ -210,4 +238,17 @@ IDENTITY_ACCESS/PAM_CONTAINER/policy == providerName.
    решение (если потребуется) + unlink FIC-created container.
 3. Не трогали: C2 topology, PamOptionFile semantics, Step 6 option
    reconciliation, Debian 12 pwhistory ModuleArguments.
-4. Не коммитить без явного запроса.
+4. **Step 7F contract — snapshot-bound unlink (обязательно):**
+   `pamProviderContainerReleaseDecision() == RemovableFicOwned` — только
+   логическая eligibility, НЕ proof, что текущий filesystem object можно
+   unlink. Proof → заменa файла attacker'ом/admin'ом → plain
+   `std::filesystem::remove(path)` удаляет replacement — ЗАПРЕЩЕНО.
+   Release executor обязан: trusted capture точного текущего snapshot
+   контейнера → strict parse → доказать exact final FIC-owned entry/block
+   ownership → доказать durable own_pam_provider_container provenance →
+   доказать zero foreign bytes после удаления → убедиться target ==
+   captured state → conditional delete exact target (иначе fail stale) →
+   fsync parent directory → только затем resolve container provenance
+   journal record. Conditional-delete primitive в проекте пока НЕТ —
+   реализовать в 7F (не создавать отдельный filesystem subsystem раньше).
+5. Не коммитить без явного запроса.

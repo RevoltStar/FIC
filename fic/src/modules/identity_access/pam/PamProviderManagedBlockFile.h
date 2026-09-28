@@ -87,14 +87,26 @@ public:
 // FIC container creation; a pre-existing file is NEVER classified FIC-created.
 //   * RemovableFicOwned    — container creation proven AND the content left
 //                            after the block removal is empty: the file
-//                            consists only of FIC serialization, so the
-//                            release executor may unlink it;
+//                            consists only of FIC serialization, so it is
+//                            LOGICALLY eligible for deletion;
 //   * RetainForeignContent — foreign bytes exist: remove only the FIC
 //                            block, keep the file;
 //   * RetainUnproven       — container creation not proven (pre-existing
 //                            file, or the provenance record is gone): a
 //                            pre-existing foreign primary file is NEVER
 //                            unlinked (fail closed).
+//
+// RemovableFicOwned is a logical release ELIGIBILITY decision, NOT proof
+// that the CURRENT filesystem object may be unlinked: between the proof and
+// a plain `unlink(path)` the file may have been replaced by an
+// attacker/admin, and the replacement must never be deleted. The Step 7F
+// release executor MUST perform a snapshot-bound re-proof (trusted capture
+// of the exact current container state, strict re-parse, ownership and
+// provenance re-proof, conditional deletion against the exact captured
+// state, fail stale on any mismatch, fsync of the parent directory, and
+// only then resolution of the container provenance journal record). A plain
+// unchecked `std::filesystem::remove(path)` after an older proof is
+// forbidden.
 enum class PamProviderContainerReleaseDecision {
     RemovableFicOwned,
     RetainForeignContent,

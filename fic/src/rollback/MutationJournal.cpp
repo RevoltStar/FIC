@@ -339,6 +339,27 @@ bool validatePamProviderContainerUndoPayload(
     return true;
 }
 
+// Exact identity of one unresolved PAM provider managed-entry transition.
+// A Prepared record may only be re-prepared as the EXACT same idempotent
+// transition; any difference (new target body, changed placement, provider,
+// managed key, previous state or policy identity) would silently replace
+// durable crash-recovery provenance of a possibly already executed physical
+// write. The comparison is explicit and type-safe instead of relying on
+// the generic refresh path; the (policy, backend, resource) lookup already
+// pins resource identity, and the remaining payload fields are compared
+// here in full.
+bool samePamProviderPreparedTransition(
+    const UndoRemovePamProviderManagedEntry& existing,
+    const UndoRemovePamProviderManagedEntry& incoming) {
+    return existing.policyName == incoming.policyName &&
+           existing.providerName == incoming.providerName &&
+           existing.configPath == incoming.configPath &&
+           existing.managedKey == incoming.managedKey &&
+           existing.previousAppliedBody == incoming.previousAppliedBody &&
+           existing.appliedBody == incoming.appliedBody &&
+           existing.placement == incoming.placement;
+}
+
 bool validKerberosSectionName(const std::string& section) {
     return !section.empty() &&
         section.find_first_of("[]*#;\r\n") == std::string::npos;
@@ -1608,6 +1629,43 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
             }
         }
     }
+    // Container ownership invariant: at most ONE ACTIVE
+    // own_pam_provider_container provenance may exist per physical config
+    // path, regardless of provider. The generic (policy, backend, resource)
+    // invariant above cannot catch two different providers claiming the
+    // same file (their policy identities differ); the write path refuses
+    // such a state, so the loader must reject it too (write/read semantic
+    // parity) — container provenance is the authorization foundation of the
+    // future unlink. Historical resolved records (RolledBack / Detached)
+    // NEVER conflict with an active claim: mutation history is preserved.
+    for (std::size_t outer = 0; outer < parsed.size(); ++outer) {
+        if (!parsed[outer].isActive()) {
+            continue;
+        }
+        const auto* outerContainer =
+            std::get_if<UndoOwnPamProviderContainer>(
+                &parsed[outer].undo.payload);
+        if (outerContainer == nullptr) {
+            continue;
+        }
+        for (std::size_t inner = outer + 1; inner < parsed.size(); ++inner) {
+            if (!parsed[inner].isActive()) {
+                continue;
+            }
+            const auto* innerContainer =
+                std::get_if<UndoOwnPamProviderContainer>(
+                    &parsed[inner].undo.payload);
+            if (innerContainer != nullptr &&
+                innerContainer->configPath == outerContainer->configPath) {
+                return failLoad(
+                    "Mutation journal содержит несколько активных "
+                    "own_pam_provider_container provenance для одного "
+                    "config path: '" +
+                        outerContainer->configPath + "' (fail closed)",
+                    error);
+            }
+        }
+    }
 
     // The parsed document is proven, but readable != durable: the visible
     // file may still be the result of a rename whose parent directory fsync
@@ -1887,11 +1945,14 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                     }
                     if (existing.status == MutationStatus::Prepared) {
                         // An unresolved Prepared transition must be
-                        // recovered/completed first: silently replacing its
-                        // previous body would lose the durable recovery
-                        // provenance.
-                        if (oldEntry->previousAppliedBody !=
-                            newEntry->previousAppliedBody) {
+                        // recovered/completed first: only the EXACT same
+                        // idempotent re-prepare is allowed. Silently
+                        // replacing the previous state, the target body,
+                        // the placement or any identity field would lose
+                        // the durable recovery provenance of a transition
+                        // whose physical write may already have happened.
+                        if (!samePamProviderPreparedTransition(*oldEntry,
+                                                               *newEntry)) {
                             error = "PAM provider managed-entry refresh "
                                     "conflicts with an unresolved Prepared "
                                     "transition (fail closed): recover or "

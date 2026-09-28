@@ -534,7 +534,7 @@ void testUnknownSchemaVersionFailsClosed() {
 
 void testBrokenDocumentStructureFailsClosed() {
     TempFile file;
-    file.write(R"({"schema_version": 1, "records": []})");
+    file.write(R"({"schema_version": 2, "records": []})");
     MutationJournal journal(file.path);
     std::string error;
     require(!journal.load(error),
@@ -544,7 +544,7 @@ void testBrokenDocumentStructureFailsClosed() {
 void testUnknownEnumValueFailsClosed() {
     TempFile file;
     file.write(
-        R"({"schema_version": 1, "next_id": 2, "records": [{"id": 1, )"
+        R"({"schema_version": 2, "next_id": 2, "records": [{"id": 1, )"
         R"("policy": {"module": "SYSCTL", "submodule": "Global", )"
         R"("policy": "p"}, "resource": "vm.swappiness", )"
         R"("undo": {"action": "remove_managed_setting", "backend": "sysctl", )"
@@ -565,7 +565,7 @@ void testDuplicateIdFailsClosed() {
         R"("undo": {"action": "remove_managed_setting", "backend": "sysctl", )"
         R"("key": "vm.swappiness", "applied_value": "10"}, "status": "applied", )"
         R"("created_at_epoch": 1, "updated_at_epoch": 1, "error": ""})";
-    file.write(R"({"schema_version": 1, "next_id": 2, "records": [)" +
+    file.write(R"({"schema_version": 2, "next_id": 2, "records": [)" +
                recordJson + "," + recordJson + R"(]})");
     MutationJournal journal(file.path);
     std::string error;
@@ -702,7 +702,7 @@ void requireBrokenSshJournalFailsClosed(const std::string& content,
 }
 
 std::string sshJournalHead() {
-    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+    return "{\"schema_version\":2,\"next_id\":2,\"records\":[{\"id\":1,"
            "\"policy\":{\"module\":\"NET\",\"submodule\":\"SshEdit\","
            "\"policy\":\"ssh_port\"},\"resource\":\"ssh:/etc/ssh/sshd_config:Port\","
            "\"backend\":\"ssh\",\"status\":\"applied\",\"created_at_epoch\":1,"
@@ -826,7 +826,7 @@ void requireBrokenGrubJournalFailsClosed(const std::string& content,
 }
 
 std::string grubJournalHead() {
-    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+    return "{\"schema_version\":2,\"next_id\":2,\"records\":[{\"id\":1,"
            "\"policy\":{\"module\":\"OSS\",\"submodule\":\"Grub\","
            "\"policy\":\"grub_test_policy\"},\"resource\":\"GRUB_TIMEOUT\","
            "\"backend\":\"grub\",\"status\":\"applied\",\"created_at_epoch\":1,"
@@ -899,7 +899,7 @@ std::string grubJournalRecord(std::uint64_t id, const std::string& resource,
 
 std::string grubJournalDocument(const std::vector<std::string>& records,
                                 std::uint64_t nextId) {
-    std::string result = "{\"schema_version\":1,\"next_id\":" +
+    std::string result = "{\"schema_version\":2,\"next_id\":" +
         std::to_string(nextId) + ",\"records\":[";
     for (std::size_t index = 0; index < records.size(); ++index) {
         if (index != 0) {
@@ -1227,7 +1227,7 @@ void testLoadRaceBetweenCaptureAndBarrier() {
     // between the load capture and the re-proof/durability barrier. The load
     // must never parse one document and durability-confirm another.
     const std::string replacement =
-        "{\"schema_version\":1,\"next_id\":2,\"records\":[]}";
+        "{\"schema_version\":2,\"next_id\":2,\"records\":[]}";
     MutationJournal::setLoadAfterCaptureHookForTests(
         [&file, &replacement]() { file.write(replacement); });
     struct HookReset {
@@ -1584,7 +1584,7 @@ void testInterruptedBootstrapRecovers() {
     TempFile file;
     // J exists as a valid empty journal, W missing: crash between the two
     // bootstrap phases.
-    file.write(R"({"schema_version": 1, "next_id": 1, "records": []})");
+    file.write(R"({"schema_version": 2, "next_id": 1, "records": []})");
     DaemonMutationJournal::instance().setOverridePath(file.path);
     struct OverrideReset {
         ~OverrideReset() { DaemonMutationJournal::instance().resetOverride(); }
@@ -2339,7 +2339,7 @@ void testKerberosUndoPayloadRoundTrip() {
 
 std::string sssdJournalHead(const std::string& resource =
                                 "pam/offline_credentials_expiration") {
-    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+    return "{\"schema_version\":2,\"next_id\":2,\"records\":[{\"id\":1,"
            "\"policy\":{\"module\":\"IDENTITY_ACCESS\",\"submodule\":\"SSSD\","
            "\"policy\":\"sssd_offline_credentials_expiration\"},\"resource\":\"" +
         resource +
@@ -2349,7 +2349,7 @@ std::string sssdJournalHead(const std::string& resource =
 
 std::string kerberosJournalHead(const std::string& resource =
                                     "libdefaults/ticket_lifetime") {
-    return "{\"schema_version\":1,\"next_id\":2,\"records\":[{\"id\":1,"
+    return "{\"schema_version\":2,\"next_id\":2,\"records\":[{\"id\":1,"
            "\"policy\":{\"module\":\"IDENTITY_ACCESS\","
            "\"submodule\":\"KERBEROS\","
            "\"policy\":\"kerberos_ticket_lifetime\"},\"resource\":\"" +
