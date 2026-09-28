@@ -7,9 +7,11 @@
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamProviderConfigFile.h"
+#include "modules/identity_access/pam/PamProviderManagedEntryExecutor.h"
 #include "modules/identity_access/pam/PamProviderModuleArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 #include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
+#include "rollback/DaemonMutationJournal.h"
 
 #include <utility>
 
@@ -81,6 +83,15 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
                 ": " + error,
             logLevel::ERROR);
         return false;
+    }
+
+    // Step 7B routing: the supported faillock scalar assignment contract
+    // goes through the journal-backed managed provider block executor
+    // instead of the legacy replace-all/snapshot writer.
+    if (fic::identity::pam::usesPamProviderManagedEntry(
+            provider, *capability, *binding, feature_)) {
+        return this->applyManagedProviderEntry(
+            *capability, *services, *binding, nativeExpectedValue);
     }
 
     fic::identity::pam::PamConfiguration configuration(platformConfig_);
@@ -245,6 +256,101 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         "PAM policy " + this->policyName + " is effective for " +
             std::to_string(verifiedServiceCount) +
             " configured services",
+        logLevel::INFO);
+    return true;
+}
+
+bool PamOptionPolicy::applyManagedProviderEntry(
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::vector<std::string>& services,
+    const fic::identity::pam::PamProviderPolicyBinding& binding,
+    const std::string& nativeExpectedValue) {
+    // Structural preflight (same semantics as the legacy path): the
+    // provider must be active and structurally sound BEFORE any journal
+    // transaction is prepared.
+    std::string error;
+    fic::identity::pam::PamConfiguration configuration(platformConfig_);
+    fic::identity::pam::PamCapabilityVerification preflight;
+    if (!fic::identity::pam::PamCapabilityVerifier::verify(
+            configuration, platformConfig_, services, capability.capability,
+            capability.provider, preflight,
+            fic::identity::pam::PamCapabilityVerificationMode::Structural)) {
+        this->log(
+            "PAM capability preflight failed for " + this->policyName +
+                ": " +
+                fic::identity::pam::formatPamCapabilityVerification(
+                    preflight),
+            logLevel::ERROR);
+        return false;
+    }
+    if (!fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            preflight.inspection, capability, binding.option,
+            nativeExpectedValue, error)) {
+        this->log(
+            "PAM option override preflight failed for " + this->policyName +
+                ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
+
+    // Journal provenance is MANDATORY on the managed path (fail closed):
+    // a physical mutation without durable Prepared provenance would
+    // destroy rollback ownership. There is NO legacy-writer fallback.
+    auto* journal =
+        fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) {
+        this->log(
+            "PAM mutation journal is not usable for " + this->policyName +
+                " (fail closed): " + error,
+            logLevel::ERROR);
+        return false;
+    }
+
+    const auto& provider =
+        fic::identity::pam::pamProviderDescriptor(capability.provider);
+    fic::identity::pam::PamProviderManagedEntryRequest request;
+    request.policyName = this->policyName;
+    request.provider = capability.provider;
+    request.providerName = provider.name;
+    request.managedKey = binding.option;
+    request.nativeValue = nativeExpectedValue;
+    request.configPath = capability.configPath;
+    // faillock.conf scalar assignments have last-wins semantics → EOF.
+    request.placement =
+        fic::identity::pam::PamProviderBlockPlacementRequest::End;
+    request.absentDecision =
+        fic::identity::pam::pamProviderAbsentContainerDecision(provider);
+
+    // Semantic postcondition: reuse the existing verification pipeline
+    // (PamCapabilityVerifier + PamProviderSemanticVerifier over the
+    // configured services); the executor runs it before every Applied
+    // transition.
+    auto semantic = [&](std::string& semanticError) {
+        std::size_t verifiedServiceCount = 0;
+        return this->verifyPostMutationPamState(
+            capability, services, binding, nativeExpectedValue,
+            /*expectedFlagEnabled=*/false, verifiedServiceCount,
+            semanticError);
+    };
+
+    auto outcome =
+        fic::identity::pam::PamProviderManagedEntryOutcome::AppliedNoOp;
+    if (!fic::identity::pam::PamProviderManagedEntryExecutor::apply(
+            request, *journal, semantic, outcome, error)) {
+        this->log(
+            "PAM managed provider entry apply failed for " +
+                this->policyName + ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
+    this->log(
+        std::string("PAM policy ") + this->policyName +
+            (outcome ==
+                    fic::identity::pam::PamProviderManagedEntryOutcome::
+                        AppliedNoOp
+                ? " is proven effective on the managed provider block "
+                  "(no-op)"
+                : " applied through the managed provider block"),
         logLevel::INFO);
     return true;
 }

@@ -20,6 +20,17 @@ protected:
 
     bool applyPam(const std::string& expectedValue) override;
 
+    // Step 7B: journal-backed managed provider block path for the
+    // supported faillock scalar assignment contract (see
+    // usesPamProviderManagedEntry). Runs the full crash-safe lifecycle
+    // (PamProviderManagedEntryExecutor) instead of the legacy
+    // setExpectedState/PamConfigFileTransaction writer.
+    bool applyManagedProviderEntry(
+        const fic::platform::PamCapabilityConfig& capability,
+        const std::vector<std::string>& services,
+        const fic::identity::pam::PamProviderPolicyBinding& binding,
+        const std::string& nativeExpectedValue);
+
     virtual bool verifyPostMutationPamState(
         const fic::platform::PamCapabilityConfig& capability,
         const std::vector<std::string>& services,
