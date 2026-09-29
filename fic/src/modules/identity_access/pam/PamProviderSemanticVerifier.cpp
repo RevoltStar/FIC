@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <string_view>
 
 #include <sys/stat.h>
 
@@ -932,6 +933,104 @@ bool pwhistoryCanApplyOption(
     return true;
 }
 
+// ASCII-only case-insensitive helpers for the typed pwhistory conflicting
+// option check below (mirrors the evaluator's internal upstream
+// strcasecmp / pam_str_skip_icase_prefix semantics; the evaluator's own
+// helpers are internal to its translation unit).
+char pwhistoryIcaseLower(char character)
+{
+    return character >= 'A' && character <= 'Z'
+        ? static_cast<char>(character - 'A' + 'a')
+        : character;
+}
+
+bool pwhistoryIcaseEquals(std::string_view left, std::string_view right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (pwhistoryIcaseLower(left[index]) !=
+            pwhistoryIcaseLower(right[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool pwhistoryIcaseStartsWith(std::string_view value,
+                              std::string_view prefix)
+{
+    if (value.size() < prefix.size()) {
+        return false;
+    }
+    return pwhistoryIcaseEquals(value.substr(0, prefix.size()), prefix);
+}
+
+// Typed pwhistory replacement for verifyGenericFlagArguments. Upstream
+// pam_pwhistory.c matches the presence flags debug / enforce_for_root
+// with strcasecmp over the WHOLE token, so the flag proof here is fully
+// case-insensitive:
+//   * a valued token naming the flag ("debug=x", "enforce_for_root=")
+//     fails closed (never an enabled flag);
+//   * case-variant duplicates fail closed;
+//   * with a requested DISABLED state, ANY case-variant flag occurrence
+//     ("EnFoRcE_FoR_RoOt" included) is an unreachable override for the
+//     legacy config writer and fails the preflight closed;
+//   * with a requested ENABLED state a flag occurrence is never a
+//     conflict (the effective state is already true through argv);
+//   * conflicting options, when declared, are checked case-insensitively
+//     (whole token or "<option>=" prefix) — no generic case-sensitive
+//     fallback.
+bool verifyPwhistoryFlagArguments(
+    const PamProviderInspection& inspection,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
+    for (const auto& rule : inspection.providerRules) {
+        PwhistoryFlagArgumentScan scan;
+        PwhistoryConfigEvaluator::scanFlagArguments(
+            rule.arguments, flag, scan);
+        if (!scan.valuedArgument.empty()) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) + ": pwhistory PAM flag " +
+                scan.valuedArgument + " must not have a value";
+            return false;
+        }
+        if (scan.occurrences > 1) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) + ": duplicate pwhistory flag " +
+                flag;
+            return false;
+        }
+        if (!expectedEnabled && scan.occurrences > 0) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) + ": pwhistory PAM flag " +
+                scan.firstArgument + " (case-insensitive " + flag +
+                ") overrides the requested disabled state";
+            return false;
+        }
+        if (!expectedEnabled) {
+            for (const auto& option : conflictingOptionsWhenDisabled) {
+                for (const auto& argument : rule.arguments) {
+                    if (pwhistoryIcaseEquals(argument, option) ||
+                        pwhistoryIcaseStartsWith(argument, option + "=")) {
+                        error = rule.source.string() + ":" +
+                            std::to_string(rule.line) +
+                            ": pwhistory PAM argument " + option +
+                            " conflicts with the requested disabled state";
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool pwhistoryCanApplyFlag(
     const PamProviderInspection& inspection,
     const fic::platform::PamCapabilityConfig& capability,
@@ -965,7 +1064,15 @@ bool pwhistoryCanApplyFlag(
             return false;
         }
     }
-    return verifyGenericFlagArguments(
+    // Step 7D semantic cleanup: the flag override proof uses the TYPED
+    // case-insensitive pwhistory argv semantics (upstream
+    // strcasecmp("enforce_for_root")), NOT the generic case-sensitive
+    // helper — a case-variant argv override ("EnFoRcE_FoR_RoOt") must
+    // fail a requested disabled state closed BEFORE any legacy config
+    // mutation, while the same-effective argv must NOT block a requested
+    // enabled state (the legacy writer may still add the config flag;
+    // the effective state is already true through argv).
+    return verifyPwhistoryFlagArguments(
         inspection, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);
 }

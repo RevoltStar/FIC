@@ -2852,6 +2852,33 @@ void testPwhistoryConfigFirstMatchSemantics() {
                 error);
     }
     {
+        const auto [state, error] = evaluate("", {"DEBUG"});
+        require(error.empty() && state.debug,
+            "the argv DEBUG case variant must enable debug: " + error);
+    }
+    // Step 7D semantic cleanup: the presence flags debug and
+    // enforce_for_root are WHOLE-TOKEN options upstream
+    // (strcasecmp over the whole token) — ANY valued form, including an
+    // EMPTY assignment, is a different token and must fail closed
+    // BEFORE state evaluation instead of silently enabling the flag.
+    for (const auto& arguments : std::vector<std::vector<std::string>>{
+             {"debug=x"}, {"DEBUG=x"}, {"debug="}, {"DeBuG=1"},
+             {"enforce_for_root=yes"}, {"enforce_for_root="},
+             {"EnFoRcE_FoR_RoOt="}, {"ENFORCE_FOR_ROOT=yes"}}) {
+        bool ok = true;
+        const auto [state, error] = evaluate("", arguments, &ok);
+        require(!ok,
+            "a valued pwhistory presence-flag token must fail closed: " +
+                error);
+        require(
+            error.find("must not have a value") != std::string::npos,
+            "the valued flag diagnostic must name the whole-token "
+            "contract: " + error);
+        require(!state.debug && !state.enforceForRoot,
+            "a refused valued flag token must not enable any flag: " +
+                error);
+    }
+    {
         const auto [state, error] =
             evaluate("", {"FILE=/run/fic-opasswd"});
         require(error.empty() && state.file == "/run/fic-opasswd",
@@ -2957,6 +2984,17 @@ void testPwhistoryDuplicatePamArgumentsFailClosed() {
         const auto [ok, error] = evaluate(arguments);
         require(!ok,
             "duplicate pwhistory flag argv must fail closed: " + error);
+    }
+    // A valued malformed variant does NOT bypass the uniqueness contract:
+    // "debug DEBUG=x" must fail closed (either as malformed or as a
+    // duplicate — SUCCESS is never acceptable).
+    for (const auto& arguments : std::vector<std::vector<std::string>>{
+             {"debug", "DEBUG=x"}, {"debug=x", "debug"},
+             {"enforce_for_root", "EnFoRcE_FoR_RoOt="}}) {
+        const auto [ok, error] = evaluate(arguments);
+        require(!ok,
+            "a mixed valid/malformed pwhistory flag argv must fail "
+            "closed: " + error);
     }
     // The diagnostic names the option kind, not the raw token casing.
     {
@@ -3198,6 +3236,79 @@ void testPwhistoryManagedOptionSemantics() {
         error.find("duplicate pwhistory PAM argument enforce_for_root") !=
             std::string::npos,
         "the duplicate flag preflight diagnostic is missing: " + error);
+
+    // Step 7D semantic cleanup: the legacy-writer flag preflight uses the
+    // TYPED case-insensitive pwhistory argv semantics.
+    // canApplyFlag(false): a mixed-case argv enforce_for_root override is
+    // unreachable for the legacy config writer and must fail the
+    // preflight closed BEFORE any mutation.
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " EnFoRcE_FoR_RoOt\n");
+    const auto readConfig = [](const std::filesystem::path& path) {
+        std::ifstream input(path);
+        return std::string(
+            (std::istreambuf_iterator<char>(input)),
+            std::istreambuf_iterator<char>());
+    };
+    const std::string preflightConfigBefore =
+        readConfig(platform.passwordHistoryConfigPath);
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyFlag(
+            inspect(), capability, "enforce_for_root", false, {}, error),
+        "a mixed-case argv enforce_for_root must fail the disabled flag "
+        "preflight closed");
+    require(
+        error.find("overrides the requested disabled state") !=
+            std::string::npos,
+        "the argv-override preflight diagnostic is missing: " + error);
+    require(
+        readConfig(platform.passwordHistoryConfigPath) ==
+            preflightConfigBefore,
+        "the refused argv-override preflight must not mutate the config");
+    // canApplyFlag(true): the same-effective argv is NOT a conflict.
+    require(
+        fic::identity::pam::PamProviderSemanticVerifier::canApplyFlag(
+            inspect(), capability, "enforce_for_root", true, {}, error),
+        "a same-effective mixed-case argv must not block the enabled "
+        "flag preflight: " + error);
+    // Case variants are semantically identical for the preflight — no
+    // case-sensitive generic fallback.
+    for (const auto& argvFlag : std::vector<std::string>{
+             "enforce_for_root", "ENFORCE_FOR_ROOT", "EnFoRcE_FoR_RoOt"}) {
+        writeFile(
+            temp.path() / "pam.d/passwd",
+            "password required pam_pwhistory.so conf=" +
+                platform.passwordHistoryConfigPath.string() + " " +
+                argvFlag + "\n");
+        require(
+            !fic::identity::pam::PamProviderSemanticVerifier::canApplyFlag(
+                inspect(), capability, "enforce_for_root", false, {},
+                error),
+            "every case variant of the argv flag must fail the disabled "
+            "preflight closed: " + argvFlag);
+        require(
+            fic::identity::pam::PamProviderSemanticVerifier::canApplyFlag(
+                inspect(), capability, "enforce_for_root", true, {}, error),
+            "every case variant of the argv flag must keep the enabled "
+            "preflight valid: " + argvFlag + ": " + error);
+    }
+    // A valued flag token fails the preflight closed as well.
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " enforce_for_root=\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyFlag(
+            inspect(), capability, "enforce_for_root", true, {}, error),
+        "an empty-assignment enforce_for_root token must fail the flag "
+        "preflight closed");
+    require(
+        error.find("must not have a value") != std::string::npos,
+        "the valued flag preflight diagnostic is missing: " + error);
 
     // §41: Debian 12 ModuleArguments capability keeps the specialized
     // pwhistoryArguments backend with priority (the config evaluator is

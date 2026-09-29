@@ -2,15 +2,16 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `de207d3` («Follow-up к последнему коммиту» — Step 7B,
-  7C, 7D и их follow-up'ы закоммичены).
-- Рабочее дерево содержит **follow-up Step 7D №2** (strict duplicate-argv
-  contract для typed pwhistory evaluator), изменения НЕ закоммичены.
-  Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `5199613` («Follow-up к последнему коммиту №2» —
+  Step 7B, 7C, 7D и follow-up'ы №1–№2 закоммичены).
+- Рабочее дерево содержит **follow-up Step 7D №3** (semantic cleanup:
+  whole-token pwhistory presence flags + typed case-insensitive
+  canApplyFlag), изменения НЕ закоммичены. Коммит НЕ делать без явного
+  запроса.
 
 ## Current task
 
-**Step 7D + follow-up №2 (выполнены, не закоммичены):** Step 7D —
+**Step 7D + follow-up'ы №2–№3 (выполнены, не закоммичены):** Step 7D —
 `password_history_depth →
 pam_pwhistory → remember` переведён на journal-backed
 `PamProviderManagedEntryExecutor` с placement **Beginning** на
@@ -78,6 +79,33 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   conf= uniqueness remains governed by the case-sensitive external-config
   contract (verifyExternalConfigContract); CONF= is not treated as conf=
   (unknown argv → fail closed).
+- **Follow-up 7D №3 (whole-token flags + typed flag preflight):**
+  pam_pwhistory argv presence flags `debug` and `enforce_for_root` are
+  valid ONLY as whole tokens, matched case-insensitively. Any valued
+  form, including an empty assignment (`debug=` / `enforce_for_root=`),
+  is rejected fail-closed. Classifier выдаёт
+  `PwhistoryPamArgumentValidity::{Valid,MalformedKnown}`: valued-формы
+  флагов = MalformedKnown (в своём kind), validatePamArguments
+  отвергает их ДО duplicate-проверки и ДО state evaluation с
+  dedicated диагностикой `pwhistory PAM flag <token> must not have a
+  value`; `applyPamArguments` больше НЕ выводит flag semantics из
+  generic `name before '='` — только whole-token
+  `asciiEqualsIgnoreCase(argument, "debug"/"enforce_for_root")`
+  (upstream strcasecmp).
+  pwhistory canApplyFlag uses provider-specific case-insensitive argv
+  semantics (`verifyPwhistoryFlagArguments` + typed
+  `PwhistoryConfigEvaluator::scanFlagArguments` — тот же classifier) and
+  rejects an argv enforce_for_root override (ЛЮБОЙ case-вариант) before
+  any ProviderConfigFile legacy mutation. canApplyFlag(false): argv
+  flag occurrence → fail closed (unreachable для legacy writer),
+  CURRENT config flag state НЕ является rejection reason.
+  canApplyFlag(true): argv flag occurrence — НЕ конфликт (effective
+  state уже true). Valued token → fail closed в preflight тоже.
+  conflictingOptionsWhenDisabled (сейчас пустой для binding) при
+  наличии проверяется typed icase (whole token или `option=` prefix) —
+  generic case-sensitive helper больше не используется для pwhistory.
+  verifyFlag postcondition остался typed effective proof через
+  evaluator (icase argv учитывается по построению).
 - Backend в PamProviderSemanticVerifier: capability/option/flag/
   canApplyOption/canApplyFlag. Ключевое: `canApplyOption` — prospective
   (BOF перекроет текущий foreign remember, конфликтует только argv);
@@ -145,13 +173,27 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   duplicate argv в canApplyOption (включая prospective BOF при foreign
   remember=3), duplicate conf= → external contract, conf=/a CONF=/b →
   unknown argv, duplicate enforce_for_root в canApplyFlag.
+  Follow-up 7D №3: valued presence-flag tokens (debug=x / DEBUG=x /
+  debug= / DeBuG=1 / enforce_for_root= / EnFoRcE_FoR_RoOt= /
+  ENFORCE_FOR_ROOT=yes) → FAIL + «must not have a value», flags не
+  включены; DEBUG → state.debug; смешанные valid/malformed flag argv
+  (debug DEBUG=x, debug=x debug, enforce_for_root EnFoRcE_FoR_RoOt=) →
+  FAIL. Backend-level: canApplyFlag(false) при argv EnFoRcE_FoR_RoOt →
+  FAIL «overrides the requested disabled state», config untouched;
+  canApplyFlag(true) с тем же argv → SUCCESS; все case-варианты
+  (enforce_for_root/ENFORCE_FOR_ROOT/EnFoRcE_FoR_RoOt) дают один
+  semantic result; valued enforce_for_root= → FAIL в preflight.
 - `identity_policy_hierarchy_tests`: production-like policy BOF apply
   (rotateTestJournal 4/5/6), идемпотентность, §40 transitional flag
   smoke (legacy enforce_for_root не ломает managed block), §29 argv
   override fail-closed на уровне policy (config+journal untouched),
   §29b duplicate argv (remember=10 REMEMBER=20) → apply FAIL,
   pwhistory.conf и journal untouched — duplicate rejection до journal
-  mutation.
+  mutation. Follow-up 7D №3: §29c argv EnFoRcE_FoR_RoOt + policy
+  password_history_enforce_for_root=no → apply FAIL на semantic
+  preflight ДО legacy mutation (pwhistory.conf byte-identical, journal
+  без flag records); §29d тот же argv + policy=yes → legacy apply
+  SUCCESS (same-effective argv не блокирует enable).
 - Тестовые фикстуры (makePlatform/makePasswordHistoryPlatform) binding
   descriptor default topology на временные пути + verifyCapability
   helper создаёт пустой pwhistory.conf (как для pwquality).
@@ -159,10 +201,9 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   с PamProviderSemanticVerifier.cpp (executor, configuration, hierarchy,
   passwdqc, wiring и др.).
 
-## Validation (фактически выполнено, follow-up 7D №2)
+## Validation (фактически выполнено, follow-up 7D №3)
 
-- Полный build `build-check` (ubuntu-24.04) — 0 errors, 0 warnings
-  (изменённые файлы пересобраны начисто).
+- Полный build `build-check` (ubuntu-24.04) — 0 errors, 0 warnings.
 - Полный CTest — **111/111 PASS** (1 skip: `command_hash_batch_tests`,
   окружение).
 - Targeted: executor/block/block-file/journal/configuration/hierarchy/

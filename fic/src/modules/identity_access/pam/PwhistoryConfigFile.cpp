@@ -86,6 +86,19 @@ bool applyPamArguments(const std::vector<std::string>& arguments,
                        PwhistoryEffectiveState& state,
                        std::string& error);
 
+// Validity of ONE classified argv token beyond its semantic kind:
+//   * Valid — the token matches the upstream syntax of its kind;
+//   * MalformedKnown — the token NAMES a known option but with a syntax
+//     that upstream would NOT accept for that kind (the presence flags
+//     debug / enforce_for_root are whole-token options upstream:
+//     strcasecmp(argv, "debug"); any valued form, including an EMPTY
+//     assignment "debug=", is a different token and is rejected
+//     fail-closed instead of being silently applied as the flag).
+enum class PwhistoryPamArgumentValidity {
+    Valid,
+    MalformedKnown
+};
+
 bool evaluateTopology(const fic::platform::PamProviderConfigTopology& topology,
                       PwhistoryEffectiveState& state,
                       std::string& error,
@@ -242,34 +255,33 @@ bool applyPamArguments(const std::vector<std::string>& arguments,
             continue;
         }
         const std::size_t equals = argument.find('=');
-        // The named options below are matched CASE-INSENSITIVELY on the
-        // lowercase copy, mirroring the upstream pam_pwhistory.c option
-        // parser (strcasecmp("debug")/strcasecmp("enforce_for_root"),
-        // pam_str_skip_icase_prefix for remember=/retry=/file=). The
-        // compare keeps the RAW name for diagnostics.
+        // Upstream pam_pwhistory.c: strcasecmp(argv, "debug") /
+        // strcasecmp(argv, "enforce_for_root") — the presence flags are
+        // WHOLE-TOKEN options compared case-insensitively. A valued form
+        // ("debug=x", "DEBUG=x", "enforce_for_root=", ...) is NOT the
+        // flag; the strict argv validation
+        // (validatePwhistoryPamArguments) has already rejected every such
+        // token before this application pass, and any valued token that
+        // still reaches this point fails closed as an unknown argument
+        // below.
+        if (asciiEqualsIgnoreCase(argument, "debug")) {
+            state.debug = true;
+            continue;
+        }
+        if (asciiEqualsIgnoreCase(argument, "enforce_for_root")) {
+            state.enforceForRoot = true;
+            continue;
+        }
+        // Assignment-like options are matched CASE-INSENSITIVELY on the
+        // lowercase name copy, mirroring the upstream
+        // pam_str_skip_icase_prefix parser for remember=/retry=/file=.
+        // The compare keeps the RAW name for diagnostics.
         const std::string name = lowercaseCopy(
             equals == std::string::npos ? argument
                                         : argument.substr(0, equals));
         const std::string value = equals == std::string::npos
             ? std::string{}
             : argument.substr(equals + 1);
-        if (name == "debug") {
-            state.debug = true;
-            continue;
-        }
-        if (name == "enforce_for_root") {
-            if (!value.empty()) {
-                // Upstream strcasecmp("enforce_for_root") would silently
-                // ignore a valued token as an unknown option; FIC fails
-                // closed instead (ambiguous input).
-                error = source.string() + ":" + std::to_string(line) +
-                    ": pwhistory PAM flag " + argument +
-                    " must not have a value";
-                return false;
-            }
-            state.enforceForRoot = true;
-            continue;
-        }
         if (name == "remember" || name == "retry") {
             int parsed = 0;
             if (!parseUnsignedInteger(value, parsed)) {
@@ -367,24 +379,29 @@ const char* pwhistoryPamArgumentKindName(PwhistoryPamArgumentKind kind)
     return "unknown";
 }
 
-// Classifies ONE raw argv token into its semantic kind. The known-kind
-// set mirrors the upstream pam_pwhistory.c / pwhistory_config.c option
-// parser:
+// Classifies ONE raw argv token into its semantic kind and validity. The
+// known-kind set mirrors the upstream pam_pwhistory.c / pwhistory_config.c
+// option parser:
 //   * whole-token options: try_first_pass / use_first_pass /
 //     use_authtok / debug / enforce_for_root (strcasecmp — icase);
 //   * value-prefixed options: authtok_type= / remember= / retry= /
 //     file= (pam_str_skip_icase_prefix — icase);
 //   * conf= (pam_str_skip_prefix — CASE-SENSITIVE).
-// A valued "debug=..."/"enforce_for_root=..." token stays inside its
-// flag kind: the application pass keeps rejecting valued flags with the
-// dedicated "must not have a value" diagnostic. Valueless
-// remember/retry/file tokens likewise stay inside their kind (the
-// application pass rejects them as invalid values), so a SINGLE such
+// The presence flags debug / enforce_for_root are WHOLE-TOKEN options
+// upstream: only the exact (case-insensitive) token is a valid flag
+// occurrence. A valued form ("debug=x", "enforce_for_root=", ...) names
+// the flag kind but is reported as MalformedKnown so the uniqueness
+// contract rejects it fail-closed with a dedicated diagnostic BEFORE any
+// state evaluation — it must never be applied as an enabled flag.
+// Valueless remember/retry/file tokens likewise stay inside their kind
+// (the application pass rejects them as invalid values), so a SINGLE such
 // token keeps its original diagnostic and only a genuine DUPLICATE is
 // reported by the uniqueness contract first.
 bool classifyPwhistoryPamArgument(const std::string& argument,
-                                  PwhistoryPamArgumentKind& kind)
+                                  PwhistoryPamArgumentKind& kind,
+                                  PwhistoryPamArgumentValidity& validity)
 {
+    validity = PwhistoryPamArgumentValidity::Valid;
     if (asciiEqualsIgnoreCase(argument, "try_first_pass")) {
         kind = PwhistoryPamArgumentKind::TryFirstPass;
         return true;
@@ -401,14 +418,22 @@ bool classifyPwhistoryPamArgument(const std::string& argument,
         kind = PwhistoryPamArgumentKind::AuthtokType;
         return true;
     }
-    if (asciiEqualsIgnoreCase(argument, "debug") ||
-        asciiStartsWithIgnoreCase(argument, "debug=")) {
+    if (asciiEqualsIgnoreCase(argument, "debug")) {
         kind = PwhistoryPamArgumentKind::Debug;
         return true;
     }
-    if (asciiEqualsIgnoreCase(argument, "enforce_for_root") ||
-        asciiStartsWithIgnoreCase(argument, "enforce_for_root=")) {
+    if (asciiStartsWithIgnoreCase(argument, "debug=")) {
+        kind = PwhistoryPamArgumentKind::Debug;
+        validity = PwhistoryPamArgumentValidity::MalformedKnown;
+        return true;
+    }
+    if (asciiEqualsIgnoreCase(argument, "enforce_for_root")) {
         kind = PwhistoryPamArgumentKind::EnforceForRoot;
+        return true;
+    }
+    if (asciiStartsWithIgnoreCase(argument, "enforce_for_root=")) {
+        kind = PwhistoryPamArgumentKind::EnforceForRoot;
+        validity = PwhistoryPamArgumentValidity::MalformedKnown;
         return true;
     }
     if (asciiStartsWithIgnoreCase(argument, "remember=") ||
@@ -445,7 +470,9 @@ bool validatePwhistoryPamArguments(
     std::set<PwhistoryPamArgumentKind> seenKinds;
     for (const auto& argument : arguments) {
         PwhistoryPamArgumentKind kind = PwhistoryPamArgumentKind::Unknown;
-        if (!classifyPwhistoryPamArgument(argument, kind)) {
+        PwhistoryPamArgumentValidity validity =
+            PwhistoryPamArgumentValidity::Valid;
+        if (!classifyPwhistoryPamArgument(argument, kind, validity)) {
             // Unknown tokens keep the application-pass diagnostic (the
             // evaluator would fail closed with the same message).
             error = source.string() + ":" + std::to_string(line) +
@@ -457,6 +484,17 @@ bool validatePwhistoryPamArguments(
         // case-insensitive pwhistory option contract.
         if (kind == PwhistoryPamArgumentKind::Conf) {
             continue;
+        }
+        // A token that NAMES a known option but carries a value forbidden
+        // by the upstream whole-token flag syntax (debug=x, DEBUG=x,
+        // debug=, enforce_for_root=, EnFoRcE_FoR_RoOt=yes, ...) is
+        // rejected fail-closed BEFORE the duplicate check and BEFORE any
+        // state evaluation — it must never be applied as an enabled flag.
+        if (validity == PwhistoryPamArgumentValidity::MalformedKnown) {
+            error = source.string() + ":" + std::to_string(line) +
+                ": pwhistory PAM flag " + argument +
+                " must not have a value";
+            return false;
         }
         if (!seenKinds.insert(kind).second) {
             error = source.string() + ":" + std::to_string(line) +
@@ -560,6 +598,61 @@ bool PwhistoryConfigEvaluator::validatePamArguments(
     std::string& error)
 {
     return validatePwhistoryPamArguments(arguments, source, line, error);
+}
+
+namespace {
+
+bool pwhistoryFlagKindFor(const std::string& flag,
+                          PwhistoryPamArgumentKind& kind)
+{
+    if (asciiEqualsIgnoreCase(flag, "debug")) {
+        kind = PwhistoryPamArgumentKind::Debug;
+        return true;
+    }
+    if (asciiEqualsIgnoreCase(flag, "enforce_for_root")) {
+        kind = PwhistoryPamArgumentKind::EnforceForRoot;
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void PwhistoryConfigEvaluator::scanFlagArguments(
+    const std::vector<std::string>& arguments,
+    const std::string& flag,
+    PwhistoryFlagArgumentScan& scan)
+{
+    scan = PwhistoryFlagArgumentScan{};
+    PwhistoryPamArgumentKind flagKind = PwhistoryPamArgumentKind::Unknown;
+    if (!pwhistoryFlagKindFor(flag, flagKind)) {
+        return;
+    }
+    for (const auto& argument : arguments) {
+        PwhistoryPamArgumentKind kind = PwhistoryPamArgumentKind::Unknown;
+        PwhistoryPamArgumentValidity validity =
+            PwhistoryPamArgumentValidity::Valid;
+        if (!classifyPwhistoryPamArgument(argument, kind, validity) ||
+            kind != flagKind) {
+            // Unknown tokens and other options are not this flag's
+            // business (unknown-argv rejection belongs to
+            // validatePamArguments).
+            continue;
+        }
+        if (validity == PwhistoryPamArgumentValidity::MalformedKnown) {
+            // A valued form names the flag but is NOT a flag occurrence;
+            // it is reported separately so the preflight rejects it
+            // fail-closed.
+            if (scan.valuedArgument.empty()) {
+                scan.valuedArgument = argument;
+            }
+            continue;
+        }
+        if (scan.occurrences == 0) {
+            scan.firstArgument = argument;
+        }
+        ++scan.occurrences;
+    }
 }
 
 bool PwhistoryEffectiveState::managedValue(const std::string& option,

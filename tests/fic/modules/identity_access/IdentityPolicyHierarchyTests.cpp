@@ -1467,6 +1467,68 @@ int main() {
                 "records");
         }
 
+        // §29c at policy level (Step 7D semantic cleanup): a case-
+        // insensitive PAM argv enforce_for_root override
+        // ("EnFoRcE_FoR_RoOt") must fail the
+        // password_history_enforce_for_root=no apply closed at the typed
+        // semantic preflight — BEFORE any legacy config mutation /
+        // snapshot commit. The legacy flag writer cannot change module
+        // argv, so the case-variant override is unreachable.
+        const fs::path argvOverrideRoot = root / "pwhistory-argv-override";
+        const auto argvOverridePlatform =
+            makePasswordHistoryPlatform(argvOverrideRoot);
+        writeFile(
+            argvOverrideRoot / "pam.d/passwd",
+            "password required pam_pwhistory.so conf=" +
+                argvOverridePlatform.passwordHistoryConfigPath.string() +
+                " EnFoRcE_FoR_RoOt\n");
+        writeFile(
+            argvOverrideRoot / "security/pam_pwhistory.so", "test", 0555);
+        const std::string argvOverrideForeign = "remember = 5\n";
+        writeFile(
+            argvOverridePlatform.passwordHistoryConfigPath,
+            argvOverrideForeign);
+        rotateTestJournal(root, 7);
+        writeIdentityConfig(root, "no");
+        PamPasswordHistoryEnforceForRootPolicy argvOverrideDisabled(
+            argvOverridePlatform);
+        require(
+            !argvOverrideDisabled.apply(),
+            "a mixed-case argv enforce_for_root override must fail the "
+            "disabled flag policy apply closed");
+        require(
+            readFile(argvOverridePlatform.passwordHistoryConfigPath) ==
+                argvOverrideForeign,
+            "the refused argv-override flag apply must not mutate "
+            "pwhistory.conf");
+        {
+            std::string journalError;
+            auto* flagJournal =
+                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                    journalError);
+            require(flagJournal != nullptr, journalError);
+            require(
+                flagJournal
+                    ->activeRecords(
+                        {"IDENTITY_ACCESS", "PAM",
+                         "password_history_enforce_for_root"})
+                    .empty(),
+                "the refused argv-override flag apply must prepare NO "
+                "journal records");
+        }
+
+        // §29d at policy level: the SAME-EFFECTIVE argv must NOT block a
+        // requested enabled state — the legacy path stays semantically
+        // valid for case-variant argv (no case-sensitive preflight
+        // fallback).
+        writeIdentityConfig(root, "yes");
+        PamPasswordHistoryEnforceForRootPolicy argvOverrideEnabled(
+            argvOverridePlatform);
+        require(
+            argvOverrideEnabled.apply(),
+            "the same-effective mixed-case argv must not block the "
+            "enabled flag policy apply");
+
         const auto authenticationPlatform =
             makeAuthenticationPlatform(root);
         writeFile(

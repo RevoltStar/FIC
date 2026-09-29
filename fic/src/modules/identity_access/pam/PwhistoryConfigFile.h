@@ -48,6 +48,21 @@ struct PwhistoryEffectiveState {
                       std::string& error) const;
 };
 
+// Result of scanning ONE PAM rule argv for a pwhistory presence flag
+// (debug / enforce_for_root) under the upstream case-insensitive
+// WHOLE-TOKEN semantics (strcasecmp over the whole token).
+struct PwhistoryFlagArgumentScan {
+    // Number of exact case-insensitive whole-token occurrences of the
+    // flag ("debug", "EnFoRcE_FoR_RoOt", ...).
+    std::size_t occurrences = 0;
+    // RAW first occurrence token (for diagnostics).
+    std::string firstArgument;
+    // First token that NAMES the flag but carries a value ("debug=x",
+    // "EnFoRcE_FoR_RoOt="); empty when every token naming the flag is a
+    // valid valueless occurrence.
+    std::string valuedArgument;
+};
+
 class PwhistoryConfigEvaluator {
 public:
     // FIC strict duplicate-argv contract (Step 7D follow-up): every KNOWN
@@ -59,6 +74,16 @@ public:
     // identical duplicate "remember=10 REMEMBER=10" all fail closed —
     // the upstream last-wins effective result is never treated as a
     // proof of unambiguity. Unknown argv tokens fail closed as well.
+    //
+    // Whole-token presence flags (Step 7D semantic cleanup): upstream
+    // matches "debug" and "enforce_for_root" with strcasecmp over the
+    // WHOLE token, so they are valid ONLY as valueless tokens
+    // (case-insensitive: "debug", "DEBUG", "EnFoRcE_FoR_RoOt", ...).
+    // ANY valued form, including an empty assignment ("debug=x",
+    // "DEBUG=x", "debug=", "enforce_for_root=", "enforce_for_root=yes"),
+    // is rejected fail-closed by this validation with a dedicated
+    // diagnostic BEFORE any state evaluation.
+    //
     // The "conf=" selector is NOT part of this case-insensitive option
     // contract: upstream selects the config file through the CASE-
     // SENSITIVE pam_str_skip_prefix("conf="), so conf= uniqueness stays
@@ -71,6 +96,22 @@ public:
         const std::filesystem::path& source,
         std::size_t line,
         std::string& error);
+
+    // Typed pwhistory flag scan (Step 7D semantic cleanup): classifies the
+    // argv tokens of ONE PAM rule against a pwhistory presence flag
+    // (debug / enforce_for_root) using the SAME case-insensitive
+    // whole-token semantics as validatePamArguments /
+    // evaluateInvocation. The typed provider preflight
+    // (pwhistoryCanApplyFlag) uses it to see case-variant flag overrides
+    // ("EnFoRcE_FoR_RoOt") that the generic case-sensitive argv helper
+    // cannot observe. Unknown tokens are IGNORED here: the unknown-argv
+    // rejection is owned by validatePamArguments.
+    // The flag parameter is matched case-insensitively against the
+    // known flag names; an unknown flag name yields an empty scan.
+    static void scanFlagArguments(
+        const std::vector<std::string>& arguments,
+        const std::string& flag,
+        PwhistoryFlagArgumentScan& scan);
 
     // Evaluates the REAL config topology (primary file first-match parse,
     // then the PAM argv of one provider rule). Fails closed on a missing
