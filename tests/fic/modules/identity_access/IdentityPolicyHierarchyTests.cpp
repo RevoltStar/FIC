@@ -18,6 +18,10 @@
 #include "modules/identity_access/pam/policies/PamPasswordQualityPolicies.h"
 #include "modules/identity_access/sssd/SssdPolicy.h"
 
+#include "rollback/DaemonMutationJournal.h"
+#include "rollback/MutationJournal.h"
+#include "rollback/MutationRecord.h"
+
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/fs/AtomicFileWriter.h>
 
@@ -133,15 +137,28 @@ void initializeRuntimePaths(const std::filesystem::path& root) {
     paths.deviceDatabaseFile = root / "data/devices.db";
     paths.deviceDatabaseLockFile = root / "log/devices.lock";
     paths.lockDebugLogFile = root / "log/db-lock.log";
+    // Step 7C: the managed pwquality/faillock policy path opens the
+    // daemon mutation journal (fail closed without it).
+    paths.mutationJournalFile = root / "data/mutation-journal.json";
 
     std::filesystem::create_directories(paths.configDir);
     std::filesystem::create_directories(paths.logDir);
     std::filesystem::create_directories(paths.dataDir);
 
     writeIdentityConfig(root, "yes");
-
     std::string error;
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+}
+
+// Step 7C helper: some test phases externally rewrite pwquality.conf after
+// a managed apply, which is exactly the AppliedMissing drift/fail-closed
+// state of the managed entry executor. Rotating to a fresh journal file
+// models a clean daemon restart with a fresh provenance database for the
+// next phase.
+void rotateTestJournal(const std::filesystem::path& root, unsigned sequence) {
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+        root / ("data/mutation-journal-" + std::to_string(sequence) +
+                ".json"));
 }
 
 TestPamPlatformConfig makePasswordHistoryPlatform(
@@ -718,14 +735,37 @@ int main() {
             "uncommitted missing-target rollback removed external file");
 
         writeFile(transactionPath, transactionOriginal, 0644);
+        // Step 7C: password_min_length owns its state through the
+        // journal-backed managed provider block path. A final verification
+        // failure must NOT restore a whole-file snapshot: the physical FIC
+        // entry and its Prepared journal provenance stay recoverable and
+        // the foreign bytes outside the FIC block survive byte-exact.
         FaultInjectedPamOptionPolicy rollbackPolicy(transactionPlatform);
         require(
             !rollbackPolicy.applyValue("13"),
             "injected final verification failure must fail apply");
+        const std::string faultedConfig =
+            readFile(transactionPlatform.passwordQualityConfigPath);
         require(
-            readFile(transactionPlatform.passwordQualityConfigPath) ==
-                transactionOriginal,
-            "failed final PAM verification did not restore raw config");
+            faultedConfig.find(transactionOriginal) == 0 &&
+                faultedConfig.find("minlen = 13") != std::string::npos,
+            "failed final PAM verification must keep the recoverable "
+            "managed entry and the foreign bytes (no snapshot rollback)");
+        std::string faultJournalError;
+        auto* faultJournal = fic::rollback::DaemonMutationJournal::instance()
+                                 .tryGet(faultJournalError);
+        require(
+            faultJournal != nullptr, faultJournalError);
+        const auto faultRecords = faultJournal->activeRecords(
+            {"IDENTITY_ACCESS", "PAM", "fault_injected_password_min_length"});
+        require(
+            faultRecords.size() == 1 &&
+                faultRecords.front().status ==
+                    fic::rollback::MutationStatus::Prepared &&
+                faultRecords.front().resource ==
+                    transactionPlatform.passwordQualityConfigPath.string(),
+            "the failed managed apply must leave a recoverable Prepared "
+            "journal record");
 
         FaultInjectedPamOptionPolicy rollbackFailurePolicy(
             transactionPlatform,
@@ -738,7 +778,8 @@ int main() {
         require(
             readFile(transactionPlatform.passwordQualityConfigPath) ==
                 "external concurrent change\n",
-            "rollback overwrote a concurrent external config change");
+            "the managed path never rewrites physical state after a failed "
+            "postcondition");
 
         applyPasswordQualityAssignment<PamPasswordCheckUsernamePolicy>(
             root, passwordQualityPlatform,
@@ -804,10 +845,16 @@ int main() {
                     enabledFlagContent,
             "enforce_for_root enable is not idempotent");
 
+        // Step 7C: password_min_length owns its state through the managed
+        // provider block path. Foreign (even case-variant/duplicate)
+        // assignments are NEVER canonicalized or removed — the FIC EOF
+        // entry wins under the sequential primary evaluation, which the
+        // policy postcondition proves on every apply.
         writeIdentityConfig(
             root, "yes", "yes",
             "password_min_length.status=ENABLE\n"
             "password_min_length.value=20\n");
+        rotateTestJournal(root, 1);
         writeFile(
             passwordQualityPlatform.passwordQualityConfigPath,
             "MINLEN = 10\n");
@@ -816,11 +863,16 @@ int main() {
         require(
             uppercaseMinLength.apply(),
             "case-insensitive pwquality assignment mutation failed");
+        const std::string uppercaseManagedConfig =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
         require(
-            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
-                "minlen = 20\n",
-            "pwquality assignment was not canonicalized to lowercase");
+            uppercaseManagedConfig.find("MINLEN = 10\n") == 0 &&
+                uppercaseManagedConfig.find("minlen = 20") !=
+                    std::string::npos,
+            "foreign case-variant pwquality assignment must stay byte-exact "
+            "while the FIC EOF entry carries minlen = 20");
 
+        rotateTestJournal(root, 2);
         writeFile(
             passwordQualityPlatform.passwordQualityConfigPath,
             "minlen = 15\n"
@@ -830,11 +882,14 @@ int main() {
         require(
             duplicateCaseMinLength.apply(),
             "case-variant pwquality assignment duplicate caused rollback");
+        const std::string duplicateManagedConfig =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
         require(
-            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
-                "minlen = 20\n"
-                "minlen = 20\n",
-            "conflicting case-variant pwquality assignment remained active");
+            duplicateManagedConfig.find("minlen = 15\nMINLEN = 10\n") == 0 &&
+                duplicateManagedConfig.find("minlen = 20") !=
+                    std::string::npos,
+            "foreign duplicate case-variant assignments must stay byte-exact "
+            "while the FIC EOF entry carries minlen = 20");
 
         writeIdentityConfig(
             root, "yes", "yes",
@@ -883,6 +938,7 @@ int main() {
 
         writePasswordQualityGraph(" minlen=10 minlen=20");
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+        rotateTestJournal(root, 3);
         writeIdentityConfig(
             root, "yes", "yes",
             "password_min_length.status=ENABLE\n"

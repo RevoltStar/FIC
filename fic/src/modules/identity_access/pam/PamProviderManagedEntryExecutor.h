@@ -57,8 +57,9 @@ struct PamProviderManagedEntryRequest {
     std::string nativeValue;
     // Shared provider primary configuration path.
     std::filesystem::path configPath;
-    // Placement contract of the provider configuration (faillock: End —
-    // scalar assignments have last-wins semantics).
+    // Placement contract of the provider configuration. Production callers
+    // derive it through pamProviderManagedEntryPlacement() (faillock and
+    // pwquality scalar assignments are last-wins → End).
     PamProviderBlockPlacementRequest placement =
         PamProviderBlockPlacementRequest::End;
     // Typed decision for a PROVEN-ABSENT primary. Production callers must
@@ -68,16 +69,25 @@ struct PamProviderManagedEntryRequest {
         PamProviderAbsentContainerDecision::FailClosed;
 };
 
-// Step 7B routing decision: managed provider block path is used ONLY for
-// the supported contract — pam_faillock, provider-config-file mode, native
-// Assignment syntax, and exactly the three faillock scalar assignment
-// features. Everything else (module-argument policies, flags such as
-// even_deny_root — Step 7E, pwquality/passwdqc/pwhistory — Step 7C/7D,
-// ALT topology paths) stays on the existing legacy path.
+// Step 7B/7C routing decision: managed provider block path is used ONLY
+// for the supported contract — provider-config-file mode, native
+// Assignment syntax, and the explicitly whitelisted scalar assignment
+// features PER PROVIDER (Step 7B: the three faillock scalars; Step 7C: the
+// nine pam_pwquality scalars — enforce_for_root stays Step 7E). Everything
+// else (module-argument policies, flags, pam_passwdqc/ALT topology paths,
+// pam_pwhistory — Step 7D) stays on the existing legacy path.
 bool usesPamProviderManagedEntry(
     const PamProviderDescriptor& provider,
     const fic::platform::PamCapabilityConfig& capability,
     const PamProviderPolicyBinding& binding,
+    fic::platform::PamPolicyFeature feature);
+
+// Typed placement contract of the managed provider block for a routed
+// (provider, feature) pair. faillock and pwquality scalar assignments are
+// last-wins → EOF primary; Step 7D adds pam_pwhistory → Beginning as one
+// typed case here, never as a new hardcoded condition in the policy wiring.
+PamProviderBlockPlacementRequest pamProviderManagedEntryPlacement(
+    const PamProviderDescriptor& provider,
     fic::platform::PamPolicyFeature feature);
 
 // Typed provider/platform decision for a proven-absent primary container.

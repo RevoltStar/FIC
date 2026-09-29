@@ -1130,9 +1130,6 @@ bool usesPamProviderManagedEntry(
     const fic::platform::PamCapabilityConfig& capability,
     const PamProviderPolicyBinding& binding,
     fic::platform::PamPolicyFeature feature) {
-    if (provider.kind != fic::platform::PamProviderKind::PamFaillock) {
-        return false;
-    }
     if (capability.configurationMode !=
         fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
         return false;
@@ -1140,13 +1137,71 @@ bool usesPamProviderManagedEntry(
     if (binding.syntax != PamNativeOptionSyntax::Assignment) {
         return false;
     }
-    switch (feature) {
-    case fic::platform::PamPolicyFeature::FailedAuthenticationAttempts:
-    case fic::platform::PamPolicyFeature::FailedAuthenticationCountingPeriod:
-    case fic::platform::PamPolicyFeature::FailedAuthenticationUnlockTime:
-        return true;
+    // Explicit per-provider scalar feature whitelist (Step 7B/7C): the
+    // managed entry path is OPT-IN per feature — never "every Assignment
+    // binding of the provider" — so a future policy cannot silently
+    // acquire journal-backed physical ownership.
+    switch (provider.kind) {
+    case fic::platform::PamProviderKind::PamFaillock:
+        switch (feature) {
+        case fic::platform::PamPolicyFeature::FailedAuthenticationAttempts:
+        case fic::platform::PamPolicyFeature::
+                FailedAuthenticationCountingPeriod:
+        case fic::platform::PamPolicyFeature::
+                FailedAuthenticationUnlockTime:
+            return true;
+        default:
+            // even_deny_root (Flag) — Step 7E.
+            return false;
+        }
+    case fic::platform::PamProviderKind::PamPwquality:
+        switch (feature) {
+        case fic::platform::PamPolicyFeature::PasswordMinLength:
+        case fic::platform::PamPolicyFeature::PasswordMinClasses:
+        case fic::platform::PamPolicyFeature::PasswordCheckUsername:
+        case fic::platform::PamPolicyFeature::PasswordCheckGecos:
+        case fic::platform::PamPolicyFeature::PasswordMinChangedCharacters:
+        case fic::platform::PamPolicyFeature::PasswordMinLowercase:
+        case fic::platform::PamPolicyFeature::PasswordMinUppercase:
+        case fic::platform::PamPolicyFeature::PasswordMinDigits:
+        case fic::platform::PamPolicyFeature::PasswordMinOther:
+            return true;
+        default:
+            // enforce_for_root (Flag) — Step 7E stays legacy.
+            return false;
+        }
     default:
+        // pam_passwdqc (ALT password-quality topology), pam_pwhistory
+        // (Step 7D), tally/tally2/cracklib/pam_unix remember stay legacy.
         return false;
+    }
+}
+
+// Typed placement contract of the managed provider block. Callers must
+// derive the placement here instead of hardcoding it at the apply site, so
+// Step 7D (pam_pwhistory → Beginning) adds one typed case instead of a new
+// provider-specific condition in the policy wiring.
+PamProviderBlockPlacementRequest pamProviderManagedEntryPlacement(
+    const PamProviderDescriptor& provider,
+    fic::platform::PamPolicyFeature feature) {
+    (void)feature;
+    switch (provider.kind) {
+    case fic::platform::PamProviderKind::PamFaillock:
+        // faillock.conf scalar assignments have last-wins sequential
+        // semantics → EOF.
+        return PamProviderBlockPlacementRequest::End;
+    case fic::platform::PamProviderKind::PamPwquality:
+        // PwqualityConfigEvaluator models DropInsThenPrimary: the
+        // lexically sorted pwquality.conf.d/*.conf drop-ins are applied
+        // first, then the primary is parsed sequentially. A managed
+        // assignment at EOF of the primary therefore outranks every
+        // drop-in and every earlier primary assignment. PAM module argv
+        // is applied AFTER the config topology and cannot be outranked —
+        // conflicting module arguments remain a fail-closed semantic
+        // verifier concern, never a physical mutation target.
+        return PamProviderBlockPlacementRequest::End;
+    default:
+        return PamProviderBlockPlacementRequest::End;
     }
 }
 

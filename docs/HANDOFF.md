@@ -2,162 +2,126 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `ad6dd50` («Follow-up к последнему коммиту» —
-  Step 7B + предыдущий follow-up закоммичены).
-- Рабочее дерево содержит **второй follow-up Step 7B** (fix UB/stale-local
-  state в crash window `entry Prepared` → `container Prepared`), изменения
-  НЕ закоммичены. Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `633ab1d` («Follow-up к последнему коммиту №2» —
+  Step 7B и оба follow-up закоммичены).
+- Рабочее дерево содержит **Step 7C** (pwquality scalars на managed-entry
+  executor), изменения НЕ закоммичены. Коммит НЕ делать без явного запроса.
 
 ## Current task
 
-**Follow-up Step 7B №2 (выполнен, не закоммичен):** fix UB в
-`applyFreshCreatedContainer()` + 2 regression-теста. Два предыдущих
-архитектурных исправления (durable target first; Prepared-container
-witness) уже в `ad6dd50` и не менялись.
+**Step 7C (выполнен, не закоммичен):** 9 scalar-политик `pam_pwquality`
+переведены на journal-backed `PamProviderManagedEntryExecutor` Step 7B.
+Executor не переписывался; Step 7B invariants не ослаблены.
 
-### Исправление (P0): stale `containerRecord` optional / UB
+### Routing
 
-- Crash window внутри fresh FIC-created container lifecycle: entry Prepared
-  persisted → CRASH → container Prepared ещё НЕ persisted → file absent.
-  Это легитимное промежуточное journal состояние; recovery обязан сам
-  создать недостающую container provenance (`journal.prepareMutation`
-  внутри `applyFreshCreatedContainer`) до physical create.
-- Bug: после успешного `journal.setStatus(containerId, Applied)` код
-  refresh-хвоста делал `std::optional<MutationRecord> completedContainer =
-  containerRecord; completedContainer->status = Applied;` — при исходном
-  `containerRecord == nullopt` это dereference disengaged optional (UB).
-- Fix: container provenance уже durably Applied на этот момент, поэтому
-  refresh-хвост передаёт `containerRecord = std::nullopt` (и witness
-  `nullptr`) — `completePreparedContainerProvenance` для nullopt/Applied —
-  верифицированный no-op. Никаких fabricated локальных `MutationRecord`;
-  caller'овский optional — stale pre-prepare state и не используется.
-- Invariants: entry Prepared может легитимно существовать до container
-  Prepared; recovery этого состояния создаёт недостающую container
-  provenance до physical create и не полагается на stale pre-prepare
-  optional caller'а; после того как container provenance стала Applied
-  внутри той же операции, последующий desired-value refresh не использует
-  stale входной `containerRecord` optional. Проверено и не сломано:
-  `container Prepared + entry absent + file absent` → fail closed;
-  `container Applied + file absent` → fail closed.
+- `usesPamProviderManagedEntry` — typed per-provider whitelist:
+  PamFaillock → 3 scalar features (7B); PamPwquality → 9 scalar features
+  (minlen, minclass, usercheck, gecoscheck, difok, lcredit, ucredit,
+  dcredit, ocredit). Всё остальное — legacy path: enforce_for_root (Flag,
+  Step 7E), passwdqc/ALT, pwhistory (7D).
+- Условия маршрута: `configurationMode == ProviderConfigFile` +
+  `binding.syntax == Assignment` + feature whitelist. Descriptor pwquality
+  уже содержал все 9 bindings с корректными encodings.
+- Debian 12/13, Ubuntu 24.04/26.04: pwquality capability =
+  ProviderConfigFile + `/etc/security/pwquality.conf` → managed path
+  автоматически, без distro hardcode.
 
-### Предыдущие исправления (в `ad6dd50`, не менялись)
+### Placement
 
-**Follow-up Step 7B (выполнен):** два архитектурных
-исправления в `PamProviderManagedEntryExecutor` + regression-тесты.
-Routing трёх faillock scalar политик и вся структура Step 7B сохранены.
+- Новый typed helper `pamProviderManagedEntryPlacement(provider, feature)`:
+  PamFaillock → End, PamPwquality → End. `PamOptionPolicy::applyManagedProviderEntry`
+  больше не хардкодит End; для 7D достаточно добавить `PamPwhistory →
+  Beginning` одной веткой в helper.
+- EOF primary обоснование: `PwqualityConfigEvaluator` = DropInsThenPrimary
+  (sorted `pwquality.conf.d/*.conf` → primary последовательно) → FIC EOF
+  перекрывает все drop-ins и ранние primary assignments. PAM argv
+  применяется ПОСЛЕ topology — физически не перекрывается и остаётся
+  fail-closed concern semantic verifier'а (не мутируется).
 
-### Исправление 1 (P0): durable target first
+### Native encoding (journal/physical хранит NATIVE body)
 
-- Раньше recovery `Prepared` (`PreparedFreshAbsent` /
-  `PreparedUpdatePreviousPresent`) физически писал `request.nativeValue`
-  (current desired) вместо durable journal target → proof ожидал target,
-  executor сам портил recoverable state (физика C, journal 5→10 → следующий
-  запуск `PreparedConflict`).
-- Теперь: `performPhysicalMutation(request, nativeValueToWrite, ...)` —
-  явное значение записи; recovery пишет ТОЛЬКО durable target из
-  `payload->appliedBody`, извлечённый общим canonical parser'ом
-  `parseCanonicalPamProviderEntryBody` + проверка `key == payload->managedKey`
-  (хелпер `durableTargetNativeValue`, никакого substring surgery).
-- `SemanticPostcondition` параметризована значением:
-  `bool(const std::string& expectedNativeValue, std::string& error)`.
-  Recovery вызывает `semantic(durableTarget)`, refresh/no-op —
-  `semantic(currentDesired)`. Production lambda в
-  `PamOptionPolicy::applyManagedProviderEntry` передаёт аргумент в
-  `verifyPostMutationPamState` (не захватывает `nativeExpectedValue`).
-- После завершения durable transition при `desired != target` — ОБЯЗАТЕЛЬНЫЙ
-  fresh trusted read + strict parse + exact Applied ownership proof
-  (`freshProveRecoveredAppliedState`) и только потом refresh `B→C` тем же id
-  (общий хвост `refreshProvenOwnedEntry`; требует fresh read — stale
-  snapshot запрещён для второй мутации).
-- Fresh-create recovery (`applyFreshCreatedContainer`): при существующей
-  Prepared entry physical create содержит durable target из journal;
-  semantic(target); entry Applied; container Applied; затем при
-  `desired != target` fresh read + refresh тем же id.
+- Кодирование НЕ изменено: `encodePamNativeValue` в `applyPam` до routing.
+- YesNoInteger: yes/no → 1/0 (usercheck, gecoscheck).
+- MinimumCredit: логический минимум N → -N; 0 → 0 (lcredit/ucredit/
+  dcredit/ocredit). Положительные кредиты никогда не пишутся.
+- Direct: verbatim (minlen, minclass, difok).
 
-### Исправление 2 (P0/P1): Prepared container provenance
+### Ownership / topology invariants (7C)
 
-- Раньше `reconcileContainerProvenance` переводил Prepared → Applied по
-  вызову caller'а: новый entry, созданный самой операцией в уже существующем
-  контейнере, мог «легализовать» контейнер — circular ownership proof.
-- Теперь `provePreparedContainerCreationWitness()` ДО любой физической
-  мутации текущего apply сканирует ВСЕ активные entry-записи journal для
-  (provider, configPath) — любая политика (cross-policy recovery) — и ищет
-  pre-existing exact journal↔physical witness через Step 7A
-  classifier/ownership proof. Допустимые witness-статусы (строгий набор):
-  - entry `Applied` + `AppliedExact` (exact id + body);
-  - entry `Prepared` + `PreparedFreshTargetPresent` /
-    `PreparedUpdateTargetPresent` (физическое создание уже произошло).
-  НЕ witness: `PreparedFreshAbsent`, `PreparedUpdatePreviousPresent`,
-  `PreparedConflict`, `AppliedMissing`, `AppliedDrifted`, `RollbackFailed`.
-- Завершение Prepared → Applied только через typed-токен
-  `ProvenPamProviderContainerCreation` (`completePreparedContainerProvenance`;
-  nullptr = fail closed). Exclusive-create fresh flow завершает контейнер
-  собственным созданием (контейнер был proven-absent, создание эксклюзивное,
-  ownership proven) — это не circular proof.
-- Witness proof + завершение provenance происходят в `apply()` ДО обработки
-  текущей политики; текущая политика никогда не становится evidence.
-
-### Invariants (не ослаблять в 7C–7F)
-
-- Для `status == Prepared` текущее значение политики НЕ имеет права менять
-  unresolved transaction: сначала recover exact journal transition
-  (durable target), потом reconcile current desired (fresh read, same id).
-- Semantic verification параметризована target value; recovery target и
-  current desired могут различаться.
-- Prepared container provenance становится Applied ТОЛЬКО из pre-existing
-  exact journal↔physical creation witness; никогда из entry, созданного
-  текущей операцией.
-- После завершения одного durable transition любой следующий refresh
-  desired-value начинается с fresh trusted read/snapshot.
-- Executor никогда не пишет физически без Prepared journal provenance;
-  recovery всегда через classifier; no whole-file snapshot rollback;
-  same-id refresh; EOF placement; absent production primary — FailClosed;
-  container record независим от lifecycle creator entry ПОСЛЕ того как стал
-  Applied; ≤1 active `own_pam_provider_container` на configPath.
+- Один общий block `provider=pam_pwquality` в EOF primary; FIC владеет
+  только своими entries. Drop-ins `pwquality.conf.d` — foreign, никогда не
+  мутируются; foreign primary bytes (включая case-variant/duplicate
+  assignments) сохраняются byte-exact, НЕ канонизируются и НЕ удаляются.
+- Existing primary (в т.ч. пустой) — PreExisting: только entry-records,
+  НИКОГДА `PAM_CONTAINER/pam_pwquality`. Absent primary — FailClosed, no
+  create (`explicitConfig == Unsupported` сохранён;
+  `ReplacesNativeTopology` не вводился). Metadata existing primary
+  сохраняется (PreserveExisting, тест mode 0600).
+- Semantic preflight (`canApplyOption`) и параметризованный postcondition
+  (PamCapabilityVerifier + PamProviderSemanticVerifier +
+  PwqualityConfigEvaluator) обязательны и не изменены: enforcing=0,
+  local_users_only, invalid drop-ins/primary, PAM argv override,
+  minlen+positive-credit interaction — всё fail-closed.
+- NO whole-file snapshot rollback на managed path (7B invariant);
+  final-verification failure оставляет durable recoverable Prepared + FIC
+  entry, foreign bytes byte-exact.
+- Step 7B crash state machine переиспользуется полностью (durable target
+  first, same-id refresh, fresh second read); executor-код не дублировался.
 
 ### Tests
 
-`tests/fic/modules/identity_access/pam/PamProviderManagedEntryExecutorTests.cpp`
-— 28 кейсов (было 16). Harness semantic callback собирает
-`verifiedValues` (порядок semantic-проверок) + `failSemanticFor`
-(injected failures). Новые regression:
-desired-changed recovery (previous-present / target-present / fresh /
-fresh-created container) с проверкой semantic sequence `[10,20]` / `[5,7]`;
-failure между двумя transitions → recoverable `Prepared(10→20)` + adopt
-при повторном apply; prepared container без witness → fail closed
-(byte-exact, контейнер Prepared, нет новых записей); creator witness
-(apply A; cross-policy apply B; Applied-exact witness); wrong creator
-id/body → fail closed; crash window `entry Prepared + container record
-absent + file absent` — desired changed (`["5","7"]`, recovery сам создаёт
-container provenance, 1 entry + 1 container + 1 physical entry, same id)
-и desired unchanged (`["5"]`). Все существующие кейсы сохранены.
+- `pam_provider_managed_entry_executor_tests` — 38 кейсов (было 28).
+  Новые: routing matrix (9 pwquality true; enforce_for_root/passwdqc/
+  cross-provider false; placement helper; absent decision), shared block
+  9 политик (native bodies, drop-ins/foreign byte-exact, no container
+  provenance), neighbor-id stability (difok 3→5: same id, 8 соседей
+  неизменны), encoding kinds (yes/no→1/0, 0→0, 4→-4 через production
+  codec), effective topology ordering (реальный evaluator: drop-in 8 /
+  foreign 10 / FIC 14 → effective 14), crash-recovery smoke (12→14
+  recovery; prepared 12→14 + desired 16 → semantic [14,16]), drift smoke
+  (body 15 same id → fail closed, no rewrite), empty primary OK vs absent
+  primary FailClosed, metadata 0600, foreign duplicates preserved,
+  faillock+pwquality coexist в одном journal.
+- CMake executor-тестов: добавлены PwqualityConfigFile.cpp,
+  PamProviderCatalog.cpp, PamProviderMetadata.cpp,
+  PamPlatformComposition.cpp, PamOptionValueCodec.cpp (evaluator + codec;
+  без production closure).
+- `IdentityPolicyHierarchyTests` обновлён под managed-контракт:
+  initializeRuntimePaths задаёт mutationJournalFile (+ rotateTestJournal
+  для фаз с внешней перезаписью pwquality.conf — иначе легитимный
+  AppliedMissing fail-closed executor'а); fault-injection
+  final-verification теперь ожидает recoverable Prepared + FIC entry
+  вместо whole-file restore; case-variant duplicates ожидают byte-exact
+  preservation + FIC EOF entry.
 
 ## Validation (фактически выполнено)
 
-- `cmake --build build-check --target pam_provider_managed_entry_executor_tests`
-  — PASS, warnings нет.
-- `ctest -R pam_provider_managed` → **4/4 PASS** (включая
-  `pam_provider_managed_entry_journal_tests`).
-- Полный build `build-check` — PASS без warnings; полный CTest —
-  **111/111 PASS** (1 skip: `command_hash_batch_tests`, окружение).
+- Полный build `build-check` — PASS, 0 warnings.
+- Targeted: `ctest -R 'pam_provider_managed|pam_configuration|
+  mutation_journal|pam_option_value_codec'` — 6/6 PASS.
+- Полный CTest — **111/111 PASS** (1 skip: `command_hash_batch_tests`,
+  окружение).
 - `git diff --check` — чисто.
+- Полный distro E2E НЕ запускался (по условию задачи, до 7F).
 
-## Remaining (Step 7C+)
+## Remaining (Step 7D+)
 
-1. 7C: pwquality на этот же executor (durable-target-first и witness
-   семантика уже в executor'е; absent-container для pwquality — тоже
-   `ReplacesNativeTopology` → FailClosed).
-2. 7D: pwhistory BOF placement; 7E: suppress/wrapper set-only false;
-   7F: rollback executor wiring + package release + unlink FIC-created
-   container.
-3. **Step 7F contract — snapshot-bound unlink (обязательно):**
-   conditional-delete primitive ещё НЕ существует: trusted capture →
-   strict parse → exact ownership/provenance re-proof → conditional delete
-   exact target (fail stale) → fsync parent dir → только затем resolve
-   container provenance record.
-4. Прод-apply трёх faillock политик на absent primary отказывает
-   (FailClosed): создание `/etc/security/faillock.conf` потребует
-   platform-level proof contract — отдельное архитектурное решение.
-5. Не трогали: C2 topology, PamOptionFile semantics, Step 6 option
-   reconciliation, Debian 12 pwhistory ModuleArguments.
-6. Не коммитить без явного запроса.
+1. 7D: pwhistory BOF placement (typed helper готов: `PamPwhistory →
+   Beginning` + routing whitelist).
+2. 7E: enforce_for_root (pwquality Flag + faillock even_deny_root) —
+   suppress/wrapper set-only false.
+3. 7F: rollback executor wiring + package release + unlink FIC-created
+   container (snapshot-bound conditional-delete primitive ещё НЕ
+   существует: trusted capture → strict parse → exact ownership re-proof →
+   conditional delete → fsync parent dir → resolve provenance).
+4. Прод-apply faillock/pwquality на absent primary отказывает (FailClosed);
+   создание primary требует platform-level proof contract.
+5. PAM argv override на production daemon harness end-to-end не
+   прогонялся: покрыт semantic verifier regression (`pam_configuration_tests`,
+   в т.ч. `testPwqualityEffectiveTopologyAndArguments`) + routing test;
+   production `applyManagedProviderEntry` вызывает `canApplyOption` до
+   любой journal mutation — контракт сохранён.
+6. Не трогали: C2 topology, PamOptionFile semantics, Step 6 option
+   reconciliation, passwdqc/ALT, codec, descriptor'ы, activation.
+7. Не коммитить без явного запроса.

@@ -85,9 +85,10 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
 
-    // Step 7B routing: the supported faillock scalar assignment contract
-    // goes through the journal-backed managed provider block executor
-    // instead of the legacy replace-all/snapshot writer.
+    // Step 7B/7C routing: the whitelisted provider scalar assignment
+    // contracts (faillock + pwquality scalars) go through the journal-backed
+    // managed provider block executor instead of the legacy
+    // replace-all/snapshot writer.
     if (fic::identity::pam::usesPamProviderManagedEntry(
             provider, *capability, *binding, feature_)) {
         return this->applyManagedProviderEntry(
@@ -315,9 +316,13 @@ bool PamOptionPolicy::applyManagedProviderEntry(
     request.managedKey = binding.option;
     request.nativeValue = nativeExpectedValue;
     request.configPath = capability.configPath;
-    // faillock.conf scalar assignments have last-wins semantics → EOF.
-    request.placement =
-        fic::identity::pam::PamProviderBlockPlacementRequest::End;
+    // Typed placement decision (Step 7C): faillock and pwquality scalar
+    // assignments are last-wins → EOF primary (pwquality drop-ins are
+    // applied BEFORE the primary by the PwqualityConfigEvaluator
+    // DropInsThenPrimary model, so EOF primary outranks them). Step 7D
+    // (pam_pwhistory → Beginning) is one typed case in the helper.
+    request.placement = fic::identity::pam::pamProviderManagedEntryPlacement(
+        provider, feature_);
     request.absentDecision =
         fic::identity::pam::pamProviderAbsentContainerDecision(provider);
 

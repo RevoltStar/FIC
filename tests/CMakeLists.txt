@@ -612,6 +612,15 @@ add_executable(pam_provider_managed_entry_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlockFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedEntryExecutor.cpp
+    # Step 7C: the pwquality effective-topology ordering test evaluates the
+    # managed block through the real PwqualityConfigEvaluator; the encoding
+    # regression tests go through the production value codec
+    # (encodePamNativeValue → PamOptionValueCodec).
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/platform/PamProviderMetadata.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
 )
 target_include_directories(pam_provider_managed_entry_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
