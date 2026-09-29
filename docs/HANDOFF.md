@@ -2,118 +2,123 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `e011859` (Step 7A + follow-up №1 + follow-up №2
-  закоммичены).
-- Рабочее дерево содержит **Step 7B** (base commit = `e011859`, изменения
-  НЕ закоммичены).
-- Коммит НЕ делать без явного запроса пользователя.
+- Ветка `main`; HEAD = `7185b8d` («Приступаем к Step7B» — Step 7B закоммичен).
+- Рабочее дерево содержит **follow-up Step 7B** (crash-recovery/provenance
+  дефекты), изменения НЕ закоммичены. Коммит НЕ делать без явного запроса.
 
 ## Current task
 
-**Step 7B (выполнен, не закоммичен):** перевод трёх scalar-политик
-`pam_faillock` (`deny` = failed_authentication_attempts, `fail_interval` =
-failed_authentication_counting_period, `unlock_time` =
-failed_authentication_unlock_time) на journal-backed managed-entry
-исполнение поверх Step 7A primitives. Полный crash-recovery matrix,
-container provenance lifecycle, routing + production wiring, unit tests.
-7C/7D/7E/7F НЕ трогали; disable/release wiring НЕ трогали.
+**Follow-up Step 7B (выполнен, не закоммичен):** два архитектурных
+исправления в `PamProviderManagedEntryExecutor` + regression-тесты.
+Routing трёх faillock scalar политик и вся структура Step 7B сохранены.
 
-### Что реализовано (Step 7B)
+### Исправление 1 (P0): durable target first
 
-Новые файлы:
+- Раньше recovery `Prepared` (`PreparedFreshAbsent` /
+  `PreparedUpdatePreviousPresent`) физически писал `request.nativeValue`
+  (current desired) вместо durable journal target → proof ожидал target,
+  executor сам портил recoverable state (физика C, journal 5→10 → следующий
+  запуск `PreparedConflict`).
+- Теперь: `performPhysicalMutation(request, nativeValueToWrite, ...)` —
+  явное значение записи; recovery пишет ТОЛЬКО durable target из
+  `payload->appliedBody`, извлечённый общим canonical parser'ом
+  `parseCanonicalPamProviderEntryBody` + проверка `key == payload->managedKey`
+  (хелпер `durableTargetNativeValue`, никакого substring surgery).
+- `SemanticPostcondition` параметризована значением:
+  `bool(const std::string& expectedNativeValue, std::string& error)`.
+  Recovery вызывает `semantic(durableTarget)`, refresh/no-op —
+  `semantic(currentDesired)`. Production lambda в
+  `PamOptionPolicy::applyManagedProviderEntry` передаёт аргумент в
+  `verifyPostMutationPamState` (не захватывает `nativeExpectedValue`).
+- После завершения durable transition при `desired != target` — ОБЯЗАТЕЛЬНЫЙ
+  fresh trusted read + strict parse + exact Applied ownership proof
+  (`freshProveRecoveredAppliedState`) и только потом refresh `B→C` тем же id
+  (общий хвост `refreshProvenOwnedEntry`; требует fresh read — stale
+  snapshot запрещён для второй мутации).
+- Fresh-create recovery (`applyFreshCreatedContainer`): при существующей
+  Prepared entry physical create содержит durable target из journal;
+  semantic(target); entry Applied; container Applied; затем при
+  `desired != target` fresh read + refresh тем же id.
 
-- `fic/src/modules/identity_access/pam/PamProviderManagedEntryExecutor.h/.cpp` —
-  reusable executor одной logical transaction managed entry:
-  - routing-функции `usesPamProviderManagedEntry()` (только PamFaillock +
-    ProviderConfigFile + Assignment syntax + ровно 3 scalar feature; всё
-    остальное — legacy path) и `pamProviderAbsentContainerDecision()`
-    (FailClosed для `ReplacesNativeTopology`; на сегодня НИ ОДНА платформа
-    не доказывает CreateFicOwned — тесты прокидывают CreateFicOwned явно);
-  - `PamProviderManagedEntryExecutor::apply(request, journal, semantic,
-    outcome, error)` — caller держит `configurationMutex`, executor без
-    локальных mutex, без whole-file snapshot rollback;
-  - journal identity: entry = PolicyRef `IDENTITY_ACCESS/PAM/<policyName>`
-    + `UndoRemovePamProviderManagedEntry`; container =
-    `IDENTITY_ACCESS/PAM_CONTAINER/<providerName>` +
-    `UndoOwnPamProviderContainer`;
-  - recovery ВСЕГДА через Step 7A classifier
-    (`classifyPamProviderJournalBinding`), дубликаты семантики запрещены;
-  - refresh = `prepareMutation(previous=old appliedBody)` с assertion того
-    же record id; typed fail-closed ошибки PreparedConflict /
-    AppliedMissing / AppliedDrifted / unprovable RollbackFailed; displaced
-    owned block переносится ТОЛЬКО после exact ownership proof; no-op
-    требует полной proof chain (value + id + placement + semantic);
-  - container provenance НЕ фабрикуется для pre-existing файлов; Prepared
-    container Completed только после proven FIC entry ownership; absent
-    container при FailClosed отказывается ДО подготовки journal records.
-- `tests/fic/modules/identity_access/pam/PamProviderManagedEntryExecutorTests.cpp`
-  — 16 кейсов: routing decision, absent-container FailClosed (без journal
-  records), FIC-created container lifecycle, proven no-op, reuse Applied
-  provenance второй политикой, crash matrix (PreparedFreshAbsent /
-  PreparedFreshTargetPresent / PreparedUpdatePreviousPresent /
-  PreparedUpdateTargetPresent / PreparedConflict / AppliedMissing /
-  AppliedDrifted), update lifecycle same-id, foreign mutation id (9)
-  conflict, три политики в одном блоке + byte-exact foreign bytes +
-  стабильные neighbor id, restart recovery через свежий объект журнала.
+### Исправление 2 (P0/P1): Prepared container provenance
 
-Изменённые:
-
-- `fic/src/modules/identity_access/pam/PamOptionPolicy.{h,cpp}` — routing в
-  `applyPam()` после вычисления `nativeExpectedValue`:
-  `usesPamProviderManagedEntry()` → `applyManagedProviderEntry()`
-  (structural preflight через существующий verifier pipeline → MANDATORY
-  usable journal через `DaemonMutationJournal::tryGet` (fail closed, БЕЗ
-  legacy-writer fallback) → executor с semantic postcondition =
-  существующий `verifyPostMutationPamState`; НЕ используется shortcut
-  `hasExpectedState`).
-- `tests/CMakeLists.txt` — новый таргет
-  `pam_provider_managed_entry_executor_tests` + closure-исходники executor
-  добавлены в 3 существующих таргета, компилирующих `PamOptionPolicy.cpp`.
+- Раньше `reconcileContainerProvenance` переводил Prepared → Applied по
+  вызову caller'а: новый entry, созданный самой операцией в уже существующем
+  контейнере, мог «легализовать» контейнер — circular ownership proof.
+- Теперь `provePreparedContainerCreationWitness()` ДО любой физической
+  мутации текущего apply сканирует ВСЕ активные entry-записи journal для
+  (provider, configPath) — любая политика (cross-policy recovery) — и ищет
+  pre-existing exact journal↔physical witness через Step 7A
+  classifier/ownership proof. Допустимые witness-статусы (строгий набор):
+  - entry `Applied` + `AppliedExact` (exact id + body);
+  - entry `Prepared` + `PreparedFreshTargetPresent` /
+    `PreparedUpdateTargetPresent` (физическое создание уже произошло).
+  НЕ witness: `PreparedFreshAbsent`, `PreparedUpdatePreviousPresent`,
+  `PreparedConflict`, `AppliedMissing`, `AppliedDrifted`, `RollbackFailed`.
+- Завершение Prepared → Applied только через typed-токен
+  `ProvenPamProviderContainerCreation` (`completePreparedContainerProvenance`;
+  nullptr = fail closed). Exclusive-create fresh flow завершает контейнер
+  собственным созданием (контейнер был proven-absent, создание эксклюзивное,
+  ownership proven) — это не circular proof.
+- Witness proof + завершение provenance происходят в `apply()` ДО обработки
+  текущей политики; текущая политика никогда не становится evidence.
 
 ### Invariants (не ослаблять в 7C–7F)
 
-- Executor никогда не пишет физически без Prepared journal provenance.
-- Prepared provenance никогда не отбрасывается: любая ошибка оставляет
-  recoverable состояние; recovery всегда через classifier.
-- Container record независим от entry record (см. Step 7A follow-up №2:
-  ≤ 1 active `own_pam_provider_container` на configPath).
-- Absent-container решение — typed на caller'е; `ReplacesNativeTopology`
-  + отсутствие primary = отказ (vendor fallback непроверяем).
+- Для `status == Prepared` текущее значение политики НЕ имеет права менять
+  unresolved transaction: сначала recover exact journal transition
+  (durable target), потом reconcile current desired (fresh read, same id).
+- Semantic verification параметризована target value; recovery target и
+  current desired могут различаться.
+- Prepared container provenance становится Applied ТОЛЬКО из pre-existing
+  exact journal↔physical creation witness; никогда из entry, созданного
+  текущей операцией.
+- После завершения одного durable transition любой следующий refresh
+  desired-value начинается с fresh trusted read/snapshot.
+- Executor никогда не пишет физически без Prepared journal provenance;
+  recovery всегда через classifier; no whole-file snapshot rollback;
+  same-id refresh; EOF placement; absent production primary — FailClosed;
+  container record независим от lifecycle creator entry ПОСЛЕ того как стал
+  Applied; ≤1 active `own_pam_provider_container` на configPath.
+
+### Tests
+
+`tests/fic/modules/identity_access/pam/PamProviderManagedEntryExecutorTests.cpp`
+— 26 кейсов (было 16). Harness semantic callback собирает
+`verifiedValues` (порядок semantic-проверок) + `failSemanticFor`
+(injected failures). Новые regression:
+desired-changed recovery (previous-present / target-present / fresh /
+fresh-created container) с проверкой semantic sequence `[10,20]` / `[5,7]`;
+failure между двумя transitions → recoverable `Prepared(10→20)` + adopt
+при повторном apply; prepared container без witness → fail closed
+(byte-exact, контейнер Prepared, нет новых записей); creator witness
+(apply A; cross-policy apply B; Applied-exact witness); wrong creator
+id/body → fail closed. Все существующие кейсы сохранены.
 
 ## Validation (фактически выполнено)
 
-- `cmake --build build-check --target fic` — PASS, warnings нет.
-- `ctest -R pam_provider_managed` → **4/4 PASS** (включая новый
-  `pam_provider_managed_entry_executor_tests`).
-- Полный build `build-check` — PASS (все таргеты, включая тесты,
-  компилирующие `PamOptionPolicy.cpp`).
-- Полный CTest: **111/111 PASS** (1 skip: `command_hash_batch_tests`,
-  окружение).
+- `cmake --build build-check --target fic` и
+  `--target pam_provider_managed_entry_executor_tests` — PASS, warnings нет.
+- `ctest -R pam_provider_managed` → **4/4 PASS**.
+- Полный build `build-check` — PASS; полный CTest — **111/111 PASS**
+  (1 skip: `command_hash_batch_tests`, окружение).
 - `git diff --check` — чисто.
 
 ## Remaining (Step 7C+)
 
-1. 7C: pwquality на этот же executor (routing уже параметризован
-   provider'ом; absent-container решение для pwquality — тоже
+1. 7C: pwquality на этот же executor (durable-target-first и witness
+   семантика уже в executor'е; absent-container для pwquality — тоже
    `ReplacesNativeTopology` → FailClosed).
 2. 7D: pwhistory BOF placement; 7E: suppress/wrapper set-only false;
    7F: rollback executor wiring + package release + unlink FIC-created
    container.
 3. **Step 7F contract — snapshot-bound unlink (обязательно):**
-   `pamProviderContainerReleaseDecision() == RemovableFicOwned` — только
-   логическая eligibility, НЕ proof, что текущий filesystem object можно
-   unlink. Proof → заменa файла attacker'ом/admin'ом → plain
-   `std::filesystem::remove(path)` удаляет replacement — ЗАПРЕЩЕНО.
-   Release executor обязан: trusted capture точного текущего snapshot
-   контейнера → strict parse → доказать exact final FIC-owned entry/block
-   ownership → доказать durable own_pam_provider_container provenance →
-   доказать zero foreign bytes после удаления → убедиться target ==
-   captured state → conditional delete exact target (иначе fail stale) →
-   fsync parent directory → только затем resolve container provenance
-   journal record. Conditional-delete primitive в проекте пока НЕТ —
-   реализовать в 7F.
+   conditional-delete primitive ещё НЕ существует: trusted capture →
+   strict parse → exact ownership/provenance re-proof → conditional delete
+   exact target (fail stale) → fsync parent dir → только затем resolve
+   container provenance record.
 4. Прод-apply трёх faillock политик на absent primary отказывает
-   (FailClosed): прод-создание `/etc/security/faillock.conf` потребует
+   (FailClosed): создание `/etc/security/faillock.conf` потребует
    platform-level proof contract — отдельное архитектурное решение.
 5. Не трогали: C2 topology, PamOptionFile semantics, Step 6 option
    reconciliation, Debian 12 pwhistory ModuleArguments.

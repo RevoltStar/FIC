@@ -324,11 +324,15 @@ bool PamOptionPolicy::applyManagedProviderEntry(
     // Semantic postcondition: reuse the existing verification pipeline
     // (PamCapabilityVerifier + PamProviderSemanticVerifier over the
     // configured services); the executor runs it before every Applied
-    // transition.
-    auto semantic = [&](std::string& semanticError) {
+    // transition. The expected native value is PARAMETERIZED: the executor
+    // passes the durable journal target while completing an unresolved
+    // Prepared transaction and the current desired value otherwise — the
+    // captured `nativeExpectedValue` must never be used for all phases.
+    auto semantic = [&](const std::string& expectedNativeValue,
+                        std::string& semanticError) {
         std::size_t verifiedServiceCount = 0;
         return this->verifyPostMutationPamState(
-            capability, services, binding, nativeExpectedValue,
+            capability, services, binding, expectedNativeValue,
             /*expectedFlagEnabled=*/false, verifiedServiceCount,
             semanticError);
     };

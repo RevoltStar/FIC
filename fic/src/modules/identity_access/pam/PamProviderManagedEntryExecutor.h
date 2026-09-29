@@ -109,7 +109,18 @@ public:
     // configured services) here; unit tests inject an equivalent checker.
     // The executor runs it BEFORE every Applied transition — entry
     // ownership proof alone never proves PAM effectiveness.
-    using SemanticPostcondition = std::function<bool(std::string& error)>;
+    //
+    // The postcondition is PARAMETERIZED by the exact native value of the
+    // state being proven. The executor passes:
+    //   * the DURABLE JOURNAL TARGET value while completing an unresolved
+    //     Prepared transaction (the current desired value MUST NOT leak
+    //     into an unfinished transaction), and
+    //   * the CURRENT desired value for fresh applies, refreshes and no-op
+    //     proofs.
+    // Recovery target and current desired value may legitimately differ;
+    // the callback must verify exactly the value it receives.
+    using SemanticPostcondition = std::function<bool(
+        const std::string& expectedNativeValue, std::string& error)>;
 
     // Executes one full managed-entry logical transaction for the request
     // against the given USABLE journal (fail closed when no usable journal

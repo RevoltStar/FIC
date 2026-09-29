@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -68,6 +69,15 @@ struct Harness {
     std::filesystem::path configPath = temp.directory / "faillock.conf";
     MutationJournal journal;
     std::string error;
+    // Semantic verification sequence: the executor must pass the EXACT
+    // expected native value of the state being proven — the durable journal
+    // target first during Prepared recovery, the current desired value for
+    // fresh applies/refreshes. Regression harness for the
+    // "durable target first" invariant.
+    std::vector<std::string> verifiedValues;
+    // Injected semantic failures (by expected value) to test recoverable
+    // failure states between two transitions.
+    std::set<std::string> failSemanticFor;
 
     Harness() : Harness(std::filesystem::path{}) {}
 
@@ -99,8 +109,19 @@ struct Harness {
 
     bool apply(const PamProviderManagedEntryRequest& request,
         PamProviderManagedEntryOutcome& outcome) {
+        verifiedValues.clear();
         return PamProviderManagedEntryExecutor::apply(request, journal,
-            [](std::string& /*error*/) { return true; }, outcome, error);
+            [this](const std::string& expectedNativeValue,
+                std::string& semanticError) {
+                if (failSemanticFor.count(expectedNativeValue) != 0) {
+                    semanticError = "injected semantic failure for '" +
+                        expectedNativeValue + "'";
+                    return false;
+                }
+                verifiedValues.push_back(expectedNativeValue);
+                return true;
+            },
+            outcome, error);
     }
 
     std::vector<MutationRecord> entryRecords(const std::string& policyName) {
@@ -213,6 +234,23 @@ MutationId prepareUpdateTransaction(Harness& harness,
         harness.error);
     require(harness.journal.setStatus(
                 id, MutationStatus::Prepared, harness.error),
+        harness.error);
+    return id;
+}
+
+// Hand-prepares the container provenance record (crash-state construction:
+// container Prepared committed, lifecycle completion not).
+MutationId prepareContainerRecord(Harness& harness) {
+    UndoOwnPamProviderContainer payload;
+    payload.providerName = "pam_faillock";
+    payload.configPath = harness.configPath.string();
+
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM_CONTAINER", "pam_faillock"};
+    record.resource = harness.configPath.string();
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, payload};
+    MutationId id = 0;
+    require(harness.journal.prepareMutation(record, id, harness.error),
         harness.error);
     return id;
 }
@@ -702,6 +740,384 @@ void testRestartRecovery() {
         "restart recovery must complete the prepared transaction");
 }
 
+// ---------------------------------------------------------------------------
+// Step 7B follow-up: durable-target-first recovery + prepared container
+// provenance witness regressions
+// ---------------------------------------------------------------------------
+
+// §8/§30: Prepared 5→10, physical still 5, current desired 20. The durable
+// transaction MUST complete first: semantic sequence [10, 20], same id,
+// final Applied target 20 — never a direct 5→20 write.
+void testRecoveryDesiredChangedPreviousPresent() {
+    auto harness = appliedPolicy("failed_authentication_attempts", "deny",
+        "5");
+    const MutationId id =
+        harness.soleEntryRecord("failed_authentication_attempts", "base")
+            .id;
+    prepareUpdateTransaction(harness, "failed_authentication_attempts",
+        "deny", "deny = 5", "deny = 10");
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "20"),
+                outcome),
+        harness.error);
+    require(harness.verifiedValues.size() == 2 &&
+                harness.verifiedValues[0] == "10" &&
+                harness.verifiedValues[1] == "20",
+        "semantic verification must prove the durable target 10 first, "
+        "then the current desired 20");
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "changed desired");
+    require(record.id == id, "both transitions must keep the same id");
+    require(record.status == MutationStatus::Applied,
+        "the final state must be Applied");
+    const auto* payload = std::get_if<UndoRemovePamProviderManagedEntry>(
+        &record.undo.payload);
+    require(payload != nullptr && payload->appliedBody == "deny = 20",
+        "the journal target must be the current desired body");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "deny = 20" &&
+                parse.view.entries.front().mutationId == id,
+        "physical entry must carry the desired body under the same id");
+}
+
+// §29: Prepared 5→10, physical already 10, current desired 20. Adoption
+// first (semantic 10, no rewrite), then refresh 10→20: semantic sequence
+// [10, 20], same id.
+void testRecoveryDesiredChangedTargetPresent() {
+    auto harness = appliedPolicy("failed_authentication_attempts", "deny",
+        "5");
+    const MutationId id =
+        harness.soleEntryRecord("failed_authentication_attempts", "base")
+            .id;
+    prepareUpdateTransaction(harness, "failed_authentication_attempts",
+        "deny", "deny = 5", "deny = 10");
+    writePhysicalEntry(harness, readFile(harness.configPath),
+        "failed_authentication_attempts", "deny", "10", id);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "20"),
+                outcome),
+        harness.error);
+    require(harness.verifiedValues.size() == 2 &&
+                harness.verifiedValues[0] == "10" &&
+                harness.verifiedValues[1] == "20",
+        "adoption must verify the durable target 10 before the desired 20");
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "target adoption");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "adoption + refresh must keep the same record id");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "deny = 20" &&
+                parse.view.entries.front().mutationId == id,
+        "final physical state must be the desired body under the same id");
+}
+
+// §31: fresh Prepared transaction (target=5, physical entry absent) with
+// current desired 7 in an existing container: 5 is completed first
+// (semantic [5, 7]), same id.
+void testRecoveryDesiredChangedFreshPrepared() {
+    auto harness = appliedPolicy("failed_authentication_counting_period",
+        "fail_interval", "15");
+    const MutationId id = prepareEntryRecord(harness,
+        "failed_authentication_attempts", "deny = 5", "");
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "7"),
+                outcome),
+        harness.error);
+    require(harness.verifiedValues.size() == 2 &&
+                harness.verifiedValues[0] == "5" &&
+                harness.verifiedValues[1] == "7",
+        "the fresh durable target 5 must be completed before the desired 7");
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "fresh changed desired");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "both transitions must keep the same record id");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 2,
+        "both policies must be present");
+    for (const auto& entry : parse.view.entries) {
+        if (entry.policy == "failed_authentication_attempts") {
+            require(entry.body == "deny = 7" && entry.mutationId == id,
+                "the refreshed entry must carry the desired body");
+        }
+    }
+}
+
+// §31 FIC-created container variant: fresh Prepared entry + Prepared
+// container provenance + absent file, current desired changed. The
+// exclusive create completes the durable target 5 first, then refreshes
+// to 7; the container provenance is completed by the creation itself.
+void testRecoveryDesiredChangedFreshCreatedContainer() {
+    Harness harness;
+    const MutationId id = prepareEntryRecord(harness,
+        "failed_authentication_attempts", "deny = 5", "");
+    prepareContainerRecord(harness);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "7",
+                               PamProviderAbsentContainerDecision::
+                                   CreateFicOwned),
+                outcome),
+        harness.error);
+    require(harness.verifiedValues.size() == 2 &&
+                harness.verifiedValues[0] == "5" &&
+                harness.verifiedValues[1] == "7",
+        "the FIC-created container flow must complete the durable target "
+        "5 before the desired 7");
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "fresh created container");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "same id through both transitions");
+    require(harness.containerRecords().size() == 1 &&
+                harness.containerRecords().front().status ==
+                    MutationStatus::Applied,
+        "the container provenance must be Applied after the create");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "deny = 7",
+        "the created entry must carry the desired body");
+}
+
+// §9: the second transition (10→20) fails after the durable transaction
+// (5→10) was completed. The journal must hold a normal recoverable
+// Prepared previous=10 target=20 — never the stale 5→10 provenance.
+void testFailureBetweenTransitionsIsRecoverable() {
+    auto harness = appliedPolicy("failed_authentication_attempts", "deny",
+        "5");
+    const MutationId id =
+        harness.soleEntryRecord("failed_authentication_attempts", "base")
+            .id;
+    prepareUpdateTransaction(harness, "failed_authentication_attempts",
+        "deny", "deny = 5", "deny = 10");
+    harness.failSemanticFor.insert("20");
+
+    PamProviderManagedEntryOutcome outcome;
+    require(!harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "20"),
+                outcome),
+        "the injected semantic failure must fail the apply");
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "between transitions");
+    require(record.id == id, "the failed refresh keeps the same id");
+    require(record.status == MutationStatus::Prepared,
+        "the failed refresh must be recoverable (Prepared)");
+    const auto* payload = std::get_if<UndoRemovePamProviderManagedEntry>(
+        &record.undo.payload);
+    require(payload != nullptr &&
+                payload->previousAppliedBody == "deny = 10" &&
+                payload->appliedBody == "deny = 20",
+        "the journal must hold the NEW 10→20 transition, not the stale "
+        "5→10 provenance");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "deny = 20",
+        "the physical write of the new transition already happened");
+
+    // The failed state is normally recoverable: the physical target is
+    // adopted on the next apply.
+    harness.failSemanticFor.clear();
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "20"),
+                outcome),
+        harness.error);
+    require(harness.verifiedValues.size() == 1 &&
+                harness.verifiedValues[0] == "20",
+        "the recovery must adopt the already-written target");
+    const auto recovered = harness.soleEntryRecord(
+        "failed_authentication_attempts", "recovered between");
+    require(recovered.id == id && recovered.status == MutationStatus::Applied,
+        "the next apply must complete the same record");
+}
+
+// §16/§19: container Prepared, file carries a canonical FIC block with an
+// entry id that has NO active journal record — markers alone are never
+// creation proof. Fail closed BEFORE any mutation: file byte-exact,
+// container stays Prepared, no new entry record, no new physical entry.
+void testPreparedContainerWithoutWitnessRefused() {
+    Harness harness;
+    const MutationId containerId = prepareContainerRecord(harness);
+
+    // Hand-built physical state: FIC block + entry id 42, no journal
+    // record for it (copied file / stale block / external creation).
+    const std::string foreign = "# administrator bytes\n";
+    writePhysicalEntry(harness, foreign, "failed_authentication_attempts",
+        "deny", "5", 42);
+    const std::string before = readFile(harness.configPath);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(!harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "5"),
+                outcome),
+        "a Prepared container without an exact creation witness must fail "
+        "closed");
+    require(harness.error.find("witness") != std::string::npos,
+        "typed missing-witness diagnostic expected, got: " + harness.error);
+    require(readFile(harness.configPath) == before,
+        "a refused witness-less apply must not touch the file");
+    const auto containers = harness.containerRecords();
+    require(containers.size() == 1 && containers.front().id == containerId &&
+                containers.front().status == MutationStatus::Prepared,
+        "the container provenance must stay Prepared");
+    require(harness.entryRecords("failed_authentication_attempts").empty(),
+        "no entry journal record may be created without a witness");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().mutationId == 42,
+        "the pre-existing physical state must be untouched");
+}
+
+// §17 (apply A): crash after the physical create of the creator entry but
+// before the entry/container completion. The PRE-EXISTING physical creator
+// entry proves the container creation witness; the recovery completes both.
+void testPreparedContainerCreatorWitnessCompletes() {
+    Harness harness;
+    prepareContainerRecord(harness);
+    const MutationId id = prepareEntryRecord(harness,
+        "failed_authentication_attempts", "deny = 5", "");
+    writePhysicalEntry(harness, "", "failed_authentication_attempts",
+        "deny", "5", id);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "5"),
+                outcome),
+        harness.error);
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "creator recovery");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "the creator entry must be completed with the same id");
+    require(harness.containerRecords().size() == 1 &&
+                harness.containerRecords().front().status ==
+                    MutationStatus::Applied,
+        "the container provenance must be reconciled from the proven "
+        "witness");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "deny = 5" &&
+                parse.view.entries.front().mutationId == id,
+        "the adopted entry must be untouched");
+}
+
+// §25: crash during policy A; the first policy applied after restart is B.
+// B must prove the historical creation transaction A (exact journal↔physical
+// witness), reconcile the container provenance, and only then mutate — B
+// itself never becomes the creation evidence.
+void testPreparedContainerCrossPolicyWitness() {
+    Harness harness;
+    prepareContainerRecord(harness);
+    const MutationId creatorId = prepareEntryRecord(harness,
+        "failed_authentication_attempts", "deny = 5", "");
+    writePhysicalEntry(harness, "", "failed_authentication_attempts",
+        "deny", "5", creatorId);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request(
+                               "failed_authentication_counting_period",
+                               "fail_interval", "15"),
+                outcome),
+        harness.error);
+    require(harness.containerRecords().size() == 1 &&
+                harness.containerRecords().front().status ==
+                    MutationStatus::Applied,
+        "B must reconcile the container provenance from A's witness");
+    const auto creator = harness.soleEntryRecord(
+        "failed_authentication_attempts", "cross-policy creator");
+    require(creator.id == creatorId &&
+                creator.status == MutationStatus::Prepared,
+        "the creator transaction stays untouched and recoverable");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 2,
+        "both the creator entry and the new policy entry must exist");
+    for (const auto& entry : parse.view.entries) {
+        if (entry.policy == "failed_authentication_attempts") {
+            require(entry.body == "deny = 5" &&
+                        entry.mutationId == creatorId,
+                "the creator entry must survive byte-exact");
+        }
+    }
+}
+
+// Applied-exact creator entry is also an accepted witness state.
+void testPreparedContainerAppliedWitness() {
+    Harness harness;
+    prepareContainerRecord(harness);
+    const MutationId creatorId = prepareEntryRecord(harness,
+        "failed_authentication_attempts", "deny = 5", "");
+    writePhysicalEntry(harness, "", "failed_authentication_attempts",
+        "deny", "5", creatorId);
+    require(harness.journal.setStatus(
+                creatorId, MutationStatus::Applied, harness.error),
+        harness.error);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request(
+                               "failed_authentication_counting_period",
+                               "fail_interval", "15"),
+                outcome),
+        harness.error);
+    require(harness.containerRecords().front().status ==
+                MutationStatus::Applied,
+        "an Applied-exact creator entry proves the container creation");
+}
+
+// §18: wrong creator identity (foreign physical id or drifted body under
+// the creator id) is never a witness: fail closed, container stays
+// Prepared, no physical mutation.
+void testPreparedContainerWrongCreatorIdentityRefused() {
+    // Variant 1: creator body present under a FOREIGN physical id.
+    {
+        Harness harness;
+        prepareContainerRecord(harness);
+        prepareEntryRecord(harness, "failed_authentication_attempts",
+            "deny = 5", "");
+        writePhysicalEntry(harness, "", "failed_authentication_attempts",
+            "deny", "5", 99);
+        const std::string before = readFile(harness.configPath);
+
+        PamProviderManagedEntryOutcome outcome;
+        require(!harness.apply(harness.request(
+                                    "failed_authentication_attempts", "deny",
+                                    "5"),
+                        outcome),
+            "a foreign physical id must not witness the creation");
+        require(readFile(harness.configPath) == before,
+            "no physical mutation may happen");
+        require(harness.containerRecords().front().status ==
+                    MutationStatus::Prepared,
+            "the container provenance must stay Prepared");
+    }
+    // Variant 2: creator id present but a drifted body.
+    {
+        Harness harness;
+        prepareContainerRecord(harness);
+        const MutationId id = prepareEntryRecord(harness,
+            "failed_authentication_attempts", "deny = 5", "");
+        writePhysicalEntry(harness, "", "failed_authentication_attempts",
+            "deny", "7", id);
+        const std::string before = readFile(harness.configPath);
+
+        PamProviderManagedEntryOutcome outcome;
+        require(!harness.apply(harness.request(
+                                    "failed_authentication_attempts", "deny",
+                                    "5"),
+                        outcome),
+            "a drifted creator body must not witness the creation");
+        require(readFile(harness.configPath) == before,
+            "no physical mutation may happen");
+        require(harness.containerRecords().front().status ==
+                    MutationStatus::Prepared,
+            "the container provenance must stay Prepared");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -722,6 +1138,16 @@ int main() {
         testForeignMutationIdConflictRefused();
         testThreePoliciesOneBlockForeignBytesExact();
         testRestartRecovery();
+        testRecoveryDesiredChangedPreviousPresent();
+        testRecoveryDesiredChangedTargetPresent();
+        testRecoveryDesiredChangedFreshPrepared();
+        testRecoveryDesiredChangedFreshCreatedContainer();
+        testFailureBetweenTransitionsIsRecoverable();
+        testPreparedContainerWithoutWitnessRefused();
+        testPreparedContainerCreatorWitnessCompletes();
+        testPreparedContainerCrossPolicyWitness();
+        testPreparedContainerAppliedWitness();
+        testPreparedContainerWrongCreatorIdentityRefused();
     } catch (const std::exception& exception) {
         std::cerr << "FAILED: " << exception.what() << "\n";
         return 1;

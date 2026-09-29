@@ -147,6 +147,36 @@ PamProviderOwnershipExpectation expectationFromRecord(
     return expectation;
 }
 
+// Typed proof token for completing a Prepared container provenance record
+// as Applied. It can only be produced by
+// provePreparedContainerCreationWitness() from a PRE-EXISTING exact
+// journal↔physical creation witness (proven BEFORE any physical mutation
+// of the current apply), or by the exclusive-create fresh flow for the
+// container it just created and proved. A Prepared → Applied container
+// transition can therefore never be triggered without proof.
+struct ProvenPamProviderContainerCreation {
+    MutationId witnessEntryId = 0;
+};
+
+// Extracts the native value of the DURABLE JOURNAL TARGET
+// (payload->appliedBody) through the shared canonical body parser — never
+// by string surgery — and proves the journal invariant that the parsed key
+// matches the payload's managed key.
+bool durableTargetNativeValue(const UndoRemovePamProviderManagedEntry& payload,
+    std::string& nativeValue, std::string& error) {
+    std::string key;
+    std::string value;
+    if (!parseCanonicalPamProviderEntryBody(payload.appliedBody, key, value) ||
+        key != payload.managedKey) {
+        error = "journal record applied body '" + payload.appliedBody +
+            "' is not a canonical body for the managed key '" +
+            payload.managedKey + "' (fail closed)";
+        return false;
+    }
+    nativeValue = value;
+    return true;
+}
+
 std::string bindingStateName(PamProviderJournalBindingState state) {
     switch (state) {
     case PamProviderJournalBindingState::PreparedFreshAbsent:
@@ -193,14 +223,19 @@ std::string entryProofName(PamProviderEntryProof proof) {
 // state through the fresh-proof recovery matrix.
 bool performPhysicalMutation(
     const PamProviderManagedEntryRequest& request,
-    const std::string& currentContent, bool containerWasAbsent,
-    const AtomicTargetState& snapshot, MutationId mutationId,
-    std::string& newContent, std::string& error) {
+    // The EXACT native value to write. Recovery callers MUST pass the
+    // durable journal target (derived from payload->appliedBody), NEVER
+    // request.nativeValue: an unresolved Prepared transaction is completed
+    // towards its durable target first, whatever the current desired value
+    // is.
+    const std::string& nativeValueToWrite, const std::string& currentContent,
+    bool containerWasAbsent, const AtomicTargetState& snapshot,
+    MutationId mutationId, std::string& newContent, std::string& error) {
     PamProviderEntrySpec spec;
     spec.provider = request.providerName;
     spec.policy = request.policyName;
     spec.managedKey = request.managedKey;
-    spec.value = request.nativeValue;
+    spec.value = nativeValueToWrite;
     spec.mutationId = mutationId;
     auto mutation =
         setPamProviderManagedEntry(currentContent, spec, request.placement);
@@ -265,13 +300,15 @@ bool proveEntryState(const PamProviderManagedEntryRequest& request,
 
 // Container provenance lifecycle: a container WITHOUT an active provenance
 // record never receives one here (FIC does not prove it created the file);
-// a Prepared record is completed ONLY after the caller has proven exact
-// FIC entry ownership inside the parsed provider block — never merely
-// because the path exists.
-bool reconcileContainerProvenance(
+// a Prepared record is completed ONLY with a proven creation-witness token
+// (pre-existing exact journal↔physical witness, or the exclusive create of
+// the current operation) — never merely because the path exists, and never
+// from an entry the current recovery/apply operation just created inside a
+// pre-existing container.
+bool completePreparedContainerProvenance(
     fic::rollback::MutationJournal& journal, const PamProviderManagedEntryRequest& request,
     const std::optional<MutationRecord>& containerRecord,
-    std::string& error) {
+    const ProvenPamProviderContainerCreation* proven, std::string& error) {
     if (!containerRecord.has_value() ||
         containerRecord->status == MutationStatus::Applied) {
         return true;
@@ -281,10 +318,182 @@ bool reconcileContainerProvenance(
             request.configPath.string() + " (fail closed)";
         return false;
     }
+    if (proven == nullptr) {
+        error = "container provenance for " + request.configPath.string() +
+            " is Prepared but no pre-existing creation witness was proven " +
+            "(fail closed): a Prepared container must never be legalized " +
+            "by an entry created by the current operation";
+        return false;
+    }
     if (!journal.setStatus(
             containerRecord->id, MutationStatus::Applied, error)) {
         error = "container provenance Applied transition failed (Prepared " +
             std::string("state kept, recoverable): ") + error;
+        return false;
+    }
+    return true;
+}
+
+// Proves a PRE-EXISTING creation witness for a Prepared container
+// provenance record on the CURRENT trusted parse (before ANY physical
+// mutation of this apply). The witness binds a physical FIC entry to an
+// active journal entry transaction of the same provider/config path —
+// exact physical mutation id + exact canonical body through the Step 7A
+// classifier/ownership proof. Marker or block presence alone is never
+// proof.
+//
+// Accepted witness states (strict set):
+//   * entry Applied  + AppliedExact physical ownership;
+//   * entry Prepared + PreparedFreshTargetPresent / PreparedUpdateTargetPresent
+//     (the physical creation already happened before the crash).
+// NOT witnesses: PreparedFreshAbsent (no physical creation),
+// PreparedUpdatePreviousPresent (target not written), PreparedConflict,
+// AppliedMissing, AppliedDrifted, and RollbackFailed (ambiguous creation
+// provenance — fail closed by preference of the stricter witness set).
+bool provePreparedContainerCreationWitness(
+    fic::rollback::MutationJournal& journal,
+    const PamProviderManagedEntryRequest& request,
+    const PamProviderBlockParseResult& parse,
+    ProvenPamProviderContainerCreation& witness, std::string& error) {
+    const std::string configPath = request.configPath.string();
+    for (const auto& record : journal.records()) {
+        if (!record.isActive()) {
+            continue;
+        }
+        const auto* payload = entryPayload(record);
+        if (payload == nullptr || payload->providerName != request.providerName ||
+            payload->configPath != configPath) {
+            continue; // unrelated record kind or another container
+        }
+        if (record.status == MutationStatus::Applied) {
+            auto proof = provePamProviderEntryOwnership(
+                parse, expectationFromRecord(record, *payload));
+            if (proof.proven) {
+                witness.witnessEntryId = record.id;
+                return true;
+            }
+            continue; // drifted/missing entry of another policy: not a witness
+        }
+        if (record.status == MutationStatus::Prepared) {
+            auto binding = classifyPamProviderJournalBinding(
+                PamProviderJournalMutationStatus::Prepared, parse,
+                expectationFromRecord(record, *payload));
+            if (binding.ok &&
+                (binding.state ==
+                        PamProviderJournalBindingState::PreparedFreshTargetPresent ||
+                    binding.state ==
+                        PamProviderJournalBindingState::PreparedUpdateTargetPresent)) {
+                witness.witnessEntryId = record.id;
+                return true;
+            }
+            continue;
+        }
+        // RollbackFailed: never accepted as a creation witness (strict set).
+    }
+    error = "container provenance for " + configPath +
+        " is Prepared but no pre-existing exact journal↔physical creation " +
+        "witness exists (fail closed): no active entry transaction of this " +
+        "provider proves an exact physical FIC entry, so FIC creation of " +
+        "the container cannot be proven — no new entry may legalize it";
+    return false;
+}
+
+// Shared value-refresh path for a PROVEN Applied/RollbackFailed journal
+// record: prepares the next transition (previous = journal appliedBody,
+// target = CURRENT desired value, SAME record id), performs the physical
+// mutation, proves it and completes the record as Applied.
+//
+// `read` MUST be a FRESH trusted read of the current container state: a
+// read/snapshot captured before an earlier physical mutation of the same
+// logical transaction is stale, and using it for a second physical
+// mutation would make both the snapshot CAS and the ownership proof
+// unsound. After completing one durable transition, always re-read.
+bool refreshProvenOwnedEntry(
+    fic::rollback::MutationJournal& journal,
+    const PamProviderManagedEntryRequest& request,
+    const PamProviderManagedEntryExecutor::SemanticPostcondition& semantic,
+    const PamProviderContainerReadResult& read,
+    const MutationRecord& entryRecord,
+    const std::optional<MutationRecord>& containerRecord,
+    const ProvenPamProviderContainerCreation* containerWitness,
+    PamProviderManagedEntryOutcome& outcome, std::string& error) {
+    const auto* payload = entryPayload(entryRecord);
+    const MutationId id = entryRecord.id;
+    const std::string desiredBody =
+        pamProviderEntryBody(request.managedKey, request.nativeValue);
+    MutationId refreshedId = 0;
+    if (!journal.prepareMutation(
+            buildEntryRecord(request, payload->appliedBody), refreshedId,
+            error)) {
+        return false;
+    }
+    if (refreshedId != id) {
+        error = "journal refresh unexpectedly produced record id " +
+            std::to_string(refreshedId) + " instead of " +
+            std::to_string(id) + " (fail closed)";
+        return false;
+    }
+    std::string newContent;
+    if (!performPhysicalMutation(request, request.nativeValue, read.content,
+            /*containerWasAbsent=*/false, read.snapshot, id, newContent,
+            error)) {
+        return false;
+    }
+    if (!proveEntryState(request, desiredBody, id, error)) {
+        return false;
+    }
+    if (!semantic(request.nativeValue, error)) {
+        error = "semantic postcondition failed: " + error;
+        return false;
+    }
+    if (!journal.setStatus(id, MutationStatus::Applied, error)) {
+        error = "entry Applied transition failed after refresh (Prepared " +
+            std::string("kept; crash recovery continues the ") +
+            "previous→target transition or adopts the exact target): " +
+            error;
+        return false;
+    }
+    if (!completePreparedContainerProvenance(
+            journal, request, containerRecord, containerWitness, error)) {
+        return false;
+    }
+    outcome = PamProviderManagedEntryOutcome::Applied;
+    return true;
+}
+
+// Fresh trusted re-read + strict parse + exact Applied ownership proof of
+// the recovered journal target, AFTER a completed durable transition. This
+// is the mandatory starting point for any subsequent desired-value refresh
+// of the same logical transaction: the read/parse captured before the
+// recovery mutation are stale and must never back a second physical
+// mutation.
+bool freshProveRecoveredAppliedState(
+    const PamProviderManagedEntryRequest& request,
+    const MutationRecord& entryRecord,
+    PamProviderContainerReadResult& read, std::string& error) {
+    const auto* payload = entryPayload(entryRecord);
+    read = PamProviderManagedBlockFile::readForMutation(
+        request.configPath, PamProviderAbsentContainerDecision::FailClosed,
+        error);
+    if (!read.ok) {
+        error = "fresh trusted re-read after the completed durable "
+                "transition failed: " +
+            error;
+        return false;
+    }
+    auto parse = parsePamProviderManagedBlock(read.content);
+    if (!parse.ok) {
+        error = "strict parse after the completed durable transition failed " +
+            std::string("(fail closed): ") + parse.error;
+        return false;
+    }
+    auto proof = provePamProviderEntryOwnership(
+        parse, expectationFromRecord(entryRecord, *payload));
+    if (!proof.proven) {
+        error = "exact Applied ownership proof after the completed durable " +
+            std::string("transition failed (") + entryProofName(proof.proof) +
+            "): the recovered physical state is not the proven journal " +
+            "target (fail closed)";
         return false;
     }
     return true;
@@ -297,14 +506,39 @@ namespace {
 // Fresh FIC-created container flow: entry transaction prepared first,
 // container provenance Prepared BEFORE the physical create, exclusive
 // create, proof chain, then entry Applied and container Applied.
+// Recovery of an existing Prepared entry transaction completes the DURABLE
+// journal target first (never the current desired value); a differing
+// current desired value is reconciled afterwards through a fresh trusted
+// re-read and a normal same-id refresh.
 bool applyFreshCreatedContainer(
     fic::rollback::MutationJournal& journal, const PamProviderManagedEntryRequest& request,
     const PamProviderManagedEntryExecutor::SemanticPostcondition& semantic,
     const std::optional<MutationRecord>& entryRecord,
     const std::optional<MutationRecord>& containerRecord,
     std::string& error) {
-    const std::string desiredBody =
-        pamProviderEntryBody(request.managedKey, request.nativeValue);
+    // The value this transaction physically writes: the DURABLE JOURNAL
+    // TARGET of an existing Prepared record, or the current desired value
+    // for a genuinely fresh transaction.
+    std::string targetNative;
+    if (entryRecord.has_value()) {
+        const auto* payload = entryPayload(*entryRecord);
+        if (payload == nullptr ||
+            payload->providerName != request.providerName ||
+            payload->configPath != request.configPath.string() ||
+            payload->managedKey != request.managedKey ||
+            contractToPlacement(payload->placement) != request.placement) {
+            error = "existing Prepared entry transaction identity does not " +
+                std::string("match the request (fail closed)");
+            return false;
+        }
+        if (!durableTargetNativeValue(*payload, targetNative, error)) {
+            return false;
+        }
+    } else {
+        targetNative = request.nativeValue;
+    }
+    const std::string targetBody =
+        pamProviderEntryBody(request.managedKey, targetNative);
     MutationId entryId = 0;
     if (entryRecord.has_value()) {
         entryId = entryRecord->id; // recovery: SAME durable record id
@@ -321,14 +555,15 @@ bool applyFreshCreatedContainer(
     }
     std::string newContent;
     if (!performPhysicalMutation(
-            request, /*currentContent=*/"", /*containerWasAbsent=*/true,
-            AtomicTargetState{}, entryId, newContent, error)) {
+            request, targetNative, /*currentContent=*/"",
+            /*containerWasAbsent=*/true, AtomicTargetState{}, entryId,
+            newContent, error)) {
         return false;
     }
-    if (!proveEntryState(request, desiredBody, entryId, error)) {
+    if (!proveEntryState(request, targetBody, entryId, error)) {
         return false;
     }
-    if (!semantic(error)) {
+    if (!semantic(targetNative, error)) {
         error = "semantic postcondition failed: " + error;
         return false;
     }
@@ -338,13 +573,40 @@ bool applyFreshCreatedContainer(
             "physical state): " + error;
         return false;
     }
+    // The EXCLUSIVE create performed by THIS operation (container was
+    // proven absent, no concurrent object existed, FIC entry ownership is
+    // proven above) is the creation proof for the container it just
+    // created; the durable container Prepared record was committed before
+    // the physical create.
+    ProvenPamProviderContainerCreation ownCreation{entryId};
     if (!journal.setStatus(containerId, MutationStatus::Applied, error)) {
         error = "container provenance Applied transition failed (Prepared " +
             std::string("kept; crash recovery reconciles against the ") +
             "proven FIC-created state): " + error;
         return false;
     }
-    return true;
+    const std::string desiredBody =
+        pamProviderEntryBody(request.managedKey, request.nativeValue);
+    if (desiredBody == targetBody) {
+        return true;
+    }
+    // The current desired value changed while the durable fresh-create
+    // transaction was being recovered: complete it, then reconcile the
+    // desired value from a FRESH trusted read (the pre-mutation state does
+    // not exist here — the file was just created; never reuse a stale
+    // snapshot for a second mutation).
+    std::optional<MutationRecord> completedContainer = containerRecord;
+    completedContainer->status = MutationStatus::Applied;
+    PamProviderContainerReadResult freshRead;
+    if (!freshProveRecoveredAppliedState(request, *entryRecord, freshRead,
+            error)) {
+        return false;
+    }
+    PamProviderManagedEntryOutcome refreshedOutcome =
+        PamProviderManagedEntryOutcome::Applied;
+    return refreshProvenOwnedEntry(journal, request, semantic, freshRead,
+        *entryRecord, completedContainer, &ownCreation, refreshedOutcome,
+        error);
 }
 
 // Fresh entry transaction inside an EXISTING container (pre-existing
@@ -362,7 +624,7 @@ bool applyFreshEntryExistingContainer(
         return false;
     }
     std::string newContent;
-    if (!performPhysicalMutation(request, read.content,
+    if (!performPhysicalMutation(request, request.nativeValue, read.content,
             /*containerWasAbsent=*/false, read.snapshot, entryId, newContent,
             error)) {
         return false;
@@ -372,7 +634,7 @@ bool applyFreshEntryExistingContainer(
     if (!proveEntryState(request, desiredBody, entryId, error)) {
         return false;
     }
-    if (!semantic(error)) {
+    if (!semantic(request.nativeValue, error)) {
         error = "semantic postcondition failed: " + error;
         return false;
     }
@@ -382,8 +644,12 @@ bool applyFreshEntryExistingContainer(
             "physical state): " + error;
         return false;
     }
-    return reconcileContainerProvenance(
-        journal, request, containerRecord, error);
+    // A Prepared container provenance was already proven and completed in
+    // apply() BEFORE any physical mutation of this operation (it must never
+    // be legalized by this newly created entry), so this is a no-op unless
+    // the provenance is absent/Applied.
+    return completePreparedContainerProvenance(
+        journal, request, containerRecord, /*proven=*/nullptr, error);
 }
 
 // Proven-absent primary. Every durable state here has a defined,
@@ -478,6 +744,13 @@ bool applyProvenOwnedOrFailedRecord(
     const MutationId id = entryRecord.id;
     const std::string desiredBody =
         pamProviderEntryBody(request.managedKey, request.nativeValue);
+    // Native value of the PROVEN journal body (payload->appliedBody); used
+    // for relocation writes and no-op semantics — the state being proven
+    // here is the journaled body, not an assumed one.
+    std::string provenNative;
+    if (!durableTargetNativeValue(*payload, provenNative, error)) {
+        return false;
+    }
 
     if (entryRecord.status == MutationStatus::RollbackFailed) {
         // RollbackFailed is never ignored: prove the CURRENT physical
@@ -499,7 +772,8 @@ bool applyProvenOwnedOrFailedRecord(
             // lifecycle transition).
             if (!parse.view.satisfiesPlacement(request.placement)) {
                 std::string newContent;
-                if (!performPhysicalMutation(request, read.content,
+                if (!performPhysicalMutation(request, provenNative,
+                        read.content,
                         /*containerWasAbsent=*/false, read.snapshot, id,
                         newContent, error)) {
                     return false;
@@ -509,12 +783,13 @@ bool applyProvenOwnedOrFailedRecord(
                     return false;
                 }
             }
-            if (!semantic(error)) {
+            if (!semantic(provenNative, error)) {
                 error = "semantic postcondition failed: " + error;
                 return false;
             }
-            if (!reconcileContainerProvenance(
-                    journal, request, containerRecord, error)) {
+            if (!completePreparedContainerProvenance(
+                    journal, request, containerRecord, /*proven=*/nullptr,
+                    error)) {
                 return false;
             }
             outcome = PamProviderManagedEntryOutcome::AppliedNoOp;
@@ -562,7 +837,8 @@ bool applyProvenOwnedOrFailedRecord(
                 // requested placement AFTER exact ownership proof; foreign
                 // bytes survive byte-exact.
                 std::string newContent;
-                if (!performPhysicalMutation(request, read.content,
+                if (!performPhysicalMutation(request, provenNative,
+                        read.content,
                         /*containerWasAbsent=*/false, read.snapshot, id,
                         newContent, error)) {
                     return false;
@@ -572,12 +848,13 @@ bool applyProvenOwnedOrFailedRecord(
                     return false;
                 }
             }
-            if (!semantic(error)) {
+            if (!semantic(provenNative, error)) {
                 error = "semantic postcondition failed: " + error;
                 return false;
             }
-            if (!reconcileContainerProvenance(
-                    journal, request, containerRecord, error)) {
+            if (!completePreparedContainerProvenance(
+                    journal, request, containerRecord, /*proven=*/nullptr,
+                    error)) {
                 return false;
             }
             outcome = PamProviderManagedEntryOutcome::AppliedNoOp;
@@ -585,48 +862,14 @@ bool applyProvenOwnedOrFailedRecord(
         }
     }
 
-    // Value refresh: previous = journal appliedBody, target = desired,
-    // SAME record id (legitimate transition for Applied and RollbackFailed
-    // with proven current ownership; also reached after Prepared recovery
-    // when the desired value changed during recovery).
-    MutationId refreshedId = 0;
-    if (!journal.prepareMutation(
-            buildEntryRecord(request, payload->appliedBody), refreshedId,
-            error)) {
-        return false;
-    }
-    if (refreshedId != id) {
-        error = "journal refresh unexpectedly produced record id " +
-            std::to_string(refreshedId) + " instead of " +
-            std::to_string(id) + " (fail closed)";
-        return false;
-    }
-    std::string newContent;
-    if (!performPhysicalMutation(request, read.content,
-            /*containerWasAbsent=*/false, read.snapshot, id, newContent,
-            error)) {
-        return false;
-    }
-    if (!proveEntryState(request, desiredBody, id, error)) {
-        return false;
-    }
-    if (!semantic(error)) {
-        error = "semantic postcondition failed: " + error;
-        return false;
-    }
-    if (!journal.setStatus(id, MutationStatus::Applied, error)) {
-        error = "entry Applied transition failed after refresh (Prepared " +
-            std::string("kept; crash recovery continues the ") +
-            "previous→target transition or adopts the exact target): " +
-            error;
-        return false;
-    }
-    if (!reconcileContainerProvenance(
-            journal, request, containerRecord, error)) {
-        return false;
-    }
-    outcome = PamProviderManagedEntryOutcome::Applied;
-    return true;
+    // Value refresh: previous = journal appliedBody, target = CURRENT
+    // desired value, SAME record id (legitimate transition for Applied and
+    // RollbackFailed with proven current ownership; also reached after
+    // Prepared recovery when the desired value changed during recovery —
+    // the caller MUST pass a FRESH trusted read in that case).
+    return refreshProvenOwnedEntry(journal, request, semantic, read,
+        entryRecord, containerRecord, /*containerWitness=*/nullptr, outcome,
+        error);
 }
 
 } // namespace
@@ -655,8 +898,16 @@ bool applyActiveEntryRecord(
     }
 
     if (entryRecord.status == MutationStatus::Prepared) {
-        // Honour the durable transaction first, whatever the current
-        // desired value is; the record keeps its id.
+        // DURABLE TARGET FIRST. An unresolved Prepared transaction is
+        // completed towards ITS journal target (payload->appliedBody),
+        // whatever the current desired value is; the record keeps its id.
+        // The current desired value has no right to steer an unresolved
+        // transaction — it is reconciled only AFTER the durable transition
+        // is proven and journaled as Applied.
+        std::string durableNative;
+        if (!durableTargetNativeValue(*payload, durableNative, error)) {
+            return false;
+        }
         auto expectation = expectationFromRecord(entryRecord, *payload);
         auto binding = classifyPamProviderJournalBinding(
             PamProviderJournalMutationStatus::Prepared, parse, expectation);
@@ -673,13 +924,15 @@ bool applyActiveEntryRecord(
             return false;
         case PamProviderJournalBindingState::PreparedFreshAbsent:
             // The physical mutation has not happened yet: continue with
-            // the SAME record id.
+            // the SAME record id, writing the DURABLE TARGET.
         case PamProviderJournalBindingState::PreparedUpdatePreviousPresent:
             // The exact previous FIC-owned body is still physically
-            // present: continue the previous→target transition, SAME id.
+            // present: continue the previous→target transition towards
+            // the DURABLE TARGET, SAME id — never towards the current
+            // desired value.
         {
             std::string newContent;
-            if (!performPhysicalMutation(request, read.content,
+            if (!performPhysicalMutation(request, durableNative, read.content,
                     /*containerWasAbsent=*/false, read.snapshot, id,
                     newContent, error)) {
                 return false;
@@ -700,8 +953,10 @@ bool applyActiveEntryRecord(
         if (!proveEntryState(request, payload->appliedBody, id, error)) {
             return false;
         }
-        if (!semantic(error)) {
-            error = "semantic postcondition failed: " + error;
+        if (!semantic(durableNative, error)) {
+            error = "semantic postcondition failed for the durable "
+                    "transaction target: " +
+                error;
             return false;
         }
         if (!journal.setStatus(id, MutationStatus::Applied, error)) {
@@ -710,8 +965,12 @@ bool applyActiveEntryRecord(
                 "exact physical state): " + error;
             return false;
         }
-        if (!reconcileContainerProvenance(
-                journal, request, containerRecord, error)) {
+        // A Prepared container provenance was already proven and completed
+        // in apply() BEFORE any physical mutation; this is a no-op
+        // defense-in-depth check.
+        if (!completePreparedContainerProvenance(
+                journal, request, containerRecord, /*proven=*/nullptr,
+                error)) {
             return false;
         }
         outcome = PamProviderManagedEntryOutcome::Applied;
@@ -719,9 +978,26 @@ bool applyActiveEntryRecord(
             return true;
         }
         // Desired value changed while the prepared transaction was being
-        // recovered: recovery is complete (record Applied, physical
-        // exact), so run the normal refresh path below in the same
-        // logical transaction.
+        // recovered. The durable transition is complete (record Applied,
+        // physical exact target); the read/parse captured BEFORE the
+        // recovery mutation are now STALE and must never back a second
+        // physical mutation. Mandatory order: fresh trusted read → strict
+        // parse → exact Applied ownership proof of the recovered target →
+        // only then the refresh previous=recovered target → desired.
+        PamProviderContainerReadResult freshRead;
+        if (!freshProveRecoveredAppliedState(request, entryRecord, freshRead,
+                error)) {
+            return false;
+        }
+        auto freshParse = parsePamProviderManagedBlock(freshRead.content);
+        if (!freshParse.ok) {
+            error = "strict parse of the recovered container failed (fail " +
+                std::string("closed): ") + freshParse.error;
+            return false;
+        }
+        return applyProvenOwnedOrFailedRecord(journal, request, semantic,
+            freshRead, freshParse, entryRecord, containerRecord, outcome,
+            error);
     }
 
     return applyProvenOwnedOrFailedRecord(journal, request, semantic, read,
@@ -810,6 +1086,27 @@ bool PamProviderManagedEntryExecutor::apply(
             "' FIC block — ambiguous externally created container state " +
             "(fail closed)";
         return false;
+    }
+    // Prepared container provenance with an existing file: the historical
+    // creation MUST be proven from a PRE-EXISTING exact journal↔physical
+    // witness BEFORE any physical mutation of this operation — a new entry
+    // created by this apply is never acceptable evidence of a previous
+    // container creation (circular ownership proof). Fail closed when no
+    // witness exists; reconcile (Prepared → Applied) immediately so the
+    // current policy processing can never become the legalization
+    // evidence.
+    if (containerRecord.has_value() &&
+        containerRecord->status == MutationStatus::Prepared) {
+        ProvenPamProviderContainerCreation witness;
+        if (!provePreparedContainerCreationWitness(
+                journal, request, parse, witness, error)) {
+            return false;
+        }
+        if (!completePreparedContainerProvenance(
+                journal, request, containerRecord, &witness, error)) {
+            return false;
+        }
+        containerRecord->status = MutationStatus::Applied;
     }
     if (!entryRecord.has_value()) {
         if (!applyFreshEntryExistingContainer(
