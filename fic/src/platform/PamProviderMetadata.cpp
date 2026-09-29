@@ -101,7 +101,7 @@ const std::vector<PamProviderDescriptor>& pamProviderDescriptors()
          primaryConfig(
              "/etc/security/pwhistory.conf", {},
              fic::platform::PamExplicitConfigSemantics::ReplacesNativeTopology),
-         Grammar::KeyValue, Semantic::Generic,
+         Grammar::KeyValue, Semantic::Pwhistory,
          {assignment(Feature::PasswordHistoryDepth, "remember"),
           flag(Feature::PasswordHistoryEnforceForRoot, "enforce_for_root")}},
         {Provider::PamTally2, Capability::AuthenticationLockout,

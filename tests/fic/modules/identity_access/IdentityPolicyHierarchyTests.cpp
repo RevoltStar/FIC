@@ -150,11 +150,14 @@ void initializeRuntimePaths(const std::filesystem::path& root) {
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
 }
 
-// Step 7C helper: some test phases externally rewrite pwquality.conf after
-// a managed apply, which is exactly the AppliedMissing drift/fail-closed
-// state of the managed entry executor. Rotating to a fresh journal file
-// models a clean daemon restart with a fresh provenance database for the
-// next phase.
+// Step 7C/7D helper: some test phases externally rewrite a provider
+// primary (pwquality.conf, pwhistory.conf) after a managed apply, which is
+// exactly the AppliedMissing drift/fail-closed state of the managed entry
+// executor. Rotating to a fresh journal file gives each phase its own
+// independent provenance namespace; it is a TEST fixture device, NOT a
+// model of a normal production restart (a real restart MUST re-read the
+// same persistent journal and fail closed on the drift it legitimately
+// reports).
 void rotateTestJournal(const std::filesystem::path& root, unsigned sequence) {
     fic::rollback::DaemonMutationJournal::instance().setOverridePath(
         root / ("data/mutation-journal-" + std::to_string(sequence) +
@@ -169,6 +172,13 @@ TestPamPlatformConfig makePasswordHistoryPlatform(
     platform.passwordServices = {"passwd"};
     platform.passwordHistoryConfigPath =
         root / "security-config/pwhistory.conf";
+    // Step 7D: the typed pwhistory config backend evaluates the REAL
+    // topology; bind the descriptor default topology to the temporary
+    // primary path (no drop-ins upstream).
+    auto historyTopology = fic::identity::pam::pamProviderDescriptor(
+        fic::platform::PamProviderKind::PamPwhistory).defaultConfigTopology;
+    historyTopology.primaryPath = platform.passwordHistoryConfigPath;
+    platform.capabilities[2].configTopology = std::move(historyTopology);
     return platform;
 }
 
@@ -1300,6 +1310,125 @@ int main() {
                 false,
                 flagError),
             flagError);
+
+        // ----------------------------------------------------------------
+        // Step 7D: password_history_depth owns its state through the
+        // journal-backed managed provider block path on the
+        // ProviderConfigFile + PamAuthUpdate contract (Debian 13 /
+        // Ubuntu 24.04 / Ubuntu 26.04 style). Upstream
+        // pam_modutil_search_key is FIRST-match per key, so the FIC
+        // block lands at the BEGINNING of pwhistory.conf and outranks
+        // every later foreign remember assignment; foreign bytes stay
+        // byte-exact after the block; a pre-existing primary never
+        // receives container provenance.
+        // ----------------------------------------------------------------
+        const fs::path managedHistoryRoot = root / "managed-pwhistory";
+        auto managedHistoryPlatform =
+            makePasswordHistoryPlatform(managedHistoryRoot);
+        managedHistoryPlatform.capabilities[2].topology =
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+        writeFile(
+            managedHistoryRoot / "pam.d/passwd",
+            "password required pam_pwhistory.so conf=" +
+                managedHistoryPlatform.passwordHistoryConfigPath.string() +
+                "\n");
+        writeFile(
+            managedHistoryRoot / "security/pam_pwhistory.so", "test", 0555);
+        const std::string managedHistoryForeign =
+            "# admin comment\nremember = 3\nretry = 4\nremember = 7\n";
+        writeFile(
+            managedHistoryPlatform.passwordHistoryConfigPath,
+            managedHistoryForeign);
+        rotateTestJournal(root, 4);
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_history_depth.status=ENABLE\n"
+            "password_history_depth.value=10\n");
+        PamPasswordHistoryDepthPolicy managedDepth(managedHistoryPlatform);
+        require(
+            managedDepth.apply(),
+            "managed pwhistory depth BOF apply failed");
+        const std::string managedHistoryConfig =
+            readFile(managedHistoryPlatform.passwordHistoryConfigPath);
+        const std::string managedHistoryTail =
+            managedHistoryConfig.substr(
+                managedHistoryConfig.size() - managedHistoryForeign.size());
+        require(
+            managedHistoryConfig.find(
+                "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 "
+                "provider=pam_pwhistory") == 0 &&
+                managedHistoryConfig.find("remember = 10") !=
+                    std::string::npos &&
+                managedHistoryTail == managedHistoryForeign,
+            "the managed pwhistory block must sit at BOF with the foreign "
+            "bytes preserved byte-exact after it");
+        require(
+            managedDepth.apply() &&
+                readFile(
+                    managedHistoryPlatform.passwordHistoryConfigPath) ==
+                    managedHistoryConfig,
+            "managed pwhistory depth apply is not idempotent");
+
+        // §40 transitional compatibility: password_history_enforce_for_root
+        // stays on the legacy flag path (Step 7E) and must NOT disturb the
+        // managed depth entry.
+        rotateTestJournal(root, 5);
+        writeIdentityConfig(
+            root, "yes", "yes",
+            "password_history_enforce_for_root.status=ENABLE\n"
+            "password_history_enforce_for_root.value=yes\n");
+        PamPasswordHistoryEnforceForRootPolicy flagAfterManagedDepth(
+            managedHistoryPlatform);
+        require(
+            flagAfterManagedDepth.apply(),
+            "legacy enforce_for_root apply failed after a managed depth "
+            "apply");
+        const std::string afterFlagConfig =
+            readFile(managedHistoryPlatform.passwordHistoryConfigPath);
+        require(
+            afterFlagConfig.find(
+                "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 "
+                "provider=pam_pwhistory") == 0 &&
+                afterFlagConfig.find("remember = 10") != std::string::npos &&
+                afterFlagConfig.find("\nenforce_for_root") !=
+                    std::string::npos,
+            "the legacy flag apply must keep the managed BOF block valid "
+            "and its remember entry unchanged");
+
+        // §29 at policy level: a conflicting PAM argv remember must fail
+        // the semantic preflight BEFORE any journal mutation — config and
+        // journal stay untouched.
+        rotateTestJournal(root, 6);
+        writeFile(
+            managedHistoryRoot / "pam.d/passwd",
+            "password required pam_pwhistory.so conf=" +
+                managedHistoryPlatform.passwordHistoryConfigPath.string() +
+                " use_authtok remember=20\n");
+        PamPasswordHistoryDepthPolicy conflictingArgvDepth(
+            managedHistoryPlatform);
+        require(
+            !conflictingArgvDepth.apply(),
+            "a conflicting PAM argv remember must fail the managed depth "
+            "apply closed");
+        require(
+            readFile(managedHistoryPlatform.passwordHistoryConfigPath) ==
+                afterFlagConfig,
+            "the refused argv-override apply must not mutate the config");
+        {
+            std::string journalError;
+            auto* conflictJournal =
+                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                    journalError);
+            require(conflictJournal != nullptr, journalError);
+            require(
+                conflictJournal
+                    ->activeRecords(
+                        {"IDENTITY_ACCESS", "PAM",
+                         "password_history_depth"})
+                    .empty(),
+                "the refused argv-override apply must prepare NO journal "
+                "records");
+        }
 
         const auto authenticationPlatform =
             makeAuthenticationPlatform(root);

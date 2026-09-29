@@ -8,7 +8,12 @@ namespace fic::identity::pam {
 namespace {
 
 PamOptionKeyMatchMode keyMatchMode(const PamProviderDescriptor& provider) {
-    return provider.semanticBackend == PamProviderSemanticBackendKind::Pwquality
+    // Upstream pam_modutil_search_key matches pwhistory keys
+    // case-insensitively (strcasecmp), like pwquality's own parser.
+    return provider.semanticBackend ==
+                    PamProviderSemanticBackendKind::Pwquality ||
+                provider.semanticBackend ==
+                    PamProviderSemanticBackendKind::Pwhistory
         ? PamOptionKeyMatchMode::AsciiCaseInsensitive
         : PamOptionKeyMatchMode::CaseSensitive;
 }

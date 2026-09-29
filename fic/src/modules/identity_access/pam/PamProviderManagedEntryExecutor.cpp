@@ -1137,10 +1137,24 @@ bool usesPamProviderManagedEntry(
     if (binding.syntax != PamNativeOptionSyntax::Assignment) {
         return false;
     }
-    // Explicit per-provider scalar feature whitelist (Step 7B/7C): the
-    // managed entry path is OPT-IN per feature — never "every Assignment
-    // binding of the provider" — so a future policy cannot silently
-    // acquire journal-backed physical ownership.
+    // SINGLE source of truth: the routed (provider, capability, feature)
+    // set is exactly the set for which the total placement helper returns
+    // a placement contract. A feature that has no placement can never be
+    // routed, so the routing/placement contracts cannot drift apart (the
+    // Step 7C default-End footgun is eliminated).
+    return pamProviderManagedEntryPlacement(provider, capability, feature)
+        .has_value();
+}
+
+// Typed placement contract of the managed provider block — the SINGLE
+// per-provider feature whitelist of the managed entry path. Callers derive
+// the placement here instead of hardcoding it at the apply site; an
+// unroutable combination has NO placement (nullopt), never a silent End.
+std::optional<PamProviderBlockPlacementRequest>
+pamProviderManagedEntryPlacement(
+    const PamProviderDescriptor& provider,
+    const fic::platform::PamCapabilityConfig& capability,
+    fic::platform::PamPolicyFeature feature) {
     switch (provider.kind) {
     case fic::platform::PamProviderKind::PamFaillock:
         switch (feature) {
@@ -1149,10 +1163,12 @@ bool usesPamProviderManagedEntry(
                 FailedAuthenticationCountingPeriod:
         case fic::platform::PamPolicyFeature::
                 FailedAuthenticationUnlockTime:
-            return true;
+            // faillock.conf scalar assignments have last-wins sequential
+            // semantics → EOF.
+            return PamProviderBlockPlacementRequest::End;
         default:
             // even_deny_root (Flag) — Step 7E.
-            return false;
+            return std::nullopt;
         }
     case fic::platform::PamProviderKind::PamPwquality:
         switch (feature) {
@@ -1165,43 +1181,47 @@ bool usesPamProviderManagedEntry(
         case fic::platform::PamPolicyFeature::PasswordMinUppercase:
         case fic::platform::PamPolicyFeature::PasswordMinDigits:
         case fic::platform::PamPolicyFeature::PasswordMinOther:
-            return true;
+            // PwqualityConfigEvaluator models DropInsThenPrimary: the
+            // lexically sorted pwquality.conf.d/*.conf drop-ins are
+            // applied first, then the primary is parsed sequentially. A
+            // managed assignment at EOF of the primary therefore outranks
+            // every drop-in and every earlier primary assignment. PAM
+            // module argv is applied AFTER the config topology and cannot
+            // be outranked — conflicting module arguments remain a
+            // fail-closed semantic verifier concern, never a physical
+            // mutation target.
+            return PamProviderBlockPlacementRequest::End;
         default:
             // enforce_for_root (Flag) — Step 7E stays legacy.
-            return false;
+            return std::nullopt;
         }
+    case fic::platform::PamProviderKind::PamPwhistory:
+        // Step 7D: ONLY the current Debian 13 / Ubuntu 24.04 / Ubuntu
+        // 26.04-style contract — ProviderConfigFile + PamAuthUpdate. The
+        // typed topology/configuration contract (never a distro name)
+        // keeps Debian 12 (ModuleArguments → Step 6 joint coordinator)
+        // and ALT p11 (AltTcbManaged → /etc/security/fic-pwhistory.conf
+        // legacy ownership) outside this route. Upstream
+        // pam_modutil_search_key returns the FIRST case-insensitive
+        // matching key, so the managed remember entry MUST sit at the
+        // beginning of pwhistory.conf to outrank later foreign
+        // assignments.
+        if (feature ==
+                fic::platform::PamPolicyFeature::PasswordHistoryDepth &&
+            capability.configurationMode ==
+                fic::platform::PamCapabilityConfigurationMode::
+                    ProviderConfigFile &&
+            capability.topology ==
+                fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+            return PamProviderBlockPlacementRequest::Beginning;
+        }
+        // enforce_for_root (Flag) — Step 7E. Debian 12 and ALT stay on
+        // their existing paths.
+        return std::nullopt;
     default:
-        // pam_passwdqc (ALT password-quality topology), pam_pwhistory
-        // (Step 7D), tally/tally2/cracklib/pam_unix remember stay legacy.
-        return false;
-    }
-}
-
-// Typed placement contract of the managed provider block. Callers must
-// derive the placement here instead of hardcoding it at the apply site, so
-// Step 7D (pam_pwhistory → Beginning) adds one typed case instead of a new
-// provider-specific condition in the policy wiring.
-PamProviderBlockPlacementRequest pamProviderManagedEntryPlacement(
-    const PamProviderDescriptor& provider,
-    fic::platform::PamPolicyFeature feature) {
-    (void)feature;
-    switch (provider.kind) {
-    case fic::platform::PamProviderKind::PamFaillock:
-        // faillock.conf scalar assignments have last-wins sequential
-        // semantics → EOF.
-        return PamProviderBlockPlacementRequest::End;
-    case fic::platform::PamProviderKind::PamPwquality:
-        // PwqualityConfigEvaluator models DropInsThenPrimary: the
-        // lexically sorted pwquality.conf.d/*.conf drop-ins are applied
-        // first, then the primary is parsed sequentially. A managed
-        // assignment at EOF of the primary therefore outranks every
-        // drop-in and every earlier primary assignment. PAM module argv
-        // is applied AFTER the config topology and cannot be outranked —
-        // conflicting module arguments remain a fail-closed semantic
-        // verifier concern, never a physical mutation target.
-        return PamProviderBlockPlacementRequest::End;
-    default:
-        return PamProviderBlockPlacementRequest::End;
+        // pam_passwdqc (ALT password-quality topology),
+        // tally/tally2/cracklib/pam_unix remember stay legacy.
+        return std::nullopt;
     }
 }
 

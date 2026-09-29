@@ -7,6 +7,7 @@
 #include "modules/identity_access/pam/PamProviderInspector.h"
 #include "modules/identity_access/pam/PamPwhistoryArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
+#include "modules/identity_access/pam/PwhistoryConfigFile.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -133,6 +134,13 @@ TestPamPlatformConfig makePlatform(const TempDirectory& temp) {
         std::filesystem::path(
             platform.passwordQualityConfigPath.string() + ".d")};
     platform.capabilities[1].configTopology = std::move(qualityTopology);
+    // Step 7D: the typed pwhistory config backend evaluates the REAL
+    // topology, so the test fixture must bind the descriptor default
+    // topology to the temporary primary path (no drop-ins upstream).
+    auto historyTopology = fic::identity::pam::pamProviderDescriptor(
+        fic::platform::PamProviderKind::PamPwhistory).defaultConfigTopology;
+    historyTopology.primaryPath = platform.passwordHistoryConfigPath;
+    platform.capabilities[2].configTopology = std::move(historyTopology);
     return platform;
 }
 
@@ -178,7 +186,8 @@ fic::identity::pam::PamCapabilityVerification verifyCapability(
         [capability](const auto& candidate) {
             return candidate.capability == capability;
         });
-    if (provider == fic::identity::pam::PamProviderKind::PamPwquality &&
+    if ((provider == fic::identity::pam::PamProviderKind::PamPwquality ||
+            provider == fic::identity::pam::PamProviderKind::PamPwhistory) &&
         capabilityConfig != platform.capabilities.end() &&
         !std::filesystem::exists(capabilityConfig->configPath)) {
         writeFile(capabilityConfig->configPath, "");
@@ -2684,6 +2693,283 @@ void testLegacyPwhistoryNativeRememberSemantics() {
             "explicit legacy remember=0 was considered effective");
 }
 
+// ---------------------------------------------------------------------------
+// Step 7D: typed pwhistory config evaluator + semantic backend.
+// ---------------------------------------------------------------------------
+
+using fic::identity::pam::PwhistoryConfigEvaluator;
+using fic::identity::pam::PwhistoryEffectiveState;
+
+fic::platform::PamProviderConfigTopology makePwhistoryTestTopology(
+    const std::filesystem::path& primary) {
+    fic::platform::PamProviderConfigTopology topology;
+    topology.primaryPath = primary;
+    topology.explicitConfig =
+        fic::platform::PamExplicitConfigSemantics::ReplacesNativeTopology;
+    return topology;
+}
+
+// Upstream fidelity of the config parser/evaluator:
+// pam_modutil_search_key first-match (case-insensitive) per key,
+// '#' comments, space/tab/'=' separators, conservative integer parsing;
+// defaults remember=10/retry=1; module argv parsed AFTER the config and
+// overrides it; missing primary fails closed (vendor fallback).
+void testPwhistoryConfigFirstMatchSemantics() {
+    TempDirectory temp;
+    const auto primary = temp.path() / "pwhistory.conf";
+    const auto topology = makePwhistoryTestTopology(primary);
+    const auto evaluate = [&](const std::string& content,
+                              const std::vector<std::string>& arguments = {},
+                              bool* ok = nullptr) {
+        writeFile(primary, content);
+        PwhistoryEffectiveState state;
+        std::string error;
+        const bool success =
+            PwhistoryConfigEvaluator::evaluateInvocation(
+                arguments, primary, 1, topology, state, error);
+        if (ok != nullptr) {
+            *ok = success;
+        }
+        return std::pair<PwhistoryEffectiveState, std::string>(state, error);
+    };
+
+    // First match wins; later duplicates are inert (a last-match
+    // implementation would report 40).
+    {
+        const auto [state, error] = evaluate("remember = 2\nremember = 40\n");
+        require(error.empty() && state.remember == 2,
+            "the evaluator must use the FIRST matching remember key, got " +
+                std::to_string(state.remember) + ": " + error);
+    }
+    // Case-insensitive first match.
+    {
+        const auto [state, error] =
+            evaluate("REMEMBER = 2\nReMeMbEr = 40\n");
+        require(error.empty() && state.remember == 2,
+            "the evaluator must match keys case-insensitively, got " +
+                std::to_string(state.remember) + ": " + error);
+    }
+    // Comments (full-line and inline), leading whitespace, separators.
+    {
+        const auto [state, error] = evaluate(
+            "# remember = 99\n   remember\t= 5 # trailing\nretry=3\n"
+            "remember  =  7\n");
+        require(error.empty() && state.remember == 5 && state.retry == 3,
+            "comment/whitespace/separator handling regressed: " + error);
+    }
+    // Defaults on an existing empty file.
+    {
+        const auto [state, error] = evaluate("");
+        require(error.empty() && state.remember == 10 && state.retry == 1 &&
+                    !state.enforceForRoot,
+            "upstream defaults remember=10/retry=1 were not modeled: " +
+                error);
+    }
+    // Presence flags in the config file (upstream enables them whenever
+    // the key search returns a value — the value is ignored).
+    {
+        const auto [state, error] = evaluate("enforce_for_root = 0\ndebug\n");
+        require(error.empty() && state.enforceForRoot && state.debug,
+            "config presence-flag semantics regressed: " + error);
+    }
+    // Unknown config keys are inert (upstream reads only the known keys).
+    {
+        const auto [state, error] = evaluate("whatever = 1\nremember = 4\n");
+        require(error.empty() && state.remember == 4,
+            "unknown config keys must stay inert: " + error);
+    }
+    // Malformed ACTIVE first occurrence of a known key → fail closed.
+    for (const auto& content : std::vector<std::string>{
+             "remember = abc\n", "remember\n", "remember =\n",
+             "remember = -3\n"}) {
+        bool ok = true;
+        evaluate(content, {}, &ok);
+        require(!ok,
+            "malformed pwhistory directive must fail closed: " + content);
+    }
+    // Missing primary fails closed (vendor fallback cannot be proven).
+    {
+        std::filesystem::remove(primary);
+        PwhistoryEffectiveState state;
+        std::string error;
+        require(!PwhistoryConfigEvaluator::evaluateInvocation(
+                    {}, primary, 1, topology, state, error),
+            "a missing pwhistory primary must fail closed");
+        require(error.find("does not exist") != std::string::npos,
+            "the absent-primary diagnostic is missing: " + error);
+    }
+    // Module argv parsed AFTER the config → overrides it (last-wins).
+    {
+        const auto [state, error] =
+            evaluate("remember = 5\n", {"use_authtok", "remember=20"});
+        require(error.empty() && state.remember == 20,
+            "the PAM argv remember must override the config file: " + error);
+    }
+    // argv remember=0 disables history (upstream PAM_IGNORE).
+    {
+        const auto [state, error] =
+            evaluate("remember = 5\n", {"remember=0"});
+        require(error.empty() && state.remember == 0,
+            "argv remember=0 must disable history: " + error);
+    }
+    // Upstream argv clamp [0, 400].
+    {
+        const auto [state, error] = evaluate("", {"remember=500"});
+        require(error.empty() && state.remember == 400,
+            "the upstream argv remember clamp must be modeled: " + error);
+    }
+    // Unknown PAM arguments fail closed (stricter than the upstream
+    // silent ignore, per the FIC ambiguous-input policy).
+    {
+        PwhistoryEffectiveState state;
+        std::string error;
+        writeFile(primary, "");
+        require(!PwhistoryConfigEvaluator::evaluateInvocation(
+                    {"nullok"}, primary, 1, topology, state, error),
+            "unknown pwhistory PAM arguments must fail closed");
+    }
+    // Valued enforce_for_root argv fails closed (ambiguous input).
+    {
+        PwhistoryEffectiveState state;
+        std::string error;
+        writeFile(primary, "");
+        require(!PwhistoryConfigEvaluator::evaluateInvocation(
+                    {"enforce_for_root=yes"}, primary, 1, topology, state,
+                    error),
+            "a valued pwhistory flag argument must fail closed");
+    }
+}
+
+// Semantic backend (verifyOption / canApplyOption) over the REAL config:
+// prospective BOF preflight, argv override preflight refusal, conf=
+// external contract, and the Debian 12 ModuleArguments backend priority.
+void testPwhistoryManagedOptionSemantics() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.passwordServices = {"passwd"};
+    platform.capabilities[2].topology =
+        fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+    writeFile(temp.path() / "security/pam_pwhistory.so", "test", 0555);
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() + "\n");
+    writeFile(platform.passwordHistoryConfigPath, "remember = 3\n");
+
+    const auto inspect = [&]() {
+        fic::identity::pam::PamConfiguration configuration(platform);
+        fic::identity::pam::PamProviderInspection inspection;
+        std::string error;
+        require(
+            fic::identity::pam::PamProviderInspector::inspect(
+                configuration, platform.passwordServices,
+                fic::identity::pam::PamCapability::PasswordHistory,
+                fic::identity::pam::PamProviderKind::PamPwhistory,
+                inspection, error),
+            error);
+        return inspection;
+    };
+    const auto& capability = platform.capabilities[2];
+
+    // §10: the CURRENT config remember=3 must NOT reject the prospective
+    // FIC BOF remember=10 (first-match override after the mutation).
+    std::string error;
+    require(
+        fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "the prospective BOF override must not be rejected by the current "
+        "foreign value: " + error);
+
+    // §11: the postcondition reads the ACTUAL physical config. Write a
+    // real FIC BOF block (canonical grammar) and prove the effective
+    // first-match value.
+    writeFile(
+        platform.passwordHistoryConfigPath,
+        "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 provider=pam_pwhistory "
+        "lead=none\n"
+        "# FIC_PAM_ENTRY_BEGIN version=1 "
+        "policy=password_history_depth mutation=42\n"
+        "remember = 10\n"
+        "# FIC_PAM_ENTRY_END\n"
+        "# FIC_PAM_PROVIDER_BLOCK_END\n"
+        "remember = 3\n");
+    require(
+        fic::identity::pam::PamProviderSemanticVerifier::verifyOption(
+            inspect(), capability, "remember", "10", error),
+        "the FIC BOF entry must be proven effective over the foreign "
+        "remember = 3: " + error);
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::verifyOption(
+            inspect(), capability, "remember", "3", error),
+        "the foreign remember = 3 must not satisfy the managed state");
+
+    // §29: a conflicting PAM argv override fails the preflight, and the
+    // postcondition proves the ARGV value, not the config value.
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " use_authtok remember=20\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "a conflicting PAM argv remember must fail the preflight closed");
+    require(
+        fic::identity::pam::PamProviderSemanticVerifier::verifyOption(
+            inspect(), capability, "remember", "20", error),
+        "the effective value under the argv override is 20: " + error);
+
+    // §30: a same-valued argv is acceptable.
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " remember=10\n");
+    require(
+        fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "a same-valued PAM argv remember must be acceptable: " + error);
+
+    // §31: a wrong conf= target must fail the preflight BEFORE any
+    // journal mutation would happen (the FIC file would be ineffective).
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=/tmp/other.conf\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "a wrong conf= target must fail the external config contract");
+
+    // §41: Debian 12 ModuleArguments capability keeps the specialized
+    // pwhistoryArguments backend with priority (the config evaluator is
+    // never reached there).
+    auto argumentsPlatform = platform;
+    argumentsPlatform.capabilities[2].configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
+    argumentsPlatform.capabilities[2].configPath =
+        "/etc/security/pwhistory.conf";
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so use_authtok remember=7\n");
+    {
+        fic::identity::pam::PamConfiguration configuration(argumentsPlatform);
+        fic::identity::pam::PamProviderInspection inspection;
+        require(
+            fic::identity::pam::PamProviderInspector::inspect(
+                configuration, argumentsPlatform.passwordServices,
+                fic::identity::pam::PamCapability::PasswordHistory,
+                fic::identity::pam::PamProviderKind::PamPwhistory,
+                inspection, error),
+            error);
+        require(
+            fic::identity::pam::PamProviderSemanticVerifier::verifyOption(
+                inspection, argumentsPlatform.capabilities[2], "remember",
+                "7", error),
+            "the ModuleArguments backend must keep priority on Debian 12: " +
+                error);
+    }
+}
+
 void testPasswordHistoryAlternativeIsDetected() {
     TempDirectory temp;
     const auto platform = makePlatform(temp);
@@ -3018,6 +3304,8 @@ int main() {
         testPamOptionValueCodec();
         testTrustedPamServiceAliasSecurityContract();
         testLegacyPwhistoryNativeRememberSemantics();
+        testPwhistoryConfigFirstMatchSemantics();
+        testPwhistoryManagedOptionSemantics();
         testPasswordHistoryAlternativeIsDetected();
         testPasswdqcConfigArgumentAndInlineOverride();
         testAltPasswdqcUsesOnlyLocalPasswordBranch();

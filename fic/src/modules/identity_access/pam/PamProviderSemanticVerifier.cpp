@@ -4,6 +4,7 @@
 #include "modules/identity_access/pam/PasswdqcConfigFile.h"
 #include "modules/identity_access/pam/PamPwhistoryArguments.h"
 #include "modules/identity_access/pam/PwqualityConfigFile.h"
+#include "modules/identity_access/pam/PwhistoryConfigFile.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -698,6 +699,266 @@ bool pwqualityCanApplyFlag(
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Step 7D: typed pwhistory config-file backend
+// (PamProviderSemanticBackendKind::Pwhistory). Models the REAL upstream
+// effective semantics:
+//
+//   * config file first-match per key (pam_modutil_search_key — case-
+//     insensitive, '#' comments, space/tab/'=' separators);
+//   * PAM module argv applied AFTER the config file (last-wins override);
+//   * missing primary → fail closed (vendor fallback cannot be proven);
+//   * external conf= contract through verifyExternalConfigContract
+//     (wrong/duplicate conf= is a preflight refusal, never a mutation).
+//
+// The Debian 12 ModuleArguments backend (pwhistoryArguments) keeps
+// priority in backendFor() and is never reached through this path.
+// ---------------------------------------------------------------------------
+
+fic::platform::PamProviderConfigTopology pwhistoryTopology(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability)
+{
+    if (capability.configTopology.has_value()) {
+        return *capability.configTopology;
+    }
+    return pamProviderDescriptor(inspection.provider).defaultConfigTopology;
+}
+
+// Prepares the topology for evaluating ONE provider rule. The external
+// conf= contract (verifyExternalConfigContract) already proves that the
+// module reads exactly capability.configPath — for rules that omit conf=
+// because the capability path must equal the default primary, and for
+// rules that pin conf= explicitly. The evaluated primary is therefore
+// ALWAYS capability.configPath (synthetic inspection capabilities without
+// a configTopology stay correct). Upstream missing-file semantics:
+//   * an explicitly conf=-selected missing file yields the BUILT-IN
+//     defaults (no vendor fallback for explicit conf=);
+//   * a missing DEFAULT primary may activate the VENDOR fallback, which
+//     FIC cannot prove → fail closed.
+bool preparePwhistoryRuleTopology(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const PamRule& rule,
+    fic::platform::PamProviderConfigTopology& topology,
+    std::string& error)
+{
+    topology = pwhistoryTopology(inspection, capability);
+    topology.primaryPath = capability.configPath;
+    bool primaryExists = false;
+    if (!pathExists(capability.configPath, primaryExists, error)) {
+        return false;
+    }
+    if (primaryExists) {
+        return true;
+    }
+    const auto& descriptor = pamProviderDescriptor(inspection.provider);
+    const bool explicitConfSelected =
+        PamProviderInspector::argumentValue(
+            rule, descriptor.externalConfigArgument).has_value();
+    if (!explicitConfSelected) {
+        error = "pam_pwhistory default primary configuration is absent: " +
+            capability.configPath.string() +
+            "; the vendor fallback topology cannot be proven (fail closed)";
+        return false;
+    }
+    // Explicit conf= to a missing file: upstream uses the built-in
+    // defaults — model that by evaluating no config file at all.
+    topology.primaryPath.reset();
+    return true;
+}
+
+bool evaluatePwhistory(const PamProviderInspection& inspection,
+                       const fic::platform::PamCapabilityConfig& capability,
+                       const PamRule& rule,
+                       PwhistoryEffectiveState& state,
+                       std::string& error)
+{
+    fic::platform::PamProviderConfigTopology topology;
+    if (!preparePwhistoryRuleTopology(
+            inspection, capability, rule, topology, error)) {
+        return false;
+    }
+    return PwhistoryConfigEvaluator::evaluateInvocation(
+        rule.arguments, rule.source, rule.line, topology, state, error);
+}
+
+bool pwhistoryCapability(const PamProviderInspection& inspection,
+                         const fic::platform::PamCapabilityConfig& capability,
+                         bool requireSecurityEnforcement,
+                         PamProviderSemanticFailure& failure,
+                         std::string& error)
+{
+    if (!PamProviderInspector::verifyExternalConfigContract(
+            inspection, capability, error) ||
+        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        failure = PamProviderSemanticFailure::Broken;
+        return false;
+    }
+    for (const auto& rule : inspection.providerRules) {
+        PwhistoryEffectiveState state;
+        if (!evaluatePwhistory(inspection, capability, rule, state, error)) {
+            failure = PamProviderSemanticFailure::Broken;
+            return false;
+        }
+        if (requireSecurityEnforcement && state.remember == 0) {
+            failure = PamProviderSemanticFailure::Ineffective;
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": pam_pwhistory effective remember is disabled "
+                "(PAM_IGNORE upstream)";
+            return false;
+        }
+    }
+    failure = PamProviderSemanticFailure::None;
+    error.clear();
+    return true;
+}
+
+bool pwhistoryStateSatisfiesOption(
+    const PwhistoryEffectiveState& state,
+    const PamRule& rule,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
+    std::string effectiveValue;
+    if (!state.managedValue(option, effectiveValue, error)) {
+        return false;
+    }
+    if (effectiveValue != expectedValue) {
+        error = rule.source.string() + ":" +
+            std::to_string(rule.line) + ": effective pwhistory " + option +
+            " is " + effectiveValue + ", expected " + expectedValue;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool pwhistoryOption(const PamProviderInspection& inspection,
+                     const fic::platform::PamCapabilityConfig& capability,
+                     const std::string& option,
+                     const std::string& expectedValue,
+                     std::string& error)
+{
+    if (!PamProviderInspector::verifyExternalConfigContract(
+            inspection, capability, error) ||
+        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        return false;
+    }
+    for (const auto& rule : inspection.providerRules) {
+        PwhistoryEffectiveState state;
+        if (!evaluatePwhistory(inspection, capability, rule, state, error)) {
+            return false;
+        }
+        if (!pwhistoryStateSatisfiesOption(
+                state, rule, option, expectedValue, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool pwhistoryFlag(const PamProviderInspection& inspection,
+                   const fic::platform::PamCapabilityConfig& capability,
+                   const std::string& flag,
+                   bool expectedEnabled,
+                   const std::vector<std::string>&,
+                   std::string& error)
+{
+    if (flag != "enforce_for_root") {
+        error = "unsupported managed pwhistory flag " + flag;
+        return false;
+    }
+    if (!PamProviderInspector::verifyExternalConfigContract(
+            inspection, capability, error) ||
+        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        return false;
+    }
+    for (const auto& rule : inspection.providerRules) {
+        PwhistoryEffectiveState state;
+        if (!evaluatePwhistory(inspection, capability, rule, state, error)) {
+            return false;
+        }
+        if (state.enforceForRoot != expectedEnabled) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": effective pwhistory enforce_for_root is " +
+                (state.enforceForRoot ? "enabled" : "disabled") +
+                ", expected " +
+                (expectedEnabled ? "enabled" : "disabled") +
+                ": a PAM module argument or foreign config entry overrides "
+                "the requested state";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool pwhistoryCanApplyOption(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& option,
+    const std::string& expectedValue,
+    std::string& error)
+{
+    // Structural + unmanaged-input preflight; the effective-remember
+    // security check is subsumed by the prospective exact-value proof
+    // below (the managed BOF entry is the FIRST match after the
+    // mutation, so a CURRENT foreign remember value is never a rejection
+    // reason — only PAM argv overrides and unsafe inputs are).
+    if (!PamProviderInspector::verifyExternalConfigContract(
+            inspection, capability, error) ||
+        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        return false;
+    }
+    for (const auto& rule : inspection.providerRules) {
+        fic::platform::PamProviderConfigTopology topology;
+        if (!preparePwhistoryRuleTopology(
+                inspection, capability, rule, topology, error)) {
+            return false;
+        }
+        PwhistoryEffectiveState state;
+        if (!PwhistoryConfigEvaluator::evaluateInvocationWithManagedOption(
+                rule.arguments, rule.source, rule.line, topology,
+                option, expectedValue, state, error) ||
+            !pwhistoryStateSatisfiesOption(
+                state, rule, option, expectedValue, error)) {
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
+bool pwhistoryCanApplyFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
+    // Step 7E will own the flag mutation; until then the flag stays on
+    // the legacy writer path, so the preflight only proves that nothing
+    // prevents the legacy apply (module argv overrides, unmanaged or
+    // unsafe inputs, broken external contract) — the CURRENT config flag
+    // state is deliberately NOT compared here.
+    if (flag != "enforce_for_root") {
+        error = "unsupported managed pwhistory flag " + flag;
+        return false;
+    }
+    if (!PamProviderInspector::verifyExternalConfigContract(
+            inspection, capability, error) ||
+        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        return false;
+    }
+    return verifyGenericFlagArguments(
+        inspection, flag, expectedEnabled,
+        conflictingOptionsWhenDisabled, error);
+}
+
 const SemanticBackend& backendFor(PamProviderSemanticBackendKind kind)
 {
     static const SemanticBackend generic{
@@ -709,6 +970,9 @@ const SemanticBackend& backendFor(PamProviderSemanticBackendKind kind)
     static const SemanticBackend passwdqc{
         passwdqcCapability, passwdqcOption, passwdqcFlag,
         typedManagedConfigCanApplyOption, typedManagedConfigCanApplyFlag};
+    static const SemanticBackend pwhistory{
+        pwhistoryCapability, pwhistoryOption, pwhistoryFlag,
+        pwhistoryCanApplyOption, pwhistoryCanApplyFlag};
     switch (kind) {
     case PamProviderSemanticBackendKind::Generic:
         return generic;
@@ -716,6 +980,8 @@ const SemanticBackend& backendFor(PamProviderSemanticBackendKind kind)
         return pwquality;
     case PamProviderSemanticBackendKind::Passwdqc:
         return passwdqc;
+    case PamProviderSemanticBackendKind::Pwhistory:
+        return pwhistory;
     }
     return generic;
 }

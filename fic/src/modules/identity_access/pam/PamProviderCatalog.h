@@ -31,7 +31,12 @@ enum class PamExternalConfigMode {
 enum class PamProviderSemanticBackendKind {
     Generic,
     Pwquality,
-    Passwdqc
+    Passwdqc,
+    // Step 7D: typed pwhistory config evaluator (first-match
+    // pam_modutil_search_key semantics + module argv last-wins). The
+    // ModuleArguments capability mode (Debian 12) keeps the specialized
+    // pwhistoryArguments backend regardless of this descriptor value.
+    Pwhistory
 };
 
 struct PamProviderPolicyBinding {

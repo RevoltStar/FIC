@@ -316,13 +316,23 @@ bool PamOptionPolicy::applyManagedProviderEntry(
     request.managedKey = binding.option;
     request.nativeValue = nativeExpectedValue;
     request.configPath = capability.configPath;
-    // Typed placement decision (Step 7C): faillock and pwquality scalar
-    // assignments are last-wins → EOF primary (pwquality drop-ins are
-    // applied BEFORE the primary by the PwqualityConfigEvaluator
-    // DropInsThenPrimary model, so EOF primary outranks them). Step 7D
-    // (pam_pwhistory → Beginning) is one typed case in the helper.
-    request.placement = fic::identity::pam::pamProviderManagedEntryPlacement(
-        provider, feature_);
+    // Typed placement decision (Step 7B/7C/7D): the helper is the SINGLE
+    // whitelist+placement source (faillock and pwquality scalar
+    // assignments are last-wins → EOF primary; pam_pwhistory
+    // password_history_depth is first-match → Beginning). An unroutable
+    // combination has NO placement: fail closed BEFORE any journal
+    // mutation instead of silently assuming End (defense in depth against
+    // a future erroneous whitelist expansion).
+    const auto placement = fic::identity::pam::pamProviderManagedEntryPlacement(
+        provider, capability, feature_);
+    if (!placement.has_value()) {
+        this->log(
+            "PAM managed provider entry has no typed placement contract "
+            "for " + this->policyName + " (fail closed)",
+            logLevel::ERROR);
+        return false;
+    }
+    request.placement = *placement;
     request.absentDecision =
         fic::identity::pam::pamProviderAbsentContainerDecision(provider);
 

@@ -3,6 +3,7 @@
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
 #include "modules/identity_access/pam/PamProviderManagedBlockFile.h"
 #include "modules/identity_access/pam/PwqualityConfigFile.h"
+#include "modules/identity_access/pam/PwhistoryConfigFile.h"
 #include "platform/PlatformProfile.h"
 #include "rollback/MutationJournal.h"
 #include "rollback/MutationRecord.h"
@@ -36,6 +37,12 @@ void require(bool condition, const std::string& message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+bool endsWith(const std::string& value, const std::string& suffix) {
+    return value.size() >= suffix.size() &&
+        value.compare(value.size() - suffix.size(), suffix.size(), suffix) ==
+            0;
 }
 
 class TempDir {
@@ -77,6 +84,9 @@ struct Harness {
     std::filesystem::path pwqualityDropInDirectory() const {
         return pwqualityConfigPath.parent_path() / "pwquality.conf.d";
     }
+    // Step 7D: the pam_pwhistory provider primary of the same harness.
+    std::filesystem::path pwhistoryConfigPath =
+        temp.directory / "pwhistory.conf";
     MutationJournal journal;
     std::string error;
     // Semantic verification sequence: the executor must pass the EXACT
@@ -136,9 +146,30 @@ struct Harness {
         return request;
     }
 
+    // Step 7D: the pam_pwhistory provider variant of the same request
+    // against the pwhistory primary of this harness. The upstream
+    // pam_modutil_search_key first-match semantics require BOF placement.
+    PamProviderManagedEntryRequest pwhistoryRequest(
+        const std::string& policyName, const std::string& key,
+        const std::string& value,
+        PamProviderAbsentContainerDecision absentDecision =
+            PamProviderAbsentContainerDecision::FailClosed) const {
+        PamProviderManagedEntryRequest request;
+        request.policyName = policyName;
+        request.provider = PamProviderKind::PamPwhistory;
+        request.providerName = "pam_pwhistory";
+        request.managedKey = key;
+        request.nativeValue = value;
+        request.configPath = pwhistoryConfigPath;
+        request.placement = PamProviderBlockPlacementRequest::Beginning;
+        request.absentDecision = absentDecision;
+        return request;
+    }
+
     bool apply(const PamProviderManagedEntryRequest& request,
         PamProviderManagedEntryOutcome& outcome) {
         verifiedValues.clear();
+        error.clear();
         return PamProviderManagedEntryExecutor::apply(request, journal,
             [this](const std::string& expectedNativeValue,
                 std::string& semanticError) {
@@ -218,7 +249,9 @@ MutationId prepareEntryRecord(Harness& harness,
     const std::string& policyName, const std::string& appliedBody,
     const std::string& previousBody,
     const std::string& providerName = "pam_faillock",
-    const std::filesystem::path& configPath = std::filesystem::path{}) {
+    const std::filesystem::path& configPath = std::filesystem::path{},
+    PamProviderBlockPlacementRequest placement =
+        PamProviderBlockPlacementRequest::End) {
     UndoRemovePamProviderManagedEntry payload;
     payload.policyName = policyName;
     payload.providerName = providerName;
@@ -228,7 +261,9 @@ MutationId prepareEntryRecord(Harness& harness,
     payload.appliedBody = appliedBody;
     payload.previousAppliedBody = previousBody;
     payload.placement =
-        fic::rollback::PamProviderBlockPlacementContract::End;
+        placement == PamProviderBlockPlacementRequest::Beginning
+        ? fic::rollback::PamProviderBlockPlacementContract::Beginning
+        : fic::rollback::PamProviderBlockPlacementContract::End;
 
     MutationRecord record;
     record.policy = {"IDENTITY_ACCESS", "PAM", policyName};
@@ -249,11 +284,12 @@ void writePhysicalEntry(Harness& harness, const std::string& baseContent,
     const std::string& policyName, const std::string& key,
     const std::string& value, MutationId id,
     const std::string& providerName = "pam_faillock",
-    const std::filesystem::path& configPath = std::filesystem::path{}) {
+    const std::filesystem::path& configPath = std::filesystem::path{},
+    PamProviderBlockPlacementRequest placement =
+        PamProviderBlockPlacementRequest::End) {
     auto spec = PamProviderEntrySpec{providerName, policyName, key, value,
         static_cast<std::uint64_t>(id)};
-    auto mutation = setPamProviderManagedEntry(baseContent, spec,
-        PamProviderBlockPlacementRequest::End);
+    auto mutation = setPamProviderManagedEntry(baseContent, spec, placement);
     require(mutation.ok, mutation.error);
     writeFile(configPath.empty() ? harness.configPath : configPath,
         mutation.content);
@@ -267,7 +303,9 @@ MutationId prepareUpdateTransaction(Harness& harness,
     const std::string& policyName, const std::string& key,
     const std::string& previousBody, const std::string& targetBody,
     const std::string& providerName = "pam_faillock",
-    const std::filesystem::path& configPath = std::filesystem::path{}) {
+    const std::filesystem::path& configPath = std::filesystem::path{},
+    PamProviderBlockPlacementRequest placement =
+        PamProviderBlockPlacementRequest::End) {
     UndoRemovePamProviderManagedEntry payload;
     payload.policyName = policyName;
     payload.providerName = providerName;
@@ -277,7 +315,9 @@ MutationId prepareUpdateTransaction(Harness& harness,
     payload.appliedBody = targetBody;
     payload.previousAppliedBody = previousBody;
     payload.placement =
-        fic::rollback::PamProviderBlockPlacementContract::End;
+        placement == PamProviderBlockPlacementRequest::Beginning
+        ? fic::rollback::PamProviderBlockPlacementContract::Beginning
+        : fic::rollback::PamProviderBlockPlacementContract::End;
     MutationRecord update;
     update.policy = {"IDENTITY_ACCESS", "PAM", policyName};
     update.resource = payload.configPath;
@@ -420,6 +460,64 @@ void testRoutingDecision() {
                 PamPolicyFeature::PasswordQualityEnforceForRoot),
         "pwquality flag syntax must stay on the legacy path");
 
+    // Step 7D: pam_pwhistory password_history_depth uses the managed
+    // entry path ONLY for the current Debian 13 / Ubuntu 24.04 / Ubuntu
+    // 26.04-style typed contract (ProviderConfigFile + PamAuthUpdate).
+    // Debian 12 (ModuleArguments), ALT p11 (AltTcbManaged) and the
+    // enforce_for_root flag (Step 7E) stay outside the route. No distro
+    // name is ever consulted — the typed topology/configuration contract
+    // is the whole decision.
+    PamProviderDescriptor pwhistory;
+    pwhistory.kind = PamProviderKind::PamPwhistory;
+    pwhistory.name = "pam_pwhistory";
+    pwhistory.defaultConfigTopology.explicitConfig =
+        fic::platform::PamExplicitConfigSemantics::ReplacesNativeTopology;
+    fic::platform::PamCapabilityConfig pwhistoryCapability;
+    pwhistoryCapability.provider = PamProviderKind::PamPwhistory;
+    pwhistoryCapability.configurationMode =
+        PamCapabilityConfigurationMode::ProviderConfigFile;
+    pwhistoryCapability.topology =
+        fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
+    pwhistoryCapability.configPath = "/etc/security/pwhistory.conf";
+
+    const auto depth = assignmentBinding(
+        PamPolicyFeature::PasswordHistoryDepth, "remember");
+    require(usesPamProviderManagedEntry(pwhistory, pwhistoryCapability,
+                depth, PamPolicyFeature::PasswordHistoryDepth),
+        "pwhistory depth must use the managed entry path on "
+        "ProviderConfigFile + PamAuthUpdate platforms");
+
+    // ALT p11: AltTcbManaged topology keeps the legacy
+    // /etc/security/fic-pwhistory.conf ownership (Step 7D routing false).
+    auto altPwhistoryCapability = pwhistoryCapability;
+    altPwhistoryCapability.topology =
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged;
+    altPwhistoryCapability.configPath =
+        "/etc/security/fic-pwhistory.conf";
+    require(!usesPamProviderManagedEntry(pwhistory, altPwhistoryCapability,
+                depth, PamPolicyFeature::PasswordHistoryDepth),
+        "ALT AltTcbManaged pwhistory must stay on the legacy path");
+
+    // Debian 12: ModuleArguments keeps the Step 6 joint coordinator.
+    auto argumentsPwhistoryCapability = pwhistoryCapability;
+    argumentsPwhistoryCapability.configurationMode =
+        PamCapabilityConfigurationMode::ModuleArguments;
+    require(!usesPamProviderManagedEntry(pwhistory,
+                argumentsPwhistoryCapability, depth,
+                PamPolicyFeature::PasswordHistoryDepth),
+        "Debian 12 ModuleArguments pwhistory must stay on the Step 6 "
+        "coordinator path");
+
+    // enforce_for_root (Flag) — Step 7E stays legacy even on the managed
+    // D13/U24/U26 contract.
+    const auto historyEnforceForRoot = assignmentBinding(
+        PamPolicyFeature::PasswordHistoryEnforceForRoot,
+        "enforce_for_root");
+    require(!usesPamProviderManagedEntry(pwhistory, pwhistoryCapability,
+                historyEnforceForRoot,
+                PamPolicyFeature::PasswordHistoryEnforceForRoot),
+        "pwhistory enforce_for_root must stay on the legacy path (Step 7E)");
+
     // Faillock whitelist must not accept pwquality features and vice versa.
     const auto minLength = assignmentBinding(
         PamPolicyFeature::PasswordMinLength, "minlen");
@@ -438,16 +536,40 @@ void testRoutingDecision() {
                 passwdqcMin, PamPolicyFeature::PasswdqcStrengthThresholds),
         "passwdqc must stay on the legacy path");
 
-    // Typed placement contract: faillock and pwquality scalars are
-    // last-wins → EOF primary.
-    require(pamProviderManagedEntryPlacement(provider,
+    // Typed placement contract (TOTAL helper, no silent End fallback):
+    // faillock/pwquality scalars are last-wins → EOF; the pwhistory
+    // depth is first-match → BOF; every unroutable combination has NO
+    // placement.
+    require(pamProviderManagedEntryPlacement(provider, capability,
                 PamPolicyFeature::FailedAuthenticationAttempts) ==
                 PamProviderBlockPlacementRequest::End,
         "faillock managed placement must be EOF");
-    require(pamProviderManagedEntryPlacement(pwquality,
+    require(pamProviderManagedEntryPlacement(pwquality, pwqualityCapability,
                 PamPolicyFeature::PasswordMinLength) ==
                 PamProviderBlockPlacementRequest::End,
         "pwquality managed placement must be EOF");
+    require(pamProviderManagedEntryPlacement(pwhistory,
+                pwhistoryCapability,
+                PamPolicyFeature::PasswordHistoryDepth) ==
+                PamProviderBlockPlacementRequest::Beginning,
+        "pwhistory depth managed placement must be BOF (upstream "
+        "pam_modutil_search_key first-match semantics)");
+    require(!pamProviderManagedEntryPlacement(pwhistory,
+                altPwhistoryCapability,
+                PamPolicyFeature::PasswordHistoryDepth).has_value(),
+        "the ALT AltTcbManaged pwhistory combination must have NO "
+        "placement contract");
+    require(!pamProviderManagedEntryPlacement(pwhistory,
+                pwhistoryCapability,
+                PamPolicyFeature::PasswordHistoryEnforceForRoot)
+                .has_value(),
+        "the pwhistory flag combination must have NO placement contract");
+    require(!pamProviderManagedEntryPlacement(provider, capability,
+                PamPolicyFeature::PasswordMinLength).has_value(),
+        "an unrouted faillock feature must have NO placement contract");
+    require(!pamProviderManagedEntryPlacement(passwdqc, pwqualityCapability,
+                PamPolicyFeature::PasswdqcStrengthThresholds).has_value(),
+        "passwdqc must have NO placement contract");
 
     require(pamProviderAbsentContainerDecision(provider) ==
                 PamProviderAbsentContainerDecision::FailClosed,
@@ -1920,6 +2042,604 @@ void testProviderSeparationFaillockPwqualityCoexist() {
         "the pwquality entry record stays Applied");
 }
 
+// ---------------------------------------------------------------------------
+// Step 7D: pam_pwhistory managed entries at BOF placement.
+// ---------------------------------------------------------------------------
+
+// Evaluates the REAL upstream pwhistory semantics over the harness primary
+// (first-match per key + module argv last-wins) — the same evaluator the
+// production semantic backend uses.
+PwhistoryEffectiveState evaluatePwhistoryHarness(
+    const Harness& harness, const std::vector<std::string>& arguments = {},
+    bool managedRememberOverride = false,
+    const std::string& managedValue = {}) {
+    fic::platform::PamProviderConfigTopology topology;
+    topology.primaryPath = harness.pwhistoryConfigPath;
+    topology.explicitConfig =
+        fic::platform::PamExplicitConfigSemantics::ReplacesNativeTopology;
+    PwhistoryEffectiveState state;
+    std::string error;
+    const bool ok = managedRememberOverride
+        ? PwhistoryConfigEvaluator::evaluateInvocationWithManagedOption(
+              arguments, harness.pwhistoryConfigPath, 1, topology,
+              "remember", managedValue, state, error)
+        : PwhistoryConfigEvaluator::evaluateInvocation(
+              arguments, harness.pwhistoryConfigPath, 1, topology, state,
+              error);
+    require(ok, "pwhistory topology evaluation failed: " + error);
+    return state;
+}
+
+// §24: the FIRST production BOF consumer of the managed-entry executor.
+// The FIC block lands at the beginning of an existing foreign primary,
+// foreign bytes survive byte-exact AFTER the block, exactly one entry
+// carries the journal mutation id, no container provenance is fabricated
+// for the pre-existing primary, and the real evaluator proves effective
+// remember == 10 over the foreign duplicates.
+void testPwhistoryBeginningBlockIntegration() {
+    Harness harness;
+    const std::string foreign =
+        "# admin comment\nremember = 3\nretry = 4\nremember = 7\n";
+    writeFile(harness.pwhistoryConfigPath, foreign);
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10"),
+                          outcome),
+        harness.error);
+    require(outcome == PamProviderManagedEntryOutcome::Applied,
+        "fresh pwhistory apply must be Applied");
+
+    // Physical: block at BOF, one entry, foreign bytes byte-exact after.
+    auto parse = harness.parse(harness.pwhistoryConfigPath);
+    require(parse.ok && parse.view.present,
+        "strict parse of the pwhistory block failed: " + parse.error);
+    require(parse.view.provider == "pam_pwhistory", "provider mismatch");
+    require(parse.view.atBeginning,
+        "the pwhistory block must sit at the beginning of the file");
+    require(parse.view.entries.size() == 1,
+        "exactly one pwhistory FIC entry expected");
+    require(parse.view.entries.front().body == "remember = 10",
+        "the entry body must carry the native remember value");
+    require(endsWith(readFile(harness.pwhistoryConfigPath), foreign),
+        "the foreign bytes must survive byte-exact after the FIC block");
+
+    // Journal: entry Applied at Beginning placement, NO container record
+    // for the pre-existing primary.
+    const auto record = harness.soleEntryRecord(
+        "password_history_depth", "pwhistory BOF integration");
+    require(record.status == MutationStatus::Applied,
+        "the pwhistory entry record must be Applied");
+    const auto* payload = std::get_if<UndoRemovePamProviderManagedEntry>(
+        &record.undo.payload);
+    require(payload != nullptr, "entry payload type mismatch");
+    require(payload->appliedBody == "remember = 10", "payload body mismatch");
+    require(payload->placement ==
+                fic::rollback::PamProviderBlockPlacementContract::Beginning,
+        "the journal placement contract must be Beginning");
+    require(harness.containerRecords("pam_pwhistory").empty(),
+        "a pre-existing pwhistory primary must never receive container "
+        "provenance");
+
+    // Semantic: the REAL evaluator proves the first-match effective value.
+    const auto state = evaluatePwhistoryHarness(harness);
+    require(state.remember == 10,
+        "effective first-match remember must be 10, got " +
+            std::to_string(state.remember));
+    require(state.retry == 4,
+        "the foreign retry = 4 must stay effective (FIC never touched it)");
+}
+
+// §25: BOF foreign separator ownership — insertion/refresh must not lose
+// foreign bytes or normalize foreign line endings, for BOTH a file with a
+// terminal LF and a file WITHOUT a terminal LF.
+void testPwhistoryForeignSeparatorOwnership() {
+    // File with a normal terminal newline.
+    {
+        Harness harness;
+        writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 3\n");
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "10")),
+            harness.error);
+        require(endsWith(readFile(harness.pwhistoryConfigPath),
+                    "# admin\nremember = 3\n"),
+            "foreign bytes must survive the BOF insertion byte-exact");
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "20")),
+            harness.error);
+        require(endsWith(readFile(harness.pwhistoryConfigPath),
+                    "# admin\nremember = 3\n"),
+            "foreign bytes must survive the refresh byte-exact");
+        auto parse = harness.parse(harness.pwhistoryConfigPath);
+        require(parse.ok && parse.view.entries.size() == 1 &&
+                    parse.view.entries.front().body == "remember = 20" &&
+                    parse.view.atBeginning,
+            "the refreshed entry must stay exact-owned at BOF");
+    }
+    // File WITHOUT a terminal newline.
+    {
+        Harness harness;
+        writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 3");
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "10")),
+            harness.error);
+        const std::string afterInsert =
+            readFile(harness.pwhistoryConfigPath);
+        require(endsWith(afterInsert, "# admin\nremember = 3") &&
+                    !endsWith(afterInsert, "remember = 3\n"),
+            "the missing terminal LF is foreign byte ownership: FIC must "
+            "not normalize it");
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "20")),
+            harness.error);
+        const std::string afterRefresh =
+            readFile(harness.pwhistoryConfigPath);
+        require(endsWith(afterRefresh, "# admin\nremember = 3") &&
+                    !endsWith(afterRefresh, "remember = 3\n"),
+            "the refresh must keep the foreign no-final-newline shape");
+        auto parse = harness.parse(harness.pwhistoryConfigPath);
+        require(parse.ok && parse.view.entries.size() == 1 &&
+                    parse.view.entries.front().body == "remember = 20" &&
+                    parse.view.atBeginning,
+            "the strict block grammar must survive the refresh");
+    }
+}
+
+// §32/§34: an existing (even EMPTY) primary is PreExisting — success with
+// no container provenance; an ABSENT primary is FailClosed (vendor
+// fallback risk): no create, no records, no false ownership.
+void testPwhistoryEmptyAndAbsentPrimary() {
+    // Pre-existing empty primary → success, block at BOF, no records.
+    {
+        Harness harness;
+        writeFile(harness.pwhistoryConfigPath, "");
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "10")),
+            harness.error);
+        auto parse = harness.parse(harness.pwhistoryConfigPath);
+        require(parse.ok && parse.view.entries.size() == 1 &&
+                    parse.view.entries.front().body == "remember = 10" &&
+                    parse.view.atBeginning,
+            "the FIC block must be created at BOF of the empty primary");
+        require(harness.containerRecords("pam_pwhistory").empty(),
+            "an existing (even empty) primary is PreExisting — no "
+            "container provenance");
+    }
+    // Absent primary → FailClosed, no create, no records.
+    {
+        Harness harness;
+        PamProviderManagedEntryOutcome outcome;
+        require(!harness.apply(harness.pwhistoryRequest(
+                                   "password_history_depth", "remember",
+                                   "10"),
+                             outcome),
+            "an absent pwhistory primary must fail closed (vendor "
+            "fallback cannot be proven)");
+        require(!std::filesystem::exists(harness.pwhistoryConfigPath),
+            "an absent pwhistory primary must not be created");
+        require(harness.entryRecords("password_history_depth").empty() &&
+                    harness.containerRecords("pam_pwhistory").empty(),
+            "a refused absent-primary apply must prepare NO journal "
+            "records");
+    }
+}
+
+// §33: existing primary metadata (mode 0600) is preserved by the managed
+// BOF mutation (Step 7A PreserveExisting primitive).
+void testPwhistoryMetadataPreservation() {
+    Harness harness;
+    writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 3\n");
+    std::filesystem::permissions(harness.pwhistoryConfigPath,
+        std::filesystem::perms::owner_read |
+            std::filesystem::perms::owner_write);
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+    const auto permissions =
+        std::filesystem::status(harness.pwhistoryConfigPath).permissions();
+    require(permissions == (std::filesystem::perms::owner_read |
+                               std::filesystem::perms::owner_write),
+        "the existing pwhistory primary mode 0600 must be preserved, got " +
+            std::to_string(static_cast<unsigned int>(permissions)));
+}
+
+// §26/§28: block displacement at BOF. After a successful apply the
+// administrator prepends `REMEMBER = 2` (case-variant foreign key —
+// upstream search is case-insensitive, so the effective remember becomes
+// 2 while the FIC entry stays exact-owned). The next SAME-desired apply
+// must: prove exact ownership, see the placement violation, safely
+// relocate the owned block back to BOF, keep ALL foreign bytes byte-exact
+// and in order, keep the SAME journal record id, and prove effective
+// remember == 10 afterwards.
+void testPwhistoryDisplacementRelocation() {
+    Harness harness;
+    const std::string foreign = "# admin\nremember = 3\nremember = 7\n";
+    writeFile(harness.pwhistoryConfigPath, foreign);
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+    const MutationId id = harness.soleEntryRecord(
+        "password_history_depth", "displacement base").id;
+
+    // The administrator prepends a case-variant foreign key.
+    writeFile(harness.pwhistoryConfigPath,
+        "REMEMBER = 2\n" +
+            readFile(harness.pwhistoryConfigPath));
+
+    // Semantic postcondition BEFORE relocation: the effective first-match
+    // remember is the foreign 2 (case-insensitive first match), even
+    // though the FIC entry is still physically exact-owned.
+    {
+        const auto displaced = evaluatePwhistoryHarness(harness);
+        require(displaced.remember == 2,
+            "the displaced case-variant foreign key must be effective "
+            "before relocation, got " + std::to_string(displaced.remember));
+    }
+
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+
+    const std::string relocated = readFile(harness.pwhistoryConfigPath);
+    // Block relocated to BOF; the foreign prepend and the original
+    // foreign bytes survive byte-exact and in the same mutual order.
+    require(relocated.find(
+                "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 "
+                "provider=pam_pwhistory") == 0,
+        "the owned block must be relocated back to the beginning");
+    require(endsWith(relocated, "REMEMBER = 2\n" + foreign),
+        "the foreign prepend and foreign bytes must survive byte-exact "
+        "and in order");
+    auto parse = harness.parse(harness.pwhistoryConfigPath);
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "remember = 10" &&
+                parse.view.entries.front().mutationId == id &&
+                parse.view.atBeginning,
+        "the relocated entry must keep its body and SAME mutation id");
+    // Same journal record, no new record, same id.
+    const auto record = harness.soleEntryRecord(
+        "password_history_depth", "displacement relocation");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "the relocation must reuse the SAME journal record id");
+    // Semantic: effective remember is the FIC value again.
+    const auto state = evaluatePwhistoryHarness(harness);
+    require(state.remember == 10,
+        "after relocation the effective first-match remember must be 10, "
+        "got " + std::to_string(state.remember));
+}
+
+// §37: placement drift is NOT body drift. A DISPLACED exact-owned block
+// is safely relocated (see the displacement test); a WRONG body under the
+// same id is AppliedDrifted — fail closed, never relocated or rewritten
+// "as if placement-only".
+void testPwhistoryPlacementDriftIsNotBodyDrift() {
+    Harness harness;
+    writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 5\n");
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+    const MutationId id = harness.soleEntryRecord(
+        "password_history_depth", "drift distinction base").id;
+
+    // Foreign prepend + manual body edit of the exact-owned entry
+    // (drifted body under the SAME id, also displaced).
+    std::string content = "REMEMBER = 2\n" +
+        readFile(harness.pwhistoryConfigPath);
+    const std::size_t bodyPosition =
+        content.find("remember = 10\n# FIC_PAM_ENTRY_END");
+    require(bodyPosition != std::string::npos,
+        "test fixture corruption: FIC entry body not found");
+    content.replace(bodyPosition, std::string("remember = 10").size(),
+        "remember = 11");
+    writeFile(harness.pwhistoryConfigPath, content);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(!harness.apply(harness.pwhistoryRequest(
+                               "password_history_depth", "remember", "10"),
+                           outcome),
+        "a wrong body under the same id must fail closed even when the "
+        "block is also displaced");
+    require(harness.error.find("Drifted") != std::string::npos ||
+                harness.error.find("drift") != std::string::npos,
+        "the drift diagnostic must be typed: " + harness.error);
+    const std::string after = readFile(harness.pwhistoryConfigPath);
+    require(after.find("remember = 11") != std::string::npos &&
+                after.find("REMEMBER = 2\n") == 0,
+        "the drifted body and foreign prepend must stay untouched (no "
+        "rewrite, no relocation of a drifted block)");
+    const auto record = harness.soleEntryRecord(
+        "password_history_depth", "drift distinction");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "the Applied record must stay untouched (never rewritten)");
+}
+
+// §27: first-match duplicate regression. `remember = 2` followed by
+// `remember = 40` is effective 2 upstream; after the FIC BOF apply the
+// effective value MUST be 10, not the LAST foreign duplicate 40. A
+// last-match evaluator implementation would fail this test.
+void testPwhistoryFirstMatchDuplicates() {
+    Harness harness;
+    writeFile(harness.pwhistoryConfigPath,
+        "remember = 2\nremember = 40\n");
+    {
+        const auto before = evaluatePwhistoryHarness(harness);
+        require(before.remember == 2,
+            "the evaluator must use FIRST-match, got " +
+                std::to_string(before.remember));
+    }
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+    const auto state = evaluatePwhistoryHarness(harness);
+    require(state.remember == 10,
+        "the FIC BOF entry must outrank BOTH foreign duplicates "
+        "(effective 10, not last-match 40), got " +
+            std::to_string(state.remember));
+}
+
+// §28: case-insensitive first-match regression. `REMEMBER = 2` /
+// `ReMeMbEr = 40` must be effective 2 upstream (strcasecmp), the foreign
+// casing is never canonicalized, and the FIC BOF `remember = 10` outranks
+// both.
+void testPwhistoryCaseInsensitiveFirstMatch() {
+    Harness harness;
+    writeFile(harness.pwhistoryConfigPath,
+        "REMEMBER = 2\nReMeMbEr = 40\n");
+    {
+        const auto before = evaluatePwhistoryHarness(harness);
+        require(before.remember == 2,
+            "the evaluator must match keys case-insensitively, got " +
+                std::to_string(before.remember));
+    }
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+    const std::string content = readFile(harness.pwhistoryConfigPath);
+    require(endsWith(content, "REMEMBER = 2\nReMeMbEr = 40\n"),
+        "foreign key casing must never be canonicalized");
+    const auto state = evaluatePwhistoryHarness(harness);
+    require(state.remember == 10,
+        "the FIC BOF entry must outrank the case-variant foreign keys, "
+        "got " + std::to_string(state.remember));
+}
+
+// §35: crash-recovery smoke for the BOF pwhistory placement.
+// a) Applied remember=5 (id=A) → Prepared update 5→10 at Beginning,
+//    physical still 5 → apply 10: SAME id, physical 10 at BOF, Applied.
+// b) Prepared 5→10, physical 5, current desired 20: the DURABLE target
+//    10 is completed first (semantic sequence [10, 20]), SAME id, final
+//    physical remember=20 at BOF.
+void testPwhistoryCrashRecoverySmoke() {
+    // (a) plain recovery to the durable target.
+    {
+        Harness harness;
+        writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 5\n");
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "5")),
+            harness.error);
+        const MutationId id = harness.soleEntryRecord(
+            "password_history_depth", "pwhistory smoke base").id;
+        prepareUpdateTransaction(harness, "password_history_depth",
+            "remember", "remember = 5", "remember = 10", "pam_pwhistory",
+            harness.pwhistoryConfigPath,
+            PamProviderBlockPlacementRequest::Beginning);
+
+        PamProviderManagedEntryOutcome outcome;
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "10"),
+                              outcome),
+            harness.error);
+        require(outcome == PamProviderManagedEntryOutcome::Applied,
+            "the BOF recovery must be a physical mutation");
+        const auto record = harness.soleEntryRecord(
+            "password_history_depth", "pwhistory recovery");
+        require(record.id == id && record.status == MutationStatus::Applied,
+            "pwhistory recovery must complete the SAME record as Applied");
+        auto parse = harness.parse(harness.pwhistoryConfigPath);
+        require(parse.ok && parse.view.entries.size() == 1 &&
+                    parse.view.entries.front().body == "remember = 10" &&
+                    parse.view.entries.front().mutationId == id &&
+                    parse.view.atBeginning,
+            "the recovered physical entry must carry the durable target "
+            "at BOF");
+    }
+    // (b) desired changed during recovery: durable target 10 first, then
+    // the desired 20 via a fresh read + same-id refresh.
+    {
+        Harness harness;
+        writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 5\n");
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "5")),
+            harness.error);
+        const MutationId id = harness.soleEntryRecord(
+            "password_history_depth", "pwhistory smoke base b").id;
+        prepareUpdateTransaction(harness, "password_history_depth",
+            "remember", "remember = 5", "remember = 10", "pam_pwhistory",
+            harness.pwhistoryConfigPath,
+            PamProviderBlockPlacementRequest::Beginning);
+
+        require(harness.apply(harness.pwhistoryRequest(
+                                  "password_history_depth", "remember",
+                                  "20")),
+            harness.error);
+        // The durable target 10 was proven first, then the desired 20.
+        require((harness.verifiedValues ==
+                    std::vector<std::string>{"10", "20"}),
+            "the recovery must complete the DURABLE target first, then "
+            "the current desired value");
+        const auto record = harness.soleEntryRecord(
+            "password_history_depth", "pwhistory recovery b");
+        require(record.id == id && record.status == MutationStatus::Applied,
+            "the desired-changed recovery must keep the SAME id");
+        auto parse = harness.parse(harness.pwhistoryConfigPath);
+        require(parse.ok && parse.view.entries.size() == 1 &&
+                    parse.view.entries.front().body == "remember = 20" &&
+                    parse.view.atBeginning,
+            "the final physical entry must be the desired 20 at BOF");
+    }
+}
+
+// §36: Applied drift BOF smoke. Journal Applied (id=A, body
+// remember=10, Beginning); the physical entry under the SAME id carries
+// remember=11 → AppliedDrifted, fail closed, NO rewrite.
+void testPwhistoryAppliedDriftSmoke() {
+    Harness harness;
+    writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 10\n");
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+    const MutationId id = harness.soleEntryRecord(
+        "password_history_depth", "drift smoke base").id;
+
+    std::string content = readFile(harness.pwhistoryConfigPath);
+    const std::size_t bodyPosition =
+        content.find("remember = 10\n# FIC_PAM_ENTRY_END");
+    require(bodyPosition != std::string::npos,
+        "test fixture corruption: FIC entry body not found");
+    content.replace(bodyPosition, std::string("remember = 10").size(),
+        "remember = 11");
+    writeFile(harness.pwhistoryConfigPath, content);
+
+    PamProviderManagedEntryOutcome outcome;
+    require(!harness.apply(harness.pwhistoryRequest(
+                               "password_history_depth", "remember", "10"),
+                           outcome),
+        "a drifted BOF entry body must fail closed");
+    require(readFile(harness.pwhistoryConfigPath).find("remember = 11") !=
+            std::string::npos,
+        "the drifted body must not be rewritten");
+    const auto record = harness.soleEntryRecord(
+        "password_history_depth", "drift smoke");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "the Applied record must stay untouched on drift");
+}
+
+// §38: semantic failure AFTER the physical BOF write. The injected
+// postcondition failure must return false, keep the journal recoverable
+// (Prepared), keep the physical FIC entry and the foreign bytes — and
+// NEVER restore a whole-file snapshot. The next apply adopts the exact
+// target-present state through the generic state machine.
+void testPwhistorySemanticFailureNoSnapshotRollback() {
+    Harness harness;
+    writeFile(harness.pwhistoryConfigPath, "# admin\nremember = 5\n");
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "5")),
+        harness.error);
+    const MutationId id = harness.soleEntryRecord(
+        "password_history_depth", "semantic failure base").id;
+    prepareUpdateTransaction(harness, "password_history_depth", "remember",
+        "remember = 5", "remember = 10", "pam_pwhistory",
+        harness.pwhistoryConfigPath,
+        PamProviderBlockPlacementRequest::Beginning);
+
+    harness.failSemanticFor.insert("10");
+    require(!harness.apply(harness.pwhistoryRequest(
+                               "password_history_depth", "remember", "10")),
+        "the injected semantic failure must fail the apply");
+    require(harness.error.find("semantic postcondition failed") !=
+            std::string::npos,
+        "the semantic failure must be reported: " + harness.error);
+
+    // Journal stays recoverable (Prepared), physical FIC entry stays.
+    const auto record = harness.soleEntryRecord(
+        "password_history_depth", "semantic failure");
+    require(record.id == id && record.status == MutationStatus::Prepared,
+        "the transaction must stay Prepared (recoverable, no snapshot "
+        "rollback)");
+    auto parse = harness.parse(harness.pwhistoryConfigPath);
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "remember = 10" &&
+                parse.view.entries.front().mutationId == id &&
+                parse.view.atBeginning,
+        "the physical FIC entry must remain (no whole-file restore)");
+    require(endsWith(readFile(harness.pwhistoryConfigPath),
+                "# admin\nremember = 5\n"),
+        "the foreign bytes must survive the failed apply byte-exact");
+
+    // Next apply: exact target-present state recovers/adopts (same id).
+    harness.failSemanticFor.clear();
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+    const auto recovered = harness.soleEntryRecord(
+        "password_history_depth", "semantic failure recovery");
+    require(recovered.id == id &&
+                recovered.status == MutationStatus::Applied,
+        "the next apply must adopt the exact target-present state with "
+        "the SAME id");
+}
+
+// §44: three providers (faillock/pwquality/pwhistory) coexist in ONE
+// MutationJournal without collision — different providers, paths, and
+// placements (EOF, EOF, BOF).
+void testProviderSeparationAllThreeCoexist() {
+    Harness harness;
+    writeFile(harness.configPath, "# faillock admin\n");
+    writeFile(harness.pwqualityConfigPath, "# pwquality admin\n");
+    writeFile(harness.pwhistoryConfigPath, "# pwhistory admin\n");
+    require(harness.apply(harness.request(
+                              "failed_authentication_attempts", "deny",
+                              "5")),
+        harness.error);
+    require(harness.apply(harness.pwqualityRequest(
+                              "password_min_length", "minlen", "14")),
+        harness.error);
+    require(harness.apply(harness.pwhistoryRequest(
+                              "password_history_depth", "remember", "10")),
+        harness.error);
+
+    auto faillockParse = harness.parse(harness.configPath);
+    require(faillockParse.ok &&
+                faillockParse.view.provider == "pam_faillock" &&
+                faillockParse.view.entries.size() == 1 &&
+                faillockParse.view.entries.front().body == "deny = 5" &&
+                faillockParse.view.atEnd,
+        "the faillock block must stay at EOF of faillock.conf");
+    auto pwqualityParse = harness.parse(harness.pwqualityConfigPath);
+    require(pwqualityParse.ok &&
+                pwqualityParse.view.provider == "pam_pwquality" &&
+                pwqualityParse.view.entries.size() == 1 &&
+                pwqualityParse.view.entries.front().body == "minlen = 14" &&
+                pwqualityParse.view.atEnd,
+        "the pwquality block must stay at EOF of pwquality.conf");
+    auto pwhistoryParse = harness.parse(harness.pwhistoryConfigPath);
+    require(pwhistoryParse.ok &&
+                pwhistoryParse.view.provider == "pam_pwhistory" &&
+                pwhistoryParse.view.entries.size() == 1 &&
+                pwhistoryParse.view.entries.front().body ==
+                    "remember = 10" &&
+                pwhistoryParse.view.atBeginning,
+        "the pwhistory block must stay at BOF of pwhistory.conf");
+
+    // Journal: three independent entry records + one FIC-created
+    // faillock container (the other two primaries are pre-existing).
+    require(harness.soleEntryRecord("failed_authentication_attempts",
+                "coexist faillock")
+                    .status == MutationStatus::Applied,
+        "the faillock entry record stays Applied");
+    require(harness.soleEntryRecord("password_min_length",
+                "coexist pwquality")
+                    .status == MutationStatus::Applied,
+        "the pwquality entry record stays Applied");
+    require(harness.soleEntryRecord("password_history_depth",
+                "coexist pwhistory")
+                    .status == MutationStatus::Applied,
+        "the pwhistory entry record stays Applied");
+    // All three primaries were pre-existing (even if only a comment):
+    // FIC owns only its entries — no container provenance anywhere.
+    require(harness.containerRecords("pam_faillock").empty() &&
+                harness.containerRecords("pam_pwquality").empty() &&
+                harness.containerRecords("pam_pwhistory").empty(),
+        "pre-existing primaries never receive container provenance");
+}
+
 } // namespace
 
 int main() {
@@ -1964,6 +2684,20 @@ int main() {
         testPwqualityMetadataPreservation();
         testPwqualityForeignDuplicatesPreserved();
         testProviderSeparationFaillockPwqualityCoexist();
+
+        // Step 7D: pam_pwhistory depth on the shared executor (BOF).
+        testPwhistoryBeginningBlockIntegration();
+        testPwhistoryForeignSeparatorOwnership();
+        testPwhistoryEmptyAndAbsentPrimary();
+        testPwhistoryMetadataPreservation();
+        testPwhistoryDisplacementRelocation();
+        testPwhistoryPlacementDriftIsNotBodyDrift();
+        testPwhistoryFirstMatchDuplicates();
+        testPwhistoryCaseInsensitiveFirstMatch();
+        testPwhistoryCrashRecoverySmoke();
+        testPwhistoryAppliedDriftSmoke();
+        testPwhistorySemanticFailureNoSnapshotRollback();
+        testProviderSeparationAllThreeCoexist();
     } catch (const std::exception& exception) {
         std::cerr << "FAILED: " << exception.what() << "\n";
         return 1;

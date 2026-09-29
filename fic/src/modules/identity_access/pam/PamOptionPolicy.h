@@ -20,11 +20,12 @@ protected:
 
     bool applyPam(const std::string& expectedValue) override;
 
-    // Step 7B/7C: journal-backed managed provider block path for the
+    // Step 7B/7C/7D: journal-backed managed provider block path for the
     // whitelisted provider scalar assignment contracts (faillock +
-    // pwquality scalars — see usesPamProviderManagedEntry). Runs the full
-    // crash-safe lifecycle (PamProviderManagedEntryExecutor) instead of the
-    // legacy setExpectedState/PamConfigFileTransaction writer.
+    // pwquality + pwhistory scalars — see usesPamProviderManagedEntry).
+    // Runs the full crash-safe lifecycle (PamProviderManagedEntryExecutor)
+    // instead of the legacy setExpectedState/PamConfigFileTransaction
+    // writer.
     bool applyManagedProviderEntry(
         const fic::platform::PamCapabilityConfig& capability,
         const std::vector<std::string>& services,
