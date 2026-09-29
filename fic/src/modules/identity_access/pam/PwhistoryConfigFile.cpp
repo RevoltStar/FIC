@@ -10,6 +10,7 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <string_view>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -43,6 +44,34 @@ bool parseUnsignedInteger(const std::string& value, int& parsed)
     }
     parsed = static_cast<int>(candidate);
     return true;
+}
+
+// ASCII-only case-insensitive comparison helpers. Upstream Linux-PAM
+// matches PAM module option NAMES case-insensitively (strcasecmp /
+// pam_str_skip_icase_prefix); the comparison is deliberately ASCII-only —
+// no locale-dependent semantics beyond the plain ASCII PAM option
+// contract.
+bool asciiEqualsIgnoreCase(std::string_view left, std::string_view right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (std::tolower(static_cast<unsigned char>(left[index])) !=
+            std::tolower(static_cast<unsigned char>(right[index]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool asciiStartsWithIgnoreCase(std::string_view value,
+                               std::string_view prefix)
+{
+    if (value.size() < prefix.size()) {
+        return false;
+    }
+    return asciiEqualsIgnoreCase(value.substr(0, prefix.size()), prefix);
 }
 
 bool applyPamArguments(const std::vector<std::string>& arguments,
@@ -179,13 +208,25 @@ bool applyPamArguments(const std::vector<std::string>& arguments,
                        std::string& error)
 {
     for (const auto& argument : arguments) {
-        if (argument == "try_first_pass" || argument == "use_first_pass" ||
-            argument == "use_authtok") {
+        // Upstream pam_pwhistory.c: strcasecmp(argv, "try_first_pass") /
+        // strcasecmp(argv, "use_first_pass") / strcasecmp(argv,
+        // "use_authtok") — the WHOLE argument token is compared
+        // case-insensitively, so a valued variant ("use_authtok=x") is
+        // NOT accepted here and stays a fail-closed unknown argument.
+        if (asciiEqualsIgnoreCase(argument, "try_first_pass") ||
+            asciiEqualsIgnoreCase(argument, "use_first_pass") ||
+            asciiEqualsIgnoreCase(argument, "use_authtok")) {
             continue;
         }
-        if (argument.compare(0, 13, "authtok_type=") == 0) {
+        // Upstream: pam_str_skip_icase_prefix(argv, "authtok_type=") —
+        // case-insensitive value prefix.
+        if (asciiStartsWithIgnoreCase(argument, "authtok_type=")) {
             continue;
         }
+        // Upstream pwhistory_config.c selection is CASE-SENSITIVE:
+        // pam_str_skip_prefix(argv[i], "conf=") — NOT the icase variant.
+        // "CONF=..." is therefore never a config selector here; it falls
+        // through and fails closed as an unknown PAM argument.
         if (argument.compare(0, 5, "conf=") == 0) {
             // The config FILE selection is a separate external contract
             // (verifyExternalConfigContract); the evaluator itself always
@@ -193,6 +234,11 @@ bool applyPamArguments(const std::vector<std::string>& arguments,
             continue;
         }
         const std::size_t equals = argument.find('=');
+        // The named options below are matched CASE-INSENSITIVELY on the
+        // lowercase copy, mirroring the upstream pam_pwhistory.c option
+        // parser (strcasecmp("debug")/strcasecmp("enforce_for_root"),
+        // pam_str_skip_icase_prefix for remember=/retry=/file=). The
+        // compare keeps the RAW name for diagnostics.
         const std::string name = lowercaseCopy(
             equals == std::string::npos ? argument
                                         : argument.substr(0, equals));

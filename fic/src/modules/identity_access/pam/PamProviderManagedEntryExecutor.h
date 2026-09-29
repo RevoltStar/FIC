@@ -81,31 +81,41 @@ struct PamProviderManagedEntryRequest {
 // even_deny_root and enforce_for_root stay Step 7E — pam_passwdqc/ALT
 // topology paths, tally/tally2/cracklib/pam_unix remember) stays on the
 // existing legacy path.
+// THIN WRAPPER: the decision is fully delegated to
+// pamProviderManagedEntryPlacement() below — the wrapper adds NO routing
+// conditions of its own, so the routing and placement contracts can never
+// drift apart.
 bool usesPamProviderManagedEntry(
     const PamProviderDescriptor& provider,
     const fic::platform::PamCapabilityConfig& capability,
     const PamProviderPolicyBinding& binding,
     fic::platform::PamPolicyFeature feature);
 
-// Typed placement contract of the managed provider block for a routed
-// (provider, feature) pair. Callers must derive the placement here instead
-// of hardcoding it at the apply site, and the helper is TOTAL: an
-// unroutable (provider, capability, feature) combination has NO placement
+// Typed placement contract of the managed provider block — the COMPLETE
+// single-source-of-truth routing+placement contract of the managed entry
+// path. The helper evaluates EVERY routing dimension in one place:
+// capability configuration mode, binding syntax, provider kind, feature,
+// and (for pam_pwhistory) the platform topology strategy. Callers must
+// derive the placement here instead of hardcoding it at the apply site,
+// and the helper is TOTAL: an unroutable combination has NO placement
 // (nullopt) — there is deliberately NO silent End fallback, so a future
 // whitelisting mistake can never acquire EOF placement by accident.
-//   * PamFaillock + 3 Step 7B scalars                  → End
+//   * configurationMode != ProviderConfigFile           → nullopt;
+//   * binding.syntax != Assignment                      → nullopt;
+//   * PamFaillock + 3 Step 7B scalars                   → End
 //     (faillock.conf has last-wins sequential semantics);
-//   * PamPwquality + 9 Step 7C scalars                 → End
+//   * PamPwquality + 9 Step 7C scalars                  → End
 //     (PwqualityConfigEvaluator DropInsThenPrimary model: EOF primary
 //     outranks every drop-in and every earlier primary assignment);
 //   * PamPwhistory + PasswordHistoryDepth
-//     + ProviderConfigFile + PamAuthUpdate             → Beginning
+//     + ProviderConfigFile + PamAuthUpdate              → Beginning
 //     (upstream pam_modutil_search_key FIRST-MATCH semantics: the FIC BOF
 //     entry outranks every later foreign remember assignment).
 // Everything else → nullopt.
 std::optional<PamProviderBlockPlacementRequest> pamProviderManagedEntryPlacement(
     const PamProviderDescriptor& provider,
     const fic::platform::PamCapabilityConfig& capability,
+    const PamProviderPolicyBinding& binding,
     fic::platform::PamPolicyFeature feature);
 
 // Typed provider/platform decision for a proven-absent primary container.

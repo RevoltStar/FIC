@@ -1130,31 +1130,43 @@ bool usesPamProviderManagedEntry(
     const fic::platform::PamCapabilityConfig& capability,
     const PamProviderPolicyBinding& binding,
     fic::platform::PamPolicyFeature feature) {
-    if (capability.configurationMode !=
-        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
-        return false;
-    }
-    if (binding.syntax != PamNativeOptionSyntax::Assignment) {
-        return false;
-    }
-    // SINGLE source of truth: the routed (provider, capability, feature)
-    // set is exactly the set for which the total placement helper returns
-    // a placement contract. A feature that has no placement can never be
-    // routed, so the routing/placement contracts cannot drift apart (the
-    // Step 7C default-End footgun is eliminated).
-    return pamProviderManagedEntryPlacement(provider, capability, feature)
+    // SINGLE source of truth: the routed set is exactly the set for which
+    // the total placement helper returns a placement contract. This
+    // wrapper deliberately adds NO routing conditions of its own — the
+    // configuration-mode, binding-syntax, provider, feature and topology
+    // gates ALL live in pamProviderManagedEntryPlacement() below, so the
+    // routing and placement contracts cannot drift apart (the Step 7C
+    // default-End footgun is eliminated).
+    return pamProviderManagedEntryPlacement(provider, capability, binding,
+        feature)
         .has_value();
 }
 
-// Typed placement contract of the managed provider block — the SINGLE
-// per-provider feature whitelist of the managed entry path. Callers derive
-// the placement here instead of hardcoding it at the apply site; an
+// Typed placement contract of the managed provider block — the COMPLETE
+// single-source-of-truth routing+placement contract of the managed entry
+// path. Every routing dimension (configuration mode, binding syntax,
+// provider kind, feature, pwhistory topology) is evaluated HERE; an
 // unroutable combination has NO placement (nullopt), never a silent End.
 std::optional<PamProviderBlockPlacementRequest>
 pamProviderManagedEntryPlacement(
     const PamProviderDescriptor& provider,
     const fic::platform::PamCapabilityConfig& capability,
+    const PamProviderPolicyBinding& binding,
     fic::platform::PamPolicyFeature feature) {
+    // Routing gate 1: the managed entry path physically mutates the shared
+    // provider primary configuration; module-arguments capabilities (e.g.
+    // Debian 12 pwhistory, Step 6 coordinator) have no provider config
+    // file to mutate.
+    if (capability.configurationMode !=
+        fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
+        return std::nullopt;
+    }
+    // Routing gate 2: the executor writes typed "<key> = <value>" scalar
+    // entries; flag bindings (even_deny_root / enforce_for_root, Step 7E)
+    // stay on their existing paths.
+    if (binding.syntax != PamNativeOptionSyntax::Assignment) {
+        return std::nullopt;
+    }
     switch (provider.kind) {
     case fic::platform::PamProviderKind::PamFaillock:
         switch (feature) {
@@ -1198,19 +1210,16 @@ pamProviderManagedEntryPlacement(
     case fic::platform::PamProviderKind::PamPwhistory:
         // Step 7D: ONLY the current Debian 13 / Ubuntu 24.04 / Ubuntu
         // 26.04-style contract — ProviderConfigFile + PamAuthUpdate. The
-        // typed topology/configuration contract (never a distro name)
-        // keeps Debian 12 (ModuleArguments → Step 6 joint coordinator)
-        // and ALT p11 (AltTcbManaged → /etc/security/fic-pwhistory.conf
-        // legacy ownership) outside this route. Upstream
-        // pam_modutil_search_key returns the FIRST case-insensitive
-        // matching key, so the managed remember entry MUST sit at the
-        // beginning of pwhistory.conf to outrank later foreign
-        // assignments.
+        // typed topology contract (never a distro name) keeps ALT p11
+        // (AltTcbManaged → /etc/security/fic-pwhistory.conf legacy
+        // ownership) outside this route; ModuleArguments mode is already
+        // excluded by routing gate 1 above (Debian 12 stays on the Step 6
+        // joint coordinator). Upstream pam_modutil_search_key returns the
+        // FIRST case-insensitive matching key, so the managed remember
+        // entry MUST sit at the beginning of pwhistory.conf to outrank
+        // later foreign assignments.
         if (feature ==
                 fic::platform::PamPolicyFeature::PasswordHistoryDepth &&
-            capability.configurationMode ==
-                fic::platform::PamCapabilityConfigurationMode::
-                    ProviderConfigFile &&
             capability.topology ==
                 fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
             return PamProviderBlockPlacementRequest::Beginning;

@@ -16,6 +16,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -427,6 +428,10 @@ void testRoutingDecision() {
     pwqualityCapability.configurationMode =
         PamCapabilityConfigurationMode::ProviderConfigFile;
     pwqualityCapability.configPath = "/etc/security/pwquality.conf";
+    // ModuleArguments pwquality variant for the total-placement matrix.
+    auto pwqualityArgumentsCapability = pwqualityCapability;
+    pwqualityArgumentsCapability.configurationMode =
+        PamCapabilityConfigurationMode::ModuleArguments;
 
     const std::vector<std::pair<PamPolicyFeature, const char*>> pwqualityScalars{
         {PamPolicyFeature::PasswordMinLength, "minlen"},
@@ -540,36 +545,118 @@ void testRoutingDecision() {
     // faillock/pwquality scalars are last-wins → EOF; the pwhistory
     // depth is first-match → BOF; every unroutable combination has NO
     // placement.
-    require(pamProviderManagedEntryPlacement(provider, capability,
+    require(pamProviderManagedEntryPlacement(provider, capability, deny,
                 PamPolicyFeature::FailedAuthenticationAttempts) ==
                 PamProviderBlockPlacementRequest::End,
         "faillock managed placement must be EOF");
     require(pamProviderManagedEntryPlacement(pwquality, pwqualityCapability,
-                PamPolicyFeature::PasswordMinLength) ==
+                minLength, PamPolicyFeature::PasswordMinLength) ==
                 PamProviderBlockPlacementRequest::End,
         "pwquality managed placement must be EOF");
-    require(pamProviderManagedEntryPlacement(pwhistory,
-                pwhistoryCapability,
-                PamPolicyFeature::PasswordHistoryDepth) ==
+    require(pamProviderManagedEntryPlacement(pwhistory, pwhistoryCapability,
+                depth, PamPolicyFeature::PasswordHistoryDepth) ==
                 PamProviderBlockPlacementRequest::Beginning,
         "pwhistory depth managed placement must be BOF (upstream "
         "pam_modutil_search_key first-match semantics)");
+    // TOTAL contract matrix: the placement helper itself refuses every
+    // unroutable combination — configuration mode, binding syntax,
+    // provider kind, feature and pwhistory topology are all evaluated in
+    // one place (no hidden routing checks remain in
+    // usesPamProviderManagedEntry).
+    // Configuration mode gate (ModuleArguments → no placement):
+    require(!pamProviderManagedEntryPlacement(provider, arguments, deny,
+                PamPolicyFeature::FailedAuthenticationAttempts).has_value(),
+        "faillock ModuleArguments must have NO placement contract");
+    require(!pamProviderManagedEntryPlacement(pwquality,
+                pwqualityArgumentsCapability, minLength,
+                PamPolicyFeature::PasswordMinLength).has_value(),
+        "pwquality ModuleArguments must have NO placement contract");
     require(!pamProviderManagedEntryPlacement(pwhistory,
-                altPwhistoryCapability,
+                argumentsPwhistoryCapability, depth,
+                PamPolicyFeature::PasswordHistoryDepth).has_value(),
+        "pwhistory ModuleArguments (Debian 12, Step 6 coordinator) must "
+        "have NO placement contract");
+    // Binding syntax gate (Flag → no placement, even for a whitelisted
+    // scalar feature):
+    auto flagSyntaxBinding = deny;
+    flagSyntaxBinding.syntax = PamNativeOptionSyntax::Flag;
+    require(!pamProviderManagedEntryPlacement(provider, capability,
+                flagSyntaxBinding,
+                PamPolicyFeature::FailedAuthenticationAttempts).has_value(),
+        "faillock Flag binding must have NO placement contract");
+    require(!pamProviderManagedEntryPlacement(pwquality,
+                pwqualityCapability, flagSyntaxBinding,
+                PamPolicyFeature::PasswordMinLength).has_value(),
+        "pwquality Flag binding must have NO placement contract");
+    auto historyFlagBinding = depth;
+    historyFlagBinding.syntax = PamNativeOptionSyntax::Flag;
+    require(!pamProviderManagedEntryPlacement(pwhistory,
+                pwhistoryCapability, historyFlagBinding,
+                PamPolicyFeature::PasswordHistoryDepth).has_value(),
+        "pwhistory Flag binding must have NO placement contract");
+    // Topology gate (ALT AltTcbManaged → no placement):
+    require(!pamProviderManagedEntryPlacement(pwhistory,
+                altPwhistoryCapability, depth,
                 PamPolicyFeature::PasswordHistoryDepth).has_value(),
         "the ALT AltTcbManaged pwhistory combination must have NO "
         "placement contract");
+    // Unrouted feature / provider gates:
+    auto historyEnforceForRootFlag =
+        assignmentBinding(PamPolicyFeature::PasswordHistoryEnforceForRoot,
+            "enforce_for_root");
+    historyEnforceForRootFlag.syntax = PamNativeOptionSyntax::Flag;
     require(!pamProviderManagedEntryPlacement(pwhistory,
-                pwhistoryCapability,
-                PamPolicyFeature::PasswordHistoryEnforceForRoot)
-                .has_value(),
+                pwhistoryCapability, historyEnforceForRootFlag,
+                PamPolicyFeature::PasswordHistoryEnforceForRoot).has_value(),
         "the pwhistory flag combination must have NO placement contract");
     require(!pamProviderManagedEntryPlacement(provider, capability,
-                PamPolicyFeature::PasswordMinLength).has_value(),
+                minLength, PamPolicyFeature::PasswordMinLength).has_value(),
         "an unrouted faillock feature must have NO placement contract");
     require(!pamProviderManagedEntryPlacement(passwdqc, pwqualityCapability,
+                passwdqcMin,
                 PamPolicyFeature::PasswdqcStrengthThresholds).has_value(),
         "passwdqc must have NO placement contract");
+
+    // ROUTING EQUALITY INVARIANT: usesPamProviderManagedEntry is a thin
+    // wrapper — for the representative matrix its result must be exactly
+    // placement.has_value() (no hidden routing checks on either side).
+    const std::vector<std::tuple<PamProviderDescriptor,
+        fic::platform::PamCapabilityConfig, PamProviderPolicyBinding,
+        PamPolicyFeature>> routingMatrix{
+        {provider, capability, deny,
+            PamPolicyFeature::FailedAuthenticationAttempts},
+        {provider, arguments, deny,
+            PamPolicyFeature::FailedAuthenticationAttempts},
+        {provider, capability, flagSyntaxBinding,
+            PamPolicyFeature::FailedAuthenticationAttempts},
+        {pwquality, pwqualityCapability, minLength,
+            PamPolicyFeature::PasswordMinLength},
+        {pwquality, pwqualityArgumentsCapability, minLength,
+            PamPolicyFeature::PasswordMinLength},
+        {pwquality, pwqualityCapability, enforceForRoot,
+            PamPolicyFeature::PasswordQualityEnforceForRoot},
+        {pwhistory, pwhistoryCapability, depth,
+            PamPolicyFeature::PasswordHistoryDepth},
+        {pwhistory, argumentsPwhistoryCapability, depth,
+            PamPolicyFeature::PasswordHistoryDepth},
+        {pwhistory, altPwhistoryCapability, depth,
+            PamPolicyFeature::PasswordHistoryDepth},
+        {pwhistory, pwhistoryCapability, historyFlagBinding,
+            PamPolicyFeature::PasswordHistoryDepth},
+        {pwhistory, pwhistoryCapability, historyEnforceForRootFlag,
+            PamPolicyFeature::PasswordHistoryEnforceForRoot},
+        {passwdqc, pwqualityCapability, passwdqcMin,
+            PamPolicyFeature::PasswdqcStrengthThresholds}};
+    for (const auto& [matrixProvider, matrixCapability, matrixBinding,
+             matrixFeature] : routingMatrix) {
+        const bool routed = usesPamProviderManagedEntry(matrixProvider,
+            matrixCapability, matrixBinding, matrixFeature);
+        const bool placed = pamProviderManagedEntryPlacement(matrixProvider,
+            matrixCapability, matrixBinding, matrixFeature).has_value();
+        require(routed == placed,
+            "routing/placement invariant violated for provider " +
+                std::string(matrixProvider.name));
+    }
 
     require(pamProviderAbsentContainerDecision(provider) ==
                 PamProviderAbsentContainerDecision::FailClosed,

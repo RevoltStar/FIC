@@ -85,10 +85,10 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
 
-    // Step 7B/7C routing: the whitelisted provider scalar assignment
-    // contracts (faillock + pwquality scalars) go through the journal-backed
-    // managed provider block executor instead of the legacy
-    // replace-all/snapshot writer.
+    // Step 7B/7C/7D routing: the whitelisted provider scalar assignment
+    // contracts (faillock + pwquality + pwhistory depth scalars) go
+    // through the journal-backed managed provider block executor instead
+    // of the legacy replace-all/snapshot writer.
     if (fic::identity::pam::usesPamProviderManagedEntry(
             provider, *capability, *binding, feature_)) {
         return this->applyManagedProviderEntry(
@@ -317,14 +317,15 @@ bool PamOptionPolicy::applyManagedProviderEntry(
     request.nativeValue = nativeExpectedValue;
     request.configPath = capability.configPath;
     // Typed placement decision (Step 7B/7C/7D): the helper is the SINGLE
-    // whitelist+placement source (faillock and pwquality scalar
-    // assignments are last-wins → EOF primary; pam_pwhistory
-    // password_history_depth is first-match → Beginning). An unroutable
-    // combination has NO placement: fail closed BEFORE any journal
-    // mutation instead of silently assuming End (defense in depth against
-    // a future erroneous whitelist expansion).
+    // routing+placement contract source (configuration mode, binding
+    // syntax, provider, feature and pwhistory topology are evaluated in
+    // one place; faillock and pwquality scalar assignments are last-wins
+    // → EOF primary; pam_pwhistory password_history_depth is first-match
+    // → Beginning). An unroutable combination has NO placement: fail
+    // closed BEFORE any journal mutation instead of silently assuming End
+    // (defense in depth against a future erroneous whitelist expansion).
     const auto placement = fic::identity::pam::pamProviderManagedEntryPlacement(
-        provider, capability, feature_);
+        provider, capability, binding, feature_);
     if (!placement.has_value()) {
         this->log(
             "PAM managed provider entry has no typed placement contract "

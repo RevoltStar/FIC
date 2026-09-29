@@ -2,11 +2,11 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `3a36687` («Приступаем к Step7C» — Step 7B, 7C и
-  follow-up закоммичены).
-- Рабочее дерево содержит **Step 7D** (pwhistory depth на managed-entry
-  executor, BOF), изменения НЕ закоммичены. Коммит НЕ делать без явного
-  запроса.
+- Ветка `main`; HEAD = `28ce8cb` («Приступаем к Step7D» — Step 7B, 7C, 7D
+  и их follow-up'ы закоммичены).
+- Рабочее дерево содержит **follow-up Step 7D** (case-insensitive
+  pam_pwhistory argv + total placement contract), изменения НЕ
+  закоммичены. Коммит НЕ делать без явного запроса.
 
 ## Current task
 
@@ -18,13 +18,17 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
 
 ### Routing / placement
 
-- Новый TOTAL helper `pamProviderManagedEntryPlacement(provider,
-  capability, feature) -> std::optional<Placement>` — ЕДИННЫЙ источник
-  whitelist'а: PamFaillock + 3 скаляра (7B) → End; PamPwquality + 9
-  скаляров (7C) → End; PamPwhistory + PasswordHistoryDepth +
-  ProviderConfigFile + PamAuthUpdate (7D) → Beginning; всё остальное →
-  nullopt. Silent-End fallback УДАЛЁН. `usesPamProviderManagedEntry`
-  выведен из helper'а (routing/placement не могут разойтись).
+- TOTAL helper `pamProviderManagedEntryPlacement(provider, capability,
+  binding, feature) -> std::optional<Placement>` — ПОЛНЫЙ единый
+  routing+placement контракт: configurationMode != ProviderConfigFile →
+  nullopt; binding.syntax != Assignment → nullopt; затем whitelist:
+  PamFaillock + 3 скаляра (7B) → End; PamPwquality + 9 скаляров (7C) →
+  End; PamPwhistory + PasswordHistoryDepth + PamAuthUpdate (7D) →
+  Beginning; всё остальное → nullopt (включая Flag-биндинги,
+  ModuleArguments/ALT-топологии и чужие фичи). Silent-End fallback
+  УДАЛЁН. `usesPamProviderManagedEntry` — THIN WRAPPER над helper'ом
+  (routing-equality invariant зафиксирован тестом на representative
+  matrix).
 - `PamOptionPolicy::applyManagedProviderEntry` fail-closed при
   nullopt-placement ДО journal mutation.
 - D12 (ModuleArguments → Step 6 coordinator) и ALT p11 (AltTcbManaged →
@@ -45,7 +49,15 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   evaluateInvocationWithManagedOption — prospective BOF override).
   First-match per key (seenKeys), unknown config keys инертны, malformed
   known directive → fail closed, argv: remember clamp [0,400], remember=0
-  = PAM_IGNORE, unknown/valued-flag argv → fail closed.
+  = PAM_IGNORE, unknown/valued-flag argv → fail closed. Follow-up 7D:
+  option NAMES в argv сравниваются case-insensitive как upstream —
+  try_first_pass/use_first_pass/use_authtok (ASCII equals,
+  весь токен: valued-вариант остаётся unknown → fail closed),
+  authtok_type= (ASCII icase prefix), debug/enforce_for_root/remember=/
+  retry=/file= (lowercaseCopy — фактически icase). `conf=` остаётся
+  CASE-SENSITIVE prefix (upstream pam_str_skip_prefix, не icase):
+  `CONF=...` НЕ является селектором и fail-closed как unknown argv;
+  verifyExternalConfigContract/uniqueArgumentValue тоже case-sensitive.
 - Descriptor PamPwhistory: `Semantic::Generic` → `Semantic::Pwhistory`
   (новый вариант enum). `backendFor`: ModuleArguments →
   pwhistoryArguments с ПРИОРИТЕТОМ (D12 не задет).
@@ -79,7 +91,12 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
 
 ### Tests
 
-- `pam_provider_managed_entry_executor_tests` — 50 кейсов: pwhistory
+- `pam_provider_managed_entry_executor_tests` — 50 кейсов + follow-up 7D:
+  routing/placement total-matrix (faillock/pwquality/pwhistory ×
+  ModuleArguments/Flag/ALT/чужие фичи → nullopt placement) и
+  routing-equality invariant
+  (usesPamProviderManagedEntry == placement.has_value() на 12
+  representative комбинациях). Кроме того: pwhistory
   BOF integration (foreign `remember=3/retry=4/remember=7` → effective
   10), separator ownership (LF / no-final-LF), empty vs absent primary,
   metadata 0600, displacement+relocation (same id, REMEMBER = 2
@@ -94,7 +111,12 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   malformed fail-closed, absent primary, argv override/clamp/
   remember=0, unknown argv fail-closed) + backend-тест (prospective
   canApply, реальный FIC BOF block в verifyOption, argv override,
-  same-valued argv, wrong conf=, D12 backend priority).
+  same-valued argv, wrong conf=, D12 backend priority). Follow-up 7D:
+  argv case-регрессии (TRY_FIRST_PASS/Try_First_Pass/USE_FIRST_PASS/
+  Use_First_Pass/USE_AUTHTOK/Use_Authtok/AUTHTOK_TYPE=/Authtok_Type=
+  инертны, REMEMBER=20 → 20, EnFoRcE_FoR_RoOt → flag, FILE= → file),
+  valued use_authtok=x fail-closed, CONF= ≠ conf= (fail-closed unknown),
+  lowercase conf= инертен.
 - `identity_policy_hierarchy_tests`: production-like policy BOF apply
   (rotateTestJournal 4/5/6), идемпотентность, §40 transitional flag
   smoke (legacy enforce_for_root не ломает managed block), §29 argv
@@ -106,13 +128,14 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   с PamProviderSemanticVerifier.cpp (executor, configuration, hierarchy,
   passwdqc, wiring и др.).
 
-## Validation (фактически выполнено)
+## Validation (фактически выполнено, follow-up 7D)
 
 - Полный build `build-check` (ubuntu-24.04) — 0 errors, 0 warnings.
 - Полный CTest — **111/111 PASS** (1 skip: `command_hash_batch_tests`,
   окружение).
-- Targeted: executor/configuration/hierarchy/wiring/mutation_journal —
-  8/8 PASS.
+- Targeted: executor/block/block-file/journal/configuration/hierarchy/
+  pam_password_* (slot, topology model/planner/executor, wiring,
+  release)/alt_pam_* — 15/15 PASS.
 - `git diff --check` — чисто.
 - Полный distro E2E НЕ запускался (по условию, до 7F).
 

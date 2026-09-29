@@ -2818,6 +2818,71 @@ void testPwhistoryConfigFirstMatchSemantics() {
         require(error.empty() && state.remember == 400,
             "the upstream argv remember clamp must be modeled: " + error);
     }
+    // Upstream argv option NAMES are matched case-insensitively
+    // (strcasecmp / pam_str_skip_icase_prefix): valid case variants of the
+    // inert transport options must be accepted and must NOT change the
+    // effective state.
+    {
+        const auto [state, error] = evaluate("remember = 10\n",
+            {"TRY_FIRST_PASS", "Try_First_Pass", "USE_FIRST_PASS",
+                "Use_First_Pass", "USE_AUTHTOK", "Use_Authtok",
+                "AUTHTOK_TYPE=", "Authtok_Type=Password"});
+        require(error.empty() && state.remember == 10,
+            "case variants of the inert pwhistory argv options must be "
+                "accepted without changing the effective remember: " +
+                error);
+    }
+    // Active argv options are matched case-insensitively too (upstream
+    // pam_str_skip_icase_prefix on the option name).
+    {
+        const auto [state, error] = evaluate("", {"REMEMBER=20"});
+        require(error.empty() && state.remember == 20,
+            "the argv REMEMBER=20 case variant must be applied: " + error);
+    }
+    {
+        const auto [state, error] = evaluate("", {"EnFoRcE_FoR_RoOt"});
+        require(error.empty() && state.enforceForRoot,
+            "the argv EnFoRcE_FoR_RoOt case variant must enable "
+                "enforce_for_root: " +
+                error);
+    }
+    {
+        const auto [state, error] =
+            evaluate("", {"FILE=/run/fic-opasswd"});
+        require(error.empty() && state.file == "/run/fic-opasswd",
+            "the argv FILE= case variant must be applied: " + error);
+    }
+    // A VALUED use_authtok token is NOT the upstream flag (strcasecmp
+    // compares the whole token) → unknown argument, fail closed.
+    {
+        bool ok = true;
+        evaluate("", {"use_authtok=yes"}, &ok);
+        require(!ok,
+            "a valued use_authtok argv token must fail closed");
+    }
+    // Upstream conf= selection is CASE-SENSITIVE
+    // (pam_str_skip_prefix, NOT the icase variant): "CONF=..." is not a
+    // config selector and falls through to the fail-closed unknown
+    // argument handling instead of being silently interpreted as conf=.
+    {
+        bool ok = true;
+        const auto [state, error] =
+            evaluate("remember = 10\n", {"CONF=/etc/other.conf"}, &ok);
+        require(!ok,
+            "the uppercase CONF= argv prefix must NOT be treated as the "
+            "case-sensitive conf= selector");
+        require(error.find("unknown pwhistory PAM argument") !=
+                std::string::npos,
+            "CONF= must fail closed as an unknown argument: " + error);
+    }
+    // The lowercase conf= selector itself stays inert for the evaluator
+    // (the file selection is a separate external contract).
+    {
+        const auto [state, error] =
+            evaluate("remember = 10\n", {"conf=/etc/security/pwhistory.conf"});
+        require(error.empty() && state.remember == 10,
+            "the lowercase conf= selector must stay inert: " + error);
+    }
     // Unknown PAM arguments fail closed (stricter than the upstream
     // silent ignore, per the FIC ambiguous-input policy).
     {
