@@ -886,6 +886,115 @@ void testRecoveryDesiredChangedFreshCreatedContainer() {
         "the created entry must carry the desired body");
 }
 
+// Crash window INSIDE the fresh FIC-created container lifecycle: the entry
+// Prepared record was durably committed, but the crash happened BEFORE the
+// container provenance record was prepared and before the physical create.
+// This intermediate journal state (entry Prepared + NO container record +
+// absent file) is legitimate and must be recovered: recovery prepares the
+// missing container provenance itself, physically creates the DURABLE
+// journal target first, and only then reconciles the changed current
+// desired value through a fresh trusted read — same entry id throughout.
+void testRecoveryFreshCreatedContainerProvenanceMissing() {
+    Harness harness;
+    const MutationId id = prepareEntryRecord(harness,
+        "failed_authentication_attempts", "deny = 5", "");
+    // NOTE: no prepareContainerRecord(harness) — the crash window is
+    // before the container provenance was durably prepared.
+    require(harness.containerRecords().empty(),
+        "the crash state must have no container provenance record");
+    require(!std::filesystem::exists(harness.configPath),
+        "the crash state must have an absent physical container");
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "7",
+                               PamProviderAbsentContainerDecision::
+                                   CreateFicOwned),
+                outcome),
+        harness.error);
+    require(harness.verifiedValues.size() == 2 &&
+                harness.verifiedValues[0] == "5" &&
+                harness.verifiedValues[1] == "7",
+        "the durable journal target 5 must be created before the desired 7");
+    // Entry journal: exactly one active record, same id, Applied, final
+    // desired body.
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "provenance-missing recovery");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "the same entry record id must carry both transitions");
+    const auto* payload =
+        std::get_if<UndoRemovePamProviderManagedEntry>(
+            &record.undo.payload);
+    require(payload != nullptr && payload->appliedBody == "deny = 7",
+        "the entry record must be Applied with the desired body");
+    // Container journal: exactly one active record (created by THIS
+    // recovery, no duplicates), Applied.
+    require(harness.containerRecords().size() == 1 &&
+                harness.containerRecords().front().status ==
+                    MutationStatus::Applied,
+        "the recovery must prepare exactly one container provenance and "
+        "complete it as Applied");
+    // Physical state: strict parse, one exact entry with the same id.
+    auto parse = harness.parse();
+    require(parse.ok, "strict parse of the recovered container failed: " +
+            parse.error);
+    require(parse.view.provider == "pam_faillock" &&
+                parse.view.entries.size() == 1 &&
+                parse.view.entries.front().policy ==
+                    "failed_authentication_attempts" &&
+                parse.view.entries.front().body == "deny = 7" &&
+                parse.view.entries.front().mutationId == id &&
+                // EOF placement contract: the created block is a lone
+                // FIC-owned block (nothing after the END marker), which
+                // satisfies EOF per the grammar contract (the
+                // single-valued effectivePlacement diagnostic reports
+                // BOF for a lone block — "BOF wins").
+                parse.view.atEnd,
+        "the physical state must be exactly one FIC-owned entry with the "
+        "same mutation id at EOF");
+}
+
+// Same crash window with the current desired value UNCHANGED: the recovery
+// completes the durable target (which equals the desired value) in a single
+// transition — one semantic verification, one physical create, entry and
+// container Applied with the same entry id.
+void testRecoveryFreshCreatedContainerProvenanceMissingDesiredUnchanged() {
+    Harness harness;
+    const MutationId id = prepareEntryRecord(harness,
+        "failed_authentication_attempts", "deny = 5", "");
+    require(harness.containerRecords().empty(),
+        "the crash state must have no container provenance record");
+    require(!std::filesystem::exists(harness.configPath),
+        "the crash state must have an absent physical container");
+
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(harness.request("failed_authentication_attempts",
+                               "deny", "5",
+                               PamProviderAbsentContainerDecision::
+                                   CreateFicOwned),
+                outcome),
+        harness.error);
+    require(harness.verifiedValues.size() == 1 &&
+                harness.verifiedValues[0] == "5",
+        "the desired value equals the durable target: exactly one semantic "
+        "verification of the created state");
+    const auto record = harness.soleEntryRecord(
+        "failed_authentication_attempts", "provenance-missing no-change");
+    require(record.id == id && record.status == MutationStatus::Applied,
+        "the entry must be Applied with the same id");
+    require(harness.containerRecords().size() == 1 &&
+                harness.containerRecords().front().status ==
+                    MutationStatus::Applied,
+        "exactly one container provenance record must be Applied");
+    auto parse = harness.parse();
+    require(parse.ok && parse.view.entries.size() == 1 &&
+                parse.view.entries.front().body == "deny = 5" &&
+                parse.view.entries.front().mutationId == id &&
+                parse.view.atEnd,
+        "the physical state must carry the durable target with the same id");
+}
+
+
 // §9: the second transition (10→20) fails after the durable transaction
 // (5→10) was completed. The journal must hold a normal recoverable
 // Prepared previous=10 target=20 — never the stale 5→10 provenance.
@@ -1142,6 +1251,8 @@ int main() {
         testRecoveryDesiredChangedTargetPresent();
         testRecoveryDesiredChangedFreshPrepared();
         testRecoveryDesiredChangedFreshCreatedContainer();
+        testRecoveryFreshCreatedContainerProvenanceMissing();
+        testRecoveryFreshCreatedContainerProvenanceMissingDesiredUnchanged();
         testFailureBetweenTransitionsIsRecoverable();
         testPreparedContainerWithoutWitnessRefused();
         testPreparedContainerCreatorWitnessCompletes();

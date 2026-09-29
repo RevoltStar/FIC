@@ -577,8 +577,7 @@ bool applyFreshCreatedContainer(
     // proven absent, no concurrent object existed, FIC entry ownership is
     // proven above) is the creation proof for the container it just
     // created; the durable container Prepared record was committed before
-    // the physical create.
-    ProvenPamProviderContainerCreation ownCreation{entryId};
+    // the physical create and is transitioned to Applied here.
     if (!journal.setStatus(containerId, MutationStatus::Applied, error)) {
         error = "container provenance Applied transition failed (Prepared " +
             std::string("kept; crash recovery reconciles against the ") +
@@ -595,8 +594,13 @@ bool applyFreshCreatedContainer(
     // desired value from a FRESH trusted read (the pre-mutation state does
     // not exist here — the file was just created; never reuse a stale
     // snapshot for a second mutation).
-    std::optional<MutationRecord> completedContainer = containerRecord;
-    completedContainer->status = MutationStatus::Applied;
+    //
+    // The container provenance is ALREADY durably Applied (journal
+    // transition above), so the refresh must not re-reconcile it. The
+    // caller's `containerRecord` optional is stale pre-prepare state and
+    // may be disengaged when THIS operation created the provenance —
+    // never fabricate a local record from it; nullopt makes the refresh
+    // tail a verified no-op for the container.
     PamProviderContainerReadResult freshRead;
     if (!freshProveRecoveredAppliedState(request, *entryRecord, freshRead,
             error)) {
@@ -605,8 +609,8 @@ bool applyFreshCreatedContainer(
     PamProviderManagedEntryOutcome refreshedOutcome =
         PamProviderManagedEntryOutcome::Applied;
     return refreshProvenOwnedEntry(journal, request, semantic, freshRead,
-        *entryRecord, completedContainer, &ownCreation, refreshedOutcome,
-        error);
+        *entryRecord, /*containerRecord=*/std::nullopt,
+        /*containerWitness=*/nullptr, refreshedOutcome, error);
 }
 
 // Fresh entry transaction inside an EXISTING container (pre-existing

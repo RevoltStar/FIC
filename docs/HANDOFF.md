@@ -2,13 +2,47 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `7185b8d` («Приступаем к Step7B» — Step 7B закоммичен).
-- Рабочее дерево содержит **follow-up Step 7B** (crash-recovery/provenance
-  дефекты), изменения НЕ закоммичены. Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `ad6dd50` («Follow-up к последнему коммиту» —
+  Step 7B + предыдущий follow-up закоммичены).
+- Рабочее дерево содержит **второй follow-up Step 7B** (fix UB/stale-local
+  state в crash window `entry Prepared` → `container Prepared`), изменения
+  НЕ закоммичены. Коммит НЕ делать без явного запроса.
 
 ## Current task
 
-**Follow-up Step 7B (выполнен, не закоммичен):** два архитектурных
+**Follow-up Step 7B №2 (выполнен, не закоммичен):** fix UB в
+`applyFreshCreatedContainer()` + 2 regression-теста. Два предыдущих
+архитектурных исправления (durable target first; Prepared-container
+witness) уже в `ad6dd50` и не менялись.
+
+### Исправление (P0): stale `containerRecord` optional / UB
+
+- Crash window внутри fresh FIC-created container lifecycle: entry Prepared
+  persisted → CRASH → container Prepared ещё НЕ persisted → file absent.
+  Это легитимное промежуточное journal состояние; recovery обязан сам
+  создать недостающую container provenance (`journal.prepareMutation`
+  внутри `applyFreshCreatedContainer`) до physical create.
+- Bug: после успешного `journal.setStatus(containerId, Applied)` код
+  refresh-хвоста делал `std::optional<MutationRecord> completedContainer =
+  containerRecord; completedContainer->status = Applied;` — при исходном
+  `containerRecord == nullopt` это dereference disengaged optional (UB).
+- Fix: container provenance уже durably Applied на этот момент, поэтому
+  refresh-хвост передаёт `containerRecord = std::nullopt` (и witness
+  `nullptr`) — `completePreparedContainerProvenance` для nullopt/Applied —
+  верифицированный no-op. Никаких fabricated локальных `MutationRecord`;
+  caller'овский optional — stale pre-prepare state и не используется.
+- Invariants: entry Prepared может легитимно существовать до container
+  Prepared; recovery этого состояния создаёт недостающую container
+  provenance до physical create и не полагается на stale pre-prepare
+  optional caller'а; после того как container provenance стала Applied
+  внутри той же операции, последующий desired-value refresh не использует
+  stale входной `containerRecord` optional. Проверено и не сломано:
+  `container Prepared + entry absent + file absent` → fail closed;
+  `container Applied + file absent` → fail closed.
+
+### Предыдущие исправления (в `ad6dd50`, не менялись)
+
+**Follow-up Step 7B (выполнен):** два архитектурных
 исправления в `PamProviderManagedEntryExecutor` + regression-тесты.
 Routing трёх faillock scalar политик и вся структура Step 7B сохранены.
 
@@ -84,7 +118,7 @@ Routing трёх faillock scalar политик и вся структура Ste
 ### Tests
 
 `tests/fic/modules/identity_access/pam/PamProviderManagedEntryExecutorTests.cpp`
-— 26 кейсов (было 16). Harness semantic callback собирает
+— 28 кейсов (было 16). Harness semantic callback собирает
 `verifiedValues` (порядок semantic-проверок) + `failSemanticFor`
 (injected failures). Новые regression:
 desired-changed recovery (previous-present / target-present / fresh /
@@ -93,15 +127,19 @@ failure между двумя transitions → recoverable `Prepared(10→20)` + 
 при повторном apply; prepared container без witness → fail closed
 (byte-exact, контейнер Prepared, нет новых записей); creator witness
 (apply A; cross-policy apply B; Applied-exact witness); wrong creator
-id/body → fail closed. Все существующие кейсы сохранены.
+id/body → fail closed; crash window `entry Prepared + container record
+absent + file absent` — desired changed (`["5","7"]`, recovery сам создаёт
+container provenance, 1 entry + 1 container + 1 physical entry, same id)
+и desired unchanged (`["5"]`). Все существующие кейсы сохранены.
 
 ## Validation (фактически выполнено)
 
-- `cmake --build build-check --target fic` и
-  `--target pam_provider_managed_entry_executor_tests` — PASS, warnings нет.
-- `ctest -R pam_provider_managed` → **4/4 PASS**.
-- Полный build `build-check` — PASS; полный CTest — **111/111 PASS**
-  (1 skip: `command_hash_batch_tests`, окружение).
+- `cmake --build build-check --target pam_provider_managed_entry_executor_tests`
+  — PASS, warnings нет.
+- `ctest -R pam_provider_managed` → **4/4 PASS** (включая
+  `pam_provider_managed_entry_journal_tests`).
+- Полный build `build-check` — PASS без warnings; полный CTest —
+  **111/111 PASS** (1 skip: `command_hash_batch_tests`, окружение).
 - `git diff --check` — чисто.
 
 ## Remaining (Step 7C+)
