@@ -1430,6 +1430,43 @@ int main() {
                 "records");
         }
 
+        // §29b at policy level: a DUPLICATE known PAM argv option
+        // (remember=10 REMEMBER=20) must fail the semantic preflight
+        // closed BEFORE any journal mutation — the typed evaluator
+        // rejects the ambiguous argv set before state evaluation, so
+        // neither pwhistory.conf nor the journal is touched and the
+        // upstream last-wins effective value (20) is never accepted.
+        writeFile(
+            managedHistoryRoot / "pam.d/passwd",
+            "password required pam_pwhistory.so conf=" +
+                managedHistoryPlatform.passwordHistoryConfigPath.string() +
+                " remember=10 REMEMBER=20\n");
+        PamPasswordHistoryDepthPolicy duplicateArgvDepth(
+            managedHistoryPlatform);
+        require(
+            !duplicateArgvDepth.apply(),
+            "a duplicate PAM argv remember must fail the managed depth "
+            "apply closed");
+        require(
+            readFile(managedHistoryPlatform.passwordHistoryConfigPath) ==
+                afterFlagConfig,
+            "the refused duplicate-argv apply must not mutate the config");
+        {
+            std::string journalError;
+            auto* duplicateJournal =
+                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                    journalError);
+            require(duplicateJournal != nullptr, journalError);
+            require(
+                duplicateJournal
+                    ->activeRecords(
+                        {"IDENTITY_ACCESS", "PAM",
+                         "password_history_depth"})
+                    .empty(),
+                "the refused duplicate-argv apply must prepare NO journal "
+                "records");
+        }
+
         const auto authenticationPlatform =
             makeAuthenticationPlatform(root);
         writeFile(

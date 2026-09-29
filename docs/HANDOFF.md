@@ -2,15 +2,16 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `28ce8cb` («Приступаем к Step7D» — Step 7B, 7C, 7D
-  и их follow-up'ы закоммичены).
-- Рабочее дерево содержит **follow-up Step 7D** (case-insensitive
-  pam_pwhistory argv + total placement contract), изменения НЕ
-  закоммичены. Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `de207d3` («Follow-up к последнему коммиту» — Step 7B,
+  7C, 7D и их follow-up'ы закоммичены).
+- Рабочее дерево содержит **follow-up Step 7D №2** (strict duplicate-argv
+  contract для typed pwhistory evaluator), изменения НЕ закоммичены.
+  Коммит НЕ делать без явного запроса.
 
 ## Current task
 
-**Step 7D (выполнен, не закоммичен):** `password_history_depth →
+**Step 7D + follow-up №2 (выполнены, не закоммичены):** Step 7D —
+`password_history_depth →
 pam_pwhistory → remember` переведён на journal-backed
 `PamProviderManagedEntryExecutor` с placement **Beginning** на
 ProviderConfigFile + PamAuthUpdate платформах (Debian 13 / Ubuntu 24.04 /
@@ -61,6 +62,22 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
 - Descriptor PamPwhistory: `Semantic::Generic` → `Semantic::Pwhistory`
   (новый вариант enum). `backendFor`: ModuleArguments →
   pwhistoryArguments с ПРИОРИТЕТОМ (D12 не задет).
+- **Follow-up 7D №2 (duplicate-argv invariant):** Pwhistory typed
+  evaluator rejects duplicate known PAM argv options case-insensitively
+  before state evaluation. Upstream last-wins semantics are modeled only
+  after the argv set has passed FIC's stricter uniqueness validation.
+  `PwhistoryConfigEvaluator::validatePamArguments` вызывается в
+  evaluateInvocation / evaluateInvocationWithManagedOption ДО topology/argv
+  application и в pwhistoryCanApplyFlag (legacy-writer preflight). Kind'ы
+  (classifier `classifyPwhistoryPamArgument`): try_first_pass /
+  use_first_pass / use_authtok (ASCII equals, весь токен), authtok_type=
+  / remember= / retry= / file= (ASCII icase prefix), debug /
+  enforce_for_root (ASCII equals; valued-варианты остаются в своём kind —
+  valued-flag rejection происходит в application pass) — все icase,
+  uniqueness строгая по kind (включая inert transport options).
+  conf= uniqueness remains governed by the case-sensitive external-config
+  contract (verifyExternalConfigContract); CONF= is not treated as conf=
+  (unknown argv → fail closed).
 - Backend в PamProviderSemanticVerifier: capability/option/flag/
   canApplyOption/canApplyFlag. Ключевое: `canApplyOption` — prospective
   (BOF перекроет текущий foreign remember, конфликтует только argv);
@@ -114,13 +131,27 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   same-valued argv, wrong conf=, D12 backend priority). Follow-up 7D:
   argv case-регрессии (TRY_FIRST_PASS/Try_First_Pass/USE_FIRST_PASS/
   Use_First_Pass/USE_AUTHTOK/Use_Authtok/AUTHTOK_TYPE=/Authtok_Type=
-  инертны, REMEMBER=20 → 20, EnFoRcE_FoR_RoOt → flag, FILE= → file),
-  valued use_authtok=x fail-closed, CONF= ≠ conf= (fail-closed unknown),
-  lowercase conf= инертен.
+  инертны — каждый вариант отдельно, дубликаты kind внутри одного
+  вызова запрещены), REMEMBER=20 → 20, EnFoRcE_FoR_RoOt → flag,
+  FILE= → file), valued use_authtok=x fail-closed, CONF= ≠ conf=
+  (fail-closed unknown), lowercase conf= инертен. Follow-up 7D №2:
+  testPwhistoryDuplicatePamArgumentsFailClosed (remember=10 remember=20 /
+  remember=10 REMEMBER=20 / remember=10 REMEMBER=10 → duplicate
+  diagnostic; retry/file, flags enforce_for_root/debug, inert
+  use_authtok/authtok_type/try_first_pass/use_first_pass дубликаты →
+  fail closed; conf=/a CONF=/b → unknown, не duplicate selector; valid
+  single case-variants REMEMBER=20/RETRY=4/FILE=/foo/EnFoRcE_FoR_RoOt/
+  USE_AUTHTOK/AUTHTOK_TYPE=x применяются как upstream) + backend-level:
+  duplicate argv в canApplyOption (включая prospective BOF при foreign
+  remember=3), duplicate conf= → external contract, conf=/a CONF=/b →
+  unknown argv, duplicate enforce_for_root в canApplyFlag.
 - `identity_policy_hierarchy_tests`: production-like policy BOF apply
   (rotateTestJournal 4/5/6), идемпотентность, §40 transitional flag
   smoke (legacy enforce_for_root не ломает managed block), §29 argv
-  override fail-closed на уровне policy (config+journal untouched).
+  override fail-closed на уровне policy (config+journal untouched),
+  §29b duplicate argv (remember=10 REMEMBER=20) → apply FAIL,
+  pwhistory.conf и journal untouched — duplicate rejection до journal
+  mutation.
 - Тестовые фикстуры (makePlatform/makePasswordHistoryPlatform) binding
   descriptor default topology на временные пути + verifyCapability
   helper создаёт пустой pwhistory.conf (как для pwquality).
@@ -128,14 +159,15 @@ Ubuntu 26.04). Executor и Step 7B state machine не менялись.
   с PamProviderSemanticVerifier.cpp (executor, configuration, hierarchy,
   passwdqc, wiring и др.).
 
-## Validation (фактически выполнено, follow-up 7D)
+## Validation (фактически выполнено, follow-up 7D №2)
 
-- Полный build `build-check` (ubuntu-24.04) — 0 errors, 0 warnings.
+- Полный build `build-check` (ubuntu-24.04) — 0 errors, 0 warnings
+  (изменённые файлы пересобраны начисто).
 - Полный CTest — **111/111 PASS** (1 skip: `command_hash_batch_tests`,
   окружение).
 - Targeted: executor/block/block-file/journal/configuration/hierarchy/
   pam_password_* (slot, topology model/planner/executor, wiring,
-  release)/alt_pam_* — 15/15 PASS.
+  release)/alt_pam_* — PASS.
 - `git diff --check` — чисто.
 - Полный distro E2E НЕ запускался (по условию, до 7F).
 

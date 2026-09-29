@@ -954,6 +954,17 @@ bool pwhistoryCanApplyFlag(
         !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
         return false;
     }
+    // Step 7D follow-up: the same strict duplicate-argv contract as every
+    // other typed pwhistory semantic operation — an ambiguous argv set
+    // (duplicate known option, case variants included) must fail this
+    // legacy-writer preflight closed too. conf= uniqueness stays governed
+    // by verifyExternalConfigContract above.
+    for (const auto& rule : inspection.providerRules) {
+        if (!PwhistoryConfigEvaluator::validatePamArguments(
+                rule.arguments, rule.source, rule.line, error)) {
+            return false;
+        }
+    }
     return verifyGenericFlagArguments(
         inspection, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);

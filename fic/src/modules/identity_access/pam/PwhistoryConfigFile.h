@@ -50,11 +50,36 @@ struct PwhistoryEffectiveState {
 
 class PwhistoryConfigEvaluator {
 public:
+    // FIC strict duplicate-argv contract (Step 7D follow-up): every KNOWN
+    // pam_pwhistory option (try_first_pass / use_first_pass / use_authtok /
+    // authtok_type= / debug / enforce_for_root / remember= / retry= /
+    // file=) may occur AT MOST ONCE per one PAM rule invocation. Option
+    // NAMES are matched case-insensitively like upstream, so
+    // "remember=10 remember=20", "remember=10 REMEMBER=20" and the
+    // identical duplicate "remember=10 REMEMBER=10" all fail closed —
+    // the upstream last-wins effective result is never treated as a
+    // proof of unambiguity. Unknown argv tokens fail closed as well.
+    // The "conf=" selector is NOT part of this case-insensitive option
+    // contract: upstream selects the config file through the CASE-
+    // SENSITIVE pam_str_skip_prefix("conf="), so conf= uniqueness stays
+    // governed by the external config contract
+    // (PamProviderInspector::verifyExternalConfigContract) and an
+    // uppercase "CONF=..." is an unknown pwhistory argument, never a
+    // second selector.
+    static bool validatePamArguments(
+        const std::vector<std::string>& arguments,
+        const std::filesystem::path& source,
+        std::size_t line,
+        std::string& error);
+
     // Evaluates the REAL config topology (primary file first-match parse,
     // then the PAM argv of one provider rule). Fails closed on a missing
     // primary (vendor fallback cannot be proven), on malformed KNOWN
     // directives and on unknown PAM arguments (stricter than the upstream
-    // silent-ignore, per the FIC ambiguous-input policy).
+    // silent-ignore, per the FIC ambiguous-input policy). The strict
+    // duplicate-argv validation (validatePamArguments) runs BEFORE any
+    // state evaluation, so the evaluator stays deterministic and never
+    // applies a partially evaluated ambiguous argv set.
     static bool evaluateInvocation(
         const std::vector<std::string>& arguments,
         const std::filesystem::path& source,

@@ -51,14 +51,20 @@ bool parseUnsignedInteger(const std::string& value, int& parsed)
 // pam_str_skip_icase_prefix); the comparison is deliberately ASCII-only —
 // no locale-dependent semantics beyond the plain ASCII PAM option
 // contract.
+char asciiLower(char character)
+{
+    return character >= 'A' && character <= 'Z'
+        ? static_cast<char>(character - 'A' + 'a')
+        : character;
+}
+
 bool asciiEqualsIgnoreCase(std::string_view left, std::string_view right)
 {
     if (left.size() != right.size()) {
         return false;
     }
     for (std::size_t index = 0; index < left.size(); ++index) {
-        if (std::tolower(static_cast<unsigned char>(left[index])) !=
-            std::tolower(static_cast<unsigned char>(right[index]))) {
+        if (asciiLower(left[index]) != asciiLower(right[index])) {
             return false;
         }
     }
@@ -198,9 +204,11 @@ bool applyConfigParameter(const std::string& key,
 }
 
 // PAM argv application (parse_option order: argv is parsed AFTER the
-// config file, so argv values OVERRIDE config values; duplicate argv keys
-// are last-wins upstream, but FIC keeps its existing stricter
-// duplicate-argument safety at the inspector/verifier level).
+// config file, so argv values OVERRIDE config values). The argv set has
+// already passed the strict duplicate/uniqueness validation
+// (validatePwhistoryPamArguments) BEFORE any state mutation, so the
+// upstream last-wins semantics are modeled here only for the validated
+// single-occurrence-per-kind set.
 bool applyPamArguments(const std::vector<std::string>& arguments,
                        const std::filesystem::path& source,
                        std::size_t line,
@@ -296,6 +304,171 @@ bool applyPamArguments(const std::vector<std::string>& arguments,
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Step 7D follow-up: strict duplicate-argv contract.
+//
+// Upstream pam_pwhistory.c applies duplicate argv keys last-wins
+// (parse_option per token); the effective result of "remember=10
+// remember=20" is 20. FIC rejects such an invocation BEFORE any state
+// evaluation instead: every KNOWN pam_pwhistory option is classified
+// into ONE semantic kind, and each kind may occur at most once per PAM
+// rule invocation. Option NAMES are matched case-insensitively like
+// upstream, so case variants and identical duplicates of the same kind
+// fail closed alike — an identical effective result does not make the
+// input unambiguous.
+//
+// The "conf=" selector is NOT part of this case-insensitive option
+// contract: upstream selects the config file through the CASE-SENSITIVE
+// pam_str_skip_prefix("conf="), so conf= uniqueness stays governed by
+// the external config contract (verifyExternalConfigContract), and an
+// uppercase "CONF=..." is an unknown pwhistory argument — never a
+// second selector.
+// ---------------------------------------------------------------------------
+enum class PwhistoryPamArgumentKind {
+    TryFirstPass,
+    UseFirstPass,
+    UseAuthtok,
+    AuthtokType,
+    Debug,
+    EnforceForRoot,
+    Remember,
+    Retry,
+    File,
+    Conf,
+    Unknown
+};
+
+const char* pwhistoryPamArgumentKindName(PwhistoryPamArgumentKind kind)
+{
+    switch (kind) {
+    case PwhistoryPamArgumentKind::TryFirstPass:
+        return "try_first_pass";
+    case PwhistoryPamArgumentKind::UseFirstPass:
+        return "use_first_pass";
+    case PwhistoryPamArgumentKind::UseAuthtok:
+        return "use_authtok";
+    case PwhistoryPamArgumentKind::AuthtokType:
+        return "authtok_type";
+    case PwhistoryPamArgumentKind::Debug:
+        return "debug";
+    case PwhistoryPamArgumentKind::EnforceForRoot:
+        return "enforce_for_root";
+    case PwhistoryPamArgumentKind::Remember:
+        return "remember";
+    case PwhistoryPamArgumentKind::Retry:
+        return "retry";
+    case PwhistoryPamArgumentKind::File:
+        return "file";
+    case PwhistoryPamArgumentKind::Conf:
+        return "conf";
+    case PwhistoryPamArgumentKind::Unknown:
+        break;
+    }
+    return "unknown";
+}
+
+// Classifies ONE raw argv token into its semantic kind. The known-kind
+// set mirrors the upstream pam_pwhistory.c / pwhistory_config.c option
+// parser:
+//   * whole-token options: try_first_pass / use_first_pass /
+//     use_authtok / debug / enforce_for_root (strcasecmp — icase);
+//   * value-prefixed options: authtok_type= / remember= / retry= /
+//     file= (pam_str_skip_icase_prefix — icase);
+//   * conf= (pam_str_skip_prefix — CASE-SENSITIVE).
+// A valued "debug=..."/"enforce_for_root=..." token stays inside its
+// flag kind: the application pass keeps rejecting valued flags with the
+// dedicated "must not have a value" diagnostic. Valueless
+// remember/retry/file tokens likewise stay inside their kind (the
+// application pass rejects them as invalid values), so a SINGLE such
+// token keeps its original diagnostic and only a genuine DUPLICATE is
+// reported by the uniqueness contract first.
+bool classifyPwhistoryPamArgument(const std::string& argument,
+                                  PwhistoryPamArgumentKind& kind)
+{
+    if (asciiEqualsIgnoreCase(argument, "try_first_pass")) {
+        kind = PwhistoryPamArgumentKind::TryFirstPass;
+        return true;
+    }
+    if (asciiEqualsIgnoreCase(argument, "use_first_pass")) {
+        kind = PwhistoryPamArgumentKind::UseFirstPass;
+        return true;
+    }
+    if (asciiEqualsIgnoreCase(argument, "use_authtok")) {
+        kind = PwhistoryPamArgumentKind::UseAuthtok;
+        return true;
+    }
+    if (asciiStartsWithIgnoreCase(argument, "authtok_type=")) {
+        kind = PwhistoryPamArgumentKind::AuthtokType;
+        return true;
+    }
+    if (asciiEqualsIgnoreCase(argument, "debug") ||
+        asciiStartsWithIgnoreCase(argument, "debug=")) {
+        kind = PwhistoryPamArgumentKind::Debug;
+        return true;
+    }
+    if (asciiEqualsIgnoreCase(argument, "enforce_for_root") ||
+        asciiStartsWithIgnoreCase(argument, "enforce_for_root=")) {
+        kind = PwhistoryPamArgumentKind::EnforceForRoot;
+        return true;
+    }
+    if (asciiStartsWithIgnoreCase(argument, "remember=") ||
+        asciiEqualsIgnoreCase(argument, "remember")) {
+        kind = PwhistoryPamArgumentKind::Remember;
+        return true;
+    }
+    if (asciiStartsWithIgnoreCase(argument, "retry=") ||
+        asciiEqualsIgnoreCase(argument, "retry")) {
+        kind = PwhistoryPamArgumentKind::Retry;
+        return true;
+    }
+    if (asciiStartsWithIgnoreCase(argument, "file=") ||
+        asciiEqualsIgnoreCase(argument, "file")) {
+        kind = PwhistoryPamArgumentKind::File;
+        return true;
+    }
+    // CASE-SENSITIVE upstream config selector (pam_str_skip_prefix):
+    // "CONF=..." is NOT a conf= token; it stays unknown and fails
+    // closed below.
+    if (argument.compare(0, 5, "conf=") == 0) {
+        kind = PwhistoryPamArgumentKind::Conf;
+        return true;
+    }
+    return false;
+}
+
+bool validatePwhistoryPamArguments(
+    const std::vector<std::string>& arguments,
+    const std::filesystem::path& source,
+    std::size_t line,
+    std::string& error)
+{
+    std::set<PwhistoryPamArgumentKind> seenKinds;
+    for (const auto& argument : arguments) {
+        PwhistoryPamArgumentKind kind = PwhistoryPamArgumentKind::Unknown;
+        if (!classifyPwhistoryPamArgument(argument, kind)) {
+            // Unknown tokens keep the application-pass diagnostic (the
+            // evaluator would fail closed with the same message).
+            error = source.string() + ":" + std::to_string(line) +
+                ": unknown pwhistory PAM argument " + argument;
+            return false;
+        }
+        // conf= uniqueness is a SEPARATE case-sensitive external-config
+        // contract (verifyExternalConfigContract), not part of this
+        // case-insensitive pwhistory option contract.
+        if (kind == PwhistoryPamArgumentKind::Conf) {
+            continue;
+        }
+        if (!seenKinds.insert(kind).second) {
+            error = source.string() + ":" + std::to_string(line) +
+                ": duplicate pwhistory PAM argument " +
+                pwhistoryPamArgumentKindName(kind);
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool evaluateFile(const std::filesystem::path& path,
                   PwhistoryEffectiveState& state,
                   std::string& error,
@@ -380,6 +553,15 @@ bool evaluateTopology(const fic::platform::PamProviderConfigTopology& topology,
 
 } // namespace
 
+bool PwhistoryConfigEvaluator::validatePamArguments(
+    const std::vector<std::string>& arguments,
+    const std::filesystem::path& source,
+    std::size_t line,
+    std::string& error)
+{
+    return validatePwhistoryPamArguments(arguments, source, line, error);
+}
+
 bool PwhistoryEffectiveState::managedValue(const std::string& option,
                                            std::string& value,
                                            std::string& error) const
@@ -406,6 +588,12 @@ bool PwhistoryConfigEvaluator::evaluateInvocation(
 {
     error.clear();
     state = PwhistoryEffectiveState{};
+    // The strict duplicate/uniqueness argv contract runs BEFORE any
+    // state evaluation: an ambiguous argv set is rejected as a whole
+    // instead of being partially applied (fail closed, deterministic).
+    if (!validatePwhistoryPamArguments(arguments, source, line, error)) {
+        return false;
+    }
     if (!evaluateTopology(topology, state, error)) {
         return false;
     }
@@ -424,6 +612,13 @@ bool PwhistoryConfigEvaluator::evaluateInvocationWithManagedOption(
 {
     error.clear();
     state = PwhistoryEffectiveState{};
+    // Same strict argv contract BEFORE the prospective BOF state is
+    // evaluated: a duplicate argv (e.g. "remember=10 REMEMBER=20" under
+    // a managed remember option) fails closed instead of being silently
+    // modeled as the upstream last-wins effective value.
+    if (!validatePwhistoryPamArguments(arguments, source, line, error)) {
+        return false;
+    }
     // BOF placement model: the managed entry is evaluated FIRST (it will
     // be the first matching key in the file), and every foreign
     // occurrence of the managed key in the existing file is overridden

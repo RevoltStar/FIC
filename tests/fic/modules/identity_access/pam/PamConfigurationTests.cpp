@@ -2821,16 +2821,21 @@ void testPwhistoryConfigFirstMatchSemantics() {
     // Upstream argv option NAMES are matched case-insensitively
     // (strcasecmp / pam_str_skip_icase_prefix): valid case variants of the
     // inert transport options must be accepted and must NOT change the
-    // effective state.
+    // effective state. Each variant is evaluated SEPARATELY — the strict
+    // duplicate-argv contract (Step 7D follow-up) rejects two occurrences
+    // of the same kind within ONE invocation.
     {
-        const auto [state, error] = evaluate("remember = 10\n",
-            {"TRY_FIRST_PASS", "Try_First_Pass", "USE_FIRST_PASS",
-                "Use_First_Pass", "USE_AUTHTOK", "Use_Authtok",
-                "AUTHTOK_TYPE=", "Authtok_Type=Password"});
-        require(error.empty() && state.remember == 10,
-            "case variants of the inert pwhistory argv options must be "
-                "accepted without changing the effective remember: " +
-                error);
+        for (const auto& variant : std::vector<std::string>{
+                 "TRY_FIRST_PASS", "Try_First_Pass", "USE_FIRST_PASS",
+                 "Use_First_Pass", "USE_AUTHTOK", "Use_Authtok",
+                 "AUTHTOK_TYPE=", "Authtok_Type=Password"}) {
+            const auto [state, error] =
+                evaluate("remember = 10\n", {variant});
+            require(error.empty() && state.remember == 10,
+                "case variant of the inert pwhistory argv options must be "
+                    "accepted without changing the effective remember: " +
+                    variant + ": " + error);
+        }
     }
     // Active argv options are matched case-insensitively too (upstream
     // pam_str_skip_icase_prefix on the option name).
@@ -2902,6 +2907,107 @@ void testPwhistoryConfigFirstMatchSemantics() {
                     {"enforce_for_root=yes"}, primary, 1, topology, state,
                     error),
             "a valued pwhistory flag argument must fail closed");
+    }
+}
+
+// Step 7D follow-up: strict duplicate-argv contract. Upstream applies
+// duplicate argv keys last-wins; FIC rejects the whole invocation BEFORE
+// any state evaluation (fail closed). Option NAMES are matched
+// case-insensitively, so case variants and identical duplicates of the
+// same kind are rejected alike; conf= stays outside this contract.
+void testPwhistoryDuplicatePamArgumentsFailClosed() {
+    TempDirectory temp;
+    const auto primary = temp.path() / "pwhistory.conf";
+    const auto topology = makePwhistoryTestTopology(primary);
+    const auto evaluate = [&](const std::vector<std::string>& arguments) {
+        writeFile(primary, "");
+        PwhistoryEffectiveState state;
+        std::string error;
+        const bool ok = PwhistoryConfigEvaluator::evaluateInvocation(
+            arguments, primary, 1, topology, state, error);
+        return std::pair<bool, std::string>(ok, error);
+    };
+
+    // Duplicate remember assignments (mixed case and identical
+    // duplicates included): an identical effective result does not make
+    // the input unambiguous.
+    for (const auto& arguments : std::vector<std::vector<std::string>>{
+             {"remember=10", "remember=20"},
+             {"remember=10", "REMEMBER=20"},
+             {"remember=10", "REMEMBER=10"}}) {
+        const auto [ok, error] = evaluate(arguments);
+        require(!ok,
+            "duplicate pwhistory remember argv must fail closed: " + error);
+        require(
+            error.find("duplicate pwhistory PAM argument remember") !=
+                std::string::npos,
+            "the duplicate remember diagnostic is missing: " + error);
+    }
+    // Representative remaining assignments: retry and file.
+    for (const auto& arguments : std::vector<std::vector<std::string>>{
+             {"retry=2", "RETRY=3"}, {"file=/a", "FILE=/b"}}) {
+        const auto [ok, error] = evaluate(arguments);
+        require(!ok,
+            "duplicate pwhistory assignment argv must fail closed: " +
+                error);
+    }
+    // Flags reject duplicates case-insensitively.
+    for (const auto& arguments : std::vector<std::vector<std::string>>{
+             {"enforce_for_root", "EnFoRcE_FoR_RoOt"}, {"debug", "DEBUG"}}) {
+        const auto [ok, error] = evaluate(arguments);
+        require(!ok,
+            "duplicate pwhistory flag argv must fail closed: " + error);
+    }
+    // The diagnostic names the option kind, not the raw token casing.
+    {
+        const auto [ok, error] =
+            evaluate({"enforce_for_root", "EnFoRcE_FoR_RoOt"});
+        require(
+            error.find("duplicate pwhistory PAM argument enforce_for_root") !=
+                std::string::npos,
+            "the duplicate flag diagnostic must name the option kind: " +
+                error);
+    }
+    // Inert transport options reject duplicates too (strict uniqueness
+    // for ALL known pwhistory argv kinds).
+    for (const auto& arguments : std::vector<std::vector<std::string>>{
+             {"use_authtok", "USE_AUTHTOK"},
+             {"authtok_type=foo", "AUTHTOK_TYPE=bar"},
+             {"try_first_pass", "TRY_FIRST_PASS"},
+             {"use_first_pass", "use_first_pass"}}) {
+        const auto [ok, error] = evaluate(arguments);
+        require(!ok,
+            "duplicate inert pwhistory argv must fail closed: " + error);
+    }
+    // conf= is NOT part of the case-insensitive option contract: an
+    // uppercase CONF= token is an unknown pwhistory argument — never a
+    // second config selector. The pair therefore fails closed for the
+    // UNKNOWN reason, while lowercase conf= duplicates stay governed by
+    // the case-sensitive external config contract.
+    {
+        const auto [ok, error] = evaluate({"conf=/a", "CONF=/b"});
+        require(!ok, "conf=/a CONF=/b must fail closed: " + error);
+        require(error.find("unknown pwhistory PAM argument CONF=/b") !=
+                std::string::npos,
+            "CONF= must be rejected as an unknown argument, not as a "
+            "duplicate conf= selector: " + error);
+    }
+    // Valid single case variants still apply with upstream semantics
+    // (the contract rejects duplicates, not case-insensitive matching).
+    {
+        PwhistoryEffectiveState state;
+        std::string error;
+        writeFile(primary, "");
+        require(
+            PwhistoryConfigEvaluator::evaluateInvocation(
+                {"REMEMBER=20", "RETRY=4", "FILE=/foo", "EnFoRcE_FoR_RoOt",
+                    "USE_AUTHTOK", "AUTHTOK_TYPE=x"},
+                primary, 1, topology, state, error) &&
+                state.remember == 20 && state.retry == 4 &&
+                state.file == "/foo" && state.enforceForRoot,
+            "valid single case-variant argv must keep upstream effective "
+            "semantics: " +
+                error);
     }
 }
 
@@ -3004,6 +3110,94 @@ void testPwhistoryManagedOptionSemantics() {
         !fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
             inspect(), capability, "remember", "10", error),
         "a wrong conf= target must fail the external config contract");
+
+    // Step 7D follow-up: a DUPLICATE known PAM argv option fails the
+    // managed preflight closed — the upstream last-wins effective value
+    // (20) is never accepted as the semantic proof, and the rejection
+    // happens before any state evaluation (no partial prospective
+    // modeling of an ambiguous argv set).
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " remember=10 REMEMBER=20\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "a duplicate PAM argv remember must fail the preflight closed");
+    require(
+        error.find("duplicate pwhistory PAM argument remember") !=
+            std::string::npos,
+        "the duplicate argv preflight diagnostic is missing: " + error);
+
+    // §29b: the same duplicate contract at the prospective BOF level —
+    // the FIC BOF remember=requested must not turn "remember=10
+    // REMEMBER=20" into an effective-20 conflict; the argv set itself is
+    // rejected first.
+    writeFile(
+        platform.passwordHistoryConfigPath, "remember = 3\n");
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " remember=10 REMEMBER=20\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "a duplicate PAM argv remember must fail the prospective BOF "
+        "preflight closed (not an effective-20 conflict)");
+
+    // conf= duplicates stay governed by the CASE-SENSITIVE external
+    // config contract (verifyExternalConfigContract), not by the
+    // case-insensitive option contract.
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() + " conf=" +
+            platform.passwordHistoryConfigPath.string() + "\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "duplicate lowercase conf= selectors must fail the external "
+        "config contract");
+    require(
+        error.find("duplicate PAM argument conf") != std::string::npos,
+        "the duplicate conf= external-config diagnostic is missing: " +
+            error);
+
+    // conf=/a CONF=/b: the uppercase token is NOT a second selector —
+    // the external contract passes and the rejection reason is the
+    // unknown argv token.
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() + " CONF=/b\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyOption(
+            inspect(), capability, "remember", "10", error),
+        "conf=/a CONF=/b must fail closed");
+    require(
+        error.find("unknown pwhistory PAM argument CONF=/b") !=
+            std::string::npos,
+        "CONF=/b must be rejected as an unknown argument, not as a "
+        "duplicate conf= selector: " + error);
+
+    // The legacy-writer flag preflight (canApplyFlag) enforces the same
+    // duplicate-argv contract.
+    writeFile(
+        temp.path() / "pam.d/passwd",
+        "password required pam_pwhistory.so conf=" +
+            platform.passwordHistoryConfigPath.string() +
+            " enforce_for_root EnFoRcE_FoR_RoOt\n");
+    require(
+        !fic::identity::pam::PamProviderSemanticVerifier::canApplyFlag(
+            inspect(), capability, "enforce_for_root", true, {}, error),
+        "a duplicate PAM argv enforce_for_root must fail the flag "
+        "preflight closed");
+    require(
+        error.find("duplicate pwhistory PAM argument enforce_for_root") !=
+            std::string::npos,
+        "the duplicate flag preflight diagnostic is missing: " + error);
 
     // §41: Debian 12 ModuleArguments capability keeps the specialized
     // pwhistoryArguments backend with priority (the config evaluator is
@@ -3370,6 +3564,7 @@ int main() {
         testTrustedPamServiceAliasSecurityContract();
         testLegacyPwhistoryNativeRememberSemantics();
         testPwhistoryConfigFirstMatchSemantics();
+        testPwhistoryDuplicatePamArgumentsFailClosed();
         testPwhistoryManagedOptionSemantics();
         testPasswordHistoryAlternativeIsDetected();
         testPasswdqcConfigArgumentAndInlineOverride();
