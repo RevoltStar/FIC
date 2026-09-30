@@ -2,11 +2,11 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `85addf0` («Follow-up к последнему коммиту»,
-  родитель `b61e616`; в `85addf0` закоммичены Step 7E и follow-up №1 —
-  P1/P2/парсер-фиксы). Поверх HEAD — незакоммиченный **follow-up №2**
-  (write/read parity suppression-id authority, см. Current task).
-  Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `dd99d66` («Follow-up к последнему коммиту №2»,
+  родитель `85addf0`; в `dd99d66` закоммичен follow-up №2 — production
+  write/read parity suppression-id authority, принят). Поверх HEAD —
+  незакоммиченный **follow-up №3** (test-only: исправление regression
+  fixtures, см. Current task). Коммит НЕ делать без явного запроса.
 
 ## Current task
 
@@ -39,7 +39,7 @@
 4. Include cleanup в `PamProviderManagedBlock.h` (дубликаты `<cctype>`,
    `<cstdint>`, `<string>`, `<vector>`).
 
-**Follow-up №2 к Step 7E (выполнен, не закоммичен) — write/read parity
+**Follow-up №2 к Step 7E (закоммичен в `dd99d66`) — write/read parity
 suppression-id authority:** load-side collision check уже был
 status-aware, но write-side `prepareMutation()` использовал отдельную
 status-слепую lambda (всегда target ∪ previous) и ошибочно считал
@@ -55,6 +55,19 @@ Write-side regressions: Applied previous-is-historical → SUCCESS +
 reload; RollbackFailed previous-is-historical → SUCCESS + reload;
 active-target collision → FAIL; Prepared previous-is-authority → FAIL
 (остался).
+
+**Follow-up №3 к Step 7E (выполнен, не закоммичен) — test-only:** два
+write-side regression-теста из `dd99d66` фактически не воспроизводили
+старый status-blind баг: record A строилась fresh-переходом
+(previous={}), поэтому переиспользуемый id никогда не был previous A, и
+тест прошёл бы и на старом writer. Fixtures перестроены через легальный
+same-id false→false refresh lifecycle: fresh {old} → Applied → refresh
+(target {new}, previous {old}) → Applied (RollbackFailed-тест затем →
+RollbackFailed). Добавлены same-mutation-id assert, pre-assertion
+фактического payload A (статус + target + previous) ДО parity-assertion
+и полные reload proofs (A Applied/RollbackFailed target+previous
+сохранены, B persisted с target). Тесты теперь падают на pre-dd99d66
+status-blind writer и проходят на shared status-aware реализации.
 
 Step 7F НЕ начат.
 
@@ -116,9 +129,11 @@ Step 7F НЕ начат.
 - Follow-up №1 (закоммичен в `85addf0`): P1 identity/ownership split +
   fail-closed fresh; P2 authority model load+write; парсер-фикс
   публикации suppressions вне блока; include cleanup.
-- Follow-up №2 (не закоммичен): единый status-aware authority helper
-  load+write (устранён write/read mismatch), write-side regressions
-  Applied/RollbackFailed previous-is-historical.
+- Follow-up №2 (закоммичен в `dd99d66`): единый status-aware authority
+  helper load+write (устранён write/read mismatch), write-side
+  regressions Applied/RollbackFailed previous-is-historical.
+- Follow-up №3 (не закоммичен): исправлены regression fixtures —
+  real same-id refresh с непустым previous set + reload proofs.
 
 ### Changed areas
 
@@ -138,7 +153,10 @@ Step 7F НЕ начат.
   (+`testFlagSuppressionAuthorityInvariants`: load-side cases A–D,
   Applied-previous-not-authority, cross-file OK; write-side parity;
   follow-up №2: `testAppliedPreviousSuppressionSetIsHistoricalAtWriteTime`,
-  `testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime`)
+  `testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime`;
+  follow-up №3: fixtures этих двух тестов перестроены через легальный
+  same-id refresh с непустым previous set, добавлены payload/reload
+  assertions)
 - `tests/.../pam/PamProviderManagedEntryExecutorTests.cpp` (routing
   matrix синтаксо-осознанный), `IdentityPolicyHierarchyTests.cpp`
   (policy-path 7E), `tests/CMakeLists.txt` (в Step 7E)
@@ -160,12 +178,18 @@ Step 7F НЕ начат.
   `alt_pam_faillock_topology_tests`,
   `alt_pam_password_history_topology_tests` — все PASS.
 - `git diff --check` — чисто.
-- Follow-up №2: полный build + полный CTest (112/112, тот же 1 skip) +
-  `git diff --check` повторно выполнены на этой сессии; targeted:
-  `pam_provider_managed_entry_journal_tests`,
-  `pam_provider_managed_flag_executor_tests`,
-  `pam_provider_managed_entry_executor_tests`,
-  `identity_policy_hierarchy_tests` — PASS.
+- Follow-up №3 (поверх `dd99d66`, текущая сессия):
+  - targeted build + run: `pam_provider_managed_entry_journal_tests`
+    PASS, `pam_provider_managed_flag_executor_tests` PASS;
+  - mutation check: временная подмена write-side вызова на
+    `preparedPamFlagSuppressionAuthority(*otherFlag)` (эквивалент старого
+    status-blind writer) → journal-тест упал на основном assertion
+    (`suppression id 's1' ... already provable rollback authority of
+    active record 1`); production-файл восстановлен через
+    `git checkout --`, реального изменения нет;
+  - полный build `build-check` — 0 errors; полный CTest — **112/112
+    PASS** (1 skip, тот же);
+  - `git diff --check` — чисто.
 - Distro E2E НЕ запускался (до 7F).
 
 ## Remaining

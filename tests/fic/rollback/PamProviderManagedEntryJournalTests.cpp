@@ -902,12 +902,20 @@ MutationRecord authorityFlagRecordFor(
     return record;
 }
 
-// Write-side regression for the status-aware authority parity bug: the
-// previous status-blind write-side helper treated the previous
-// suppression id set of an Applied record as ACTIVE authority, so a legal
-// incoming transition re-using that historical id was wrongly refused,
-// while the loader accepted exactly the same document. The record is
-// built through the legal lifecycle only (prepare → set Applied).
+// Write-side regression for the status-aware authority parity bug fixed
+// in dd99d66: the pre-fix status-blind write-side helper computed the
+// authority of an Applied record as suppressionIds ∪ previousSuppressionIds,
+// so a legal incoming transition re-using the record's HISTORICAL previous
+// id was wrongly refused while the loader accepted the same document.
+// This regression MUST FAIL against that status-blind writer and PASS
+// against the shared status-aware authority implementation.
+//
+// The fixture therefore must really carry a non-empty previous set: it is
+// built ONLY through the legal lifecycle — fresh {s1} → Applied →
+// same-id false→false refresh (target {s3}, previous {s1}) → Applied —
+// never by forging a status or payload. A fresh Applied record with
+// previous={} would make this test vacuous (it would pass on the old
+// status-blind writer too, because the reused id never belonged to A).
 void testAppliedPreviousSuppressionSetIsHistoricalAtWriteTime() {
     TempJournal temp;
     std::string error;
@@ -916,26 +924,59 @@ void testAppliedPreviousSuppressionSetIsHistoricalAtWriteTime() {
     require(journal.load(error), error);
     MutationId id = 0;
 
-    // Record A through the legal lifecycle: fresh transition, then the
-    // durable completion into Applied. Its previous set {s1} becomes
-    // historical provenance; its active authority is the target {s3} only.
+    // Phase A1: fresh owned state {s1}, committed as Applied.
     require(journal.prepareMutation(
                 authorityFlagRecordFor(authorityFlagPayload(
-                    "flag_policy_one", std::nullopt, {"s3"}, {}, path)),
+                    "flag_policy_one", std::nullopt, {"s1"}, {}, path)),
                 id, error),
         error);
-    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    const MutationId recordAId = id;
+    require(recordAId != 0, "journal must allocate a non-zero mutation id");
+    require(journal.setStatus(recordAId, MutationStatus::Applied, error),
+        error);
 
-    // Incoming record B re-uses the HISTORICAL previous id of A as its
-    // target on the SAME file: no cross-record authority collision
-    // (A authority = {s3}, B prepared authority = {s1}) — must be accepted.
+    // Phase A2: same-identity false→false refresh — the new transition
+    // owns {s3} and carries the currently owned {s1} as its previous
+    // provenance. Step 7E refresh keeps ONE journal transaction identity.
+    require(journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_one", false, {"s3"}, {"s1"}, path)),
+                id, error),
+        error);
+    require(id == recordAId,
+        "the refresh must reuse the same journal transaction identity");
+    require(journal.setStatus(recordAId, MutationStatus::Applied, error),
+        error);
+
+    // The fixture must be verified BEFORE the parity assertion: an
+    // accidental previous={} fixture would make the test vacuous.
+    {
+        const auto active = journal.activeRecords(
+            {"IDENTITY_ACCESS", "PAM", "flag_policy_one"});
+        require(active.size() == 1, "record A must be the only active one");
+        const auto* flagA = std::get_if<UndoRemovePamProviderManagedFlag>(
+            &active.front().undo.payload);
+        require(flagA != nullptr, "record A payload type mismatch");
+        require(active.front().status == MutationStatus::Applied,
+            "record A must be Applied before the parity assertion");
+        require(flagA->suppressionIds == std::vector<std::string>{"s3"} &&
+                flagA->previousSuppressionIds ==
+                    std::vector<std::string>{"s1"},
+            "record A must durably carry target {s3} and historical "
+            "previous {s1}");
+    }
+
+    // Phase B (main regression assertion): flag_policy_two re-uses the
+    // HISTORICAL previous id of A as its target on the SAME file. The
+    // status-aware writer accepts it (A authority = {s3}); the old
+    // status-blind writer (A authority = {s3, s1}) refused exactly here.
     require(journal.prepareMutation(
                 authorityFlagRecordFor(authorityFlagPayload(
                     "flag_policy_two", std::nullopt, {"s1"}, {}, path)),
                 id, error),
         error);
-    // The ACTIVE target id of A is still authority: a third record
-    // claiming it must be refused (status-aware, not set-blind).
+    // Active-target negative control: {s3} is still A's authority, so the
+    // fix must not have disabled collision validation entirely.
     require(!journal.prepareMutation(
                 authorityFlagRecordFor(authorityFlagPayload(
                     "flag_policy_three", std::nullopt, {"s3"}, {}, path)),
@@ -943,18 +984,44 @@ void testAppliedPreviousSuppressionSetIsHistoricalAtWriteTime() {
         "an active target authority of an Applied record must still be "
         "refused at write time");
 
-    // Write/read parity: the accepted document loads cleanly.
+    // Write/read parity: the accepted document loads cleanly and keeps
+    // the exact provenance this regression is about.
     MutationJournal reader(temp.path);
     require(reader.load(error), error);
-    require(reader.activeRecords({"IDENTITY_ACCESS", "PAM", "flag_policy_two"})
-                    .size() == 1,
+    const auto restoredA = reader.activeRecords(
+        {"IDENTITY_ACCESS", "PAM", "flag_policy_one"});
+    require(restoredA.size() == 1 &&
+                restoredA.front().status == MutationStatus::Applied,
+        "record A must reload as Applied");
+    const auto* restoredFlagA = std::get_if<UndoRemovePamProviderManagedFlag>(
+        &restoredA.front().undo.payload);
+    require(restoredFlagA != nullptr &&
+                restoredFlagA->suppressionIds ==
+                    std::vector<std::string>{"s3"} &&
+                restoredFlagA->previousSuppressionIds ==
+                    std::vector<std::string>{"s1"},
+        "the historical previous set {s1} must survive persistence");
+    const auto restoredB = reader.activeRecords(
+        {"IDENTITY_ACCESS", "PAM", "flag_policy_two"});
+    require(restoredB.size() == 1,
         "the legal historical-id reuse must be persisted");
+    const auto* restoredFlagB = std::get_if<UndoRemovePamProviderManagedFlag>(
+        &restoredB.front().undo.payload);
+    require(restoredFlagB != nullptr &&
+                restoredFlagB->suppressionIds == std::vector<std::string>{"s1"},
+        "record B must persist with target {s1}");
 }
 
 // Write-side RollbackFailed regression: RollbackFailed is an ACTIVE
 // status whose authority is the target set only — the previous set is
-// historical provenance. Built through the legal lifecycle
-// (prepare → Applied → set RollbackFailed).
+// historical provenance. This regression MUST FAIL against the
+// pre-dd99d66 status-blind writer (which attributed the previous set to a
+// RollbackFailed record too) and PASS against the shared status-aware
+// implementation. The fixture is built ONLY through the legal lifecycle —
+// fresh {s8} → Applied → same-id false→false refresh (target {s9},
+// previous {s8}) → Applied → RollbackFailed — never by forging a status
+// or payload; a fresh record with previous={} would make the test
+// vacuous.
 void testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime() {
     TempJournal temp;
     std::string error;
@@ -963,23 +1030,61 @@ void testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime() {
     require(journal.load(error), error);
     MutationId id = 0;
 
+    // Phase R1: fresh owned state {s8}, committed as Applied.
     require(journal.prepareMutation(
                 authorityFlagRecordFor(authorityFlagPayload(
-                    "flag_policy_one", std::nullopt, {"s9"}, {}, path)),
+                    "flag_policy_one", std::nullopt, {"s8"}, {}, path)),
                 id, error),
         error);
-    require(journal.setStatus(id, MutationStatus::Applied, error), error);
-    require(journal.setStatus(id, MutationStatus::RollbackFailed, error),
+    const MutationId recordAId = id;
+    require(recordAId != 0, "journal must allocate a non-zero mutation id");
+    require(journal.setStatus(recordAId, MutationStatus::Applied, error),
         error);
 
-    // B re-uses the historical previous id {s8} of the RollbackFailed
-    // record: allowed, because its authority is the target {s9} only.
+    // Phase R2: same-identity false→false refresh — target {s9} with the
+    // currently owned {s8} as previous provenance; the durable state is
+    // then moved into RollbackFailed (rollback of the target failed).
+    require(journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_one", false, {"s9"}, {"s8"}, path)),
+                id, error),
+        error);
+    require(id == recordAId,
+        "the refresh must reuse the same journal transaction identity");
+    require(journal.setStatus(recordAId, MutationStatus::Applied, error),
+        error);
+    require(journal.setStatus(recordAId, MutationStatus::RollbackFailed, error),
+        error);
+
+    // The fixture must be verified BEFORE the parity assertion: an
+    // accidental previous={} fixture would make the test vacuous.
+    {
+        const auto active = journal.activeRecords(
+            {"IDENTITY_ACCESS", "PAM", "flag_policy_one"});
+        require(active.size() == 1, "record A must be the only active one");
+        const auto* flagA = std::get_if<UndoRemovePamProviderManagedFlag>(
+            &active.front().undo.payload);
+        require(flagA != nullptr, "record A payload type mismatch");
+        require(active.front().status == MutationStatus::RollbackFailed,
+            "record A must be RollbackFailed before the parity assertion");
+        require(flagA->suppressionIds == std::vector<std::string>{"s9"} &&
+                flagA->previousSuppressionIds ==
+                    std::vector<std::string>{"s8"},
+            "record A must durably carry target {s9} and historical "
+            "previous {s8}");
+    }
+
+    // Main regression assertion: flag_policy_two re-uses the HISTORICAL
+    // previous id {s8} of the RollbackFailed record (its authority is the
+    // target {s9} only). The old status-blind writer refused exactly here.
     require(journal.prepareMutation(
                 authorityFlagRecordFor(authorityFlagPayload(
                     "flag_policy_two", std::nullopt, {"s8"}, {}, path)),
                 id, error),
         error);
-    // The target id {s9} is still active authority: refused.
+    // Active-target negative control: {s9} is still A's authority —
+    // RollbackFailed remains an active journal status owning its target
+    // suppression set.
     require(!journal.prepareMutation(
                 authorityFlagRecordFor(authorityFlagPayload(
                     "flag_policy_three", std::nullopt, {"s9"}, {}, path)),
@@ -987,11 +1092,32 @@ void testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime() {
         "an active target authority of a RollbackFailed record must be "
         "refused at write time");
 
+    // Write/read parity: the accepted document loads cleanly and keeps
+    // the exact provenance this regression is about.
     MutationJournal reader(temp.path);
     require(reader.load(error), error);
-    require(reader.activeRecords({"IDENTITY_ACCESS", "PAM", "flag_policy_two"})
-                    .size() == 1,
+    const auto restoredA = reader.activeRecords(
+        {"IDENTITY_ACCESS", "PAM", "flag_policy_one"});
+    require(restoredA.size() == 1 &&
+                restoredA.front().status == MutationStatus::RollbackFailed,
+        "record A must reload as RollbackFailed");
+    const auto* restoredFlagA = std::get_if<UndoRemovePamProviderManagedFlag>(
+        &restoredA.front().undo.payload);
+    require(restoredFlagA != nullptr &&
+                restoredFlagA->suppressionIds ==
+                    std::vector<std::string>{"s9"} &&
+                restoredFlagA->previousSuppressionIds ==
+                    std::vector<std::string>{"s8"},
+        "the historical previous set {s8} must survive persistence");
+    const auto restoredB = reader.activeRecords(
+        {"IDENTITY_ACCESS", "PAM", "flag_policy_two"});
+    require(restoredB.size() == 1,
         "the legal RollbackFailed historical-id reuse must be persisted");
+    const auto* restoredFlagB = std::get_if<UndoRemovePamProviderManagedFlag>(
+        &restoredB.front().undo.payload);
+    require(restoredFlagB != nullptr &&
+                restoredFlagB->suppressionIds == std::vector<std::string>{"s8"},
+        "record B must persist with target {s8}");
 }
 
 } // namespace
