@@ -491,6 +491,52 @@ bool samePamProviderPreparedFlagTransition(
                incoming.previousSuppressionIds;
 }
 
+// Step 7E: rollback authority over the suppression ids of ONE PAM provider
+// managed-flag record. This is the SINGLE status-aware authority model,
+// shared by the load-side cross-record collision check AND by
+// prepareMutation() on the write path (write/read semantic parity: the
+// writer refuses exactly those cross-record authority collisions that the
+// loader would reject for the resulting active statuses — do NOT
+// reintroduce a second, status-blind authority computation here).
+//
+// Status → authority (Prepared is an UNRESOLVED transition: the physical
+// state may sit on either durable side, so both are potential authority):
+//   * Prepared       — suppressionIds ∪ previousSuppressionIds;
+//   * Applied        — suppressionIds (the previous state has been
+//                      physically replaced; its ids are historical
+//                      provenance, never authority);
+//   * RollbackFailed — suppressionIds (the target is still the durable
+//                      owned state; previous ids are historical);
+//   * resolved statuses (RolledBack / Detached, i.e. !isActive()) — none:
+//                      complete mutation history never conflicts.
+std::vector<std::string> preparedPamFlagSuppressionAuthority(
+    const UndoRemovePamProviderManagedFlag& flag) {
+    std::vector<std::string> authority = flag.suppressionIds;
+    authority.insert(authority.end(),
+        flag.previousSuppressionIds.begin(),
+        flag.previousSuppressionIds.end());
+    return authority;
+}
+
+// Authority of an EXISTING record, evaluated by its ACTUAL status. For a
+// Prepared record this equals preparedPamFlagSuppressionAuthority(); for
+// an Applied/RollbackFailed record the previous set is already historical
+// provenance. An incoming prepare must NOT be evaluated through this
+// helper with a guessed status: prepareMutation persists the incoming
+// transition as Prepared, so model its authority with
+// preparedPamFlagSuppressionAuthority() (its FUTURE Prepared state).
+std::vector<std::string> activePamFlagSuppressionAuthority(
+    const MutationRecord& record,
+    const UndoRemovePamProviderManagedFlag& flag) {
+    if (!record.isActive()) {
+        return {};
+    }
+    if (record.status == MutationStatus::Prepared) {
+        return preparedPamFlagSuppressionAuthority(flag);
+    }
+    return flag.suppressionIds;
+}
+
 bool validKerberosSectionName(const std::string& section) {
     return !section.empty() &&
         section.find_first_of("[]*#;\r\n") == std::string::npos;
@@ -1920,31 +1966,15 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
     // journal corruption — fail closed at load (write/read semantic parity
     // with the executor's provenance proof).
     //
-    // Authority domain per record status:
-    //   * Prepared — the physical transition of this record may or may not
-    //     have happened, so BOTH sides of the durable transition are
-    //     potential authority: suppressionIds ∪ previousSuppressionIds;
-    //   * Applied / RollbackFailed — the target state is durably proven and
-    //     the previous state has been physically replaced: only
-    //     suppressionIds remains rollback authority;
-    //   * resolved statuses (RolledBack / Detached) are never authority:
-    //     historical mutation history is preserved and never conflicts.
+    // Per-record authority comes from the shared status-aware helper
+    // activePamFlagSuppressionAuthority() — the single authority model
+    // also enforced by prepareMutation() on the write path (see the
+    // helper for the status → authority table).
     //
     // The comparison is scoped by configPath: a suppression id is a token
     // of ONE physical file namespace (Step 7E §11), so identical ids in
     // records of DIFFERENT provider primaries are independent provenance,
     // never a conflict.
-    const auto activeFlagAuthority = [](const MutationRecord& record,
-                                        const UndoRemovePamProviderManagedFlag&
-                                            flag) {
-        std::vector<std::string> authority = flag.suppressionIds;
-        if (record.status == MutationStatus::Prepared) {
-            authority.insert(authority.end(),
-                flag.previousSuppressionIds.begin(),
-                flag.previousSuppressionIds.end());
-        }
-        return authority;
-    };
     for (std::size_t outer = 0; outer < parsed.size(); ++outer) {
         if (!parsed[outer].isActive()) {
             continue;
@@ -1955,7 +1985,7 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
             continue;
         }
         const std::vector<std::string> outerAuthority =
-            activeFlagAuthority(parsed[outer], *outerFlag);
+            activePamFlagSuppressionAuthority(parsed[outer], *outerFlag);
         for (std::size_t inner = outer + 1; inner < parsed.size(); ++inner) {
             if (!parsed[inner].isActive()) {
                 continue;
@@ -1968,7 +1998,7 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
                 continue;
             }
             const std::vector<std::string> innerAuthority =
-                activeFlagAuthority(parsed[inner], *innerFlag);
+                activePamFlagSuppressionAuthority(parsed[inner], *innerFlag);
             for (const std::string& id : outerAuthority) {
                 if (std::find(innerAuthority.begin(), innerAuthority.end(),
                               id) != innerAuthority.end()) {
@@ -2240,24 +2270,19 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                        UndoRemovePamProviderManagedFlag>(
                        &record.undo.payload)) {
             // Step 7E write/read parity for the cross-record suppression-id
-            // authority invariant: the loader rejects any document in which
-            // ONE suppression id is provable rollback authority of TWO
-            // active flag records of the SAME physical file (Prepared =
-            // target ∪ previous authority; Applied/RollbackFailed = target
-            // authority only). The writer must never persist such a state.
-            // The record being refreshed (same logical identity) is
-            // REPLACED by this prepare, so its old authority is released,
-            // not retained.
-            const auto flagAuthority = [](const UndoRemovePamProviderManagedFlag&
-                                              flag) {
-                std::vector<std::string> authority = flag.suppressionIds;
-                authority.insert(authority.end(),
-                    flag.previousSuppressionIds.begin(),
-                    flag.previousSuppressionIds.end());
-                return authority;
-            };
+            // authority invariant: the writer refuses exactly those
+            // cross-record authority collisions that the loader would
+            // reject for the resulting active statuses. Existing records
+            // are evaluated by their ACTUAL status through the shared
+            // activePamFlagSuppressionAuthority() helper (the single
+            // authority model of the load path); the incoming transition
+            // is evaluated as the authority of its FUTURE Prepared state
+            // (target ∪ previous), because this prepare persists it as
+            // Prepared. The record being refreshed (same logical identity)
+            // is REPLACED by this prepare, so its old authority is
+            // released, not retained.
             const std::vector<std::string> incomingAuthority =
-                flagAuthority(*pamFlag);
+                preparedPamFlagSuppressionAuthority(*pamFlag);
             for (const MutationRecord& other : records_) {
                 if (!other.isActive() ||
                     other.undo.backend != MutationBackend::Pam ||
@@ -2273,7 +2298,7 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                     continue;
                 }
                 const std::vector<std::string> otherAuthority =
-                    flagAuthority(*otherFlag);
+                    activePamFlagSuppressionAuthority(other, *otherFlag);
                 for (const std::string& id : incomingAuthority) {
                     if (std::find(otherAuthority.begin(),
                                   otherAuthority.end(),

@@ -2,13 +2,15 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `b61e616` («Приступаем к Step7E», родитель
-  `d2327b5`). Поверх HEAD — незакоммиченный **follow-up к Step 7E**
-  (P1/P2-фиксы, см. Current task). Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `85addf0` («Follow-up к последнему коммиту»,
+  родитель `b61e616`; в `85addf0` закоммичены Step 7E и follow-up №1 —
+  P1/P2/парсер-фиксы). Поверх HEAD — незакоммиченный **follow-up №2**
+  (write/read parity suppression-id authority, см. Current task).
+  Коммит НЕ делать без явного запроса.
 
 ## Current task
 
-**Follow-up к Step 7E (выполнен, не закоммичен):**
+**Follow-up №1 к Step 7E (закоммичен в `85addf0`):**
 1. **P1 — fresh-transaction orphan-wrapper adoption.** Баг: canonical
    suppression wrapper того же identity (provider/policy/key), но с чужим
    mutation id (или без активной journal-записи) молча адоптировался
@@ -36,6 +38,23 @@
    публикуются всегда.
 4. Include cleanup в `PamProviderManagedBlock.h` (дубликаты `<cctype>`,
    `<cstdint>`, `<string>`, `<vector>`).
+
+**Follow-up №2 к Step 7E (выполнен, не закоммичен) — write/read parity
+suppression-id authority:** load-side collision check уже был
+status-aware, но write-side `prepareMutation()` использовал отдельную
+status-слепую lambda (всегда target ∪ previous) и ошибочно считал
+historical `previousSuppressionIds` уже Applied/RollbackFailed соседней
+записи активной authority — валидный incoming transition,
+переиспользующий этот id, ложно отвергался (fail-safe, но нарушение
+заявленной write/read semantic parity: loader тот же persisted state
+принимал). Фикс: единые shared helpers в `MutationJournal.cpp` —
+`preparedPamFlagSuppressionAuthority()` (future Prepared: target ∪
+previous) и `activePamFlagSuppressionAuthority(record, flag)`
+(фактический статус записи); обе стороны используют ОДНУ модель.
+Write-side regressions: Applied previous-is-historical → SUCCESS +
+reload; RollbackFailed previous-is-historical → SUCCESS + reload;
+active-target collision → FAIL; Prepared previous-is-authority → FAIL
+(остался).
 
 Step 7F НЕ начат.
 
@@ -67,9 +86,14 @@ Step 7F НЕ начат.
   materialized).
 - **Suppression-id authority model (P2):** один suppression id —
   authority максимум ОДНОЙ активной flag записи одного физического файла
-  (namespace = configPath). Prepared = target ∪ previous; Applied/
-  RollbackFailed = target; resolved — never authority. Инвариант
-  соблюдается и на load, и на write (parity).
+  (namespace = configPath). Единая status-aware модель
+  (`activePamFlagSuppressionAuthority`): Prepared = target ∪ previous;
+  Applied/RollbackFailed = target; resolved — never authority.
+  `prepareMutation` оценивает existing records по их фактическому
+  статусу, а incoming transition — как future Prepared (target ∪
+  previous, `preparedPamFlagSuppressionAuthority`); refresh-имая запись
+  исключена (её authority освобождается заменой). Одна модель на load
+  и write (parity).
 
 ### Completed
 
@@ -89,9 +113,12 @@ Step 7F НЕ начат.
   argv-конфликт флага → preflight fail closed до мутации.
 - Fix в `PamProviderManagedBlock.cpp` (`parsePamProviderSuppressionWrapper`):
   mid-parse reset `wrapper = T{}` затирал уже присвоенный `provider`.
-- Follow-up (эта сессия): P1 identity/ownership split + fail-closed
-  fresh; P2 authority model load+write; парсер-фикс публикации
-  suppressions вне блока; include cleanup.
+- Follow-up №1 (закоммичен в `85addf0`): P1 identity/ownership split +
+  fail-closed fresh; P2 authority model load+write; парсер-фикс
+  публикации suppressions вне блока; include cleanup.
+- Follow-up №2 (не закоммичен): единый status-aware authority helper
+  load+write (устранён write/read mismatch), write-side regressions
+  Applied/RollbackFailed previous-is-historical.
 
 ### Changed areas
 
@@ -99,15 +126,19 @@ Step 7F НЕ начат.
   (парсер-фикс publish-suppressions; include cleanup)
 - `fic/src/modules/identity_access/pam/PamProviderManagedFlagExecutor.cpp`
   (P1: FlagPhysicalInspection/inspect/applyFreshFlag)
-- `fic/src/rollback/MutationJournal.cpp` (P2: activeFlagAuthority
-  load-side; write-side parity в prepareMutation)
+- `fic/src/rollback/MutationJournal.cpp` (P2: shared
+  `preparedPamFlagSuppressionAuthority` /
+  `activePamFlagSuppressionAuthority` — единая status-aware модель на
+  load и в prepareMutation)
 - `tests/fic/modules/identity_access/pam/
   PamProviderManagedFlagExecutorTests.cpp` (+3 теста: orphan wrapper
   refuse для desired=false/true, foreign-mutation-id fail-closed для
   обоих desired; helpers `forgeWrapperLine`/`writeOrphanWrapperState`)
 - `tests/fic/rollback/PamProviderManagedEntryJournalTests.cpp`
   (+`testFlagSuppressionAuthorityInvariants`: load-side cases A–D,
-  Applied-previous-not-authority, cross-file OK; write-side parity)
+  Applied-previous-not-authority, cross-file OK; write-side parity;
+  follow-up №2: `testAppliedPreviousSuppressionSetIsHistoricalAtWriteTime`,
+  `testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime`)
 - `tests/.../pam/PamProviderManagedEntryExecutorTests.cpp` (routing
   matrix синтаксо-осознанный), `IdentityPolicyHierarchyTests.cpp`
   (policy-path 7E), `tests/CMakeLists.txt` (в Step 7E)
@@ -129,6 +160,12 @@ Step 7F НЕ начат.
   `alt_pam_faillock_topology_tests`,
   `alt_pam_password_history_topology_tests` — все PASS.
 - `git diff --check` — чисто.
+- Follow-up №2: полный build + полный CTest (112/112, тот же 1 skip) +
+  `git diff --check` повторно выполнены на этой сессии; targeted:
+  `pam_provider_managed_entry_journal_tests`,
+  `pam_provider_managed_flag_executor_tests`,
+  `pam_provider_managed_entry_executor_tests`,
+  `identity_policy_hierarchy_tests` — PASS.
 - Distro E2E НЕ запускался (до 7F).
 
 ## Remaining

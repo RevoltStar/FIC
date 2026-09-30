@@ -872,6 +872,128 @@ void testFlagSuppressionAuthorityInvariants() {
         "a refused record must never be persisted");
 }
 
+// Shared builders for the write-side status-aware authority regressions:
+// the payload/record shapes are identical to the parity cases above, but
+// the record statuses are reached ONLY through the legal lifecycle
+// (prepareMutation → setStatus), never by forging a status.
+UndoRemovePamProviderManagedFlag authorityFlagPayload(
+    const std::string& policy, std::optional<bool> previousEnabled,
+    std::vector<std::string> targetIds, std::vector<std::string> previousIds,
+    const std::string& configPath) {
+    UndoRemovePamProviderManagedFlag payload;
+    payload.policyName = policy;
+    payload.providerName = "pam_faillock";
+    payload.configPath = configPath;
+    payload.managedKey = "even_deny_root";
+    payload.appliedEnabled = false;
+    payload.previousAppliedEnabled = previousEnabled;
+    payload.placement = PamProviderBlockPlacementContract::End;
+    payload.suppressionIds = std::move(targetIds);
+    payload.previousSuppressionIds = std::move(previousIds);
+    return payload;
+}
+
+MutationRecord authorityFlagRecordFor(
+    UndoRemovePamProviderManagedFlag payload) {
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM", payload.policyName};
+    record.resource = payload.configPath;
+    record.undo = UndoAction{MutationBackend::Pam, std::move(payload)};
+    return record;
+}
+
+// Write-side regression for the status-aware authority parity bug: the
+// previous status-blind write-side helper treated the previous
+// suppression id set of an Applied record as ACTIVE authority, so a legal
+// incoming transition re-using that historical id was wrongly refused,
+// while the loader accepted exactly the same document. The record is
+// built through the legal lifecycle only (prepare → set Applied).
+void testAppliedPreviousSuppressionSetIsHistoricalAtWriteTime() {
+    TempJournal temp;
+    std::string error;
+    const std::string path = "/etc/security/faillock.conf";
+    MutationJournal journal(temp.path);
+    require(journal.load(error), error);
+    MutationId id = 0;
+
+    // Record A through the legal lifecycle: fresh transition, then the
+    // durable completion into Applied. Its previous set {s1} becomes
+    // historical provenance; its active authority is the target {s3} only.
+    require(journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_one", std::nullopt, {"s3"}, {}, path)),
+                id, error),
+        error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+
+    // Incoming record B re-uses the HISTORICAL previous id of A as its
+    // target on the SAME file: no cross-record authority collision
+    // (A authority = {s3}, B prepared authority = {s1}) — must be accepted.
+    require(journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_two", std::nullopt, {"s1"}, {}, path)),
+                id, error),
+        error);
+    // The ACTIVE target id of A is still authority: a third record
+    // claiming it must be refused (status-aware, not set-blind).
+    require(!journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_three", std::nullopt, {"s3"}, {}, path)),
+                id, error),
+        "an active target authority of an Applied record must still be "
+        "refused at write time");
+
+    // Write/read parity: the accepted document loads cleanly.
+    MutationJournal reader(temp.path);
+    require(reader.load(error), error);
+    require(reader.activeRecords({"IDENTITY_ACCESS", "PAM", "flag_policy_two"})
+                    .size() == 1,
+        "the legal historical-id reuse must be persisted");
+}
+
+// Write-side RollbackFailed regression: RollbackFailed is an ACTIVE
+// status whose authority is the target set only — the previous set is
+// historical provenance. Built through the legal lifecycle
+// (prepare → Applied → set RollbackFailed).
+void testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime() {
+    TempJournal temp;
+    std::string error;
+    const std::string path = "/etc/security/faillock.conf";
+    MutationJournal journal(temp.path);
+    require(journal.load(error), error);
+    MutationId id = 0;
+
+    require(journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_one", std::nullopt, {"s9"}, {}, path)),
+                id, error),
+        error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    require(journal.setStatus(id, MutationStatus::RollbackFailed, error),
+        error);
+
+    // B re-uses the historical previous id {s8} of the RollbackFailed
+    // record: allowed, because its authority is the target {s9} only.
+    require(journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_two", std::nullopt, {"s8"}, {}, path)),
+                id, error),
+        error);
+    // The target id {s9} is still active authority: refused.
+    require(!journal.prepareMutation(
+                authorityFlagRecordFor(authorityFlagPayload(
+                    "flag_policy_three", std::nullopt, {"s9"}, {}, path)),
+                id, error),
+        "an active target authority of a RollbackFailed record must be "
+        "refused at write time");
+
+    MutationJournal reader(temp.path);
+    require(reader.load(error), error);
+    require(reader.activeRecords({"IDENTITY_ACCESS", "PAM", "flag_policy_two"})
+                    .size() == 1,
+        "the legal RollbackFailed historical-id reuse must be persisted");
+}
+
 } // namespace
 
 int main() {
@@ -884,6 +1006,8 @@ int main() {
         testPreparedTransitionImmutability();
         testContainerLoadInvariants();
         testFlagSuppressionAuthorityInvariants();
+        testAppliedPreviousSuppressionSetIsHistoricalAtWriteTime();
+        testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderManagedEntryJournalTests failed: "
                   << error.what() << '\n';
