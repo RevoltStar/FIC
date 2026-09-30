@@ -2,20 +2,42 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `5199613`. Рабочее дерево содержит **Step 7E**
-  (journal-backed managed ownership трёх set-only PAM-флагов), изменения
-  НЕ закоммичены. Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `b61e616` («Приступаем к Step7E», родитель
+  `d2327b5`). Поверх HEAD — незакоммиченный **follow-up к Step 7E**
+  (P1/P2-фиксы, см. Current task). Коммит НЕ делать без явного запроса.
 
 ## Current task
 
-**Step 7E (выполнен, не закоммичен):** `even_deny_root` (faillock),
-`enforce_for_root` (pwquality), `enforce_for_root` (pwhistory) переведены
-на journal-backed `PamProviderManagedFlagExecutor` (durable-target-first
-state machine Step 7B). desired=true → bare flag в FIC provider block;
-desired=false → disabled sentinel + suppression wrappers вокруг каждого
-подавляемого foreign-активного вхождения (байты foreign line — в
-`raw=` wrapper'а, journal хранит только provenance ids). Step 7F НЕ
-начат.
+**Follow-up к Step 7E (выполнен, не закоммичен):**
+1. **P1 — fresh-transaction orphan-wrapper adoption.** Баг: canonical
+   suppression wrapper того же identity (provider/policy/key), но с чужим
+   mutation id (или без активной journal-записи) молча адоптировался
+   fresh-транзакцией. Фикс: `FlagPhysicalInspection` получил
+   `matchingIdentityWrapperIds` (identity отдельно от ownership);
+   `inspectFlagPhysicalState` классифицирует identity → ownership
+   (при `expectedMutationId==0` каждый identity-matching wrapper —
+   `foreignMutationWrapper=true`); `applyFreshFlag` fail closed ДО
+   `prepareMutation()` с диагностикой, перечисляющей orphan suppression
+   ids («orphan FIC PAM suppression wrapper(s)… suppression id(s) s7…»).
+   Инвариант: «Physical FIC state is never adopted from markers alone».
+2. **P2 — suppression-id collision invariant в MutationJournal.**
+   Load-side rebuild через `activeFlagAuthority`: Prepared =
+   `suppressionIds ∪ previousSuppressionIds`, Applied/RollbackFailed =
+   только `suppressionIds`, resolved (RolledBack/Detached) — never
+   authority; сравнение ограничено `configPath` (per-physical-file
+   namespace). Write/read parity: `prepareMutation` отказывает incoming
+   flag payload, чья authority (target ∪ previous) коллидирует с активной
+   Pam flag записью того же `configPath` (refresh-имая запись исключена —
+   её старая authority освобождается).
+3. **Парсер-фикс (обнаружен при валидации P1):**
+   `parsePamProviderManagedBlock` публиковал `view.suppressions` только
+   при наличии FIC-блока; wrapper'ы в файле без блока молча терялись из
+   view (orphan-состояние было невидимо). Теперь suppressions
+   публикуются всегда.
+4. Include cleanup в `PamProviderManagedBlock.h` (дубликаты `<cctype>`,
+   `<cstdint>`, `<string>`, `<vector>`).
+
+Step 7F НЕ начат.
 
 ### Accepted architecture / invariants
 
@@ -33,7 +55,8 @@ desired=false → disabled sentinel + suppression wrappers вокруг кажд
   = файл ∪ journal).
 - Applied refresh — no-op; дрейф (AppliedDrifted), чужой mutation id,
   неизвестный wrapper id, wrappers при enabled — fail closed. Fresh
-  transaction не адоптирует pre-existing entry/wrapper. Prepared
+  transaction не адоптирует pre-existing entry/wrapper (P1: и wrapper
+  того же identity — до фикса адоптировался). Prepared
   recovery: durable target первым, затем reconciliation под текущий
   desired (semantic callback получает durable target ПЕРВЫМ).
 - Absent primary → FailClosed (no create, no records); metadata
@@ -42,6 +65,11 @@ desired=false → disabled sentinel + suppression wrappers вокруг кажд
   ⇒ пустые suppression-наборы; fresh transition ⇒ нет previous
   provenance; write/read parity (previous_applied_enabled всегда
   materialized).
+- **Suppression-id authority model (P2):** один suppression id —
+  authority максимум ОДНОЙ активной flag записи одного физического файла
+  (namespace = configPath). Prepared = target ∪ previous; Applied/
+  RollbackFailed = target; resolved — never authority. Инвариант
+  соблюдается и на load, и на write (parity).
 
 ### Completed
 
@@ -61,32 +89,47 @@ desired=false → disabled sentinel + suppression wrappers вокруг кажд
   argv-конфликт флага → preflight fail closed до мутации.
 - Fix в `PamProviderManagedBlock.cpp` (`parsePamProviderSuppressionWrapper`):
   mid-parse reset `wrapper = T{}` затирал уже присвоенный `provider`.
+- Follow-up (эта сессия): P1 identity/ownership split + fail-closed
+  fresh; P2 authority model load+write; парсер-фикс публикации
+  suppressions вне блока; include cleanup.
 
 ### Changed areas
 
-- `fic/src/modules/identity_access/pam/` (FlagExecutor — новые файлы,
-  ManagedBlock, EntryExecutor, PamOptionPolicy, SemanticVerifier,
-  PwhistoryConfigFile)
-- `fic/src/rollback/MutationJournal.cpp`, `MutationRecord.h`
+- `fic/src/modules/identity_access/pam/PamProviderManagedBlock.{h,cpp}`
+  (парсер-фикс publish-suppressions; include cleanup)
+- `fic/src/modules/identity_access/pam/PamProviderManagedFlagExecutor.cpp`
+  (P1: FlagPhysicalInspection/inspect/applyFreshFlag)
+- `fic/src/rollback/MutationJournal.cpp` (P2: activeFlagAuthority
+  load-side; write-side parity в prepareMutation)
+- `tests/fic/modules/identity_access/pam/
+  PamProviderManagedFlagExecutorTests.cpp` (+3 теста: orphan wrapper
+  refuse для desired=false/true, foreign-mutation-id fail-closed для
+  обоих desired; helpers `forgeWrapperLine`/`writeOrphanWrapperState`)
+- `tests/fic/rollback/PamProviderManagedEntryJournalTests.cpp`
+  (+`testFlagSuppressionAuthorityInvariants`: load-side cases A–D,
+  Applied-previous-not-authority, cross-file OK; write-side parity)
 - `tests/.../pam/PamProviderManagedEntryExecutorTests.cpp` (routing
-  matrix синтаксо-осознанный), `tests/.../pam/
-  PamProviderManagedFlagExecutorTests.cpp` (новый, 19 сценариев:
-  byte-exact wrap/unwrap round trips (indent/comment/=0/no-LF/CRLF/
-  case), grammar/refusals, journal round-trip/validation/retry-
-  identity, lifecycle §66–§76, metadata §65, restart refresh),
-  `IdentityPolicyHierarchyTests.cpp` (policy-path 7E: disable→wrapper+
-  sentinel block, enable→block, argv-конфликт fail closed, SET-forms,
-  pwhistory flag в одном block с depth), `tests/CMakeLists.txt`
+  matrix синтаксо-осознанный), `IdentityPolicyHierarchyTests.cpp`
+  (policy-path 7E), `tests/CMakeLists.txt` (в Step 7E)
 - `docs/rollback.md` — раздел «PAM provider managed flag rollback
-  (Step 7E)»
+  (Step 7E)» (в Step 7E; follow-up внешних контрактов не менял)
 
 ### Validation (фактически выполнено)
 
-- Полный build `build-check` (ubuntu-24.04) — 0 errors, 0 warnings.
+- Полный build `build-check` (ubuntu-24.04) — 0 errors.
 - Полный CTest — **112/112 PASS** (1 skip: `command_hash_batch_tests`,
   окружение).
-- `git diff --check` — см. финальную проверку сессии; distro E2E НЕ
-  запускался (до 7F).
+- Targeted: `pam_provider_managed_flag_executor_tests`,
+  `pam_provider_managed_entry_journal_tests`,
+  `pam_provider_managed_entry_executor_tests`,
+  `pam_provider_managed_block_tests`,
+  `pam_provider_managed_block_file_tests`,
+  `identity_policy_hierarchy_tests`, `pam_configuration_tests`,
+  `pam_password_wiring_tests`, `pam_password_*`,
+  `alt_pam_faillock_topology_tests`,
+  `alt_pam_password_history_topology_tests` — все PASS.
+- `git diff --check` — чисто.
+- Distro E2E НЕ запускался (до 7F).
 
 ## Remaining
 
@@ -100,3 +143,8 @@ desired=false → disabled sentinel + suppression wrappers вокруг кажд
    reconciliation, passwdqc/ALT, codec, activation, D12
    coordinator/slot writer.
 5. Не коммитить без явного запроса.
+6. Инструментальная деталь: line-number-based вставки в
+   `PamProviderManagedFlagExecutorTests.cpp` /
+   `PamProviderManagedEntryJournalTests.cpp` повреждали файлы
+   (восстановление через `git checkout`); использовать только
+   text-anchor правки.

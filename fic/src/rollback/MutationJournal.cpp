@@ -1913,13 +1913,38 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
         }
     }
 
-    // Step 7E invariant: ONE active suppression id may never belong to TWO
-    // active PAM flag records. Two active claims over one physical wrapper
-    // would give it ambiguous rollback authority (which record releases
-    // it?), so the state is journal corruption — fail closed at load
-    // (write/read semantic parity with the executor's provenance proof).
-    // Historical resolved records NEVER conflict: mutation history is
-    // preserved.
+    // Step 7E invariant: ONE suppression id may never be provable rollback
+    // authority of TWO active PAM flag records of the SAME physical file.
+    // Two active claims over one physical wrapper would give it ambiguous
+    // rollback authority (which record releases it?), so the state is
+    // journal corruption — fail closed at load (write/read semantic parity
+    // with the executor's provenance proof).
+    //
+    // Authority domain per record status:
+    //   * Prepared — the physical transition of this record may or may not
+    //     have happened, so BOTH sides of the durable transition are
+    //     potential authority: suppressionIds ∪ previousSuppressionIds;
+    //   * Applied / RollbackFailed — the target state is durably proven and
+    //     the previous state has been physically replaced: only
+    //     suppressionIds remains rollback authority;
+    //   * resolved statuses (RolledBack / Detached) are never authority:
+    //     historical mutation history is preserved and never conflicts.
+    //
+    // The comparison is scoped by configPath: a suppression id is a token
+    // of ONE physical file namespace (Step 7E §11), so identical ids in
+    // records of DIFFERENT provider primaries are independent provenance,
+    // never a conflict.
+    const auto activeFlagAuthority = [](const MutationRecord& record,
+                                        const UndoRemovePamProviderManagedFlag&
+                                            flag) {
+        std::vector<std::string> authority = flag.suppressionIds;
+        if (record.status == MutationStatus::Prepared) {
+            authority.insert(authority.end(),
+                flag.previousSuppressionIds.begin(),
+                flag.previousSuppressionIds.end());
+        }
+        return authority;
+    };
     for (std::size_t outer = 0; outer < parsed.size(); ++outer) {
         if (!parsed[outer].isActive()) {
             continue;
@@ -1929,25 +1954,30 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
         if (outerFlag == nullptr) {
             continue;
         }
-        for (const std::string& id : outerFlag->suppressionIds) {
-            for (std::size_t inner = outer + 1; inner < parsed.size();
-                 ++inner) {
-                if (!parsed[inner].isActive()) {
-                    continue;
-                }
-                const auto* innerFlag =
-                    std::get_if<UndoRemovePamProviderManagedFlag>(
-                        &parsed[inner].undo.payload);
-                if (innerFlag == nullptr) {
-                    continue;
-                }
-                if (std::find(innerFlag->suppressionIds.begin(),
-                              innerFlag->suppressionIds.end(),
-                              id) != innerFlag->suppressionIds.end()) {
+        const std::vector<std::string> outerAuthority =
+            activeFlagAuthority(parsed[outer], *outerFlag);
+        for (std::size_t inner = outer + 1; inner < parsed.size(); ++inner) {
+            if (!parsed[inner].isActive()) {
+                continue;
+            }
+            const auto* innerFlag =
+                std::get_if<UndoRemovePamProviderManagedFlag>(
+                    &parsed[inner].undo.payload);
+            if (innerFlag == nullptr ||
+                innerFlag->configPath != outerFlag->configPath) {
+                continue;
+            }
+            const std::vector<std::string> innerAuthority =
+                activeFlagAuthority(parsed[inner], *innerFlag);
+            for (const std::string& id : outerAuthority) {
+                if (std::find(innerAuthority.begin(), innerAuthority.end(),
+                              id) != innerAuthority.end()) {
                     return failLoad(
                         "Mutation journal содержит suppression id '" + id +
-                            "' в нескольких активных PAM flag records: "
-                            "неоднозначная rollback authority (fail closed)",
+                            "' в нескольких активных PAM flag records для " +
+                            outerFlag->configPath +
+                            ": неоднозначная rollback authority (fail "
+                            "closed)",
                         error);
                 }
             }
@@ -2205,6 +2235,58 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                         "must not claim a previous applied body (fail "
                         "closed): refresh the active record instead";
                 return false;
+            }
+        } else if (const auto* pamFlag = std::get_if<
+                       UndoRemovePamProviderManagedFlag>(
+                       &record.undo.payload)) {
+            // Step 7E write/read parity for the cross-record suppression-id
+            // authority invariant: the loader rejects any document in which
+            // ONE suppression id is provable rollback authority of TWO
+            // active flag records of the SAME physical file (Prepared =
+            // target ∪ previous authority; Applied/RollbackFailed = target
+            // authority only). The writer must never persist such a state.
+            // The record being refreshed (same logical identity) is
+            // REPLACED by this prepare, so its old authority is released,
+            // not retained.
+            const auto flagAuthority = [](const UndoRemovePamProviderManagedFlag&
+                                              flag) {
+                std::vector<std::string> authority = flag.suppressionIds;
+                authority.insert(authority.end(),
+                    flag.previousSuppressionIds.begin(),
+                    flag.previousSuppressionIds.end());
+                return authority;
+            };
+            const std::vector<std::string> incomingAuthority =
+                flagAuthority(*pamFlag);
+            for (const MutationRecord& other : records_) {
+                if (!other.isActive() ||
+                    other.undo.backend != MutationBackend::Pam ||
+                    other.policy == record.policy ||
+                    other.resource != record.resource) {
+                    continue;
+                }
+                const auto* otherFlag =
+                    std::get_if<UndoRemovePamProviderManagedFlag>(
+                        &other.undo.payload);
+                if (otherFlag == nullptr ||
+                    otherFlag->configPath != pamFlag->configPath) {
+                    continue;
+                }
+                const std::vector<std::string> otherAuthority =
+                    flagAuthority(*otherFlag);
+                for (const std::string& id : incomingAuthority) {
+                    if (std::find(otherAuthority.begin(),
+                                  otherAuthority.end(),
+                                  id) != otherAuthority.end()) {
+                        error = "suppression id '" + id +
+                            "' of the prepared PAM provider managed-flag "
+                            "record is already provable rollback authority "
+                            "of active record " +
+                            std::to_string(other.id) + " for " +
+                            pamFlag->configPath + " (fail closed)";
+                        return false;
+                    }
+                }
             }
         } else if (const auto* newContainer = std::get_if<
                        UndoOwnPamProviderContainer>(&record.undo.payload)) {

@@ -857,8 +857,13 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
                           : PamProviderBlockPlacement::Misplaced);
         canonicalSort(entries);
         view.entries = std::move(entries);
-        view.suppressions = std::move(suppressions);
     }
+    // Step 7E follow-up: suppression wrappers exist OUTSIDE the provider
+    // block, so they are published even when the file carries no FIC block
+    // at all (a fresh transaction must see orphan wrappers and fail
+    // closed — wrappers are FIC provenance no matter what the rest of the
+    // file looks like).
+    result.view.suppressions = std::move(suppressions);
 
     result.ok = true;
     return result;

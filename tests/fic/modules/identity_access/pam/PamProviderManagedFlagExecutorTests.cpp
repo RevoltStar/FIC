@@ -1108,6 +1108,150 @@ void testRestartRefreshFromPersistedJournal() {
         "the restart must reuse the persisted record id");
 }
 
+// ---------------------------------------------------------------------------
+// Step 7E follow-up §78: fresh transactions never adopt or silently use
+// orphan FIC-owned physical state (managed entry AND suppression wrappers)
+// without an active journal record proving ownership.
+// ---------------------------------------------------------------------------
+
+// Forge one byte-canonical suppression wrapper of the flag identity with
+// valid non-zero ids and a valid embedded raw active occurrence.
+std::string forgeWrapperLine(const std::string& rawLine,
+    std::uint64_t mutationId, const std::string& suppressionId) {
+    return pamProviderSuppressionWrapperLine("pam_faillock", kFlagPolicy,
+        "even_deny_root", mutationId, suppressionId, rawLine);
+}
+
+// Physical state: existing primary, NO managed flag entry, ONE canonical
+// suppression wrapper of the SAME (provider, policy, managed key) with a
+// valid mutation id and a valid embedded raw active occurrence — but NO
+// active journal record (orphan FIC provenance).
+void writeOrphanWrapperState(const Harness& harness) {
+    const std::string rawLine = "even_deny_root # admin";
+    const std::string forged = forgeWrapperLine(rawLine, 4, "s7");
+    std::string parseError;
+    PamProviderSuppressedLine probe;
+    require(parsePamProviderSuppressionWrapper(forged, probe, parseError),
+        "test bug: the forged wrapper must parse canonically: " + parseError);
+    writeFile(harness.configPath, rawLine + "\n" + forged + "\n");
+}
+
+void testFreshDesiredFalseRefusesOrphanWrapper() {
+    Harness harness;
+    writeOrphanWrapperState(harness);
+    const std::string original = readFile(harness.configPath);
+
+    // §78: a fresh disabled transaction must fail closed BEFORE any journal
+    // prepare: the orphan wrapper is FIC provenance no active record proves.
+    auto disable = harness.faillockRequest(kFlagPolicy, "even_deny_root",
+        false);
+    require(!harness.apply(disable),
+        "a fresh disable must refuse an orphan suppression wrapper of the "
+            "same identity: " + harness.error);
+    require(contains(harness.error, "orphan FIC PAM suppression wrapper") &&
+            contains(harness.error, "s7"),
+        "the diagnostic must name the unproven/orphan provenance: " +
+            harness.error);
+    require(harness.flagRecords(kFlagPolicy).empty(),
+        "the refused fresh apply must prepare NO journal records");
+    require(readFile(harness.configPath) == original,
+        "the refused fresh apply must leave the config byte-identical");
+    auto wrappers = wrappersOf(readFile(harness.configPath));
+    require(wrappers.size() == 1 && wrappers.front().suppressionId == "s7" &&
+            wrappers.front().mutationId == 4,
+        "the existing orphan wrapper must stay unchanged");
+    require(entryOf(readFile(harness.configPath), kFlagPolicy,
+                "even_deny_root") == nullptr,
+        "no new managed flag entry must appear");
+}
+
+void testFreshDesiredTrueRefusesOrphanWrapper() {
+    Harness harness;
+    writeOrphanWrapperState(harness);
+    const std::string original = readFile(harness.configPath);
+
+    // §78: a fresh ENABLED transaction must also fail closed — it has no
+    // right to silently keep or unwrap a foreign/orphan FIC wrapper.
+    auto enable = harness.faillockRequest(kFlagPolicy, "even_deny_root",
+        true);
+    require(!harness.apply(enable),
+        "a fresh enable must refuse an orphan suppression wrapper of the "
+            "same identity: " + harness.error);
+    require(contains(harness.error, "orphan FIC PAM suppression wrapper"),
+        "the diagnostic must name the unproven/orphan provenance: " +
+            harness.error);
+    require(harness.flagRecords(kFlagPolicy).empty(),
+        "the refused fresh apply must prepare NO journal records");
+    require(readFile(harness.configPath) == original,
+        "the refused fresh apply must leave the config byte-identical");
+    require(wrappersOf(readFile(harness.configPath)).size() == 1,
+        "the existing orphan wrapper must stay unchanged (no silent "
+            "unwrap)");
+    require(entryOf(readFile(harness.configPath), kFlagPolicy,
+                "even_deny_root") == nullptr,
+        "no new managed flag entry must appear");
+}
+
+// §41: with an ACTIVE journal record, a canonical wrapper of the same
+// identity carrying a DIFFERENT mutation id stays a distinct fail-closed
+// conflict for ANY desired state (never rewritten, never unwrapped, never
+// re-id'd) — separate from the fresh orphan case.
+void testDifferentMutationIdWrapperFailsClosedForAnyDesired() {
+    Harness harness;
+    writeFile(harness.configPath, "even_deny_root # admin\n");
+    auto disable = harness.faillockRequest(kFlagPolicy, "even_deny_root",
+        false);
+    PamProviderManagedEntryOutcome outcome;
+    require(harness.apply(disable, outcome), harness.error);
+    const MutationId activeId =
+        harness.soleFlagRecord(kFlagPolicy, "active record").id;
+    require(activeId != 0, "an active record id is expected");
+    require(wrappersOf(readFile(harness.configPath)).size() == 1 &&
+                wrappersOf(readFile(harness.configPath))
+                        .front()
+                        .mutationId == activeId,
+        "the owned wrapper must carry the active record id");
+
+    // Foreign mutation id Y != X on the same identity: the disabled
+    // sentinel entry of the SAME record stays physically present, so the
+    // refusal is the foreign-mutation-id conflict (not entry drift).
+    const std::string forgedState =
+        forgeWrapperLine("even_deny_root # admin", activeId + 1, "s9") +
+        "\n"
+        "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 provider=pam_faillock "
+        "lead=newline\n"
+        "# FIC_PAM_ENTRY_BEGIN version=1 policy=" +
+        std::string(kFlagPolicy) + " mutation=" +
+        std::to_string(activeId) +
+        "\n"
+        "# FIC_PAM_FLAG_DISABLED version=1 key=even_deny_root\n"
+        "# FIC_PAM_ENTRY_END\n"
+        "# FIC_PAM_PROVIDER_BLOCK_END\n";
+    writeFile(harness.configPath, forgedState);
+
+    require(!harness.apply(disable),
+        "a foreign-mutation wrapper must fail closed for desired=false: " +
+            harness.error);
+    require(contains(harness.error, "foreign mutation id"),
+        "the diagnostic must name the foreign mutation id: " + harness.error);
+    require(readFile(harness.configPath) == forgedState,
+        "the foreign wrapper must stay unchanged (no rewrite/unwrap/re-id)");
+    const MutationRecord after =
+        harness.soleFlagRecord(kFlagPolicy, "foreign mutation id");
+    require(after.id == activeId && after.status == MutationStatus::Applied,
+        "the refused apply must never rewrite the journal record");
+
+    auto enable = harness.faillockRequest(kFlagPolicy, "even_deny_root",
+        true);
+    require(!harness.apply(enable),
+        "a foreign-mutation wrapper must fail closed for desired=true: " +
+            harness.error);
+    require(contains(harness.error, "foreign mutation id"),
+        "the diagnostic must name the foreign mutation id: " + harness.error);
+    require(readFile(harness.configPath) == forgedState,
+        "the foreign wrapper must stay unchanged for desired=true");
+}
+
 } // namespace
 
 int main() {
@@ -1142,6 +1286,12 @@ int main() {
         {"testPwqualityIcaseLifecycle", testPwqualityIcaseLifecycle},
         {"testRestartRefreshFromPersistedJournal",
             testRestartRefreshFromPersistedJournal},
+        {"testFreshDesiredFalseRefusesOrphanWrapper",
+            testFreshDesiredFalseRefusesOrphanWrapper},
+        {"testFreshDesiredTrueRefusesOrphanWrapper",
+            testFreshDesiredTrueRefusesOrphanWrapper},
+        {"testDifferentMutationIdWrapperFailsClosedForAnyDesired",
+            testDifferentMutationIdWrapperFailsClosedForAnyDesired},
     };
     for (const auto& test : tests) {
         try {

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -18,6 +19,10 @@ void require(bool condition, const std::string& message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+bool contains(const std::string& haystack, const std::string& needle) {
+    return haystack.find(needle) != std::string::npos;
 }
 
 class TempJournal {
@@ -627,6 +632,246 @@ std::string entryRecordJson(const std::string& policyName,
     return record;
 }
 
+// Step 7E follow-up: cross-record suppression-id collision AUTHORITY
+// invariant. A suppression id may never be provable rollback authority of
+// TWO active PAM flag records of the SAME physical file:
+//   * Prepared — unresolved transition: BOTH sides are potential authority
+//     (suppressionIds ∪ previousSuppressionIds);
+//   * Applied / RollbackFailed — durable target authority only
+//     (suppressionIds); the previous set of a COMPLETED transition is
+//     historical provenance;
+//   * resolved statuses never conflict;
+//   * ids are per-physical-file tokens: identical ids in records of
+//     different provider primaries are independent namespaces;
+//   * previous/target overlap INSIDE one Prepared transition is
+//     legitimate (false→false growth) and never a cross-record conflict.
+// Load-side cases are crafted as journal documents; the write-side cases
+// prove prepare/read semantic parity (the writer refuses what the loader
+// would reject).
+void testFlagSuppressionAuthorityInvariants() {
+    TempJournal temp;
+    std::string error;
+    const std::string path = "/etc/security/faillock.conf";
+
+    auto idsJson = [](const std::vector<std::string>& ids) {
+        std::string json = "[";
+        for (std::size_t index = 0; index < ids.size(); ++index) {
+            if (index != 0) {
+                json += ", ";
+            }
+            json += "\"" + ids[index] + "\"";
+        }
+        return json + "]";
+    };
+    auto flagRecordJson = [&](unsigned id, const std::string& policy,
+                              const std::string& status,
+                              const std::string& configPath,
+                              const std::vector<std::string>& targetIds,
+                              const std::vector<std::string>& previousIds) {
+        std::string record = "{\"id\": " + std::to_string(id);
+        record += ", \"policy\": {\"module\": \"IDENTITY_ACCESS\", ";
+        record += "\"submodule\": \"PAM\", \"policy\": \"" + policy + "\"}";
+        record += ", \"resource\": \"" + configPath + "\"";
+        record += ", \"backend\": \"pam\"";
+        record += ", \"status\": \"" + status + "\"";
+        record += ", \"undo\": {\"action\": "
+                  "\"remove_pam_provider_managed_flag\", ";
+        record += "\"backend\": \"pam\", \"policy\": \"" + policy + "\", ";
+        record += "\"provider\": \"pam_faillock\", ";
+        record += "\"config_path\": \"" + configPath + "\", ";
+        record += "\"managed_key\": \"even_deny_root\", ";
+        record += "\"applied_enabled\": false, ";
+        record += "\"previous_applied_enabled\": \"" +
+                  (previousIds.empty() ? std::string("none")
+                                       : std::string("disabled")) +
+                  "\", ";
+        record += "\"placement\": \"end\", ";
+        record += "\"suppression_ids\": " + idsJson(targetIds) + ", ";
+        record += "\"previous_suppression_ids\": " + idsJson(previousIds) +
+                  "}";
+        record += ", \"created_at_epoch\": 1, \"updated_at_epoch\": 1, ";
+        record += "\"error\": \"\"}";
+        return record;
+    };
+    auto writeDoc = [&](const std::string& records, unsigned nextId) {
+        std::ofstream out(temp.path, std::ios::binary | std::ios::trunc);
+        require(static_cast<bool>(out), "journal document write failed");
+        out << "{\"schema_version\": 2, \"next_id\": " << nextId
+            << ", \"records\": [" << records << "]}\n";
+        out.close();
+        std::filesystem::permissions(
+            temp.path, std::filesystem::perms::owner_read |
+                           std::filesystem::perms::owner_write);
+    };
+    auto expectLoadFailure = [&](const char* what) {
+        MutationJournal reader(temp.path);
+        require(!reader.load(error), what);
+        require(!error.empty(), "load failure must carry an error message");
+    };
+    auto expectLoadSuccess = [&](const char* what) {
+        MutationJournal reader(temp.path);
+        require(reader.load(error), std::string(what) + ": " + error);
+    };
+
+    // Case A: a Prepared record's PREVIOUS side is still live authority:
+    // its unresolved transition may physically sit on the previous side, so
+    // another active record claiming s1 is ambiguous rollback authority.
+    writeDoc(flagRecordJson(1, "flag_policy_one", "prepared", path, {"s2"},
+                 {"s1"}) +
+                 ", " +
+                 flagRecordJson(2, "flag_policy_two", "applied", path,
+                     {"s1"}, {}),
+             3);
+    expectLoadFailure(
+        "a Prepared previous-side suppression id collision loaded");
+
+    // Case B: target-set collisions between two active records of one file
+    // remain fail closed (existing invariant preserved).
+    writeDoc(flagRecordJson(1, "flag_policy_one", "applied", path, {"s2"},
+                 {}) +
+                 ", " +
+                 flagRecordJson(2, "flag_policy_two", "applied", path,
+                     {"s2"}, {}),
+             3);
+    expectLoadFailure(
+        "a target-set suppression id collision between active records "
+        "loaded");
+
+    // Case C: resolved historical records NEVER conflict with active
+    // authority (mutation history is preserved).
+    writeDoc(flagRecordJson(1, "flag_policy_one", "rolled_back", path,
+                 {"s2"}, {}) +
+                 ", " +
+                 flagRecordJson(2, "flag_policy_two", "applied", path,
+                     {"s2"}, {}),
+             3);
+    expectLoadSuccess("resolved history conflicted with active authority");
+
+    // The previous set of a COMPLETED (Applied) transition is historical
+    // provenance, never authority.
+    writeDoc(flagRecordJson(1, "flag_policy_one", "applied", path, {"s3"},
+                 {"s1"}) +
+                 ", " +
+                 flagRecordJson(2, "flag_policy_two", "applied", path,
+                     {"s1"}, {}),
+             3);
+    expectLoadSuccess("an Applied previous set was treated as authority");
+
+    // Case D: previous/target overlap INSIDE one Prepared transition is the
+    // legitimate false→false growth shape — no cross-record conflict.
+    writeDoc(
+        flagRecordJson(1, "flag_policy_one", "prepared", path, {"s1", "s2"},
+            {"s1"}),
+        2);
+    expectLoadSuccess(
+        "an intra-transition previous/target overlap was treated as a "
+        "cross-record conflict");
+
+    // Identical ids in records of DIFFERENT physical files are independent
+    // per-file namespaces, never a conflict.
+    writeDoc(flagRecordJson(1, "flag_policy_one", "applied",
+                 "/etc/security/faillock.conf", {"s2"}, {}) +
+                 ", " +
+                 flagRecordJson(2, "flag_policy_two", "applied",
+                     "/etc/security/pwquality.conf", {"s2"}, {}),
+             3);
+    expectLoadSuccess("identical ids across different files conflicted");
+
+    // Write/read parity: prepareMutation enforces the same invariant BEFORE
+    // any persist, so the writer can never produce a document the loader
+    // would reject.
+    auto flagPayload = [](const std::string& policy,
+                          std::optional<bool> previousEnabled,
+                          std::vector<std::string> targetIds,
+                          std::vector<std::string> previousIds,
+                          const std::string& configPath) {
+        UndoRemovePamProviderManagedFlag payload;
+        payload.policyName = policy;
+        payload.providerName = "pam_faillock";
+        payload.configPath = configPath;
+        payload.managedKey = "even_deny_root";
+        payload.appliedEnabled = false;
+        payload.previousAppliedEnabled = previousEnabled;
+        payload.placement = PamProviderBlockPlacementContract::End;
+        payload.suppressionIds = std::move(targetIds);
+        payload.previousSuppressionIds = std::move(previousIds);
+        return payload;
+    };
+    auto flagRecordFor = [](UndoRemovePamProviderManagedFlag payload) {
+        MutationRecord record;
+        record.policy = {"IDENTITY_ACCESS", "PAM", payload.policyName};
+        record.resource = payload.configPath;
+        record.undo = UndoAction{MutationBackend::Pam, std::move(payload)};
+        return record;
+    };
+    TempJournal writeTemp;
+    MutationJournal journal(writeTemp.path);
+    require(journal.load(error), error);
+    MutationId id = 0;
+
+    // Prepared target authority {s2}: another policy claiming s2 on the
+    // SAME file is refused at write time.
+    require(journal.prepareMutation(
+                flagRecordFor(flagPayload("flag_policy_one", std::nullopt,
+                    {"s2"}, {}, path)),
+                id, error),
+        error);
+    require(!journal.prepareMutation(
+                flagRecordFor(flagPayload("flag_policy_two", std::nullopt,
+                    {"s2"}, {}, path)),
+                id, error),
+        "a target id colliding with a Prepared authority must be refused "
+        "at write time");
+    require(contains(error, "suppression id"),
+        "the write refusal must name the colliding id: " + error);
+
+    // A non-colliding id is accepted on the same file...
+    require(journal.prepareMutation(
+                flagRecordFor(flagPayload("flag_policy_two", std::nullopt,
+                    {"s3"}, {}, path)),
+                id, error),
+        error);
+    // ... and the SAME id is accepted for a DIFFERENT physical file
+    // (independent namespace).
+    require(journal.prepareMutation(
+                flagRecordFor(flagPayload("flag_policy_three", std::nullopt,
+                    {"s2"}, {}, "/etc/security/pwquality.conf")),
+                id, error),
+        error);
+
+    // Resolve flag_policy_one (target {s2}) into Applied, so its authority
+    // shrinks to the target set; then re-prepare flag_policy_one as an
+    // unresolved false→false growth: target {s4}, previous {s2} — the
+    // previous side stays authority under a non-Prepared record.
+    // flag_policy_three lives on a different file (independent namespace).
+    require(journal.prepareMutation(
+                flagRecordFor(flagPayload("flag_policy_one", std::nullopt,
+                    {"s2"}, {}, path)),
+                id, error),
+        error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    require(journal.prepareMutation(
+                flagRecordFor(flagPayload("flag_policy_one", false, {"s4"},
+                    {"s2"}, path)),
+                id, error),
+        error);
+    require(!journal.prepareMutation(
+                flagRecordFor(flagPayload("flag_policy_five", std::nullopt,
+                    {"s2"}, {}, path)),
+                id, error),
+        "a previous-side id of an unresolved Prepared transition must be "
+        "refused at write time");
+
+    // The journal stayed healthy through the refusals and the persisted
+    // document loads cleanly (write/read parity).
+    MutationJournal reader(writeTemp.path);
+    require(reader.load(error), error);
+    require(reader.activeRecords({"IDENTITY_ACCESS", "PAM",
+                "flag_policy_five"})
+                .empty(),
+        "a refused record must never be persisted");
+}
+
 } // namespace
 
 int main() {
@@ -638,6 +883,7 @@ int main() {
         testContainerProvenance();
         testPreparedTransitionImmutability();
         testContainerLoadInvariants();
+        testFlagSuppressionAuthorityInvariants();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderManagedEntryJournalTests failed: "
                   << error.what() << '\n';

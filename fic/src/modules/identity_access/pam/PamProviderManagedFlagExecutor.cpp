@@ -192,7 +192,9 @@ const PamProviderManagedEntry* findFlagEntry(
 // Typed physical inspection of ONE provider primary against a set-only
 // flag identity. Produced ONLY from a strict parse of a trusted read —
 // never from a permissive regex scan (Step 7E §10). expectedMutationId
-// refines the entry/wrapper mutation-id match (0 disables the refinement).
+// refines the OWNERSHIP classification of identity-matching state
+// (0 = fresh no-journal state: ownership cannot be refined, so every
+// identity-matching wrapper is unproven orphan provenance).
 struct FlagPhysicalInspection {
     bool ok = false;
     PamProviderBlockParseResult parse;
@@ -202,11 +204,20 @@ struct FlagPhysicalInspection {
     PamProviderManagedEntryKind entryKind =
         PamProviderManagedEntryKind::Assignment;
     std::uint64_t entryMutationId = 0;
-    // Canonical wrappers of THIS record (provider/policy/key/mutation id),
-    // in physical order.
+    // Canonical wrappers of THIS (provider, policy, key) identity, in
+    // physical order — recorded INDEPENDENTLY of expectedMutationId.
+    // Identity and ownership are separate concepts: any element is FIC
+    // physical provenance of this flag identity even when no active
+    // journal record exists to prove it (Step 7E follow-up §78).
+    std::vector<std::string> matchingIdentityWrapperIds;
+    // Canonical wrappers of THIS record (provider/policy/key + the exact
+    // expected mutation id), in physical order. Meaningful only with an
+    // active record (expectedMutationId != 0); a subset of
+    // matchingIdentityWrapperIds.
     std::vector<std::string> ownedWrapperIds;
     // A wrapper of this provider+policy+key carrying ANOTHER mutation id —
-    // unproven provenance conflict (Step 7E §41).
+    // unproven provenance conflict (Step 7E §41). Meaningful only with an
+    // active record (expectedMutationId != 0).
     bool foreignMutationWrapper = false;
     // Active unsuppressed occurrences of the managed key (outside the
     // block, outside wrappers; comments never count).
@@ -248,18 +259,29 @@ FlagPhysicalInspection inspectFlagPhysicalState(
     for (const PamProviderSuppressedLine& wrapper :
          inspection.parse.view.suppressions) {
         inspection.allSuppressionIds.push_back(wrapper.suppressionId);
-        if (wrapper.provider == request.providerName &&
+        const bool matchingIdentity =
+            wrapper.provider == request.providerName &&
             wrapper.policy == request.policyName &&
-            wrapper.managedKey == request.managedKey &&
-            expectedMutationId != 0 &&
-            wrapper.mutationId != expectedMutationId) {
-            inspection.foreignMutationWrapper = true;
+            wrapper.managedKey == request.managedKey;
+        if (!matchingIdentity) {
+            continue;
         }
-        if (wrapper.provider == request.providerName &&
-            wrapper.policy == request.policyName &&
-            wrapper.managedKey == request.managedKey &&
-            expectedMutationId != 0 &&
-            wrapper.mutationId == expectedMutationId) {
+        // Identity matching is independent of the expected mutation id:
+        // every canonical wrapper of this flag identity is FIC physical
+        // provenance and must never be silently ignored.
+        inspection.matchingIdentityWrapperIds.push_back(
+            wrapper.suppressionId);
+        if (expectedMutationId == 0) {
+            // Fresh state (no active journal record): ownership cannot be
+            // refined, so EVERY identity-matching wrapper is unproven
+            // orphan provenance (Step 7E follow-up §78). The ownership
+            // classification below never runs.
+            inspection.foreignMutationWrapper = true;
+            continue;
+        }
+        if (wrapper.mutationId != expectedMutationId) {
+            inspection.foreignMutationWrapper = true;
+        } else {
             inspection.ownedWrapperIds.push_back(wrapper.suppressionId);
         }
     }
@@ -449,10 +471,28 @@ bool applyFreshFlag(
         return false;
     }
     // A canonical wrapper claiming THIS policy identity is unproven
-    // provenance without an active record (wrong mutation id or no record).
-    if (inspection.foreignMutationWrapper || !inspection.ownedWrapperIds.empty()) {
-        error = "canonical FIC PAM suppression wrapper of this policy exists "
-                "without a proven journal transaction (fail closed)";
+    // provenance without an active record (wrong mutation id or no record
+    // at all — Step 7E follow-up §78): a fresh transaction never adopts,
+    // unwraps, rewrites or re-ids FIC-owned physical state without journal
+    // provenance.
+    if (inspection.matchingIdentityWrapperIds.empty()) {
+        if (inspection.foreignMutationWrapper) {
+            error = "canonical FIC PAM suppression wrapper of this policy "
+                    "exists without a proven journal transaction (fail "
+                    "closed)";
+            return false;
+        }
+    } else {
+        error = "orphan FIC PAM suppression wrapper(s) of this policy exist "
+                "without an active journal transaction (no provenance, fail "
+                "closed before any journal prepare): suppression id(s) ";
+        for (std::size_t index = 0;
+             index < inspection.matchingIdentityWrapperIds.size(); ++index) {
+            error += (index == 0 ? "" : ", ") +
+                inspection.matchingIdentityWrapperIds[index];
+        }
+        error += "; a fresh flag transaction never adopts or silently uses "
+                 "physical FIC state proven by markers alone";
         return false;
     }
     // Target suppression ids are generated BEFORE the journal prepare: the
