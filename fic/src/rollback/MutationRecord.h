@@ -195,6 +195,41 @@ struct UndoRemovePamProviderManagedEntry {
         PamProviderBlockPlacementContract::End;
 };
 
+// PAM shared provider configuration set-only FLAG ownership-release payload
+// (Step 7E). The record proves ONLY FIC ownership of ONE managed set-only
+// flag entry (bare enabled key / disabled sentinel) plus the PERMISSION to
+// unwrap the suppression wrappers it lists — it is PROVENANCE, never a
+// backup: no foreign line, no historical config content and no whole-file
+// snapshot is ever stored. The embedded foreign lines live byte-exact
+// inside the provider primary itself (inside the FIC suppression wrappers);
+// rollback (Step 7F) removes the exact managed flag entry and unwraps only
+// the CURRENTLY EXISTING wrappers proven by these suppression ids; a
+// missing wrapper is an externally released subset and is NEVER
+// reconstructed.
+//
+// appliedEnabled — the target flag state of the record;
+// previousAppliedEnabled — nullopt = fresh transition (no previous FIC
+// owned state); a value = refresh of the previous→target transition (the
+// bool may legitimately be EQUAL for a false→false provenance refresh that
+// only grows the suppression set);
+// suppressionIds — the FIC-owned wrapper provenance of the TARGET state
+// (always empty for an enabled target: an enabled flag never owns
+// wrappers);
+// previousSuppressionIds — the provenance of the PREVIOUS state (empty for
+// a fresh transition).
+struct UndoRemovePamProviderManagedFlag {
+    std::string policyName;   // FIC policy identity (physical entry marker)
+    std::string providerName; // PAM provider identity (physical block marker)
+    std::string configPath;   // primary provider configuration resource
+    std::string managedKey;   // managed set-only key
+    bool appliedEnabled = false;
+    std::optional<bool> previousAppliedEnabled;
+    PamProviderBlockPlacementContract placement =
+        PamProviderBlockPlacementContract::End;
+    std::vector<std::string> suppressionIds;
+    std::vector<std::string> previousSuppressionIds;
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoRemoveSshManagedPolicy,
@@ -206,6 +241,7 @@ using UndoPayload = std::variant<
     UndoRestoreKerberosScalar,
     UndoDisablePamCapability,
     UndoRemovePamProviderManagedEntry,
+    UndoRemovePamProviderManagedFlag,
     UndoOwnPamProviderContainer>;
 
 struct UndoAction {

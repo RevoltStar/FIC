@@ -8,6 +8,7 @@
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamProviderConfigFile.h"
 #include "modules/identity_access/pam/PamProviderManagedEntryExecutor.h"
+#include "modules/identity_access/pam/PamProviderManagedFlagExecutor.h"
 #include "modules/identity_access/pam/PamProviderModuleArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 #include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
@@ -85,14 +86,19 @@ bool PamOptionPolicy::applyPam(const std::string& expectedValue) {
         return false;
     }
 
-    // Step 7B/7C/7D routing: the whitelisted provider scalar assignment
-    // contracts (faillock + pwquality + pwhistory depth scalars) go
-    // through the journal-backed managed provider block executor instead
-    // of the legacy replace-all/snapshot writer.
+    // Step 7B/7C/7D/7E routing: the whitelisted provider contracts
+    // (scalars → PamProviderManagedEntryExecutor, set-only flags →
+    // PamProviderManagedFlagExecutor) go through the journal-backed
+    // managed provider block executors instead of the legacy
+    // replace-all/snapshot writer.
     if (fic::identity::pam::usesPamProviderManagedEntry(
             provider, *capability, *binding, feature_)) {
-        return this->applyManagedProviderEntry(
-            *capability, *services, *binding, nativeExpectedValue);
+        return binding->syntax ==
+                       fic::identity::pam::PamNativeOptionSyntax::Flag
+            ? this->applyManagedProviderFlag(
+                  *capability, *services, *binding, expectedFlagEnabled)
+            : this->applyManagedProviderEntry(
+                  *capability, *services, *binding, nativeExpectedValue);
     }
 
     fic::identity::pam::PamConfiguration configuration(platformConfig_);
@@ -368,6 +374,130 @@ bool PamOptionPolicy::applyManagedProviderEntry(
             (outcome ==
                     fic::identity::pam::PamProviderManagedEntryOutcome::
                         AppliedNoOp
+                ? " is proven effective on the managed provider block "
+                  "(no-op)"
+                : " applied through the managed provider block"),
+        logLevel::INFO);
+    return true;
+}
+
+// Step 7E: journal-backed managed set-only flag path (even_deny_root /
+// enforce_for_root). Preflight: structural capability verification +
+// managed-flag prospective semantic verification (suppression model) +
+// the provider-correct primary conflicting-directive scan for a requested
+// disabled state (faillock root_unlock_time stays a conflict — never a
+// suppression target). Then the full PamProviderManagedFlagExecutor
+// lifecycle runs instead of the legacy setFlag writer.
+bool PamOptionPolicy::applyManagedProviderFlag(
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::vector<std::string>& services,
+    const fic::identity::pam::PamProviderPolicyBinding& binding,
+    bool expectedFlagEnabled) {
+    std::string error;
+    fic::identity::pam::PamConfiguration configuration(platformConfig_);
+    fic::identity::pam::PamCapabilityVerification preflight;
+    if (!fic::identity::pam::PamCapabilityVerifier::verify(
+            configuration, platformConfig_, services, capability.capability,
+            capability.provider, preflight,
+            fic::identity::pam::PamCapabilityVerificationMode::Structural)) {
+        this->log(
+            "PAM capability preflight failed for " + this->policyName +
+                ": " + fic::identity::pam::formatPamCapabilityVerification(
+                    preflight),
+            logLevel::ERROR);
+        return false;
+    }
+    const auto& provider =
+        fic::identity::pam::pamProviderDescriptor(capability.provider);
+    // Managed set-only flag preflight (Step 7E §52): prospective
+    // suppression model — a foreign primary flag line FIC can safely
+    // suppress never blocks a requested disabled state, while PAM argv
+    // overrides, drop-ins (pwquality), missing primaries and untrusted
+    // inputs fail closed BEFORE any journal mutation.
+    if (!fic::identity::pam::PamProviderSemanticVerifier::
+            canApplyManagedProviderFlag(
+                preflight.inspection, capability, binding.option,
+                expectedFlagEnabled,
+                binding.conflictingOptionsWhenDisabled, error)) {
+        this->log(
+            "PAM managed flag preflight failed for " + this->policyName +
+                ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
+    // Provider-correct primary conflict scan for a requested disabled
+    // state (mirrors the legacy flag dependency contract): conflicting
+    // directives (e.g. faillock root_unlock_time) remain independent
+    // admin state — never suppressed, never rewritten (Step 7E §55).
+    if (!expectedFlagEnabled &&
+        !binding.conflictingOptionsWhenDisabled.empty() &&
+        !fic::identity::pam::PamProviderConfigFile::verifyNoActiveDirectives(
+            provider, capability.configPath,
+            binding.conflictingOptionsWhenDisabled, error)) {
+        this->log(
+            "PAM managed flag dependency preflight failed for " +
+                this->policyName + ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
+
+    fic::identity::pam::PamProviderManagedFlagRequest request;
+    request.policyName = this->policyName;
+    request.provider = capability.provider;
+    request.providerName = provider.name;
+    request.managedKey = binding.option;
+    request.expectedEnabled = expectedFlagEnabled;
+    request.configPath = capability.configPath;
+    // Single source of truth: the same total routing+placement helper as
+    // the assignment path (usesPamProviderManagedEntry above already
+    // proved a placement exists — re-derive it typed).
+    const auto placement = fic::identity::pam::pamProviderManagedEntryPlacement(
+        provider, capability, binding, feature_);
+    if (!placement.has_value()) {
+        this->log(
+            "PAM managed provider flag has no typed placement contract "
+            "for " + this->policyName + " (fail closed)",
+            logLevel::ERROR);
+        return false;
+    }
+    request.placement = *placement;
+
+    // Semantic postcondition, parameterized by the flag state being
+    // proven: the executor passes the DURABLE journal target during
+    // recovery and the current desired value otherwise. For the set-only
+    // flags the native value is not representable — the flag verifier
+    // path is used with expectedFlagEnabled only.
+    auto semantic = [&](bool expectedEnabled, std::string& semanticError) {
+        std::size_t verifiedServiceCount = 0;
+        return this->verifyPostMutationPamState(
+            capability, services, binding,
+            /*nativeExpectedValue=*/{}, expectedEnabled,
+            verifiedServiceCount, semanticError);
+    };
+
+    auto outcome =
+        fic::identity::pam::PamProviderManagedEntryOutcome::AppliedNoOp;
+    auto* journal =
+        fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) {
+        this->log(
+            "PAM mutation journal is not usable for " + this->policyName +
+                ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
+    if (!fic::identity::pam::PamProviderManagedFlagExecutor::apply(
+            request, *journal, semantic, outcome, error)) {
+        this->log(
+            "PAM managed provider flag apply failed for " +
+                this->policyName + ": " + error,
+            logLevel::ERROR);
+        return false;
+    }
+    this->log(
+        std::string("PAM policy ") + this->policyName +
+            (outcome == fic::identity::pam::PamProviderManagedEntryOutcome::
+                            AppliedNoOp
                 ? " is proven effective on the managed provider block "
                   "(no-op)"
                 : " applied through the managed provider block"),

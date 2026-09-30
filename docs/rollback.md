@@ -1171,6 +1171,54 @@ Package-release (prerm) игнорирует желаемые значения �
 весь домен, финальные слоты — Neutral без pwhistory опций; proof владения
 не зависит от конкретных `remember`/`enforce_for_root` значений.
 
+## PAM provider managed flag rollback (Step 7E)
+
+Step 7E добавляет journal-backed FIC-владение тремя set-only флагами
+(`even_deny_root` в faillock, `enforce_for_root` в pwquality и pwhistory)
+через `PamProviderManagedFlagExecutor` — ту же durable-target-first state
+machine, что и managed entry (Step 7B), с undo-действием
+`remove_pam_provider_managed_flag` (identity: provider, configPath,
+managedKey, appliedEnabled, previousAppliedEnabled, placement,
+suppressionIds, previousSuppressionIds).
+
+Семантика состояний (upstream presence-flags — значение «false» в конфиге
+не существует):
+
+* desired=true → bare managed key внутри FIC provider block (запись
+  `remove_pam_provider_managed_flag` с appliedEnabled=true и ПУСТЫМИ
+  suppression-наборами); foreign-вхождения не трогаются — true эффективно
+  независимо от них (entry outrank'ит по placement).
+* desired=false → disabled sentinel (`# FIC_PAM_FLAG_DISABLED version=1
+  key=<key>`) ПЛЮС canonical suppression wrappers вокруг КАЖДОГО
+  подавляемого foreign-активного вхождения ключа. Foreign line никогда не
+  удаляется и не хранится в journal: её точные байты живут внутри wrapper
+  (`raw=`-суффикс); journal хранит только provenance id (s1, s2, ...) —
+  permission set, а не backup manifest.
+
+Rollback / Step 7F освобождает FIC entry и разворачивает только текущие
+физически доказанные wrappers — foreign-состояние возвращается
+естественно, байт-в-байт. Ids внешне освобождённых wrappers
+канонизируются из provenance (никогда не реконструируются из journal) и
+НЕ переиспользуются, пока активная запись ссылается на них (namespace id —
+объединение физического файла и journal provenance).
+
+Ключевые fail-closed инварианты (детали в
+`fic/src/modules/identity_access/pam/PamProviderManagedFlagExecutor.h`):
+
+* Applied refresh — no-op; физический дрейф доказанного состояния
+  (AppliedDrifted), чужой mutation id на wrapper, неизвестный wrapper id,
+  wrappers при enabled-состоянии — отказ без физических изменений.
+* Fresh transaction никогда не адоптирует pre-existing entry/wrapper без
+  journal provenance (ABA-защита).
+* Prepared recovery: durable target завершается первым (та же запись id),
+  затем — только при расхождении — reconciliation под текущий desired.
+* Идемпотентность: точный повтор — AppliedNoOp; toggle false↔true идёт
+  под ОДНОЙ активной записью (id стабилен весь lifecycle); wrappers
+  освобождаются байт-в-байт (§42), новые foreign-строки при disabled
+  получают новые ids (§39/§72), старые стабильны.
+* Metadata (владелец/права) primary-конфига сохраняется каждой физической
+  мутацией.
+
 ## Package-removal C2 domain release (prerm)
 
 Rollback политик (раздел выше) и удаление пакета — разные операции с разными

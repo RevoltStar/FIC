@@ -913,11 +913,34 @@ int main() {
         require(
             uppercaseRootFlagDisabled.apply(),
             "case-insensitive pwquality flag disable failed");
+        const std::string disabledRootFlagContent =
+            readFile(passwordQualityPlatform.passwordQualityConfigPath);
         require(
-            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
-                "\n",
-            "uppercase pwquality SET flag remained active after disable");
+            disabledRootFlagContent.rfind(
+                "# FIC_PAM_SUPPRESS version=1 provider=pam_pwquality "
+                "policy=password_quality_enforce_for_root "
+                "key=enforce_for_root mutation=",
+                0) == 0 &&
+                disabledRootFlagContent.find("raw=ENFORCE_FOR_ROOT\n") !=
+                    std::string::npos &&
+                disabledRootFlagContent.find(
+                    "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 "
+                    "provider=pam_pwquality") != std::string::npos &&
+                disabledRootFlagContent.find(
+                    "# FIC_PAM_FLAG_DISABLED version=1 "
+                    "key=enforce_for_root") != std::string::npos &&
+                disabledRootFlagContent.find(
+                    "# FIC_PAM_PROVIDER_BLOCK_END") != std::string::npos,
+            "uppercase pwquality SET flag disable must keep the line "
+            "wrapped byte-exactly");
 
+        // Step 7E: the journal still proves an Applied disabled flag state
+        // from the disable above; externally resetting the physical file
+        // without rotating the journal is AppliedDrifted (fail closed).
+        // The platform-level re-enable starts from a fresh provenance
+        // namespace (a fresh journal FILE — reusing the same sequence
+        // number would re-read the old record).
+        rotateTestJournal(root, 21);
         writeIdentityConfig(
             root, "yes", "yes",
             "password_quality_enforce_for_root.status=ENABLE\n"
@@ -933,18 +956,38 @@ int main() {
         const std::string enabledRootFlagContent =
             readFile(passwordQualityPlatform.passwordQualityConfigPath);
         require(
-            (enabledRootFlagContent == "EnFoRcE_FoR_RoOt\n" ||
-             enabledRootFlagContent == "enforce_for_root\n") &&
-                mixedCaseRootFlagEnabled.apply() &&
+            enabledRootFlagContent ==
+                "EnFoRcE_FoR_RoOt\n"
+                "\n"
+                "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 "
+                "provider=pam_pwquality lead=newline\n"
+                "# FIC_PAM_ENTRY_BEGIN version=1 "
+                "policy=password_quality_enforce_for_root mutation=1\n"
+                "enforce_for_root\n"
+                "# FIC_PAM_ENTRY_END\n"
+                "# FIC_PAM_PROVIDER_BLOCK_END\n",
+            "pwquality SET flag enable content mismatch: [" +
+                enabledRootFlagContent + "]");
+        require(
+            mixedCaseRootFlagEnabled.apply() &&
                 readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
                     enabledRootFlagContent,
             "pwquality SET flag enable created a semantic duplicate");
 
         writePasswordQualityGraph(" enforce_for_root=0");
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
+        // Step 7E: PAM module argv cannot be outranked by any config
+        // topology — a conflicting flag argv fails the managed flag
+        // preflight BEFORE any physical mutation.
         require(
-            qualityForRootEnabled.apply(),
-            "SET-style enforce_for_root=0 argv diverged in policy preflight");
+            !qualityForRootEnabled.apply(),
+            "SET-style enforce_for_root=0 argv was accepted despite being "
+            "unreachable through config");
+        require(
+            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
+                "",
+            "enforce_for_root argv-conflict preflight failure modified the "
+            "managed config");
 
         writePasswordQualityGraph(" minlen=10 minlen=20");
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
@@ -986,6 +1029,11 @@ int main() {
                 passwordQualityPlatform.passwordQualityConfigPath,
                 "enforce_for_root", false, optionError),
             optionError);
+        // Step 7E: the disable above proves an Applied state in the
+        // current journal; the externally rewritten physical file without
+        // rotating the journal is AppliedDrifted (fail closed). Start a
+        // fresh provenance namespace for the SET-assignment re-enable.
+        rotateTestJournal(root, 22);
         writeIdentityConfig(
             root, "yes", "yes",
             "password_quality_enforce_for_root.status=ENABLE\n"
@@ -1001,12 +1049,17 @@ int main() {
         const std::string assignedFlagContent =
             readFile(passwordQualityPlatform.passwordQualityConfigPath);
         require(
-            assignedFlagContent == "enforce_for_root=0\n" &&
+            assignedFlagContent.rfind("enforce_for_root=0\n", 0) == 0 &&
                 assignedQualityFlagEnabled.apply() &&
                 readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
                     assignedFlagContent,
-            "enabled pwquality SET assignment was not idempotent");
+            "enabled pwquality SET assignment was not idempotent: [" +
+                assignedFlagContent + "]");
 
+        // Step 7E: fresh provenance namespace — the enabled record above
+        // must not strangle the externally rewritten disable sub-case
+        // (physical drift without rotation is AppliedDrifted, fail closed).
+        rotateTestJournal(root, 23);
         writeIdentityConfig(
             root, "yes", "yes",
             "password_quality_enforce_for_root.status=ENABLE\n"
@@ -1019,11 +1072,33 @@ int main() {
         require(
             assignedQualityFlagDisabled.apply(),
             "uppercase pwquality SET assignment could not be disabled");
-        require(
-            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
-                "\n",
-            "uppercase pwquality SET assignment remained active");
+        {
+            const std::string disabledSetAssignment =
+                readFile(passwordQualityPlatform.passwordQualityConfigPath);
+            require(
+                disabledSetAssignment.rfind(
+                    "# FIC_PAM_SUPPRESS version=1 provider=pam_pwquality "
+                    "policy=password_quality_enforce_for_root "
+                    "key=enforce_for_root mutation=",
+                    0) == 0 &&
+                    disabledSetAssignment.find("raw=ENFORCE_FOR_ROOT=0\n") !=
+                        std::string::npos &&
+                    disabledSetAssignment.find(
+                        "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 "
+                        "provider=pam_pwquality") != std::string::npos &&
+                    disabledSetAssignment.find(
+                        "# FIC_PAM_FLAG_DISABLED version=1 "
+                        "key=enforce_for_root") != std::string::npos &&
+                    disabledSetAssignment.find(
+                        "# FIC_PAM_PROVIDER_BLOCK_END") !=
+                        std::string::npos,
+                "uppercase pwquality SET assignment remained active");
+        }
 
+        // Step 7E: fresh provenance namespace for the multi-occurrence
+        // disable sub-case (externally rewritten file + stale Applied
+        // record would be AppliedDrifted, fail closed).
+        rotateTestJournal(root, 24);
         writeFile(
             passwordQualityPlatform.passwordQualityConfigPath,
             "enforce_for_root\n"
@@ -1033,10 +1108,34 @@ int main() {
         require(
             duplicateQualityFlagsDisabled.apply(),
             "mixed pwquality SET forms could not be disabled together");
-        require(
-            readFile(passwordQualityPlatform.passwordQualityConfigPath) ==
-                "\n\n",
-            "not all active pwquality SET forms were neutralized");
+        {
+            const std::string mixedDisabled =
+                readFile(passwordQualityPlatform.passwordQualityConfigPath);
+            std::size_t wrapperCount = 0;
+            std::size_t searchFrom = 0;
+            while ((searchFrom = mixedDisabled.find(
+                        "# FIC_PAM_SUPPRESS version=1", searchFrom)) !=
+                   std::string::npos) {
+                ++wrapperCount;
+                ++searchFrom;
+            }
+            require(
+                wrapperCount == 2 &&
+                    mixedDisabled.find("raw=enforce_for_root\n") !=
+                        std::string::npos &&
+                    mixedDisabled.find("raw=EnFoRcE_FoR_RoOt=0\n") !=
+                        std::string::npos &&
+                    mixedDisabled.find("suppression=s1") !=
+                        std::string::npos &&
+                    mixedDisabled.find("suppression=s2") !=
+                        std::string::npos &&
+                    mixedDisabled.find(
+                        "# FIC_PAM_FLAG_DISABLED version=1 "
+                        "key=enforce_for_root") != std::string::npos &&
+                    mixedDisabled.find("# FIC_PAM_PROVIDER_BLOCK_END") !=
+                        std::string::npos,
+                "not all active pwquality SET forms were neutralized");
+        }
 
         writeFile(passwordQualityPlatform.passwordQualityConfigPath, "");
         applyPasswordQualityAssignment<
@@ -1369,10 +1468,11 @@ int main() {
                     managedHistoryConfig,
             "managed pwhistory depth apply is not idempotent");
 
-        // §40 transitional compatibility: password_history_enforce_for_root
-        // stays on the legacy flag path (Step 7E) and must NOT disturb the
-        // managed depth entry.
-        rotateTestJournal(root, 5);
+        // Step 7E: password_history_enforce_for_root is MANAGED in the SAME
+        // provider block as the depth entry (Step 7D) — the flag apply must
+        // extend the existing block with its own journal record id (NEVER
+        // reuse the depth entry's mutation id) and must not disturb the
+        // remember entry.
         writeIdentityConfig(
             root, "yes", "yes",
             "password_history_enforce_for_root.status=ENABLE\n"
@@ -1381,7 +1481,7 @@ int main() {
             managedHistoryPlatform);
         require(
             flagAfterManagedDepth.apply(),
-            "legacy enforce_for_root apply failed after a managed depth "
+            "managed enforce_for_root apply failed after a managed depth "
             "apply");
         const std::string afterFlagConfig =
             readFile(managedHistoryPlatform.passwordHistoryConfigPath);
@@ -1390,9 +1490,9 @@ int main() {
                 "# FIC_PAM_PROVIDER_BLOCK_BEGIN version=1 "
                 "provider=pam_pwhistory") == 0 &&
                 afterFlagConfig.find("remember = 10") != std::string::npos &&
-                afterFlagConfig.find("\nenforce_for_root") !=
+                afterFlagConfig.find("\nenforce_for_root\n") !=
                     std::string::npos,
-            "the legacy flag apply must keep the managed BOF block valid "
+            "the managed flag apply must keep the managed BOF block valid "
             "and its remember entry unchanged");
 
         // §29 at policy level: a conflicting PAM argv remember must fail

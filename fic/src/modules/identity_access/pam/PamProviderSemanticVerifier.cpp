@@ -1039,11 +1039,6 @@ bool pwhistoryCanApplyFlag(
     const std::vector<std::string>& conflictingOptionsWhenDisabled,
     std::string& error)
 {
-    // Step 7E will own the flag mutation; until then the flag stays on
-    // the legacy writer path, so the preflight only proves that nothing
-    // prevents the legacy apply (module argv overrides, unmanaged or
-    // unsafe inputs, broken external contract) — the CURRENT config flag
-    // state is deliberately NOT compared here.
     if (flag != "enforce_for_root") {
         error = "unsupported managed pwhistory flag " + flag;
         return false;
@@ -1075,6 +1070,70 @@ bool pwhistoryCanApplyFlag(
     return verifyPwhistoryFlagArguments(
         inspection, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);
+}
+
+// Step 7E: managed-flag preflight for the journal-backed set-only flag
+// executor (PamProviderManagedFlagExecutor). Same argv invariants as the
+// legacy preflight above, PLUS the prospective first-match flag model
+// (PwhistoryConfigEvaluator::evaluateInvocationWithManagedFlag): the
+// executor can safely SUPPRESS every foreign primary occurrence of the
+// key, so a foreign config flag line never blocks a requested disabled
+// state — but a PAM argv override, a missing primary (vendor fallback
+// cannot be proven), malformed known directives and broken/untrusted
+// inputs still fail closed BEFORE any journal mutation.
+bool pwhistoryCanApplyManagedFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
+    if (flag != "enforce_for_root") {
+        error = "unsupported managed pwhistory flag " + flag;
+        return false;
+    }
+    if (!PamProviderInspector::verifyExternalConfigContract(
+            inspection, capability, error) ||
+        !verifyNoUnmanagedGenericInputs(inspection, capability, error)) {
+        return false;
+    }
+    // argv invariants (Step 7D): typed case-insensitive whole-token flag
+    // semantics — a case-variant argv override makes a requested disabled
+    // state unreachable and fails closed; the same-effective argv never
+    // blocks a requested enabled state.
+    if (!verifyPwhistoryFlagArguments(
+            inspection, flag, expectedEnabled,
+            conflictingOptionsWhenDisabled, error)) {
+        return false;
+    }
+    // Prospective suppress/insert model of the primary under the real
+    // topology + PAM argv.
+    for (const auto& rule : inspection.providerRules) {
+        fic::platform::PamProviderConfigTopology topology;
+        if (!preparePwhistoryRuleTopology(
+                inspection, capability, rule, topology, error)) {
+            return false;
+        }
+        PwhistoryEffectiveState state;
+        if (!PwhistoryConfigEvaluator::evaluateInvocationWithManagedFlag(
+                rule.arguments, rule.source, rule.line, topology,
+                flag, expectedEnabled, state, error)) {
+            return false;
+        }
+        if (state.enforceForRoot != expectedEnabled) {
+            error = rule.source.string() + ":" +
+                std::to_string(rule.line) +
+                ": prospective pwhistory enforce_for_root is " +
+                (state.enforceForRoot ? "enabled" : "disabled") +
+                ", expected " +
+                (expectedEnabled ? "enabled" : "disabled") +
+                ": an unmanaged input overrides the requested state";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
 }
 
 const SemanticBackend& backendFor(PamProviderSemanticBackendKind kind)
@@ -1177,6 +1236,35 @@ bool PamProviderSemanticVerifier::canApplyFlag(
     const std::vector<std::string>& conflictingOptionsWhenDisabled,
     std::string& error)
 {
+    return backendFor(inspection, capability).canApplyFlag(
+        inspection, capability, flag, expectedEnabled,
+        conflictingOptionsWhenDisabled, error);
+}
+
+bool PamProviderSemanticVerifier::canApplyManagedProviderFlag(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    const std::string& flag,
+    bool expectedEnabled,
+    const std::vector<std::string>& conflictingOptionsWhenDisabled,
+    std::string& error)
+{
+    // Per-provider dispatch of the managed set-only flag preflight
+    // (Step 7E §52). pwquality: the existing prospective evaluator already
+    // models primary suppression + drop-in enforcement. pwhistory: the
+    // dedicated managed preflight with the new prospective flag evaluator.
+    // faillock and every other Generic provider: the generic argv-only
+    // check — the primary conflicting-directive proof (root_unlock_time)
+    // stays the caller's provider-correct scanner responsibility.
+    const auto kind =
+        pamProviderDescriptor(inspection.provider).semanticBackend;
+    if (kind == PamProviderSemanticBackendKind::Pwhistory &&
+        capability.configurationMode !=
+            fic::platform::PamCapabilityConfigurationMode::ModuleArguments) {
+        return pwhistoryCanApplyManagedFlag(
+            inspection, capability, flag, expectedEnabled,
+            conflictingOptionsWhenDisabled, error);
+    }
     return backendFor(inspection, capability).canApplyFlag(
         inspection, capability, flag, expectedEnabled,
         conflictingOptionsWhenDisabled, error);

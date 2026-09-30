@@ -32,6 +32,20 @@ protected:
         const fic::identity::pam::PamProviderPolicyBinding& binding,
         const std::string& nativeExpectedValue);
 
+    // Step 7E: journal-backed managed provider block path for the
+    // whitelisted set-only Flag bindings (faillock even_deny_root,
+    // pwquality/pwhistory enforce_for_root — see
+    // usesPamProviderManagedEntry). Runs the full crash-safe lifecycle of
+    // PamProviderManagedFlagExecutor: desired=true → FIC-owned bare flag;
+    // desired=false → FIC-owned disabled sentinel + suppression wrappers
+    // around every suppressible foreign active occurrence (the foreign
+    // bytes stay in the file; the journal stores only provenance ids).
+    bool applyManagedProviderFlag(
+        const fic::platform::PamCapabilityConfig& capability,
+        const std::vector<std::string>& services,
+        const fic::identity::pam::PamProviderPolicyBinding& binding,
+        bool expectedFlagEnabled);
+
     virtual bool verifyPostMutationPamState(
         const fic::platform::PamCapabilityConfig& capability,
         const std::vector<std::string>& services,

@@ -144,6 +144,29 @@ public:
         const std::string& expectedValue,
         PwhistoryEffectiveState& state,
         std::string& error);
+
+    // Prospective preflight model (Step 7E): evaluates the state as it
+    // WOULD be after the FIC managed flag transition.
+    //   * expectedEnabled=true  — the FIC bare flag becomes the FIRST
+    //     matching key in the primary (BOF entry under the upstream
+    //     first-match pam_modutil_search_key semantics), so every later
+    //     foreign occurrence of the key is overridden; the effective state
+    //     is true regardless of foreign lines;
+    //   * expectedEnabled=false — ALL primary occurrences of the managed
+    //     key are suppressed (wrapped into FIC comments by the executor),
+    //     so the key is absent from the effective primary state and the
+    //     flag stays false; a PAM argv override still fails the evaluation
+    //     (last-wins after config), which is exactly the unreachable-false
+    //     preflight contract.
+    static bool evaluateInvocationWithManagedFlag(
+        const std::vector<std::string>& arguments,
+        const std::filesystem::path& source,
+        std::size_t line,
+        const fic::platform::PamProviderConfigTopology& topology,
+        const std::string& flag,
+        bool expectedEnabled,
+        PwhistoryEffectiveState& state,
+        std::string& error);
 };
 
 } // namespace fic::identity::pam

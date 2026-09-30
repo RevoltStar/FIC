@@ -49,6 +49,29 @@ public:
         bool expectedEnabled,
         const std::vector<std::string>& conflictingOptionsWhenDisabled,
         std::string& error);
+
+    // Step 7E: managed-flag PRE-MUTATION preflight for the journal-backed
+    // set-only flag executor (PamProviderManagedFlagExecutor). Unlike the
+    // legacy preflight, this models the SUPPRESSION of foreign primary
+    // occurrences: a foreign active flag line that FIC can safely wrap
+    // never blocks a requested disabled state. Per provider:
+    //   * PamPwquality — the existing prospective DropInsThenPrimary
+    //     evaluator (primary same-key occurrences skipped, drop-ins
+    //     evaluated as-is: a drop-in flag occurrence still makes false
+    //     unreachable and fails closed);
+    //   * PamPwhistory — the Step 7D argv invariants (whole-token icase
+    //     flags, valued forms fail closed, duplicates fail closed, conf=
+    //     contract) PLUS the new prospective first-match flag evaluator;
+    //   * PamFaillock / Generic — the generic argv-only check (the caller
+    //     additionally proves the primary conflicting directives through
+    //     the provider-correct directive scanner).
+    static bool canApplyManagedProviderFlag(
+        const PamProviderInspection& inspection,
+        const fic::platform::PamCapabilityConfig& capability,
+        const std::string& flag,
+        bool expectedEnabled,
+        const std::vector<std::string>& conflictingOptionsWhenDisabled,
+        std::string& error);
 };
 
 } // namespace fic::identity::pam

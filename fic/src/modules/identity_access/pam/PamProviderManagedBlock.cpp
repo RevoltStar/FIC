@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cstring>
 #include <system_error>
+#include <utility>
 
 namespace fic::identity::pam {
 namespace {
@@ -341,6 +342,34 @@ void findBlockLineIndices(const std::string& content,
 }
 
 // MARKER_ANCHOR_VALIDATE
+namespace {
+
+// Shared canonical body validator of the ownership expectation: accepts the
+// canonical ASSIGNMENT body, the ENABLED flag body (exact bare managed key)
+// and the DISABLED flag sentinel body — in every case with EXACTLY the
+// expectation's managed key (never a prefix compare).
+bool ownershipBodyMatchesKey(const std::string& body,
+                             const std::string& managedKey) {
+    if (!isValidPamProviderManagedKey(managedKey)) {
+        return false;
+    }
+    std::string parsedKey;
+    std::string parsedValue;
+    if (parseCanonicalPamProviderEntryBody(body, parsedKey, parsedValue)) {
+        return parsedKey == managedKey;
+    }
+    if (body == managedKey) {
+        return true;
+    }
+    std::string sentinelKey;
+    if (parseCanonicalPamProviderFlagDisabledBody(body, sentinelKey)) {
+        return sentinelKey == managedKey;
+    }
+    return false;
+}
+
+} // namespace
+
 bool validateOwnershipExpectation(
     const PamProviderOwnershipExpectation& expectation,
     std::string& error) {
@@ -351,24 +380,18 @@ bool validateOwnershipExpectation(
         error = "invalid FIC PAM ownership expectation";
         return false;
     }
-    // EXACT key match via the shared canonical validator — never a prefix
-    // compare: "deny_extra = 5" must never validate against managedKey
-    // "deny".
-    std::string parsedKey;
-    std::string parsedValue;
-    if (!parseCanonicalPamProviderEntryBody(expectation.body, parsedKey,
-                                            parsedValue) ||
-        parsedKey != expectation.managedKey) {
+    // EXACT key match via the shared canonical body validator — never a
+    // prefix compare: "deny_extra = 5" must never validate against
+    // managedKey "deny".
+    if (!ownershipBodyMatchesKey(expectation.body,
+                                 expectation.managedKey)) {
         error = "FIC PAM ownership expectation requires a canonical "
                 "applied body of exactly the managed key";
         return false;
     }
     if (!expectation.previousBody.empty()) {
-        std::string previousKey;
-        std::string previousValue;
-        if (!parseCanonicalPamProviderEntryBody(expectation.previousBody,
-                                                previousKey, previousValue) ||
-            previousKey != expectation.managedKey ||
+        if (!ownershipBodyMatchesKey(expectation.previousBody,
+                                     expectation.managedKey) ||
             expectation.previousBody == expectation.body) {
             error = "FIC PAM ownership expectation requires a canonical "
                     "previous body of the same managed key, different from "
@@ -381,6 +404,204 @@ bool validateOwnershipExpectation(
 
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Step 7E: provider-specific set-only flag primitives.
+// ---------------------------------------------------------------------------
+
+bool pamProviderFlagKeyMatchIgnoreCase(const std::string& provider) {
+    // Upstream evidence (Step 7E §18):
+    //   * libpwquality src/settings.c: recognized keys are matched after
+    //     lowercasing (ASCII case-insensitive);
+    //   * pam_pwhistory: pam_modutil_search_key uses strcasecmp;
+    //   * pam_faillock faillock_config.c: strcmp — CASE-SENSITIVE.
+    return provider == "pam_pwquality" || provider == "pam_pwhistory";
+}
+
+bool pamProviderFlagLineIsActiveOccurrence(const std::string& provider,
+                                           const std::string& physicalLine,
+                                           const std::string& managedKey) {
+    if (!isValidPamProviderManagedKey(managedKey)) {
+        return false;
+    }
+    std::string line = physicalLine;
+    // Upstream: '#' truncates the rest of the line (all three providers).
+    const std::size_t comment = line.find('#');
+    if (comment != std::string::npos) {
+        line.erase(comment);
+    }
+    std::size_t start = 0;
+    while (start < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[start])) != 0) {
+        ++start;
+    }
+    if (start == line.size()) {
+        return false; // blank or comment-only line: never active
+    }
+    std::size_t keyEnd = start;
+    while (keyEnd < line.size() &&
+           std::isspace(static_cast<unsigned char>(line[keyEnd])) == 0 &&
+           line[keyEnd] != '=') {
+        ++keyEnd;
+    }
+    const std::string key = line.substr(start, keyEnd - start);
+    if (key.size() != managedKey.size()) {
+        return false;
+    }
+    const bool ignoreCase = pamProviderFlagKeyMatchIgnoreCase(provider);
+    for (std::size_t index = 0; index < key.size(); ++index) {
+        const unsigned char a = static_cast<unsigned char>(key[index]);
+        const unsigned char b = static_cast<unsigned char>(managedKey[index]);
+        if (a == b) {
+            continue;
+        }
+        if (!ignoreCase) {
+            return false;
+        }
+        const unsigned char lowerA = a >= 'A' && a <= 'Z' ? a - 'A' + 'a' : a;
+        const unsigned char lowerB = b >= 'A' && b <= 'Z' ? b - 'A' + 'a' : b;
+        if (lowerA != lowerB) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string pamProviderSuppressionWrapperLine(
+    const std::string& provider, const std::string& policy,
+    const std::string& managedKey, std::uint64_t mutationId,
+    const std::string& suppressionId, const std::string& rawLine) {
+    return std::string(kPamProviderSuppressMarkerPrefix) + provider +
+        " policy=" + policy + " key=" + managedKey +
+        " mutation=" + std::to_string(mutationId) +
+        " suppression=" + suppressionId + " raw=" + rawLine;
+}
+
+bool parsePamProviderSuppressionWrapper(const std::string& physicalLine,
+                                        PamProviderSuppressedLine& wrapper,
+                                        std::string& error) {
+    const std::string prefix = kPamProviderSuppressMarkerPrefix;
+    if (physicalLine.size() <= prefix.size() ||
+        physicalLine.compare(0, prefix.size(), prefix) != 0) {
+        error = "line is not a canonical FIC PAM suppression wrapper";
+        return false;
+    }
+    // Sequential canonical field order after the marker prefix:
+    // <provider>, policy=, key=, mutation=, suppression=, raw= (LAST field
+    // delimiter: everything after it is the opaque original physical line).
+    std::string rest = physicalLine.substr(prefix.size());
+    const std::size_t providerEnd = rest.find(' ');
+    if (providerEnd == std::string::npos) {
+        error = "FIC PAM suppression wrapper: missing provider field";
+        return false;
+    }
+    const std::string provider = rest.substr(0, providerEnd);
+    rest.erase(0, providerEnd + 1);
+    if (!isValidPamProviderIdentityToken(provider)) {
+        error = "FIC PAM suppression wrapper: invalid provider identity";
+        return false;
+    }
+    const auto readTokenField = [&](const char* name,
+                                    std::string& value) -> bool {
+        const std::string field = std::string(name) + "=";
+        if (rest.compare(0, field.size(), field) != 0) {
+            error = std::string("FIC PAM suppression wrapper: expected ") +
+                name + "= field";
+            return false;
+        }
+        rest.erase(0, field.size());
+        const std::size_t space = rest.find(' ');
+        if (space == std::string::npos) {
+            error = std::string("FIC PAM suppression wrapper: missing ") +
+                name + "= field terminator";
+            return false;
+        }
+        value = rest.substr(0, space);
+        rest.erase(0, space + 1);
+        return true;
+    };
+    std::string policy;
+    std::string key;
+    std::string mutation;
+    std::string suppression;
+    if (!readTokenField("policy", policy) || !readTokenField("key", key) ||
+        !readTokenField("mutation", mutation) ||
+        !readTokenField("suppression", suppression)) {
+        return false;
+    }
+    if (rest.compare(0, 4, "raw=") != 0) {
+        error = "FIC PAM suppression wrapper: raw= must be the last field "
+                "delimiter";
+        return false;
+    }
+    const std::string raw = rest.substr(4);
+    wrapper = PamProviderSuppressedLine{};
+    wrapper.provider = provider;
+    wrapper.policy = policy;
+    wrapper.managedKey = key;
+    wrapper.suppressionId = suppression;
+    wrapper.rawLine = raw;
+    if (!isValidPamProviderIdentityToken(policy)) {
+        error = "FIC PAM suppression wrapper: invalid policy identity";
+        return false;
+    }
+    if (!isValidPamProviderManagedKey(key)) {
+        error = "FIC PAM suppression wrapper: invalid managed key";
+        return false;
+    }
+    std::string mutationError;
+    if (!parsePhysicalMutationId(mutation, wrapper.mutationId,
+                                 mutationError)) {
+        error = "FIC PAM suppression wrapper: " + mutationError;
+        return false;
+    }
+    if (!isValidPamProviderSuppressionId(suppression)) {
+        error = "FIC PAM suppression wrapper: invalid suppression id";
+        return false;
+    }
+    if (raw.empty() || raw.find('\n') != std::string::npos ||
+        raw.find('\0') != std::string::npos) {
+        error = "FIC PAM suppression wrapper: embedded raw line must be a "
+                "single non-empty physical line";
+        return false;
+    }
+    // Strict wrapper proof (Step 7E §11): the embedded raw line must be an
+    // ACTIVE occurrence of the same managed key under the provider-specific
+    // key semantics. A manually edited embedded line is never proven
+    // suppressed state.
+    if (!pamProviderFlagLineIsActiveOccurrence(wrapper.provider, raw, key)) {
+        error = "FIC PAM suppression wrapper: embedded raw line is not an "
+                "active occurrence of the managed key " +
+            key + " (fail closed)";
+        return false;
+    }
+    return true;
+}
+
+std::string nextPamProviderSuppressionId(
+    const std::vector<std::string>& existingIds) {
+    std::uint64_t maxSuffix = 0;
+    for (const std::string& id : existingIds) {
+        if (id.size() < 2 || id.front() != 's') {
+            continue;
+        }
+        const std::string suffix = id.substr(1);
+        if (!std::all_of(suffix.begin(), suffix.end(), [](unsigned char c) {
+                return std::isdigit(c) != 0;
+            }) || suffix.front() == '0') {
+            continue;
+        }
+        std::uint64_t value = 0;
+        const auto result =
+            std::from_chars(suffix.data(), suffix.data() + suffix.size(),
+                            value);
+        if (result.ec == std::errc() &&
+            result.ptr == suffix.data() + suffix.size()) {
+            maxSuffix = std::max(maxSuffix, value);
+        }
+    }
+    return "s" + std::to_string(maxSuffix + 1);
+}
 
 PamProviderBlockParseResult parsePamProviderManagedBlock(
     const std::string& content) {
@@ -395,6 +616,7 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
     std::string provider;
     bool leadOwnedNewline = false;
     std::vector<PamProviderManagedEntry> entries;
+    std::vector<PamProviderSuppressedLine> suppressions;
     PamProviderManagedEntry current;
 
     for (std::size_t index = 0; index < lines.size(); ++index) {
@@ -405,6 +627,44 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
             // Every mention of the reserved marker namespace must be an
             // EXACTLY canonical marker in a valid structural position.
             // Anything else is a foreign FIC-like malformed marker.
+            //
+            // Step 7E: the canonical suppression wrapper is accepted ONLY
+            // outside the provider block (inside the block it is a
+            // misplaced FIC structure — fail closed).
+            const std::string physical = physicalLineContent(lines[index]);
+            if (physical.compare(
+                    0, std::strlen(kPamProviderSuppressMarkerPrefix),
+                    kPamProviderSuppressMarkerPrefix) == 0) {
+                if (insideBlock) {
+                    result.error =
+                        "FIC PAM suppression wrapper внутри provider block "
+                        "(fail closed): " +
+                        line;
+                    return result;
+                }
+                PamProviderSuppressedLine wrapper;
+                std::string wrapperError;
+                if (!parsePamProviderSuppressionWrapper(
+                        physical, wrapper, wrapperError)) {
+                    result.error = "foreign FIC-подобный malformed SUPPRESS "
+                                   "marker: " +
+                        wrapperError;
+                    return result;
+                }
+                for (const PamProviderSuppressedLine& existing :
+                     suppressions) {
+                    if (existing.suppressionId == wrapper.suppressionId) {
+                        result.error =
+                            "дублированный suppression id внутри shared "
+                            "PAM provider configuration: " +
+                            wrapper.suppressionId;
+                        return result;
+                    }
+                }
+                wrapper.lineIndex = index;
+                suppressions.push_back(std::move(wrapper));
+                continue;
+            }
             if (line == kPamProviderBlockEndMarker) {
                 if (!insideBlock || insideEntry) {
                     result.error =
@@ -485,6 +745,19 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
                 ++entryCount;
                 continue;
             }
+            // Step 7E: the canonical disabled-flag sentinel is accepted ONLY
+            // as the body line of an entry inside the block (it is the
+            // FIC-owned inert disabled-state anchor).
+            std::string sentinelKey;
+            if (insideBlock && insideEntry && !entryBodySeen &&
+                parseCanonicalPamProviderFlagDisabledBody(
+                    physicalLineContent(lines[index]), sentinelKey)) {
+                current.managedKey = sentinelKey;
+                current.body = physicalLineContent(lines[index]);
+                current.kind = PamProviderManagedEntryKind::FlagDisabled;
+                entryBodySeen = true;
+                continue;
+            }
             result.error = "foreign FIC-подобный malformed marker в shared "
                            "PAM provider configuration: " + line;
             return result;
@@ -505,14 +778,30 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
             }
             std::string parsedKey;
             std::string parsedBody;
-            if (!parseEntryBody(bodyLine, parsedKey, parsedBody,
-                                result.error)) {
-                return result;
+            // Step 7E typed body union: canonical assignment (unchanged
+            // Step 7A grammar), exact bare managed key (enabled flag) — the
+            // disabled sentinel was handled in the reserved-namespace
+            // branch above.
+            if (parseEntryBody(bodyLine, parsedKey, parsedBody,
+                               result.error)) {
+                current.managedKey = parsedKey;
+                current.body = parsedBody;
+                current.kind = PamProviderManagedEntryKind::Assignment;
+                entryBodySeen = true;
+                continue;
             }
-            current.managedKey = parsedKey;
-            current.body = parsedBody;
-            entryBodySeen = true;
-            continue;
+            if (isValidPamProviderManagedKey(bodyLine)) {
+                current.managedKey = bodyLine;
+                current.body = bodyLine;
+                current.kind = PamProviderManagedEntryKind::FlagEnabled;
+                entryBodySeen = true;
+                continue;
+            }
+            result.error = "строка внутри FIC PAM provider entry не является "
+                           "canonical assignment, bare flag key или disabled "
+                           "sentinel: " +
+                bodyLine;
+            return result;
         }
         // Inside the block, outside an entry: the canonical structural
         // portion admits nothing.
@@ -568,6 +857,7 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
                           : PamProviderBlockPlacement::Misplaced);
         canonicalSort(entries);
         view.entries = std::move(entries);
+        view.suppressions = std::move(suppressions);
     }
 
     result.ok = true;
@@ -881,6 +1171,315 @@ PamProviderRemovalResult removePamProviderManagedEntry(
         ? assembleAtBeginning(foreign, block)
         : assembleAtEnd(foreign, block);
     result.outcome = PamProviderRemovalResult::Outcome::Removed;
+    result.ok = true;
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Step 7E: set-only flag transition primitive.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Splits ONE physical line into its content (no CR/LF terminator) and its
+// exact terminator ("" for a last line without a newline; "\n"; "\r\n").
+// The split is what makes the suppression wrapper byte-exact round-trip
+// safe: the embedded raw line never contains the terminator, and the
+// terminator of the wrapper line is the terminator of the original line.
+std::pair<std::string, std::string> splitPhysicalLine(
+    const std::string& physical) {
+    std::string text = physical;
+    std::string terminator;
+    if (!text.empty() && text.back() == '\n') {
+        text.pop_back();
+        if (!text.empty() && text.back() == '\r') {
+            terminator = "\r\n";
+            text.pop_back();
+        } else {
+            terminator = "\n";
+        }
+    } else if (!text.empty() && text.back() == '\r') {
+        // Degenerate lone-CR terminator: preserved byte-exact.
+        terminator = "\r";
+        text.pop_back();
+    }
+    return {std::move(text), std::move(terminator)};
+}
+
+PamProviderManagedEntry* findMutableEntry(
+    std::vector<PamProviderManagedEntry>& entries, const std::string& policy,
+    const std::string& managedKey) {
+    for (PamProviderManagedEntry& entry : entries) {
+        if (entry.policy == policy && entry.managedKey == managedKey) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+bool containsId(const std::vector<std::string>& ids,
+                const std::string& value) {
+    return std::find(ids.begin(), ids.end(), value) != ids.end();
+}
+
+bool validateFlagSpec(const PamProviderFlagSpec& spec, std::string& error) {
+    if (!isValidPamProviderIdentityToken(spec.provider) ||
+        !isValidPamProviderIdentityToken(spec.policy)) {
+        error = "invalid provider/policy identity for FIC PAM managed flag";
+        return false;
+    }
+    if (!isValidPamProviderManagedKey(spec.managedKey)) {
+        error = "invalid managed key for FIC PAM managed flag: " +
+            spec.managedKey;
+        return false;
+    }
+    if (spec.mutationId == 0) {
+        error = "FIC PAM managed flag requires a non-zero mutation id";
+        return false;
+    }
+    if (spec.enabled) {
+        if (!spec.keepSuppressionIds.empty() ||
+            !spec.createSuppressionIds.empty()) {
+            error = "enabled FIC PAM flag target must not own suppression "
+                    "wrappers";
+            return false;
+        }
+        return true;
+    }
+    for (const std::string& id : spec.keepSuppressionIds) {
+        if (!isValidPamProviderSuppressionId(id)) {
+            error = "invalid kept suppression id for FIC PAM managed flag: " +
+                id;
+            return false;
+        }
+    }
+    for (const std::string& id : spec.createSuppressionIds) {
+        if (!isValidPamProviderSuppressionId(id)) {
+            error = "invalid new suppression id for FIC PAM managed flag: " +
+                id;
+            return false;
+        }
+        if (containsId(spec.keepSuppressionIds, id)) {
+            error = "suppression id is both kept and newly created: " + id;
+            return false;
+        }
+    }
+    for (std::size_t outer = 0; outer < spec.createSuppressionIds.size();
+         ++outer) {
+        for (std::size_t inner = outer + 1;
+             inner < spec.createSuppressionIds.size(); ++inner) {
+            if (spec.createSuppressionIds[outer] ==
+                spec.createSuppressionIds[inner]) {
+                error = "duplicate new suppression id: " +
+                    spec.createSuppressionIds[outer];
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+PamProviderFlagMutationResult setPamProviderManagedFlagTransition(
+    const std::string& content,
+    const PamProviderFlagSpec& spec,
+    PamProviderBlockPlacementRequest request) {
+    PamProviderFlagMutationResult result;
+    std::string error;
+    if (!validateFlagSpec(spec, error)) {
+        result.error = error;
+        return result;
+    }
+    const PamProviderBlockParseResult parse =
+        parsePamProviderManagedBlock(content);
+    if (!parse.ok) {
+        result.error = parse.error;
+        return result;
+    }
+    if (parse.view.present && parse.view.provider != spec.provider) {
+        result.error = "FIC PAM provider block принадлежит другому "
+                       "provider: " +
+            parse.view.provider;
+        return result;
+    }
+
+    // --- managed entry (policy, key): bare key or disabled sentinel ---
+    std::vector<PamProviderManagedEntry> entries = parse.view.entries;
+    const std::string targetBody =
+        spec.enabled ? spec.managedKey
+                     : pamProviderFlagDisabledBody(spec.managedKey);
+    const PamProviderManagedEntryKind targetKind =
+        spec.enabled ? PamProviderManagedEntryKind::FlagEnabled
+                     : PamProviderManagedEntryKind::FlagDisabled;
+    bool changed = false;
+    if (PamProviderManagedEntry* existing =
+            findMutableEntry(entries, spec.policy, spec.managedKey)) {
+        // Fail closed: an entry carrying a DIFFERENT mutation id belongs to
+        // another journal transaction identity (ABA protection).
+        if (existing->mutationId != spec.mutationId) {
+            result.error = "FIC PAM entry (policy, key) уже существует с "
+                           "другим physical mutation id: " +
+                std::to_string(existing->mutationId) + " != " +
+                std::to_string(spec.mutationId);
+            return result;
+        }
+        if (existing->body != targetBody) {
+            existing->body = targetBody;
+            existing->kind = targetKind;
+            changed = true;
+        }
+    } else {
+        PamProviderManagedEntry added;
+        added.policy = spec.policy;
+        added.managedKey = spec.managedKey;
+        added.body = targetBody;
+        added.kind = targetKind;
+        added.mutationId = spec.mutationId;
+        entries.push_back(std::move(added));
+        canonicalSort(entries);
+        changed = true;
+    }
+
+    // --- suppression wrappers + foreign active occurrences ---
+    // Wrappers and foreign lines live OUTSIDE the block span; every edit is
+    // done IN PLACE so the physical position of each foreign byte relative
+    // to the others never changes (Step 7E §63).
+    const std::vector<std::string> lines = physicalLines(content);
+    std::size_t beginIndex = std::string::npos;
+    std::size_t endIndex = std::string::npos;
+    findBlockLineIndices(content, beginIndex, endIndex);
+    std::vector<std::string> rebuilt;
+    rebuilt.reserve(lines.size());
+    std::size_t createCursor = 0;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const bool insideBlockSpan =
+            beginIndex != std::string::npos && index >= beginIndex &&
+            index <= endIndex;
+        if (insideBlockSpan) {
+            rebuilt.push_back(lines[index]);
+            continue;
+        }
+        // Canonical wrapper line (the strict parse already proved the
+        // canonical form and raw-line proof of every wrapper).
+        const PamProviderSuppressedLine* wrapper = nullptr;
+        for (const PamProviderSuppressedLine& candidate :
+             parse.view.suppressions) {
+            if (candidate.lineIndex == index) {
+                wrapper = &candidate;
+                break;
+            }
+        }
+        if (wrapper != nullptr) {
+            const bool owned = wrapper->provider == spec.provider &&
+                wrapper->policy == spec.policy &&
+                wrapper->managedKey == spec.managedKey &&
+                wrapper->mutationId == spec.mutationId;
+            if (!owned) {
+                // Another record's provenance is foreign state here —
+                // never touched.
+                rebuilt.push_back(lines[index]);
+                continue;
+            }
+            if (spec.enabled) {
+                // Release: the embedded raw line returns byte-exact to the
+                // wrapper's physical position (Step 7E §42).
+                const std::string terminator =
+                    splitPhysicalLine(lines[index]).second;
+                rebuilt.push_back(wrapper->rawLine + terminator);
+                changed = true;
+                continue;
+            }
+            if (!containsId(spec.keepSuppressionIds,
+                            wrapper->suppressionId)) {
+                result.error = "FIC PAM suppression wrapper of this record "
+                               "carries an id outside keep∪create (fail "
+                               "closed): " +
+                    wrapper->suppressionId;
+                return result;
+            }
+            rebuilt.push_back(lines[index]);
+            continue;
+        }
+        // Foreign line: wrap when the target state is disabled and the line
+        // is an ACTIVE occurrence of the managed key (comments, FIC markers
+        // and blank lines are never active — the scanner proves it).
+        if (!spec.enabled) {
+            const auto [text, terminator] = splitPhysicalLine(lines[index]);
+            if (pamProviderFlagLineIsActiveOccurrence(
+                    spec.provider, text, spec.managedKey)) {
+                if (createCursor >= spec.createSuppressionIds.size()) {
+                    result.error = "FIC PAM flag transition ran out of new "
+                                   "suppression ids: an active occurrence "
+                                   "cannot be wrapped (fail closed)";
+                    return result;
+                }
+                rebuilt.push_back(pamProviderSuppressionWrapperLine(
+                    spec.provider, spec.policy, spec.managedKey,
+                    spec.mutationId, spec.createSuppressionIds[createCursor],
+                    text) + terminator);
+                ++createCursor;
+                changed = true;
+                continue;
+            }
+        }
+        rebuilt.push_back(lines[index]);
+    }
+    if (!spec.enabled && createCursor != spec.createSuppressionIds.size()) {
+        result.error = "FIC PAM flag transition received more new "
+                       "suppression ids than there are active occurrences "
+                       "(fail closed)";
+        return result;
+    }
+
+    // --- reassembly: foreign bytes + block at the requested placement ---
+    std::string foreign;
+    if (parse.view.present) {
+        if (parse.view.atBeginning) {
+            for (std::size_t index = endIndex + 1; index < rebuilt.size();
+                 ++index) {
+                foreign += rebuilt[index];
+            }
+        } else {
+            std::string before;
+            for (std::size_t index = 0; index < beginIndex; ++index) {
+                before += rebuilt[index];
+            }
+            // lead=newline: the EXACTLY ONE LF immediately before BEGIN is
+            // FIC-owned serialization — stripped here, re-added by the
+            // renderer (mirrors foreignBytes/assembleAtEnd).
+            if (parse.view.leadOwnedNewline && !before.empty() &&
+                before.back() == '\n') {
+                before.pop_back();
+            }
+            std::string after;
+            for (std::size_t index = endIndex + 1; index < rebuilt.size();
+                 ++index) {
+                after += rebuilt[index];
+            }
+            foreign = before + after;
+        }
+    } else {
+        for (const std::string& line : rebuilt) {
+            foreign += line;
+        }
+    }
+    if (!changed && parse.view.satisfiesPlacement(request)) {
+        result.outcome = PamProviderFlagMutationResult::Outcome::NoOp;
+        result.content = content;
+        result.ok = true;
+        return result;
+    }
+    // Structural lead contract (identical to setPamProviderManagedEntry).
+    const bool leadOwnedNewline =
+        request == PamProviderBlockPlacementRequest::End && !foreign.empty();
+    const std::string block = renderBlock(spec.provider, entries,
+                                          leadOwnedNewline);
+    result.content =
+        request == PamProviderBlockPlacementRequest::Beginning
+        ? assembleAtBeginning(foreign, block)
+        : assembleAtEnd(foreign, block);
+    result.outcome = PamProviderFlagMutationResult::Outcome::Committed;
     result.ok = true;
     return result;
 }

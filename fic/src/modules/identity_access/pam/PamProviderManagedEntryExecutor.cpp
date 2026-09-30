@@ -1161,9 +1161,47 @@ pamProviderManagedEntryPlacement(
         fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
         return std::nullopt;
     }
-    // Routing gate 2: the executor writes typed "<key> = <value>" scalar
-    // entries; flag bindings (even_deny_root / enforce_for_root, Step 7E)
-    // stay on their existing paths.
+    // Routing gate 2: Flag bindings route ONLY through the Step 7E
+    // set-only flag whitelist (per provider + feature + topology); the
+    // Assignment whitelist below is untouched (Step 7B/7C/7D matrix).
+    // Any other syntax is unroutable.
+    if (binding.syntax == PamNativeOptionSyntax::Flag) {
+        switch (provider.kind) {
+        case fic::platform::PamProviderKind::PamFaillock:
+            // even_deny_root — journal-backed managed flag ownership, no
+            // topology restriction beyond the ProviderConfigFile gate
+            // (ALT ProviderConfigFile topology included).
+            if (feature == fic::platform::PamPolicyFeature::
+                               FailedAuthenticationEnforceForRoot) {
+                return PamProviderBlockPlacementRequest::End;
+            }
+            return std::nullopt;
+        case fic::platform::PamProviderKind::PamPwquality:
+            // enforce_for_root — primary EOF; drop-ins stay READ-ONLY
+            // evaluation inputs (Step 7C invariant).
+            if (feature == fic::platform::PamPolicyFeature::
+                               PasswordQualityEnforceForRoot) {
+                return PamProviderBlockPlacementRequest::End;
+            }
+            return std::nullopt;
+        case fic::platform::PamProviderKind::PamPwhistory:
+            // enforce_for_root — same shared provider block, BOF (the FIC
+            // bare flag must be the FIRST matching key under the upstream
+            // first-match semantics). ALT p11 (AltTcbManaged) and Debian 12
+            // (ModuleArguments, excluded by gate 1) stay outside.
+            if (feature == fic::platform::PamPolicyFeature::
+                               PasswordHistoryEnforceForRoot &&
+                capability.topology ==
+                    fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+                return PamProviderBlockPlacementRequest::Beginning;
+            }
+            return std::nullopt;
+        default:
+            // pam_passwdqc (Assignment binding "enforce") and all other
+            // providers stay legacy.
+            return std::nullopt;
+        }
+    }
     if (binding.syntax != PamNativeOptionSyntax::Assignment) {
         return std::nullopt;
     }
@@ -1179,7 +1217,6 @@ pamProviderManagedEntryPlacement(
             // semantics → EOF.
             return PamProviderBlockPlacementRequest::End;
         default:
-            // even_deny_root (Flag) — Step 7E.
             return std::nullopt;
         }
     case fic::platform::PamProviderKind::PamPwquality:
@@ -1204,7 +1241,6 @@ pamProviderManagedEntryPlacement(
             // mutation target.
             return PamProviderBlockPlacementRequest::End;
         default:
-            // enforce_for_root (Flag) — Step 7E stays legacy.
             return std::nullopt;
         }
     case fic::platform::PamProviderKind::PamPwhistory:
@@ -1224,8 +1260,6 @@ pamProviderManagedEntryPlacement(
                 fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
             return PamProviderBlockPlacementRequest::Beginning;
         }
-        // enforce_for_root (Flag) — Step 7E. Debian 12 and ALT stay on
-        // their existing paths.
         return std::nullopt;
     default:
         // pam_passwdqc (ALT password-quality topology),

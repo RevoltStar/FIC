@@ -727,5 +727,54 @@ bool PwhistoryConfigEvaluator::evaluateInvocationWithManagedOption(
     return applyPamArguments(arguments, source, line, state, error);
 }
 
+bool PwhistoryConfigEvaluator::evaluateInvocationWithManagedFlag(
+    const std::vector<std::string>& arguments,
+    const std::filesystem::path& source,
+    std::size_t line,
+    const fic::platform::PamProviderConfigTopology& topology,
+    const std::string& flag,
+    bool expectedEnabled,
+    PwhistoryEffectiveState& state,
+    std::string& error)
+{
+    error.clear();
+    state = PwhistoryEffectiveState{};
+    if (flag != "enforce_for_root") {
+        error = "unsupported managed pwhistory flag " + flag;
+        return false;
+    }
+    // Same strict argv contract BEFORE the prospective state is evaluated:
+    // a duplicate argv or a valued presence-flag token fails closed
+    // instead of being silently modeled (Step 7D invariants preserved).
+    if (!validatePwhistoryPamArguments(arguments, source, line, error)) {
+        return false;
+    }
+    if (expectedEnabled) {
+        // BOF insert model: the FIC bare flag is the FIRST matching key in
+        // the primary, so every later foreign occurrence of the key is
+        // overridden (first-match semantics). Apply the flag first, then
+        // evaluate the primary with the key skipped everywhere.
+        const std::string managedSkipKey = flag;
+        if (!applyConfigParameter(managedSkipKey, "", state, error)) {
+            return false;
+        }
+        if (!evaluateTopology(topology, state, error, &managedSkipKey)) {
+            return false;
+        }
+    } else {
+        // Suppression model: ALL primary occurrences of the key are
+        // wrapped into FIC comments, so the key is absent from the
+        // effective primary state.
+        const std::string managedSkipKey = flag;
+        if (!evaluateTopology(topology, state, error, &managedSkipKey)) {
+            return false;
+        }
+    }
+    // PAM argv is applied AFTER the config (upstream last-wins): an argv
+    // override of the flag still makes the requested state unreachable and
+    // fails this prospective evaluation.
+    return applyPamArguments(arguments, source, line, state, error);
+}
+
 } // namespace fic::identity::pam
 

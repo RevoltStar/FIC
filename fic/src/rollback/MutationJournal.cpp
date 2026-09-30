@@ -19,6 +19,10 @@ namespace {
 
 using nlohmann::json;
 
+// PAM managed-block grammar helpers (identity/suppression tokens, canonical
+// bodies) live in fic::identity::pam.
+using fic::identity::pam::isValidPamProviderSuppressionId;
+
 std::int64_t currentEpochSeconds() {
     return static_cast<std::int64_t>(::time(nullptr));
 }
@@ -120,6 +124,25 @@ json serializeUndoAction(const UndoAction& action) {
                     PamProviderBlockPlacementContract::Beginning
                 ? "beginning"
                 : "end";
+    } else if (const auto* pamFlag = std::get_if<
+                   UndoRemovePamProviderManagedFlag>(&action.payload)) {
+        value["policy"] = pamFlag->policyName;
+        value["provider"] = pamFlag->providerName;
+        value["config_path"] = pamFlag->configPath;
+        value["managed_key"] = pamFlag->managedKey;
+        value["applied_enabled"] = pamFlag->appliedEnabled;
+        // Write/read parity: ALWAYS written. "none" = fresh transition;
+        // "enabled"/"disabled" = the previous FIC-owned state of a refresh.
+        value["previous_applied_enabled"] =
+            !pamFlag->previousAppliedEnabled.has_value()
+            ? "none"
+            : (*pamFlag->previousAppliedEnabled ? "enabled" : "disabled");
+        value["placement"] =
+            pamFlag->placement == PamProviderBlockPlacementContract::Beginning
+                ? "beginning"
+                : "end";
+        value["suppression_ids"] = pamFlag->suppressionIds;
+        value["previous_suppression_ids"] = pamFlag->previousSuppressionIds;
     } else if (const auto* pamContainer = std::get_if<
                    UndoOwnPamProviderContainer>(&action.payload)) {
         value["provider"] = pamContainer->providerName;
@@ -339,6 +362,94 @@ bool validatePamProviderContainerUndoPayload(
     return true;
 }
 
+// Shared PAM provider set-only FLAG undo-payload validation (write + read
+// parity, Step 7E §30). The payload is PROVENANCE, never a backup: only
+// identity tokens, the managed key, the bool states, the placement and the
+// canonical suppression id permission sets are carried. No foreign line,
+// no historical config content, no whole-file snapshot is representable.
+bool validatePamProviderManagedFlagUndoPayload(
+    const UndoRemovePamProviderManagedFlag& payload,
+    std::string& error) {
+    if (!isValidPamProviderIdentityToken(payload.policyName) ||
+        !isValidPamProviderIdentityToken(payload.providerName)) {
+        error = "remove_pam_provider_managed_flag undo requires valid "
+                "policy and provider identity tokens";
+        return false;
+    }
+    if (!isValidPamProviderManagedKey(payload.managedKey)) {
+        error = "remove_pam_provider_managed_flag undo requires a valid "
+                "managed key";
+        return false;
+    }
+    if (payload.configPath.empty() || payload.configPath.front() != '/' ||
+        payload.configPath.find_first_of("\r\n") != std::string::npos ||
+        payload.configPath.find('\0') != std::string::npos) {
+        error = "remove_pam_provider_managed_flag undo requires an absolute "
+                "config path free of CR/LF/NUL";
+        return false;
+    }
+    const auto validateSuppressionSet =
+        [&](const std::vector<std::string>& ids, const char* fieldName) {
+            std::set<std::string> unique;
+            for (const std::string& id : ids) {
+                if (!isValidPamProviderSuppressionId(id)) {
+                    error = std::string(
+                                "remove_pam_provider_managed_flag undo "
+                                "requires canonical suppression ids in ") +
+                        fieldName + ", got: " + id;
+                    return false;
+                }
+                if (!unique.insert(id).second) {
+                    error = std::string(
+                                "remove_pam_provider_managed_flag undo has "
+                                "a duplicate suppression id in ") +
+                        fieldName + ": " + id;
+                    return false;
+                }
+            }
+            return true;
+        };
+    if (!validateSuppressionSet(payload.suppressionIds,
+                                "suppression_ids")) {
+        return false;
+    }
+    if (!validateSuppressionSet(payload.previousSuppressionIds,
+                                "previous_suppression_ids")) {
+        return false;
+    }
+    // An ENABLED flag state never owns suppression wrappers: a non-empty
+    // set with an enabled state is a logical contradiction.
+    if (payload.appliedEnabled && !payload.suppressionIds.empty()) {
+        error = "remove_pam_provider_managed_flag undo has an enabled "
+                "target with a non-empty suppression id set";
+        return false;
+    }
+    if (payload.previousAppliedEnabled.has_value() &&
+        *payload.previousAppliedEnabled &&
+        !payload.previousSuppressionIds.empty()) {
+        error = "remove_pam_provider_managed_flag undo has an enabled "
+                "previous state with a non-empty previous suppression id "
+                "set";
+        return false;
+    }
+    // A fresh transition (no previous FIC-owned state) must not carry
+    // previous provenance.
+    if (!payload.previousAppliedEnabled.has_value() &&
+        !payload.previousSuppressionIds.empty()) {
+        error = "remove_pam_provider_managed_flag undo has a fresh "
+                "transition with a non-empty previous suppression id set";
+        return false;
+    }
+    switch (payload.placement) {
+        case PamProviderBlockPlacementContract::Beginning:
+        case PamProviderBlockPlacementContract::End:
+            return true;
+    }
+    error = "remove_pam_provider_managed_flag undo has an unknown "
+            "placement contract";
+    return false;
+}
+
 // Exact identity of one unresolved PAM provider managed-entry transition.
 // A Prepared record may only be re-prepared as the EXACT same idempotent
 // transition; any difference (new target body, changed placement, provider,
@@ -358,6 +469,26 @@ bool samePamProviderPreparedTransition(
            existing.previousAppliedBody == incoming.previousAppliedBody &&
            existing.appliedBody == incoming.appliedBody &&
            existing.placement == incoming.placement;
+}
+
+// Exact identity of one unresolved PAM provider managed-FLAG transition
+// (Step 7E §31): policy, provider, config path, managed key, target and
+// previous bool states, placement and BOTH suppression id sets must match
+// exactly for an idempotent Prepared retry.
+bool samePamProviderPreparedFlagTransition(
+    const UndoRemovePamProviderManagedFlag& existing,
+    const UndoRemovePamProviderManagedFlag& incoming) {
+    return existing.policyName == incoming.policyName &&
+           existing.providerName == incoming.providerName &&
+           existing.configPath == incoming.configPath &&
+           existing.managedKey == incoming.managedKey &&
+           existing.appliedEnabled == incoming.appliedEnabled &&
+           existing.previousAppliedEnabled ==
+               incoming.previousAppliedEnabled &&
+           existing.placement == incoming.placement &&
+           existing.suppressionIds == incoming.suppressionIds &&
+           existing.previousSuppressionIds ==
+               incoming.previousSuppressionIds;
 }
 
 bool validKerberosSectionName(const std::string& section) {
@@ -734,6 +865,106 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
+    if (actionName == "remove_pam_provider_managed_flag" &&
+        backend == MutationBackend::Pam) {
+        // Step 7E: durable set-only flag provenance (PROVENANCE, never a
+        // backup — no foreign line or historical content is representable).
+        UndoRemovePamProviderManagedFlag payload;
+        const auto readString = [&](const char* field,
+                                    std::string& target) -> bool {
+            const auto it = value.find(field);
+            if (it == value.end() || !it->is_string()) {
+                error = std::string(
+                            "remove_pam_provider_managed_flag undo "
+                            "requires a string ") +
+                    field;
+                return false;
+            }
+            target = it->get<std::string>();
+            return true;
+        };
+        if (!readString("policy", payload.policyName) ||
+            !readString("provider", payload.providerName) ||
+            !readString("config_path", payload.configPath) ||
+            !readString("managed_key", payload.managedKey)) {
+            return false;
+        }
+        const auto appliedEnabledIt = value.find("applied_enabled");
+        if (appliedEnabledIt == value.end() ||
+            !appliedEnabledIt->is_boolean()) {
+            error = "remove_pam_provider_managed_flag undo requires a "
+                    "boolean applied_enabled";
+            return false;
+        }
+        payload.appliedEnabled = appliedEnabledIt->get<bool>();
+        const auto previousIt = value.find("previous_applied_enabled");
+        if (previousIt == value.end() || !previousIt->is_string()) {
+            error = "remove_pam_provider_managed_flag undo requires a "
+                    "string previous_applied_enabled";
+            return false;
+        }
+        if (*previousIt == "none") {
+            payload.previousAppliedEnabled.reset();
+        } else if (*previousIt == "enabled") {
+            payload.previousAppliedEnabled = true;
+        } else if (*previousIt == "disabled") {
+            payload.previousAppliedEnabled = false;
+        } else {
+            error = "remove_pam_provider_managed_flag undo has an unknown "
+                    "previous_applied_enabled: " +
+                previousIt->get<std::string>();
+            return false;
+        }
+        const auto placementIt = value.find("placement");
+        if (placementIt == value.end() || !placementIt->is_string()) {
+            error = "remove_pam_provider_managed_flag undo requires a "
+                    "string placement";
+            return false;
+        }
+        if (*placementIt == "beginning") {
+            payload.placement =
+                PamProviderBlockPlacementContract::Beginning;
+        } else if (*placementIt == "end") {
+            payload.placement = PamProviderBlockPlacementContract::End;
+        } else {
+            error = "remove_pam_provider_managed_flag undo has unknown "
+                    "placement: " +
+                placementIt->get<std::string>();
+            return false;
+        }
+        const auto readIds = [&](const char* field,
+                                 std::vector<std::string>& target) -> bool {
+            const auto it = value.find(field);
+            if (it == value.end() || !it->is_array()) {
+                error = std::string(
+                            "remove_pam_provider_managed_flag undo "
+                            "requires a string array ") +
+                    field;
+                return false;
+            }
+            for (const auto& entry : *it) {
+                if (!entry.is_string()) {
+                    error = std::string(
+                                "remove_pam_provider_managed_flag undo "
+                                "requires string entries in ") +
+                        field;
+                    return false;
+                }
+                target.push_back(entry.get<std::string>());
+            }
+            return true;
+        };
+        if (!readIds("suppression_ids", payload.suppressionIds) ||
+            !readIds("previous_suppression_ids",
+                     payload.previousSuppressionIds)) {
+            return false;
+        }
+        if (!validatePamProviderManagedFlagUndoPayload(payload, error)) {
+            return false;
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
     if (actionName == "own_pam_provider_container" &&
         backend == MutationBackend::Pam) {
         // Durable container-level FIC ownership provenance, independent of
@@ -867,6 +1098,17 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
                         "managed-entry undo payload";
                 return false;
             }
+        } else if (const auto* pamFlag = std::get_if<
+                       UndoRemovePamProviderManagedFlag>(
+                       &record.undo.payload)) {
+            if (record.policy.moduleName != "IDENTITY_ACCESS" ||
+                record.policy.submoduleName != "PAM" ||
+                record.policy.policyName != pamFlag->policyName ||
+                record.resource != pamFlag->configPath) {
+                error = "PAM journal resource/policy does not match the "
+                        "managed-flag undo payload";
+                return false;
+            }
         } else if (const auto* pamContainer = std::get_if<
                        UndoOwnPamProviderContainer>(&record.undo.payload)) {
             // The container provenance identity is the dedicated
@@ -992,6 +1234,10 @@ std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoRemovePamProviderManagedEntry>(
             action.payload)) {
         return "remove_pam_provider_managed_entry";
+    }
+    if (std::holds_alternative<UndoRemovePamProviderManagedFlag>(
+            action.payload)) {
+        return "remove_pam_provider_managed_flag";
     }
     if (std::holds_alternative<UndoOwnPamProviderContainer>(action.payload)) {
         return "own_pam_provider_container";
@@ -1667,6 +1913,47 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
         }
     }
 
+    // Step 7E invariant: ONE active suppression id may never belong to TWO
+    // active PAM flag records. Two active claims over one physical wrapper
+    // would give it ambiguous rollback authority (which record releases
+    // it?), so the state is journal corruption — fail closed at load
+    // (write/read semantic parity with the executor's provenance proof).
+    // Historical resolved records NEVER conflict: mutation history is
+    // preserved.
+    for (std::size_t outer = 0; outer < parsed.size(); ++outer) {
+        if (!parsed[outer].isActive()) {
+            continue;
+        }
+        const auto* outerFlag = std::get_if<UndoRemovePamProviderManagedFlag>(
+            &parsed[outer].undo.payload);
+        if (outerFlag == nullptr) {
+            continue;
+        }
+        for (const std::string& id : outerFlag->suppressionIds) {
+            for (std::size_t inner = outer + 1; inner < parsed.size();
+                 ++inner) {
+                if (!parsed[inner].isActive()) {
+                    continue;
+                }
+                const auto* innerFlag =
+                    std::get_if<UndoRemovePamProviderManagedFlag>(
+                        &parsed[inner].undo.payload);
+                if (innerFlag == nullptr) {
+                    continue;
+                }
+                if (std::find(innerFlag->suppressionIds.begin(),
+                              innerFlag->suppressionIds.end(),
+                              id) != innerFlag->suppressionIds.end()) {
+                    return failLoad(
+                        "Mutation journal содержит suppression id '" + id +
+                            "' в нескольких активных PAM flag records: "
+                            "неоднозначная rollback authority (fail closed)",
+                        error);
+                }
+            }
+        }
+    }
+
     // The parsed document is proven, but readable != durable: the visible
     // file may still be the result of a rename whose parent directory fsync
     // never completed. Re-prove the exact captured snapshot against the
@@ -1844,6 +2131,26 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                                                             error)) {
                 return false;
             }
+        } else if (const auto* pamFlag = std::get_if<
+                       UndoRemovePamProviderManagedFlag>(
+                       &record.undo.payload)) {
+            // Step 7E: the set-only flag record carries the (policy,
+            // provider, config path) ownership identity exactly like the
+            // managed-entry record; the payload carries ONLY provenance
+            // (bool states, placement, canonical suppression id permission
+            // sets) — never foreign lines or historical content.
+            if (record.policy.moduleName != "IDENTITY_ACCESS" ||
+                record.policy.submoduleName != "PAM" ||
+                record.policy.policyName != pamFlag->policyName ||
+                record.resource != pamFlag->configPath) {
+                error = "PAM provider managed-flag mutation record identity "
+                        "does not match undo payload (fail closed)";
+                return false;
+            }
+            if (!validatePamProviderManagedFlagUndoPayload(*pamFlag,
+                                                           error)) {
+                return false;
+            }
         } else if (const auto* pamContainer = std::get_if<
                        UndoOwnPamProviderContainer>(&record.undo.payload)) {
             // Container provenance lives under the dedicated PAM_CONTAINER
@@ -1967,6 +2274,47 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                         error = "PAM provider managed-entry refresh does "
                                 "not carry the currently owned applied body "
                                 "as its previous state (fail closed)";
+                        return false;
+                    }
+                } else if (const auto* newFlag = std::get_if<
+                               UndoRemovePamProviderManagedFlag>(
+                               &record.undo.payload)) {
+                    // Step 7E: the same deterministic refresh semantics for
+                    // the set-only flag provenance.
+                    const auto* oldFlag = std::get_if<
+                        UndoRemovePamProviderManagedFlag>(
+                        &existing.undo.payload);
+                    if (oldFlag == nullptr ||
+                        oldFlag->providerName != newFlag->providerName) {
+                        error = "PAM provider managed-flag refresh changed "
+                                "the undo payload identity (fail closed)";
+                        return false;
+                    }
+                    if (existing.status == MutationStatus::Prepared) {
+                        // An unresolved Prepared flag transition must be
+                        // recovered/completed first: only the EXACT same
+                        // idempotent re-prepare is allowed (Step 7E §31 —
+                        // target/previous bool states, placement and both
+                        // suppression id sets must match exactly).
+                        if (!samePamProviderPreparedFlagTransition(
+                                *oldFlag, *newFlag)) {
+                            error = "PAM provider managed-flag refresh "
+                                    "conflicts with an unresolved Prepared "
+                                    "transition (fail closed): recover or "
+                                    "complete the existing transaction first";
+                            return false;
+                        }
+                    } else if (newFlag->previousAppliedEnabled !=
+                                   oldFlag->appliedEnabled ||
+                               newFlag->previousSuppressionIds !=
+                                   oldFlag->suppressionIds) {
+                        // Applied/RollbackFailed provenance: a refresh must
+                        // carry the currently owned flag state and the
+                        // currently owned suppression id set as the previous
+                        // state of the new transition.
+                        error = "PAM provider managed-flag refresh does "
+                                "not carry the currently owned applied "
+                                "state as its previous state (fail closed)";
                         return false;
                     }
                 } else if (std::get_if<UndoOwnPamProviderContainer>(

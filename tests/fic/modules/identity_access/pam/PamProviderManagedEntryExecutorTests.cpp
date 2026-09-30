@@ -395,12 +395,17 @@ void testRoutingDecision() {
                 PamPolicyFeature::FailedAuthenticationUnlockTime),
         "unlock_time must use the managed entry path");
 
-    // A Flag-syntax binding (even_deny_root, Step 7E) stays legacy.
+    // A Flag-syntax binding (even_deny_root) routes through Step 7E ONLY
+    // for the EnforceForRoot feature; the scalar Attempts feature stays
+    // legacy even with flag syntax.
     auto flag = deny;
     flag.syntax = PamNativeOptionSyntax::Flag;
     require(!usesPamProviderManagedEntry(provider, capability, flag,
                 PamPolicyFeature::FailedAuthenticationAttempts),
-        "flag syntax must stay on the legacy path");
+        "flag syntax with a scalar feature must stay on the legacy path");
+    require(usesPamProviderManagedEntry(provider, capability, flag,
+                PamPolicyFeature::FailedAuthenticationEnforceForRoot),
+        "even_deny_root flag must use the managed flag path");
 
     // Module-arguments mode stays legacy.
     auto arguments = capability;
@@ -450,20 +455,20 @@ void testRoutingDecision() {
                 " must use the managed entry path");
     }
 
-    // enforce_for_root is a Flag binding — Step 7E stays legacy even if a
-    // future refactor accidentally changes the syntax check.
+    // enforce_for_root: Assignment syntax is unroutable (Step 7E flags are
+    // owned only through Flag-syntax bindings); the Flag syntax routes.
     const auto enforceForRoot = assignmentBinding(
         PamPolicyFeature::PasswordQualityEnforceForRoot, "enforce_for_root");
     require(!usesPamProviderManagedEntry(pwquality, pwqualityCapability,
                 enforceForRoot,
                 PamPolicyFeature::PasswordQualityEnforceForRoot),
-        "pwquality enforce_for_root must stay on the legacy path");
+        "pwquality enforce_for_root assignment syntax must stay legacy");
     auto pwqualityFlag = enforceForRoot;
     pwqualityFlag.syntax = PamNativeOptionSyntax::Flag;
-    require(!usesPamProviderManagedEntry(pwquality, pwqualityCapability,
+    require(usesPamProviderManagedEntry(pwquality, pwqualityCapability,
                 pwqualityFlag,
                 PamPolicyFeature::PasswordQualityEnforceForRoot),
-        "pwquality flag syntax must stay on the legacy path");
+        "pwquality enforce_for_root flag must use the managed flag path");
 
     // Step 7D: pam_pwhistory password_history_depth uses the managed
     // entry path ONLY for the current Debian 13 / Ubuntu 24.04 / Ubuntu
@@ -513,15 +518,25 @@ void testRoutingDecision() {
         "Debian 12 ModuleArguments pwhistory must stay on the Step 6 "
         "coordinator path");
 
-    // enforce_for_root (Flag) — Step 7E stays legacy even on the managed
-    // D13/U24/U26 contract.
+    // enforce_for_root (Flag) routes through Step 7E on the managed
+    // D13/U24/U26 contract; the Assignment syntax stays legacy.
     const auto historyEnforceForRoot = assignmentBinding(
         PamPolicyFeature::PasswordHistoryEnforceForRoot,
         "enforce_for_root");
     require(!usesPamProviderManagedEntry(pwhistory, pwhistoryCapability,
                 historyEnforceForRoot,
                 PamPolicyFeature::PasswordHistoryEnforceForRoot),
-        "pwhistory enforce_for_root must stay on the legacy path (Step 7E)");
+        "pwhistory enforce_for_root assignment syntax must stay legacy");
+    auto historyFlag = historyEnforceForRoot;
+    historyFlag.syntax = PamNativeOptionSyntax::Flag;
+    require(usesPamProviderManagedEntry(pwhistory, pwhistoryCapability,
+                historyFlag,
+                PamPolicyFeature::PasswordHistoryEnforceForRoot),
+        "pwhistory enforce_for_root flag must use the managed flag path");
+    require(!usesPamProviderManagedEntry(pwhistory, altPwhistoryCapability,
+                historyFlag,
+                PamPolicyFeature::PasswordHistoryEnforceForRoot),
+        "ALT AltTcbManaged pwhistory flag must stay on the legacy path");
 
     // Faillock whitelist must not accept pwquality features and vice versa.
     const auto minLength = assignmentBinding(
@@ -605,10 +620,11 @@ void testRoutingDecision() {
         assignmentBinding(PamPolicyFeature::PasswordHistoryEnforceForRoot,
             "enforce_for_root");
     historyEnforceForRootFlag.syntax = PamNativeOptionSyntax::Flag;
-    require(!pamProviderManagedEntryPlacement(pwhistory,
+    require(pamProviderManagedEntryPlacement(pwhistory,
                 pwhistoryCapability, historyEnforceForRootFlag,
-                PamPolicyFeature::PasswordHistoryEnforceForRoot).has_value(),
-        "the pwhistory flag combination must have NO placement contract");
+                PamPolicyFeature::PasswordHistoryEnforceForRoot) ==
+                PamProviderBlockPlacementRequest::Beginning,
+        "the pwhistory flag combination must use the Step 7E BOF placement");
     require(!pamProviderManagedEntryPlacement(provider, capability,
                 minLength, PamPolicyFeature::PasswordMinLength).has_value(),
         "an unrouted faillock feature must have NO placement contract");
