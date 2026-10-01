@@ -2299,7 +2299,7 @@ void testCredentialFailureBeforeFaillockRemainsABypass() {
     platform.authenticationServices = {"sshd"};
     writeFile(
         temp.path() / "pam.d/sshd",
-        "auth requisite pam_userpass.so\n"
+        "auth requisite pam_tcb.so\n"
         "auth requisite pam_faillock.so preauth\n"
         "auth [success=2 default=bad] pam_unix.so\n"
         "auth [default=die] pam_faillock.so authfail\n"
@@ -2319,6 +2319,39 @@ void testCredentialFailureBeforeFaillockRemainsABypass() {
             verification.detail.find("failure_accounting_bypass") !=
                 std::string::npos,
         "credential failure before pam_faillock must remain a bypass: " +
+            fic::identity::pam::formatPamCapabilityVerification(verification));
+}
+
+void testCredentialCollectorFailureBeforeGateIsNotAccountingBypass() {
+    TempDirectory temp;
+    auto platform = makePlatform(temp);
+    platform.authenticationServices = {"sshd"};
+    writeFile(
+        temp.path() / "pam.d/sshd",
+        "auth required pam_userpass.so\n"
+        "auth include system-check-localuser\n"
+        "auth requisite pam_faillock.so preauth\n"
+        "auth [success=2 default=bad] pam_tcb.so\n"
+        "auth [default=die] pam_faillock.so authfail\n"
+        "auth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n"
+        "account required pam_faillock.so\n"
+        "account required pam_tcb.so\n");
+    writeFile(
+        temp.path() / "pam.d/system-check-localuser",
+        "auth [success=1 perm_denied=ignore default=die] pam_localuser.so\n"
+        "auth optional pam_permit.so\n");
+    writeFile(temp.path() / "security/pam_faillock.so", "test", 0555);
+    const auto verification = verifyCapability(
+        platform,
+        fic::identity::pam::PamCapability::AuthenticationLockout,
+        fic::identity::pam::PamProviderKind::PamFaillock,
+        platform.authenticationServices);
+    require(
+        verification.state ==
+            fic::identity::pam::PamEnforcementState::Effective,
+        "pam_userpass collection or pam_localuser gate failure was treated "
+        "as an unaccounted credential rejection: " +
             fic::identity::pam::formatPamCapabilityVerification(verification));
 }
 
@@ -3735,6 +3768,7 @@ int main(int argc, char** argv) {
         testUnknownAuthModuleCannotProveEnforcement();
         testFailureAccountingBypass();
         testCredentialFailureBeforeFaillockRemainsABypass();
+        testCredentialCollectorFailureBeforeGateIsNotAccountingBypass();
         testPamOptionValueCodec();
         testTrustedPamServiceAliasSecurityContract();
         testLegacyPwhistoryNativeRememberSemantics();

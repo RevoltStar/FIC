@@ -40,6 +40,7 @@ enum class ActionKind {
 
 enum class PamModuleRole {
     CredentialAuthenticator,
+    CredentialCollector,
     Auxiliary,
     Gate,
     Enforcement,
@@ -403,14 +404,19 @@ bool authenticationFailureResult(const std::string& result) {
 PamModuleRole moduleRole(const std::string& module) {
     static const std::set<std::string> credentialAuthenticators = {
         "pam_ccreds.so", "pam_krb5.so", "pam_ldap.so", "pam_pkcs11.so",
-        "pam_sss.so", "pam_tcb.so", "pam_unix.so", "pam_userpass.so",
-        "pam_winbind.so"
+        "pam_sss.so", "pam_tcb.so", "pam_unix.so", "pam_winbind.so"
+    };
+    static const std::set<std::string> credentialCollectors = {
+        // ALT pam_userpass obtains PAM_USER/PAM_AUTHTOK through the PAM
+        // conversation. Its result still drives PAM control flow, but it does
+        // not verify whether the collected credentials are correct.
+        "pam_userpass.so"
     };
     static const std::set<std::string> gates = {
         "pam_access.so", "pam_deny.so", "pam_env.so", "pam_faildelay.so",
-        "pam_nologin.so", "pam_securetty.so", "pam_sepermit.so",
-        "pam_shells.so", "pam_succeed_if.so", "pam_time.so",
-        "pam_wheel.so"
+        "pam_localuser.so", "pam_nologin.so", "pam_securetty.so",
+        "pam_sepermit.so", "pam_shells.so", "pam_succeed_if.so",
+        "pam_time.so", "pam_wheel.so"
     };
     static const std::set<std::string> auxiliaries = {
         "pam_gnome_keyring.so"
@@ -418,6 +424,9 @@ PamModuleRole moduleRole(const std::string& module) {
     if (credentialAuthenticators.find(module) !=
         credentialAuthenticators.end()) {
         return PamModuleRole::CredentialAuthenticator;
+    }
+    if (credentialCollectors.find(module) != credentialCollectors.end()) {
+        return PamModuleRole::CredentialCollector;
     }
     if (gates.find(module) != gates.end()) {
         return PamModuleRole::Gate;

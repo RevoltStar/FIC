@@ -2,76 +2,95 @@
 
 ## Current base
 
-- Ветка `main`, HEAD `bef88b7a7c5b7725109fd685307ece6849f2ee1f`.
-- Текущий follow-up не закоммичен; коммит только по отдельному запросу.
+- Ветка `main`, фактический HEAD
+  `57040ba0ea243f3d759c70cdb62ac7f524b68759`.
+- Текущий semantic follow-up не закоммичен; commit только по отдельному
+  запросу.
 
 ## Current task
 
-- Устранить несовместимость FIC с штатным PAM alias ALT Workstation 11.2/p11
-  `/etc/pam.d/system-check-localuser` без ослабления общей symlink-защиты.
-- Ручной `fic-cli policy apply IDENTITY_ACCESS all` на ВМ 10.88.0.86 дал
-  23 applied, 5 failed, 3 disabled. Первичный отказ —
-  `enable_authentication_lockout`: alias не был объявлен в `AltP11Profile`.
-  Четыре `failed_authentication_*` отказали каскадно.
+- Исправлен semantic false positive `PamControlFlowAnalyzer`, обнаруженный
+  ручным запуском на ALT Workstation 11.2 после исправления штатного alias
+  `/etc/pam.d/system-check-localuser`.
+- Наблюдавшийся trace был:
+  `pam_userpass PAM_AUTH_ERR` -> поздний
+  `pam_localuser PAM_SERVICE_ERR/default=die` -> ошибочный вывод, что
+  credential failure обошёл `pam_faillock authfail`.
 
-## Package evidence / accepted contract
+## Accepted architecture / invariants
 
-- На ALT Workstation 11.2: `pam-config-1.10.0-alt0.p11.2.noarch` владеет
-  `/etc/pam.d/system-check-localuser` (`rpm -qf`), observed link ведёт на
-  `system-check-localuser-systemd`; `rpm -V pam-config` не показал изменения
-  этого объекта.
-- `pam-config` поставляет ровно два target-файла:
-  `system-check-localuser-legacy` и `system-check-localuser-systemd`.
-  `pam-config-control-1.10.0-alt0.p11.2` поставляет
-  `/etc/control.d/facilities/system-check-localuser`; `control ... help`
-  предлагает `legacy` и `systemd`. Control script выбирает существующие
-  sibling-файлы `system-check-localuser-*`; для указанной package version
-  доказаны только два штатных target. Wildcard trust в FIC не добавлен.
-- Production trust остаётся typed: exact alias path + exact allowed targets +
-  существующие safe filesystem checks в `PamConfiguration::resolveServicePath`.
-  Пакетный `rpm` не используется для runtime trust.
+- `pam_userpass.so` получает `PAM_USER`/`PAM_AUTHTOK` через PAM conversation,
+  но сам не проверяет credentials. Его role — `CredentialCollector`.
+- Return codes collector/gate по-прежнему полностью участвуют в PAM control
+  flow: `bad`, `die`, `done`, jumps, stack impression/status и termination не
+  ослаблены. Но только модули с credential-verification semantics создают
+  `authenticationSuccessObserved`/`authenticationFailureObserved`.
+- `pam_localuser.so` — identity gate, а не credential authenticator; его
+  operational/identity failures не являются password rejection evidence.
+- Настоящие authenticators (`pam_tcb`, `pam_unix`, `pam_sss`, `pam_krb5`,
+  и т. п.) сохраняют прежнюю fail-closed семантику: credential rejection,
+  завершившийся до `pam_faillock authfail`, остаётся
+  `failure_accounting_bypass`.
+- `Unknown` остаётся conservative/fail-closed. Trusted bypass/exclusion,
+  placement faillock и post-enable verification не менялись.
+
+## Historical context
+
+- Git history suggests that the likely origin was the first analyzer in
+  `9d56ff97`: negative-list helper `authenticationDecisionModule()` считал
+  authentication decision любым auth-модулем, который не был явно известен
+  как non-credential.
+- При введении explicit `PamModuleRole` в `a4c62791` `pam_userpass` был
+  перенесён в `CredentialAuthenticator`, по-видимому сохраняя прежнюю
+  conservative heuristic; module-specific semantic justification в истории
+  не найдено. Regression из `377e6696` затем закрепил это предположение,
+  используя `pam_userpass` как credential failure.
+- Precedent `fe4bd82` уже отделил auxiliary credential consumer
+  `pam_gnome_keyring` от primary authenticators. Текущая правка аналогично
+  уточняет известную семантику, а не ослабляет fail-closed design.
 
 ## Completed / changed areas
 
-- `fic/src/platform/profiles/AltP11Profile.cpp`: добавлен alias с exact
-  targets `legacy` и `systemd`; generic resolver не менялся.
-- `PlatformProfileTests`: проверяет полный список четырёх ALT aliases и
-  exact targets нового alias; Debian/Ubuntu остаются без trusted aliases.
-- `PamConfigurationTests`: оба target проходят через production resolver;
-  unknown, absolute, parent escape, nested symlink, writable и directory
-  target отклоняются. Добавлен opt-in read-only `--live-alt-alias`.
-- `AltPamFaillockTopologyManagerTests`: SSS graph fixture использует
-  `system-check-localuser -> system-check-localuser-systemd` и проходит
-  enable/status/disable; opt-in `--live-alt-enable` проверяет native ALT
-  topology в disposable container.
-- `pam_provider_rollback_gate_alt.sh`: на обновлённом ALT p11 требует
-  native alias и запускает оба production-backed probe; проверяет link,
-  target contents/mode/owner и `rpm -V` для alias/targets до/после topology
-  operation. Общий `rpm -V pam-config` после enable/disable может изменить
-  timestamp управляемого `system-auth-local-only`, поэтому не сравнивается
-  целиком.
+- `PamControlFlowAnalyzer.cpp`: добавлена роль `CredentialCollector`;
+  `pam_userpass` удалён из `CredentialAuthenticator`; `pam_localuser`
+  классифицирован как `Gate`. Conservative outcomes `pam_userpass` не
+  сужались: исходник ALT доказывает назначение, но не exhaustive result set.
+- `PamConfigurationTests`: старый security-negative test переведён на
+  настоящий `pam_tcb`; добавлен парный regression, где failure collector и
+  gate не создаёт `failure_accounting_bypass`.
+- `AltPamFaillockTopologyManagerTests`: SSH fixture повторяет graph
+  `sshd -> pam_userpass -> common-login-use_first_pass ->
+  system-auth-use_first_pass -> system-check-localuser ->
+  system-check-localuser-systemd`, exact trusted alias и control
+  `[success=1 perm_denied=ignore default=die]`; capability соответствует
+  ALT contract `LocalUsersOnly`.
+- Узкий audit `credentialAuthenticators` не выявил другого очевидного
+  collector/consumer: остальные entries являются credential-verifying
+  providers. Отдельно исследованный `pam_gnome_keyring` оставлен `Auxiliary`.
+- Mutation check: при временном возврате только `pam_userpass` в
+  `CredentialAuthenticator` новый paired regression падает с исходным
+  `failure_accounting_bypass`; production role затем восстановлена.
 
 ## Validation
 
-- Targeted build и CTest: `platform_profile_tests`,
-  `pam_configuration_tests`, `pam_control_flow_analyzer_tests`,
-  `alt_pam_faillock_topology_tests`, `identity_policy_hierarchy_tests` —
-  5/5 PASS.
+- Mutation check на старой role — ожидаемый FAIL с trace
+  `pam_userpass PAM_AUTH_ERR -> pam_localuser PAM_USER_UNKNOWN/default=die`.
+- Targeted CTest: `pam_configuration_tests`,
+  `pam_control_flow_analyzer_tests`, `alt_pam_faillock_topology_tests`,
+  `identity_policy_hierarchy_tests`, `platform_profile_tests` — 5/5 PASS.
 - `cmake --build build-check -j4` — PASS.
-- Полный `ctest --test-dir build-check --output-on-failure` вне sandbox —
-  114 passed, 1 skipped (`command_hash_batch_tests`, root-only).
-  Первый sandbox run дал четыре environmental failures (source fixture,
-  socket bind, group lookup); все четыре прошли вне sandbox.
-- Real ALT gate в одноразовом `localhost/fic-rpm-builder:alt-p11` после
-  обновления `pam-config` и `pam-config-control` с 1.9.1 до
-  1.10.0-alt0.p11.2 — PASS, включая native alias resolver и реальный
-  faillock enable/status/disable.
+- `ctest --test-dir build-check --output-on-failure` — 114 PASS,
+  1 root-only test skipped (`command_hash_batch_tests`), failures нет.
+- Real ALT gate не выполнен: локального Docker image
+  `localhost/fic-rpm-builder:alt-p11` нет, попытка pull не продвинулась;
+  Podman не установлен. SSH к прежней ВМ `10.88.0.86` завершился timeout.
 
 ## Remaining
 
-- Обновлённый FIC не устанавливался на ВМ 10.88.0.86: повтор исходного
-  `fic-cli policy apply IDENTITY_ACCESS all` и четырёх зависимых option
-  policies на ВМ не выполнен. Контейнерный manager gate подтверждает
-  устранение исходной ошибки graph resolution, но не полный daemon/CLI path.
-- Не менять PAM rollback architecture, generic symlink handling и unrelated
-  modules. Не коммитить без отдельного запроса.
+- При появлении образа или доступа повторить real ALT gate и daemon/CLI path
+  `fic-cli policy apply IDENTITY_ACCESS all`, затем проверить четыре
+  `failed_authentication_*` policies.
+- Отдельная ошибка password history
+  `Active PAM provenance has no proven owned topology` не входит в этот fix и
+  намеренно не исправлялась.
+- Не коммитить без отдельного запроса.

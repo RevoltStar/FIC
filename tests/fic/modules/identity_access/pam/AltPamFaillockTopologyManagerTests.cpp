@@ -217,10 +217,25 @@ void writeSshUseFirstPassGraph(TemporaryTree& tree) {
     TemporaryTree::write(
         tree.root / "pam.d/system-auth-use_first_pass-local",
         "#%PAM-1.0\n"
-        "auth include system-auth-use_first_pass-local-only\n"
-        "auth include system-auth-common\n"
+        "auth include system-check-localuser\n"
+        "auth substack system-auth-use_first_pass-local-only\n"
+        "auth [default=1] pam_permit.so\n"
+        "auth substack system-auth-sss-only\n"
+        "auth substack system-auth-common\n"
         "password include system-auth-use_first_pass-local-only\n"
         "password include system-auth-common\n");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-check-localuser-systemd",
+        "#%PAM-1.0\n"
+        "auth [success=1 perm_denied=ignore default=die] pam_localuser.so\n"
+        "auth [success=2 auth_err=ignore default=bad] pam_succeed_if.so "
+        "uid >= 65536 quiet\n");
+    fs::create_symlink("system-check-localuser-systemd",
+                       tree.root / "pam.d/system-check-localuser");
+    TemporaryTree::write(
+        tree.root / "pam.d/system-auth-sss-only",
+        "#%PAM-1.0\n"
+        "auth required pam_sss.so forward_pass\n");
     TemporaryTree::write(
         tree.root / "pam.d/system-auth-common",
         "#%PAM-1.0\n"
@@ -243,6 +258,8 @@ fic::platform::PamPlatformConfig useFirstPassPlatform(
     const TemporaryTree& tree) {
     auto platform = tree.platform();
     platform.scopes.front().services = {"sshd", "system-auth"};
+    platform.capabilities.front().subjectScope =
+        fic::platform::PamIdentitySubjectScope::LocalUsersOnly;
     platform.trustedServiceAliases.push_back(
         {tree.root / "pam.d/system-auth-use_first_pass",
          {tree.root / "pam.d/system-auth-use_first_pass-local"}});
@@ -422,7 +439,8 @@ void testTrustedUseFirstPassAliasInSshGraph() {
         TemporaryTree::read(useFirstPassTarget);
     AltPamFaillockTopologyManager manager(platform, tree.options());
     std::string error;
-    require(manager.enable(error),
+    const bool enabled = manager.enable(error);
+    require(enabled,
             "trusted ALT use_first_pass alias was rejected: " + error);
     const std::string enabledPrimary = TemporaryTree::read(tree.target());
     const std::string enabledUseFirstPass =
