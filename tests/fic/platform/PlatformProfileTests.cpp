@@ -272,7 +272,7 @@ void testSelectedProfile() {
     require(!profile.pam.moduleDirectories.empty(),
             "PAM module directories are missing");
     if (profile.id == "alt-p11") {
-        require(profile.pam.trustedServiceAliases.size() == 3 &&
+        require(profile.pam.trustedServiceAliases.size() == 4 &&
                     profile.pam.trustedServiceAliases.front().aliasPath ==
                         "/etc/pam.d/system-auth" &&
                     profile.pam.trustedServiceAliases.front().allowedTargets ==
@@ -302,7 +302,13 @@ void testSelectedProfile() {
                     profile.pam.trustedServiceAliases[2].allowedTargets ==
                         std::vector<std::filesystem::path>{
                             "/etc/pam.d/system-policy-local",
-                            "/etc/pam.d/system-policy-remote"},
+                            "/etc/pam.d/system-policy-remote"} &&
+                    profile.pam.trustedServiceAliases[3].aliasPath ==
+                        "/etc/pam.d/system-check-localuser" &&
+                    profile.pam.trustedServiceAliases[3].allowedTargets ==
+                        std::vector<std::filesystem::path>{
+                            "/etc/pam.d/system-check-localuser-legacy",
+                            "/etc/pam.d/system-check-localuser-systemd"},
                 "ALT trusted native PAM alias contract is incorrect");
     } else {
         require(profile.pam.trustedServiceAliases.empty(),

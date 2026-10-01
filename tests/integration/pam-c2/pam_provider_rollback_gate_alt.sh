@@ -39,6 +39,66 @@ cmake -S "$REPO" -B /tmp/fic-provider-gate-build -DCMAKE_BUILD_TYPE=Release \
     > "$EVID/cmake-configure.log" 2>&1 || die_environment "cmake configure failed"
 cmake --build /tmp/fic-provider-gate-build --target fic-pam-provider-rollback-driver -j2 \
     > "$EVID/cmake-build.log" 2>&1 || die_environment "driver build failed"
+cmake --build /tmp/fic-provider-gate-build --target \
+    pam_configuration_tests alt_pam_faillock_topology_tests -j2 \
+    >> "$EVID/cmake-build.log" 2>&1 || die_environment "PAM alias probe build failed"
+ALIAS_PROBE="$(find /tmp/fic-provider-gate-build -name pam_configuration_tests -type f | head -1)"
+[ -n "$ALIAS_PROBE" ] || die_environment "PAM alias probe binary not found"
+TOPOLOGY_PROBE="$(find /tmp/fic-provider-gate-build -name alt_pam_faillock_topology_tests -type f | head -1)"
+[ -n "$TOPOLOGY_PROBE" ] || die_environment "ALT topology probe binary not found"
+if [ ! -L /etc/pam.d/system-check-localuser ]; then
+    die_environment "native system-check-localuser symlink missing; use ALT 11.2/p11 pam-config"
+fi
+readlink /etc/pam.d/system-check-localuser > "$EVID/system-check-localuser.before"
+rpm -q pam-config > "$EVID/pam-config-version.txt" || die_environment "pam-config missing"
+rpm -qf /etc/pam.d/system-check-localuser > "$EVID/alias-owner.txt" || \
+    die_environment "native alias is not package-owned"
+rpm -V pam-config > "$EVID/pam-config-verify.before" || :
+sha256sum /etc/pam.d/system-check-localuser-legacy \
+    /etc/pam.d/system-check-localuser-systemd \
+    > "$EVID/system-check-targets.before"
+stat -c '%a %u:%g %n' /etc/pam.d/system-check-localuser-legacy \
+    /etc/pam.d/system-check-localuser-systemd \
+    > "$EVID/system-check-target-modes.before"
+if "$ALIAS_PROBE" --live-alt-alias > "$EVID/alias-probe.log" 2>&1; then
+    gate_pass "A0 native system-check-localuser symlink accepted by production resolver"
+else
+    gate_fail "A0 native system-check-localuser symlink rejected by production resolver"
+fi
+cmp -s "$EVID/system-check-localuser.before" \
+    <(readlink /etc/pam.d/system-check-localuser) || \
+    gate_fail "A0 native alias target changed during read-only probe"
+rpm -V pam-config > "$EVID/pam-config-verify.after" || :
+cmp -s "$EVID/pam-config-verify.before" "$EVID/pam-config-verify.after" || \
+    gate_fail "A0 pam-config verification changed during read-only probe"
+if "$TOPOLOGY_PROBE" --live-alt-enable > "$EVID/topology-probe.log" 2>&1; then
+    gate_pass "A0b native ALT faillock enable/status/disable through symlink"
+else
+    gate_fail "A0b native ALT faillock topology operation failed"
+fi
+cmp -s "$EVID/system-check-localuser.before" \
+    <(readlink /etc/pam.d/system-check-localuser) || \
+    gate_fail "A0b native alias target changed during topology operation"
+sha256sum /etc/pam.d/system-check-localuser-legacy \
+    /etc/pam.d/system-check-localuser-systemd \
+    > "$EVID/system-check-targets.after"
+stat -c '%a %u:%g %n' /etc/pam.d/system-check-localuser-legacy \
+    /etc/pam.d/system-check-localuser-systemd \
+    > "$EVID/system-check-target-modes.after"
+cmp -s "$EVID/system-check-targets.before" \
+    "$EVID/system-check-targets.after" || \
+    gate_fail "A0b native alias target contents changed"
+cmp -s "$EVID/system-check-target-modes.before" \
+    "$EVID/system-check-target-modes.after" || \
+    gate_fail "A0b native alias target metadata changed"
+rpm -V pam-config > "$EVID/pam-config-verify.after-topology" || :
+grep 'system-check-localuser' "$EVID/pam-config-verify.before" \
+    > "$EVID/system-check-rpm-verify.before" || :
+grep 'system-check-localuser' "$EVID/pam-config-verify.after-topology" \
+    > "$EVID/system-check-rpm-verify.after" || :
+cmp -s "$EVID/system-check-rpm-verify.before" \
+    "$EVID/system-check-rpm-verify.after" || \
+    gate_fail "A0b native alias/targets changed by rpm verification"
 DRIVER_BIN="$(find /tmp/fic-provider-gate-build -name fic-pam-provider-rollback-driver -type f | head -1)"
 [ -n "$DRIVER_BIN" ] || die_environment "driver binary not found"
 mkdir -p "$(dirname "$DRIVER")"

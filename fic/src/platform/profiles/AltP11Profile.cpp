@@ -143,7 +143,10 @@ PlatformProfile makeBuildPlatformProfile() {
           "/etc/pam.d/system-auth-use_first_pass-pkcs11"}},
         {"/etc/pam.d/system-policy",
          {"/etc/pam.d/system-policy-local",
-          "/etc/pam.d/system-policy-remote"}}
+          "/etc/pam.d/system-policy-remote"}},
+        {"/etc/pam.d/system-check-localuser",
+         {"/etc/pam.d/system-check-localuser-legacy",
+          "/etc/pam.d/system-check-localuser-systemd"}}
     };
     profile.pam.capabilities = {
         {PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock,

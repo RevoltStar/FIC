@@ -2,131 +2,76 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `71f695cc9fab58ec3b5496b8b81830616269b3a9`
-  ("Follow-up к последнему коммиту №2"). Поверх HEAD —
-  **незакоммиченный final cleanup к Шагу 7F** (2 правки + регрессии).
-  Коммит НЕ делать без явного запроса.
+- Ветка `main`, HEAD `bef88b7a7c5b7725109fd685307ece6849f2ee1f`.
+- Текущий follow-up не закоммичен; коммит только по отдельному запросу.
 
 ## Current task
 
-**Final cleanup (Step 7F) — реализация и валидация завершены,
-не закоммичено.** Base before this follow-up:
-`71f695cc9fab58ec3b5496b8b81830616269b3a9` (чистое дерево).
+- Устранить несовместимость FIC с штатным PAM alias ALT Workstation 11.2/p11
+  `/etc/pam.d/system-check-localuser` без ослабления общей symlink-защиты.
+- Ручной `fic-cli policy apply IDENTITY_ACCESS all` на ВМ 10.88.0.86 дал
+  23 applied, 5 failed, 3 disabled. Первичный отказ —
+  `enable_authentication_lockout`: alias не был объявлен в `AltP11Profile`.
+  Четыре `failed_authentication_*` отказали каскадно.
 
-- **(1) Orphan empty canonical FIC provider block — fail closed.**
-  `PamProviderPackageRelease.cpp::preflightPhysicalState`: после strict
-  parse, если `parse.view.present && parse.view.entries.empty()` →
-  preflight FAIL с диагностикой "orphan empty FIC PAM provider block";
-  никакой deletion/healing; config+journal byte-identical. Существующее
-  rejection блоков с present-but-uncovered entries не тронуто (новый
-  check покрывает только случай, когда entry-loop вообще не выполняется).
-  **Важно (отклонение от исходной постановки):** состояние
-  `parse.ok==true && present && entries.empty()` в текущем коде
-  НЕДОСТИЖИМО — строгая грамматика Step 7A (commit `aa3f8b66`,
-  `PamProviderManagedBlock.cpp`, "пустой FIC PAM provider block") уже
-  fail-closed отвергает блок без entry на уровне parse. Новый check
-  оставлен как defense-in-depth на случай будущего ослабления грамматики;
-  регрессия `testEmptyOrphanProviderBlockRejectedAtPreflight` закрепляет
-  контракт end-to-end (Stage A FAIL + Stage B FAIL + byte-identical) и
-  на base `71f695c` проходит (мутация нового check её не ломает —
-  негативный контроль для этого сценария невозможен технически).
-- **(2) Route-aware `pamProviderManagedPrimaryPath(s)`.** Новый общий
-  предикат `capabilityHasManagedProviderRoute(descriptor, capability)`
-  (anonymous namespace `PamProviderRollback.cpp`): ≥1 binding с
-  `pamProviderManagedEntryPlacement(...).has_value()`. Используется
-  ОДИН раз обоими потребителями managed-domain модели:
-  `pamProviderManagedPrimaryPath` (enumeration primary paths) и
-  `pamProviderContainerRollbackRouteForPayload` (container proof).
-  Никаких distro switch. Матрица: ALT passwdqc
-  (`/etc/passwdqc.conf`) и ALT pwhistory
-  (`/etc/security/fic-pwhistory.conf`, AltTcbManaged) — исключены;
-  D12 pwhistory (ModuleArguments) — исключён; D12/D13/U24/U26
-  faillock+pwquality и D13/U24/U26 pwhistory
-  (ProviderConfigFile+PamAuthUpdate) — включены.
+## Package evidence / accepted contract
 
-## Accepted architecture / invariants
+- На ALT Workstation 11.2: `pam-config-1.10.0-alt0.p11.2.noarch` владеет
+  `/etc/pam.d/system-check-localuser` (`rpm -qf`), observed link ведёт на
+  `system-check-localuser-systemd`; `rpm -V pam-config` не показал изменения
+  этого объекта.
+- `pam-config` поставляет ровно два target-файла:
+  `system-check-localuser-legacy` и `system-check-localuser-systemd`.
+  `pam-config-control-1.10.0-alt0.p11.2` поставляет
+  `/etc/control.d/facilities/system-check-localuser`; `control ... help`
+  предлагает `legacy` и `systemd`. Control script выбирает существующие
+  sibling-файлы `system-check-localuser-*`; для указанной package version
+  доказаны только два штатных target. Wildcard trust в FIC не добавлен.
+- Production trust остаётся typed: exact alias path + exact allowed targets +
+  существующие safe filesystem checks в `PamConfiguration::resolveServicePath`.
+  Пакетный `rpm` не используется для runtime trust.
 
-- Все прежние инварианты Шага 7F (ownership proof, Stage A/B
-  согласованность, exact orphan identity, record-specific
-  classification, `activePamFlagSuppressionAuthority`, final
-  re-enumeration, Detached=no second lifecycle, zero-wrapper flag
-  release, Prepared authority, conditional-delete hardening, Stage-A
-  binding whitelist, crash-after-delete recovery) — без изменений.
-- Managed-provider domain = ЕДИНЫЙ общий предикат
-  `capabilityHasManagedProviderRoute` для enumeration и container
-  proof; второй whitelist/distro switch не вводить.
-- Package preflight сканирует ТОЛЬКО route-managed primaries; файлы
-  unmanaged ProviderConfigFile-возможностей (passwdqc.conf) — не
-  provider domain, в scan не входят (даже с FIC_PAM_-подобным
-  содержимым).
+## Completed / changed areas
 
-## Completed
+- `fic/src/platform/profiles/AltP11Profile.cpp`: добавлен alias с exact
+  targets `legacy` и `systemd`; generic resolver не менялся.
+- `PlatformProfileTests`: проверяет полный список четырёх ALT aliases и
+  exact targets нового alias; Debian/Ubuntu остаются без trusted aliases.
+- `PamConfigurationTests`: оба target проходят через production resolver;
+  unknown, absolute, parent escape, nested symlink, writable и directory
+  target отклоняются. Добавлен opt-in read-only `--live-alt-alias`.
+- `AltPamFaillockTopologyManagerTests`: SSS graph fixture использует
+  `system-check-localuser -> system-check-localuser-systemd` и проходит
+  enable/status/disable; opt-in `--live-alt-enable` проверяет native ALT
+  topology в disposable container.
+- `pam_provider_rollback_gate_alt.sh`: на обновлённом ALT p11 требует
+  native alias и запускает оба production-backed probe; проверяет link,
+  target contents/mode/owner и `rpm -V` для alias/targets до/после topology
+  operation. Общий `rpm -V pam-config` после enable/disable может изменить
+  timestamp управляемого `system-auth-local-only`, поэтому не сравнивается
+  целиком.
 
-- Оба пункта выше + регрессии:
-  - `PamProviderRollbackTests` (+3): route-aware ALT-профиль (ровно 1
-    primary, конкретные пути passwdqc.conf/fic-pwhistory.conf
-    отсутствуют), D13-like (все 3 present) / D12-like (pwhistory
-    ModuleArguments отсутствует), container proof на unmanaged
-    capability (passwdqc + ALT pwhistory) → Conflict, положительный
-    контроль на managed faillock.
-  - `PamProviderPackageReleaseTests` (+2): empty orphan block (Stage A
-    FAIL, diagnostic, Stage B FAIL, config+journal byte-identical),
-    ALT-shaped package release (managed faillock primary чист, temp
-    `/etc/passwdqc.conf` с FIC_PAM_-подобным контентом не участвует в
-    scan, release проходит, файл byte-identical).
-- Негативный контроль: откат `pamProviderManagedPrimaryPath` к
-  ProviderConfigFile-only eligibility →
-  `testManagedPrimaryPathsRouteAwareAltProfile` FAIL на "exactly one
-  managed provider primary"; после восстановления — PASS.
+## Validation
 
-## Changed areas
-
-- `fic/src/modules/identity_access/pam/PamProviderRollback.{h,cpp}`,
-  `fic/src/modules/identity_access/pam/PamProviderPackageRelease.cpp`.
-- `tests/fic/modules/identity_access/pam/{PamProviderRollbackTests,
-  PamProviderPackageReleaseTests}.cpp` (регистрация в main() каждого
-  файла; CTest-цели существовали, `tests/CMakeLists.txt` не менялся).
-
-
-## Validation (фактически выполнено)
-
-- Полный build `build-check` (ubuntu-24.04) — 0 errors.
-- Полный CTest — **115/115 PASS** (1 skip: `command_hash_batch_tests`,
-  окружение).
-- `python3 tests/integration/packaging/PamPackagingChecks.py $PWD` —
-  PASS.
-- `git diff --check` — чисто.
-- **Real-distro gates: 5/5 PASS** — `pam_provider_rollback_gate.sh` на
-  debian-12, debian-13, ubuntu-24.04, ubuntu-26.04 и
-  `pam_provider_rollback_gate_alt.sh` на altlinux-p11 (важно именно для
-  ALT: изменённая enumeration domain). Логи: `/tmp/gate7f-*.log`.
+- Targeted build и CTest: `platform_profile_tests`,
+  `pam_configuration_tests`, `pam_control_flow_analyzer_tests`,
+  `alt_pam_faillock_topology_tests`, `identity_policy_hierarchy_tests` —
+  5/5 PASS.
+- `cmake --build build-check -j4` — PASS.
+- Полный `ctest --test-dir build-check --output-on-failure` вне sandbox —
+  114 passed, 1 skipped (`command_hash_batch_tests`, root-only).
+  Первый sandbox run дал четыре environmental failures (source fixture,
+  socket bind, group lookup); все четыре прошли вне sandbox.
+- Real ALT gate в одноразовом `localhost/fic-rpm-builder:alt-p11` после
+  обновления `pam-config` и `pam-config-control` с 1.9.1 до
+  1.10.0-alt0.p11.2 — PASS, включая native alias resolver и реальный
+  faillock enable/status/disable.
 
 ## Remaining
 
-1. Коммит НЕ делать без явного запроса.
-2. Прошлое Remaining (prerm mutation-checks через
-   `pam_prerm_release_gate.sh`) не закрыто и осталось вне scope: apt
-   зеркала sandbox нестабильны; пререквизит — пересборка prebuilt debs
-   из `dist/` (built 21.09, до всех изменений 7F). Запускать с
-   `-e http_proxy= -e https_proxy=` (prerm-скрипт не сбрасывает
-   хостовый loopback proxy).
-3. Не трогали (вне scope): C2 topology, PamOptionFile semantics,
-   Step 6 option reconciliation, codec, activation, D12 coordinator,
-   MutationJournal schema.
-
-## Следующему агенту
-
-- `capabilityHasManagedProviderRoute` — internal helper в anonymous
-  namespace `PamProviderRollback.cpp`; публичного API для него нет и не
-  нужно (проверяется через `pamProviderManagedPrimaryPaths` и
-  `pamProviderContainerRollbackRouteForPayload`).
-- Все callers `pamProviderManagedPrimaryPath(s)` — только
-  `PamProviderPackageRelease.cpp` (`knownProviderPrimaries`) и
-  внутренний plural-хелпер; поведение managed-путей не изменилось,
-  изменился только состав исключаемых unmanaged путей.
-- Если будущая задача ослабит строгую грамматику Step 7A (разрешит
-  пустые блоки), preflight empty-block check станет первичной линией
-  защиты — не удалять вместе с ней без отдельного решения.
-- Прежние знания о gate-инфраструктуре (podman `--network=slirp4netns`,
-  `-e http_proxy= -e https_proxy=`, логи в `/tmp/gate-*.log`) остаются
-  в силе.
+- Обновлённый FIC не устанавливался на ВМ 10.88.0.86: повтор исходного
+  `fic-cli policy apply IDENTITY_ACCESS all` и четырёх зависимых option
+  policies на ВМ не выполнен. Контейнерный manager gate подтверждает
+  устранение исходной ошибки graph resolution, но не полный daemon/CLI path.
+- Не менять PAM rollback architecture, generic symlink handling и unrelated
+  modules. Не коммитить без отдельного запроса.

@@ -8,6 +8,7 @@
 #include "modules/identity_access/pam/PamPwhistoryArguments.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 #include "modules/identity_access/pam/PwhistoryConfigFile.h"
+#include "platform/PlatformProfile.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -2416,7 +2417,9 @@ void testTrustedPamServiceAliasSecurityContract() {
          std::vector<std::pair<std::string, std::string>>{
              {"system-auth", "system-auth-sss"},
              {"system-auth-use_first_pass",
-              "system-auth-use_first_pass-sss"}}) {
+              "system-auth-use_first_pass-sss"},
+             {"system-check-localuser", "system-check-localuser-legacy"},
+             {"system-check-localuser", "system-check-localuser-systemd"}}) {
         TempDirectory temp;
         auto platform = makePlatform(temp);
         platform.authenticationServices = {alias};
@@ -2433,8 +2436,47 @@ void testTrustedPamServiceAliasSecurityContract() {
         require(collect(platform, alias, rules, sources, error) &&
                     rules.size() == 1 &&
                     rules.front().source == temp.path() / "pam.d" / target,
-                "exact ALT SSS PAM alias target was rejected: " + target +
+                "exact ALT PAM alias target was rejected: " + target +
                     ": " + error);
+    }
+    for (const auto& [target, targetKind] :
+         std::vector<std::pair<std::string, std::string>>{
+             {"system-check-localuser-evil", "regular"},
+             {"../evil", "escape"},
+             {"/tmp/evil", "absolute"},
+             {"system-check-localuser-systemd", "nested"},
+             {"system-check-localuser-systemd", "writable"},
+             {"system-check-localuser-systemd", "directory"}}) {
+        TempDirectory temp;
+        auto platform = makePlatform(temp);
+        platform.authenticationServices = {"system-check-localuser"};
+        platform.trustedServiceAliases = {
+            {temp.path() / "pam.d/system-check-localuser",
+             {temp.path() / "pam.d/system-check-localuser-legacy",
+              temp.path() / "pam.d/system-check-localuser-systemd"}}};
+        const auto targetPath = temp.path() / "pam.d" / target;
+        if (targetKind == "regular") {
+            writeFile(targetPath, "auth required pam_permit.so\n");
+        } else if (targetKind == "nested") {
+            writeFile(temp.path() / "pam.d/real",
+                      "auth required pam_permit.so\n");
+            std::filesystem::create_symlink("real", targetPath);
+        } else if (targetKind == "writable") {
+            writeFile(targetPath, "auth required pam_permit.so\n", 0664);
+        } else if (targetKind == "directory") {
+            std::filesystem::create_directories(targetPath);
+        } else {
+            std::filesystem::create_directories(temp.path() / "pam.d");
+        }
+        std::filesystem::create_symlink(
+            target, temp.path() / "pam.d/system-check-localuser");
+        std::vector<fic::identity::pam::PamRule> rules;
+        std::set<std::filesystem::path> sources;
+        std::string error;
+        require(!collect(platform, "system-check-localuser", rules,
+                         sources, error),
+                "unsafe system-check-localuser " + targetKind +
+                    " target was accepted");
     }
     {
         TempDirectory temp;
@@ -3623,8 +3665,30 @@ void testAltPasswdqcUsesOnlyLocalPasswordBranch() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--live-alt-alias") {
+            const auto profile = fic::platform::makeBuildPlatformProfile();
+            require(profile.id == "alt-p11", "live alias gate requires ALT p11");
+            const auto alias = std::filesystem::path(
+                "/etc/pam.d/system-check-localuser");
+            require(std::filesystem::is_symlink(
+                        std::filesystem::symlink_status(alias)),
+                    "native system-check-localuser symlink is missing");
+            fic::identity::pam::PamConfiguration configuration(profile.pam);
+            std::vector<fic::identity::pam::PamRule> rules;
+            std::set<std::filesystem::path> sources;
+            std::string error;
+            require(configuration.collectRules(
+                        "system-check-localuser",
+                        fic::identity::pam::PamManagementGroup::Auth,
+                        rules, error, &sources), error);
+            require(!rules.empty(), "native alias has no auth rules");
+            std::cout << "native ALT PAM alias accepted: "
+                      << std::filesystem::read_symlink(alias) << '\n';
+            return 0;
+        }
+        require(argc == 1, "unknown pam_configuration_tests arguments");
         testIncludeGraphAndProviderInspection();
         testIncludeCycleFailsClosed();
         testNonRegularHigherPriorityServiceFails();

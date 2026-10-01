@@ -128,7 +128,10 @@ public:
             {root / "pam.d/system-auth",
              {root / "pam.d/system-auth-local"}},
             {root / "pam.d/system-policy",
-             {root / "pam.d/system-policy-local"}}
+             {root / "pam.d/system-policy-local"}},
+            {root / "pam.d/system-check-localuser",
+             {root / "pam.d/system-check-localuser-legacy",
+              root / "pam.d/system-check-localuser-systemd"}}
         };
         return result;
     }
@@ -748,13 +751,15 @@ void testSssModeVerifiesManagedLocalBranch() {
         "account substack system-auth-sss-only\n"
         "account substack system-auth-common\n");
     TemporaryTree::write(
-        tree.root / "pam.d/system-check-localuser",
+        tree.root / "pam.d/system-check-localuser-systemd",
         "auth [success=1 perm_denied=ignore default=die] pam_localuser.so\n"
         "auth [success=2 auth_err=ignore default=bad] "
         "pam_succeed_if.so uid >= 65536 quiet\n"
         "account [success=1 perm_denied=ignore default=die] pam_localuser.so\n"
         "account [success=2 auth_err=ignore default=bad] "
         "pam_succeed_if.so uid >= 65536 quiet\n");
+    fs::create_symlink("system-check-localuser-systemd",
+                       tree.root / "pam.d/system-check-localuser");
     TemporaryTree::write(
         tree.root / "pam.d/system-auth-sss-only",
         "auth required pam_sss.so forward_pass\n"
@@ -1235,8 +1240,29 @@ void testAltAuthsuccRoundTripChains() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--live-alt-enable") {
+            const auto profile = fic::platform::makeBuildPlatformProfile();
+            require(profile.id == "alt-p11", "live topology gate requires ALT p11");
+            AltPamFaillockTopologyOptions options;
+            options.lockFilePath = "/tmp/fic-alt-alias-gate.lock";
+            AltPamFaillockTopologyManager manager(profile.pam, options);
+            std::string error;
+            require(manager.enableStrategy(
+                        fic::platform::PamFaillockStrategy::PreauthRequired,
+                        error),
+                    "native ALT faillock enable failed: " + error);
+            AltPamFaillockTopologyState state;
+            require(manager.status(state, error) &&
+                        state == AltPamFaillockTopologyState::Enabled,
+                    "native ALT faillock status failed: " + error);
+            require(manager.disable(error),
+                    "native ALT faillock cleanup failed: " + error);
+            std::cout << "native ALT faillock enable/status/disable passed\n";
+            return 0;
+        }
+        require(argc == 1, "unknown ALT topology test arguments");
         testCanonicalRoundTrip();
         testAltStrategyTransitions();
         testAltAuthsuccRoundTripChains();
