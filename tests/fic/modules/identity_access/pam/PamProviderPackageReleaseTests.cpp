@@ -1103,6 +1103,101 @@ void testIndependentActiveContainerStillProcessed() {
     }
 }
 
+// Step 7F security follow-up: a canonical FIC provider block with ZERO
+// entries (BEGIN/END only, no wrappers) has no possible journal provenance.
+// Stage A must fail closed read-only; Stage B must refuse through its fresh
+// preflight without any config/journal mutation.
+void testEmptyOrphanProviderBlockRejectedAtPreflight() {
+    Harness harness(/*capabilityTopology=*/false);
+    std::string emptyBlock;
+    emptyBlock += kPamProviderBlockBeginMarkerPrefix;
+    emptyBlock += kProvider;
+    emptyBlock += kPamProviderBlockLeadField;
+    emptyBlock += kPamProviderBlockLeadNone;
+    emptyBlock += "\n";
+    emptyBlock += kPamProviderBlockEndMarker;
+    emptyBlock += "\n";
+    writeFile(harness.configPath, emptyBlock);
+    const std::string configBefore = readFile(harness.configPath);
+    const std::string journalBefore = readFile(harness.journalPath);
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "orphan empty FIC provider block must fail Stage A closed: " +
+                error);
+    // The Step 7A strict grammar itself fails closed on an empty canonical
+    // block ("пустой FIC PAM provider block"); the package preflight
+    // empty-block check is defense-in-depth for that contract. Either way
+    // Stage A must refuse and name the empty FIC provider block.
+    require(error.find("provider block") != std::string::npos,
+            "Stage A must name the empty FIC provider block: " + error);
+    require(readFile(harness.configPath) == configBefore,
+            "Stage A must not repair the empty provider block");
+    require(readFile(harness.journalPath) == journalBefore,
+            "Stage A must not touch the journal");
+    require(!release.run(PamProviderPackageRelease::Mode::Release, report,
+                         error),
+            "Stage B re-runs the Stage A proof and must refuse: " + error);
+    require(readFile(harness.configPath) == configBefore,
+            "Stage B must not mutate the config");
+    require(readFile(harness.journalPath) == journalBefore,
+            "Stage B must not mutate the journal");
+}
+
+// Step 7F security follow-up: the package provider domain is route-aware.
+// ALT-shaped platform: the managed faillock primary is scanned; the
+// passwdqc capability (ProviderConfigFile but NO managed Step 7 route) is
+// NOT part of the known provider primaries — even non-canonical
+// reserved-namespace bytes in its config must not fail (or otherwise
+// affect) the release, and its file stays byte-identical.
+void testUnmanagedAltCapabilityPathExcludedFromScan() {
+    Harness harness;
+    harness.platform.capabilities.clear();
+    PamCapabilityConfig faillock;
+    faillock.provider = fic::platform::PamProviderKind::PamFaillock;
+    faillock.configurationMode =
+        PamCapabilityConfigurationMode::ProviderConfigFile;
+    faillock.configPath = harness.configPath;
+    faillock.topology = fic::platform::PamTopologyStrategyKind::AltTcbManaged;
+    harness.platform.capabilities.push_back(faillock);
+    const std::filesystem::path passwdqcPath =
+        harness.temp.directory / "passwdqc.conf";
+    PamCapabilityConfig passwdqc;
+    passwdqc.provider = fic::platform::PamProviderKind::PamPasswdqc;
+    passwdqc.configurationMode =
+        PamCapabilityConfigurationMode::ProviderConfigFile;
+    passwdqc.configPath = passwdqcPath;
+    passwdqc.topology =
+        fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
+    harness.platform.capabilities.push_back(passwdqc);
+    writeFile(harness.configPath, kForeign);
+    // Non-canonical reserved-namespace bytes: the trusted provider parser
+    // fails closed if this file is EVER treated as a provider primary.
+    const std::string foreignPasswdqc =
+        "# admin\nqc_minlen = 8\n# FIC_PAM_SUSPICIOUS foreign comment\n";
+    writeFile(passwdqcPath, foreignPasswdqc);
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                        error),
+            "the unmanaged passwdqc path must not participate in the "
+            "provider primary scan: " + error);
+    require(release.run(PamProviderPackageRelease::Mode::Release, report,
+                        error),
+            "clean ALT-shaped release with an unmanaged capability: " +
+                error);
+    require(!report.changedSystemState, "release mutates nothing");
+    require(readFile(passwdqcPath) == foreignPasswdqc,
+            "passwdqc.conf stays byte-identical");
+    require(readFile(harness.configPath) == kForeign,
+            "managed faillock primary stays byte-identical");
+}
+
 int main() {
     try {
         testCleanNoop();
@@ -1127,6 +1222,8 @@ int main() {
         testWrongKeyOrphanWrapperSamePolicyRejected();
         testPreparedPreviousWrapperAuthorityAccepted();
         testIndependentActiveContainerStillProcessed();
+        testEmptyOrphanProviderBlockRejectedAtPreflight();
+        testUnmanagedAltCapabilityPathExcludedFromScan();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderPackageReleaseTests failed: " << error.what()
                   << '\n';

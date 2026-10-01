@@ -1004,6 +1004,214 @@ void testWrongPolicyForCorrectKeyConflict() {
                 result.message);
 }
 
+// ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Step 7F security follow-up: route-aware managed primary enumeration.
+// ---------------------------------------------------------------------
+
+fic::platform::PamCapabilityConfig altShapeCapability(
+    PamProviderKind provider, const std::filesystem::path& configPath,
+    fic::platform::PamTopologyStrategyKind topology,
+    std::optional<fic::platform::PamCapabilityConfigurationMode> mode =
+        std::nullopt) {
+    PamCapabilityConfig capability;
+    capability.provider = provider;
+    capability.configPath = configPath;
+    capability.topology = topology;
+    if (mode.has_value()) {
+        capability.configurationMode = *mode;
+    }
+    return capability;
+}
+
+bool containsPath(const std::vector<std::filesystem::path>& paths,
+                  const std::filesystem::path& path) {
+    for (const std::filesystem::path& current : paths) {
+        if (current == path) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ALT p11-shaped profile: only the faillock ProviderConfigFile capability
+// actually routes a managed Step 7 policy. passwdqc (ProviderConfigFile,
+// legacy Assignment-only route) and the AltTcbManaged pwhistory are NOT
+// managed provider domains and must never be enumerated as primaries.
+void testManagedPrimaryPathsRouteAwareAltProfile() {
+    TempDir temp;
+    const std::filesystem::path faillockPath =
+        temp.directory / "faillock.conf";
+    const std::filesystem::path passwdqcPath =
+        temp.directory / "passwdqc.conf";
+    const std::filesystem::path pwhistoryPath =
+        temp.directory / "fic-pwhistory.conf";
+    fic::platform::PamPlatformConfig platform;
+    platform.capabilities.push_back(altShapeCapability(
+        PamProviderKind::PamFaillock, faillockPath,
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged));
+    platform.capabilities.push_back(altShapeCapability(
+        PamProviderKind::PamPasswdqc, passwdqcPath,
+        fic::platform::PamTopologyStrategyKind::StaticVerifyOnly));
+    platform.capabilities.push_back(altShapeCapability(
+        PamProviderKind::PamPwhistory, pwhistoryPath,
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged));
+    const std::vector<std::filesystem::path> primaries =
+        pamProviderManagedPrimaryPaths(platform);
+    require(primaries.size() == 1,
+            "ALT profile: exactly one managed provider primary (faillock)");
+    require(primaries.front() == faillockPath,
+            "ALT profile: the faillock primary is enumerated");
+    require(!containsPath(primaries, passwdqcPath),
+            "ALT profile: passwdqc.conf is NOT a managed provider primary");
+    require(!containsPath(primaries, pwhistoryPath),
+            "ALT profile: fic-pwhistory.conf is NOT a managed provider "
+            "primary");
+}
+
+// D13/U24/U26-like profile: pwhistory is ProviderConfigFile +
+// PamAuthUpdate — managed remember/enforce_for_root routes exist, so all
+// three primaries are enumerated. D12-like profile: pwhistory is
+// ModuleArguments (Step 6 joint coordinator) — never a managed primary.
+void testManagedPrimaryPathsRouteAwareDebianProfiles() {
+    {
+        TempDir temp;
+        const std::filesystem::path faillockPath =
+            temp.directory / "faillock.conf";
+        const std::filesystem::path pwqualityPath =
+            temp.directory / "pwquality.conf";
+        const std::filesystem::path pwhistoryPath =
+            temp.directory / "pwhistory.conf";
+        fic::platform::PamPlatformConfig platform;
+        platform.capabilities.push_back(altShapeCapability(
+            PamProviderKind::PamFaillock, faillockPath,
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate));
+        platform.capabilities.push_back(altShapeCapability(
+            PamProviderKind::PamPwquality, pwqualityPath,
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate));
+        platform.capabilities.push_back(altShapeCapability(
+            PamProviderKind::PamPwhistory, pwhistoryPath,
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate));
+        const std::vector<std::filesystem::path> primaries =
+            pamProviderManagedPrimaryPaths(platform);
+        require(primaries.size() == 3,
+                "D13-like profile: all three managed primaries enumerated");
+        require(containsPath(primaries, faillockPath),
+                "D13-like profile: faillock.conf is a managed primary");
+        require(containsPath(primaries, pwqualityPath),
+                "D13-like profile: pwquality.conf is a managed primary");
+        require(containsPath(primaries, pwhistoryPath),
+                "D13-like profile: pwhistory.conf is a managed primary");
+    }
+    {
+        TempDir temp;
+        const std::filesystem::path faillockPath =
+            temp.directory / "faillock.conf";
+        const std::filesystem::path pwqualityPath =
+            temp.directory / "pwquality.conf";
+        const std::filesystem::path pwhistoryPath =
+            temp.directory / "pwhistory.conf";
+        fic::platform::PamPlatformConfig platform;
+        platform.capabilities.push_back(altShapeCapability(
+            PamProviderKind::PamFaillock, faillockPath,
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate));
+        platform.capabilities.push_back(altShapeCapability(
+            PamProviderKind::PamPwquality, pwqualityPath,
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate));
+        platform.capabilities.push_back(altShapeCapability(
+            PamProviderKind::PamPwhistory, pwhistoryPath,
+            fic::platform::PamTopologyStrategyKind::PamAuthUpdate,
+            fic::platform::PamCapabilityConfigurationMode::ModuleArguments));
+        const std::vector<std::filesystem::path> primaries =
+            pamProviderManagedPrimaryPaths(platform);
+        require(primaries.size() == 2,
+                "D12-like profile: exactly two managed primaries");
+        require(!containsPath(primaries, pwhistoryPath),
+                "D12-like profile: ModuleArguments pwhistory is NOT "
+                "enumerated");
+    }
+}
+
+
+// The container provenance proof uses the SAME shared managed-domain
+// predicate as the primary enumeration: a ProviderConfigFile capability
+// WITHOUT a managed Step 7 route (ALT passwdqc / ALT pwhistory
+// AltTcbManaged) can never confirm container provenance — Conflict before
+// any journal path read/mutation. The managed faillock capability stays
+// provable (positive control).
+void testContainerUnmanagedCapabilityConflict() {
+    {
+        Harness harness;
+        harness.platform.capabilities.clear();
+        const std::filesystem::path passwdqcPath =
+            harness.temp.directory / "passwdqc.conf";
+        PamCapabilityConfig capability;
+        capability.provider = PamProviderKind::PamPasswdqc;
+        capability.configurationMode =
+            PamCapabilityConfigurationMode::ProviderConfigFile;
+        capability.configPath = passwdqcPath;
+        harness.platform.capabilities.push_back(capability);
+        writeFile(passwdqcPath, kForeign);
+        const fic::rollback::MutationId id = prepareContainerRecordAt(
+            harness, "pam_passwdqc", passwdqcPath.string());
+        MutationRecord record = journalRecordById(harness, id);
+        const PamProviderRollbackResult result = undoOwnPamProviderContainer(
+            harness.options(), harness.journal, record,
+            std::get<UndoOwnPamProviderContainer>(record.undo.payload));
+        require(!result.ok,
+                "container provenance for an unmanaged capability must be "
+                "rejected: " + result.message);
+        require(result.conflict, "rejection must be a Conflict");
+        require(result.message.find("managed") != std::string::npos,
+                "rejection must name the managed-provider domain proof: " +
+                    result.message);
+        require(std::filesystem::exists(passwdqcPath),
+                "the unmanaged path stays untouched");
+        require(journalRecordById(harness, id).status ==
+                    MutationStatus::Applied,
+                "the rejected container record stays Applied");
+    }
+    {
+        Harness harness;
+        harness.platform.capabilities.clear();
+        const std::filesystem::path pwhistoryPath =
+            harness.temp.directory / "fic-pwhistory.conf";
+        PamCapabilityConfig capability;
+        capability.provider = PamProviderKind::PamPwhistory;
+        capability.configurationMode =
+            PamCapabilityConfigurationMode::ProviderConfigFile;
+        capability.configPath = pwhistoryPath;
+        capability.topology =
+            fic::platform::PamTopologyStrategyKind::AltTcbManaged;
+        harness.platform.capabilities.push_back(capability);
+        writeFile(pwhistoryPath, kForeign);
+        const fic::rollback::MutationId id = prepareContainerRecordAt(
+            harness, "pam_pwhistory", pwhistoryPath.string());
+        MutationRecord record = journalRecordById(harness, id);
+        const PamProviderRollbackResult result = undoOwnPamProviderContainer(
+            harness.options(), harness.journal, record,
+            std::get<UndoOwnPamProviderContainer>(record.undo.payload));
+        require(!result.ok && result.conflict,
+                "ALT pwhistory container provenance must Conflict: " +
+                    result.message);
+        require(journalRecordById(harness, id).status ==
+                    MutationStatus::Applied,
+                "the rejected container record stays Applied");
+    }
+    {
+        Harness harness;
+        std::string message;
+        const std::optional<PamProviderContainerRollbackRoute> route =
+            pamProviderContainerRollbackRouteForPayload(
+                harness.options(), kProvider, harness.configPath.string(),
+                message);
+        require(route.has_value(),
+                "managed faillock container route still proves: " + message);
+        require(route->configPath == harness.configPath,
+                "managed faillock container route keeps the exact primary");
+    }
+}
+
 int main() {
     try {
         testAppliedExactRelease();
@@ -1038,6 +1246,9 @@ int main() {
         testFlagAssignmentMasqueradeConflict();
         testEntryFlagMasqueradeConflict();
         testWrongPolicyForCorrectKeyConflict();
+        testManagedPrimaryPathsRouteAwareAltProfile();
+        testManagedPrimaryPathsRouteAwareDebianProfiles();
+        testContainerUnmanagedCapabilityConflict();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderRollbackTests failed: " << error.what()
                   << '\n';

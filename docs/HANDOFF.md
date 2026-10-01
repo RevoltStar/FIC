@@ -2,124 +2,131 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `040f2e1...` ("Follow-up к последнему коммиту").
-  Поверх HEAD — **незакоммиченный final security follow-up к Шагу 7F**
-  (4 дефекта PAM provider rollback / package release). Коммит НЕ делать
-  без явного запроса.
+- Ветка `main`; HEAD = `71f695cc9fab58ec3b5496b8b81830616269b3a9`
+  ("Follow-up к последнему коммиту №2"). Поверх HEAD —
+  **незакоммиченный final cleanup к Шагу 7F** (2 правки + регрессии).
+  Коммит НЕ делать без явного запроса.
 
 ## Current task
 
-**Final security follow-up (4 дефекта) — реализация и валидация
-завершены, не закоммичено.** Base before this follow-up: `040f2e1…`
-(чистое дерево). Шаги 7A–7F и их семантика ownership/journal не
-менялись — только ужесточение proof-путей:
+**Final cleanup (Step 7F) — реализация и валидация завершены,
+не закоммичено.** Base before this follow-up:
+`71f695cc9fab58ec3b5496b8b81830616269b3a9` (чистое дерево).
 
-- **(P1) Current-platform proof для `UndoOwnPamProviderContainer`.**
-  Новый SSOT-хелпер `pamProviderContainerRollbackRouteForPayload()`
-  (`PamProviderRollback.h/.cpp`): ProviderConfigFile capability с
-  lexically-exact configPath + provider name match + принадлежность
-  managed-provider domain через `pamProviderManagedEntryPlacement(...).
-  has_value()` (derived от typed routing/catalog, БЕЗ distro switch).
-  Применён в runtime (`undoOwnPamProviderContainerUnlocked` — Conflict
-  ДО любого read/mutation journal path) и в package Stage A (container
-  coherence — fail closed перед `readForMutation`).
-- **(P2) Точный orphan coverage.** `preflightPhysicalState` в
-  `PamProviderPackageRelease.cpp`: покрытие физического FIC объекта =
-  ровно одна активная запись с точной identity (path+provider+policy+
-  managedKey), доказанная через `classifyPamProviderJournalBinding`
-  (entry) или flag release proof (flag-owned entry); ambiguity → fail
-  closed. Wrapper покрыт только если его suppression id ∈ АКТИВНОЙ
-  authority ровно одной flag записи — единая модель вынесена в shared
-  `fic::rollback::activePamFlagSuppressionAuthority()`
-  (`MutationJournal.h/.cpp`; Prepared: suppressionIds ∪
-  previousSuppressionIds; Applied/RollbackFailed: suppressionIds;
-  resolved: none). Слабой модели (path, policy) больше нет.
-- **(P2) Typed payload route: policy ↔ feature ↔ key ↔ syntax.**
-  `pamProviderRollbackRouteForPayload()` расширен параметрами
-  `policyName` + `expectedSyntax` (Assignment для entry undo, Flag для
-  flag undo): доказывает `pamProviderManagedFeaturePolicyName(
-  binding.feature) == policyName` и `binding.syntax == expectedSyntax`.
-  Используется и runtime rollback, и package Stage A per-record proof.
-- **(P2) Final sweep без stale/resolved записей.** `run(Release)`:
-  destructive sweep контейнеров идёт по id записей, активных на момент
-  старта release, но каждая запись перечитывается из ТЕКУЩЕГО journal;
-  уже resolved (policy-release-deletes-container) — только report без
-  второго lifecycle pass; исчезнувшая запись — integrity error.
-  Дополнительно defense-in-depth refusal в
-  `undoOwnPamProviderContainerUnlocked`: переданная копия записи обязана
-  совпадать с текущей активной записью journal (stale/Detached/
-  RolledBack → Conflict, никакого второго lifecycle owner).
+- **(1) Orphan empty canonical FIC provider block — fail closed.**
+  `PamProviderPackageRelease.cpp::preflightPhysicalState`: после strict
+  parse, если `parse.view.present && parse.view.entries.empty()` →
+  preflight FAIL с диагностикой "orphan empty FIC PAM provider block";
+  никакой deletion/healing; config+journal byte-identical. Существующее
+  rejection блоков с present-but-uncovered entries не тронуто (новый
+  check покрывает только случай, когда entry-loop вообще не выполняется).
+  **Важно (отклонение от исходной постановки):** состояние
+  `parse.ok==true && present && entries.empty()` в текущем коде
+  НЕДОСТИЖИМО — строгая грамматика Step 7A (commit `aa3f8b66`,
+  `PamProviderManagedBlock.cpp`, "пустой FIC PAM provider block") уже
+  fail-closed отвергает блок без entry на уровне parse. Новый check
+  оставлен как defense-in-depth на случай будущего ослабления грамматики;
+  регрессия `testEmptyOrphanProviderBlockRejectedAtPreflight` закрепляет
+  контракт end-to-end (Stage A FAIL + Stage B FAIL + byte-identical) и
+  на base `71f695c` проходит (мутация нового check её не ломает —
+  негативный контроль для этого сценария невозможен технически).
+- **(2) Route-aware `pamProviderManagedPrimaryPath(s)`.** Новый общий
+  предикат `capabilityHasManagedProviderRoute(descriptor, capability)`
+  (anonymous namespace `PamProviderRollback.cpp`): ≥1 binding с
+  `pamProviderManagedEntryPlacement(...).has_value()`. Используется
+  ОДИН раз обоими потребителями managed-domain модели:
+  `pamProviderManagedPrimaryPath` (enumeration primary paths) и
+  `pamProviderContainerRollbackRouteForPayload` (container proof).
+  Никаких distro switch. Матрица: ALT passwdqc
+  (`/etc/passwdqc.conf`) и ALT pwhistory
+  (`/etc/security/fic-pwhistory.conf`, AltTcbManaged) — исключены;
+  D12 pwhistory (ModuleArguments) — исключён; D12/D13/U24/U26
+  faillock+pwquality и D13/U24/U26 pwhistory
+  (ProviderConfigFile+PamAuthUpdate) — включены.
 
 ## Accepted architecture / invariants
 
 - Все прежние инварианты Шага 7F (ownership proof, Stage A/B
-  согласованность, conditional delete hardening, managed-provider lock,
-  SSOT provider primaries без `configTopology.has_value()`) — без
-  изменений, не пересматривать.
-- Container provenance proof — часть того же typed SSOT; второго
-  whitelist/distro switch не вводить.
-- `activePamFlagSuppressionAuthority` — единственная модель authority
-  suppression wrapper'ов; не дублировать в preflight/executors.
+  согласованность, exact orphan identity, record-specific
+  classification, `activePamFlagSuppressionAuthority`, final
+  re-enumeration, Detached=no second lifecycle, zero-wrapper flag
+  release, Prepared authority, conditional-delete hardening, Stage-A
+  binding whitelist, crash-after-delete recovery) — без изменений.
+- Managed-provider domain = ЕДИНЫЙ общий предикат
+  `capabilityHasManagedProviderRoute` для enumeration и container
+  proof; второй whitelist/distro switch не вводить.
+- Package preflight сканирует ТОЛЬКО route-managed primaries; файлы
+  unmanaged ProviderConfigFile-возможностей (passwdqc.conf) — не
+  provider domain, в scan не входят (даже с FIC_PAM_-подобным
+  содержимым).
 
 ## Completed
 
-- Все 4 фикса выше + регрессии: `PamProviderRollbackTests` (+6: wrong
-  path / wrong provider container proof, Detached no-second-lifecycle,
-  flag↔assignment masquerade ×2, wrong policy for correct key),
-  `PamProviderPackageReleaseTests` (+5: wrong-key same-policy orphan
-  entry, wrong mutation id, wrong-key orphan wrapper, Prepared
-  previous-wrapper authority, independent active container processed).
-- Негативный контроль на base `040f2e1` (отдельный worktree, новые
-  тест-файлы поверх base-кода): 7 из 11 новых регрессий падают на base
-  (дефекты доказаны); wrong-mutation-id, prepared-previous-authority и
-  independent-container проходят на обеих версиях (guards, а не
-  regressions).
+- Оба пункта выше + регрессии:
+  - `PamProviderRollbackTests` (+3): route-aware ALT-профиль (ровно 1
+    primary, конкретные пути passwdqc.conf/fic-pwhistory.conf
+    отсутствуют), D13-like (все 3 present) / D12-like (pwhistory
+    ModuleArguments отсутствует), container proof на unmanaged
+    capability (passwdqc + ALT pwhistory) → Conflict, положительный
+    контроль на managed faillock.
+  - `PamProviderPackageReleaseTests` (+2): empty orphan block (Stage A
+    FAIL, diagnostic, Stage B FAIL, config+journal byte-identical),
+    ALT-shaped package release (managed faillock primary чист, temp
+    `/etc/passwdqc.conf` с FIC_PAM_-подобным контентом не участвует в
+    scan, release проходит, файл byte-identical).
+- Негативный контроль: откат `pamProviderManagedPrimaryPath` к
+  ProviderConfigFile-only eligibility →
+  `testManagedPrimaryPathsRouteAwareAltProfile` FAIL на "exactly one
+  managed provider primary"; после восстановления — PASS.
 
 ## Changed areas
 
 - `fic/src/modules/identity_access/pam/PamProviderRollback.{h,cpp}`,
-  `fic/src/modules/identity_access/pam/PamProviderPackageRelease.cpp`,
-  `fic/src/rollback/MutationJournal.{h,cpp}`.
+  `fic/src/modules/identity_access/pam/PamProviderPackageRelease.cpp`.
 - `tests/fic/modules/identity_access/pam/{PamProviderRollbackTests,
   PamProviderPackageReleaseTests}.cpp` (регистрация в main() каждого
-  файла; CTest-цели уже существовали, `tests/CMakeLists.txt` не менялся).
+  файла; CTest-цели существовали, `tests/CMakeLists.txt` не менялся).
+
 
 ## Validation (фактически выполнено)
 
 - Полный build `build-check` (ubuntu-24.04) — 0 errors.
 - Полный CTest — **115/115 PASS** (1 skip: `command_hash_batch_tests`,
   окружение).
-- `python3 tests/integration/packaging/PamPackagingChecks.py $PWD` — PASS.
+- `python3 tests/integration/packaging/PamPackagingChecks.py $PWD` —
+  PASS.
 - `git diff --check` — чисто.
-- **Real-distro gates: все 5 PASS** — `pam_provider_rollback_gate.sh`
-  на debian-12, debian-13, ubuntu-24.04, ubuntu-26.04 (G1–G10);
-  `pam_provider_rollback_gate_alt.sh` на altlinux-11 (A1–A9).
+- **Real-distro gates: 5/5 PASS** — `pam_provider_rollback_gate.sh` на
+  debian-12, debian-13, ubuntu-24.04, ubuntu-26.04 и
+  `pam_provider_rollback_gate_alt.sh` на altlinux-p11 (важно именно для
+  ALT: изменённая enumeration domain). Логи: `/tmp/gate7f-*.log`.
 
 ## Remaining
 
 1. Коммит НЕ делать без явного запроса.
-2. Optional 4 mutation-checks (`pam_prerm_release_gate.sh`: history-
-   initial / quality-history / foreign-quality-history /
-   foreign-added-during-fic) НЕ завершены: (а) apt-get update/install
-   в контейнере стал нестабилен (зеркала sandbox); (б) сценарии 1–2
-   упали на C2 topology bootstrap ПРИ УСТАНОВКЕ СТАРЫХ prebuilt debs из
-   `dist/` (built 2025-09-21, до всех изменений этого follow-up) —
-   отношение к изменениям исключено: gate ставит пакеты из `dist/`, а
-   не из исходников. Перед повтором: пересобрать debs; запускать с
-   `-e http_proxy= -e https_proxy=` — в отличие от rollback gate,
-   prerm-скрипт НЕ сбрасывает хостовый loopback proxy.
+2. Прошлое Remaining (prerm mutation-checks через
+   `pam_prerm_release_gate.sh`) не закрыто и осталось вне scope: apt
+   зеркала sandbox нестабильны; пререквизит — пересборка prebuilt debs
+   из `dist/` (built 21.09, до всех изменений 7F). Запускать с
+   `-e http_proxy= -e https_proxy=` (prerm-скрипт не сбрасывает
+   хостовый loopback proxy).
 3. Не трогали (вне scope): C2 topology, PamOptionFile semantics,
-   Step 6 option reconciliation, codec, activation, D12 coordinator.
+   Step 6 option reconciliation, codec, activation, D12 coordinator,
+   MutationJournal schema.
 
 ## Следующему агенту
 
-- `pamProviderRollbackRouteForPayload` теперь имеет 8 параметров; все
-  callers обновлены (только `PamProviderPackageRelease.cpp` + внутренний
-  runtime path в `PamProviderRollback.cpp`).
-- Container sweep в `run(Release)` работает по `containerIds`
-  (active-at-start) + перечитывание текущего состояния по id; report
-  buckets (deleted/detached/retained) заполняются и для уже-resolved
-  записей (policy-release-deletes-container).
-- Прежние «Follow-up добавления к Шагу 7F» (driver lifecycle, SSOT
-  policy identity, сериализация enabled-флага, driver bootstrap rm -rf)
-  остаются в силе как знания о gate-инфраструктуре.
+- `capabilityHasManagedProviderRoute` — internal helper в anonymous
+  namespace `PamProviderRollback.cpp`; публичного API для него нет и не
+  нужно (проверяется через `pamProviderManagedPrimaryPaths` и
+  `pamProviderContainerRollbackRouteForPayload`).
+- Все callers `pamProviderManagedPrimaryPath(s)` — только
+  `PamProviderPackageRelease.cpp` (`knownProviderPrimaries`) и
+  внутренний plural-хелпер; поведение managed-путей не изменилось,
+  изменился только состав исключаемых unmanaged путей.
+- Если будущая задача ослабит строгую грамматику Step 7A (разрешит
+  пустые блоки), preflight empty-block check станет первичной линией
+  защиты — не удалять вместе с ней без отдельного решения.
+- Прежние знания о gate-инфраструктуре (podman `--network=slirp4netns`,
+  `-e http_proxy= -e https_proxy=`, логи в `/tmp/gate-*.log`) остаются
+  в силе.

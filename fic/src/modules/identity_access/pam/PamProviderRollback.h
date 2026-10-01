@@ -167,14 +167,19 @@ const char* pamProviderManagedFeaturePolicyName(
 
 // Single source of truth for the managed provider PRIMARY domain (Step 7F
 // follow-up): "this capability is a real managed ProviderConfigFile domain,
-// and this is its primary path". Eligibility comes from the configuration
-// MODE plus a non-empty config path — NEVER from
-// capability.configTopology.has_value(): production platform profiles carry
-// the provider topology in provider.defaultConfigTopology, so a nullopt
-// capability-level configTopology is the NORMAL routed shape (explicit
-// capability.configTopology is only an override, see
-// validatePamProviderConfigTopology). This is the same eligibility the
-// typed routing proof (routeForPayload) applies.
+// and this is its primary path". Eligibility is route-aware: the
+// configuration MODE (ProviderConfigFile + non-empty config path) PLUS the
+// typed managed-route proof — the capability descriptor must actually route
+// at least one managed policy binding through
+// pamProviderManagedEntryPlacement(). The same shared predicate backs the
+// container provenance proof, so the two domain models cannot drift.
+// NEVER from capability.configTopology.has_value(): production platform
+// profiles carry the provider topology in provider.defaultConfigTopology,
+// so a nullopt capability-level configTopology is the NORMAL routed shape
+// (explicit capability.configTopology is only an override, see
+// validatePamProviderConfigTopology). ProviderConfigFile-shaped
+// capabilities WITHOUT a managed route (ALT passwdqc, ALT AltTcbManaged
+// pwhistory) are never enumerated.
 std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
     const fic::platform::PamCapabilityConfig& capability);
 

@@ -340,6 +340,23 @@ bool PamProviderPackageRelease::preflightPhysicalState(std::string& error) {
                 ": " + parse.error;
             return false;
         }
+        // Canonical grammar invariant (Step 7F security follow-up): the FIC
+        // provider block exists ONLY as the container of managed entries.
+        // A strictly-parsed block with ZERO entries can never be
+        // journal-covered — the exact provenance loops below have no
+        // physical object to match — so it is an orphan FIC serialization
+        // (e.g. a crashed release that removed the last entry but never
+        // completed the container delete). Stage A is read-only: report and
+        // fail closed, never repair. This closes the
+        // Stage-A-PASS/Stage-B-PASS/final-proof-FAIL gap for
+        // BEGIN/END-only blocks.
+        if (parse.view.present && parse.view.entries.empty()) {
+            error = "preflight: orphan empty FIC PAM provider block (provider '" +
+                parse.view.provider + "') in " + path.string() +
+                " without any journal-covered managed entry — package "
+                "removal is blocked (fail closed)";
+            return false;
+        }
         for (const PamProviderManagedEntry& entry : parse.view.entries) {
             // Exactly one active ENTRY record with the exact identity, and
             // the record-specific journal↔physical classifier must confirm

@@ -700,6 +700,28 @@ PamProviderRollbackResult undoFlagUnlocked(
         "Flag rollback (record " + std::to_string(record.id) + ")");
 }
 
+// Shared managed-provider-domain predicate (Step 7F security follow-up).
+// A capability belongs to the managed provider configuration domain ONLY
+// when its typed descriptor actually routes at least one managed policy
+// binding through pamProviderManagedEntryPlacement(). SINGLE source of
+// truth for BOTH the container provenance proof
+// (pamProviderContainerRollbackRouteForPayload) and the managed primary
+// enumeration (pamProviderManagedPrimaryPath) — the two domain models can
+// never drift apart (e.g. ALT p11: faillock is a managed ProviderConfigFile
+// domain, while passwdqc and the AltTcbManaged pwhistory stay outside it
+// despite being ProviderConfigFile-shaped).
+bool capabilityHasManagedProviderRoute(
+    const PamProviderDescriptor& descriptor,
+    const fic::platform::PamCapabilityConfig& capability) {
+    for (const PamProviderPolicyBinding& binding : descriptor.policies) {
+        if (pamProviderManagedEntryPlacement(descriptor, capability, binding,
+                                             binding.feature).has_value()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 const char* pamProviderManagedFeaturePolicyName(
@@ -837,23 +859,21 @@ pamProviderContainerRollbackRouteForPayload(
     // Managed-provider domain proof (Step 7B-7E): the capability is the
     // managed provider configuration domain ONLY when its typed descriptor
     // actually routes at least one managed policy binding through
-    // pamProviderManagedEntryPlacement(). Derived from the existing typed
-    // routing SSOT — never a distro switch, never a second whitelist.
-    for (const PamProviderPolicyBinding& binding : descriptor.policies) {
-        if (pamProviderManagedEntryPlacement(descriptor, *capability, binding,
-                                             binding.feature).has_value()) {
-            PamProviderContainerRollbackRoute route;
-            route.descriptor = descriptor;
-            route.capability = capability;
-            route.configPath = capability->configPath;
-            return route;
-        }
+    // pamProviderManagedEntryPlacement(). Shared typed predicate (SSOT with
+    // pamProviderManagedPrimaryPath) — never a distro switch, never a
+    // second whitelist.
+    if (!capabilityHasManagedProviderRoute(descriptor, *capability)) {
+        conflictMessage = "capability текущего platform profile ('" + providerName +
+            "', config path '" + configPath +
+            "') не входит в managed provider configuration domain: container "
+            "provenance rollback запрещён";
+        return std::nullopt;
     }
-    conflictMessage = "capability текущего platform profile ('" + providerName +
-        "', config path '" + configPath +
-        "') не входит в managed provider configuration domain: container "
-        "provenance rollback запрещён";
-    return std::nullopt;
+    PamProviderContainerRollbackRoute route;
+    route.descriptor = descriptor;
+    route.capability = capability;
+    route.configPath = capability->configPath;
+    return route;
 }
 
 std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
@@ -862,6 +882,18 @@ std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
             fic::platform::PamCapabilityConfigurationMode::
                 ProviderConfigFile ||
         capability.configPath.empty()) {
+        return std::nullopt;
+    }
+    // Route-aware managed-provider domain eligibility (Step 7F security
+    // follow-up): a ProviderConfigFile capability is a managed primary ONLY
+    // when its typed descriptor actually routes at least one managed policy
+    // binding (pamProviderManagedEntryPlacement). Shared predicate (SSOT
+    // with pamProviderContainerRollbackRouteForPayload) — ALT passwdqc and
+    // the ALT AltTcbManaged pwhistory are never enumerated as managed
+    // provider primaries.
+    const PamProviderDescriptor descriptor =
+        pamProviderDescriptor(capability.provider);
+    if (!capabilityHasManagedProviderRoute(descriptor, capability)) {
         return std::nullopt;
     }
     return capability.configPath;
