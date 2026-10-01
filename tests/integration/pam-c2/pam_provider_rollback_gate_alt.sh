@@ -160,6 +160,88 @@ else
     gate_fail "A6 retry after release"
 fi
 
+# ------------------------------------------------------------------ A7/A8
+# Step 7F follow-up: zero-wrapper flag release. Without an active foreign
+# occurrence of the flag key BOTH flag=true and flag=false are owned with an
+# EMPTY authorized suppression set — no wrappers are created and disable
+# restores the foreign bytes byte-exact.
+if grep -q '^even_deny_root$' "$EVID/faillock.foreign"; then
+    grep -v '^even_deny_root$' "$EVID/faillock.foreign" \
+        > "$EVID/faillock.noroot.foreign"
+else
+    cp "$EVID/faillock.foreign" "$EVID/faillock.noroot.foreign"
+fi
+cp "$EVID/faillock.noroot.foreign" "$FAILLOCK"
+
+if "$DRIVER" apply-flag pam_faillock even_deny_root true \
+    >> "$EVID/driver.log" 2>&1 \
+    && grep -qx 'even_deny_root' "$FAILLOCK" \
+    && grep -q 'FIC_PAM_ENTRY_BEGIN' "$FAILLOCK" \
+    && ! grep -q 'FIC_PAM_SUPPRESS' "$FAILLOCK"; then
+    gate_pass "A7a flag=true without a foreign occurrence: zero-wrapper enabled state"
+else
+    gate_fail "A7a flag=true zero-wrapper apply"
+fi
+if "$DRIVER" disable-flag pam_faillock even_deny_root \
+    >> "$EVID/driver.log" 2>&1 \
+    && cmp -s "$FAILLOCK" "$EVID/faillock.noroot.foreign"; then
+    gate_pass "A7b flag=true disable: zero-wrapper release, foreign byte-exact"
+else
+    gate_fail "A7b flag=true disable"
+fi
+
+if "$DRIVER" apply-flag pam_faillock even_deny_root false \
+    >> "$EVID/driver.log" 2>&1 \
+    && grep -q 'FIC_PAM_FLAG_DISABLED' "$FAILLOCK" \
+    && ! grep -q 'FIC_PAM_SUPPRESS' "$FAILLOCK"; then
+    gate_pass "A8a flag=false without a foreign occurrence: bare sentinel, no wrappers"
+else
+    gate_fail "A8a flag=false zero-wrapper apply"
+fi
+if "$DRIVER" disable-flag pam_faillock even_deny_root \
+    >> "$EVID/driver.log" 2>&1 \
+    && cmp -s "$FAILLOCK" "$EVID/faillock.noroot.foreign"; then
+    gate_pass "A8b flag=false (no foreign occurrence) disable: sentinel released"
+else
+    gate_fail "A8b flag=false disable"
+fi
+
+# ------------------------------------------------------------------ A9
+# Orphan FIC state with NO journal provenance: disable must REFUSE
+# (fail closed) and leave the physical state untouched.
+if "$DRIVER" apply-flag pam_faillock even_deny_root true \
+    >> "$EVID/driver.log" 2>&1; then
+    cp "$FAILLOCK" "$EVID/faillock.orphan.sentinel"
+    JOURNAL_DIR=/var/lib/fic/pam-provider-gate
+    mv "$JOURNAL_DIR" "$EVID/journal.orphan.dir"
+    if "$DRIVER" disable-flag pam_faillock even_deny_root \
+        >> "$EVID/driver.log" 2>&1; then
+        gate_fail "A9a orphan no-journal disable must refuse"
+    else
+        if cmp -s "$FAILLOCK" "$EVID/faillock.orphan.sentinel"; then
+            gate_pass "A9a orphan no-journal disable refused, state untouched"
+        else
+            gate_fail "A9a orphan refusal mutated the physical state"
+        fi
+    fi
+    # The refused disable run recreates an EMPTY journal directory (the
+    # driver bootstraps the journal on startup): drop it before restoring
+    # the moved-away original, otherwise the mv would nest inside it.
+    rm -rf "$JOURNAL_DIR"
+    mv "$EVID/journal.orphan.dir" "$JOURNAL_DIR"
+    if "$DRIVER" disable-flag pam_faillock even_deny_root \
+        >> "$EVID/driver.log" 2>&1 \
+        && cmp -s "$FAILLOCK" "$EVID/faillock.noroot.foreign"; then
+        gate_pass "A9b journal restored: proven release completes"
+    else
+        gate_fail "A9b release after journal restore"
+    fi
+else
+    gate_fail "A9 setup: zero-wrapper flag=true apply failed"
+fi
+# Restore the original foreign baseline (with the foreign occurrence).
+cp "$EVID/faillock.foreign" "$FAILLOCK"
+
 if [ "$FAILED" -eq 0 ]; then
     verdict "PASS $DISTRO_ID provider-rollback-gate-alt"
     echo "[gate:alt] ALL GATES PASSED on $DISTRO_ID"

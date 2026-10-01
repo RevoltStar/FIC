@@ -660,8 +660,14 @@ PamProviderRollbackResult undoFlagUnlocked(
 
 } // namespace
 
-const fic::platform::PamPolicyFeature* pamProviderManagedPolicyFeature(
-    const std::string& policyName) {
+const char* pamProviderManagedFeaturePolicyName(
+    fic::platform::PamPolicyFeature feature);
+
+// Shared SSOT table of the managed PAM provider policy identities (canonical
+// FIC policy name <-> typed platform feature). One definition serves both
+// lookup directions.
+const std::vector<std::pair<const char*, fic::platform::PamPolicyFeature>>&
+pamProviderManagedPolicyNames() {
     static const std::vector<std::pair<const char*,
         fic::platform::PamPolicyFeature>> names = {
         {"failed_authentication_attempts",
@@ -697,9 +703,24 @@ const fic::platform::PamPolicyFeature* pamProviderManagedPolicyFeature(
         {"password_history_enforce_for_root",
          fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot},
     };
-    for (const auto& entry : names) {
+    return names;
+}
+
+const fic::platform::PamPolicyFeature* pamProviderManagedPolicyFeature(
+    const std::string& policyName) {
+    for (const auto& entry : pamProviderManagedPolicyNames()) {
         if (policyName == entry.first) {
             return &entry.second;
+        }
+    }
+    return nullptr;
+}
+
+const char* pamProviderManagedFeaturePolicyName(
+    fic::platform::PamPolicyFeature feature) {
+    for (const auto& entry : pamProviderManagedPolicyNames()) {
+        if (feature == entry.second) {
+            return entry.first;
         }
     }
     return nullptr;
@@ -752,6 +773,34 @@ std::optional<PamProviderRollbackRoute> pamProviderRollbackRouteForPayload(
     std::string& conflictMessage) {
     return routeForPayload(options, providerName, configPath, managedKey,
                            placementContract, conflictMessage);
+}
+
+std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
+    const fic::platform::PamCapabilityConfig& capability) {
+    if (capability.configurationMode !=
+            fic::platform::PamCapabilityConfigurationMode::
+                ProviderConfigFile ||
+        capability.configPath.empty()) {
+        return std::nullopt;
+    }
+    return capability.configPath;
+}
+
+std::vector<std::filesystem::path> pamProviderManagedPrimaryPaths(
+    const fic::platform::PamPlatformConfig& platform) {
+    std::vector<std::filesystem::path> paths;
+    for (const fic::platform::PamCapabilityConfig& capability :
+         platform.capabilities) {
+        const std::optional<std::filesystem::path> primary =
+            pamProviderManagedPrimaryPath(capability);
+        if (!primary.has_value()) {
+            continue;
+        }
+        if (std::find(paths.begin(), paths.end(), *primary) == paths.end()) {
+            paths.push_back(*primary);
+        }
+    }
+    return paths;
 }
 
 PamProviderRollbackResult inspectUnrecordedPamProviderManagedState(

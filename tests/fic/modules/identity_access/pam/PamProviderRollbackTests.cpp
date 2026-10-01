@@ -490,6 +490,100 @@ void testFlagEnabledWithWrapperConflict() {
             "enabled state with a matching wrapper must conflict");
 }
 
+// Physical enabled-flag state: FIC FlagEnabled entry, ZERO wrappers (the
+// normal routed shape when no foreign active occurrence existed before).
+std::string renderEnabledState() {
+    PamProviderFlagSpec spec;
+    spec.provider = kProvider;
+    spec.policy = kFlagPolicy;
+    spec.managedKey = kFlagKey;
+    spec.enabled = true;
+    spec.mutationId = 9;
+    spec.keepSuppressionIds = {};
+    PamProviderFlagMutationResult result = setPamProviderManagedFlagTransition(
+        kForeign, spec, PamProviderBlockPlacementRequest::End);
+    require(result.ok, "fixture enabled flag state: " + result.error);
+    return result.content;
+}
+
+// Step 7F follow-up: an ENABLED applied state with an EMPTY suppression set
+// is a valid owned state — the candidate matches the physical entry even
+// though authorizedUnion stays empty. The release must SUCCESS, not fail
+// with "entry kind не совпадает ни с одной авторизованной ownership state".
+void testFlagAppliedEnabledZeroWrappers() {
+    Harness harness;
+    writeFile(harness.configPath, renderEnabledState());
+    const std::string before = readFile(harness.configPath);
+    UndoRemovePamProviderManagedFlag undo = flagUndo(harness, true, {});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(result.ok && result.changedSystemState,
+            "applied enabled zero-wrapper state must release: " +
+                result.message);
+    const std::string after = readFile(harness.configPath);
+    require(after == kForeign, "foreign bytes must survive byte-exact");
+    require(after.find("FIC_PAM_") == std::string::npos,
+            "no FIC serialization may remain");
+    require(before.find("FIC_PAM_ENTRY_BEGIN") != std::string::npos,
+            "fixture had the enabled entry");
+}
+
+// Step 7F follow-up: a DISABLED applied state whose authorized suppression
+// set is empty (no foreign active occurrence before the apply) releases the
+// bare sentinel even with an empty authorizedUnion.
+void testFlagAppliedDisabledZeroWrappers() {
+    Harness harness;
+    writeFile(harness.configPath, renderDisabledState({}));
+    UndoRemovePamProviderManagedFlag undo = flagUndo(harness, false, {});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(result.ok && result.changedSystemState,
+            "applied disabled zero-wrapper state must release: " +
+                result.message);
+    const std::string after = readFile(harness.configPath);
+    require(after == kForeign, "foreign bytes must survive byte-exact");
+    require(after.find("FIC_PAM_") == std::string::npos,
+            "no FIC serialization may remain");
+}
+
+// Prepared target enabled: previous absent/false, target=true, the physical
+// state is the target-side FlagEnabled without wrappers — releasable.
+void testFlagPreparedTargetEnabledZeroWrappers() {
+    Harness harness;
+    writeFile(harness.configPath, renderEnabledState());
+    UndoRemovePamProviderManagedFlag undo = flagUndo(harness, true, {});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Prepared);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(result.ok && result.changedSystemState,
+            "prepared target enabled zero-wrapper must release: " +
+                result.message);
+    require(readFile(harness.configPath) == kForeign, "foreign exact");
+}
+
+// Prepared previous enabled: target=false with an empty authorized set
+// (no foreign occurrence before), previous=true, the physical state is the
+// previous-side FlagEnabled without wrappers — releasable.
+void testFlagPreparedPreviousEnabledZeroWrappers() {
+    Harness harness;
+    writeFile(harness.configPath, renderEnabledState());
+    UndoRemovePamProviderManagedFlag undo = flagUndo(harness, false, {});
+    undo.previousAppliedEnabled = true;
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Prepared);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(result.ok && result.changedSystemState,
+            "prepared previous enabled zero-wrapper must release: " +
+                result.message);
+    require(readFile(harness.configPath) == kForeign, "foreign exact");
+}
+
 void testFlagPreparedPreviousAndTargetSides() {
     // Prepared false(0) -> false(0): previous and target wrapper sets are
     // both authorized; the physical state matches both candidates.
@@ -743,6 +837,10 @@ int main() {
         testDisplacedBlockOwnershipSurvives();
         testPlatformIdentityProof();
         testFlagAppliedFalseReleasesWrappers();
+        testFlagAppliedEnabledZeroWrappers();
+        testFlagAppliedDisabledZeroWrappers();
+        testFlagPreparedTargetEnabledZeroWrappers();
+        testFlagPreparedPreviousEnabledZeroWrappers();
         testFlagMissingAuthorizedWrapperSubset();
         testFlagUnknownWrapperConflict();
         testFlagWrongMutationWrapperConflict();

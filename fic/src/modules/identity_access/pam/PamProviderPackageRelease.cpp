@@ -47,27 +47,15 @@ bool samePath(const std::filesystem::path& left,
         std::filesystem::path(right).lexically_normal();
 }
 
-// Known managed provider primary paths of the CURRENT platform: every
-// ProviderConfigFile capability with an explicit config topology. This is
-// the only domain where the FIC managed block/wrapper serialization can
-// ever live.
+// Known managed provider primary paths of the CURRENT platform: the Step 7F
+// SSOT (pamProviderManagedPrimaryPaths, same eligibility as the typed
+// routing proof — configuration MODE, never configTopology.has_value(),
+// which is nullopt for production profiles whose provider topology lives in
+// provider.defaultConfigTopology). This is the only domain where the FIC
+// managed block/wrapper serialization can ever live.
 std::vector<std::filesystem::path> knownProviderPrimaries(
     const fic::platform::PamPlatformConfig& platform) {
-    std::vector<std::filesystem::path> paths;
-    for (const fic::platform::PamCapabilityConfig& capability :
-         platform.capabilities) {
-        if (!capability.configTopology.has_value() ||
-            capability.configurationMode !=
-                fic::platform::PamCapabilityConfigurationMode::
-                    ProviderConfigFile) {
-            continue;
-        }
-        if (std::find(paths.begin(), paths.end(), capability.configPath) ==
-            paths.end()) {
-            paths.push_back(capability.configPath);
-        }
-    }
-    return paths;
+    return pamProviderManagedPrimaryPaths(platform);
 }
 
 // The deterministic release order (Step 7F §70): configPath, policy,
@@ -175,6 +163,34 @@ bool PamProviderPackageRelease::preflight(Report& report, std::string& error) {
             if (!binding.ok) {
                 error = "preflight: record " + std::to_string(record.id) +
                     " ownership classification failed: " + binding.error;
+                return false;
+            }
+            // Stage A is a strict READ-ONLY proof that Stage B can release.
+            // A classification that completed is not automatically
+            // releasable: only the binding states the runtime rollback
+            // handles as release/no-op may proceed. Drift/conflict states
+            // fail the package preflight BEFORE any writer is stopped and
+            // without touching config/journal.
+            switch (binding.state) {
+            case PamProviderJournalBindingState::AppliedExact:
+            case PamProviderJournalBindingState::AppliedMissing:
+            case PamProviderJournalBindingState::PreparedFreshAbsent:
+            case PamProviderJournalBindingState::PreparedFreshTargetPresent:
+            case PamProviderJournalBindingState::
+                PreparedUpdatePreviousPresent:
+            case PamProviderJournalBindingState::
+                PreparedUpdateTargetPresent:
+                break;
+            case PamProviderJournalBindingState::AppliedDrifted:
+            case PamProviderJournalBindingState::PreparedConflict:
+            default:
+                error = "preflight: record " + std::to_string(record.id) +
+                    " is in a non-releasable binding state (fail closed; " +
+                    std::string(classifyStatus ==
+                                    PamProviderJournalMutationStatus::Prepared
+                                ? "PreparedConflict"
+                                : "AppliedDrifted") +
+                    "); package removal is blocked";
                 return false;
             }
             continue;
@@ -343,10 +359,26 @@ bool PamProviderPackageRelease::preflightPhysicalState(std::string& error) {
             return false;
         }
         if (read.state == PamProviderContainerState::Absent) {
+            if (record.status == MutationStatus::Applied) {
+                // Recoverable crash state (Step 7F follow-up): conditional
+                // delete was durable, the journal resolution did not happen,
+                // then the process died. The primary being absent with an
+                // APPLIED container provenance is exactly the state the
+                // runtime backend legally recovers (prove absence again →
+                // parent-dir durability barrier → resolve the record as
+                // RolledBack through resolveAlreadyReleasedState in Stage
+                // B). This is read-only here: Stage A just must not block
+                // the recovery path forever.
+                continue;
+            }
+            // Prepared/RollbackFailed + absent primary: an absent file alone
+            // proves nothing about ownership (no creation witness here).
+            // Strict ownership semantics are kept — fail closed.
             error = "preflight: container provenance record " +
                 std::to_string(record.id) +
                 " references an absent primary " + container->configPath +
-                " (externally deleted container; fail closed)";
+                " while the record is not Applied (ambiguous externally "
+                "deleted container; fail closed)";
             return false;
         }
         const PamProviderBlockParseResult parse =

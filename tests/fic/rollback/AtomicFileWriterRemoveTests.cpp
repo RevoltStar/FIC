@@ -112,6 +112,34 @@ void testInodeReplacementPreconditionFail() {
     require(std::filesystem::exists(path), "replacement untouched");
 }
 
+void testRaceWindowReplacementRefusedByFinalProof() {
+    TempDir temp;
+    const std::filesystem::path path = temp.directory / "primary.conf";
+    writeFile(path, kContent);
+    const AtomicTargetState snapshot = capture(path);
+    // Replace the pathname INSIDE the race window (between the initial
+    // proof and the final unlink proof) with a NEW inode carrying the same
+    // content, mode and owner. The hardening must re-prove the identity,
+    // refuse the delete and leave the replacement untouched.
+    const std::filesystem::path replacement = temp.directory / "new.conf";
+    AtomicFileWriter::setRemovePreunlinkHookForTests(
+        [&](const std::string& targetPath) {
+            require(targetPath == path.string(), "hook target path");
+            writeFile(replacement, kContent);
+            std::filesystem::rename(replacement, path);
+        });
+    AtomicRemoveResult result;
+    std::string error;
+    require(AtomicFileWriter::removeIfCurrentState(path.string(), snapshot,
+                                                   &error, &result),
+            "remove: " + error);
+    AtomicFileWriter::setRemovePreunlinkHookForTests(nullptr);
+    require(result.preconditionFailed && !result.removed,
+            "race-window replacement: precondition failed, nothing deleted");
+    require(std::filesystem::exists(path), "replacement untouched");
+    require(readFile(path) == kContent, "replacement content intact");
+}
+
 void testSymlinkAndSpecialRefused() {
     TempDir temp;
     {
@@ -187,6 +215,7 @@ int main() {
         testExactSnapshotDurableDelete();
         testContentChangedPreconditionFail();
         testInodeReplacementPreconditionFail();
+        testRaceWindowReplacementRefusedByFinalProof();
         testSymlinkAndSpecialRefused();
         testUnlinkSuccessFsyncFailureNotDurable();
         testAbsentDurabilityBarrier();

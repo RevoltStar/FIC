@@ -25,6 +25,12 @@ std::function<bool(const std::string&)>& testDirectoryFsyncHook() {
     return hook;
 }
 
+// Test-only seam storage (see setRemovePreunlinkHookForTests()).
+std::function<void(const std::string&)>& testRemovePreunlinkHook() {
+    static std::function<void(const std::string&)> hook;
+    return hook;
+}
+
 std::string errnoMessage() {
     return std::strerror(errno);
 }
@@ -451,6 +457,11 @@ void AtomicFileWriter::setDirectoryFsyncHookForTests(
     testDirectoryFsyncHook() = std::move(hook);
 }
 
+void AtomicFileWriter::setRemovePreunlinkHookForTests(
+    std::function<void(const std::string& targetPath)> hook) {
+    testRemovePreunlinkHook() = std::move(hook);
+}
+
 bool AtomicFileWriter::captureTargetState(const std::string& path,
                                           AtomicTargetState& state,
                                           std::string* errorMessage) {
@@ -580,7 +591,9 @@ bool AtomicFileWriter::removeIfCurrentState(
         return true;
     }
 
-    // Content re-proof through the same directory handle.
+    // Content re-proof through the same directory handle. The fd proves the
+    // object that is READ; every identity/metadata comparison below anchors
+    // that fd to the expected state.
     int fileFd =
         ::openat(dirFd, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fileFd < 0) {
@@ -589,6 +602,35 @@ bool AtomicFileWriter::removeIfCurrentState(
         setError(errorMessage, "could not open removal target " + path + ": " +
                                    std::strerror(openErrno));
         return false;
+    }
+    struct stat openedInfo {};
+    if (::fstat(fileFd, &openedInfo) != 0) {
+        const int statErrno = errno;
+        closeFd(fileFd);
+        closeFd(dirFd);
+        setError(errorMessage, "could not stat the opened removal target " +
+                                   path + ": " + std::strerror(statErrno));
+        return false;
+    }
+    if (!S_ISREG(openedInfo.st_mode) ||
+        openedInfo.st_dev != expected.identity.device ||
+        openedInfo.st_ino != expected.identity.inode ||
+        (openedInfo.st_mode & 07777) != expected.mode ||
+        openedInfo.st_uid != expected.owner ||
+        openedInfo.st_gid != expected.group) {
+        // The pathname was replaced between the initial proof and the open:
+        // the opened object is a replacement, never deleted through this
+        // primitive (Step 7F follow-up hardening).
+        closeFd(fileFd);
+        closeFd(dirFd);
+        setError(errorMessage,
+                 "removal target identity changed before the delete (the "
+                 "opened object does not match the captured state; a "
+                 "replacement is never deleted): " + path);
+        if (result != nullptr) {
+            result->preconditionFailed = true;
+        }
+        return true;
     }
     std::string content;
     char buffer[8192];
@@ -607,16 +649,68 @@ bool AtomicFileWriter::removeIfCurrentState(
         }
         content.append(buffer, static_cast<std::size_t>(count));
     }
-    closeFd(fileFd);
     if (readFailed) {
+        closeFd(fileFd);
         closeFd(dirFd);
         setError(errorMessage, "could not read removal target " + path);
         return false;
     }
     if (content != expected.content) {
+        closeFd(fileFd);
         closeFd(dirFd);
         setError(errorMessage,
                  "removal target content changed before the delete: " + path);
+        if (result != nullptr) {
+            result->preconditionFailed = true;
+        }
+        return true;
+    }
+
+    // Test-only seam: runs AFTER the initial proof and BEFORE the final
+    // unlink proof, simulating a concurrent pathname replacement inside the
+    // race window. Production code must never set the hook.
+    if (testRemovePreunlinkHook()) {
+        testRemovePreunlinkHook()(path);
+    }
+
+    // Final unlink proof (Step 7F follow-up hardening): re-stat the PATH and
+    // compare it against the PROVEN open fd AND the captured expectation.
+    // This narrows the pathname/inode race to the tiny window between this
+    // fstatat and the unlinkat — a plain unlinkat cannot be made
+    // inode-conditional on Linux, so a replacement landing exactly in that
+    // window is a documented residual race (fail safe: the subsequent unlink
+    // of a just-replaced path is only possible after the identity re-proof
+    // below passed; every detected replacement is reported, never deleted).
+    struct stat finalInfo {};
+    if (::fstatat(dirFd, name.c_str(), &finalInfo, AT_SYMLINK_NOFOLLOW) != 0) {
+        const int statErrno = errno;
+        closeFd(fileFd);
+        closeFd(dirFd);
+        if (statErrno == ENOENT) {
+            setError(errorMessage, "removal target does not exist: " + path);
+        } else {
+            setError(errorMessage, "could not re-stat removal target " + path +
+                                       ": " + std::strerror(statErrno));
+        }
+        if (result != nullptr) {
+            result->preconditionFailed = true;
+        }
+        return true;
+    }
+    if (S_ISLNK(finalInfo.st_mode) || !S_ISREG(finalInfo.st_mode) ||
+        finalInfo.st_dev != openedInfo.st_dev ||
+        finalInfo.st_ino != openedInfo.st_ino ||
+        (finalInfo.st_mode & 07777) != (openedInfo.st_mode & 07777) ||
+        finalInfo.st_uid != openedInfo.st_uid ||
+        finalInfo.st_gid != openedInfo.st_gid) {
+        // The pathname now denotes a different object (or a symlink): keep
+        // both the replacement and the proven fd object untouched.
+        closeFd(fileFd);
+        closeFd(dirFd);
+        setError(errorMessage,
+                 "removal target identity changed before the delete (same "
+                 "content under a different inode is still a replacement): " +
+                     path);
         if (result != nullptr) {
             result->preconditionFailed = true;
         }
@@ -627,11 +721,13 @@ bool AtomicFileWriter::removeIfCurrentState(
     // it relative to the same directory handle.
     if (::unlinkat(dirFd, name.c_str(), 0) != 0) {
         const int unlinkErrno = errno;
+        closeFd(fileFd);
         closeFd(dirFd);
         setError(errorMessage, "could not unlink " + path + ": " +
                                    std::strerror(unlinkErrno));
         return false;
     }
+    closeFd(fileFd);
     closeFd(dirFd);
     if (result != nullptr) {
         result->removed = true;

@@ -4,6 +4,7 @@
 
 #include "modules/dac/mode_and_owner/policies/DAC_systemcommandlock.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/identity_access/pam/PamProviderManagedBlock.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include "modules/net/ssh/SshConfigFile.h"
@@ -549,6 +550,123 @@ void testPamExecutorJournalLifecycle() {
                 RollbackStatus::Conflict &&
                 state->disableCalls == 0,
             "legacy PAM profile rollback must refuse native disable");
+}
+
+// --------------------------------------------------- PAM provider guard ----
+// Step 7F follow-up: the managed provider OPTION policy no-journal guard
+// (§58) must be REACHABLE through the production executor. The generic
+// capability inspector understands only enable_* names, so the provider
+// branch must run BEFORE it.
+
+fic::platform::PamCapabilityConfig providerGuardCapability(
+    const std::filesystem::path& configPath) {
+    using namespace fic::platform;
+    PamCapabilityConfig capability;
+    capability.capability = PamCapability::AuthenticationLockout;
+    capability.provider = PamProviderKind::PamFaillock;
+    capability.configurationMode =
+        PamCapabilityConfigurationMode::ProviderConfigFile;
+    capability.configPath = configPath;
+    PamProviderConfigTopology topology;
+    topology.primaryPath = configPath;
+    capability.configTopology = topology;
+    return capability;
+}
+
+void testManagedProviderNoRecordNoMarkerIsNothingToDo() {
+    TempTree tree("/tmp/fic-pam-provider-guard-XXXXXX");
+    JournalOverride overrideGuard(tree.root / "journal.json");
+    RollbackExecutorDeps deps;
+    deps.pamPlatform.capabilities = {
+        providerGuardCapability(tree.root / "faillock.conf")};
+    // No journal record, no physical FIC state: the disable proceeds.
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        {"IDENTITY_ACCESS", "PAM", "failed_authentication_attempts"}, "",
+        deps);
+    require(report.status == RollbackStatus::NothingToDo,
+            "managed provider option without record/marker must be a "
+            "no-op: " + report.message);
+    require(!std::filesystem::exists(tree.root / "faillock.conf"),
+            "the no-record path must never create the primary");
+}
+
+void testManagedProviderOrphanEntryIsConflict() {
+    TempTree tree("/tmp/fic-pam-provider-guard-XXXXXX");
+    JournalOverride overrideGuard(tree.root / "journal.json");
+    RollbackExecutorDeps deps;
+    const std::filesystem::path configPath = tree.root / "faillock.conf";
+    deps.pamPlatform.capabilities = {providerGuardCapability(configPath)};
+    // Orphan FIC entry WITHOUT journal provenance: adopted never, deleted
+    // never — the disable is refused and the file stays byte-identical.
+    fic::identity::pam::PamProviderEntrySpec spec;
+    spec.provider = "pam_faillock";
+    spec.policy = "failed_authentication_attempts";
+    spec.managedKey = "deny";
+    spec.value = "5";
+    spec.mutationId = 7;
+    fic::identity::pam::PamProviderMutationResult applied =
+        fic::identity::pam::setPamProviderManagedEntry(
+            "# admin\n", spec,
+            fic::identity::pam::PamProviderBlockPlacementRequest::End);
+    require(applied.ok, "orphan entry fixture: " + applied.error);
+    writeFile(configPath, applied.content);
+    const std::string before = readFile(configPath);
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        {"IDENTITY_ACCESS", "PAM", "failed_authentication_attempts"}, "",
+        deps);
+    require(report.status == RollbackStatus::Conflict,
+            "orphan managed entry must conflict: " + report.message);
+    require(readFile(configPath) == before,
+            "orphan marker must remain byte-identical");
+}
+
+void testManagedProviderOrphanWrapperIsConflict() {
+    TempTree tree("/tmp/fic-pam-provider-guard-XXXXXX");
+    JournalOverride overrideGuard(tree.root / "journal.json");
+    RollbackExecutorDeps deps;
+    const std::filesystem::path configPath = tree.root / "faillock.conf";
+    deps.pamPlatform.capabilities = {providerGuardCapability(configPath)};
+    // Orphan suppression wrapper WITHOUT journal provenance.
+    writeFile(configPath,
+              std::string("# admin\n") +
+                  fic::identity::pam::pamProviderSuppressionWrapperLine(
+                      "pam_faillock", "failed_authentication_enforce_for_root",
+                      "even_deny_root", 9, "s1", "even_deny_root") +
+                  "\n");
+    const std::string before = readFile(configPath);
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        {"IDENTITY_ACCESS", "PAM", "failed_authentication_enforce_for_root"},
+        "", deps);
+    require(report.status == RollbackStatus::Conflict,
+            "orphan suppression wrapper must conflict: " + report.message);
+    require(readFile(configPath) == before,
+            "orphan wrapper must remain byte-identical");
+}
+
+void testLegacyCapabilityPolicyStaysWithCapabilityInspector() {
+    TempTree tree("/tmp/fic-pam-provider-guard-XXXXXX");
+    JournalOverride overrideGuard(tree.root / "journal.json");
+    RollbackExecutorDeps deps;
+    using namespace fic::platform;
+    PamCapabilityConfig capability;
+    capability.capability = PamCapability::PasswordQuality;
+    capability.scope = PamScope::EffectivePasswordStack;
+    capability.topology = PamTopologyStrategyKind::StaticVerifyOnly;
+    capability.activationIdentifiers = {"fic-pwquality"};
+    deps.pamPlatform.capabilities = {capability};
+    deps.pamPlatform.scopes = {
+        {PamScope::EffectivePasswordStack, {"passwd"}}};
+    // enable_* policies keep the legacy capability inspector: a
+    // StaticVerifyOnly topology answers AlreadyReleased ("Static PAM
+    // topology is not FIC-owned") — a message the provider guard never
+    // produces, proving the dispatch stayed on the capability branch.
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        {"IDENTITY_ACCESS", "PAM", "enable_password_quality"}, "", deps);
+    require(report.status == RollbackStatus::NothingToDo &&
+                report.message.find("Static PAM topology") !=
+                    std::string::npos,
+            "enable_* policies must stay on the legacy capability "
+            "inspector: " + report.message);
 }
 
 void testNotEnrolledPolicyKeepsLegacyDisable() {
@@ -2712,6 +2830,14 @@ int main() {
          testContextualManagedProviderEnrollment},
         {"PAM ownership release", testPamOwnershipRelease},
         {"PAM executor journal lifecycle", testPamExecutorJournalLifecycle},
+        {"managed provider option without record/marker is nothing to do",
+         testManagedProviderNoRecordNoMarkerIsNothingToDo},
+        {"managed provider orphan entry is conflict",
+         testManagedProviderOrphanEntryIsConflict},
+        {"managed provider orphan wrapper is conflict",
+         testManagedProviderOrphanWrapperIsConflict},
+        {"legacy capability policy stays with capability inspector",
+         testLegacyCapabilityPolicyStaysWithCapabilityInspector},
         {"sssd executor rollback removes managed setting",
          testSssdExecutorRollbackRemovesManagedSetting},
         {"sssd executor drift conflict refuses disable",

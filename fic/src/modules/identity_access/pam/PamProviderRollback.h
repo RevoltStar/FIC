@@ -11,6 +11,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace fic::identity::pam {
 
@@ -116,6 +117,34 @@ std::optional<PamProviderRollbackRoute> pamProviderRollbackRouteForPayload(
 // receives a default-positive enrollment.
 const fic::platform::PamPolicyFeature* pamProviderManagedPolicyFeature(
     const std::string& policyName);
+
+// Inverse SSOT lookup: the canonical FIC policy identity name of a managed
+// PAM provider feature (same table as pamProviderManagedPolicyFeature), or
+// nullptr when the feature is not routed through the managed provider
+// configuration. Used by harnesses/drivers that must address journal and
+// physical provenance with the SAME policy identity production uses.
+const char* pamProviderManagedFeaturePolicyName(
+    fic::platform::PamPolicyFeature feature);
+
+// Single source of truth for the managed provider PRIMARY domain (Step 7F
+// follow-up): "this capability is a real managed ProviderConfigFile domain,
+// and this is its primary path". Eligibility comes from the configuration
+// MODE plus a non-empty config path — NEVER from
+// capability.configTopology.has_value(): production platform profiles carry
+// the provider topology in provider.defaultConfigTopology, so a nullopt
+// capability-level configTopology is the NORMAL routed shape (explicit
+// capability.configTopology is only an override, see
+// validatePamProviderConfigTopology). This is the same eligibility the
+// typed routing proof (routeForPayload) applies.
+std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
+    const fic::platform::PamCapabilityConfig& capability);
+
+// Deduplicated primary paths of every managed ProviderConfigFile capability
+// of the platform: the only domain where FIC managed block/wrapper
+// serialization can ever live. Package preflight/final-proof scan every
+// path returned here.
+std::vector<std::filesystem::path> pamProviderManagedPrimaryPaths(
+    const fic::platform::PamPlatformConfig& platform);
 
 // Public locked API (RollbackExecutor dispatch).
 PamProviderRollbackResult undoPamProviderManagedEntry(

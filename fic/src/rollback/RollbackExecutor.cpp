@@ -799,23 +799,15 @@ RollbackReport checkUnrecordedOwnership(
                      "изменениями этой политики";
 
     if (policy.moduleName == "IDENTITY_ACCESS" &&
-        policy.submoduleName == "PAM") {
-        const PamRollbackResult result = inspectUnrecordedPamCapability(
-            pamOptions(deps), policy.policyName);
-        report.status = result.state == PamRollbackState::AlreadyReleased
-            ? RollbackStatus::NothingToDo
-            : result.state == PamRollbackState::Conflict
-                ? RollbackStatus::Conflict : RollbackStatus::Failed;
-        report.message = result.message;
-        return report;
-    }
-
-    if (policy.moduleName == "IDENTITY_ACCESS" &&
         policy.submoduleName == "PAM" &&
         pamProviderManagedPolicyFeature(policy.policyName) != nullptr) {
         // Step 7F no-journal guard (§58): a managed provider policy without
         // an active journal record must not have orphan physical FIC state.
-        // Orphan markers are never adopted and never removed.
+        // Orphan markers are never adopted and never removed. This branch
+        // MUST come before the generic capability inspector: capability
+        // inspectors only understand enable_* policy names, so a managed
+        // provider option policy that falls into the generic branch would
+        // silently lose the no-record/orphan check.
         PamProviderRollbackOptions options;
         options.platform = deps.pamPlatform;
         const PamProviderRollbackResult result =
@@ -825,6 +817,18 @@ RollbackReport checkUnrecordedOwnership(
             ? RollbackStatus::NothingToDo
             : result.conflict ? RollbackStatus::Conflict
                               : RollbackStatus::Failed;
+        report.message = result.message;
+        return report;
+    }
+
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "PAM") {
+        const PamRollbackResult result = inspectUnrecordedPamCapability(
+            pamOptions(deps), policy.policyName);
+        report.status = result.state == PamRollbackState::AlreadyReleased
+            ? RollbackStatus::NothingToDo
+            : result.state == PamRollbackState::Conflict
+                ? RollbackStatus::Conflict : RollbackStatus::Failed;
         report.message = result.message;
         return report;
     }

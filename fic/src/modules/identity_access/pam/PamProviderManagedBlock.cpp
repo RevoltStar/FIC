@@ -1614,6 +1614,14 @@ PamProviderFlagReleaseResult releasePamProviderManagedFlag(
     // false→false refresh whose previous and target wrapper sets both
     // cover the existing ids): the union of the matched authorized sets is
     // then the release authority.
+    //
+    // Candidate MATCHING and the authorized union are two separate facts
+    // (Step 7F follow-up): a valid FlagEnabled state and a valid
+    // FlagDisabled state without foreign active occurrences carry an EMPTY
+    // authorized suppression set, yet the candidate fully matches the
+    // physical entry. `matchedCandidate` (not `!authorizedUnion.empty()`)
+    // therefore decides whether the physical state is owned at all.
+    bool matchedCandidate = false;
     std::vector<std::string> authorizedUnion;
     for (const PamProviderFlagOwnedStateCandidate& candidate :
          expectation.candidates) {
@@ -1638,28 +1646,24 @@ PamProviderFlagReleaseResult releasePamProviderManagedFlag(
         if (!subset) {
             continue;
         }
+        matchedCandidate = true;
         for (const std::string& id : candidate.authorizedSuppressionIds) {
             if (!containsId(authorizedUnion, id)) {
                 authorizedUnion.push_back(id);
             }
         }
     }
-    if (authorizedUnion.empty() && !physicalWrapperIds.empty()) {
+    if (!matchedCandidate) {
+        if (entry != nullptr) {
+            // An entry exists but no candidate matched its kind.
+            result.error = "FIC PAM entry kind не совпадает ни с одной "
+                           "авторизованной ownership state (fail closed)";
+            return result;
+        }
+        // Wrapper-only physical state: no candidate covered the wrapper ids.
         result.error = "FIC PAM wrapper ids не входят ни в одну "
                        "авторизованную journal ownership state (fail "
                        "closed)";
-        return result;
-    }
-    if (authorizedUnion.empty() && entry == nullptr) {
-        result.outcome = PamProviderFlagReleaseResult::Outcome::AlreadyAbsent;
-        result.content = content;
-        result.ok = true;
-        return result;
-    }
-    if (authorizedUnion.empty()) {
-        // An entry exists but no candidate matched its kind.
-        result.error = "FIC PAM entry kind не совпадает ни с одной "
-                       "авторизованной ownership state (fail closed)";
         return result;
     }
     for (const std::string& id : physicalWrapperIds) {

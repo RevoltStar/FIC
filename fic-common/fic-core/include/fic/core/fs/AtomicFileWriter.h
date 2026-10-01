@@ -108,6 +108,14 @@ public:
     static void setDirectoryFsyncHookForTests(
         std::function<bool(const std::string& targetPath)> hook);
 
+    // Test-only deterministic seam for removeIfCurrentState(): when set, the
+    // hook runs AFTER the initial identity/content proof and BEFORE the
+    // final unlink proof — a test may replace the pathname target in that
+    // window to prove the hardening refuses the delete. Production code
+    // must never set the hook.
+    static void setRemovePreunlinkHookForTests(
+        std::function<void(const std::string& targetPath)> hook);
+
     // Confirms a directory-entry change (including removal) for path.
     // Unlike ensureTargetDurable(), the target need not exist.
     static bool fsyncParentDirectoryForPath(

@@ -30,7 +30,19 @@ namespace fp = fic::platform;
 namespace {
 
 const char* kJournalPath = "/var/lib/fic/pam-provider-gate/mutation-journal.json";
-const char* kPolicyPrefix = "ficgate_";
+
+// Canonical FIC policy identity for a routed binding feature (same SSOT
+// table production uses). The driver never invents synthetic policy names:
+// journal records, physical markers and the orphan no-journal inspection
+// must address identical policy identities.
+std::string managedPolicyName(const fp::PamPolicyFeature& feature) {
+    const char* name = pamProviderManagedFeaturePolicyName(feature);
+    if (name == nullptr) {
+        std::cerr << "binding feature is not a managed provider policy\n";
+        std::exit(3);
+    }
+    return name;
+}
 
 std::string readFile(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -256,7 +268,7 @@ int cmdApply(Context& context, const std::string& providerName,
         return 3;
     }
     PamProviderManagedEntryRequest request;
-    request.policyName = kPolicyPrefix + option;
+    request.policyName = managedPolicyName(feature);
     request.provider = descriptor->kind;
     request.providerName = descriptor->name;
     request.managedKey = binding->option;
@@ -300,7 +312,7 @@ int cmdApplyFlag(Context& context, const std::string& providerName,
         return 3;
     }
     PamProviderManagedFlagRequest request;
-    request.policyName = kPolicyPrefix + option;
+    request.policyName = managedPolicyName(feature);
     request.provider = descriptor->kind;
     request.providerName = descriptor->name;
     request.managedKey = binding->option;
@@ -324,9 +336,29 @@ int cmdApplyFlag(Context& context, const std::string& providerName,
     return 0;
 }
 
+// Canonical policy identity of a routed option, resolved through the same
+// descriptor SSOT as apply (the disable path never fabricates identities).
+std::string policyNameForOption(const Context& context,
+                                const std::string& providerName,
+                                const std::string& option) {
+    const PamProviderDescriptor* descriptor = context.descriptor(providerName);
+    if (descriptor == nullptr) {
+        std::cerr << "unknown provider: " << providerName << "\n";
+        std::exit(3);
+    }
+    for (const PamProviderPolicyBinding& binding : descriptor->policies) {
+        if (binding.option == option) {
+            return managedPolicyName(binding.feature);
+        }
+    }
+    std::cerr << "unknown option: " << option << "\n";
+    std::exit(3);
+}
+
 int cmdDisableEntry(Context& context, const std::string& providerName,
                     const std::string& option) {
-    const std::string policyName = kPolicyPrefix + option;
+    const std::string policyName =
+        policyNameForOption(context, providerName, option);
     const fr::MutationRecord* record = activeRecord(context, policyName);
     if (record == nullptr) {
         const PamProviderRollbackResult orphan =
@@ -344,6 +376,22 @@ int cmdDisableEntry(Context& context, const std::string& providerName,
     const PamProviderRollbackResult result = undoPamProviderManagedEntry(
         context.rollbackOptions, context.journal, *record,
         std::get<fr::UndoRemovePamProviderManagedEntry>(record->undo.payload));
+    if (result.ok) {
+        // Production lifecycle contract (docs/rollback.md): the OUTER
+        // RollbackExecutor marks the policy record RolledBack after a
+        // successful undo. The driver reproduces this exactly, otherwise
+        // the record stays active and a later fresh apply of the same
+        // identity is refused as AppliedDrifted.
+        std::string statusError;
+        if (!context.journal.setStatus(record->id,
+                                       fr::MutationStatus::RolledBack,
+                                       statusError)) {
+            std::cerr << "disable " << option
+                      << ": journal RolledBack resolution failed: "
+                      << statusError << "\n";
+            return 1;
+        }
+    }
     std::cout << "disable " << option << ": ok=" << result.ok
               << (result.nothingToDo ? " nothingToDo" : "")
               << (result.conflict ? " conflict" : "") << " "
@@ -353,7 +401,8 @@ int cmdDisableEntry(Context& context, const std::string& providerName,
 
 int cmdDisableFlag(Context& context, const std::string& providerName,
                    const std::string& option) {
-    const std::string policyName = kPolicyPrefix + option;
+    const std::string policyName =
+        policyNameForOption(context, providerName, option);
     const fr::MutationRecord* record = activeRecord(context, policyName);
     if (record == nullptr) {
         const PamProviderRollbackResult orphan =
@@ -370,6 +419,22 @@ int cmdDisableFlag(Context& context, const std::string& providerName,
     const PamProviderRollbackResult result = undoPamProviderManagedFlag(
         context.rollbackOptions, context.journal, *record,
         std::get<fr::UndoRemovePamProviderManagedFlag>(record->undo.payload));
+    if (result.ok) {
+        // Production lifecycle contract (docs/rollback.md): the OUTER
+        // RollbackExecutor marks the policy record RolledBack after a
+        // successful undo. The driver reproduces this exactly, otherwise
+        // the record stays active and a later fresh apply of the same
+        // identity is refused as AppliedDrifted.
+        std::string statusError;
+        if (!context.journal.setStatus(record->id,
+                                       fr::MutationStatus::RolledBack,
+                                       statusError)) {
+            std::cerr << "disable-flag " << option
+                      << ": journal RolledBack resolution failed: "
+                      << statusError << "\n";
+            return 1;
+        }
+    }
     std::cout << "disable-flag " << option << ": ok=" << result.ok
               << (result.nothingToDo ? " nothingToDo" : "")
               << (result.conflict ? " conflict" : "") << " "

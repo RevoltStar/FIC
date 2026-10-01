@@ -69,7 +69,13 @@ struct Harness {
     MutationJournal journal{journalPath};
     PamPlatformConfig platform;
 
-    Harness() {
+    // capabilityTopology=false renders the PRODUCTION profile shape:
+    // ProviderConfigFile route with capability.configTopology = nullopt (the
+    // provider topology lives in provider.defaultConfigTopology). Fixtures
+    // for Step 7F follow-up regressions must use this shape — an explicit
+    // configTopology previously masked a production bug in
+    // knownProviderPrimaries.
+    explicit Harness(bool capabilityTopology = true) {
         std::string error;
         require(journal.initializeOrLoad(error), "journal init: " + error);
         PamCapabilityConfig capability;
@@ -77,9 +83,11 @@ struct Harness {
         capability.configurationMode =
             PamCapabilityConfigurationMode::ProviderConfigFile;
         capability.configPath = configPath;
-        fic::platform::PamProviderConfigTopology topology;
-        topology.primaryPath = configPath;
-        capability.configTopology = topology;
+        if (capabilityTopology) {
+            fic::platform::PamProviderConfigTopology topology;
+            topology.primaryPath = configPath;
+            capability.configTopology = topology;
+        }
         platform.capabilities.push_back(capability);
     }
 
@@ -254,15 +262,26 @@ void testPartialReleaseAndRetry() {
                                           error),
                 "apply second");
     }
+    // Step 7F follow-up: Stage B re-runs the full Stage A preflight, and a
+    // drifted record is a non-releasable binding state — the release is
+    // refused WHOLE (fail closed) BEFORE any record is released. Stage A and
+    // Stage B are strictly consistent: a state Stage A refuses can never
+    // produce a partial package-release mutation.
+    const std::string configBefore = readFile(harness.configPath);
+    const std::string journalBefore = readFile(harness.journalPath);
     PamProviderPackageRelease release(harness.journal, harness.platform,
                                       harness.options());
     PamProviderPackageRelease::Report report;
     std::string error;
     require(!release.run(PamProviderPackageRelease::Mode::Release, report,
-                         error),
-            "drifted second record blocks the removal");
-    require(!report.releasedRecords.empty(),
-            "partial release is monotonic (first record already released)");
+                          error),
+            "drifted second record blocks the whole release: " + error);
+    require(error.find("non-releasable") != std::string::npos,
+            "Stage B refusal must name the binding state: " + error);
+    require(readFile(harness.configPath) == configBefore,
+            "config untouched by the blocked release");
+    require(readFile(harness.journalPath) == journalBefore,
+            "journal untouched by the blocked release");
     // Retry after the external drift is fixed completes the release.
     {
         PamProviderEntrySpec spec;
@@ -587,6 +606,297 @@ void testUnrelatedRecordUntouchedAndJournalValid() {
             "resolved history is preserved");
 }
 
+// ---------------------------------------------------------------------------
+// Step 7F follow-up regressions.
+// ---------------------------------------------------------------------------
+
+// Production-like capability: ProviderConfigFile + configPath + configTopology
+// = nullopt. The primary MUST participate in the orphan scan, the orphan
+// wrapper scan and the final proof (the same SSOT list the release uses).
+fic::rollback::MutationId prepareReleaseContainerRecord(
+    Harness& harness, MutationStatus status) {
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM_CONTAINER", kProvider};
+    record.resource = harness.configPath.string();
+    record.undo = UndoAction{
+        fic::rollback::MutationBackend::Pam,
+        UndoOwnPamProviderContainer{kProvider, harness.configPath.string()}};
+    record.status = status;
+    std::string error;
+    fic::rollback::MutationId id = 0;
+    require(harness.journal.prepareMutation(record, id, error),
+            "container prepare: " + error);
+    if (status != MutationStatus::Prepared) {
+        require(harness.journal.setStatus(id, status, error),
+                "container status: " + error);
+    }
+    return id;
+}
+
+// Crash between the durable conditional delete and the journal resolution:
+// an APPLIED container provenance with an absent primary is recoverable.
+// Stage A must pass read-only; Stage B completes the lifecycle.
+void testCrashAfterContainerDeleteRecovers() {
+    Harness harness;
+    const fic::rollback::MutationId containerId =
+        prepareReleaseContainerRecord(harness, MutationStatus::Applied);
+    // The FIC-owned container was durably deleted; the journal resolution
+    // never happened (simulated crash); then the process restarted.
+    require(!std::filesystem::exists(harness.configPath),
+            "fixture: primary absent after the crash");
+
+    // Stage A: strictly read-only and must recognize the recoverable state.
+    PamProviderPackageRelease stageA(harness.journal, harness.platform,
+                                     harness.options());
+    PamProviderPackageRelease::Report stageAReport;
+    std::string error;
+    require(stageA.run(PamProviderPackageRelease::Mode::Preflight,
+                       stageAReport, error),
+            "Stage A must accept the crash-after-delete state: " + error);
+    require(!std::filesystem::exists(harness.configPath),
+            "Stage A stays read-only");
+
+    // Stage B: existing runtime recovery (durable absence proof + resolve
+    // the container provenance as RolledBack).
+    PamProviderPackageRelease stageB(harness.journal, harness.platform,
+                                     harness.options());
+    PamProviderPackageRelease::Report report;
+    require(stageB.run(PamProviderPackageRelease::Mode::Release, report,
+                       error),
+            "Stage B must complete the crash recovery: " + error);
+    require(report.containersDeleted.size() == 1,
+            "the container record resolved as deleted");
+    bool rolledBack = false;
+    for (const MutationRecord& record : harness.journal.records()) {
+        if (record.id == containerId) {
+            rolledBack = record.status == MutationStatus::RolledBack;
+        }
+    }
+    require(rolledBack, "container provenance must be RolledBack");
+    require(!std::filesystem::exists(harness.configPath),
+            "file remains absent");
+
+    // Retry idempotence.
+    PamProviderPackageRelease retry(harness.journal, harness.platform,
+                                    harness.options());
+    PamProviderPackageRelease::Report retryReport;
+    require(retry.run(PamProviderPackageRelease::Mode::Release, retryReport,
+                      error),
+            "retry is idempotent: " + error);
+    require(!std::filesystem::exists(harness.configPath),
+            "still absent after the retry");
+}
+
+// A PREPARED container provenance with an absent primary proves nothing
+// (no creation witness): Stage A keeps strict ownership semantics.
+void testPreparedContainerAbsentFailsClosed() {
+    Harness harness;
+    prepareReleaseContainerRecord(harness, MutationStatus::Prepared);
+    require(!std::filesystem::exists(harness.configPath),
+            "fixture: primary absent");
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "ambiguous Prepared absent container must fail closed: " +
+                error);
+    require(error.find("not Applied") != std::string::npos,
+            "rejection must name the non-Applied provenance: " + error);
+}
+
+void testProductionLikeTopologyParticipatesInScans() {
+    // Orphan FIC entry in the primary must fail the preflight (orphan scan
+    // really reads the primary even without capability.configTopology).
+    {
+        Harness harness(/*capabilityTopology=*/false);
+        renderEntryState(harness.configPath, kProvider, kPolicy, "deny", "8",
+                         1, kForeign); // no journal provenance
+        PamProviderPackageRelease release(harness.journal, harness.platform,
+                                          harness.options());
+        PamProviderPackageRelease::Report report;
+        std::string error;
+        require(!release.run(PamProviderPackageRelease::Mode::Preflight,
+                             report, error),
+                "production-like topology: orphan entry must be detected "
+                "by the package preflight: " + error);
+        require(error.find("orphan") != std::string::npos,
+                "detection must come from the orphan scan: " + error);
+    }
+    // Orphan suppression wrapper likewise.
+    {
+        Harness harness(/*capabilityTopology=*/false);
+        writeFile(harness.configPath,
+                  std::string(kForeign) +
+                      pamProviderSuppressionWrapperLine(
+                          kProvider, "failed_authentication_enforce_for_root",
+                          "even_deny_root", 5, "s1", "even_deny_root") +
+                      "\n");
+        PamProviderPackageRelease release(harness.journal, harness.platform,
+                                          harness.options());
+        PamProviderPackageRelease::Report report;
+        std::string error;
+        require(!release.run(PamProviderPackageRelease::Mode::Preflight,
+                             report, error),
+                "production-like topology: orphan wrapper must be detected "
+                "by the package preflight: " + error);
+    }
+    // A fully journaled release through the production-like profile: the
+    // final proof reads the same primary (no FIC serialization may remain
+    // and the release must succeed end-to-end).
+    {
+        Harness harness(/*capabilityTopology=*/false);
+        const fic::rollback::MutationId id = prepareEntryRecordId(
+            harness, kPolicy, kProvider, "deny", "8",
+            harness.configPath.string());
+        renderEntryState(harness.configPath, kProvider, kPolicy, "deny", "8",
+                         id, kForeign);
+        PamProviderPackageRelease release(harness.journal, harness.platform,
+                                          harness.options());
+        PamProviderPackageRelease::Report report;
+        std::string error;
+        require(release.run(PamProviderPackageRelease::Mode::Release, report,
+                            error),
+                "production-like topology release: " + error);
+        require(readFile(harness.configPath) == kForeign,
+                "final proof really validated the primary: foreign-only");
+    }
+}
+
+// Stage A must be a strict releasability proof: drifted states FAIL before
+// any writer is stopped; no config/journal mutation happens.
+void testStageARejectsAppliedDrifted() {
+    Harness harness;
+    applyEntryFixture(harness, 1, "8");
+    prepareEntryRecord(harness, 1, "8");
+    // Physical drift: the managed value was externally rewritten.
+    {
+        PamProviderEntrySpec spec;
+        spec.provider = kProvider;
+        spec.policy = kPolicy;
+        spec.managedKey = "deny";
+        spec.value = "99";
+        spec.mutationId = 1;
+        PamProviderMutationResult result = setPamProviderManagedEntry(
+            readFile(harness.configPath), spec,
+            PamProviderBlockPlacementRequest::End);
+        require(result.ok, "drift fixture: " + result.error);
+        writeFile(harness.configPath, result.content);
+    }
+    const std::string configBefore = readFile(harness.configPath);
+    const std::string journalBefore = readFile(harness.journalPath);
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "Stage A must reject AppliedDrifted: " + error);
+    require(error.find("non-releasable") != std::string::npos,
+            "rejection must name the binding state: " + error);
+    require(readFile(harness.configPath) == configBefore,
+            "config untouched by the failed Stage A");
+    require(readFile(harness.journalPath) == journalBefore,
+            "journal untouched by the failed Stage A");
+}
+
+void testStageARejectsPreparedConflict() {
+    Harness harness;
+    // Legit journal path to a Prepared UPDATE transition: fresh Applied
+    // record (deny=5), then a refresh carrying that body as previous and
+    // deny=8 as target. The refresh persists as Prepared.
+    applyEntryFixture(harness, 1, "5");
+    prepareEntryRecord(harness, 1, "5");
+    {
+        UndoRemovePamProviderManagedEntry undo;
+        undo.policyName = kPolicy;
+        undo.providerName = kProvider;
+        undo.configPath = harness.configPath.string();
+        undo.managedKey = "deny";
+        undo.appliedBody = pamProviderEntryBody("deny", "8");
+        undo.previousAppliedBody = pamProviderEntryBody("deny", "5");
+        undo.placement = fic::rollback::PamProviderBlockPlacementContract::End;
+        MutationRecord record;
+        record.policy = {"IDENTITY_ACCESS", "PAM", kPolicy};
+        record.resource = undo.configPath;
+        record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+        record.status = MutationStatus::Prepared;
+        std::string error;
+        fic::rollback::MutationId assigned = 0;
+        require(harness.journal.prepareMutation(record, assigned, error),
+                "prepare update: " + error);
+    }
+    // Physical drift: the FIC-owned entry (same mutation id) carries a body
+    // that is NEITHER the target nor the previous body -> PreparedConflict.
+    std::string config = readFile(harness.configPath);
+    const std::string previousBody = pamProviderEntryBody("deny", "5");
+    const std::string driftedBody = pamProviderEntryBody("deny", "77");
+    const std::size_t pos = config.find(previousBody);
+    require(pos != std::string::npos, "previous body present in fixture");
+    config.replace(pos, previousBody.size(), driftedBody);
+    writeFile(harness.configPath, config);
+    const std::string configBefore = readFile(harness.configPath);
+    const std::string journalBefore = readFile(harness.journalPath);
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "Stage A must reject PreparedConflict: " + error);
+    require(error.find("non-releasable") != std::string::npos,
+            "rejection must name the binding state: " + error);
+    require(readFile(harness.configPath) == configBefore,
+            "config untouched by the failed Stage A");
+    require(readFile(harness.journalPath) == journalBefore,
+            "journal untouched by the failed Stage A");
+}
+
+void testStageAPassesAppliedMissingAndPreparedFreshAbsent() {
+    // Applied + physical entry externally released: releasable no-op.
+    {
+        Harness harness;
+        prepareEntryRecord(harness, 1, "8");
+        writeFile(harness.configPath, kForeign);
+        PamProviderPackageRelease release(harness.journal, harness.platform,
+                                          harness.options());
+        PamProviderPackageRelease::Report report;
+        std::string error;
+        require(release.run(PamProviderPackageRelease::Mode::Preflight,
+                            report, error),
+                "Stage A must accept AppliedMissing: " + error);
+    }
+    // Prepared fresh + physical entry absent: releasable.
+    {
+        Harness harness;
+        UndoRemovePamProviderManagedEntry undo;
+        undo.policyName = kPolicy;
+        undo.providerName = kProvider;
+        undo.configPath = harness.configPath.string();
+        undo.managedKey = "deny";
+        undo.appliedBody = pamProviderEntryBody("deny", "8");
+        undo.placement =
+            fic::rollback::PamProviderBlockPlacementContract::End;
+        MutationRecord record;
+        record.policy = {"IDENTITY_ACCESS", "PAM", kPolicy};
+        record.resource = undo.configPath;
+        record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+        record.status = MutationStatus::Prepared;
+        std::string error;
+        fic::rollback::MutationId assigned = 0;
+        require(harness.journal.prepareMutation(record, assigned, error),
+                "prepare fresh: " + error);
+        writeFile(harness.configPath, kForeign);
+        PamProviderPackageRelease release(harness.journal, harness.platform,
+                                          harness.options());
+        PamProviderPackageRelease::Report report;
+        require(release.run(PamProviderPackageRelease::Mode::Preflight,
+                            report, error),
+                "Stage A must accept PreparedFreshAbsent: " + error);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -602,6 +912,12 @@ int main() {
         testPreExistingPrimaryRetained();
         testMultipleProviderFiles();
         testUnrelatedRecordUntouchedAndJournalValid();
+        testProductionLikeTopologyParticipatesInScans();
+        testStageARejectsAppliedDrifted();
+        testStageARejectsPreparedConflict();
+        testStageAPassesAppliedMissingAndPreparedFreshAbsent();
+        testCrashAfterContainerDeleteRecovers();
+        testPreparedContainerAbsentFailsClosed();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderPackageReleaseTests failed: " << error.what()
                   << '\n';
