@@ -1,6 +1,7 @@
 #include "features/policies/widgets/PolicyEditorWidget.h"
 
 #include <map>
+#include <memory>
 #include <stdexcept>
 
 #include <QCheckBox>
@@ -171,8 +172,10 @@ PolicyEditorWidget::PolicyEditorWidget(
         QCheckBox* enabled = nullptr;
         QWidget* value = nullptr;
         EditorType type = EditorType::Unknown;
+        bool originalEnabled = false;
+        std::string originalValue;
     };
-    std::vector<Row> controls;
+    auto controls = std::make_shared<std::vector<Row>>();
     std::map<std::string, std::vector<PolicyDescriptor>> bySubmodule;
     for (const PolicyDescriptor& policy : policies) {
         bySubmodule[policy.submoduleName].push_back(policy);
@@ -275,7 +278,8 @@ PolicyEditorWidget::PolicyEditorWidget(
             grid->addWidget(
                 createTableCell(descriptionWidget, content), rowNumber, 3);
 
-            controls.push_back({policy, enabled, valueWidget, type});
+            controls->push_back({policy, enabled, valueWidget, type,
+                                 enabled->isChecked(), initialValue});
             ++rowNumber;
         }
     }
@@ -307,7 +311,7 @@ PolicyEditorWidget::PolicyEditorWidget(
     const auto collectChanges = [controls](
         std::vector<PolicyChange>& changes,
         QStringList& validationErrors) {
-        for (const Row& row : controls) {
+        for (const Row& row : *controls) {
             std::string value;
             switch (row.type) {
             case EditorType::Label:
@@ -335,15 +339,61 @@ PolicyEditorWidget::PolicyEditorWidget(
             case EditorType::Unknown:
                 continue;
             }
-            std::string validationError;
-            if (!validatePolicyDescriptorValue(
-                    row.policy, value, validationError)) {
-                validationErrors << QString::fromStdString(validationError);
+            const bool enabledChanged =
+                row.enabled->isChecked() != row.originalEnabled;
+            const bool valueChanged =
+                row.type != EditorType::Label && value != row.originalValue;
+            if (!enabledChanged && !valueChanged) {
                 continue;
+            }
+            if (valueChanged) {
+                std::string validationError;
+                if (!validatePolicyDescriptorValue(
+                        row.policy, value, validationError)) {
+                    validationErrors << QString::fromStdString(validationError);
+                    continue;
+                }
             }
             changes.push_back({row.policy.policyName, value,
                                row.enabled->isChecked(),
-                               row.type != EditorType::Label});
+                               row.type != EditorType::Label,
+                               enabledChanged, valueChanged});
+        }
+    };
+    const auto acceptCurrentState = [controls]() {
+        for (Row& row : *controls) {
+            row.originalEnabled = row.enabled->isChecked();
+            switch (row.type) {
+            case EditorType::Label:
+                row.originalValue = row.policy.valueValid
+                    ? row.policy.value : row.policy.defaultValue;
+                break;
+            case EditorType::SpinBox:
+                row.originalValue = std::to_string(
+                    qobject_cast<QSpinBox*>(row.value)->value());
+                break;
+            case EditorType::LineEdit:
+                row.originalValue = qobject_cast<QLineEdit*>(row.value)
+                    ->text().toStdString();
+                break;
+            case EditorType::TextEdit: {
+                QString text = qobject_cast<QTextEdit*>(row.value)->toPlainText();
+                const QString delimiter =
+                    QString::fromStdString(row.policy.textDelimiter);
+                if (!delimiter.isEmpty() && delimiter != "\n") {
+                    text.replace("\r\n", "\n");
+                    text.replace("\n", delimiter);
+                }
+                row.originalValue = text.toStdString();
+                break;
+            }
+            case EditorType::ComboBox:
+                row.originalValue = qobject_cast<QComboBox*>(row.value)
+                    ->currentText().toStdString();
+                break;
+            case EditorType::Unknown:
+                break;
+            }
         }
     };
     const auto validateAndCollect = [this, collectChanges](
@@ -358,7 +408,7 @@ PolicyEditorWidget::PolicyEditorWidget(
     };
 
     connect(saveButton, &QPushButton::clicked, this,
-            [this, moduleName, validateAndCollect]() {
+            [this, moduleName, validateAndCollect, acceptCurrentState]() {
         std::vector<PolicyChange> changes;
         if (!validateAndCollect(changes)) {
             return;
@@ -369,6 +419,7 @@ PolicyEditorWidget::PolicyEditorWidget(
             QMessageBox::warning(this, "Save errors", error);
             return;
         }
+        acceptCurrentState();
         QMessageBox::information(
             this,
             QLocalizationManager::getLang("[save_button]"),
@@ -376,7 +427,7 @@ PolicyEditorWidget::PolicyEditorWidget(
     });
 
     connect(saveApplyButton, &QPushButton::clicked, this,
-            [this, moduleName, validateAndCollect]() {
+            [this, moduleName, validateAndCollect, acceptCurrentState]() {
         std::vector<PolicyChange> changes;
         if (!validateAndCollect(changes)) {
             return;
@@ -384,10 +435,15 @@ PolicyEditorWidget::PolicyEditorWidget(
 
         const PolicyService::ApplyResult result =
             PolicyService().saveAndApplyChanges(moduleName, changes);
-        if (result.status == PolicyService::ApplyStatus::ServiceError) {
+        if (result.status == PolicyService::ApplyStatus::SaveFailed) {
+            QMessageBox::warning(this, "Save errors", result.error);
+            return;
+        }
+        if (result.status == PolicyService::ApplyStatus::ApplyFailed) {
             QMessageBox::warning(this, "Apply errors", result.error);
             return;
         }
+        acceptCurrentState();
         const nlohmann::json& response = result.response;
         QMessageBox box(this);
         const bool ok = response.value("ok", false);

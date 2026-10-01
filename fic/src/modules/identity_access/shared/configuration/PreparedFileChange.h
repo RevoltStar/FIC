@@ -22,6 +22,13 @@ struct SecureConfigurationFileOptions {
     std::size_t maximumBytes = 4U * 1024U * 1024U;
 };
 
+struct SecureConfigurationDirectoryOptions {
+    std::optional<uid_t> expectedOwner = 0;
+    std::optional<gid_t> expectedGroup;
+    std::optional<mode_t> exactMode;
+    mode_t forbiddenMode = 0022;
+};
+
 struct ConfigurationFileSnapshot {
     std::string content;
     uid_t owner = 0;
@@ -42,9 +49,20 @@ bool readSecureConfigurationFile(
     ConfigurationFileSnapshot& snapshot,
     std::string& error);
 
+bool readSecureConfigurationFile(
+    const SecureConfigurationFileOptions& options,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
+    ConfigurationFileSnapshot& snapshot,
+    std::string& error);
+
 bool verifySecureConfigurationDirectory(
     const std::filesystem::path& path,
     const SecureConfigurationFileOptions& fileOptions,
+    std::string& error);
+
+bool verifySecureConfigurationDirectory(
+    const std::filesystem::path& path,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
     std::string& error);
 
 std::unique_ptr<PreparedConfigurationChange> makePreparedFileChange(

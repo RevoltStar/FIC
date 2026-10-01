@@ -171,7 +171,7 @@ bool listSnippetFiles(const SssdConfigurationOptions& options,
             return false;
         }
         if (!verifySecureConfigurationDirectory(
-                directory, options.mainFile, error)) {
+                directory, options.snippetDirectory, error)) {
             return false;
         }
         std::vector<std::filesystem::path> directoryFiles;
@@ -197,10 +197,12 @@ bool listSnippetFiles(const SssdConfigurationOptions& options,
 }
 
 bool readAndParse(const SecureConfigurationFileOptions& options,
+                  const SecureConfigurationDirectoryOptions& directoryOptions,
                   ParsedConfiguration& parsed,
                   std::string& error) {
     ConfigurationFileSnapshot snapshot;
-    if (!readSecureConfigurationFile(options, snapshot, error)) {
+    if (!readSecureConfigurationFile(
+            options, directoryOptions, snapshot, error)) {
         return false;
     }
     if (!parseConfiguration(snapshot.content, parsed, error)) {
@@ -241,7 +243,10 @@ bool snippetsOverride(const SssdConfigurationOptions& options,
     }
     for (const auto& path : snippets) {
         ParsedConfiguration parsed;
-        if (!readAndParse(optionsForPath(options.mainFile, path), parsed, error)) {
+        if (!readAndParse(optionsForPath(options.mainFile, path),
+                          options.snippetDirectory,
+                          parsed,
+                          error)) {
             return false;
         }
         for (const auto& assignment : parsed.assignments) {
@@ -359,12 +364,14 @@ public:
 
     ManagedSnippetChange(std::string identifier,
                          SecureConfigurationFileOptions options,
+                         SecureConfigurationDirectoryOptions directoryOptions,
                          Mode mode,
                          ConfigurationFileSnapshot original,
                          std::string candidate,
                          ConfigurationContentVerifier verifier)
         : identifier_(std::move(identifier)),
           options_(std::move(options)),
+          directoryOptions_(std::move(directoryOptions)),
           mode_(mode),
           original_(std::move(original)),
           candidate_(std::move(candidate)),
@@ -397,6 +404,7 @@ public:
 private:
     std::string identifier_;
     SecureConfigurationFileOptions options_;
+    SecureConfigurationDirectoryOptions directoryOptions_;
     Mode mode_;
     ConfigurationFileSnapshot original_;
     std::string candidate_;
@@ -412,6 +420,14 @@ SssdConfigurationOptions SssdConfigurationOptions::production() {
     options.mainFile.expectedGroup = 0;
     options.mainFile.exactMode = 0600;
     options.mainFile.forbiddenMode = 0022;
+    options.mainDirectory.expectedOwner = 0;
+    options.mainDirectory.expectedGroup = std::nullopt;
+    options.mainDirectory.exactMode = std::nullopt;
+    options.mainDirectory.forbiddenMode = 0022;
+    options.snippetDirectory.expectedOwner = 0;
+    options.snippetDirectory.expectedGroup = std::nullopt;
+    options.snippetDirectory.exactMode = std::nullopt;
+    options.snippetDirectory.forbiddenMode = 0022;
     options.snippetDirectories = {"/etc/sssd/conf.d"};
     options.managedSnippetFile = "/etc/sssd/conf.d/zzzz-fic.conf";
     return options;
@@ -571,11 +587,12 @@ enum class CompensationReadState {
 
 CompensationReadState classifyForCompensation(
     const SecureConfigurationFileOptions& options,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
     ConfigurationFileSnapshot& snapshot,
     std::string& error) {
     std::string dirError;
     if (!verifySecureConfigurationDirectory(
-            options.path.parent_path(), options, dirError)) {
+            options.path.parent_path(), directoryOptions, dirError)) {
         error = dirError;
         return CompensationReadState::OtherError;
     }
@@ -595,7 +612,8 @@ CompensationReadState classifyForCompensation(
         return CompensationReadState::Unreadable;
     }
     std::string readError;
-    if (!readSecureConfigurationFile(options, snapshot, readError)) {
+    if (!readSecureConfigurationFile(
+            options, directoryOptions, snapshot, readError)) {
         // A proven ENOENT inside the secure read (the file vanished between
         // lstat and open) is still a proven Missing; anything else is
         // unreadable and must never be overwritten.
@@ -614,11 +632,12 @@ CompensationReadState classifyForCompensation(
 // proof and the create fails closed instead of being replaced.
 bool exclusiveCreateOriginal(
     const SecureConfigurationFileOptions& options,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
     const std::string& content,
     std::string& error) {
     std::string dirError;
     if (!verifySecureConfigurationDirectory(
-            options.path.parent_path(), options, dirError)) {
+            options.path.parent_path(), directoryOptions, dirError)) {
         error = dirError;
         return false;
     }
@@ -696,11 +715,16 @@ bool exclusiveCreateOriginal(
 // proven state was already replaced.
 ConfigurationStepResult removeManagedSnippetFile(
     const SecureConfigurationFileOptions& options,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
     const ConfigurationFileSnapshot& expected) {
     ConfigurationFileSnapshot proven;
     dev_t device = 0;
     ino_t inode = 0;
     std::string error;
+    if (!verifySecureConfigurationDirectory(
+            options.path.parent_path(), directoryOptions, error)) {
+        return ConfigurationStepResult::failure(std::move(error));
+    }
     if (!captureRemovalProof(options, proven, device, inode, error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
@@ -808,11 +832,12 @@ ConfigurationStepResult ManagedSnippetChange::commitPersistent() {
         return ConfigurationStepResult::success(true);
     }
     if (mode_ == Mode::RemoveFile) {
-        return removeManagedSnippetFile(options_, original_);
+        return removeManagedSnippetFile(options_, directoryOptions_, original_);
     }
     ConfigurationFileSnapshot current;
     std::string error;
-    if (!readSecureConfigurationFile(options_, current, error)) {
+    if (!readSecureConfigurationFile(
+            options_, directoryOptions_, current, error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
     if (!snapshotsEqualSnapshots(current, original_)) {
@@ -850,7 +875,8 @@ ConfigurationStepResult ManagedSnippetChange::verifyPersistent() {
     }
     ConfigurationFileSnapshot current;
     std::string error;
-    if (!readSecureConfigurationFile(options_, current, error)) {
+    if (!readSecureConfigurationFile(
+            options_, directoryOptions_, current, error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
     ConfigurationFileSnapshot expected = mode_ == Mode::CreateFile
@@ -888,13 +914,13 @@ ConfigurationStepResult ManagedSnippetChange::rollbackPersistent() {
         // unreadable, unsafe or changed file must never be overwritten —
         // the provenance stays active and the recovery is retried later.
         const CompensationReadState state = classifyForCompensation(
-            options_, current, error);
+            options_, directoryOptions_, current, error);
         if (state == CompensationReadState::Missing) {
             // Exclusive create / no-replace semantics: a foreign object
             // appearing between the Missing proof and the create fails
             // closed instead of being replaced.
             if (!exclusiveCreateOriginal(
-                    options_, original_.content, error)) {
+                    options_, directoryOptions_, original_.content, error)) {
                 return ConfigurationStepResult::failure(std::move(error));
             }
             return ConfigurationStepResult::success(true);
@@ -931,14 +957,16 @@ ConfigurationStepResult ManagedSnippetChange::rollbackPersistent() {
         // Unsafe / Unreadable / OtherError: fail closed, write nothing.
         return ConfigurationStepResult::failure(error);
     }
-    if (!readSecureConfigurationFile(options_, current, error)) {
+    if (!readSecureConfigurationFile(
+            options_, directoryOptions_, current, error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
     if (mode_ == Mode::CreateFile) {
         if (current.content == candidate_) {
             // Compensation for a FIC-created file: CAS-verified unlink
             // back to the legitimately missing state.
-            return removeManagedSnippetFile(options_, current);
+            return removeManagedSnippetFile(
+                options_, directoryOptions_, current);
         }
         return ConfigurationStepResult::failure(
             "refusing to remove an externally modified managed SSSD "
@@ -987,7 +1015,8 @@ ConfigurationStepResult ManagedSnippetChange::verifyRollback() {
     }
     ConfigurationFileSnapshot current;
     std::string error;
-    if (!readSecureConfigurationFile(options_, current, error)) {
+    if (!readSecureConfigurationFile(
+            options_, directoryOptions_, current, error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
     if (!snapshotsEqualSnapshots(current, original_)) {
@@ -1028,7 +1057,7 @@ bool hasManagedSnippetStagingArtifacts(
     found = false;
     const auto directory = options.managedSnippetFile.parent_path();
     if (!verifySecureConfigurationDirectory(
-            directory, options.mainFile, error)) {
+            directory, options.snippetDirectory, error)) {
         return false;
     }
     const int descriptor = ::open(
@@ -1084,7 +1113,8 @@ bool SssdConfiguration::tryGetEffectiveValue(
         return false;
     }
     ConfigurationFileSnapshot mainSnapshot;
-    if (!readSecureConfigurationFile(options_.mainFile, mainSnapshot, error)) {
+    if (!readSecureConfigurationFile(
+            options_.mainFile, options_.mainDirectory, mainSnapshot, error)) {
         return false;
     }
     ParsedConfiguration mainParsed;
@@ -1104,7 +1134,10 @@ bool SssdConfiguration::tryGetEffectiveValue(
     }
     for (const auto& path : snippets) {
         ParsedConfiguration parsed;
-        if (!readAndParse(optionsForPath(options_.mainFile, path), parsed, error)) {
+        if (!readAndParse(optionsForPath(options_.mainFile, path),
+                          options_.snippetDirectory,
+                          parsed,
+                          error)) {
             return false;
         }
         for (const auto& assignment : parsed.assignments) {
@@ -1130,7 +1163,8 @@ ConfigurationPreparationResult SssdConfiguration::prepareSetValues(
         return {nullptr, std::move(error)};
     }
     ConfigurationFileSnapshot original;
-    if (!readSecureConfigurationFile(options_.mainFile, original, error)) {
+    if (!readSecureConfigurationFile(
+            options_.mainFile, options_.mainDirectory, original, error)) {
         return {nullptr, std::move(error)};
     }
     ParsedConfiguration parsed;
@@ -1246,6 +1280,7 @@ SecureConfigurationFileOptions managedSnippetOptions(
 std::unique_ptr<PreparedConfigurationChange> makeManagedSnippetChange(
     std::string identifier,
     SecureConfigurationFileOptions options,
+    SecureConfigurationDirectoryOptions directoryOptions,
     ManagedSnippetChange::Mode mode,
     ConfigurationFileSnapshot original,
     std::string candidate,
@@ -1253,6 +1288,7 @@ std::unique_ptr<PreparedConfigurationChange> makeManagedSnippetChange(
     return std::make_unique<ManagedSnippetChange>(
         std::move(identifier),
         std::move(options),
+        std::move(directoryOptions),
         mode,
         std::move(original),
         std::move(candidate),
@@ -1279,7 +1315,7 @@ bool SssdConfiguration::inspectManagedSnippet(
     // creates directories implicitly.
     if (!verifySecureConfigurationDirectory(
             options_.managedSnippetFile.parent_path(),
-            options_.mainFile,
+            options_.snippetDirectory,
             error)) {
         error = "SSSD managed drop-in directory is unsafe: " + error;
         return false;
@@ -1287,7 +1323,8 @@ bool SssdConfiguration::inspectManagedSnippet(
     // Effective semantics are undefined when the foreign main configuration
     // cannot be read safely and parsed.
     ConfigurationFileSnapshot mainSnapshot;
-    if (!readSecureConfigurationFile(options_.mainFile, mainSnapshot, error)) {
+    if (!readSecureConfigurationFile(
+            options_.mainFile, options_.mainDirectory, mainSnapshot, error)) {
         return false;
     }
     ParsedConfiguration mainParsed;
@@ -1320,6 +1357,7 @@ bool SssdConfiguration::inspectManagedSnippet(
         ParsedConfiguration parsed;
         if (!readAndParse(
                 optionsForPath(options_.mainFile, snippets[index]),
+                options_.snippetDirectory,
                 parsed,
                 error)) {
             return false;
@@ -1363,7 +1401,10 @@ bool SssdConfiguration::inspectManagedSnippet(
     ConfigurationFileSnapshot snapshot;
     std::string readError;
     if (!readSecureConfigurationFile(
-            managedSnippetOptions(options_), snapshot, readError)) {
+            managedSnippetOptions(options_),
+            options_.snippetDirectory,
+            snapshot,
+            readError)) {
         observation.dropInState =
             SssdManagedSnippetObservation::DropInState::Unsafe;
         observation.optionPresent = false;
@@ -1446,6 +1487,7 @@ ConfigurationPreparationResult SssdConfiguration::prepareManagedSnippetValue(
             makeManagedSnippetChange(
                 "sssd-managed:" + options_.managedSnippetFile.string(),
                 snippetOptions,
+                options_.snippetDirectory,
                 ManagedSnippetChange::Mode::CreateFile,
                 std::move(original),
                 std::move(candidate),
@@ -1453,7 +1495,8 @@ ConfigurationPreparationResult SssdConfiguration::prepareManagedSnippetValue(
             {}};
     }
     ConfigurationFileSnapshot original;
-    if (!readSecureConfigurationFile(snippetOptions, original, error)) {
+    if (!readSecureConfigurationFile(
+            snippetOptions, options_.snippetDirectory, original, error)) {
         return {nullptr, std::move(error)};
     }
     ParsedConfiguration parsed;
@@ -1468,6 +1511,7 @@ ConfigurationPreparationResult SssdConfiguration::prepareManagedSnippetValue(
         makeManagedSnippetChange(
             "sssd-managed:" + options_.managedSnippetFile.string(),
             snippetOptions,
+            options_.snippetDirectory,
             ManagedSnippetChange::Mode::WriteFile,
             std::move(original),
             std::move(candidate),
@@ -1503,7 +1547,8 @@ ConfigurationPreparationResult SssdConfiguration::prepareManagedSnippetRemoval(
     }
     const auto snippetOptions = managedSnippetOptions(options_);
     ConfigurationFileSnapshot original;
-    if (!readSecureConfigurationFile(snippetOptions, original, error)) {
+    if (!readSecureConfigurationFile(
+            snippetOptions, options_.snippetDirectory, original, error)) {
         return {nullptr, std::move(error)};
     }
     ParsedConfiguration parsed;
@@ -1529,6 +1574,7 @@ ConfigurationPreparationResult SssdConfiguration::prepareManagedSnippetRemoval(
             makeManagedSnippetChange(
                 "sssd-managed:" + options_.managedSnippetFile.string(),
                 snippetOptions,
+                options_.snippetDirectory,
                 ManagedSnippetChange::Mode::RemoveFile,
                 std::move(original),
                 {},
@@ -1546,6 +1592,7 @@ ConfigurationPreparationResult SssdConfiguration::prepareManagedSnippetRemoval(
         makeManagedSnippetChange(
             "sssd-managed:" + options_.managedSnippetFile.string(),
             snippetOptions,
+            options_.snippetDirectory,
             ManagedSnippetChange::Mode::WriteFile,
             std::move(original),
             std::move(candidate),

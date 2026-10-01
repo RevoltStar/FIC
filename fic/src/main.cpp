@@ -671,8 +671,9 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to enable policy");
         }
         if (command == "disable_policy") {
-            bool ok = disable(policyRegistry, platform, executables, module, policy);
-            if (ok) {
+            const fic::daemon::PolicyMutationResult mutation = disable(
+                policyRegistry, platform, executables, module, policy);
+            if (mutation.ok) {
                 if (auto reloadError = reloadRegistryAndGlobalConfig()) {
                     return fic::ipc::make_error_response(
                         "policy was disabled in configuration, but reconciliation failed: " +
@@ -682,8 +683,10 @@ json handle_request(json request,
                     return failure.value();
                 }
             }
-            return ok ? fic::ipc::make_ok_response("policy disabled")
-                      : fic::ipc::make_error_response("failed to disable policy");
+            return fic::daemon::policyMutationResponse(
+                mutation,
+                "policy disabled",
+                "failed to disable " + policy);
         }
         if (command == "reload_config") {
             if (auto reloadError = reloadRegistryAndGlobalConfig()) {

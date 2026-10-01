@@ -131,6 +131,12 @@ fic::identity::sssd::SssdConfigurationOptions sssdOptions(
     ::chmod(confd.c_str(), 0755);
     fic::identity::sssd::SssdConfigurationOptions options;
     options.mainFile = secureFile(main, 0600);
+    options.mainDirectory.expectedOwner = ::geteuid();
+    options.mainDirectory.expectedGroup = std::nullopt;
+    options.mainDirectory.forbiddenMode = 0022;
+    options.snippetDirectory.expectedOwner = ::geteuid();
+    options.snippetDirectory.expectedGroup = std::nullopt;
+    options.snippetDirectory.forbiddenMode = 0022;
     options.snippetDirectories = {confd};
     options.managedSnippetFile = confd / "zzzz-fic.conf";
     return options;
@@ -1323,12 +1329,16 @@ void testSssdDisableRollsBackManagedSetting(const fs::path& root) {
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy.apply(), "SSSD apply failed");
     }
+    const fs::path confd =
+        main.parent_path() / (main.stem().string() + "-conf.d");
+    require(::chmod(confd.c_str(), 0750) == 0,
+            "could not model ALT SSSD conf.d mode");
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     require(report.status == fic::rollback::RollbackStatus::Success,
             "SSSD disable rollback must succeed: " + report.message);
-    require(!fs::exists(main.parent_path() / (main.stem().string() + "-conf.d/zzzz-fic.conf")),
+    require(!fs::exists(confd / "zzzz-fic.conf"),
             "the semantically empty FIC drop-in must be removed");
     require(readFile(main) == original,
             "SSSD rollback must never touch the foreign sssd.conf");

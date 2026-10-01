@@ -154,6 +154,15 @@ target_include_directories(policy_service_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-
 target_link_libraries(policy_service_tests PRIVATE Qt${QT_VERSION_MAJOR}::Core fic-ipc)
 add_test(NAME policy_service_tests COMMAND policy_service_tests)
 
+add_executable(policy_mutation_result_tests
+    fic/daemon/PolicyMutationResultTests.cpp
+)
+target_include_directories(policy_mutation_result_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(policy_mutation_result_tests PRIVATE fic-ipc)
+add_test(NAME policy_mutation_result_tests COMMAND policy_mutation_result_tests)
+
 add_executable(cli_policy_set_tests
     fic-cli/PolicySetCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-cli/src/PolicySetCommand.cpp

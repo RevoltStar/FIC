@@ -2684,6 +2684,12 @@ public:
         options.configuration.mainFile.expectedGroup = ::getegid();
         options.configuration.mainFile.exactMode = 0600;
         options.configuration.mainFile.forbiddenMode = 0022;
+        options.configuration.mainDirectory.expectedOwner = ::geteuid();
+        options.configuration.mainDirectory.expectedGroup = std::nullopt;
+        options.configuration.mainDirectory.forbiddenMode = 0022;
+        options.configuration.snippetDirectory.expectedOwner = ::geteuid();
+        options.configuration.snippetDirectory.expectedGroup = std::nullopt;
+        options.configuration.snippetDirectory.forbiddenMode = 0022;
         options.configuration.snippetDirectories = {sssdConfd()};
         options.configuration.managedSnippetFile = sssdDropIn();
         options.executables = &resolver();

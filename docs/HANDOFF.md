@@ -3,94 +3,84 @@
 ## Current base
 
 - Ветка `main`, фактический HEAD
-  `57040ba0ea243f3d759c70cdb62ac7f524b68759`.
-- Текущий semantic follow-up не закоммичен; commit только по отдельному
-  запросу.
+  `68f6eb068452a137985db8704606681954985d08`.
+- Текущая правка не закоммичена; commit только по отдельному запросу.
 
 ## Current task
 
-- Исправлен semantic false positive `PamControlFlowAnalyzer`, обнаруженный
-  ручным запуском на ALT Workstation 11.2 после исправления штатного alias
-  `/etc/pam.d/system-check-localuser`.
-- Наблюдавшийся trace был:
-  `pam_userpass PAM_AUTH_ERR` -> поздний
-  `pam_localuser PAM_SERVICE_ERR/default=die` -> ошибочный вывод, что
-  credential failure обошёл `pam_faillock authfail`.
+- Исправлены четыре дефекта, найденные при ручной проверке GUI на ALT
+  Workstation K 11.4: неверный metadata contract `/etc/sssd/conf.d`, потеря
+  rollback diagnostic в `disable_policy`, replay неизменённых GUI policies и
+  неверный заголовок `Apply errors` для save-stage failure.
 
 ## Accepted architecture / invariants
 
-- `pam_userpass.so` получает `PAM_USER`/`PAM_AUTHTOK` через PAM conversation,
-  но сам не проверяет credentials. Его role — `CredentialCollector`.
-- Return codes collector/gate по-прежнему полностью участвуют в PAM control
-  flow: `bad`, `die`, `done`, jumps, stack impression/status и termination не
-  ослаблены. Но только модули с credential-verification semantics создают
-  `authenticationSuccessObserved`/`authenticationFailureObserved`.
-- `pam_localuser.so` — identity gate, а не credential authenticator; его
-  operational/identity failures не являются password rejection evidence.
-- Настоящие authenticators (`pam_tcb`, `pam_unix`, `pam_sss`, `pam_krb5`,
-  и т. п.) сохраняют прежнюю fail-closed семантику: credential rejection,
-  завершившийся до `pam_faillock authfail`, остаётся
-  `failure_accounting_bypass`.
-- `Unknown` остаётся conservative/fail-closed. Trusted bypass/exclusion,
-  placement faillock и post-enable verification не менялись.
+- File metadata и directory metadata являются независимыми security
+  contracts. `sssd.conf` и FIC-owned snippet остаются `root:root 0600`.
+  `/etc/sssd` и `/etc/sssd/conf.d` требуют root owner, запрещают group/world
+  write, symlink и non-directory, но не фиксируют non-writing group; поэтому
+  штатные `root:root 0755` и ALT `root:_sssd 0750` допустимы.
+- Старый overload directory verifier сохранён для Kerberos и других callers;
+  их строгий contract не ослаблен. SSSD передаёт typed directory options во
+  все snippet reads, inspection, commit, proof-bound removal и compensation.
+- `disable()` возвращает typed `PolicyMutationResult`; rollback/backend detail
+  сохраняется в IPC `message` и затем в ошибке `PolicyService`.
+- GUI row хранит исходные отображаемые enabled/value. Invalid source value,
+  показанный fallback, сам по себе не dirty и скрыто не переписывается.
+- `Save and Apply` различает `SaveFailed` и `ApplyFailed`; валидный
+  `apply_module` response с `ok=false` остаётся `Completed` и сохраняет
+  detailed apply UI.
+- Save по модулю остаётся последовательным и нетранзакционным. Этот follow-up
+  намеренно не добавляет module-wide atomic save или batch rollback.
 
-## Historical context
+## Completed
 
-- Git history suggests that the likely origin was the first analyzer in
-  `9d56ff97`: negative-list helper `authenticationDecisionModule()` считал
-  authentication decision любым auth-модулем, который не был явно известен
-  как non-credential.
-- При введении explicit `PamModuleRole` в `a4c62791` `pam_userpass` был
-  перенесён в `CredentialAuthenticator`, по-видимому сохраняя прежнюю
-  conservative heuristic; module-specific semantic justification в истории
-  не найдено. Regression из `377e6696` затем закрепил это предположение,
-  используя `pam_userpass` как credential failure.
-- Precedent `fe4bd82` уже отделил auxiliary credential consumer
-  `pam_gnome_keyring` от primary authenticators. Текущая правка аналогично
-  уточняет известную семантику, а не ослабляет fail-closed design.
+- Добавлен `SecureConfigurationDirectoryOptions` и отдельный secure-read
+  overload для независимой проверки parent directory.
+- SSSD production и tests переведены на directory integrity contract;
+  добавлены positive/negative проверки 0750/0755, writable, owner, symlink и
+  non-directory, а также rollback release при 0750.
+- `disable_policy` теперь возвращает имя policy и исходную rollback/backend
+  причину вместо фиксированного `failed to disable policy`.
+- `PolicyChange` получил dirty flags; service отправляет только требуемые
+  `set_policy_value` и `enable_policy`/`disable_policy` в прежнем порядке.
+- GUI показывает `Save errors` при mutation failure и `Apply errors` только
+  при transport/protocol failure стадии `apply_module`.
 
-## Completed / changed areas
+## Changed areas
 
-- `PamControlFlowAnalyzer.cpp`: добавлена роль `CredentialCollector`;
-  `pam_userpass` удалён из `CredentialAuthenticator`; `pam_localuser`
-  классифицирован как `Gate`. Conservative outcomes `pam_userpass` не
-  сужались: исходник ALT доказывает назначение, но не exhaustive result set.
-- `PamConfigurationTests`: старый security-negative test переведён на
-  настоящий `pam_tcb`; добавлен парный regression, где failure collector и
-  gate не создаёт `failure_accounting_bypass`.
-- `AltPamFaillockTopologyManagerTests`: SSH fixture повторяет graph
-  `sshd -> pam_userpass -> common-login-use_first_pass ->
-  system-auth-use_first_pass -> system-check-localuser ->
-  system-check-localuser-systemd`, exact trusted alias и control
-  `[success=1 perm_denied=ignore default=die]`; capability соответствует
-  ALT contract `LocalUsersOnly`.
-- Узкий audit `credentialAuthenticators` не выявил другого очевидного
-  collector/consumer: остальные entries являются credential-verifying
-  providers. Отдельно исследованный `pam_gnome_keyring` оставлен `Auxiliary`.
-- Mutation check: при временном возврате только `pam_userpass` в
-  `CredentialAuthenticator` новый paired regression падает с исходным
-  `failure_accounting_bypass`; production role затем восстановлена.
+- `fic/src/modules/identity_access/{shared/configuration,sssd}`
+- `fic/src/daemon`, `fic/src/main.cpp`
+- `fic-gui/src/features/policies/{services,widgets}`
+- targeted daemon, GUI policy, SSSD и rollback tests
 
 ## Validation
 
-- Mutation check на старой role — ожидаемый FAIL с trace
-  `pam_userpass PAM_AUTH_ERR -> pam_localuser PAM_USER_UNKNOWN/default=die`.
-- Targeted CTest: `pam_configuration_tests`,
-  `pam_control_flow_analyzer_tests`, `alt_pam_faillock_topology_tests`,
-  `identity_policy_hierarchy_tests`, `platform_profile_tests` — 5/5 PASS.
-- `cmake --build build-check -j4` — PASS.
-- `ctest --test-dir build-check --output-on-failure` — 114 PASS,
-  1 root-only test skipped (`command_hash_batch_tests`), failures нет.
-- Real ALT gate не выполнен: локального Docker image
-  `localhost/fic-rpm-builder:alt-p11` нет, попытка pull не продвинулась;
-  Podman не установлен. SSH к прежней ВМ `10.88.0.86` завершился timeout.
+- Fresh configure: `cmake -S . -B /tmp/fic-build-check
+  -DFIC_TARGET_PLATFORM=ubuntu-24.04` — PASS.
+- Affected targets `fic`, `fic-gui` и пять targeted test targets — PASS.
+- Targeted CTest: `policy_service_tests`, `policy_mutation_result_tests`,
+  `rollback_executor_tests`, `identity_configuration_editors_tests`,
+  `identity_concrete_policies_tests` — 5/5 PASS.
+- `cmake --build /tmp/fic-build-check -j4` — PASS.
+- Полный CTest вне sandbox — 116/116 PASS, один root-only test штатно
+  skipped (`command_hash_batch_tests`).
+- ALT Workstation K 11.4 (`172.17.1.107`): подтверждены
+  `/etc/sssd root:_sssd 0750`, `/etc/sssd/conf.d root:_sssd 0750` и
+  `/etc/sssd/sssd.conf root:root 0600`. Первый прогон выявил оставшееся
+  ошибочное наследование file-group для `/etc/sssd`; после отдельного
+  `mainDirectory` contract explicit
+  `fic-cli policy disable IDENTITY_ACCESS
+  sssd_offline_credentials_expiration` завершился `policy disabled`, rc=0.
+- IPC diagnostic path также подтверждён на первом прогоне: CLI получил полную
+  backend-причину, а не generic error.
 
 ## Remaining
 
-- При появлении образа или доступа повторить real ALT gate и daemon/CLI path
-  `fic-cli policy apply IDENTITY_ACCESS all`, затем проверить четыре
-  `failed_authentication_*` policies.
-- Отдельная ошибка password history
-  `Active PAM provenance has no proven owned topology` не входит в этот fix и
-  намеренно не исправлялась.
+- Интерактивный клик обновлённого GUI на VM автоматически не воспроизводился;
+  dirty call sequence и save/apply stages покрыты `policy_service_tests`, а
+  обновлённые `fic`, `fic-cli`, `fic-gui` RPM были установлены на VM.
+- Known limitation: при последовательном save policy A/B могут сохраниться,
+  даже если policy C завершилась ошибкой; module-wide transaction остаётся
+  отдельной будущей задачей.
 - Не коммитить без отдельного запроса.

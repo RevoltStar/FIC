@@ -14,6 +14,7 @@
 #include "policy/registry/PolicyRegistry.h"
 #include "platform/PlatformProfile.h"
 #include "platform/PlatformExecutableResolver.h"
+#include "daemon/PolicyMutationResult.h"
 
 //Дискреционное разграничение доступа
 #include "modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.h"
@@ -167,7 +168,7 @@ bool policy_list(PolicyRegistry& policyRegistry, std::string module);
 bool apply(PolicyRegistry& policyRegistry, std::string module, std::string policy);
 
 //Отключить политику
-bool disable (PolicyRegistry& policyRegistry,
+fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
               const fic::platform::PlatformProfile& platform,
               const fic::platform::PlatformExecutableResolver& executables,
               std::string module, std::string policy);

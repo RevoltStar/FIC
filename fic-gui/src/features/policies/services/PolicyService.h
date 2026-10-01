@@ -18,6 +18,8 @@ struct PolicyChange {
     std::string value;
     bool enabled = false;
     bool valueConfigurable = false;
+    bool enabledChanged = false;
+    bool valueChanged = false;
 };
 
 class PolicyService
@@ -25,11 +27,12 @@ class PolicyService
 public:
     enum class ApplyStatus {
         Completed,
-        ServiceError
+        SaveFailed,
+        ApplyFailed
     };
 
     struct ApplyResult {
-        ApplyStatus status = ApplyStatus::ServiceError;
+        ApplyStatus status = ApplyStatus::SaveFailed;
         nlohmann::json response;
         QString error;
     };

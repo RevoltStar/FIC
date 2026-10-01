@@ -84,6 +84,12 @@ fic::identity::sssd::SssdConfigurationOptions sssdOptions(
     std::vector<fs::path> snippets = {}) {
     fic::identity::sssd::SssdConfigurationOptions options;
     options.mainFile = secureFile(main, 0600);
+    options.mainDirectory.expectedOwner = ::geteuid();
+    options.mainDirectory.expectedGroup = std::nullopt;
+    options.mainDirectory.forbiddenMode = 0022;
+    options.snippetDirectory.expectedOwner = ::geteuid();
+    options.snippetDirectory.expectedGroup = std::nullopt;
+    options.snippetDirectory.forbiddenMode = 0022;
     options.snippetDirectories = std::move(snippets);
     return options;
 }
@@ -376,6 +382,73 @@ void testMetadataAndDirectorySymlinkChecksFailClosed() {
             "directory symlink rejection changed its target");
 }
 
+void testSssdSnippetDirectorySecurityContract() {
+    TemporaryTree tree("sssd-directory-contract");
+    const fs::path directory = tree.root / "etc/sssd/conf.d";
+    fs::create_directories(directory);
+
+    fic::identity::SecureConfigurationDirectoryOptions options;
+    options.expectedOwner = ::geteuid();
+    options.expectedGroup = std::nullopt;
+    options.forbiddenMode = 0022;
+    std::string error;
+
+    require(::chmod(directory.c_str(), 0750) == 0, "could not chmod 0750");
+    require(fic::identity::verifySecureConfigurationDirectory(
+                directory, options, error),
+            "ALT-style owner:<non-authorized-group> 0750 was rejected: " +
+                error);
+
+    const fs::path snippet = directory / "zzzz-fic.conf";
+    writeFile(snippet, "[pam]\noffline_credentials_expiration = 0\n", 0600);
+    fic::identity::SecureConfigurationFileOptions fileOptions;
+    fileOptions.path = snippet;
+    fileOptions.expectedOwner = ::geteuid();
+    fileOptions.expectedGroup = ::getegid();
+    fileOptions.exactMode = 0600;
+    // Deliberately stricter than the directory contract. This proves that
+    // secure file reads no longer reuse file metadata rules for conf.d.
+    fileOptions.forbiddenMode = 0077;
+    fic::identity::ConfigurationFileSnapshot snapshot;
+    require(fic::identity::readSecureConfigurationFile(
+                fileOptions, options, snapshot, error),
+            "typed SSSD directory contract was not used while reading a "
+            "snippet: " + error);
+    require(::chmod(directory.c_str(), 0755) == 0, "could not chmod 0755");
+    require(fic::identity::verifySecureConfigurationDirectory(
+                directory, options, error),
+            "owner:root-like 0755 was rejected: " + error);
+
+    require(::chmod(directory.c_str(), 0770) == 0, "could not chmod 0770");
+    require(!fic::identity::verifySecureConfigurationDirectory(
+                directory, options, error),
+            "group-writable SSSD snippet directory was accepted");
+    require(::chmod(directory.c_str(), 0777) == 0, "could not chmod 0777");
+    require(!fic::identity::verifySecureConfigurationDirectory(
+                directory, options, error),
+            "world-writable SSSD snippet directory was accepted");
+
+    require(::chmod(directory.c_str(), 0755) == 0,
+            "could not restore safe mode");
+    options.expectedOwner = static_cast<uid_t>(::geteuid() + 1);
+    require(!fic::identity::verifySecureConfigurationDirectory(
+                directory, options, error),
+            "SSSD snippet directory with a non-root-like owner was accepted");
+
+    const fs::path symlink = tree.root / "etc/sssd/conf-link";
+    fs::create_directory_symlink(directory, symlink);
+    options.expectedOwner = ::geteuid();
+    require(!fic::identity::verifySecureConfigurationDirectory(
+                symlink, options, error),
+            "symlink SSSD snippet directory was accepted");
+
+    const fs::path regular = tree.root / "etc/sssd/not-a-directory";
+    writeFile(regular, "not a directory\n", 0755);
+    require(!fic::identity::verifySecureConfigurationDirectory(
+                regular, options, error),
+            "regular file was accepted as an SSSD snippet directory");
+}
+
 void testNoOpDoesNotReplaceFile() {
     TemporaryTree tree("no-op");
     const fs::path main = tree.root / "etc/nsswitch.conf";
@@ -437,6 +510,7 @@ int main() {
         testNssParsesActionsAndUpdatesEveryDuplicate();
         testNssMalformedInputAndSymlinkFailClosed();
         testMetadataAndDirectorySymlinkChecksFailClosed();
+        testSssdSnippetDirectorySecurityContract();
         testNoOpDoesNotReplaceFile();
         testPreparedChangeRejectsExternalEditAndRollbackOverwrite();
     } catch (const std::exception& error) {

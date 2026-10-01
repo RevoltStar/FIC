@@ -23,9 +23,18 @@ PolicyService::RequestResult serviceError(std::string error)
 int main()
 {
     QString error;
-    const PolicyChange enabledValue{"sudo_timeout", "10", true, true};
-    const PolicyChange disabled{"sudo_env_reset", "", false, false};
-    const std::vector<PolicyChange> changes = {enabledValue, disabled};
+    const PolicyChange unchanged{
+        "sssd_offline_credentials_expiration", "30", false, true,
+        false, false};
+    const PolicyChange valueOnly{
+        "sudo_timeout", "60", false, true, false, true};
+    const PolicyChange enableOnly{
+        "sudo_timeout", "30", true, true, true, false};
+    const PolicyChange disableOnly{
+        "sudo_env_reset", "", false, false, true, false};
+    const PolicyChange both{
+        "sudo_timeout", "60", true, true, true, true};
+    const std::vector<PolicyChange> changes = {both, disableOnly};
 
     const nlohmann::json failedApply = {
         {"ok", false},
@@ -49,7 +58,7 @@ int main()
         return serviceError("connect failed: refused");
     });
     applyResult = transportFailure.saveAndApplyChanges("DAC", {});
-    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.status == PolicyService::ApplyStatus::ApplyFailed);
     assert(applyResult.error == "connect failed: refused");
     assert(applyResult.response.is_null());
 
@@ -57,7 +66,7 @@ int main()
         return completed({{"ok", "yes"}, {"message", "invalid"}});
     });
     applyResult = malformed.saveAndApplyChanges("DAC", {});
-    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.status == PolicyService::ApplyStatus::ApplyFailed);
     assert(applyResult.error.contains("apply_module protocol error"));
     assert(applyResult.response.is_null());
 
@@ -68,7 +77,7 @@ int main()
         });
     });
     applyResult = malformedDetails.saveAndApplyChanges("DAC", {});
-    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
+    assert(applyResult.status == PolicyService::ApplyStatus::ApplyFailed);
     assert(applyResult.error.contains("invalid diagnostic"));
     assert(applyResult.response.is_null());
 
@@ -77,14 +86,28 @@ int main()
         commands.push_back(request.at("command").get<std::string>());
         return completed({{"ok", true}, {"message", "accepted"}});
     });
-    assert(success.saveChanges("DAC", {enabledValue}, error));
-    assert((commands == std::vector<std::string>{
-        "set_policy_value", "enable_policy"}));
+    assert(success.saveChanges("DAC", {unchanged}, error));
+    assert(commands.empty());
+    assert(error.isEmpty());
+
+    assert(success.saveChanges("DAC", {valueOnly}, error));
+    assert((commands == std::vector<std::string>{"set_policy_value"}));
     assert(error.isEmpty());
 
     commands.clear();
-    assert(success.saveChanges("DAC", {disabled}, error));
+    assert(success.saveChanges("DAC", {enableOnly}, error));
+    assert((commands == std::vector<std::string>{"enable_policy"}));
+    assert(error.isEmpty());
+
+    commands.clear();
+    assert(success.saveChanges("DAC", {disableOnly}, error));
     assert((commands == std::vector<std::string>{"disable_policy"}));
+    assert(error.isEmpty());
+
+    commands.clear();
+    assert(success.saveChanges("DAC", {both}, error));
+    assert((commands == std::vector<std::string>{
+        "set_policy_value", "enable_policy"}));
     assert(error.isEmpty());
 
     commands.clear();
@@ -105,9 +128,10 @@ int main()
         }
         return completed({{"ok", true}, {"message", "accepted"}});
     });
-    applyResult = valueFailure.saveAndApplyChanges("DAC", {enabledValue});
-    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
-    assert(applyResult.error == "value denied");
+    applyResult = valueFailure.saveAndApplyChanges("DAC", {both});
+    assert(applyResult.status == PolicyService::ApplyStatus::SaveFailed);
+    assert(applyResult.error.contains(
+        "set_policy_value failed for sudo_timeout: value denied"));
     assert((commands == std::vector<std::string>{"set_policy_value"}));
 
     commands.clear();
@@ -119,9 +143,10 @@ int main()
         }
         return completed({{"ok", true}, {"message", "accepted"}});
     });
-    applyResult = stateFailure.saveAndApplyChanges("DAC", {enabledValue});
-    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
-    assert(applyResult.error == "enable denied");
+    applyResult = stateFailure.saveAndApplyChanges("DAC", {both});
+    assert(applyResult.status == PolicyService::ApplyStatus::SaveFailed);
+    assert(applyResult.error.contains(
+        "enable_policy failed for sudo_timeout: enable denied"));
     assert((commands == std::vector<std::string>{
         "set_policy_value", "enable_policy"}));
 
@@ -134,9 +159,10 @@ int main()
         }
         return completed({{"ok", true}, {"message", "accepted"}});
     });
-    applyResult = disableFailure.saveAndApplyChanges("DAC", {disabled});
-    assert(applyResult.status == PolicyService::ApplyStatus::ServiceError);
-    assert(applyResult.error == "disable denied");
+    applyResult = disableFailure.saveAndApplyChanges("DAC", {disableOnly});
+    assert(applyResult.status == PolicyService::ApplyStatus::SaveFailed);
+    assert(applyResult.error.contains(
+        "disable_policy failed for sudo_env_reset: disable denied"));
     assert((commands == std::vector<std::string>{"disable_policy"}));
 
     commands.clear();

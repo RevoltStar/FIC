@@ -241,12 +241,25 @@ bool readSecureConfigurationFile(
     const SecureConfigurationFileOptions& options,
     ConfigurationFileSnapshot& snapshot,
     std::string& error) {
+    SecureConfigurationDirectoryOptions directoryOptions;
+    directoryOptions.expectedOwner = options.expectedOwner;
+    directoryOptions.expectedGroup = options.expectedGroup;
+    directoryOptions.forbiddenMode = options.forbiddenMode;
+    return readSecureConfigurationFile(
+        options, directoryOptions, snapshot, error);
+}
+
+bool readSecureConfigurationFile(
+    const SecureConfigurationFileOptions& options,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
+    ConfigurationFileSnapshot& snapshot,
+    std::string& error) {
     if (options.path.empty() || !options.path.is_absolute()) {
         error = "configuration path must be absolute";
         return false;
     }
     if (!verifySecureConfigurationDirectory(
-            options.path.parent_path(), options, error)) {
+            options.path.parent_path(), directoryOptions, error)) {
         return false;
     }
 
@@ -333,6 +346,17 @@ bool verifySecureConfigurationDirectory(
     const std::filesystem::path& path,
     const SecureConfigurationFileOptions& fileOptions,
     std::string& error) {
+    SecureConfigurationDirectoryOptions directoryOptions;
+    directoryOptions.expectedOwner = fileOptions.expectedOwner;
+    directoryOptions.expectedGroup = fileOptions.expectedGroup;
+    directoryOptions.forbiddenMode = fileOptions.forbiddenMode;
+    return verifySecureConfigurationDirectory(path, directoryOptions, error);
+}
+
+bool verifySecureConfigurationDirectory(
+    const std::filesystem::path& path,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
+    std::string& error) {
     if (path.empty() || !path.is_absolute()) {
         error = "configuration directory path must be absolute";
         return false;
@@ -351,19 +375,26 @@ bool verifySecureConfigurationDirectory(
             path.string();
         return false;
     }
-    if (fileOptions.expectedOwner.has_value() &&
-        status.st_uid != *fileOptions.expectedOwner) {
+    if (directoryOptions.expectedOwner.has_value() &&
+        status.st_uid != *directoryOptions.expectedOwner) {
         error = "unexpected owner for configuration directory: " +
             path.string();
         return false;
     }
-    if (fileOptions.expectedGroup.has_value() &&
-        status.st_gid != *fileOptions.expectedGroup) {
+    if (directoryOptions.expectedGroup.has_value() &&
+        status.st_gid != *directoryOptions.expectedGroup) {
         error = "unexpected group for configuration directory: " +
             path.string();
         return false;
     }
-    if ((status.st_mode & fileOptions.forbiddenMode) != 0) {
+    const mode_t mode = status.st_mode & 07777;
+    if (directoryOptions.exactMode.has_value() &&
+        mode != *directoryOptions.exactMode) {
+        error = "unexpected mode for configuration directory: " +
+            path.string();
+        return false;
+    }
+    if ((mode & directoryOptions.forbiddenMode) != 0) {
         error = "unsafe writable configuration directory: " + path.string();
         return false;
     }

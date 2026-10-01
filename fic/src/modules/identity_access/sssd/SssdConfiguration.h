@@ -21,6 +21,8 @@ void setManagedSnippetStagedRaceHookForTests(
 
 struct SssdConfigurationOptions {
     SecureConfigurationFileOptions mainFile;
+    SecureConfigurationDirectoryOptions mainDirectory;
+    SecureConfigurationDirectoryOptions snippetDirectory;
     std::vector<std::filesystem::path> snippetDirectories;
     // The FIC-owned drop-in file. FIC never edits the foreign main
     // sssd.conf; all FIC-owned settings of the SSSD module live in this

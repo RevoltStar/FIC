@@ -317,7 +317,7 @@ bool apply(PolicyRegistry& policyRegistry, std::string module, std::string polic
 }
 
 //Отключить политику
-bool disable (PolicyRegistry& policyRegistry,
+fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
               const fic::platform::PlatformProfile& platform,
               const fic::platform::PlatformExecutableResolver& executables,
               std::string module, std::string policy){
@@ -398,7 +398,8 @@ bool disable (PolicyRegistry& policyRegistry,
             std::cout << "Rollback не завершен: " << rollbackReport.message << '\n';
             std::cout << "Отключение политики отменено, чтобы не оставить "
                          "незадокументированные изменения FIC." << '\n';
-            return false;
+            return fic::daemon::PolicyMutationResult::failure(
+                rollbackReport.message);
         }
         if (rollbackReport.status == fic::rollback::RollbackStatus::Success) {
             std::cout << "Rollback выполнен: " << rollbackReport.message << '\n';
@@ -407,23 +408,27 @@ bool disable (PolicyRegistry& policyRegistry,
         ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
         if(!mcfh.loadConfig()){
             std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
-            return false;
+            return fic::daemon::PolicyMutationResult::failure(
+                "could not load module configuration");
         }
         if(!mcfh.disablePolicy(policy)){
             std::cout << "Не удалось отключить параметр" << '\n';
-            return false;
+            return fic::daemon::PolicyMutationResult::failure(
+                "could not disable policy in module configuration");
         }
         std::cout << "Параметр " + policy + " отключен" << '\n';
         //mcfh.printConfig();
         if(!mcfh.saveConfig()){
             std::cout << "Не удалось отключить политику" << '\n';
-            return false;
+            return fic::daemon::PolicyMutationResult::failure(
+                "could not save module configuration");
         }else{
             std::cout << "Политика была успешно дезактивирована" << '\n';
-            return true;
+            return fic::daemon::PolicyMutationResult::success();
         }
     }
-    return false;
+    return fic::daemon::PolicyMutationResult::failure(
+        "policy was not found");
 }
 //Включить политику
 bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy){

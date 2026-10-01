@@ -150,7 +150,7 @@ bool PolicyService::saveChanges(
 {
     error.clear();
     for (const PolicyChange& change : changes) {
-        if (change.valueConfigurable) {
+        if (change.valueConfigurable && change.valueChanged) {
             const auto requestResult = request({
                 {"command", "set_policy_value"},
                 {"module", module},
@@ -160,8 +160,13 @@ bool PolicyService::saveChanges(
             nlohmann::json response;
             if (!requireResponseEnvelope(
                     requestResult, "set_policy_value", true, response, error)) {
+                error = QString("set_policy_value failed for %1: %2")
+                    .arg(QString::fromStdString(change.policyName), error);
                 return false;
             }
+        }
+        if (!change.enabledChanged) {
+            continue;
         }
         const auto requestResult = request({
             {"command", change.enabled ? "enable_policy" : "disable_policy"},
@@ -171,8 +176,11 @@ bool PolicyService::saveChanges(
         nlohmann::json response;
         if (!requireResponseEnvelope(
                 requestResult,
-                change.enabled ? "enable_policy" : "disable_policy",
-                true, response, error)) {
+                 change.enabled ? "enable_policy" : "disable_policy",
+                 true, response, error)) {
+            error = QString("%1 failed for %2: %3")
+                .arg(change.enabled ? "enable_policy" : "disable_policy",
+                     QString::fromStdString(change.policyName), error);
             return false;
         }
     }
@@ -185,12 +193,14 @@ PolicyService::ApplyResult PolicyService::saveAndApplyChanges(
 {
     ApplyResult result;
     if (!saveChanges(module, changes, result.error)) {
+        result.status = ApplyStatus::SaveFailed;
         return result;
     }
     const RequestResult requestResult = request(
         {{"command", "apply_module"}, {"module", module}});
     if (!requireApplyResponse(requestResult, result.response, result.error)) {
         result.response = nlohmann::json();
+        result.status = ApplyStatus::ApplyFailed;
         return result;
     }
     result.status = ApplyStatus::Completed;
