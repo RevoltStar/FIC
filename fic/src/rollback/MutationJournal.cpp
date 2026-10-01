@@ -525,17 +525,8 @@ std::vector<std::string> preparedPamFlagSuppressionAuthority(
 // helper with a guessed status: prepareMutation persists the incoming
 // transition as Prepared, so model its authority with
 // preparedPamFlagSuppressionAuthority() (its FUTURE Prepared state).
-std::vector<std::string> activePamFlagSuppressionAuthority(
-    const MutationRecord& record,
-    const UndoRemovePamProviderManagedFlag& flag) {
-    if (!record.isActive()) {
-        return {};
-    }
-    if (record.status == MutationStatus::Prepared) {
-        return preparedPamFlagSuppressionAuthority(flag);
-    }
-    return flag.suppressionIds;
-}
+// Shared with the PAM provider package preflight (single authority model,
+// see the declaration in MutationJournal.h).
 
 bool validKerberosSectionName(const std::string& section) {
     return !section.empty() &&
@@ -1198,6 +1189,23 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
 }
 
 } // namespace
+
+// See the declaration in MutationJournal.h: the single status-aware
+// suppression-wrapper authority model, shared with the PAM provider
+// package preflight. preparedPamFlagSuppressionAuthority() above (anonymous
+// namespace) stays the internal authority computation for future-Prepared
+// transitions on the write path.
+std::vector<std::string> activePamFlagSuppressionAuthority(
+    const MutationRecord& record,
+    const UndoRemovePamProviderManagedFlag& flag) {
+    if (!record.isActive()) {
+        return {};
+    }
+    if (record.status == MutationStatus::Prepared) {
+        return preparedPamFlagSuppressionAuthority(flag);
+    }
+    return flag.suppressionIds;
+}
 
 std::string mutationStatusToString(MutationStatus status) {
     switch (status) {

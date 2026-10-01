@@ -68,18 +68,17 @@ bool samePath(const std::filesystem::path& left,
         std::filesystem::path(right).lexically_normal();
 }
 
-// Payload-side route proof (Step 7F platform identity proof): the CURRENT
-// platform must confirm the journaled provider identity, configuration
-// path, managed key and placement contract through the SAME typed routing
-// helper the apply path uses. The journal path is never executed blindly.
-std::optional<PamProviderRollbackRoute> routeForPayload(
+// Current-platform capability match for a journaled (provider, configPath)
+// identity: the ONLY capability shape FIC ever reads or mutates through a
+// journal path is a ProviderConfigFile capability whose lexically-normal
+// config path and provider descriptor name both match. Shared by the
+// entry/flag route proof and the container provenance proof (one identity
+// model — no second, weaker match).
+const fic::platform::PamCapabilityConfig* findProviderConfigFileCapability(
     const PamProviderRollbackOptions& options,
     const std::string& providerName,
     const std::string& configPath,
-    const std::string& managedKey,
-    fic::rollback::PamProviderBlockPlacementContract placementContract,
     std::string& message) {
-    const fic::platform::PamCapabilityConfig* capability = nullptr;
     for (const fic::platform::PamCapabilityConfig& candidate :
          options.platform.capabilities) {
         if (candidate.configurationMode ==
@@ -88,14 +87,33 @@ std::optional<PamProviderRollbackRoute> routeForPayload(
             samePath(candidate.configPath, configPath) &&
             std::string(pamProviderDescriptor(candidate.provider).name) ==
                 providerName) {
-            capability = &candidate;
-            break;
+            return &candidate;
         }
     }
+    message = "текущая platform profile не подтверждает identity "
+              "journal-записи (provider '" + providerName +
+              "', config path '" + configPath + "'): rollback запрещён";
+    return nullptr;
+}
+
+// Payload-side route proof (Step 7F platform identity proof): the CURRENT
+// platform must confirm the journaled provider identity, configuration
+// path, managed key, placement contract, CANONICAL policy identity and
+// NATIVE option syntax through the SAME typed routing helper the apply
+// path uses. The journal path is never executed blindly.
+std::optional<PamProviderRollbackRoute> routeForPayload(
+    const PamProviderRollbackOptions& options,
+    const std::string& providerName,
+    const std::string& configPath,
+    const std::string& policyName,
+    const std::string& managedKey,
+    PamNativeOptionSyntax expectedSyntax,
+    fic::rollback::PamProviderBlockPlacementContract placementContract,
+    std::string& message) {
+    const fic::platform::PamCapabilityConfig* capability =
+        findProviderConfigFileCapability(options, providerName, configPath,
+                                         message);
     if (capability == nullptr) {
-        message = "текущая platform profile не подтверждает identity "
-                  "journal-записи (provider '" + providerName +
-                  "', config path '" + configPath + "'): rollback запрещён";
         return std::nullopt;
     }
     const PamProviderDescriptor descriptor =
@@ -114,6 +132,28 @@ std::optional<PamProviderRollbackRoute> routeForPayload(
             message = "placement contract journal-записи не совпадает с "
                       "текущим контрактом platform profile: rollback "
                       "запрещён";
+            return std::nullopt;
+        }
+        // Canonical policy identity: the routing binding's managed feature
+        // must be the typed feature of the journaled canonical policy name.
+        // A structurally valid journal can never bind a canonical key to a
+        // wrong policy identity.
+        const char* canonicalPolicyName =
+            pamProviderManagedFeaturePolicyName(binding.feature);
+        if (canonicalPolicyName == nullptr ||
+            policyName != canonicalPolicyName) {
+            message = "canonical policy identity journal-записи ('" +
+                policyName + "') не совпадает с managed feature маршрута ('" +
+                (canonicalPolicyName != nullptr ? canonicalPolicyName : "?") +
+                "') для managed key '" + managedKey + "': rollback запрещён";
+            return std::nullopt;
+        }
+        // Native option syntax: an assignment key can never travel through
+        // a flag payload and vice versa.
+        if (binding.syntax != expectedSyntax) {
+            message = "native option syntax journal-записи не совпадает с "
+                      "синтаксисом managed key '" + managedKey +
+                      "' в текущем platform profile: rollback запрещён";
             return std::nullopt;
         }
         PamProviderRollbackRoute route;
@@ -467,8 +507,9 @@ PamProviderRollbackResult undoEntryUnlocked(
     const UndoRemovePamProviderManagedEntry& undo) {
     std::string routeMessage;
     const std::optional<PamProviderRollbackRoute> route = routeForPayload(
-        options, undo.providerName, undo.configPath, undo.managedKey,
-        undo.placement, routeMessage);
+        options, undo.providerName, undo.configPath, undo.policyName,
+        undo.managedKey, PamNativeOptionSyntax::Assignment, undo.placement,
+        routeMessage);
     if (!route.has_value()) {
         return conflictResult(routeMessage);
     }
@@ -581,8 +622,9 @@ PamProviderRollbackResult undoFlagUnlocked(
     const UndoRemovePamProviderManagedFlag& undo) {
     std::string routeMessage;
     const std::optional<PamProviderRollbackRoute> route = routeForPayload(
-        options, undo.providerName, undo.configPath, undo.managedKey,
-        undo.placement, routeMessage);
+        options, undo.providerName, undo.configPath, undo.policyName,
+        undo.managedKey, PamNativeOptionSyntax::Flag, undo.placement,
+        routeMessage);
     if (!route.has_value()) {
         return conflictResult(routeMessage);
     }
@@ -768,11 +810,50 @@ std::optional<PamProviderRollbackRoute> pamProviderRollbackRouteForPayload(
     const PamProviderRollbackOptions& options,
     const std::string& providerName,
     const std::string& configPath,
+    const std::string& policyName,
     const std::string& managedKey,
+    PamNativeOptionSyntax expectedSyntax,
     fic::rollback::PamProviderBlockPlacementContract placementContract,
     std::string& conflictMessage) {
-    return routeForPayload(options, providerName, configPath, managedKey,
-                           placementContract, conflictMessage);
+    return routeForPayload(options, providerName, configPath, policyName,
+                           managedKey, expectedSyntax, placementContract,
+                           conflictMessage);
+}
+
+std::optional<PamProviderContainerRollbackRoute>
+pamProviderContainerRollbackRouteForPayload(
+    const PamProviderRollbackOptions& options,
+    const std::string& providerName,
+    const std::string& configPath,
+    std::string& conflictMessage) {
+    const fic::platform::PamCapabilityConfig* capability =
+        findProviderConfigFileCapability(options, providerName, configPath,
+                                         conflictMessage);
+    if (capability == nullptr) {
+        return std::nullopt;
+    }
+    const PamProviderDescriptor descriptor =
+        pamProviderDescriptor(capability->provider);
+    // Managed-provider domain proof (Step 7B-7E): the capability is the
+    // managed provider configuration domain ONLY when its typed descriptor
+    // actually routes at least one managed policy binding through
+    // pamProviderManagedEntryPlacement(). Derived from the existing typed
+    // routing SSOT — never a distro switch, never a second whitelist.
+    for (const PamProviderPolicyBinding& binding : descriptor.policies) {
+        if (pamProviderManagedEntryPlacement(descriptor, *capability, binding,
+                                             binding.feature).has_value()) {
+            PamProviderContainerRollbackRoute route;
+            route.descriptor = descriptor;
+            route.capability = capability;
+            route.configPath = capability->configPath;
+            return route;
+        }
+    }
+    conflictMessage = "capability текущего platform profile ('" + providerName +
+        "', config path '" + configPath +
+        "') не входит в managed provider configuration domain: container "
+        "provenance rollback запрещён";
+    return std::nullopt;
 }
 
 std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
@@ -928,7 +1009,51 @@ PamProviderRollbackResult undoOwnPamProviderContainerUnlocked(
     MutationJournal& journal,
     const MutationRecord& record,
     const UndoOwnPamProviderContainer& undo) {
-    (void)record;
+    // Defense-in-depth (stale-record refusal): the passed record must be
+    // the CURRENT active container provenance record of the journal. A
+    // resolved (RolledBack/Detached) or stale snapshot copy never receives
+    // destructive processing — Detached means FIC permanently relinquished
+    // the container and never writes to it again. The MAIN guarantee lives
+    // in the package release orchestration (re-enumeration of the current
+    // active records); this refusal only closes the second entry point.
+    const MutationRecord* current = nullptr;
+    for (const MutationRecord& candidate : journal.records()) {
+        if (candidate.id == record.id) {
+            current = &candidate;
+            break;
+        }
+    }
+    if (current == nullptr || !current->isActive()) {
+        return conflictResult(
+            "container provenance record " + std::to_string(record.id) +
+            " больше не является активной записью журнала (resolved or "
+            "stale snapshot); destructive container sweep запрещён");
+    }
+    const UndoOwnPamProviderContainer* currentPayload =
+        std::get_if<UndoOwnPamProviderContainer>(&current->undo.payload);
+    if (currentPayload == nullptr ||
+        currentPayload->providerName != undo.providerName ||
+        !samePath(currentPayload->configPath, undo.configPath)) {
+        return conflictResult(
+            "container provenance payload record " +
+            std::to_string(record.id) +
+            " не совпадает с текущей активной записью журнала (stale "
+            "snapshot); destructive container sweep запрещён");
+    }
+
+    // Current-platform proof (Step 7F security follow-up): the journal
+    // path is never executed blindly — the CURRENT platform profile must
+    // confirm the (provider, configPath) managed container identity
+    // through the single typed SSOT before any trusted read or mutation.
+    std::string routeMessage;
+    const std::optional<PamProviderContainerRollbackRoute> route =
+        pamProviderContainerRollbackRouteForPayload(options, undo.providerName,
+                                                    undo.configPath,
+                                                    routeMessage);
+    if (!route.has_value()) {
+        return conflictResult(routeMessage);
+    }
+
     const std::filesystem::path path(undo.configPath);
     std::string error;
     PamProviderContainerReadResult read =

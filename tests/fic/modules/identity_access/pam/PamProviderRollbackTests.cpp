@@ -825,6 +825,185 @@ void testNoReconstructionOnRetry() {
 
 } // namespace
 
+// ---------------------------------------------------------------------
+// Step 7F final security follow-up regressions.
+// ---------------------------------------------------------------------
+
+fic::rollback::MutationId prepareContainerRecordAt(
+    Harness& harness, const std::string& providerName,
+    const std::string& configPath) {
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM_CONTAINER", providerName};
+    record.resource = configPath;
+    record.undo = UndoAction{
+        fic::rollback::MutationBackend::Pam,
+        UndoOwnPamProviderContainer{providerName, configPath}};
+    std::string error;
+    fic::rollback::MutationId id = 0;
+    require(harness.journal.prepareMutation(record, id, error),
+            "container prepare: " + error);
+    require(harness.journal.setStatus(id, MutationStatus::Applied, error),
+            "container apply: " + error);
+    return id;
+}
+
+MutationRecord journalRecordById(Harness& harness,
+                                 fic::rollback::MutationId id) {
+    for (const MutationRecord& current : harness.journal.records()) {
+        if (current.id == id) {
+            return current;
+        }
+    }
+    throw std::runtime_error("journal record not found");
+}
+
+// The CURRENT platform profile must confirm the journaled container
+// identity (provider + lexically-exact config path) through the typed SSOT
+// BEFORE any journal path read/mutation: a wrong path is a Conflict, never
+// a blind readForMutation of an unconfirmed location.
+void testContainerWrongPathPlatformProof() {
+    Harness harness;
+    const std::filesystem::path foreignPath =
+        harness.temp.directory / "other.conf";
+    writeFile(foreignPath, kForeign);
+    const fic::rollback::MutationId id =
+        prepareContainerRecordAt(harness, kProvider, foreignPath.string());
+    MutationRecord record = journalRecordById(harness, id);
+    const PamProviderRollbackResult result = undoOwnPamProviderContainer(
+        harness.options(), harness.journal, record,
+        std::get<UndoOwnPamProviderContainer>(record.undo.payload));
+    require(!result.ok,
+            "container provenance with a wrong path must be rejected: " +
+                result.message);
+    require(result.message.find("platform profile") != std::string::npos,
+            "rejection must name the platform identity proof: " +
+                result.message);
+    require(std::filesystem::exists(foreignPath),
+            "the unconfirmed path must stay untouched");
+    require(journalRecordById(harness, id).status == MutationStatus::Applied,
+            "the rejected container record stays Applied");
+}
+
+// Same proof, wrong provider identity for the capability path.
+void testContainerWrongProviderPlatformProof() {
+    Harness harness;
+    writeFile(harness.configPath, kForeign);
+    const fic::rollback::MutationId id = prepareContainerRecordAt(
+        harness, "pam_pwquality", harness.configPath.string());
+    MutationRecord record = journalRecordById(harness, id);
+    const PamProviderRollbackResult result = undoOwnPamProviderContainer(
+        harness.options(), harness.journal, record,
+        std::get<UndoOwnPamProviderContainer>(record.undo.payload));
+    require(!result.ok,
+            "container provenance with a wrong provider must be rejected: " +
+                result.message);
+    require(std::filesystem::exists(harness.configPath),
+            "the capability path stays untouched on provider mismatch");
+    require(journalRecordById(harness, id).status == MutationStatus::Applied,
+            "the rejected container record stays Applied");
+}
+
+
+// A resolved (Detached) container provenance record has no second lifecycle
+// owner: re-running the container sweep with the stale record copy must be
+// refused BEFORE any read/mutation of the foreign-content file.
+void testDetachedContainerNoSecondLifecycle() {
+    Harness harness;
+    writeEntryState(harness.configPath, 7, appliedBody("8"));
+    const fic::rollback::MutationId containerId =
+        prepareContainerRecordAt(harness, kProvider,
+                                 harness.configPath.string());
+    MutationRecord entryRecord = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult entryResult = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, entryRecord,
+        std::get<UndoRemovePamProviderManagedEntry>(
+            entryRecord.undo.payload));
+    require(entryResult.ok, "entry release detaches the container: " +
+                entryResult.message);
+    MutationRecord containerCopy = journalRecordById(harness, containerId);
+    require(containerCopy.status == MutationStatus::Detached,
+            "fixture: container provenance Detached");
+    const std::string before = readFile(harness.configPath);
+    const PamProviderRollbackResult second = undoOwnPamProviderContainer(
+        harness.options(), harness.journal, containerCopy,
+        std::get<UndoOwnPamProviderContainer>(containerCopy.undo.payload));
+    require(!second.ok,
+            "a resolved container record must never be processed again: " +
+                second.message);
+    require(readFile(harness.configPath) == before,
+            "no second lifecycle write into the detached container");
+    require(journalRecordById(harness, containerId).status ==
+                MutationStatus::Detached,
+            "the container provenance stays Detached");
+}
+
+// Native option syntax binding: an assignment key can never travel through
+// UndoRemovePamProviderManagedFlag.
+void testFlagAssignmentMasqueradeConflict() {
+    Harness harness;
+    writeFile(harness.configPath, kForeign);
+    UndoRemovePamProviderManagedFlag undo =
+        flagUndo(harness, /*appliedEnabled=*/false, {"s1"});
+    undo.managedKey = "deny"; // assignment key
+    undo.policyName = "failed_authentication_attempts"; // canonical for "deny"
+    MutationRecord record =
+        makeFlagRecord(harness, 9, undo, MutationStatus::Applied);
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(!result.ok,
+            "assignment key through a flag payload must be rejected: " +
+                result.message);
+    require(result.message.find("syntax") != std::string::npos,
+            "rejection must name the native option syntax proof: " +
+                result.message);
+}
+
+// ...and a flag key can never travel through
+// UndoRemovePamProviderManagedEntry.
+void testEntryFlagMasqueradeConflict() {
+    Harness harness;
+    writeFile(harness.configPath, kForeign);
+    UndoRemovePamProviderManagedEntry undo = entryUndo(appliedBody("8"), "");
+    undo.configPath = harness.configPath.string();
+    undo.managedKey = kFlagKey; // flag key through an entry payload
+    undo.policyName = kFlagPolicy; // canonical for even_deny_root
+    MutationRecord record = makeEntryRecord(
+        harness, 9, appliedBody("8"), "", MutationStatus::Applied);
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record, undo);
+    require(!result.ok,
+            "flag key through an entry payload must be rejected: " +
+                result.message);
+    require(result.message.find("syntax") != std::string::npos,
+            "rejection must name the native option syntax proof: " +
+                result.message);
+}
+
+// Canonical policy identity binding: the routing binding of the managed key
+// must belong to the journaled canonical policy — a wrong policy for a
+// correct key is a Conflict.
+void testWrongPolicyForCorrectKeyConflict() {
+    Harness harness;
+    writeFile(harness.configPath, kForeign);
+    UndoRemovePamProviderManagedEntry undo = entryUndo(appliedBody("8"), "");
+    undo.configPath = harness.configPath.string();
+    undo.policyName = "failed_authentication_counting_period"; // wrong identity
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record, undo);
+    require(!result.ok,
+            "wrong canonical policy for a correct key must be rejected: " +
+                result.message);
+    require(result.message.find("policy") != std::string::npos,
+            "rejection must name the canonical policy identity proof: " +
+                result.message);
+}
+
 int main() {
     try {
         testAppliedExactRelease();
@@ -853,6 +1032,12 @@ int main() {
         testOtherFicEntryKeepsContainerActive();
         testFsyncFailureAfterUnlinkRecovers();
         testNoReconstructionOnRetry();
+        testContainerWrongPathPlatformProof();
+        testContainerWrongProviderPlatformProof();
+        testDetachedContainerNoSecondLifecycle();
+        testFlagAssignmentMasqueradeConflict();
+        testEntryFlagMasqueradeConflict();
+        testWrongPolicyForCorrectKeyConflict();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderRollbackTests failed: " << error.what()
                   << '\n';

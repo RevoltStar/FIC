@@ -897,7 +897,211 @@ void testStageAPassesAppliedMissingAndPreparedFreshAbsent() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Step 7F final security follow-up: exact orphan-coverage regressions.
+// ---------------------------------------------------------------------------
+
+// A same-policy entry with a DIFFERENT managed key is an orphan: the weak
+// (path, policy) coverage model is gone — coverage requires the exact
+// (path, provider, policy, managedKey) journal identity.
+void testWrongKeyOrphanSamePolicyRejected() {
+    Harness harness;
+    const fic::rollback::MutationId id = prepareEntryRecordId(
+        harness, kPolicy, kProvider, "deny", "8",
+        harness.configPath.string());
+    renderEntryState(harness.configPath, kProvider, kPolicy, "deny", "8", id,
+                     kForeign);
+    // Wrong-key FIC entry of the SAME policy with its own (fabricated)
+    // mutation id: no exact journal record covers it — the weak
+    // (path, policy) model would have covered it, the exact model does not.
+    {
+        PamProviderEntrySpec spec;
+        spec.provider = kProvider;
+        spec.policy = kPolicy;
+        spec.managedKey = "fail_interval";
+        spec.value = "999";
+        spec.mutationId = id + 7;
+        PamProviderMutationResult result = setPamProviderManagedEntry(
+            readFile(harness.configPath), spec,
+            PamProviderBlockPlacementRequest::End);
+        require(result.ok, "wrong-key fixture: " + result.error);
+        writeFile(harness.configPath, result.content);
+    }
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "wrong-key same-policy orphan must fail the preflight closed: " +
+                error);
+    require(error.find("orphan") != std::string::npos,
+            "rejection must come from the exact orphan scan: " + error);
+}
+
+// A wrong mutation id on the physical entry is drift: the exact journal
+// record does not confirm the physical state (fail closed).
+void testWrongMutationIdEntryRejected() {
+    Harness harness;
+    const fic::rollback::MutationId id = prepareEntryRecordId(
+        harness, kPolicy, kProvider, "deny", "8",
+        harness.configPath.string());
+    renderEntryState(harness.configPath, kProvider, kPolicy, "deny", "8",
+                     id + 1, kForeign);
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "wrong mutation id must fail the preflight closed: " + error);
+}
+
+
+// A suppression wrapper whose (policy, managedKey) identity matches no flag
+// record is an orphan even when another record of the same policy exists.
+void testWrongKeyOrphanWrapperSamePolicyRejected() {
+    Harness harness;
+    const fic::rollback::MutationId id = prepareEntryRecordId(
+        harness, kPolicy, kProvider, "deny", "8",
+        harness.configPath.string());
+    renderEntryState(harness.configPath, kProvider, kPolicy, "deny", "8", id,
+                     kForeign);
+    writeFile(harness.configPath,
+              readFile(harness.configPath) +
+                  pamProviderSuppressionWrapperLine(
+                      kProvider, kPolicy, "even_deny_root", id, "s9",
+                      "even_deny_root") +
+                  "\n");
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    std::string error;
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "wrong-key suppression wrapper must fail the preflight closed: " +
+                error);
+    require(error.find("suppression wrapper") != std::string::npos,
+            "rejection must name the wrapper orphan: " + error);
+}
+
 } // namespace
+
+// A PREPARED flag record owns BOTH durable sides: the previous-side
+// suppression wrapper (previousSuppressionIds) is journal-covered through
+// the single status-aware authority model.
+void testPreparedPreviousWrapperAuthorityAccepted() {
+    Harness harness;
+    const char* flagPolicy = "failed_authentication_enforce_for_root";
+    const std::string flagForeign =
+        "# admin comment\ndeny = 3\neven_deny_root\n";
+    // Prepared transition: previous disabled (wrapper s2) -> target enabled.
+    UndoRemovePamProviderManagedFlag undo;
+    undo.policyName = flagPolicy;
+    undo.providerName = kProvider;
+    undo.configPath = harness.configPath.string();
+    undo.managedKey = "even_deny_root";
+    undo.appliedEnabled = true;
+    undo.previousAppliedEnabled = false;
+    undo.previousSuppressionIds = {"s2"};
+    undo.placement = fic::rollback::PamProviderBlockPlacementContract::End;
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM", flagPolicy};
+    record.resource = undo.configPath;
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+    record.status = MutationStatus::Prepared;
+    std::string error;
+    fic::rollback::MutationId assigned = 0;
+    require(harness.journal.prepareMutation(record, assigned, error),
+            "prepare prepared-flag: " + error);
+    // Physical state: the previous (disabled) side with wrapper s2.
+    PamProviderFlagSpec spec;
+    spec.provider = kProvider;
+    spec.policy = flagPolicy;
+    spec.managedKey = "even_deny_root";
+    spec.enabled = false;
+    spec.mutationId = assigned;
+    spec.createSuppressionIds = {"s2"};
+    PamProviderFlagMutationResult fixture = setPamProviderManagedFlagTransition(
+        flagForeign, spec, PamProviderBlockPlacementRequest::End);
+    require(fixture.ok, "prepared previous fixture: " + fixture.error);
+    writeFile(harness.configPath, fixture.content);
+
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    require(release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                        error),
+            "prepared previous-side wrapper must be journal-covered: " +
+                error);
+}
+
+// An independent active container of another provider is still processed by
+// the final sweep (the stricter re-enumeration never orphans live records).
+void testIndependentActiveContainerStillProcessed() {
+    Harness harness;
+    const std::filesystem::path pwqPath =
+        harness.temp.directory / "pwquality.conf";
+    PamCapabilityConfig cap;
+    cap.capability = fic::platform::PamCapability::PasswordQuality;
+    cap.provider = fic::platform::PamProviderKind::PamPwquality;
+    cap.configurationMode =
+        PamCapabilityConfigurationMode::ProviderConfigFile;
+    cap.configPath = pwqPath;
+    fic::platform::PamProviderConfigTopology topology;
+    topology.primaryPath = pwqPath;
+    cap.configTopology = topology;
+    harness.platform.capabilities.push_back(cap);
+
+    // faillock: FIC-created container + last entry (deleted on release).
+    writeFile(harness.configPath, "");
+    const fic::rollback::MutationId faillockContainer =
+        prepareReleaseContainerRecord(harness, MutationStatus::Applied);
+    (void)faillockContainer;
+    const fic::rollback::MutationId faillockEntry = prepareEntryRecordId(
+        harness, kPolicy, kProvider, "deny", "8",
+        harness.configPath.string());
+    renderEntryState(harness.configPath, kProvider, kPolicy, "deny", "8",
+                     faillockEntry, "");
+    // pwquality: an independent FIC-created container + last entry.
+    writeFile(pwqPath, "");
+    MutationRecord pwqContainer;
+    pwqContainer.policy = {"IDENTITY_ACCESS", "PAM_CONTAINER",
+                           "pam_pwquality"};
+    pwqContainer.resource = pwqPath.string();
+    pwqContainer.undo = UndoAction{
+        fic::rollback::MutationBackend::Pam,
+        UndoOwnPamProviderContainer{"pam_pwquality", pwqPath.string()}};
+    pwqContainer.status = MutationStatus::Prepared;
+    std::string error;
+    fic::rollback::MutationId pwqContainerId = 0;
+    require(harness.journal.prepareMutation(pwqContainer, pwqContainerId,
+                                            error),
+            "prepare pwq container: " + error);
+    require(harness.journal.setStatus(pwqContainerId, MutationStatus::Applied,
+                                      error),
+            "apply pwq container: " + error);
+    const fic::rollback::MutationId pwqEntry = prepareEntryRecordId(
+        harness, "password_min_length", "pam_pwquality", "minlen", "12",
+        pwqPath.string());
+    renderEntryState(pwqPath, "pam_pwquality", "password_min_length", "minlen",
+                     "12", pwqEntry, "");
+
+    PamProviderPackageRelease release(harness.journal, harness.platform,
+                                      harness.options());
+    PamProviderPackageRelease::Report report;
+    require(release.run(PamProviderPackageRelease::Mode::Release, report,
+                        error),
+            "independent container release: " + error);
+    require(report.containersDeleted.size() == 2,
+            "both independent containers deleted");
+    require(!std::filesystem::exists(harness.configPath) &&
+                !std::filesystem::exists(pwqPath),
+            "both FIC-created primaries deleted");
+    for (const MutationRecord& record : harness.journal.records()) {
+        require(!record.isActive(), "all provider records resolved");
+    }
+}
 
 int main() {
     try {
@@ -918,6 +1122,11 @@ int main() {
         testStageAPassesAppliedMissingAndPreparedFreshAbsent();
         testCrashAfterContainerDeleteRecovers();
         testPreparedContainerAbsentFailsClosed();
+        testWrongKeyOrphanSamePolicyRejected();
+        testWrongMutationIdEntryRejected();
+        testWrongKeyOrphanWrapperSamePolicyRejected();
+        testPreparedPreviousWrapperAuthorityAccepted();
+        testIndependentActiveContainerStillProcessed();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderPackageReleaseTests failed: " << error.what()
                   << '\n';

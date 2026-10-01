@@ -2,158 +2,124 @@
 
 ## Current base
 
-- Ветка `main`; HEAD = `5e03e74...`. Поверх HEAD — **незакоммиченный
-  follow-up к Шагу 7F**: 6 дефектов runtime rollback / package release +
-  regression-тесты + расширение real-distro gates (см. Current task).
-  Коммит НЕ делать без явного запроса.
+- Ветка `main`; HEAD = `040f2e1...` ("Follow-up к последнему коммиту").
+  Поверх HEAD — **незакоммиченный final security follow-up к Шагу 7F**
+  (4 дефекта PAM provider rollback / package release). Коммит НЕ делать
+  без явного запроса.
 
 ## Current task
 
-**Follow-up к Шагу 7F (6 дефектов) — выполнен, не закоммичен.** Поверх
-завершённого Шага 7F (PAM provider managed rollback + package release,
-ключевые решения ниже — приняты, не пересматривать):
+**Final security follow-up (4 дефекта) — реализация и валидация
+завершены, не закоммичено.** Base before this follow-up: `040f2e1…`
+(чистое дерево). Шаги 7A–7F и их семантика ownership/journal не
+менялись — только ужесточение proof-путей:
 
-- **Fix 1 (P1) zero-wrapper flag release.**
-  `PamProviderManagedBlock.cpp` `releasePamProviderManagedFlag`:
-  разделены `matchedCandidate` (решающий кандидат) и `authorizedUnion`
-  (provenance). Валидные zero-wrapper FlagEnabled/FlagDisabled состояния
-  больше не классифицируются как «entry kind не совпадает». Все
-  refusal-инварианты (mutation-id proof, foreign wrapper refusal,
-  authority model) сохранены.
-- **Fix 2 (P1) недостижимый no-journal guard.**
-  `RollbackExecutor.cpp` `checkUnrecordedOwnership`: provider-managed
-  ветка (`pamProviderManagedPolicyFeature != nullptr`) перенесена ПЕРЕД
-  generic capability branch; legacy enable_* capability semantics не
-  тронуты.
-- **Fix 3 (P1) SSOT provider primaries.**
-  `pamProviderManagedPrimaryPath(s)` в `PamProviderRollback.h/.cpp`:
-  eligibility = `configurationMode == ProviderConfigFile` + непустой
-  `configPath`, НЕ `configTopology.has_value()`;
-  `knownProviderPrimaries` в PackageRelease делегирует SSOT. Остальные
-  `configTopology.has_value()` (SemanticVerifier, Inspector) — легитимный
-  explicit-override use, не тронуты.
-- **Fix 4 (P1) Stage-A binding whitelist + P2-1 crash recovery.**
-  `PamProviderPackageRelease.cpp` preflight: container Applied + absent
-  primary = recoverable (continue; Stage B идёт через
-  `resolveAlreadyReleasedState`); non-Applied + absent = fail closed;
-  whitelist binding states (AppliedExact/AppliedMissing/
-  PreparedFreshAbsent/PreparedFreshTargetPresent/
-  PreparedUpdatePreviousPresent/PreparedUpdateTargetPresent → pass;
-  AppliedDrifted/PreparedConflict/неизвестное → fail closed
-  «non-releasable», config/journal нетронуты). Следствие: Stage B
-  re-runs полный Stage-A preflight — частичный release невозможен
-  (Stage A и Stage B строго согласованы; unit-тест
-  `testPartialReleaseAndRetry` обновлён на эту семантику).
-- **Fix 6 (P2-2) conditional delete hardening.**
-  `AtomicFileWriter.cpp` `removeIfCurrentState`: `fstat(opened fd)` +
-  identity/metadata re-proof, content из proven fd, финальный
-  `fstatat(dirFd, name, AT_SYMLINK_NOFOLLOW)` против proven fd перед
-  `unlinkat`; расхождение → `preconditionFailed=true`, ничего не
-  удалено. Residual race (окно между финальным fstatat и unlinkat)
-  задокументирован в коде.
-- **Test seam:** `AtomicFileWriter::setRemovePreunlinkHookForTests`.
+- **(P1) Current-platform proof для `UndoOwnPamProviderContainer`.**
+  Новый SSOT-хелпер `pamProviderContainerRollbackRouteForPayload()`
+  (`PamProviderRollback.h/.cpp`): ProviderConfigFile capability с
+  lexically-exact configPath + provider name match + принадлежность
+  managed-provider domain через `pamProviderManagedEntryPlacement(...).
+  has_value()` (derived от typed routing/catalog, БЕЗ distro switch).
+  Применён в runtime (`undoOwnPamProviderContainerUnlocked` — Conflict
+  ДО любого read/mutation journal path) и в package Stage A (container
+  coherence — fail closed перед `readForMutation`).
+- **(P2) Точный orphan coverage.** `preflightPhysicalState` в
+  `PamProviderPackageRelease.cpp`: покрытие физического FIC объекта =
+  ровно одна активная запись с точной identity (path+provider+policy+
+  managedKey), доказанная через `classifyPamProviderJournalBinding`
+  (entry) или flag release proof (flag-owned entry); ambiguity → fail
+  closed. Wrapper покрыт только если его suppression id ∈ АКТИВНОЙ
+  authority ровно одной flag записи — единая модель вынесена в shared
+  `fic::rollback::activePamFlagSuppressionAuthority()`
+  (`MutationJournal.h/.cpp`; Prepared: suppressionIds ∪
+  previousSuppressionIds; Applied/RollbackFailed: suppressionIds;
+  resolved: none). Слабой модели (path, policy) больше нет.
+- **(P2) Typed payload route: policy ↔ feature ↔ key ↔ syntax.**
+  `pamProviderRollbackRouteForPayload()` расширен параметрами
+  `policyName` + `expectedSyntax` (Assignment для entry undo, Flag для
+  flag undo): доказывает `pamProviderManagedFeaturePolicyName(
+  binding.feature) == policyName` и `binding.syntax == expectedSyntax`.
+  Используется и runtime rollback, и package Stage A per-record proof.
+- **(P2) Final sweep без stale/resolved записей.** `run(Release)`:
+  destructive sweep контейнеров идёт по id записей, активных на момент
+  старта release, но каждая запись перечитывается из ТЕКУЩЕГО journal;
+  уже resolved (policy-release-deletes-container) — только report без
+  второго lifecycle pass; исчезнувшая запись — integrity error.
+  Дополнительно defense-in-depth refusal в
+  `undoOwnPamProviderContainerUnlocked`: переданная копия записи обязана
+  совпадать с текущей активной записью journal (stale/Detached/
+  RolledBack → Conflict, никакого второго lifecycle owner).
 
-Ключевые решения Шага 7F (принятые, не пересматривать):
+## Accepted architecture / invariants
 
-- **Ownership proof.** Физическое состояние рендерится ПОСЛЕ
-  `prepareMutation` (physical == journal mutation id — часть ownership
-  proof). Rollback выполняет payload только если ТЕКУЩАЯ platform
-  profile подтверждает identity journal-записи через ТУЖЕ typed-routing
-  SSOT, что и apply. Predicat — `configurationMode == ProviderConfigFile`
-  (НЕ `configTopology.has_value()`).
-- **Flag-release фиксация:** foreign-состояние с активной строкой
-  managed key оборачивается самим apply-transition
-  (`setPamProviderManagedFlagTransition`, `createSuppressionIds`).
-- **Managed-provider lock** fail-closed, требует существования
-  `paths.runtimeDir`.
-- Gate driver (`tests/integration/pam-c2/pam_provider_rollback_driver.cpp`)
-  намеренно исключён из default build/CTest; маршруты только через SSOT
-  (`PamProviderCatalog`), ничего не хардкодит.
+- Все прежние инварианты Шага 7F (ownership proof, Stage A/B
+  согласованность, conditional delete hardening, managed-provider lock,
+  SSOT provider primaries без `configTopology.has_value()`) — без
+  изменений, не пересматривать.
+- Container provenance proof — часть того же typed SSOT; второго
+  whitelist/distro switch не вводить.
+- `activePamFlagSuppressionAuthority` — единственная модель authority
+  suppression wrapper'ов; не дублировать в preflight/executors.
 
 ## Completed
 
-- Шаг 7F: runtime rollback executor + package release + conditional
-  delete + packaging wiring (DEB prerm, RPM preun) + real-distro gates
-  G1–G7 / A1–A6 (все пять gates PASS: debian-12/13, ubuntu-24.04/26.04,
-  altlinux-11).
-- Follow-up: все 6 фиксов выше.
-- Follow-up unit-тесты: `RollbackExecutorTests` (+4: no-record →
-  NothingToDo через production `rollbackPolicyBeforeDisable`, orphan
-  entry → Conflict, orphan wrapper → Conflict, legacy enable_* остаётся
-  на capability inspector), `PamProviderRollbackTests` (+4 zero-wrapper:
-  applied enabled/disabled, prepared target/previous enabled),
-  `PamProviderPackageReleaseTests` (+6: production-like topology
-  (Harness(bool capabilityTopology), configTopology=nullopt), Stage-A
-  reject AppliedDrifted/PreparedConflict, pass AppliedMissing/
-  PreparedFreshAbsent, crash-after-delete recovery, Prepared absent fail
-  closed), `AtomicFileWriterRemoveTests` (race-window replacement
-  refused).
-- Негативный контроль zero-wrapper release: существующий
-  `testFlagEnabledWithWrapperConflict` (enabled + matching owned wrapper
-  → conflict) — подтверждён, отдельный тест не потребовался.
-- Follow-up gates: `pam_provider_rollback_gate.sh` G8/G9 (flag=true и
-  flag=false БЕЗ foreign occurrence → ноль wrappers, byte-exact
-  restore) и G10 (orphan no-journal disable отказывает, state нетронут,
-  после restore journal — release завершается); ALT-вариант A7/A8/A9 —
-  то же. Route-driven, без хардкода distro.
+- Все 4 фикса выше + регрессии: `PamProviderRollbackTests` (+6: wrong
+  path / wrong provider container proof, Detached no-second-lifecycle,
+  flag↔assignment masquerade ×2, wrong policy for correct key),
+  `PamProviderPackageReleaseTests` (+5: wrong-key same-policy orphan
+  entry, wrong mutation id, wrong-key orphan wrapper, Prepared
+  previous-wrapper authority, independent active container processed).
+- Негативный контроль на base `040f2e1` (отдельный worktree, новые
+  тест-файлы поверх base-кода): 7 из 11 новых регрессий падают на base
+  (дефекты доказаны); wrong-mutation-id, prepared-previous-authority и
+  independent-container проходят на обеих версиях (guards, а не
+  regressions).
 
 ## Changed areas
 
-- `fic/src/modules/identity_access/pam/` (rollback/package release/
-  managed block), `fic/src/rollback/`,
-  `fic-common/fic-core/.../AtomicFileWriter.*`, `fic/src/main.cpp`.
-- `packaging/{deb,rpm}/build-fic-*.sh`,
-  `tests/integration/packaging/PamPackagingChecks.py`.
-- `tests/fic/...` (unit), `tests/CMakeLists.txt`,
-  `tests/integration/pam-c2/` (driver + 2 gate-скрипта),
-  `docs/rollback.md`.
+- `fic/src/modules/identity_access/pam/PamProviderRollback.{h,cpp}`,
+  `fic/src/modules/identity_access/pam/PamProviderPackageRelease.cpp`,
+  `fic/src/rollback/MutationJournal.{h,cpp}`.
+- `tests/fic/modules/identity_access/pam/{PamProviderRollbackTests,
+  PamProviderPackageReleaseTests}.cpp` (регистрация в main() каждого
+  файла; CTest-цели уже существовали, `tests/CMakeLists.txt` не менялся).
 
 ## Validation (фактически выполнено)
 
-- Полный build `build-check` (ubuntu-24.04) — 0 errors, 0 warnings
-  (после всех фиксов follow-up).
+- Полный build `build-check` (ubuntu-24.04) — 0 errors.
 - Полный CTest — **115/115 PASS** (1 skip: `command_hash_batch_tests`,
   окружение).
-- `python3 tests/integration/packaging/PamPackagingChecks.py $PWD` —
-  PASS (prerm C2 release wiring + PAM packaging checks).
+- `python3 tests/integration/packaging/PamPackagingChecks.py $PWD` — PASS.
 - `git diff --check` — чисто.
-- **Real-distro gates: все 5 PASS с расширенными сценариями**
-  (debian-12, debian-13, ubuntu-24.04, ubuntu-26.04: G1–G10;
-  altlinux-11/p11: A1–A9). Включают zero-wrapper flag=true/false
-  (byte-exact restore), orphan no-journal refusal (byte-exact untouched),
-  journal restore + proven release.
+- **Real-distro gates: все 5 PASS** — `pam_provider_rollback_gate.sh`
+  на debian-12, debian-13, ubuntu-24.04, ubuntu-26.04 (G1–G10);
+  `pam_provider_rollback_gate_alt.sh` на altlinux-11 (A1–A9).
 
 ## Remaining
 
-1. Финальный отчёт follow-up (11 пунктов) составлен в сессии; коммит
-   НЕ делать без явного запроса.
-2. Real DEB/RPM packaging build в follow-up не прогонялся (только
-   `PamPackagingChecks.py`).
-3. Прод-apply на absent primary отказывает (FailClosed); создание
-   primary требует platform-level proof contract.
-4. PAM argv override на production daemon harness end-to-end не
-   прогонялся (покрыт preflight/policy-level regression).
-5. Не трогали: C2 topology, PamOptionFile semantics, Step 6 option
-   reconciliation, codec, activation, D12 coordinator/slot writer.
+1. Коммит НЕ делать без явного запроса.
+2. Optional 4 mutation-checks (`pam_prerm_release_gate.sh`: history-
+   initial / quality-history / foreign-quality-history /
+   foreign-added-during-fic) НЕ завершены: (а) apt-get update/install
+   в контейнере стал нестабилен (зеркала sandbox); (б) сценарии 1–2
+   упали на C2 topology bootstrap ПРИ УСТАНОВКЕ СТАРЫХ prebuilt debs из
+   `dist/` (built 2025-09-21, до всех изменений этого follow-up) —
+   отношение к изменениям исключено: gate ставит пакеты из `dist/`, а
+   не из исходников. Перед повтором: пересобрать debs; запускать с
+   `-e http_proxy= -e https_proxy=` — в отличие от rollback gate,
+   prerm-скрипт НЕ сбрасывает хостовый loopback proxy.
+3. Не трогали (вне scope): C2 topology, PamOptionFile semantics,
+   Step 6 option reconciliation, codec, activation, D12 coordinator.
 
-## Follow-up добавления к Шагу 7F (важно для следующего агента)
+## Следующему агенту
 
-- **Driver lifecycle:** `pam_provider_rollback_driver.cpp` теперь
-  воспроизводит контракт наружного `RollbackExecutor` — после успешного
-  undo помечает policy record `RolledBack` (без этого повторный fresh
-  apply того же identity отказывает как AppliedDrifted — это правильно
-  для production, но ломало gate-сценарии re-apply).
-- **SSOT policy identity:** добавлен
-  `pamProviderManagedFeaturePolicyName(feature)` (обратный lookup в
-  `PamProviderRollback.h/.cpp`, общая таблица
-  `pamProviderManagedPolicyNames()`); драйвер больше не использует
-  синтетические имена `ficgate_*` — journal/физические маркеры/orphan
-  inspection работают с теми же именами политик, что production
-  (`failed_authentication_*` и т.д.).
-- **Сериализация enabled-флага:** маркера `FIC_PAM_FLAG_ENABLED` НЕ
-  существует; enabled state = entry с «голой» строкой ключа
-  (`even_deny_root`). Проверять: `grep -qx <key>` + `FIC_PAM_ENTRY_BEGIN`.
-  Disabled state = `FIC_PAM_FLAG_DISABLED` sentinel внутри entry.
-- **Driver bootstrap:** каждый запуск драйвера пересоздаёт пустой
-  journal dir; при mv-away/restорe журнала в gate-скриптах нужен
-  `rm -rf` перед восстановлением (иначе mv вкладывает каталог).
+- `pamProviderRollbackRouteForPayload` теперь имеет 8 параметров; все
+  callers обновлены (только `PamProviderPackageRelease.cpp` + внутренний
+  runtime path в `PamProviderRollback.cpp`).
+- Container sweep в `run(Release)` работает по `containerIds`
+  (active-at-start) + перечитывание текущего состояния по id; report
+  buckets (deleted/detached/retained) заполняются и для уже-resolved
+  записей (policy-release-deletes-container).
+- Прежние «Follow-up добавления к Шагу 7F» (driver lifecycle, SSOT
+  policy identity, сериализация enabled-флага, driver bootstrap rm -rf)
+  остаются в силе как знания о gate-инфраструктуре.

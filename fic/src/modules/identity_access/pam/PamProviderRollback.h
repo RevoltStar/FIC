@@ -104,12 +104,51 @@ std::optional<PamProviderRollbackRoute> pamProviderRollbackRouteForFeature(
 // platform must confirm the journaled provider identity, configuration
 // path, managed key AND placement contract through the same typed routing
 // helper the apply path uses. nullopt (with a typed message) = Conflict.
+//
+// Strengthened (Step 7F security follow-up): the proof additionally binds
+// the CANONICAL policy identity and the NATIVE option SYNTAX —
+//   * the routing binding resolved for `managedKey` must belong to a
+//     managed feature whose pamProviderManagedFeaturePolicyName() is
+//     exactly `policyName` (a structurally valid journal can never bind a
+//     canonical key to a wrong policy identity);
+//   * binding.syntax must equal `expectedSyntax` (an assignment key can
+//     never travel through UndoRemovePamProviderManagedFlag and a flag
+//     key never through UndoRemovePamProviderManagedEntry).
 std::optional<PamProviderRollbackRoute> pamProviderRollbackRouteForPayload(
     const PamProviderRollbackOptions& options,
     const std::string& providerName,
     const std::string& configPath,
+    const std::string& policyName,
     const std::string& managedKey,
+    PamNativeOptionSyntax expectedSyntax,
     fic::rollback::PamProviderBlockPlacementContract placementContract,
+    std::string& conflictMessage);
+
+// Typed container-provenance proof (Step 7F security follow-up): the
+// CURRENT platform must confirm the journaled provider identity AND
+// configuration path of an UndoOwnPamProviderContainer payload BEFORE any
+// journal path is read or mutated. The proof passes only when
+//   * a capability of the current profile has configurationMode ==
+//     ProviderConfigFile, a lexically-exact configPath match and
+//     pamProviderDescriptor(provider).name == providerName;
+//   * the capability belongs to the managed-provider domain (at least one
+//     policy binding of its descriptor is actually routed through
+//     pamProviderManagedEntryPlacement()) — never a random
+//     ProviderConfigFile capability FIC does not service. Derived from the
+//     typed routing/catalog SSOT, never a distro switch.
+// nullopt (with a typed message) = Conflict: nothing is read or mutated
+// through the unconfirmed path.
+struct PamProviderContainerRollbackRoute {
+    PamProviderDescriptor descriptor;
+    const fic::platform::PamCapabilityConfig* capability = nullptr;
+    std::filesystem::path configPath;
+};
+
+std::optional<PamProviderContainerRollbackRoute>
+pamProviderContainerRollbackRouteForPayload(
+    const PamProviderRollbackOptions& options,
+    const std::string& providerName,
+    const std::string& configPath,
     std::string& conflictMessage);
 
 // Typed managed-policy-name table (Step 7B-7E policy identities). Returns

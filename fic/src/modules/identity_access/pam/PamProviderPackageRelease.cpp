@@ -95,30 +95,40 @@ bool PamProviderPackageRelease::preflight(Report& report, std::string& error) {
     for (const MutationRecord& record : active) {
         std::string payloadConfigPath;
         std::string payloadProvider;
+        std::string payloadPolicy;
         std::string payloadKey;
+        PamNativeOptionSyntax payloadSyntax = PamNativeOptionSyntax::Assignment;
         fic::rollback::PamProviderBlockPlacementContract placementContract =
             fic::rollback::PamProviderBlockPlacementContract::End;
         if (const auto* entry = entryPayload(record)) {
             payloadConfigPath = entry->configPath;
             payloadProvider = entry->providerName;
+            payloadPolicy = entry->policyName;
             payloadKey = entry->managedKey;
+            payloadSyntax = PamNativeOptionSyntax::Assignment;
             placementContract = entry->placement;
         } else if (const auto* flag = flagPayload(record)) {
             payloadConfigPath = flag->configPath;
             payloadProvider = flag->providerName;
+            payloadPolicy = flag->policyName;
             payloadKey = flag->managedKey;
+            payloadSyntax = PamNativeOptionSyntax::Flag;
             placementContract = flag->placement;
         } else {
             continue; // container records are proven below
         }
-        // Platform identity proof against the CURRENT profile (§67.3).
+        // Platform identity proof against the CURRENT profile (§67.3):
+        // provider, path, managed key, placement contract, canonical policy
+        // identity and native option syntax — the same strengthened proof
+        // the runtime rollback uses (no separate whitelist semantics).
         std::string routeMessage;
         PamProviderRollbackOptions rollbackOptions;
         rollbackOptions.platform = platform_;
         const std::optional<PamProviderRollbackRoute> route =
             pamProviderRollbackRouteForPayload(
                 rollbackOptions, payloadProvider, payloadConfigPath,
-                payloadKey, placementContract, routeMessage);
+                payloadPolicy, payloadKey, payloadSyntax, placementContract,
+                routeMessage);
         if (!route.has_value()) {
             error = "preflight: active record " + std::to_string(record.id) +
                 " is not confirmed by the current platform: " + routeMessage;
@@ -269,28 +279,43 @@ bool PamProviderPackageRelease::preflightFlagRecord(
 }
 
 bool PamProviderPackageRelease::preflightPhysicalState(std::string& error) {
-    std::vector<std::pair<std::string, std::string>> journaledIdentities;
+    // Exact journal-backed provenance identity (Step 7F security follow-up):
+    // a physical FIC object is provenance-covered ONLY by an active journal
+    // record with the exact (configPath, provider, policy, managedKey)
+    // identity whose record-specific mutation classification confirms the
+    // physical state (mutation id, body, status). A record of the same
+    // policy alone never covers a differently-keyed orphan — there is NO
+    // weak (path, policy) coverage model on this path.
+    std::vector<MutationRecord> entryRecords;
+    std::vector<MutationRecord> flagRecords;
     for (const MutationRecord& record : journal_.records()) {
         if (!record.isActive()) {
             continue;
         }
-        if (const auto* entry = entryPayload(record)) {
-            journaledIdentities.emplace_back(entry->configPath,
-                                             entry->policyName);
-        } else if (const auto* flag = flagPayload(record)) {
-            journaledIdentities.emplace_back(flag->configPath,
-                                             flag->policyName);
+        if (entryPayload(record) != nullptr) {
+            entryRecords.push_back(record);
+        } else if (flagPayload(record) != nullptr) {
+            flagRecords.push_back(record);
         }
     }
-    auto covered = [&](const std::string& configPath,
-                       const std::string& policy) {
-        for (const auto& identity : journaledIdentities) {
-            if (identity.first == configPath && identity.second == policy) {
-                return true;
-            }
-        }
-        return false;
+    auto exactIdentity = [](const UndoRemovePamProviderManagedEntry& payload,
+                            const std::string& path,
+                            const std::string& provider,
+                            const std::string& policy,
+                            const std::string& managedKey) {
+        return samePath(payload.configPath, path) &&
+            payload.providerName == provider && payload.policyName == policy &&
+            payload.managedKey == managedKey;
     };
+    auto exactFlagIdentity =
+        [](const UndoRemovePamProviderManagedFlag& payload,
+           const std::string& path, const std::string& provider,
+           const std::string& policy, const std::string& managedKey) {
+            return samePath(payload.configPath, path) &&
+                payload.providerName == provider &&
+                payload.policyName == policy &&
+                payload.managedKey == managedKey;
+        };
 
     // Orphan detection (§68) over every known provider primary.
     for (const std::filesystem::path& path :
@@ -316,22 +341,185 @@ bool PamProviderPackageRelease::preflightPhysicalState(std::string& error) {
             return false;
         }
         for (const PamProviderManagedEntry& entry : parse.view.entries) {
-            if (!covered(path.string(), entry.policy)) {
+            // Exactly one active ENTRY record with the exact identity, and
+            // the record-specific journal↔physical classifier must confirm
+            // the physical mutation id/body/status.
+            const MutationRecord* matchedEntry = nullptr;
+            bool ambiguous = false;
+            for (const MutationRecord& record : entryRecords) {
+                const auto* payload = entryPayload(record);
+                if (exactIdentity(*payload, path.string(),
+                                  parse.view.provider, entry.policy,
+                                  entry.managedKey)) {
+                    if (matchedEntry != nullptr) {
+                        ambiguous = true;
+                        break;
+                    }
+                    matchedEntry = &record;
+                }
+            }
+            bool covered = false;
+            if (ambiguous) {
+                error = "preflight: ambiguous journal provenance for the FIC "
+                        "PAM entry (policy '" + entry.policy + "', key '" +
+                    entry.managedKey + "') in " + path.string() +
+                    " — package removal is blocked (fail closed)";
+                return false;
+            }
+            if (matchedEntry != nullptr) {
+                const auto* payload = entryPayload(*matchedEntry);
+                PamProviderOwnershipExpectation expectation;
+                expectation.provider = payload->providerName;
+                expectation.policy = payload->policyName;
+                expectation.managedKey = payload->managedKey;
+                expectation.body = payload->appliedBody;
+                expectation.previousBody = payload->previousAppliedBody;
+                expectation.mutationId = matchedEntry->id;
+                const PamProviderJournalMutationStatus classifyStatus =
+                    matchedEntry->status == MutationStatus::Prepared
+                    ? PamProviderJournalMutationStatus::Prepared
+                    : PamProviderJournalMutationStatus::Applied;
+                const PamProviderJournalBindingResult binding =
+                    classifyPamProviderJournalBinding(classifyStatus, parse,
+                                                      expectation);
+                covered = binding.ok &&
+                    (binding.state ==
+                         PamProviderJournalBindingState::AppliedExact ||
+                     binding.state ==
+                         PamProviderJournalBindingState::AppliedMissing ||
+                     binding.state ==
+                         PamProviderJournalBindingState::PreparedFreshAbsent ||
+                     binding.state == PamProviderJournalBindingState::
+                         PreparedFreshTargetPresent ||
+                     binding.state == PamProviderJournalBindingState::
+                         PreparedUpdatePreviousPresent ||
+                     binding.state == PamProviderJournalBindingState::
+                         PreparedUpdateTargetPresent);
+                if (!covered) {
+                    error = "preflight: physical FIC PAM entry (policy '" +
+                        entry.policy + "', key '" + entry.managedKey +
+                        "') in " + path.string() +
+                        " is not confirmed by the exact journal record " +
+                        std::to_string(matchedEntry->id) +
+                        " (drift/conflict) — package removal is blocked "
+                        "(fail closed)";
+                    return false;
+                }
+                continue; // proven journal-covered
+            }
+            // A flag record physically owns its managed flag entry (bare
+            // enabled key / disabled sentinel): the exact flag identity
+            // covers its owned entry state through the flag release proof.
+            const MutationRecord* matchedFlag = nullptr;
+            for (const MutationRecord& record : flagRecords) {
+                const auto* payload = flagPayload(record);
+                if (exactFlagIdentity(*payload, path.string(),
+                                      parse.view.provider, entry.policy,
+                                      entry.managedKey)) {
+                    if (matchedFlag != nullptr) {
+                        ambiguous = true;
+                        break;
+                    }
+                    matchedFlag = &record;
+                }
+            }
+            if (ambiguous) {
+                error = "preflight: ambiguous journal provenance for the FIC "
+                        "PAM entry (policy '" + entry.policy + "', key '" +
+                    entry.managedKey + "') in " + path.string() +
+                    " — package removal is blocked (fail closed)";
+                return false;
+            }
+            if (matchedFlag != nullptr) {
+                const auto* flag = flagPayload(*matchedFlag);
+                PamProviderFlagOwnedStateCandidate targetCandidate;
+                targetCandidate.entryKind =
+                    flag->appliedEnabled
+                    ? PamProviderManagedEntryKind::FlagEnabled
+                    : PamProviderManagedEntryKind::FlagDisabled;
+                if (!flag->appliedEnabled) {
+                    targetCandidate.authorizedSuppressionIds =
+                        flag->suppressionIds;
+                }
+                PamProviderFlagReleaseExpectation releaseExpectation;
+                releaseExpectation.provider = flag->providerName;
+                releaseExpectation.policy = flag->policyName;
+                releaseExpectation.managedKey = flag->managedKey;
+                releaseExpectation.mutationId = matchedFlag->id;
+                releaseExpectation.candidates.push_back(targetCandidate);
+                if (matchedFlag->status == MutationStatus::Prepared &&
+                    flag->previousAppliedEnabled.has_value()) {
+                    PamProviderFlagOwnedStateCandidate previousCandidate;
+                    previousCandidate.entryKind =
+                        *flag->previousAppliedEnabled
+                        ? PamProviderManagedEntryKind::FlagEnabled
+                        : PamProviderManagedEntryKind::FlagDisabled;
+                    if (!*flag->previousAppliedEnabled) {
+                        previousCandidate.authorizedSuppressionIds =
+                            flag->previousSuppressionIds;
+                    }
+                    releaseExpectation.candidates.push_back(previousCandidate);
+                }
+                const PamProviderBlockPlacementRequest placementRequest =
+                    flag->placement ==
+                        fic::rollback::PamProviderBlockPlacementContract::
+                            Beginning
+                    ? PamProviderBlockPlacementRequest::Beginning
+                    : PamProviderBlockPlacementRequest::End;
+                const PamProviderFlagReleaseResult release =
+                    releasePamProviderManagedFlag(read.content,
+                                                  releaseExpectation,
+                                                  placementRequest);
+                covered = release.ok && release.outcome ==
+                    PamProviderFlagReleaseResult::Outcome::Released;
+            }
+            if (!covered) {
                 error = "preflight: orphan FIC PAM entry for policy '" +
-                    entry.policy + "' in " + path.string() +
-                    " without active journal provenance — package removal is "
-                    "blocked (fail closed)";
+                    entry.policy + "' (key '" + entry.managedKey + "') in " +
+                    path.string() +
+                    " without exact active journal provenance — package "
+                    "removal is blocked (fail closed)";
                 return false;
             }
         }
+
         for (const PamProviderSuppressedLine& wrapper :
              parse.view.suppressions) {
-            if (!covered(path.string(), wrapper.policy)) {
+            // A suppression wrapper is journal-covered only when its
+            // suppression id belongs to the ACTIVE AUTHORITY of exactly one
+            // matching flag record (status-aware: Prepared owns the union
+            // of both durable sides, Applied/RollbackFailed the target
+            // side, resolved records nothing) — the single shared authority
+            // model from MutationJournal.
+            const MutationRecord* matchedFlag = nullptr;
+            bool ambiguous = false;
+            for (const MutationRecord& record : flagRecords) {
+                const auto* payload = flagPayload(record);
+                if (exactFlagIdentity(*payload, path.string(),
+                                      parse.view.provider, wrapper.policy,
+                                      wrapper.managedKey)) {
+                    if (matchedFlag != nullptr) {
+                        ambiguous = true;
+                        break;
+                    }
+                    matchedFlag = &record;
+                }
+            }
+            bool covered = false;
+            if (!ambiguous && matchedFlag != nullptr) {
+                const std::vector<std::string> authority =
+                    fic::rollback::activePamFlagSuppressionAuthority(
+                        *matchedFlag, *flagPayload(*matchedFlag));
+                covered = std::find(authority.begin(), authority.end(),
+                                    wrapper.suppressionId) != authority.end();
+            }
+            if (!covered) {
                 error = "preflight: orphan FIC PAM suppression wrapper for "
-                        "policy '" + wrapper.policy + "' in " +
-                    path.string() +
-                    " without active journal provenance — package removal is "
-                    "blocked (fail closed)";
+                        "policy '" + wrapper.policy + "' (key '" +
+                    wrapper.managedKey + "', suppression id '" +
+                    wrapper.suppressionId + "') in " + path.string() +
+                    " without exact active journal provenance — package "
+                    "removal is blocked (fail closed)";
                 return false;
             }
         }
@@ -345,6 +533,21 @@ bool PamProviderPackageRelease::preflightPhysicalState(std::string& error) {
         const auto* container = containerPayload(record);
         if (container == nullptr) {
             continue;
+        }
+        // Current-platform proof (Step 7F security follow-up): the journal
+        // path is never trusted blindly — the CURRENT platform profile must
+        // confirm the (provider, configPath) managed container identity
+        // through the single typed SSOT before any read of the provenance
+        // path (fail closed).
+        std::string containerRouteMessage;
+        PamProviderRollbackOptions containerRollbackOptions;
+        containerRollbackOptions.platform = platform_;
+        if (!pamProviderContainerRollbackRouteForPayload(
+                containerRollbackOptions, container->providerName,
+                container->configPath, containerRouteMessage).has_value()) {
+            error = "preflight: container provenance record " +
+                std::to_string(record.id) + ": " + containerRouteMessage;
+            return false;
         }
         std::string readError;
         PamProviderContainerReadResult read =
@@ -427,13 +630,13 @@ bool PamProviderPackageRelease::run(Mode mode, Report& report,
 
     // Deterministic release of the active entry/flag records (§70).
     std::vector<MutationRecord> releasable;
-    std::vector<MutationRecord> containers;
+    std::vector<fic::rollback::MutationId> containerIds;
     for (const MutationRecord& record : journal_.records()) {
         if (!record.isActive()) {
             continue;
         }
         if (containerPayload(record) != nullptr) {
-            containers.push_back(record);
+            containerIds.push_back(record.id);
         } else {
             releasable.push_back(record);
         }
@@ -442,10 +645,7 @@ bool PamProviderPackageRelease::run(Mode mode, Report& report,
               [](const MutationRecord& left, const MutationRecord& right) {
                   return releaseOrderKey(left) < releaseOrderKey(right);
               });
-    std::sort(containers.begin(), containers.end(),
-              [](const MutationRecord& left, const MutationRecord& right) {
-                  return releaseOrderKey(left) < releaseOrderKey(right);
-              });
+    std::sort(containerIds.begin(), containerIds.end());
 
     PamProviderRollbackOptions rollbackOptions;
     rollbackOptions.platform = platform_;
@@ -493,24 +693,61 @@ bool PamProviderPackageRelease::run(Mode mode, Report& report,
     }
 
     // Container cleanup AFTER all provider state is released (§71/§73).
-    for (const MutationRecord& record : containers) {
-        const auto* container = containerPayload(record);
+    // Re-enumeration (Step 7F security follow-up): the destructive sweep
+    // NEVER trusts the start-of-release snapshot — for every container
+    // record that was active at release start, the CURRENT journal state is
+    // re-read by id. A record the policy release already resolved (e.g.
+    // policy-release-deletes-container) is reported per its resolved status
+    // WITHOUT a second lifecycle pass; a still-active record is processed
+    // through undoOwnPamProviderContainerUnlocked (which independently
+    // refuses stale/resolved records); a record missing from the journal is
+    // an integrity error.
+    std::vector<fic::rollback::MutationId> sweepIds = containerIds;
+    for (fic::rollback::MutationId id : sweepIds) {
+        const MutationRecord* current = nullptr;
+        for (const MutationRecord& candidate : journal_.records()) {
+            if (candidate.id == id) {
+                current = &candidate;
+                break;
+            }
+        }
+        if (current == nullptr) {
+            error = "release: container provenance record " +
+                std::to_string(id) + " disappeared from the journal";
+            return false;
+        }
+        const auto* container = containerPayload(*current);
         if (container == nullptr) {
+            error = "release: journal record " + std::to_string(id) +
+                " is no longer a container provenance payload";
+            return false;
+        }
+        if (!current->isActive()) {
+            // Already resolved by the policy release above (e.g. the last
+            // entry release deleted the now-empty container): report the
+            // final state, never run a second destructive lifecycle pass.
+            if (current->status == MutationStatus::RolledBack) {
+                report.containersDeleted.push_back(container->configPath);
+            } else if (current->status == MutationStatus::Detached) {
+                report.containersDetached.push_back(container->configPath);
+            } else {
+                report.containersRetained.push_back(container->configPath);
+            }
             continue;
         }
         const PamProviderRollbackResult result =
             undoOwnPamProviderContainerUnlocked(rollbackOptions, journal_,
-                                                record, *container);
+                                                *current, *container);
         if (!result.ok) {
             error = "release: container provenance record " +
-                std::to_string(record.id) + " could not be resolved: " +
+                std::to_string(id) + " could not be resolved: " +
                 result.message;
             return false;
         }
         MutationStatus resolved = MutationStatus::Applied;
-        for (const MutationRecord& current : journal_.records()) {
-            if (current.id == record.id) {
-                resolved = current.status;
+        for (const MutationRecord& candidate : journal_.records()) {
+            if (candidate.id == id) {
+                resolved = candidate.status;
                 break;
             }
         }

@@ -265,6 +265,20 @@ private:
     JournalHealth health_ = JournalHealth::Healthy;
 };
 
+// Status-aware suppression-wrapper authority of an EXISTING journal record
+// (single authority model, do not duplicate): for the managed PAM flag
+// record of `record`,
+//   * Prepared       — suppressionIds ∪ previousSuppressionIds (the
+//                      physical state may sit on either durable side);
+//   * Applied/RollbackFailed — suppressionIds;
+//   * resolved statuses (RolledBack/Detached, !isActive()) — none.
+// Shared with the PAM provider package preflight orphan-proof: a physical
+// suppression wrapper is journal-covered only when its suppression id
+// belongs to the authority of EXACTLY ONE matching active record.
+std::vector<std::string> activePamFlagSuppressionAuthority(
+    const MutationRecord& record,
+    const UndoRemovePamProviderManagedFlag& flag);
+
 } // namespace fic::rollback
 
 #endif // FIC_ROLLBACK_MUTATION_JOURNAL_H
