@@ -1,0 +1,765 @@
+#include "modules/identity_access/pam/PamProviderRollback.h"
+
+#include "modules/identity_access/pam/PamProviderManagedBlock.h"
+#include "modules/identity_access/pam/PamProviderManagedBlockFile.h"
+#include "platform/PlatformProfile.h"
+#include "rollback/MutationJournal.h"
+#include "rollback/MutationRecord.h"
+
+#include <fic/core/fs/AtomicFileWriter.h>
+
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+
+using namespace fic::identity::pam;
+using fic::platform::PamCapabilityConfig;
+using fic::platform::PamCapabilityConfigurationMode;
+using fic::platform::PamPlatformConfig;
+using fic::platform::PamPolicyFeature;
+using fic::platform::PamProviderKind;
+using fic::rollback::MutationJournal;
+using fic::rollback::MutationRecord;
+using fic::rollback::MutationStatus;
+using fic::rollback::UndoAction;
+using fic::rollback::UndoOwnPamProviderContainer;
+using fic::rollback::UndoRemovePamProviderManagedEntry;
+using fic::rollback::UndoRemovePamProviderManagedFlag;
+
+void require(bool condition, const std::string& message) {
+    if (!condition) {
+        throw std::runtime_error(message);
+    }
+}
+
+class TempDir {
+public:
+    TempDir() {
+        char pattern[] = "/tmp/fic-pam-provider-rollback-XXXXXX";
+        char* created = ::mkdtemp(pattern);
+        if (created == nullptr) {
+            throw std::runtime_error("mkdtemp failed");
+        }
+        directory = created;
+    }
+    ~TempDir() {
+        std::error_code ignored;
+        std::filesystem::remove_all(directory, ignored);
+    }
+    std::filesystem::path directory;
+};
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
+}
+
+void writeFile(const std::filesystem::path& path, const std::string& content) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << content;
+}
+
+const char* kProvider = "pam_faillock";
+const char* kPolicy = "failed_authentication_attempts";
+const char* kKey = "deny";
+
+struct Harness {
+    TempDir temp;
+    std::filesystem::path configPath = temp.directory / "faillock.conf";
+    std::filesystem::path journalPath = temp.directory / "journal.json";
+    MutationJournal journal{journalPath};
+    PamPlatformConfig platform;
+
+    Harness() {
+        std::string error;
+        require(journal.initializeOrLoad(error), "journal init: " + error);
+        PamCapabilityConfig capability;
+        capability.capability = fic::platform::PamCapability::AuthenticationLockout;
+        capability.provider = PamProviderKind::PamFaillock;
+        capability.configurationMode =
+            PamCapabilityConfigurationMode::ProviderConfigFile;
+        capability.configPath = configPath;
+        fic::platform::PamProviderConfigTopology topology;
+        topology.primaryPath = configPath;
+        capability.configTopology = topology;
+        platform.capabilities.push_back(capability);
+    }
+
+    PamProviderRollbackOptions options() const {
+        PamProviderRollbackOptions result;
+        result.platform = platform;
+        return result;
+    }
+};
+
+// Foreign content kept byte-exact through every fixture.
+const char* kForeign = "# admin comment\ndeny = 3\n";
+
+std::string appliedBody(const std::string& value) {
+    return pamProviderEntryBody(kKey, value);
+}
+
+UndoRemovePamProviderManagedEntry entryUndo(const std::string& applied,
+                                            const std::string& previous) {
+    UndoRemovePamProviderManagedEntry undo;
+    undo.policyName = kPolicy;
+    undo.providerName = kProvider;
+    undo.configPath = ""; // set by caller (temp path differs per test)
+    undo.managedKey = kKey;
+    undo.appliedBody = applied;
+    undo.previousAppliedBody = previous;
+    undo.placement = fic::rollback::PamProviderBlockPlacementContract::End;
+    return undo;
+}
+
+// Writes a physical state with exactly one FIC entry under the given id.
+void writeEntryState(const std::filesystem::path& path,
+                     std::uint64_t mutationId, const std::string& body,
+                     const std::string& foreign = kForeign) {
+    PamProviderEntrySpec spec;
+    spec.provider = kProvider;
+    spec.policy = kPolicy;
+    spec.managedKey = kKey;
+    const auto parsed =
+        parseCanonicalPamProviderEntryBody(body, spec.managedKey,
+                                           spec.value)
+            ? spec
+            : spec;
+    (void)parsed;
+    // Derive value from the canonical body.
+    std::string key;
+    std::string value;
+    require(parseCanonicalPamProviderEntryBody(body, key, value),
+            "fixture body must be canonical assignment");
+    spec.managedKey = key;
+    spec.value = value;
+    spec.mutationId = mutationId;
+    PamProviderMutationResult result =
+        setPamProviderManagedEntry(foreign, spec,
+                                   PamProviderBlockPlacementRequest::End);
+    require(result.ok, "fixture entry apply: " + result.error);
+    writeFile(path, result.content);
+}
+
+MutationRecord makeEntryRecord(Harness& harness, std::uint64_t id,
+                               const std::string& applied,
+                               const std::string& previous,
+                               MutationStatus status) {
+    UndoRemovePamProviderManagedEntry undo =
+        entryUndo(applied, previous);
+    undo.configPath = harness.configPath.string();
+    MutationRecord record;
+    record.id = id;
+    record.policy = {"IDENTITY_ACCESS", "PAM", kPolicy};
+    record.resource = harness.configPath.string();
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+    record.status = status;
+    return record;
+}
+
+// ---------------------------------------------------------------------
+// Assignment matrix (Step 7F §83).
+// ---------------------------------------------------------------------
+
+void testAppliedExactRelease() {
+    Harness harness;
+    writeEntryState(harness.configPath, 7, appliedBody("8"));
+    const std::string before = readFile(harness.configPath);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok && !result.nothingToDo && result.changedSystemState,
+            "applied exact must release: " + result.message);
+    require(readFile(harness.configPath) == kForeign,
+            "foreign bytes must survive byte-exact");
+    require(before.find("FIC_PAM_ENTRY_BEGIN") != std::string::npos,
+            "fixture must have had an entry");
+}
+
+void testAppliedMissingIsNothingToDo() {
+    Harness harness;
+    writeFile(harness.configPath, kForeign);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok && result.nothingToDo,
+            "missing entry is externally released state");
+    require(readFile(harness.configPath) == kForeign,
+            "nothing must be reconstructed");
+}
+
+void testBodyDriftConflict() {
+    Harness harness;
+    writeEntryState(harness.configPath, 7, appliedBody("9"));
+    const std::string before = readFile(harness.configPath);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(!result.ok && result.conflict, "body drift must conflict");
+    require(readFile(harness.configPath) == before,
+            "drifted file must stay unchanged");
+}
+
+void testWrongMutationIdConflict() {
+    Harness harness;
+    writeEntryState(harness.configPath, 8, appliedBody("8"));
+    const std::string before = readFile(harness.configPath);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(!result.ok && result.conflict,
+            "wrong physical mutation id must conflict (ABA)");
+    require(readFile(harness.configPath) == before, "file unchanged");
+}
+
+void testPreparedFreshAbsent() {
+    Harness harness;
+    writeFile(harness.configPath, kForeign);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Prepared);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok && result.nothingToDo,
+            "prepared fresh absent: the system was never mutated");
+}
+
+void testPreparedFreshTargetPresent() {
+    Harness harness;
+    writeEntryState(harness.configPath, 7, appliedBody("8"));
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Prepared);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok && result.changedSystemState,
+            "prepared fresh target present: release the target");
+    require(readFile(harness.configPath) == kForeign, "foreign exact");
+}
+
+void testPreparedUpdatePreviousAndTarget() {
+    // previous side physically present -> release previous.
+    {
+        Harness harness;
+        writeEntryState(harness.configPath, 7, appliedBody("5"));
+        MutationRecord record = makeEntryRecord(
+            harness, 7, appliedBody("8"), appliedBody("5"),
+            MutationStatus::Prepared);
+        const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+            harness.options(), harness.journal, record,
+            std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+        require(result.ok && result.changedSystemState,
+            "prepared update previous present: release previous (rollback "
+            "releases whichever durable side is proven, it does NOT finish "
+            "the target)");
+        require(readFile(harness.configPath) == kForeign, "foreign exact");
+    }
+    // target side physically present -> release target.
+    {
+        Harness harness;
+        writeEntryState(harness.configPath, 7, appliedBody("8"));
+        MutationRecord record = makeEntryRecord(
+            harness, 7, appliedBody("8"), appliedBody("5"),
+            MutationStatus::Prepared);
+        const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+            harness.options(), harness.journal, record,
+            std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+        require(result.ok && result.changedSystemState,
+                "prepared update target present: release target");
+        require(readFile(harness.configPath) == kForeign, "foreign exact");
+    }
+    // neither side -> conflict.
+    {
+        Harness harness;
+        writeEntryState(harness.configPath, 7, appliedBody("6"));
+        MutationRecord record = makeEntryRecord(
+            harness, 7, appliedBody("8"), appliedBody("5"),
+            MutationStatus::Prepared);
+        const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+            harness.options(), harness.journal, record,
+            std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+        require(!result.ok && result.conflict,
+                "neither previous nor target proven must conflict");
+    }
+}
+
+void testDisplacedBlockOwnershipSurvives() {
+    // A valid FIC block displaced by foreign content is still owned:
+    // placement is not ownership (§12).
+    Harness harness;
+    writeEntryState(harness.configPath, 7, appliedBody("8"));
+    // Admin prepends a foreign line (block no longer at BOF/EOF effective
+    // placement for a BOF-contract file).
+    const std::string displaced = "top_rule = x\n" +
+        readFile(harness.configPath);
+    writeFile(harness.configPath, displaced);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok && result.changedSystemState,
+            "displaced block must still be releasable");
+    require(readFile(harness.configPath) == std::string("top_rule = x\n") + kForeign,
+            "foreign bytes (prepended + original) must survive byte-exact");
+}
+
+void testPlatformIdentityProof() {
+    // The journal claims a config path the current profile does not confirm.
+    Harness harness;
+    UndoRemovePamProviderManagedEntry undo = entryUndo(appliedBody("8"), "");
+    undo.configPath = "/elsewhere/faillock.conf";
+    MutationRecord record;
+    record.id = 7;
+    record.policy = {"IDENTITY_ACCESS", "PAM", kPolicy};
+    record.resource = undo.configPath;
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+    record.status = MutationStatus::Applied;
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record, undo);
+    require(!result.ok && result.conflict,
+            "unconfirmed platform identity must conflict (no blind path "
+            "execution)");
+}
+
+// ---------------------------------------------------------------------
+// Flag matrix (Step 7F §84).
+// ---------------------------------------------------------------------
+
+const char* kFlagPolicy = "failed_authentication_enforce_for_root";
+const char* kFlagKey = "even_deny_root";
+
+UndoRemovePamProviderManagedFlag flagUndo(const Harness& harness,
+                                          bool appliedEnabled,
+                                          std::vector<std::string> ids) {
+    UndoRemovePamProviderManagedFlag undo;
+    undo.policyName = kFlagPolicy;
+    undo.providerName = kProvider;
+    undo.configPath = harness.configPath.string();
+    undo.managedKey = kFlagKey;
+    undo.appliedEnabled = appliedEnabled;
+    undo.suppressionIds = std::move(ids);
+    undo.placement = fic::rollback::PamProviderBlockPlacementContract::End;
+    return undo;
+}
+
+MutationRecord makeFlagRecord(const Harness& harness, std::uint64_t id,
+                              const UndoRemovePamProviderManagedFlag& undo,
+                              MutationStatus status) {
+    MutationRecord record;
+    record.id = id;
+    record.policy = {"IDENTITY_ACCESS", "PAM", undo.policyName};
+    record.resource = undo.configPath;
+    record.undo = UndoAction{fic::rollback::MutationBackend::Pam, undo};
+    record.status = status;
+    return record;
+}
+
+// Physical disabled-flag state: FIC sentinel entry + authorized wrappers.
+std::string renderDisabledState(const std::vector<std::string>& ids) {
+    std::string content = kForeign;
+    for (const std::string& id : ids) {
+        content += pamProviderSuppressionWrapperLine(
+            kProvider, kFlagPolicy, kFlagKey, 9, id, "even_deny_root");
+        content += "\n";
+    }
+    PamProviderFlagSpec spec;
+    spec.provider = kProvider;
+    spec.policy = kFlagPolicy;
+    spec.managedKey = kFlagKey;
+    spec.enabled = false;
+    spec.mutationId = 9;
+    spec.keepSuppressionIds = ids;
+    PamProviderFlagMutationResult result = setPamProviderManagedFlagTransition(
+        content, spec, PamProviderBlockPlacementRequest::End);
+    require(result.ok, "fixture disabled flag state: " + result.error);
+    return result.content;
+}
+
+void testFlagAppliedFalseReleasesWrappers() {
+    Harness harness;
+    writeFile(harness.configPath,
+              renderDisabledState({"s1", "s2", "s3"}));
+    const std::string before = readFile(harness.configPath);
+    UndoRemovePamProviderManagedFlag undo =
+        flagUndo(harness, /*appliedEnabled=*/false, {"s1", "s2", "s3"});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(result.ok && result.changedSystemState,
+            "applied false: sentinel removed + wrappers unwrapped: " +
+                result.message);
+    const std::string after = readFile(harness.configPath);
+    require(after.find("FIC_PAM_") == std::string::npos,
+            "no FIC serialization may remain");
+    require(after.find("even_deny_root") != std::string::npos,
+            "foreign raw lines restored");
+    require(before.find("raw=even_deny_root") != std::string::npos,
+            "fixture had wrappers");
+}
+
+void testFlagMissingAuthorizedWrapperSubset() {
+    Harness harness;
+    // s2 vanished externally: release must unwrap only s1/s3 and NEVER
+    // reconstruct s2 (§21).
+    std::string content = renderDisabledState({"s1", "s2", "s3"});
+    const std::string wrapperS2 = pamProviderSuppressionWrapperLine(
+        kProvider, kFlagPolicy, kFlagKey, 9, "s2", "even_deny_root");
+    const auto position = content.find(wrapperS2 + "\n");
+    require(position != std::string::npos, "fixture wrapper s2 present");
+    content.erase(position, wrapperS2.size() + 1);
+    writeFile(harness.configPath, content);
+
+    UndoRemovePamProviderManagedFlag undo =
+        flagUndo(harness, false, {"s1", "s2", "s3"});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(result.ok, "missing authorized wrapper subset is releasable: " +
+                result.message);
+    const std::string after = readFile(harness.configPath);
+    require(after.find("FIC_PAM_") == std::string::npos,
+            "no FIC serialization after release");
+}
+
+void testFlagUnknownWrapperConflict() {
+    Harness harness;
+    writeFile(harness.configPath, renderDisabledState({"s1", "s99"}));
+    const std::string before = readFile(harness.configPath);
+    UndoRemovePamProviderManagedFlag undo =
+        flagUndo(harness, false, {"s1", "s2"});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(!result.ok && result.conflict,
+            "unknown wrapper id must conflict (fail closed)");
+    require(readFile(harness.configPath) == before, "file unchanged");
+}
+
+void testFlagWrongMutationWrapperConflict() {
+    Harness harness;
+    // Wrapper of the same identity but a foreign mutation id (11).
+    std::string content = kForeign +
+        pamProviderSuppressionWrapperLine(kProvider, kFlagPolicy, kFlagKey,
+                                          11, "s1", "even_deny_root") +
+        "\n";
+    writeFile(harness.configPath, content);
+    UndoRemovePamProviderManagedFlag undo =
+        flagUndo(harness, false, {"s1"});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(!result.ok && result.conflict,
+            "wrong-mutation wrapper must conflict (§23)");
+}
+
+void testFlagEnabledWithWrapperConflict() {
+    Harness harness;
+    // Journal claims enabled target; a physical wrapper of this record
+    // exists (Step 7E drift invariant, §24).
+    writeFile(harness.configPath,
+              kForeign + pamProviderSuppressionWrapperLine(
+                             kProvider, kFlagPolicy, kFlagKey, 9, "s1",
+                             "even_deny_root") + "\n");
+    UndoRemovePamProviderManagedFlag undo = flagUndo(harness, true, {});
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(!result.ok && result.conflict,
+            "enabled state with a matching wrapper must conflict");
+}
+
+void testFlagPreparedPreviousAndTargetSides() {
+    // Prepared false(0) -> false(0): previous and target wrapper sets are
+    // both authorized; the physical state matches both candidates.
+    {
+        Harness harness;
+        writeFile(harness.configPath, renderDisabledState({"s1", "s2"}));
+        UndoRemovePamProviderManagedFlag undo =
+            flagUndo(harness, false, {"s1", "s2"});
+        undo.previousAppliedEnabled = false;
+        undo.previousSuppressionIds = {"s1"};
+        MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                               MutationStatus::Prepared);
+        const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+            harness.options(), harness.journal, record, undo);
+        require(result.ok, "false->false prepared growth release: " +
+                    result.message);
+        require(readFile(harness.configPath).find("FIC_PAM_") ==
+                std::string::npos, "fully released");
+    }
+    // Prepared previous=true / target=false: the disabled target side is
+    // physically present and releases.
+    {
+        Harness harness;
+        writeFile(harness.configPath, renderDisabledState({"s1"}));
+        UndoRemovePamProviderManagedFlag undo =
+            flagUndo(harness, false, {"s1"});
+        undo.previousAppliedEnabled = true;
+        MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                               MutationStatus::Prepared);
+        const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+            harness.options(), harness.journal, record, undo);
+        require(result.ok, "prepared target side release: " + result.message);
+    }
+}
+
+void testFlagRollbackFailedTargetAuthorityOnly() {
+    Harness harness;
+    writeFile(harness.configPath, renderDisabledState({"s1"}));
+    // previousSuppressionIds are historical provenance and must not extend
+    // the release authority for a RollbackFailed record: an s99 wrapper is
+    // still a conflict even though 'previous' would not authorize it either.
+    UndoRemovePamProviderManagedFlag undo =
+        flagUndo(harness, false, {"s1"});
+    undo.previousAppliedEnabled = false;
+    undo.previousSuppressionIds = {"sold"};
+    MutationRecord record = makeFlagRecord(harness, 9, undo,
+                                           MutationStatus::RollbackFailed);
+    const PamProviderRollbackResult result = undoPamProviderManagedFlag(
+        harness.options(), harness.journal, record, undo);
+    require(result.ok, "rollbackfailed target authority releases: " +
+                result.message);
+}
+
+// ---------------------------------------------------------------------
+// Container provenance + crash/retry (Step 7F §85-§87).
+// ---------------------------------------------------------------------
+
+fic::rollback::MutationId prepareContainerRecord(Harness& harness) {
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM_CONTAINER", kProvider};
+    record.resource = harness.configPath.string();
+    record.undo = UndoAction{
+        fic::rollback::MutationBackend::Pam,
+        UndoOwnPamProviderContainer{kProvider, harness.configPath.string()}};
+    std::string error;
+    fic::rollback::MutationId id = 0;
+    require(harness.journal.prepareMutation(record, id, error),
+            "container prepare: " + error);
+    require(harness.journal.setStatus(id, MutationStatus::Applied, error),
+            "container apply: " + error);
+    return id;
+}
+
+void testFicCreatedEmptyContainerDeleted() {
+    Harness harness;
+    // FIC-created container: the file consists ONLY of the FIC block.
+    writeEntryState(harness.configPath, 7, appliedBody("8"), "");
+    const fic::rollback::MutationId containerId =
+        prepareContainerRecord(harness);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok && result.changedSystemState,
+            "last entry + empty + proven container: conditional delete: " +
+                result.message);
+    require(!std::filesystem::exists(harness.configPath),
+            "the FIC-created empty container must be deleted");
+    bool resolved = false;
+    for (const MutationRecord& current : harness.journal.records()) {
+        if (current.id == containerId) {
+            resolved = current.status == MutationStatus::RolledBack;
+        }
+    }
+    require(resolved, "container provenance must be RolledBack (§38)");
+    // The policy record itself is NOT resolved by the backend: the outer
+    // RollbackExecutor owns that lifecycle step.
+    require(record.status == MutationStatus::Applied,
+            "policy record stays active until the executor resolves it");
+}
+
+void testFicCreatedWithForeignDetached() {
+    Harness harness;
+    writeEntryState(harness.configPath, 7, appliedBody("8"));
+    const fic::rollback::MutationId containerId =
+        prepareContainerRecord(harness);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok, "foreign-content container release: " +
+                result.message);
+    require(std::filesystem::exists(harness.configPath),
+            "file retained with foreign bytes");
+    require(readFile(harness.configPath) == kForeign, "foreign exact");
+    bool detached = false;
+    for (const MutationRecord& current : harness.journal.records()) {
+        if (current.id == containerId) {
+            detached = current.status == MutationStatus::Detached;
+        }
+    }
+    require(detached, "foreign-only container must be Detached (§39)");
+}
+
+void testPreExistingContainerRetained() {
+    Harness harness;
+    // No container provenance: the (pre-existing) file is NEVER unlinked,
+    // even when it becomes empty (§40).
+    writeEntryState(harness.configPath, 7, appliedBody("8"), "x\n");
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok, "pre-existing container release: " + result.message);
+    require(std::filesystem::exists(harness.configPath),
+            "pre-existing file never deleted");
+}
+
+void testOtherFicEntryKeepsContainerActive() {
+    Harness harness;
+    // Two entries: removing one must NOT touch the container provenance.
+    writeEntryState(harness.configPath, 7, appliedBody("8"));
+    const fic::rollback::MutationId containerId =
+        prepareContainerRecord(harness);
+    // Add a second entry of another policy through the pure helper.
+    {
+        PamProviderEntrySpec spec;
+        spec.provider = kProvider;
+        spec.policy = "failed_authentication_unlock_time";
+        spec.managedKey = "unlock_time";
+        spec.value = "30";
+        spec.mutationId = 8;
+        PamProviderMutationResult result = setPamProviderManagedEntry(
+            readFile(harness.configPath), spec,
+            PamProviderBlockPlacementRequest::End);
+        require(result.ok, "second entry fixture");
+        writeFile(harness.configPath, result.content);
+    }
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult release = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(release.ok, "first entry release: " + release.message);
+    require(std::filesystem::exists(harness.configPath),
+            "container kept (other FIC entries remain, §41)");
+    bool active = false;
+    for (const MutationRecord& current : harness.journal.records()) {
+        if (current.id == containerId) {
+            active = current.status == MutationStatus::Applied;
+        }
+    }
+    require(active, "container provenance stays Applied");
+}
+
+void testFsyncFailureAfterUnlinkRecovers() {
+    Harness harness;
+    writeEntryState(harness.configPath, 7, appliedBody("8"), "");
+    const fic::rollback::MutationId containerId =
+        prepareContainerRecord(harness);
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    const PamProviderRollbackResult failed = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(!failed.ok,
+            "unlink installed but fsync failed: NOT durable, failure");
+    require(failed.changedSystemState,
+            "the unlink happened — the system WAS mutated");
+    bool containerResolved = false;
+    for (const MutationRecord& current : harness.journal.records()) {
+        if (current.id == containerId) {
+            containerResolved =
+                current.status == MutationStatus::Applied; // still active
+        }
+    }
+    require(containerResolved,
+            "journal ownership NOT resolved without durability (§35)");
+
+    // Crash-recovery retry (§85): the file is gone; durable absence +
+    // lifecycle completion.
+    require(!std::filesystem::exists(harness.configPath),
+            "the unlink from the failed attempt is visible");
+    const PamProviderRollbackResult retry = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(retry.ok && retry.nothingToDo,
+            "retry completes the lifecycle: " + retry.message);
+    bool resolved = false;
+    for (const MutationRecord& current : harness.journal.records()) {
+        if (current.id == containerId) {
+            resolved = current.status == MutationStatus::RolledBack;
+        }
+    }
+    require(resolved, "retry resolves the container provenance");
+}
+
+void testNoReconstructionOnRetry() {
+    // Crash after the physical release but before the policy journal
+    // update (§44/§87): retry classifies as already released and never
+    // recreates the managed entry.
+    Harness harness;
+    writeFile(harness.configPath, kForeign); // physical state already gone
+    MutationRecord record = makeEntryRecord(
+        harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+    const PamProviderRollbackResult result = undoPamProviderManagedEntry(
+        harness.options(), harness.journal, record,
+        std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+    require(result.ok && result.nothingToDo, "retry is a typed no-op");
+    require(readFile(harness.configPath) == kForeign,
+            "no managed entry / sentinel / wrapper reconstruction");
+}
+
+} // namespace
+
+int main() {
+    try {
+        testAppliedExactRelease();
+        testAppliedMissingIsNothingToDo();
+        testBodyDriftConflict();
+        testWrongMutationIdConflict();
+        testPreparedFreshAbsent();
+        testPreparedFreshTargetPresent();
+        testPreparedUpdatePreviousAndTarget();
+        testDisplacedBlockOwnershipSurvives();
+        testPlatformIdentityProof();
+        testFlagAppliedFalseReleasesWrappers();
+        testFlagMissingAuthorizedWrapperSubset();
+        testFlagUnknownWrapperConflict();
+        testFlagWrongMutationWrapperConflict();
+        testFlagEnabledWithWrapperConflict();
+        testFlagPreparedPreviousAndTargetSides();
+        testFlagRollbackFailedTargetAuthorityOnly();
+        testFicCreatedEmptyContainerDeleted();
+        testFicCreatedWithForeignDetached();
+        testPreExistingContainerRetained();
+        testOtherFicEntryKeepsContainerActive();
+        testFsyncFailureAfterUnlinkRecovers();
+        testNoReconstructionOnRetry();
+    } catch (const std::exception& error) {
+        std::cerr << "PamProviderRollbackTests failed: " << error.what()
+                  << '\n';
+        return 1;
+    }
+    std::cout << "PamProviderRollbackTests passed\n";
+    return 0;
+}

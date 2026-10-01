@@ -114,6 +114,19 @@ struct RollbackExecutorDeps {
     std::function<bool(const std::string& feature, std::string& error)> disableDeviceFeature;
 };
 
+// Step 7F: contextual (platform-aware) enrollment. Preserves the static
+// enrollment of every existing backend and, for IDENTITY_ACCESS/PAM option
+// policies, resolves the CURRENT platform binding through the SAME managed
+// routing helper the apply path uses (pamProviderManagedEntryPlacement):
+// only a really managed ProviderConfigFile policy on the current platform
+// becomes Supported. A Debian 12 pwhistory ModuleArguments policy, an ALT
+// AltTcbManaged pwhistory policy and passwdqc stay outside; an unknown
+// future PAM policy never receives a default-positive enrollment. Caller
+// and executor MUST use this one shared model (never two diverging
+// enrollment decisions).
+RollbackEnrollment effectiveRollbackEnrollment(const PolicyRef& policy,
+                                               const RollbackExecutorDeps& deps);
+
 // Production deps wiring for the daemon: uses the platform profile and the
 // platform executable resolver.
 RollbackExecutorDeps productionRollbackDeps(

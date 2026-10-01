@@ -493,4 +493,200 @@ bool AtomicFileWriter::captureTargetState(const std::string& path,
     state.group = info.st_gid;
     state.content = std::move(content);
     return true;
+    state.identity.device = info.st_dev;
+    state.identity.inode = info.st_ino;
+    state.mode = info.st_mode & 07777;
+    state.owner = info.st_uid;
+    state.group = info.st_gid;
+    state.content = std::move(content);
+    return true;
+}
+
+bool AtomicFileWriter::removeIfCurrentState(
+    const std::string& path,
+    const AtomicTargetState& expected,
+    std::string* errorMessage,
+    AtomicRemoveResult* result) {
+    if (result != nullptr) {
+        *result = AtomicRemoveResult{};
+    }
+    const std::filesystem::path requestedPath(path);
+    const std::filesystem::path parentDir = requestedPath.parent_path();
+    const std::string name = requestedPath.filename().string();
+    if (parentDir.empty() || name.empty() || name == "." || name == "..") {
+        setError(errorMessage, "invalid removal target path: " + path);
+        return false;
+    }
+
+    // Open the parent directory once: the proof AND the unlink are performed
+    // relative to this directory handle, so a concurrently renamed directory
+    // breaks the proof instead of silently redirecting the delete.
+    int dirFd = ::open(parentDir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd < 0) {
+        setError(errorMessage, "could not open directory " +
+                                   parentDir.string() + ": " + errnoMessage());
+        return false;
+    }
+
+    struct stat info {};
+    if (::fstatat(dirFd, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0) {
+        const int statErrno = errno;
+        closeFd(dirFd);
+        if (statErrno == ENOENT) {
+            // Nothing occupies the path: the expected state can never be
+            // proven. That is a precondition mismatch (the caller captured a
+            // state that is already gone), not an unexpected I/O failure.
+            setError(errorMessage, "removal target does not exist: " + path);
+            if (result != nullptr) {
+                result->preconditionFailed = true;
+            }
+            return true;
+        }
+        setError(errorMessage, "could not stat removal target " + path +
+                                   ": " + std::strerror(statErrno));
+        return false;
+    }
+    // Symlinks and non-regular objects are never deleted through this
+    // primitive, whatever their content looks like.
+    if (S_ISLNK(info.st_mode) || !S_ISREG(info.st_mode)) {
+        closeFd(dirFd);
+        setError(errorMessage,
+                 "refusing to remove a symlink or non-regular target: " + path);
+        if (result != nullptr) {
+            result->preconditionFailed = true;
+        }
+        return true;
+    }
+    if (info.st_dev != expected.identity.device ||
+        info.st_ino != expected.identity.inode) {
+        closeFd(dirFd);
+        setError(errorMessage,
+                 "removal target identity changed before the delete (same "
+                 "content under a different inode is still a replacement): " +
+                     path);
+        if (result != nullptr) {
+            result->preconditionFailed = true;
+        }
+        return true;
+    }
+    if ((info.st_mode & 07777) != expected.mode ||
+        info.st_uid != expected.owner || info.st_gid != expected.group) {
+        closeFd(dirFd);
+        setError(errorMessage,
+                 "removal target metadata changed before the delete: " + path);
+        if (result != nullptr) {
+            result->preconditionFailed = true;
+        }
+        return true;
+    }
+
+    // Content re-proof through the same directory handle.
+    int fileFd =
+        ::openat(dirFd, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fileFd < 0) {
+        const int openErrno = errno;
+        closeFd(dirFd);
+        setError(errorMessage, "could not open removal target " + path + ": " +
+                                   std::strerror(openErrno));
+        return false;
+    }
+    std::string content;
+    char buffer[8192];
+    bool readFailed = false;
+    while (true) {
+        const ssize_t count = ::read(fileFd, buffer, sizeof(buffer));
+        if (count == 0) {
+            break;
+        }
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            readFailed = true;
+            break;
+        }
+        content.append(buffer, static_cast<std::size_t>(count));
+    }
+    closeFd(fileFd);
+    if (readFailed) {
+        closeFd(dirFd);
+        setError(errorMessage, "could not read removal target " + path);
+        return false;
+    }
+    if (content != expected.content) {
+        closeFd(dirFd);
+        setError(errorMessage,
+                 "removal target content changed before the delete: " + path);
+        if (result != nullptr) {
+            result->preconditionFailed = true;
+        }
+        return true;
+    }
+
+    // The exact captured state is proven to still occupy the path: remove
+    // it relative to the same directory handle.
+    if (::unlinkat(dirFd, name.c_str(), 0) != 0) {
+        const int unlinkErrno = errno;
+        closeFd(dirFd);
+        setError(errorMessage, "could not unlink " + path + ": " +
+                                   std::strerror(unlinkErrno));
+        return false;
+    }
+    closeFd(dirFd);
+    if (result != nullptr) {
+        result->removed = true;
+    }
+
+    // Durability barrier for the removal. The unlink succeeded, so the
+    // system state HAS changed even if this fsync fails — the caller must
+    // treat removed=true as installed-but-not-durable exactly like an
+    // installed-but-not-durable rename.
+    std::string fsyncError;
+    if (!fsyncParentDirectoryForPath(path, &fsyncError)) {
+        setError(errorMessage, "directory fsync after removal failed (" +
+                                   fsyncError + "); the removal is NOT "
+                                   "confirmed durable");
+        return false;
+    }
+    if (result != nullptr) {
+        result->durabilityConfirmed = true;
+    }
+    return true;
+}
+
+bool AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(
+    const std::string& path, std::string* errorMessage) {
+    struct stat info {};
+    if (::lstat(path.c_str(), &info) == 0) {
+        setError(errorMessage, "target is still present: " + path);
+        return false;
+    }
+    if (errno != ENOENT) {
+        setError(errorMessage, "could not stat target " + path + ": " +
+                                   errnoMessage());
+        return false;
+    }
+    // The absence is observed. It proves nothing about power-loss durability
+    // until the parent directory entry state is fsynced (honoring the test
+    // seam, same as every other durability barrier).
+    std::string fsyncError;
+    if (!fsyncParentDirectoryForPath(path, &fsyncError)) {
+        setError(errorMessage, "absence durability barrier failed (" +
+                                   fsyncError + ")");
+        return false;
+    }
+    // Fail closed when an object appeared while the barrier ran: the new
+    // object is never touched and the caller must not resolve any state.
+    if (::lstat(path.c_str(), &info) == 0) {
+        setError(errorMessage,
+                 "an object appeared during the absence durability barrier: " +
+                     path);
+        return false;
+    }
+    if (errno != ENOENT) {
+        setError(errorMessage, "could not re-prove absence of " + path + ": " +
+                                   errnoMessage());
+        return false;
+    }
+    return true;
 }

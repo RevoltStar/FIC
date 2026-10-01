@@ -1,4 +1,5 @@
 #include "modules/identity_access/pam/PamProviderManagedFlagExecutor.h"
+#include "modules/identity_access/pam/PamProviderManagedLock.h"
 
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
 #include "modules/identity_access/pam/PamProviderManagedBlockFile.h"
@@ -977,6 +978,16 @@ bool PamProviderManagedFlagExecutor::apply(
     const SemanticPostcondition& semantic,
     PamProviderManagedEntryOutcome& outcome,
     std::string& error) {
+    // Step 7F concurrency contract: the public apply API serializes through
+    // the shared interprocess managed-provider mutation lock domain (the
+    // same lock the runtime rollback and the package release Stage B use).
+    PamProviderManagedLock::Handle providerMutationLock;
+    std::string providerLockError;
+    if (!PamProviderManagedLock::acquire(providerMutationLock,
+                                         providerLockError)) {
+        error = providerLockError;
+        return false;
+    }
     outcome = PamProviderManagedEntryOutcome::AppliedNoOp;
 
     // Request validation — fail closed before any journal/physical action.

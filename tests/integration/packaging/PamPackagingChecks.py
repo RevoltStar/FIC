@@ -231,7 +231,24 @@ attach_back() {
     return 0
 }
 case " $* " in
-    *" preflight "*)
+    # Step 7F managed provider domain: the read-only preflight is a no-op
+    # in the sandbox; the release succeeds unless a provider failure is
+    # injected (FIC_FAKE_PROVIDER_MODE=fail).
+    *" pam-provider-prerm-prepare preflight "*)
+        exit 0
+        ;;
+    *" pam-provider-prerm-prepare release "*)
+        case "$FIC_FAKE_PROVIDER_MODE" in
+            fail)
+                echo "FIC: the managed PAM provider configuration release failed (injected)" >&2
+                exit 1
+                ;;
+            *)
+                exit 0
+                ;;
+        esac
+        ;;
+    *" pam-password-prerm-prepare preflight "*)
         for p in fic-password-quality-hook fic-password-history-hook fic-password-history-initial-hook; do
             case "$(cat "$st" 2>/dev/null)" in
                 *"Module: $p"*) prove_owned "$p" || exit 1 ;;
@@ -239,7 +256,7 @@ case " $* " in
         done
         exit 0
         ;;
-    *" release "*)
+    *" pam-password-prerm-prepare release "*)
         for p in fic-password-quality-hook fic-password-history-hook fic-password-history-initial-hook; do
             case "$(cat "$st" 2>/dev/null)" in
                 *"Module: $p"*) prove_owned "$p" || exit 1 ;;
@@ -655,11 +672,12 @@ def prerm_release_wiring_tests() -> None:
             "the retired temporary history-initial prerm blocker text "
             "must be gone")
 
-    # Exactly the two narrow maintenance commands, absolute path only.
+    # Exactly the four narrow maintenance commands (C2 password domain +
+    # Step 7F managed provider domain), absolute path only.
     maintenance_lines = [line.strip() for line in fic_prerm.splitlines()
                          if "--maintenance" in line]
-    require(len(maintenance_lines) == 2,
-            "the prerm must run exactly the two package-release "
+    require(len(maintenance_lines) == 4,
+            "the prerm must run exactly the four package-release "
             "maintenance commands: " + repr(maintenance_lines))
     preflight_line = ("/opt/fic/bin/fic --maintenance "
                       "pam-password-prerm-prepare preflight")
@@ -673,7 +691,8 @@ def prerm_release_wiring_tests() -> None:
                 for line in maintenance_lines),
             "the Stage B release must run through the exact installed "
             "absolute maintenance path: " + repr(maintenance_lines))
-    require(all("pam-password-prerm-prepare" in line
+    require(all("pam-password-prerm-prepare" in line or
+                "pam-provider-prerm-prepare" in line
                 for line in maintenance_lines),
             "no generic or unrelated FIC maintenance command may run in "
             "the prerm: " + repr(maintenance_lines))
@@ -2589,6 +2608,54 @@ def main() -> int:
             "ALT PAM transaction module/config are not installed by CMake")
     require("fic-pam-passwdqc" not in rpm_builder,
             "ALT RPM must not install unsupported PAM facilities")
+
+    # ------------------------------------------------------------------
+    # Step 7F: managed provider configuration release wiring.
+    # ------------------------------------------------------------------
+    deb_builder = (root / "packaging/deb/build-fic-debian12-deb.sh").read_text()
+    prerm = function_body(deb_builder, "write_system_integration_symlink_prerm")
+    provider_preflight_position = prerm.find(
+        "pam-provider-prerm-prepare preflight")
+    provider_release_position = prerm.find(
+        "pam-provider-prerm-prepare release")
+    c2_preflight_position = prerm.find("pam-password-prerm-prepare preflight")
+    c2_release_position = prerm.find("pam-password-prerm-prepare release")
+    stop_position = prerm.find("systemctl disable --now fic-notify")
+    require(provider_preflight_position != -1,
+            "DEB prerm lost the managed provider preflight (Stage A)")
+    require(provider_release_position != -1,
+            "DEB prerm lost the managed provider release (Stage B)")
+    require(provider_preflight_position < stop_position,
+            "provider preflight must run BEFORE any service stop/mutation")
+    require(stop_position < provider_release_position,
+            "provider release must run only AFTER every FIC writer stopped")
+    require(provider_release_position < c2_release_position,
+            "deterministic DEB order: provider release BEFORE the C2 detach")
+    require(c2_preflight_position < provider_preflight_position,
+            "existing C2 preflight ordering is preserved for DEB")
+    # §81: the shell never parses the provider primaries itself — the
+    # provider configuration file names must not appear in the prerm at all.
+    for conf in ("faillock.conf", "pwquality.conf", "pwhistory.conf"):
+        require(conf not in prerm,
+                f"DEB prerm must not parse {conf} in shell (the FIC "
+                f"maintenance binary owns the whole provider decision)")
+
+    alt_builder = (root / "packaging/rpm/build-fic-alt-p11-rpm.sh").read_text()
+    alt_preun = function_body(alt_builder, "fic_pam_facility_preun_script")
+    require('if [ "$1" -eq 0 ]; then' in alt_preun and
+            "pam-provider-prerm-prepare preflight" in alt_preun,
+            "ALT RPM erase-only provider preflight (Stage A) is wired")
+    alt_release = function_body(
+        alt_builder, "fic_pam_provider_post_stop_preun_script")
+    require("pam-provider-prerm-prepare release" in alt_release,
+            "ALT RPM provider release (Stage B) is wired")
+    preun_fn = function_body(alt_builder,
+                             "system_integration_symlink_preun_script")
+    require("post_stop_hook" in preun_fn,
+            "ALT RPM preun supports a post-stop hook for the release stage")
+    require(alt_builder.count("pam-provider-prerm-prepare release") == 1 and
+            "fic_pam_provider_post_stop_preun_script" in alt_builder,
+            "ALT RPM provider release runs exactly once, on erase only")
 
     print("PAM packaging checks passed")
     return 0

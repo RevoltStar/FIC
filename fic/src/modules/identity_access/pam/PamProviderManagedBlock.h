@@ -653,6 +653,72 @@ PamProviderFlagMutationResult setPamProviderManagedFlagTransition(
     const PamProviderFlagSpec& spec,
     PamProviderBlockPlacementRequest request);
 
+// ---------------------------------------------------------------------------
+// Step 7F: pure flag RELEASE primitive (rollback side).
+// ---------------------------------------------------------------------------
+
+// One typed FIC-owned flag state the journal proves as a legal release
+// source. The physical state must STRICTLY match one of the expectation's
+// candidates: exact (policy, key) entry kind + exact physical mutation id +
+// the existing wrapper ids being a SUBSET of the authorized suppression set
+// (missing authorized ids are an externally released subset and are legal;
+// an unknown existing id is a fail-closed conflict).
+struct PamProviderFlagOwnedStateCandidate {
+    // FlagEnabled (bare managed key, no wrappers may exist) or
+    // FlagDisabled (disabled sentinel + authorized wrappers).
+    PamProviderManagedEntryKind entryKind =
+        PamProviderManagedEntryKind::FlagDisabled;
+    // Wrapper suppression ids authorized by the journal record for this
+    // state. Missing ids are never reconstructed; unknown existing ids
+    // refuse the release.
+    std::vector<std::string> authorizedSuppressionIds;
+};
+
+struct PamProviderFlagReleaseExpectation {
+    std::string provider;   // provider identity token
+    std::string policy;     // FIC policy identity token
+    std::string managedKey; // managed set-only key
+    std::uint64_t mutationId = 0; // journal MutationRecord.id (ABA proof)
+    // The authorized ownership states (target and, for a Prepared refresh,
+    // the previous state). At least one candidate is required.
+    std::vector<PamProviderFlagOwnedStateCandidate> candidates;
+};
+
+struct PamProviderFlagReleaseResult {
+    bool ok = false;
+    enum class Outcome {
+        Released,      // exact owned state released (entry and/or wrappers)
+        AlreadyAbsent  // no FIC entry AND no owned wrapper: nothing to do
+    } outcome = Outcome::Released;
+    bool changed = false; // true when the returned content differs
+    std::string content;
+    std::string error;
+};
+
+// Releases ONE FIC-owned managed set-only flag state from the content:
+// removes the exact (policy, key) entry (removing the whole block when it
+// was the last entry) and unwraps, IN PLACE and byte-exact, every
+// currently existing suppression wrapper of this record whose id is
+// authorized by the MATCHED candidate state. The embedded raw line returns
+// byte-exact (indentation, casing, "=0", inline comment, CRLF, missing
+// final LF — never normalized). Fail closed (typed refusal, content
+// unchanged) when:
+//   * the strict parse fails or the block belongs to another provider;
+//   * the (policy, key) entry exists with a different physical mutation id;
+//   * a wrapper of this record (same provider/policy/key/mutation id)
+//     carries an id outside the matched candidate's authorized set;
+//   * a wrapper with the same provider/policy/key but a DIFFERENT mutation
+//     id exists (another transaction's provenance is never released here);
+//   * an enabled candidate is matched while an owned wrapper exists;
+//   * NO candidate strictly matches the physical state (ownership cannot
+//     be proven from the journal payload).
+// A missing entry with no owned wrappers is AlreadyAbsent (externally
+// released state; nothing is reconstructed).
+PamProviderFlagReleaseResult releasePamProviderManagedFlag(
+    const std::string& content,
+    const PamProviderFlagReleaseExpectation& expectation,
+    PamProviderBlockPlacementRequest request);
+
 
 
 

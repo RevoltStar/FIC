@@ -648,6 +648,11 @@ system_integration_symlink_preun_script() {
     local command_name="$1"
     local target_path="$2"
     local lifecycle_hook="${3:-}"
+    # Step 7F: optional post-stop hook, executed ONLY on actual erase
+    # ($1 -eq 0) AFTER every FIC writer has been stopped by the systemctl
+    # block below. RPM %preun argument semantics: 0 = erase, 1 = upgrade --
+    # an upgrade NEVER runs the ownership release.
+    local post_stop_hook="${4:-}"
 
     cat <<EOF
 $lifecycle_hook
@@ -669,8 +674,29 @@ if [ "\$1" -eq 0 ]; then
     done
 fi
 
+$post_stop_hook
+
 exit 0
 EOF
+}
+
+# Step 7F: managed provider configuration release (Stage B) for the actual
+# erase ONLY, executed after every FIC writer has been stopped. The shell
+# performs NO PAM parsing here: the FIC maintenance binary owns the whole
+# provider release decision (fresh preflight + deterministic release of the
+# managed faillock/pwquality/pwhistory provider state + final proof).
+fic_pam_provider_post_stop_preun_script() {
+    cat <<'INNEREOF'
+if [ -x /opt/fic/bin/fic ]; then
+    if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
+        echo "FIC: the managed PAM provider configuration release failed; the package erase is blocked while all FIC writers remain stopped" >&2
+        exit 1
+    fi
+else
+    echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the managed PAM provider state cannot be proven released and the erase is refused" >&2
+    exit 1
+fi
+INNEREOF
 }
 
 fic_pam_facility_pre_upgrade_script() {
@@ -699,6 +725,18 @@ EOF
 fic_pam_facility_preun_script() {
     cat <<'EOF'
 if [ "$1" -eq 0 ]; then
+    # Step 7F managed provider configuration preflight (Stage A): strictly
+    # read-only, BEFORE any side effect; a failure keeps the package
+    # installed.
+    if [ -x /opt/fic/bin/fic ]; then
+        /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare preflight || {
+            echo "FIC: the read-only managed PAM provider configuration preflight refused the erase BEFORE any mutation" >&2
+            exit 1
+        }
+    else
+        echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the managed PAM provider state cannot be proven and the erase is refused" >&2
+        exit 1
+    fi
     /usr/sbin/control fic-pam-pwhistory disabled || {
         echo "refusing to remove fic with unsafe FIC-owned pam_pwhistory topology" >&2
         exit 1
@@ -854,7 +892,7 @@ build_fic_package() {
         "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, notify-send, util-linux, nftables, control, pam >= 1.7.1, pam-config >= 1.10.0" \
         "$(system_integration_pre_script "$(fic_pam_facility_pre_upgrade_script)")" \
         "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_post_script)")" \
-        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_preun_script)")")" || return 1
+        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_preun_script)" "$(fic_pam_provider_post_stop_preun_script)")")" || return 1
 
     printf '%s\n' "$output_rpm"
 }

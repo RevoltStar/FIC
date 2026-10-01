@@ -966,6 +966,15 @@ if [ "\$1" = "remove" ]; then
         echo "FIC: the read-only password package preflight refused the removal BEFORE any PAM mutation (see the classified diagnostic above); the package stays installed" >&2
         exit 1
     fi
+    # Step 7F managed provider configuration preflight (Stage A): strictly
+    # read-only early check of the managed faillock/pwquality/pwhistory
+    # provider primary state (active journal records releasable, no orphan
+    # FIC markers/wrappers, coherent container provenance). Runs BEFORE any
+    # side effect; a failure keeps the package installed.
+    if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare preflight; then
+        echo "FIC: the read-only managed PAM provider configuration preflight refused the removal BEFORE any mutation; the package stays installed" >&2
+        exit 1
+    fi
     # Invariant: package removal first stops all FIC PAM writers and only
     # then detaches the permanent hooks. A live daemon could still perform
     # PAM mutations or re-activate the infrastructure concurrently with the
@@ -1025,6 +1034,17 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-hook-account \
         fic-pwquality \
         fic-pwhistory; then
+        # Step 7F managed provider configuration release (Stage B), the
+        # FIRST release domain of the documented deterministic order:
+        # provider state (the /etc/security/*.conf primaries and the
+        # mutation journal) has no pam-auth-update dependency, so it is
+        # released before the C2 semantic transition and can abort the
+        # removal before the C2 executor mutates anything. The two release
+        # domains are sequential and never compensate for each other.
+        if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
+            echo "FIC: the managed PAM provider configuration release failed; the package removal is blocked while all FIC writers remain stopped" >&2
+            exit 1
+        fi
         # Stage B: the C2 password package release runs while every FIC
         # writer is proven stopped. The helper exit status alone is never
         # trusted: it returns 0 only when the final resulting state is

@@ -129,6 +129,22 @@ std::optional<PamProviderBlockPlacementRequest> pamProviderManagedEntryPlacement
 PamProviderAbsentContainerDecision pamProviderAbsentContainerDecision(
     const PamProviderDescriptor& provider);
 
+// Step 7F: typed proof that a PREPARED container provenance record for the
+// given provider/config path is backed by a PRE-EXISTING exact
+// journal↔physical creation witness (the strict Step 7B witness set:
+// an active Applied entry with exact physical ownership, or an active
+// Prepared entry whose durable target is already physically present).
+// Used by the rollback/package-release layer BEFORE legalizing a Prepared
+// container record — the proof is evaluated against the parse of the
+// CURRENT physical content, never against content a later mutation would
+// create. Returns false (fail closed) when no witness exists.
+bool provePamProviderPreparedContainerWitness(
+    fic::rollback::MutationJournal& journal,
+    const std::string& providerName,
+    const std::filesystem::path& configPath,
+    const PamProviderBlockParseResult& parse,
+    std::string& error);
+
 enum class PamProviderManagedEntryOutcome {
     // The desired state is proven effective; a physical mutation happened
     // in this apply (fresh create, refresh, recovery continuation or block

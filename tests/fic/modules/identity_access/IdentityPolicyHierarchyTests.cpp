@@ -144,6 +144,10 @@ void initializeRuntimePaths(const std::filesystem::path& root) {
     std::filesystem::create_directories(paths.configDir);
     std::filesystem::create_directories(paths.logDir);
     std::filesystem::create_directories(paths.dataDir);
+    // Step 7F: the managed-provider mutation lock lives in the runtime dir;
+    // the production daemon creates it at startup, the test harness must
+    // mirror that (the lock itself must stay fail-closed).
+    std::filesystem::create_directories(paths.runtimeDir);
 
     writeIdentityConfig(root, "yes");
     std::string error;

@@ -13,6 +13,7 @@
 #include "rollback/DaemonMutationJournal.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "rollback/PamRollback.h"
+#include "modules/identity_access/pam/PamProviderRollback.h"
 
 #include <algorithm>
 #include <map>
@@ -20,6 +21,16 @@
 #include <utility>
 
 namespace fic::rollback {
+
+// Step 7F: managed provider rollback backend (fic::identity::pam).
+using fic::identity::pam::PamProviderRollbackOptions;
+using fic::identity::pam::PamProviderRollbackResult;
+using fic::identity::pam::inspectUnrecordedPamProviderManagedState;
+using fic::identity::pam::pamProviderManagedPolicyFeature;
+using fic::identity::pam::pamProviderRollbackRouteForFeature;
+using fic::identity::pam::undoPamProviderManagedEntry;
+using fic::identity::pam::undoPamProviderManagedFlag;
+
 namespace {
 
 // Serializes concurrent sysctl/sudoers backend access with policy apply.
@@ -423,6 +434,73 @@ MutationRollbackOutcome undoKerberosScalarMutation(
     return outcome;
 }
 
+MutationRollbackOutcome mapPamProviderRollbackResult(
+    const PamProviderRollbackResult& result,
+    MutationRollbackOutcome& outcome) {
+    if (result.ok && result.nothingToDo) {
+        outcome.status = RollbackStatus::NothingToDo;
+    } else if (result.ok) {
+        outcome.status = RollbackStatus::Success;
+    } else if (result.conflict) {
+        outcome.status = RollbackStatus::Conflict;
+    } else {
+        outcome.status = RollbackStatus::Failed;
+    }
+    outcome.message = result.message;
+    return outcome;
+}
+
+// Step 7F backend wrappers: the typed PamProviderRollbackResult is mapped
+// here (status mapping / journal lifecycle stay in the executor; the PAM
+// physical proof lives in the dedicated backend).
+MutationRollbackOutcome undoPamProviderManagedEntryMutation(
+    const RollbackExecutorDeps& deps,
+    const MutationRecord& record,
+    const UndoRemovePamProviderManagedEntry& undo) {
+    MutationRollbackOutcome outcome;
+    outcome.id = record.id;
+    outcome.resource = record.resource;
+    PamProviderRollbackOptions options;
+    options.platform = deps.pamPlatform;
+    std::string journalError;
+    MutationJournal* journal =
+        DaemonMutationJournal::instance().tryGet(journalError);
+    if (journal == nullptr) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = journalError.empty()
+            ? "Mutation journal недоступен"
+            : journalError;
+        return outcome;
+    }
+    const PamProviderRollbackResult result =
+        undoPamProviderManagedEntry(options, *journal, record, undo);
+    return mapPamProviderRollbackResult(result, outcome);
+}
+
+MutationRollbackOutcome undoPamProviderManagedFlagMutation(
+    const RollbackExecutorDeps& deps,
+    const MutationRecord& record,
+    const UndoRemovePamProviderManagedFlag& undo) {
+    MutationRollbackOutcome outcome;
+    outcome.id = record.id;
+    outcome.resource = record.resource;
+    PamProviderRollbackOptions options;
+    options.platform = deps.pamPlatform;
+    std::string journalError;
+    MutationJournal* journal =
+        DaemonMutationJournal::instance().tryGet(journalError);
+    if (journal == nullptr) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = journalError.empty()
+            ? "Mutation journal недоступен"
+            : journalError;
+        return outcome;
+    }
+    const PamProviderRollbackResult result =
+        undoPamProviderManagedFlag(options, *journal, record, undo);
+    return mapPamProviderRollbackResult(result, outcome);
+}
+
 MutationRollbackOutcome undoMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record) {
@@ -476,6 +554,39 @@ MutationRollbackOutcome undoMutation(
             outcome.message = result.message;
             return outcome;
         }
+    }
+    if (const auto* providerEntry = std::get_if<UndoRemovePamProviderManagedEntry>(
+            &record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Pam) {
+            return undoPamProviderManagedEntryMutation(deps, record,
+                                                       *providerEntry);
+        }
+    }
+    if (const auto* providerFlag = std::get_if<UndoRemovePamProviderManagedFlag>(
+            &record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Pam) {
+            return undoPamProviderManagedFlagMutation(deps, record,
+                                                      *providerFlag);
+        }
+    }
+    if (const auto* container = std::get_if<UndoOwnPamProviderContainer>(
+            &record.undo.payload)) {
+        (void)container;
+        // The container provenance is NEVER a user-policy rollback action
+        // (Step 7F §46): it is resolved as part of the release of the last
+        // provider entry/flag (inside PamProviderRollback) and by the
+        // package-release final sweep. A container record surfacing in the
+        // per-policy dispatch is a journal identity error — fail closed.
+        MutationRollbackOutcome outcome;
+        outcome.id = record.id;
+        outcome.resource = record.resource;
+        outcome.status = RollbackStatus::Unsupported;
+        outcome.message =
+            "UndoOwnPamProviderContainer не является пользовательской "
+            "policy rollback операцией; container provenance разрешается "
+            "только внутри release последнего provider entry/flag или "
+            "package release final sweep";
+        return outcome;
     }
     if (const auto* firewallPolicy =
             std::get_if<UndoRemoveFirewallPolicy>(&record.undo.payload)) {
@@ -637,6 +748,42 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
     return RollbackEnrollment::NotEnrolled;
 }
 
+RollbackEnrollment effectiveRollbackEnrollment(const PolicyRef& policy,
+                                               const RollbackExecutorDeps& deps) {
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "PAM") {
+        // PAM submodule: evaluate the Step 7F contextual managed-provider
+        // route BEFORE the static PAM whitelist, because the static branch
+        // answers Unsupported for every non-capability PAM policy. The
+        // routing proof is the SAME typed helper the apply path uses
+        // (pamProviderManagedEntryPlacement via
+        // pamProviderRollbackRouteForFeature) — there is no third whitelist.
+        const fic::platform::PamPolicyFeature* feature =
+            pamProviderManagedPolicyFeature(policy.policyName);
+        if (feature != nullptr) {
+            PamProviderRollbackOptions options;
+            options.platform = deps.pamPlatform;
+            std::string routeMessage;
+            if (pamProviderRollbackRouteForFeature(options, *feature,
+                                                   routeMessage)
+                    .has_value()) {
+                return RollbackEnrollment::Supported;
+            }
+            // A known managed policy whose route is ABSENT on the current
+            // platform (D12 pwhistory ModuleArguments, ALT pwhistory
+            // AltTcbManaged, passwdqc) keeps its legacy disable behavior:
+            // NotEnrolled, never a disable-refusing Unsupported.
+            return RollbackEnrollment::NotEnrolled;
+        }
+        // Unknown future PAM policies keep the exact static answer
+        // (Unsupported refuses the disable fail-closed — never a silent
+        // default-positive enrollment).
+        return rollbackEnrollment(policy);
+    }
+    // All non-PAM policies keep their static enrollment exactly as before.
+    return rollbackEnrollment(policy);
+}
+
 namespace {
 
 // Fail-safe provenance check for a supported policy without active journal
@@ -659,6 +806,25 @@ RollbackReport checkUnrecordedOwnership(
             ? RollbackStatus::NothingToDo
             : result.state == PamRollbackState::Conflict
                 ? RollbackStatus::Conflict : RollbackStatus::Failed;
+        report.message = result.message;
+        return report;
+    }
+
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "PAM" &&
+        pamProviderManagedPolicyFeature(policy.policyName) != nullptr) {
+        // Step 7F no-journal guard (§58): a managed provider policy without
+        // an active journal record must not have orphan physical FIC state.
+        // Orphan markers are never adopted and never removed.
+        PamProviderRollbackOptions options;
+        options.platform = deps.pamPlatform;
+        const PamProviderRollbackResult result =
+            inspectUnrecordedPamProviderManagedState(options,
+                                                     policy.policyName);
+        report.status = result.ok && result.nothingToDo
+            ? RollbackStatus::NothingToDo
+            : result.conflict ? RollbackStatus::Conflict
+                              : RollbackStatus::Failed;
         report.message = result.message;
         return report;
     }
@@ -862,7 +1028,8 @@ RollbackReport rollbackPolicyBeforeDisable(
     const PolicyRef& policy,
     const std::string& resourceHint,
     const RollbackExecutorDeps& deps) {
-    const RollbackEnrollment enrollment = rollbackEnrollment(policy);
+    const RollbackEnrollment enrollment =
+        effectiveRollbackEnrollment(policy, deps);
     if (enrollment == RollbackEnrollment::NotEnrolled) {
         RollbackReport report;
         report.status = RollbackStatus::Success;

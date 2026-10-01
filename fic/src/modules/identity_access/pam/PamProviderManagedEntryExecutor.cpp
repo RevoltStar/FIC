@@ -1,4 +1,5 @@
 #include "modules/identity_access/pam/PamProviderManagedEntryExecutor.h"
+#include "modules/identity_access/pam/PamProviderManagedLock.h"
 
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "rollback/MutationRecord.h"
@@ -1016,6 +1017,16 @@ bool PamProviderManagedEntryExecutor::apply(
     const SemanticPostcondition& semantic,
     PamProviderManagedEntryOutcome& outcome,
     std::string& error) {
+    // Step 7F concurrency contract: the public apply API serializes through
+    // the shared interprocess managed-provider mutation lock domain (the
+    // same lock the runtime rollback and the package release Stage B use).
+    PamProviderManagedLock::Handle providerMutationLock;
+    std::string providerLockError;
+    if (!PamProviderManagedLock::acquire(providerMutationLock,
+                                         providerLockError)) {
+        error = providerLockError;
+        return false;
+    }
     outcome = PamProviderManagedEntryOutcome::AppliedNoOp;
 
     // Request validation — fail closed before any journal/physical action.
@@ -1281,6 +1292,25 @@ PamProviderAbsentContainerDecision pamProviderAbsentContainerDecision(
         return PamProviderAbsentContainerDecision::FailClosed;
     }
     return PamProviderAbsentContainerDecision::FailClosed;
+}
+
+// ---------------------------------------------------------------------------
+// Step 7F: public container creation-witness proof for the rollback and
+// package-release layer. Pure delegation to the strict Step 7B witness
+// contract — no weaker legalization path exists.
+// ---------------------------------------------------------------------------
+bool provePamProviderPreparedContainerWitness(
+    fic::rollback::MutationJournal& journal,
+    const std::string& providerName,
+    const std::filesystem::path& configPath,
+    const PamProviderBlockParseResult& parse,
+    std::string& error) {
+    PamProviderManagedEntryRequest request;
+    request.providerName = providerName;
+    request.configPath = configPath;
+    ProvenPamProviderContainerCreation witness;
+    return provePreparedContainerCreationWitness(
+        journal, request, parse, witness, error);
 }
 
 } // namespace fic::identity::pam

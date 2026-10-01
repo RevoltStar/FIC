@@ -27,6 +27,22 @@ struct AtomicTargetState {
     gid_t group = 0;
 };
 
+// Step 7F conditional-delete outcome (see
+// AtomicFileWriter::removeIfCurrentState()).
+struct AtomicRemoveResult {
+    // True only when the unlinkat actually removed the proven target.
+    bool removed = false;
+    // True only when the parent directory fsync confirmed the removal
+    // durability. removed=true with durabilityConfirmed=false means the
+    // directory entry is gone in the running system but the removal can
+    // still be lost to a crash/power loss: callers must NOT treat this as a
+    // durable release (journal ownership is not resolved).
+    bool durabilityConfirmed = false;
+    // True when the target no longer matches the expected captured state
+    // (or is a symlink / non-regular object): NOTHING was deleted.
+    bool preconditionFailed = false;
+};
+
 struct AtomicWriteOptions {
     // Applies both to a direct write and to a file disappearing before write.
     bool createIfMissing = false;
@@ -140,6 +156,50 @@ public:
     static bool captureTargetState(const std::string& path,
                                    AtomicTargetState& state,
                                    std::string* errorMessage = nullptr);
+
+    // Step 7F conditional delete: unlinks the target ONLY when it still IS
+    // exactly the given captured state. The proof and the unlink are
+    // performed descriptor-relative against the captured parent directory
+    // (fstatat(AT_SYMLINK_NOFOLLOW) + content re-proof through the same
+    // directory handle + unlinkat), so a concurrently replaced object or a
+    // swapped identity (same content, different inode) is detected and
+    // NEVER deleted. Like expectedTargetState this is an optimistic
+    // filesystem precondition, not a magical CAS: a non-cooperating writer
+    // can still race between the proof and the unlinkat — the residual
+    // window is the same one rename(2)-based replacement already accepts,
+    // and it is documented, not hidden.
+    //
+    //   * symlink or non-regular target         -> refused (removed=false,
+    //                                               preconditionFailed=true);
+    //   * state mismatch (identity, metadata or
+    //     content)                               -> preconditionFailed=true,
+    //                                               removed=false, ok=true
+    //                                               (a typed, expected
+    //                                               outcome, not an error);
+    //   * unlinkat succeeded                    -> removed=true; the parent
+    //                                               directory is fsynced
+    //                                               afterwards and
+    //                                               durabilityConfirmed is
+    //                                               true ONLY when that
+    //                                               fsync succeeded:
+    //                                               removed != durable.
+    // The method returns ok=false only for unexpected I/O failures (a
+    // vanished directory, an unreadable target, an unlinkat failure).
+    static bool removeIfCurrentState(const std::string& path,
+                                     const AtomicTargetState& expected,
+                                     std::string* errorMessage,
+                                     AtomicRemoveResult* result);
+
+    // State-bound absence durability barrier (Step 7F): proves that the
+    // target is ABSENT (ENOENT through lstat), fsyncs the parent directory
+    // (honoring the same test seam as every other durability barrier) and
+    // RE-PROVES the absence afterwards. Only then may a caller treat the
+    // absence as durable (a journal record may be resolved). An object that
+    // appears during the barrier fails closed — the new object is never
+    // touched. A target that still exists is not an error of this helper:
+    // the caller decides what a present target means.
+    static bool ensureTargetAbsentDurableIfCurrentState(
+        const std::string& path, std::string* errorMessage = nullptr);
 };
 
 #endif // ATOMICFILEWRITER_H

@@ -1489,4 +1489,263 @@ PamProviderFlagMutationResult setPamProviderManagedFlagTransition(
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// Step 7F: pure flag RELEASE primitive (rollback side).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool validateFlagReleaseExpectation(
+    const PamProviderFlagReleaseExpectation& expectation,
+    std::string& error) {
+    if (!isValidPamProviderIdentityToken(expectation.provider) ||
+        !isValidPamProviderIdentityToken(expectation.policy) ||
+        !isValidPamProviderManagedKey(expectation.managedKey)) {
+        error = "invalid release expectation identity tokens";
+        return false;
+    }
+    if (expectation.mutationId == 0) {
+        error = "release expectation carries no journal mutation id";
+        return false;
+    }
+    if (expectation.candidates.empty()) {
+        error = "release expectation carries no authorized ownership state";
+        return false;
+    }
+    for (const PamProviderFlagOwnedStateCandidate& candidate :
+         expectation.candidates) {
+        if (candidate.entryKind != PamProviderManagedEntryKind::FlagEnabled &&
+            candidate.entryKind !=
+                PamProviderManagedEntryKind::FlagDisabled) {
+            error = "release candidate carries a non-flag entry kind";
+            return false;
+        }
+        // An enabled flag NEVER owns wrappers (Step 7E invariant): an
+        // enabled candidate with an authorized suppression set is an
+        // inconsistent journal payload, not a legal release source.
+        if (candidate.entryKind ==
+                PamProviderManagedEntryKind::FlagEnabled &&
+            !candidate.authorizedSuppressionIds.empty()) {
+            error = "enabled flag candidate must not authorize suppression "
+                    "ids";
+            return false;
+        }
+        for (const std::string& id : candidate.authorizedSuppressionIds) {
+            if (!isValidPamProviderSuppressionId(id)) {
+                error = "release candidate carries an invalid suppression "
+                        "id: " + id;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+PamProviderFlagReleaseResult releasePamProviderManagedFlag(
+    const std::string& content,
+    const PamProviderFlagReleaseExpectation& expectation,
+    PamProviderBlockPlacementRequest request) {
+    PamProviderFlagReleaseResult result;
+    std::string error;
+    if (!validateFlagReleaseExpectation(expectation, error)) {
+        result.error = error;
+        return result;
+    }
+    const PamProviderBlockParseResult parse =
+        parsePamProviderManagedBlock(content);
+    if (!parse.ok) {
+        result.error = parse.error;
+        return result;
+    }
+    if (parse.view.present && parse.view.provider != expectation.provider) {
+        result.error = "FIC PAM provider block принадлежит другому "
+                       "provider: " + parse.view.provider;
+        return result;
+    }
+
+    // --- ownership classification: physical state vs candidates ---
+    // Owned wrappers of THIS record (same provider/policy/key/mutation id).
+    // A same-identity wrapper with a DIFFERENT mutation id is another
+    // transaction's provenance and refuses the release (Step 7F §23).
+    std::vector<std::string> physicalWrapperIds;
+    for (const PamProviderSuppressedLine& wrapper : parse.view.suppressions) {
+        if (wrapper.provider != expectation.provider ||
+            wrapper.policy != expectation.policy ||
+            wrapper.managedKey != expectation.managedKey) {
+            continue;
+        }
+        if (wrapper.mutationId != expectation.mutationId) {
+            result.error = "FIC PAM suppression wrapper того же identity "
+                           "несёт чужой physical mutation id: " +
+                std::to_string(wrapper.mutationId) + " != " +
+                std::to_string(expectation.mutationId) +
+                " (release запрещён)";
+            return result;
+        }
+        physicalWrapperIds.push_back(wrapper.suppressionId);
+    }
+
+    const PamProviderManagedEntry* entry = nullptr;
+    if (parse.view.present) {
+        entry = findEntry(parse.view.entries, expectation.policy,
+                          expectation.managedKey);
+    }
+    if (entry != nullptr && entry->mutationId != expectation.mutationId) {
+        result.error = "FIC PAM entry (policy, key) совпадает, но physical "
+                       "mutation id отличается: " +
+            std::to_string(entry->mutationId) + " != " +
+            std::to_string(expectation.mutationId) + " (release запрещён)";
+        return result;
+    }
+    if (entry == nullptr && physicalWrapperIds.empty()) {
+        // No FIC entry AND no owned wrapper: externally released state.
+        // Nothing is reconstructed (Step 7F §8/§20).
+        result.outcome = PamProviderFlagReleaseResult::Outcome::AlreadyAbsent;
+        result.content = content;
+        result.ok = true;
+        return result;
+    }
+
+    // The physical state must strictly match ONE of the authorized
+    // candidates: entry kind + wrapper ids being a subset of the authorized
+    // set. Several candidates may match the same physical state (e.g. a
+    // false→false refresh whose previous and target wrapper sets both
+    // cover the existing ids): the union of the matched authorized sets is
+    // then the release authority.
+    std::vector<std::string> authorizedUnion;
+    for (const PamProviderFlagOwnedStateCandidate& candidate :
+         expectation.candidates) {
+        if (entry != nullptr && entry->kind != candidate.entryKind) {
+            continue;
+        }
+        if (entry == nullptr) {
+            // Without an entry the physical state is wrapper-only: it can
+            // only match a disabled candidate.
+            if (candidate.entryKind !=
+                PamProviderManagedEntryKind::FlagDisabled) {
+                continue;
+            }
+        }
+        bool subset = true;
+        for (const std::string& id : physicalWrapperIds) {
+            if (!containsId(candidate.authorizedSuppressionIds, id)) {
+                subset = false;
+                break;
+            }
+        }
+        if (!subset) {
+            continue;
+        }
+        for (const std::string& id : candidate.authorizedSuppressionIds) {
+            if (!containsId(authorizedUnion, id)) {
+                authorizedUnion.push_back(id);
+            }
+        }
+    }
+    if (authorizedUnion.empty() && !physicalWrapperIds.empty()) {
+        result.error = "FIC PAM wrapper ids не входят ни в одну "
+                       "авторизованную journal ownership state (fail "
+                       "closed)";
+        return result;
+    }
+    if (authorizedUnion.empty() && entry == nullptr) {
+        result.outcome = PamProviderFlagReleaseResult::Outcome::AlreadyAbsent;
+        result.content = content;
+        result.ok = true;
+        return result;
+    }
+    if (authorizedUnion.empty()) {
+        // An entry exists but no candidate matched its kind.
+        result.error = "FIC PAM entry kind не совпадает ни с одной "
+                       "авторизованной ownership state (fail closed)";
+        return result;
+    }
+    for (const std::string& id : physicalWrapperIds) {
+        if (!containsId(authorizedUnion, id)) {
+            result.error = "FIC PAM suppression wrapper несёт id вне "
+                           "авторизованного набора (fail closed): " + id;
+            return result;
+        }
+    }
+
+    // --- release: ONE pure content transform ---
+    // Pass 1: unwrap every authorized owned wrapper IN PLACE (the embedded
+    // raw line returns byte-exact, including its exact terminator).
+    const std::vector<std::string> lines = physicalLines(content);
+    std::size_t beginIndex = std::string::npos;
+    std::size_t endIndex = std::string::npos;
+    findBlockLineIndices(content, beginIndex, endIndex);
+    std::string unwrapped;
+    bool changed = false;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const bool insideBlockSpan =
+            beginIndex != std::string::npos && index >= beginIndex &&
+            index <= endIndex;
+        if (!insideBlockSpan) {
+            const PamProviderSuppressedLine* wrapper = nullptr;
+            for (const PamProviderSuppressedLine& candidate :
+                 parse.view.suppressions) {
+                if (candidate.lineIndex == index) {
+                    wrapper = &candidate;
+                    break;
+                }
+            }
+            if (wrapper != nullptr &&
+                wrapper->provider == expectation.provider &&
+                wrapper->policy == expectation.policy &&
+                wrapper->managedKey == expectation.managedKey &&
+                wrapper->mutationId == expectation.mutationId) {
+                // The candidate classification already proved the id is
+                // authorized and the raw line is a proven active occurrence
+                // of the managed key: restore it byte-exact.
+                const auto [text, terminator] =
+                    splitPhysicalLine(lines[index]);
+                unwrapped += wrapper->rawLine + terminator;
+                if (wrapper->rawLine + terminator != lines[index]) {
+                    changed = true;
+                }
+                continue;
+            }
+        }
+        unwrapped += lines[index];
+    }
+
+    // Pass 2: remove the exact owned entry through the existing typed
+    // removal primitive (same ownership proofs, block removal when last).
+    PamProviderOwnershipExpectation removalExpectation;
+    removalExpectation.provider = expectation.provider;
+    removalExpectation.policy = expectation.policy;
+    removalExpectation.managedKey = expectation.managedKey;
+    removalExpectation.body = entry != nullptr
+        ? entry->body
+        : pamProviderFlagEntryBody(PamProviderManagedEntryKind::FlagDisabled,
+                                   expectation.managedKey);
+    removalExpectation.mutationId = expectation.mutationId;
+    PamProviderRemovalResult removal = removePamProviderManagedEntry(
+        unwrapped, removalExpectation, request);
+    if (!removal.ok) {
+        // AlreadyAbsent here means: entry physically absent while the
+        // wrappers existed — the unwrap pass already released them.
+        if (removal.outcome ==
+            PamProviderRemovalResult::Outcome::AlreadyAbsent) {
+            result.outcome =
+                PamProviderFlagReleaseResult::Outcome::Released;
+            result.changed = changed;
+            result.content = unwrapped;
+            result.ok = true;
+            return result;
+        }
+        result.error = removal.error;
+        return result;
+    }
+    result.outcome = PamProviderFlagReleaseResult::Outcome::Released;
+    result.changed = changed ||
+        removal.outcome != PamProviderRemovalResult::Outcome::AlreadyAbsent;
+    result.content = removal.content;
+    result.ok = true;
+    return result;
+}
+
 } // namespace fic::identity::pam

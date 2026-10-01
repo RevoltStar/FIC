@@ -194,6 +194,67 @@ public:
     TempTree tree;
 };
 
+// Step 7F: the contextual (platform-aware) enrollment of the managed
+// provider configuration policies.
+void testContextualManagedProviderEnrollment() {
+    using namespace fic::platform;
+    RollbackExecutorDeps deps;
+
+    // Managed ProviderConfigFile platform (Debian 13 / Ubuntu 24.04 / 26.04
+    // style): faillock scalars + flags route through the managed provider
+    // configuration and become rollback-supported.
+    PamCapabilityConfig faillock;
+    faillock.capability = PamCapability::AuthenticationLockout;
+    faillock.provider = PamProviderKind::PamFaillock;
+    faillock.configurationMode =
+        PamCapabilityConfigurationMode::ProviderConfigFile;
+    faillock.configPath = "/etc/security/faillock.conf";
+    PamProviderConfigTopology faillockTopology;
+    faillockTopology.primaryPath = faillock.configPath;
+    faillock.configTopology = faillockTopology;
+    deps.pamPlatform.capabilities.push_back(faillock);
+    require(effectiveRollbackEnrollment(
+                {"IDENTITY_ACCESS", "PAM", "failed_authentication_attempts"},
+                deps) == RollbackEnrollment::Supported,
+            "managed faillock scalar must be contextually enrolled");
+    require(effectiveRollbackEnrollment(
+                {"IDENTITY_ACCESS", "PAM",
+                 "failed_authentication_enforce_for_root"},
+                deps) == RollbackEnrollment::Supported,
+            "managed faillock flag must be contextually enrolled");
+    require(effectiveRollbackEnrollment(
+                {"IDENTITY_ACCESS", "PAM", "enable_password_quality"}, deps) ==
+                RollbackEnrollment::Supported,
+            "static PAM capability policies stay enrolled");
+
+    // Debian 12 style: pwhistory capability is ModuleArguments-only — the
+    // Step 6 history policies must NOT be routed into provider rollback.
+    PamCapabilityConfig historyModuleArguments;
+    historyModuleArguments.capability = PamCapability::PasswordHistory;
+    historyModuleArguments.provider = PamProviderKind::PamPwhistory;
+    historyModuleArguments.configurationMode =
+        PamCapabilityConfigurationMode::ModuleArguments;
+    deps.pamPlatform.capabilities.push_back(historyModuleArguments);
+    require(effectiveRollbackEnrollment(
+                {"IDENTITY_ACCESS", "PAM", "password_history_depth"}, deps) ==
+                RollbackEnrollment::NotEnrolled,
+            "D12 pwhistory ModuleArguments must stay outside provider "
+            "rollback");
+    require(effectiveRollbackEnrollment(
+                {"IDENTITY_ACCESS", "PAM",
+                 "password_history_enforce_for_root"},
+                deps) == RollbackEnrollment::NotEnrolled,
+            "D12 pwhistory flag must stay outside provider rollback");
+
+    // Unknown future PAM option policy never receives default-positive
+    // enrollment (§96): it keeps the exact static answer — Unsupported —
+    // which refuses the disable fail-closed instead of silently proceeding.
+    require(effectiveRollbackEnrollment(
+                {"IDENTITY_ACCESS", "PAM", "future_managed_option"}, deps) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future PAM policy must not be auto-enrolled");
+}
+
 const PolicyRef kSudoPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
 
 // ---------------------------------------------------------------- tests -----
@@ -2647,6 +2708,8 @@ int main() {
         void (*test)();
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
+        {"contextual managed provider enrollment",
+         testContextualManagedProviderEnrollment},
         {"PAM ownership release", testPamOwnershipRelease},
         {"PAM executor journal lifecycle", testPamExecutorJournalLifecycle},
         {"sssd executor rollback removes managed setting",

@@ -1195,9 +1195,9 @@ suppressionIds, previousSuppressionIds).
   (`raw=`-суффикс); journal хранит только provenance id (s1, s2, ...) —
   permission set, а не backup manifest.
 
-Rollback / Step 7F освобождает FIC entry и разворачивает только текущие
-физически доказанные wrappers — foreign-состояние возвращается
-естественно, байт-в-байт. Ids внешне освобождённых wrappers
+Rollback (Step 7F, раздел ниже) освобождает FIC entry и разворачивает
+только текущие физически доказанные wrappers — foreign-состояние
+возвращается естественно, байт-в-байт. Ids внешне освобождённых wrappers
 канонизируются из provenance (никогда не реконструируются из journal) и
 НЕ переиспользуются, пока активная запись ссылается на них (namespace id —
 объединение физического файла и journal provenance).
@@ -1319,6 +1319,141 @@ provenance-проверки выполняет сам главный `sshd_confi
 target-директивы в global section без journal-записей означает
 `Unsupported` (даже при совпадении значения с политикой), отсутствие —
 `NothingToDo`.
+
+## Managed provider runtime rollback (Step 7F, реализовано)
+
+Step 7F замыкает PAM rollback roadmap: managed provider configuration
+(assignments, set-only flags и FIC-created container provenance) имеет
+полный runtime rollback через dedicated backend
+`fic/src/modules/identity_access/pam/PamProviderRollback.{h,cpp}`.
+`RollbackExecutor` выполняет только dispatch, status mapping и journal
+lifecycle; PAM-специфическое физическое доказательство — в backend'е.
+
+Неизменяемый принцип: provider rollback **освобождает FIC ownership**, а
+не восстанавливает историческое значение администратора. Для assignment —
+удаляется только точный FIC managed entry; для set-only flag — точный FIC
+flag entry плюс разворачиваются ТОЛЬКО существующие wrappers, чья
+provenance авторизована journal-записью. Foreign raw line не хранится в
+journal, не реконструируется, возвращается только из физического wrapper
+байт-в-байт; отсутствующий wrapper — externally released subset.
+
+Status matrix (assignment):
+
+* Applied/RollbackFailed — `appliedBody` есть ownership target state:
+  exact entry → release; absent → `NothingToDo` (перед успехом
+  проверяется отсутствие orphan FIC state той же identity); drift/wrong
+  mutation id → `Conflict`. RollbackFailed рассматривается как ownership
+  target state (previous body — historical provenance).
+* Prepared fresh (previous пуст): `PreparedFreshAbsent` → `NothingToDo`
+  (система физически не мутирована); `PreparedFreshTargetPresent` →
+  release target; иначе → `Conflict`.
+* Prepared refresh (previous задан): rollback НЕ обязан завершать target —
+  цель disable это полностью освободить policy ownership, поэтому
+  доказанно-присутствующая сторона (previous или target) освобождается;
+  `PreparedConflict` → `Conflict`.
+* Placement — не ownership: смещённый foreign content'ом валидный block
+  остаётся FIC-владением и освобождается; foreign bytes байт-в-байт.
+
+Flag rollback: физическое состояние должно строго соответствовать одной
+из авторизованных ownership states (Applied/RollbackFailed — только
+target candidate; Prepared — target плюс previous при заданном
+`previousAppliedEnabled`). Существующие wrapper ids — подмножество
+авторизованного набора (отсутствующие авторизованные ids допустимы,
+неизвестные — `Conflict`); wrapper того же identity с чужим mutation id —
+`Conflict`. Release выполняется ОДНИМ чистым контент-преобразованием
+(`releasePamProviderManagedFlag`) и одной filesystem транзакцией.
+
+Container provenance (`UndoOwnPamProviderContainer`):
+
+* Последняя FIC entry/flag в файле + пустой результат release + Applied
+  container provenance → **exact snapshot-bound conditional delete**
+  (`AtomicFileWriter::removeIfCurrentState`: descriptor-relative
+  fstatat/unlinkat, re-proof identity/metadata/content, parent fsync;
+  stale → `Conflict`, replacement не трогается) → container → RolledBack.
+* Unlink прошёл, но directory fsync не удался → `removed=true, durable`
+  НЕ подтверждена: journal ownership НЕ разрешается, записи остаются
+  recoverable (retry завершает lifecycle через durable absence barrier
+  `ensureTargetAbsentDurableIfCurrentState` — появление объекта во время
+  барьера fail-closed).
+* FIC-created файл с foreign bytes → после durable write foreign-only
+  состояния container → **Detached** (FIC навсегда отказывается от права
+  удалить файл).
+* Pre-existing файл (container provenance отсутствует/не доказана) →
+  никогда не удаляется (RetainUnproven); удаляется только FIC
+  serialization.
+* Другие FIC entries в block'е → container provenance остаётся active.
+* Prepared container provenance легализуется ТОЛЬКО строгим existing
+  creation-witness proof против pre-release физического состояния.
+
+Journal order (per policy record): физический release → durability proof
+→ container resolution (если применимо) → Success/NothingToDo наружному
+`RollbackExecutor`, который один помечает policy record RolledBack. Crash
+после физического release до journal update классифицируется retry'ем как
+already released (идемпотентно, никакой реконструкции).
+
+Platform identity proof: перед каждой мутирующей операцией payload
+journal-записи сверяется с ТЕКУЩИМ platform profile (provider kind/name,
+configPath, managed key, placement contract) через тот же typed routing
+helper, что использует apply (`pamProviderManagedEntryPlacement` —
+единый source of truth, без третьего whitelist). Domain, который текущий
+profile не подтверждает — `Conflict`.
+
+Contextual enrollment: `effectiveRollbackEnrollment(policy, deps)`
+сохраняет static enrollment всех существующих backend'ов; для
+IDENTITY_ACCESS/PAM опционных политик разрешает текущий platform binding
+и только реально managed ProviderConfigFile политику делает Supported.
+Debian 12 pwhistory (ModuleArguments), ALT pwhistory (AltTcbManaged) и
+passwdqc остаются вне provider rollback; неизвестная будущая PAM policy
+сохраняет static fail-closed ответ (Unsupported). Caller и executor
+используют одну shared enrollment модель.
+
+Interprocess serialization: managed-entry apply, managed-flag apply,
+provider rollback и package provider release Stage B делят ОДИН lock
+domain — `ExclusivePidLock` на `<runtimeDir>/pam-provider-managed.lock`
+(один глобальный PAM provider домен, не per-provider файлы). Публичные
+API захватывают lock; внутренние `*Unlocked`-примитивы package release
+выполняются под уже удерживаемым lock. In-process mutex не заменяет
+interprocess lock.
+
+## Package-removal managed provider domain release (Step 7F, реализовано)
+
+`PamProviderPackageRelease.{h,cpp}` — отдельный от C2 (`PamPasswordPackageRelease`)
+release домен для managed provider configuration:
+
+* **Preflight** (Stage A) — строго read-only: загрузка healthy journal,
+  перечисление активных provider entry/flag/container записей, валидация
+  каждой против текущего platform identity, trusted read + strict parse
+  всех известных provider primary, proof releasability чистыми
+  примитивами, orphan-детекция (FIC_PAM_PROVIDER_BLOCK / FIC_PAM_SUPPRESS
+  без активной journal provenance → fail closed), coherence container
+  provenance. Никаких записей; lock не требуется.
+* **Release** (Stage B, после остановки всех FIC writer'ов) — exclusive
+  захват shared managed-provider lock, СВЕЖИЙ полный preflight (Stage A
+  snapshot никогда не доверяется), детерминированный порядок (configPath,
+  policy, managedKey, record id), container cleanup, независимый final
+  proof (нет активных записей домена, нет FIC serialization на известных
+  primary, foreign файлы сохранены, FIC-created пустые контейнеры удалены
+  durably).
+
+Journal semantics: каждый успешно released entry/flag → RolledBack;
+container: deleted → RolledBack, retained foreign → Detached; несвязанные
+записи не трогаются; journal файл никогда не удаляется. Failure —
+монотонный ownership release: released записи остаются RolledBack,
+конфликтующая остаётся активной, удаление пакета блокируется, retry
+продолжает оставшиеся активные записи (в отличие от C2 release с его
+compensation model).
+
+CLI: `fic --maintenance pam-provider-prerm-prepare preflight|release` —
+narrow root-only entrypoint без path/policy аргументов. DEB prerm
+(`write_system_integration_symlink_prerm`) выполняет provider preflight
+Stage A до любых side effects (вместе с C2 preflight) и provider release
+Stage B после остановки writer'ов и batch remove, ПЕРЕД C2 semantic
+transition (provider домен не зависит от pam-auth-update; отказ provider
+release блокирует удаление до любых C2 мутаций). ALT p11 RPM `%preun`
+выполняет provider preflight на actual erase (`$1 -eq 0`) до side effects
+и provider release post-stop hook'ом после остановки сервисов; upgrade
+никогда не запускает ownership release. Shell не содержит PAM parser'ов —
+решение целиком в maintenance binary.
 
 ## Расширение
 

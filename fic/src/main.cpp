@@ -39,6 +39,7 @@
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/ipc/FicIpcPathDefaults.h>
@@ -1279,6 +1280,78 @@ int main(int argc, char* argv[]) {
             }
             std::cout << "managed password slots are provisioned"
                       << std::endl;
+            return 0;
+        }
+        if (command == "pam-provider-prerm-prepare") {
+            // Step 7F package-removal release of the managed PROVIDER
+            // configuration domain (faillock/pwquality/pwhistory provider
+            // primaries). Narrow package-maintenance entrypoint: root-only,
+            // no path/policy arguments, the platform profile and the
+            // production journal come from the production environment. Mode
+            // argument: "preflight" (Stage A, strictly read-only, BEFORE
+            // any prerm side effect) or "release" (Stage B, after every
+            // FIC writer has been stopped).
+            if (::geteuid() != 0) {
+                std::cerr << "FIC package provider release maintenance "
+                             "must be run as root"
+                          << std::endl;
+                return 1;
+            }
+            using fic::identity::pam::PamProviderPackageRelease;
+            const std::string providerReleaseMode = get_arg_value(argc, argv, 3);
+            PamProviderPackageRelease::Mode providerMode;
+            if (providerReleaseMode == "preflight") {
+                providerMode = PamProviderPackageRelease::Mode::Preflight;
+            } else if (providerReleaseMode == "release") {
+                providerMode = PamProviderPackageRelease::Mode::Release;
+            } else {
+                std::cerr << "unknown FIC package provider release mode: "
+                          << providerReleaseMode
+                          << " (expected \"preflight\" or \"release\")"
+                          << std::endl;
+                return 1;
+            }
+            std::string providerJournalError;
+            fic::rollback::MutationJournal* providerJournal =
+                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                    providerJournalError);
+            if (providerJournal == nullptr) {
+                std::cerr << "FIC mutation journal unavailable (fail "
+                             "closed): "
+                          << providerJournalError << std::endl;
+                return 1;
+            }
+            PamProviderPackageRelease::Options providerOptions;
+            providerOptions.lockFilePath =
+                paths.runtimeDir / "pam-provider-managed.lock";
+            providerOptions.lockDebugLogPath = paths.lockDebugLogFile;
+            PamProviderPackageRelease providerRelease(
+                *providerJournal, platform.pam, providerOptions);
+            PamProviderPackageRelease::Report providerReport;
+            if (!providerRelease.run(providerMode, providerReport,
+                                     maintenanceError)) {
+                std::cerr << "FIC package provider release ("
+                          << providerReleaseMode << ") failed: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "FIC package provider release ("
+                      << providerReleaseMode << ") proven";
+            for (const std::string& released : providerReport.releasedRecords) {
+                std::cout << " released:" << released;
+            }
+            for (const std::string& deleted : providerReport.containersDeleted) {
+                std::cout << " deleted:" << deleted;
+            }
+            for (const std::string& detached :
+                 providerReport.containersDetached) {
+                std::cout << " detached:" << detached;
+            }
+            for (const std::string& retained :
+                 providerReport.containersRetained) {
+                std::cout << " retained:" << retained;
+            }
+            std::cout << std::endl;
             return 0;
         }
         if (command == "pam-password-prerm-prepare") {
