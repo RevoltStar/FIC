@@ -434,11 +434,14 @@ void testPreparedTransitionImmutability() {
     {
         MutationJournal reader(temp.path);
         require(reader.load(error), error);
+        const auto records = reader.activeRecords(
+            {"IDENTITY_ACCESS", "PAM", validPayload().policyName});
+        require(records.size() == 1 &&
+                    records.front().id == freshId &&
+                    records.front().status == MutationStatus::Prepared,
+                "update transition not armed as Prepared");
         const auto* restored = std::get_if<UndoRemovePamProviderManagedEntry>(
-            &reader.activeRecords({"IDENTITY_ACCESS", "PAM",
-                                   validPayload().policyName})
-                         .front()
-                         .undo.payload);
+            &records.front().undo.payload);
         require(restored != nullptr &&
                     restored->previousAppliedBody == "deny = 5" &&
                     restored->appliedBody == "deny = 9",
