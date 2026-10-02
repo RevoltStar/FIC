@@ -160,17 +160,17 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.baseDefaultsPath = "/etc/default/grub";
     profile.grub.rebuildArguments = {};
     profile.dac.modeAndOwnerObjects = {
-        makeModeAndOwnerPathObject("bashrc", {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}, false}),
+        makeModeAndOwnerPathObject("bashrc", {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}, true}),
         // Ubuntu ships /etc/crontab as 0644 root:root (cron-daemon-common
         // package archive). FIC hardens it to 0600 and exposes packaged 0644 as the explicit system profile.
-        makeModeAndOwnerPathObject("crontab", {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}, false}),
-        makeModeAndOwnerPathObject("fstab", {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}, true}),
-        makeModeAndOwnerPathObject("hostname", {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}, false}),
-        makeModeAndOwnerPathObject("hosts", {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}, false}),
-        makeModeAndOwnerPathObject("hosts_allow", {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}, false}),
-        makeModeAndOwnerPathObject("hosts_deny", {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}, false}),
-        makeModeAndOwnerPathObject("group", {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}, true}),
-        makeModeAndOwnerPathObject("resolv", {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, false, {}, {
+        makeModeAndOwnerPathObject("crontab", {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("fstab", {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}, false}),
+        makeModeAndOwnerPathObject("hostname", {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("hosts", {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("hosts_allow", {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("hosts_deny", {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("group", {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}, false}),
+        makeModeAndOwnerPathObject("resolv", {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, true, {}, {
             // Provider metadata is the штатное provider state: baseline ==
             // enforced for every provider-managed final target.
             {"/run/systemd/resolve/stub-resolv.conf",
@@ -188,21 +188,21 @@ PlatformProfile makeBuildPlatformProfile() {
              ManagedFileProvider::NetworkManager,
              {"root", "root", 0644}, {"root", "root", 0644}}
         }}),
-        makeModeAndOwnerPathObject("sysctl_config", {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, false}),
-        makeModeAndOwnerPathObject("logrotate_config", {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}, false}),
-        makeModeAndOwnerPathObject("passwd", {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("sysctl_config", {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("logrotate_config", {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}, true}),
+        makeModeAndOwnerPathObject("passwd", {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}, false}),
         // shadowconfig on (passwd package postinst) provisions
         // /etc/shadow as root:shadow 0640 on Debian/Ubuntu.
-        makeModeAndOwnerPathObject("shadow", {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}, true}),
-        makeModeAndOwnerPathObject("grub_config", {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, false}),
-        makeModeAndOwnerPathObject("securetty", {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, false}),
-        makeModeAndOwnerPathObject("sudoers", {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}, true}),
+        makeModeAndOwnerPathObject("shadow", {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}, false}),
+        makeModeAndOwnerPathObject("grub_config", {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, true}),
+        makeModeAndOwnerPathObject("securetty", {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, true}),
+        makeModeAndOwnerPathObject("sudoers", {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}, false}),
     // Packaged executable metadata is root:root 0755 (coreutils, e2fsprogs,
     // net-tools, iproute2 archives); FIC exposes packaged 0755 as system and 0750 as strict.
-        makeModeAndOwnerPathObject("df", {"/usr/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, true}),
-        makeModeAndOwnerPathObject("chattr", {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true}),
-        makeModeAndOwnerPathObject("arp", {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, false}),
-        makeModeAndOwnerPathObject("ip", {"/usr/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, true})
+        makeModeAndOwnerPathObject("df", {"/usr/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, false}),
+        makeModeAndOwnerPathObject("chattr", {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, false}),
+        makeModeAndOwnerPathObject("arp", {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true}),
+        makeModeAndOwnerPathObject("ip", {"/usr/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, false})
     };
     return profile;
 }

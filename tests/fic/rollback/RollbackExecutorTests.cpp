@@ -3,6 +3,7 @@
 #include "rollback/PamRollback.h"
 #include "daemon/PolicyDisableFlow.h"
 
+#include "modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
 
@@ -685,14 +686,32 @@ void testModeAndOwnerProductionDisableFlowIsReleaseOnly() {
     JournalOverride overrideGuard(journalPath);
     const std::filesystem::path managed=journal.tree.root/"managed";
     writeFile(managed,"data");
-    require(::chmod(managed.c_str(),0600)==0,"strict fixture chmod failed");
-    struct stat before {};
-    require(::stat(managed.c_str(),&before)==0,"strict fixture stat failed");
+    require(::chmod(managed.c_str(),0644)==0,"system fixture chmod failed");
+
+    const struct passwd* user=::getpwuid(::geteuid());
+    const struct group* group=::getgrgid(::getegid());
+    require(user!=nullptr&&group!=nullptr,"test identity lookup failed");
+    fic::platform::DacPlatformConfig platform;
+    fic::platform::DacPlatformConfig::PathContract system;
+    system.metadata={user->pw_name,group->gr_name,0644};
+    fic::platform::DacPlatformConfig::PathContract strict;
+    strict.metadata={user->pw_name,group->gr_name,0600};
+    platform.modeAndOwnerObjects.push_back({"fixture",
+        fic::platform::DacPlatformConfig::StaticPathObject{managed,{
+            {fic::platform::DacPlatformConfig::Profile::System,system},
+            {fic::platform::DacPlatformConfig::Profile::Strict,strict}}}});
 
     writeFile(fic::core::FicRuntimePaths::get().configDir/"DAC.conf",
               "_schema_version=1\n"
               "mode_and_owner_profiles.status=ENABLE\n"
               "mode_and_owner_profiles.value={\"fixture\":\"strict\"}\n");
+    DAC_mode_and_owner_profiles policy(platform);
+    require(policy.apply(),"strict profile apply failed");
+    struct stat before {};
+    require(::stat(managed.c_str(),&before)==0&&
+                (before.st_mode&07777)==0600,
+            "strict profile was not applied before disable");
+
     const fic::daemon::PolicyMutationResult result =
         fic::daemon::disablePolicyAfterLookup(
             {"DAC","Mode_and_Owner","mode_and_owner_profiles"},"",

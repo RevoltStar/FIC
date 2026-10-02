@@ -1177,8 +1177,14 @@ bit. Каждый executable (`df`, `chattr`, `arp`, `ip`) является от
 object. Каждый profile Mode_And_Owner — полный точный desired-state contract
 owner/group/mode: и более строгий, и более слабый фактический mode не считается
 соответствующим и исправляется до точного profile mode. Capability
-`allowMissingVariant` задаётся platform contract logical object, а выбранный
-`PresenceRequirement` приходит из policy value.
+`allowMissingVariant` задаётся положительным флагом непосредственно в source
+catalog platform profile и без логической инверсии переносится в runtime
+object; выбранный `PresenceRequirement` приходит из policy value. На Debian 12
+и Debian 13 `sudoers` объявляет этот capability, поскольку `sudo` не является
+обязательным platform component: generated default использует
+`sudoers=system_or_not_exists`, но явно выбранный `sudoers=system` по-прежнему
+требует существования файла. Этот вывод не распространяется автоматически на
+Ubuntu и ALT.
 Arbitrary user paths не принимаются.
 
 ALT p11 дополнительно задаёт logical object `tcb_credentials` с typed TCB

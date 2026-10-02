@@ -168,17 +168,17 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.baseDefaultsPath = "/etc/default/grub";
     profile.grub.rebuildArguments = {};
     std::vector<ModeAndOwnerPathProfiles> modeAndOwnerPaths = {
-        {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}, true},
         // Ubuntu ships /etc/crontab as 0644 root:root (cron-daemon-common
         // package archive). FIC hardens it to 0600 and exposes packaged 0644 as the explicit system profile.
-        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}, false},
-        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}, true},
-        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}, true},
-        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, false, {}, {
+        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}, true},
+        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, true, {}, {
             // Provider metadata is the штатное provider state: baseline ==
             // enforced for every provider-managed final target.
             {"/run/systemd/resolve/stub-resolv.conf",
@@ -196,17 +196,17 @@ PlatformProfile makeBuildPlatformProfile() {
              ManagedFileProvider::NetworkManager,
              {"root", "root", 0644}, {"root", "root", 0644}}
         }},
-        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}, false},
         // shadowconfig on (passwd package postinst) provisions
         // /etc/shadow as root:shadow 0640 on Debian/Ubuntu.
-        {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}, true},
-        {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, false},
-        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, false}
+        {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}, false},
+        {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, true},
+        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, true}
     };
     modeAndOwnerPaths.push_back(
-        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}, true});
+        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}, false});
     // Packaged executable metadata is root:root 0755 (coreutils, e2fsprogs,
     // net-tools, iproute2 archives); FIC exposes packaged 0755 as system and 0750 as strict. The gnudf and /usr/bin/ip symlink exceptions
     // are Ubuntu 26.04 packaging topology.
@@ -215,16 +215,16 @@ PlatformProfile makeBuildPlatformProfile() {
             "/usr/bin/df",
             {"root", "root", 0750},
             {"root", "root", 0755},
-            true,
+            false,
             {"/usr/bin/gnudf"}
         },
-        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true},
-        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, false},
+        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, false},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true},
         {
             "/usr/sbin/ip",
             {"root", "root", 0750},
             {"root", "root", 0755},
-            true,
+            false,
             {"/usr/bin/ip"}
         }
     };

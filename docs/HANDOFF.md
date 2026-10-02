@@ -3,13 +3,13 @@
 ## Current base
 
 * branch: `main`
-* base commit: `e11aaec0a0dc79c3cb9a5b78ee8100ea4f76dc99`
+* base commit: `2abffc56beaf0ee3acc2f5cadfe4488be1338e4a`
 
 ## Current task
 
-Follow-up for `DAC/Mode_and_Owner/mode_and_owner_profiles`: explicit
-`Profile` + `PresenceRequirement`, generated fresh-install default and
-release-only production disable flow.
+Follow-up for `DAC/Mode_and_Owner/mode_and_owner_profiles`: positive
+allow-missing capability, Debian-specific `sudoers` presence contract and
+full production apply-to-disable regression.
 
 ## Accepted architecture / invariants
 
@@ -22,51 +22,48 @@ release-only production disable flow.
   types, provider mismatch and remediation/postcondition failures fail closed.
 * Platform `Object.allowMissingVariant` controls public availability. TCB
   credential-file `required` is a separate internal topology contract.
+* Source catalogs use the same positive `allowMissingVariant` capability and
+  factories propagate it without inversion. Debian 12/13 expose the optional
+  `sudoers` variant; Ubuntu 24.04/26.04 and ALT p11 retain mandatory `sudoers`.
 * Unconfigured policy uses the generated catalog default. Explicit `{}` is an
   empty managed set, and saved mappings are never auto-filled.
 
 ## Completed
 
-* Parser, canonical JSON, restriction info and execution plan carry separate
-  profile/presence values; the old StaticPath `PathContract.required` source
-  was removed.
-* Generated defaults select `system_or_not_exists` only for platform-declared
-  allow-missing objects. `arp` has that capability on all five profiles; its
-  utility package is not a FIC dependency.
-* Fresh `DAC.conf` omits `.value`; policy-specific apply uses its generated
-  default only while unconfigured.
-* Broken allowed/provider symlinks are no longer collapsed into successful
-  ENOENT. Existing targets retain exact owner/group/mode enforcement.
-* The daemon disable sequence is in `PolicyDisableFlow` and is used by the
-  actual `disable_policy` path. Its DAC regression proves persisted DISABLE,
-  unchanged metadata/value and no rollback journal.
-* Tests cover parser variants, ENOENT versus EACCES/unsafe topology, defaults,
-  fresh bootstrap, exact remediation, chown plus SUID restoration and runtime
-  failure aggregation.
+* Replaced the source-only negative capability and its inversion with
+  `allowMissingVariant = false`; all five production catalogs were converted
+  while preserving their prior classifications.
+* Debian 12/13 `sudoers` now expose `system_or_not_exists`, so their generated
+  defaults tolerate an absent optional sudo package. Explicit `system` still
+  requires the file and an existing file is enforced to exact metadata.
+* Tests cover positive capability propagation, platform-specific sudoers
+  defaults/runtime presence behavior and the real lifecycle
+  `apply(strict) -> disable -> strict remains` through `PolicyDisableFlow`.
 
 ## Changed areas
 
-* `fic/src/modules/dac/mode_and_owner/`
 * `fic/src/platform/` and all five production profiles
-* `fic-common/fic-core/src/fs/FileStats.cpp`
-* daemon disable flow and DAC default config
-* DAC/platform/schema/rollback tests and architecture documentation
+* DAC/platform/rollback tests and architecture documentation
 
 ## Validation
 
-* Ubuntu 24.04 full build succeeded in `/tmp/fic-followup-build`.
-* Full non-root CTest passed: 115 executed/passed, one root-labelled test
-  (`command_hash_batch_tests`) skipped by contract.
+* Ubuntu 24.04 affected targets, including `fic`, built successfully in
+  `/tmp/fic-followup-build`.
 * Targeted required suite passed (8/8), including ModeAndOwner, rollback,
-  platform/static, descriptor/registry/CLI and schema bootstrap tests.
-* Debian 12, Debian 13 and Ubuntu 26.04 `platform_profile_tests` built and
-  passed. Ubuntu 24.04 is covered by the main tree.
+  platform/static, descriptor/registry/CLI and schema tests.
+* Debian 12, Debian 13 and Ubuntu 26.04 `mode_and_owner_tests` and
+  `platform_profile_tests` built and passed. Ubuntu 24.04 is covered by the
+  main tree.
+* Full non-root CTest completed: every runnable test passed. Four tests were
+  skipped by their environment/root contracts. `session_event_server_tests`
+  initially hit sandbox-denied `bind()` and passed when rerun outside sandbox.
 
 ## Remaining
 
 * ALT p11 full configure/build is unavailable on this Ubuntu host because its
   PAM transaction module requires ALT PAM development headers. The profile is
-  covered by source/static contract checks; native ALT runtime E2E is deferred.
+  covered by source/static contract checks and a direct syntax check; native
+  ALT runtime E2E is deferred.
 * Root-only ownership-change plus SUID restoration is conditional and was not
   executed in the non-root CTest run. Ordinary special-bit tests did execute.
 * `UserHomes` remains non-production; TCB public allow-missing remains disabled.

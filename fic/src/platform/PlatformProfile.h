@@ -463,7 +463,7 @@ struct ModeAndOwnerPathProfiles {
     FileMetadata strict;
     FileMetadata system;
     // Fail closed when a future catalog entry omits this capability field.
-    bool mustExistOnly = true;
+    bool allowMissingVariant = false;
 
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
     std::vector<ModeAndOwnerProviderProfileTarget> providerManagedFinalSymlinkTargets;

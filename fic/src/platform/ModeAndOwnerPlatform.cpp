@@ -42,7 +42,7 @@ Dac::Object makeModeAndOwnerPathObject(
             Dac::Profile::Strict,
             contract(profiles, profiles.strict));
     }
-    return {std::move(id), std::move(target), !profiles.mustExistOnly};
+    return {std::move(id), std::move(target), profiles.allowMissingVariant};
 }
 
 Dac::Object makeModeAndOwnerTcbObject(

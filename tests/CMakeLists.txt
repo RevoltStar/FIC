@@ -554,7 +554,8 @@ add_executable(mode_and_owner_tests
 target_include_directories(mode_and_owner_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(mode_and_owner_tests PRIVATE fic-core fic-policy Threads::Threads)
+target_link_libraries(mode_and_owner_tests PRIVATE
+    fic-core fic-policy fic-platform Threads::Threads)
 add_test(NAME mode_and_owner_tests COMMAND mode_and_owner_tests)
 
 add_executable(trusted_file_reader_tests
@@ -782,6 +783,10 @@ add_test(NAME mutation_journal_tests COMMAND mutation_journal_tests)
 add_executable(rollback_executor_tests
     fic/rollback/RollbackExecutorTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PolicyDisableFlow.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp

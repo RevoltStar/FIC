@@ -108,6 +108,7 @@ std::vector<fic::platform::ModeAndOwnerPathProfiles> catalogRules(
         rule.system = system->second.metadata;
         rule.strict = strict == path->profiles.end()
             ? rule.system : strict->second.metadata;
+        rule.allowMissingVariant = object.allowMissingVariant;
         rule.allowedFinalSymlinkTargets =
             system->second.allowedFinalSymlinkTargets;
         for (const auto& provider : system->second.providerTargets) {
@@ -660,10 +661,14 @@ void testSelectedProfile() {
         return found->allowMissingVariant;
     };
     for (const std::string& id : {"fstab", "group", "passwd", "shadow",
-                                  "sudoers", "df", "chattr", "ip"}) {
+                                  "df", "chattr", "ip"}) {
         require(!allowMissingVariant(id),
                 "mandatory DAC object allows missing variant: " + id);
     }
+    const bool debianSudoersOptional =
+        profile.id == "debian-12" || profile.id == "debian-13";
+    require(allowMissingVariant("sudoers") == debianSudoersOptional,
+            "sudoers allow-missing capability does not match platform contract");
     for (const std::string& id : {"hosts_allow", "hosts_deny", "securetty",
                                   "arp"}) {
         require(allowMissingVariant(id),
@@ -944,6 +949,24 @@ void testSelectedProfile() {
     } else {
         throw std::runtime_error("unexpected selected platform profile: " + profile.id);
     }
+}
+
+void testModeAndOwnerCapabilityPropagation() {
+    using namespace fic::platform;
+    ModeAndOwnerPathProfiles mandatory;
+    mandatory.path = "/tmp/mandatory";
+    mandatory.system = {"root", "root", 0644};
+    mandatory.strict = mandatory.system;
+    require(!makeModeAndOwnerPathObject("mandatory", mandatory)
+                 .allowMissingVariant,
+            "default source capability became allow-missing");
+
+    ModeAndOwnerPathProfiles optional = mandatory;
+    optional.path = "/tmp/optional";
+    optional.allowMissingVariant = true;
+    require(makeModeAndOwnerPathObject("optional", optional)
+                .allowMissingVariant,
+            "positive source capability was inverted by the factory");
 }
 
 void testCompatibilityIsFailClosed() {
@@ -1846,6 +1869,7 @@ int main() {
         testProviderLinkedExecutableResolver();
         testOsReleaseParsing();
         testModeAndOwnerCatalogValidation();
+        testModeAndOwnerCapabilityPropagation();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

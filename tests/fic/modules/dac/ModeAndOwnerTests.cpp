@@ -231,6 +231,50 @@ void testRequiredOptionalAndIdentityFailure(const fs::path& r) {
         require(mode(good)==0644,"failed chown was followed by partial chmod");
     }
 }
+void testSudoersPresenceSelection(const fs::path& r) {
+    const fs::path sudoers=r/"synthetic-sudoers";
+    Dac d;
+    d.modeAndOwnerObjects.push_back({"sudoers",Dac::StaticPathObject{
+        sudoers,{{Dac::Profile::System,contract(0440)}}},true});
+
+    configure(r,"{\"sudoers\":\"system_or_not_exists\"}");
+    DAC_mode_and_owner_profiles optionalMissing(d);
+    require(optionalMissing.apply(),
+        "sudoers allow-missing selection rejected an absent file");
+
+    configure(r,"{\"sudoers\":\"system\"}");
+    DAC_mode_and_owner_profiles requiredMissing(d);
+    require(!requiredMissing.apply(),
+        "explicit sudoers=system did not require the file");
+
+    write(sudoers,"fixture",0666);
+    configure(r,"{\"sudoers\":\"system_or_not_exists\"}");
+    DAC_mode_and_owner_profiles optionalExisting(d);
+    require(optionalExisting.apply()&&mode(sudoers)==0440,
+        "existing optional sudoers was not remediated to exact system metadata");
+}
+void testBuildPlatformGeneratedDefault() {
+    const fic::platform::PlatformProfile profile =
+        fic::platform::makeBuildPlatformProfile();
+    ModeAndOwnerProfilesPolicyTypeValue type(profile.dac);
+    const bool debian =
+        profile.id=="debian-12"||profile.id=="debian-13";
+    const std::string expected = debian
+        ? "sudoers=system_or_not_exists"
+        : "sudoers=system";
+    const std::string unexpected = debian
+        ? "sudoers=system\n"
+        : "sudoers=system_or_not_exists";
+    const std::string defaultValue=type.getDefaultValue();
+    require(defaultValue.find(expected)!=std::string::npos,
+        "generated sudoers default does not match platform contract");
+    require(defaultValue.find(unexpected)==std::string::npos,
+        "generated sudoers default contains the opposite presence mode");
+    require(type.validate("sudoers=system"),
+        "explicit sudoers=system is not selectable");
+    require(type.validate("sudoers=system_or_not_exists")==debian,
+        "sudoers allow-missing selection does not match platform capability");
+}
 void testDesiredStateAndRelease(const fs::path& r) {
     fs::path f=r/"managed"; write(f,"data",0666); Dac d=platform(f);
     configure(r,"{\"first\":\"strict\"}"); DAC_mode_and_owner_profiles strict(d); require(strict.apply(),"strict failed"); require(mode(f)==0600,"strict not applied");
@@ -381,4 +425,4 @@ void testTcbTopology(const fs::path& r) {
     require(mode(external)==0644,"TCB hardlink target mutated");
 }
 }
-int main() { const fs::path r=fs::temp_directory_path()/("fic-mode-owner-profiles-"+std::to_string(::getpid())); fs::remove_all(r); fs::create_directories(r); setupPaths(r); testParser(r); testExactTransitionsAndSpecialBits(r); testRequiredOptionalAndIdentityFailure(r); testDesiredStateAndRelease(r); testPreflightAndAggregation(r); testUserHomesDoesNotMutateRoot(r); testCollectionAndProviderSafety(r); testTcbTopology(r); fs::remove_all(r); }
+int main() { const fs::path r=fs::temp_directory_path()/("fic-mode-owner-profiles-"+std::to_string(::getpid())); fs::remove_all(r); fs::create_directories(r); setupPaths(r); testParser(r); testExactTransitionsAndSpecialBits(r); testRequiredOptionalAndIdentityFailure(r); testSudoersPresenceSelection(r); testBuildPlatformGeneratedDefault(); testDesiredStateAndRelease(r); testPreflightAndAggregation(r); testUserHomesDoesNotMutateRoot(r); testCollectionAndProviderSafety(r); testTcbTopology(r); fs::remove_all(r); }

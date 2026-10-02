@@ -195,43 +195,43 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.sharedDefaultsPath = "/etc/sysconfig/grub2";
     profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};
     std::vector<ModeAndOwnerPathProfiles> modeAndOwnerPaths = {
-        {"/etc/bashrc", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/bashrc", {"root", "root", 0644}, {"root", "root", 0644}, true},
         // NOTE (baseline verification): the ALT p11 RPM metadata could not be
         // queried from this environment (packages.altlinux.org and
         // rdb.altlinux.org are bot-gated). ALT vixie-cron historically ships
         // /etc/crontab as 0600 root:root, so the baseline deliberately stays
         // 0600 instead of copying the Debian 0644. Re-verify with
         // `rpm -q --dump cron` before ever changing this value.
-        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0600}, false},
-        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}, true},
-        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}, true},
-        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, false, {}, {
+        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0600}, true},
+        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, true, {}, {
             // Provider metadata is the штатное provider state: baseline ==
             // enforced for every provider-managed final target.
             {"/run/NetworkManager/resolv.conf",
              ManagedFileProvider::NetworkManager,
              {"root", "root", 0644}, {"root", "root", 0644}}
         }},
-        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, false, {
+        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, true, {
             "/etc/sysctl.d/99-sysctl.conf"
         }},
-        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/inittab", {"root", "root", 0644}, {"root", "root", 0644}, false},
-        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/inittab", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}, false},
         // ALT native shadow state: root:root 0400 (ALT shadow topology, not
         // the Debian root:shadow 0640).
-        {"/etc/shadow", {"root", "root", 0400}, {"root", "root", 0400}, true},
-        {"/etc/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, false, {
+        {"/etc/shadow", {"root", "root", 0400}, {"root", "root", 0400}, false},
+        {"/etc/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, true, {
             "/boot/grub/grub.cfg"
         }},
-        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, false}
+        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, true}
     };
     modeAndOwnerPaths.push_back(
-        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}, true});
+        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}, false});
     // ALT p11 TCB storage is the native ALT credential topology (not the
     // Debian /etc/shadow model): the profile values are simultaneously the
     // hardening state and the ALT-native baseline, declared explicitly.
@@ -245,10 +245,10 @@ PlatformProfile makeBuildPlatformProfile() {
     // exposes packaged 0755 as system and 0750 as strict. ALT keeps its topology:
     // /bin/df and /sbin/ip are not merged-/usr paths.
     std::vector<ModeAndOwnerPathProfiles> modeAndOwnerCommands = {
-        {"/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, true},
-        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true},
-        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, false},
-        {"/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, true}
+        {"/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, false},
+        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, false},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true},
+        {"/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, false}
     };
     appendModeAndOwnerObjects(profile.dac, modeAndOwnerPaths, {
         "bashrc", "crontab", "fstab", "hostname", "hosts", "hosts_allow",
