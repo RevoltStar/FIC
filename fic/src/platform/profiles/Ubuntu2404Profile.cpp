@@ -159,19 +159,18 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.managedConfigPath = "/etc/default/grub.d/zzzz-fic.cfg";
     profile.grub.baseDefaultsPath = "/etc/default/grub";
     profile.grub.rebuildArguments = {};
-    profile.dac.protectedSystemFiles = {
-        {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}},
+    profile.dac.modeAndOwnerObjects = {
+        makeModeAndOwnerPathObject("bashrc", {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}}),
         // Ubuntu ships /etc/crontab as 0644 root:root (cron-daemon-common
-        // package archive). FIC hardens it to 0600 and restores the packaged
-        // 0644 on disable.
-        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}},
-        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, {}, {
+        // package archive). FIC hardens it to 0600 and exposes packaged 0644 as the explicit system profile.
+        makeModeAndOwnerPathObject("crontab", {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("fstab", {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("hostname", {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("hosts", {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("hosts_allow", {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("hosts_deny", {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("group", {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("resolv", {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, {}, {
             // Provider metadata is the штатное provider state: baseline ==
             // enforced for every provider-managed final target.
             {"/run/systemd/resolve/stub-resolv.conf",
@@ -188,26 +187,22 @@ PlatformProfile makeBuildPlatformProfile() {
             {"/run/NetworkManager/resolv.conf",
              ManagedFileProvider::NetworkManager,
              {"root", "root", 0644}, {"root", "root", 0644}}
-        }},
-        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}},
+        }}),
+        makeModeAndOwnerPathObject("sysctl_config", {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("logrotate_config", {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}}),
+        makeModeAndOwnerPathObject("passwd", {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}}),
         // shadowconfig on (passwd package postinst) provisions
         // /etc/shadow as root:shadow 0640 on Debian/Ubuntu.
-        {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}},
-        {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}},
-        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}}
-    };
-    profile.dac.protectedSystemFiles.push_back(
-        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}});
+        makeModeAndOwnerPathObject("shadow", {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}}),
+        makeModeAndOwnerPathObject("grub_config", {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}}),
+        makeModeAndOwnerPathObject("securetty", {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}}),
+        makeModeAndOwnerPathObject("sudoers", {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}}),
     // Packaged executable metadata is root:root 0755 (coreutils, e2fsprogs,
-    // net-tools, iproute2 archives); FIC hardens to 0750 and restores the
-    // packaged 0755 on disable.
-    profile.dac.protectedSystemCommands = {
-        {"/usr/bin/df", {"root", "root", 0750}, {"root", "root", 0755}},
-        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}},
-        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}},
-        {"/usr/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}}
+    // net-tools, iproute2 archives); FIC exposes packaged 0755 as system and 0750 as strict.
+        makeModeAndOwnerPathObject("df", {"/usr/bin/df", {"root", "root", 0750}, {"root", "root", 0755}}, DacPlatformConfig::ModeSemantics::MaximumAllowed),
+        makeModeAndOwnerPathObject("chattr", {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}}, DacPlatformConfig::ModeSemantics::MaximumAllowed),
+        makeModeAndOwnerPathObject("arp", {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}}, DacPlatformConfig::ModeSemantics::MaximumAllowed),
+        makeModeAndOwnerPathObject("ip", {"/usr/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}}, DacPlatformConfig::ModeSemantics::MaximumAllowed)
     };
     return profile;
 }

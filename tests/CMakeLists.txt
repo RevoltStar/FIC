@@ -547,12 +547,8 @@ add_executable(mode_and_owner_tests
     fic/modules/dac/ModeAndOwnerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_custom_mode_and_owner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
 )
 target_include_directories(mode_and_owner_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -829,11 +825,6 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
@@ -1271,11 +1262,6 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
@@ -1828,11 +1814,6 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
@@ -1919,11 +1900,6 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/DacBaselineRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/policies/DAC_systemcommandlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp

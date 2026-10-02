@@ -156,23 +156,17 @@
 
 
 # Discretionary access control
-[module:DAC][policy:blocking_user_access_to_system_files]=Restrict user access to system files
-[module:DAC][policy:custom_mode_and_owner]=Custom file permissions and owners
+[module:DAC][policy:mode_and_owner_profiles]=File metadata profiles
 [module:DAC][policy:sudo_passwd_tries]=Number of authentication attempts
 [module:DAC][policy:sudo_securepath]=List of directories searched for commands executed through sudo
 [module:DAC][policy:sudo_timeout]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:sudo_require_authentication]=Require authentication when executing commands through sudo
-[module:DAC][policy:systemcommandlock]=Restrict system commands for users
 
-[module:DAC][policy:blocking_user_access_to_system_files][description]=Sets secure permissions for system files. The exact list is selected by the target distribution profile and is shown below.
-[module:DAC][policy:custom_mode_and_owner][description]=Allows setting a custom list of files and directories for which FIC will check and fix the owner, group, and access mode. Specify one rule per line in the format: /path|owner|group|mode. The path must be absolute, and the mode must be a 3- or 4-digit octal value. Example:
-    /etc/example.conf|root|root|0644
-    /opt/app/private|root|fic|0750
+[module:DAC][policy:mode_and_owner_profiles][description]=Manages only explicitly selected logical objects and enforces their selected owner/group/mode profile. Use one object=profile entry per line. Removing an object or disabling the policy releases management without changing current filesystem metadata.
 [module:DAC][policy:sudo_passwd_tries][description]=Number of authentication attempts
 [module:DAC][policy:sudo_securepath][description]=Completely replaces the effective sudo secure_path with the specified directory list. The default matches the target distribution profile.
 [module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:sudo_require_authentication][description]=Replaces local NOPASSWD rules with PASSWD and prevents authentication from being disabled in active sudoers files. Existing sudo timestamps, PAM, and external LDAP/SSSD sources are out of scope.
-[module:DAC][policy:systemcommandlock][description]=Sets secure permissions for system commands. The exact list is selected by the target distribution profile and is shown below.
 [module:DAC][message:platform_access_rules]=Rules for the selected target distribution profile (modes are maximum allowed values):
 
 

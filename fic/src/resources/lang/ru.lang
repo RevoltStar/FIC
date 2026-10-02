@@ -156,23 +156,17 @@
 
 
 #Дискреционное разграничение доступа
-[module:DAC][policy:blocking_user_access_to_system_files]=Блокировка доступа пользователя к системным файлам
-[module:DAC][policy:custom_mode_and_owner]=Пользовательские права и владельцы файлов
+[module:DAC][policy:mode_and_owner_profiles]=Профили владельцев и прав файлов
 [module:DAC][policy:sudo_passwd_tries]=Количество попыток аутентификации
 [module:DAC][policy:sudo_securepath]=Список каталогов, в которых будет выполняться поиск запускаемых через sudo утилит
 [module:DAC][policy:sudo_timeout]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:sudo_require_authentication]=Требовать аутентификацию при выполнении команд через sudo
-[module:DAC][policy:systemcommandlock]=Блокировка системных команд для пользователей
 
-[module:DAC][policy:blocking_user_access_to_system_files][description]=Устанавливает безопасные права для системных файлов. Точный список определяется профилем целевого дистрибутива и приведён ниже.
-[module:DAC][policy:custom_mode_and_owner][description]=Позволяет задать пользовательский список файлов и каталогов, для которых FIC будет проверять и исправлять владельца, группу и права доступа. Укажите по одному правилу на строку в формате: /путь|владелец|группа|права. Путь должен быть абсолютным, права указываются в восьмеричном виде из 3 или 4 цифр. Пример:
-    /etc/example.conf|root|root|0644
-    /opt/app/private|root|fic|0750
+[module:DAC][policy:mode_and_owner_profiles][description]=Управляет только явно выбранными логическими объектами и применяет выбранный профиль владельца, группы и прав. Укажите по одной записи объект=профиль на строку. Удаление объекта из значения или отключение политики прекращает управление без изменения текущих метаданных файловой системы.
 [module:DAC][policy:sudo_passwd_tries][description]=Количество попыток аутентификации
 [module:DAC][policy:sudo_securepath][description]=Полностью заменяет effective sudo secure_path указанным списком каталогов. Значение по умолчанию соответствует профилю целевого дистрибутива.
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:sudo_require_authentication][description]=Заменяет локальные правила NOPASSWD на PASSWD и запрещает отключение аутентификации в активных sudoers-файлах. Не учитывает действующий кэш sudo, PAM и внешние LDAP/SSSD-источники.
-[module:DAC][policy:systemcommandlock][description]=Устанавливает безопасные права для системных команд. Точный список определяется профилем целевого дистрибутива и приведён ниже.
 [module:DAC][message:platform_access_rules]=Правила для выбранного профиля целевого дистрибутива (режимы являются максимально допустимыми):
 
 

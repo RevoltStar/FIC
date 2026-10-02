@@ -1,4 +1,4 @@
-#include "modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.h"
+#include "modules/dac/mode_and_owner/ModeAndOwner.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -35,8 +35,7 @@ private:
 
 struct CollectedTcbRule {
     std::string path;
-    FileStats expected;   // enforced metadata from the profile
-    FileStats baseline;   // platform baseline metadata from the profile
+    FileStats expected;   // metadata of the explicitly selected profile
     FileStats current;    // object state captured at collection time
     mode_t requiredPermissions = 0;
     UniqueFd parent;
@@ -52,8 +51,8 @@ struct DirectoryListingSnapshot {
     std::vector<std::string> names;
 };
 
-// Safe TCB tree collection shared by the apply path (enforced metadata) and
-// the platform-baseline rollback backend. Fails closed on any unknown or
+// Safe TCB tree collection for the selected desired-state profile. Fails
+// closed on any unknown or
 // unsafe object; the returned rules pin their parent descriptors so that a
 // later mutation can re-open and re-verify the exact same inode.
 bool collectTcbTree(
@@ -167,9 +166,6 @@ bool collectTcbTree(
     rules.push_back({config.rootPath.string(),
                      FileStats(config.rootOwner, config.rootGroup,
                                static_cast<mode_t>(config.rootPermissions)),
-                     FileStats(config.rootOwner, config.rootGroup,
-                               static_cast<mode_t>(
-                                   config.rootBaselinePermissions)),
                      std::move(rootStats), 0,
                      duplicateDescriptor(rootParent.get()),
                      config.rootPath.filename().string(),
@@ -209,9 +205,6 @@ bool collectTcbTree(
                          FileStats(account, config.entryGroup,
                                    static_cast<mode_t>(
                                        config.entryDirectoryPermissions)),
-                         FileStats(account, config.entryGroup,
-                                   static_cast<mode_t>(config.
-                                       entryDirectoryBaselinePermissions)),
                          std::move(accountStats), 02000,
                          duplicateDescriptor(root.get()), account,
                          directoryInfo.st_dev, directoryInfo.st_ino,
@@ -259,9 +252,6 @@ bool collectTcbTree(
                              FileStats(account, config.entryGroup,
                                        static_cast<mode_t>(
                                            expectedFile->permissions)),
-                             FileStats(account, config.entryGroup,
-                                       static_cast<mode_t>(
-                                           expectedFile->baselinePermissions)),
                              std::move(fileStats), 0,
                              duplicateDescriptor(accountFd.get()), fileName,
                              fileInfo.st_dev, fileInfo.st_ino,
@@ -310,37 +300,9 @@ bool tcbTopologyUnchanged(
 }
 } // namespace
 
-DAC_blocking_user_access_to_system_files::DAC_blocking_user_access_to_system_files(
-    const fic::platform::DacPlatformConfig& platformConfig)
-    : ModeAndOwner(
-          MissingFilePolicy::Ignore,
-          PolicyPathResolution::Standard,
-          ModeEnforcement::MaximumAllowed),
-      tcbCredentialStorage_(platformConfig.tcbCredentialStorage)
-{
-    for (const fic::platform::FileAccessRule& rule :
-         platformConfig.protectedSystemFiles) {
-        this->ModeAndOwner::addExpectedRule(rule);
-    }
-    this->policyName = "blocking_user_access_to_system_files";
-    this->policyTypeValue = std::make_unique<FileAccessRulesPolicyTypeValue>(
-        platformConfig.protectedSystemFiles,
-        platformConfig.tcbCredentialStorage);
-}
-
-bool DAC_blocking_user_access_to_system_files::apply(){
-    // ENABLE applies the enforced hardening state only; disable-time
-    // rollback transitions to the platform profile baseline (never to the
-    // pre-FIC state) and is driven by the recorded journal provenance.
-    return this->ModeAndOwner::applyWithBaselineJournalProvenance();
-}
-
-void DAC_blocking_user_access_to_system_files::applyAdditionalRules(
+void ModeAndOwner::applyTcbCredentialTree(
+    const fic::platform::TcbCredentialStorageConfig& config,
     ApplyCounters& counters) {
-    if (!tcbCredentialStorage_) {
-        return;
-    }
-    const auto& config = *tcbCredentialStorage_;
 
     std::vector<CollectedTcbRule> rules;
     std::vector<DirectoryListingSnapshot> directorySnapshots;
@@ -381,112 +343,4 @@ void DAC_blocking_user_access_to_system_files::applyAdditionalRules(
         this->log("Не удалось безопасно проверить TCB: " + error,
                   logLevel::ERROR);
     }
-}
-
-TcbBaselineRollbackReport rollbackTcbTreeToBaseline(
-    const fic::platform::TcbCredentialStorageConfig& config) {
-    TcbBaselineRollbackReport report;
-    std::vector<CollectedTcbRule> rules;
-    std::vector<DirectoryListingSnapshot> directorySnapshots;
-    std::string error;
-    // Rollback works with the actually existing TCB tree at rollback time;
-    // missing accounts are never reconstructed and unknown/unsafe objects
-    // fail closed the same way as during apply.
-    if (!collectTcbTree(config, rules, directorySnapshots, error) ||
-        !tcbTopologyUnchanged(directorySnapshots, rules, error)) {
-        report.failed = 1;
-        report.firstError = error;
-        return report;
-    }
-
-    for (CollectedTcbRule& rule : rules) {
-        uid_t ownerId = 0;
-        gid_t groupId = 0;
-        const FileStatsOperationResult identityResult =
-            FileStats::resolve_owner_group(
-                rule.baseline._owner, rule.baseline._group, ownerId, groupId);
-        if (!identityResult) {
-            ++report.failed;
-            if (report.firstError.empty()) {
-                report.firstError = identityResult.message;
-            }
-            continue;
-        }
-        // Re-open the exact collected object through its pinned parent
-        // descriptor (nofollow) and re-verify it is still the same object
-        // type and inode before mutating. RAII: the descriptor must be
-        // closed on every exit path of this iteration (continue, failure,
-        // success); fromBorrowedDescriptor does not take ownership.
-        UniqueFd objectFd(::openat(rule.parent.get(), rule.name.c_str(),
-                                   O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
-        if (objectFd.get() < 0) {
-            ++report.failed;
-            if (report.firstError.empty()) {
-                report.firstError = rule.path + ": " +
-                    std::string(std::strerror(errno));
-            }
-            continue;
-        }
-        FileStats current =
-            FileStats::fromBorrowedDescriptor(objectFd.get(), rule.path);
-        if (current.has_error() ||
-            S_ISDIR(current.file_type()) !=
-                S_ISDIR(rule.current.file_type())) {
-            ++report.failed;
-            if (report.firstError.empty()) {
-                report.firstError = current.has_error()
-                    ? current.error_message()
-                    : "TCB object type mismatch: " + rule.path;
-            }
-            continue;
-        }
-
-        bool compliant = true;
-        if (current.owner_id() != ownerId || current.group_id() != groupId) {
-            compliant = false;
-            const FileStatsOperationResult change =
-                current.change_owner_group(ownerId, groupId);
-            if (!change) {
-                ++report.failed;
-                if (report.firstError.empty()) {
-                    report.firstError = change.message;
-                }
-                continue;
-            }
-        }
-        if ((current._permissions & 07777) !=
-            (rule.baseline._permissions & 07777)) {
-            compliant = false;
-            const FileStatsOperationResult change =
-                current.change_permissions(rule.baseline._permissions);
-            if (!change) {
-                ++report.failed;
-                if (report.firstError.empty()) {
-                    report.firstError = change.message;
-                }
-                continue;
-            }
-        }
-        // Postcondition: fstat-based verification against the baseline.
-        const FileStatsOperationResult refreshed = current.refresh();
-        if (!refreshed ||
-            current.owner_id() != ownerId ||
-            current.group_id() != groupId ||
-            (current._permissions & 07777) !=
-                (rule.baseline._permissions & 07777)) {
-            ++report.failed;
-            if (report.firstError.empty()) {
-                report.firstError = refreshed
-                    ? "TCB baseline postcondition failed: " + rule.path
-                    : refreshed.message;
-            }
-            continue;
-        }
-        if (compliant) {
-            ++report.compliant;
-        } else {
-            ++report.applied;
-        }
-    }
-    return report;
 }

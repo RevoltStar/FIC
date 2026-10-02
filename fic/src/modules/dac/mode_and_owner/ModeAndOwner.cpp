@@ -1,7 +1,5 @@
 #include "modules/dac/mode_and_owner/ModeAndOwner.h"
 
-#include "rollback/DaemonMutationJournal.h"
-
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
@@ -14,84 +12,7 @@ std::string formatPermissions(mode_t permissions) {
            << static_cast<unsigned int>(permissions & 07777);
     return output.str();
 }
-
-const char* providerName(fic::platform::ManagedFileProvider provider) {
-    switch (provider) {
-    case fic::platform::ManagedFileProvider::SystemdResolved:
-        return "systemd-resolved";
-    case fic::platform::ManagedFileProvider::NetworkManager:
-        return "NetworkManager";
-    case fic::platform::ManagedFileProvider::Resolvconf:
-        return "resolvconf";
-    }
-    return "unknown";
-}
 } // namespace
-
-FileAccessRulesPolicyTypeValue::FileAccessRulesPolicyTypeValue(
-    std::vector<fic::platform::FileAccessRule> rules,
-    std::optional<fic::platform::TcbCredentialStorageConfig>
-        tcbCredentialStorage)
-    : FixedPolicyTypeValue(),
-      rules_(std::move(rules)),
-      tcbCredentialStorage_(std::move(tcbCredentialStorage)) {
-}
-
-std::string FileAccessRulesPolicyTypeValue::getPolicyRestrictionInfo() {
-    std::ostringstream result;
-    result << LocalizationManager::getLang(
-        "[module:DAC][message:platform_access_rules]");
-    for (const fic::platform::FileAccessRule& rule : rules_) {
-        // The user-facing restriction info describes the ENFORCED state
-        // (what the policy applies); the platform baseline is a rollback
-        // implementation detail and is not part of the policy value.
-        result << "\n" << rule.path.string() << " "
-               << rule.enforced.owner << ":" << rule.enforced.group << " "
-               << std::setfill('0') << std::setw(4) << std::oct
-               << rule.enforced.permissions << std::dec;
-        if (!rule.allowedFinalSymlinkTargets.empty()) {
-            result << " (final symlink -> ";
-            for (std::size_t index = 0;
-                 index < rule.allowedFinalSymlinkTargets.size(); ++index) {
-                if (index != 0) {
-                    result << ", ";
-                }
-                result << rule.allowedFinalSymlinkTargets[index].string();
-            }
-            result << ")";
-        }
-        for (const auto& target :
-             rule.providerManagedFinalSymlinkTargets) {
-            result << "\n  provider-managed final symlink ->";
-            result << "\n    " << target.path.string() << " "
-                   << target.enforced.owner << ":" << target.enforced.group
-                   << " "
-                   << std::setfill('0') << std::setw(4) << std::oct
-                   << target.enforced.permissions << std::dec
-                   << " (provider=" << providerName(target.provider)
-                   << ", validate only)";
-        }
-    }
-    if (tcbCredentialStorage_) {
-        const auto& tcb = *tcbCredentialStorage_;
-        result << "\n" << tcb.rootPath.string() << " "
-               << tcb.rootOwner << ":" << tcb.rootGroup << " "
-               << std::setfill('0') << std::setw(4) << std::oct
-               << tcb.rootPermissions << std::dec;
-        result << "\n" << (tcb.rootPath / "<account>").string() << " "
-               << "<account>:" << tcb.entryGroup << " "
-               << std::setfill('0') << std::setw(4) << std::oct
-               << tcb.entryDirectoryPermissions << std::dec;
-        for (const auto& file : tcb.files) {
-            result << "\n"
-                   << (tcb.rootPath / "<account>" / file.name).string() << " "
-                   << "<account>:" << tcb.entryGroup << " "
-                   << std::setfill('0') << std::setw(4) << std::oct
-                   << file.permissions << std::dec;
-        }
-    }
-    return result.str();
-}
 
 ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy,
                            PolicyPathResolution pathResolution,
@@ -103,30 +24,25 @@ ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy,
     this->submoduleName = "Mode_and_Owner";
 }
 
-void ModeAndOwner::addExpectedRule(
-    const fic::platform::FileAccessRule& rule) {
-    // Apply always uses the ENFORCED metadata; the baseline metadata is
-    // consumed only by the platform-baseline rollback backend.
-    expected.insert_or_assign(
-        rule.path.string(),
-        ModeAndOwnerExpectation{
-            FileStats(rule.enforced.owner, rule.enforced.group,
-                      rule.enforced.permissions),
-            rule.allowedFinalSymlinkTargets,
-            rule.providerManagedFinalSymlinkTargets});
-}
 
 void ModeAndOwner::addExpectedRule(
     const std::filesystem::path& path,
-    const std::string& owner,
-    const std::string& group,
-    mode_t permissions) {
-    fic::platform::FileAccessRule rule;
-    rule.path = path;
-    rule.enforced = {owner, group, permissions};
-    rule.baseline = {owner, group, permissions};
-    this->addExpectedRule(rule);
+    const fic::platform::DacPlatformConfig::PathContract& contract) {
+    expected.insert_or_assign(
+        path.string(),
+        ModeAndOwnerExpectation{
+            FileStats(contract.metadata.owner, contract.metadata.group,
+                      contract.metadata.permissions),
+            contract.allowedFinalSymlinkTargets, contract.providerTargets,
+            contract.objectType, contract.required,
+            contract.modeSemantics ==
+                    fic::platform::DacPlatformConfig::ModeSemantics::Exact
+                ? ModeEnforcement::Exact
+                : ModeEnforcement::MaximumAllowed,
+            contract.remediation ==
+                fic::platform::DacPlatformConfig::Remediation::ValidateOnly});
 }
+
 
 void ModeAndOwner::applyOpenedRule(
     const std::string& filename,
@@ -301,7 +217,7 @@ bool ModeAndOwner::apply() {
             filename, allowedTargets, pathResolution_);
 
         if (currentStats.is_missing()) {
-            if (missingFilePolicy_ == MissingFilePolicy::Ignore) {
+            if (!expectation.required) {
                 this->log("Файл " + filename + " отсутствует; правило пропущено",
                           logLevel::DEBUG);
                 ++counters.success;
@@ -332,11 +248,11 @@ bool ModeAndOwner::apply() {
             // target-specific platform contract and never remediated. A
             // matching target path alone is not compliance: owner/group and
             // mode of the provider-managed file may legally differ from the
-            // static FileAccessRule expectation.
+            // static ModeAndOwnerVerifiedPath expectation.
             const FileStats providerExpectation(
-                providerTarget->enforced.owner,
-                providerTarget->enforced.group,
-                providerTarget->enforced.permissions);
+                providerTarget->metadata.owner,
+                providerTarget->metadata.group,
+                providerTarget->metadata.permissions);
             if (!currentStats.is_regular_file()) {
                 this->log(
                     "Provider-managed target " +
@@ -347,26 +263,37 @@ bool ModeAndOwner::apply() {
                 ++counters.failed;
                 continue;
             }
+            const ModeEnforcement saved = modeEnforcement_;
+            modeEnforcement_ = expectation.modeEnforcement;
             applyOpenedRule(
                 filename, providerExpectation, std::move(currentStats),
                 true, counters);
+            modeEnforcement_ = saved;
             continue;
         }
 
-        // Static regular path: the original FileAccessRule expectation is
+        const bool typeMatches =
+            expectation.objectType ==
+                    fic::platform::DacPlatformConfig::ObjectType::RegularFile
+                ? currentStats.is_regular_file()
+                : S_ISDIR(currentStats.file_type());
+        // Static path: the platform contract is authoritative.
         // authoritative and remediation is allowed. The rule describes a
         // regular file: an unexpected object type (directory, device node,
         // ...) must fail closed before any metadata mutation.
-        if (!currentStats.is_regular_file()) {
+        if (!typeMatches) {
             this->log(
                 "Объект " + currentStats.opened_policy_path().string() +
-                    " имеет неожиданный тип; ожидался обычный файл",
+                    " имеет неожиданный тип",
                 logLevel::ERROR);
             ++counters.failed;
             continue;
         }
+        const ModeEnforcement saved = modeEnforcement_;
+        modeEnforcement_ = expectation.modeEnforcement;
         applyOpenedRule(filename, expectedStats, std::move(currentStats),
-                        false, counters);
+                        expectation.validateOnly, counters);
+        modeEnforcement_ = saved;
     }
 
     applyAdditionalRules(counters);
@@ -406,72 +333,4 @@ bool ModeAndOwner::apply() {
               logLevel::ERROR);
     this->lastApplyFixedCount_ = counters.fixed;
     return false;
-}
-
-bool ModeAndOwner::applyWithBaselineJournalProvenance() {
-    // Platform-baseline disable provenance (see docs/rollback.md,
-    // "Platform-baseline rollback"): the journal record proves only that FIC
-    // performed a state-changing apply of this policy. No pre-FIC metadata is
-    // recorded; the rollback target is the platform profile baseline.
-    const fic::rollback::UndoAction undo{
-        fic::rollback::MutationBackend::Dac,
-        fic::rollback::UndoApplyDacPlatformBaseline{this->policyName}};
-    fic::rollback::MutationId mutationId = 0;
-    std::string journalError;
-    if (!fic::rollback::recordPreparedMutation(
-            this->policyRef(), this->policyName, undo, mutationId,
-            journalError)) {
-        // Fail closed: without provenance a later disable could not prove
-        // that the enforced state is FIC-owned.
-        this->log("Не удалось подготовить запись mutation journal: " +
-                      journalError,
-                  logLevel::ERROR);
-        return false;
-    }
-
-    // Non-virtual call: the wrapper is the public apply() entry point of the
-    // concrete policy classes; dispatching apply() virtually here would
-    // recurse infinitely.
-    const bool applied = this->ModeAndOwner::apply();
-    const bool changed = this->lastApplyChangedSystemState();
-
-    // Lifecycle matrix (docs/rollback.md, "Platform-baseline rollback"):
-    //   success + changed   -> commit (Applied provenance);
-    //   success + unchanged -> discard;
-    //   failure + changed   -> keep Prepared (partial mutation provenance);
-    //   failure + unchanged -> discard: a failed apply that mutated nothing
-    //     (fail-closed checks, compliant objects) must never leave persistent
-    //     provenance behind.
-    if (changed) {
-        if (applied) {
-            std::string commitError;
-            if (!fic::rollback::commitMutation(mutationId, commitError)) {
-                // The mutation already happened: apply must not report success
-                // without reliable provenance. The Prepared record stays active
-                // on disk and remains safely resolvable.
-                this->log("Ошибка фиксации записи mutation journal: " +
-                              commitError,
-                          logLevel::ERROR);
-                return false;
-            }
-            return true;
-        }
-        // Failed apply that actually changed system state: the Prepared record
-        // stays active so that disable-time rollback can transition the
-        // already mutated objects to the platform baseline. Note: this is
-        // provenance, not apply-time transactional compensation.
-        return false;
-    }
-
-    // No system state changed: the record proves nothing and is discarded.
-    // A journal inconsistency here is fail closed even when apply itself
-    // succeeded, otherwise a stale active Prepared record would persist.
-    std::string discardError;
-    if (!fic::rollback::discardMutation(mutationId, discardError)) {
-        this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                      discardError,
-                  logLevel::ERROR);
-        return false;
-    }
-    return applied;
 }

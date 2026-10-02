@@ -49,13 +49,13 @@ void requireEmptyValueRequest(const std::string& module,
 
 int main()
 {
-    requireEmptyValueRequest("DAC", "custom_mode_and_owner");
+    requireEmptyValueRequest("DAC", "mode_and_owner_profiles");
     requireEmptyValueRequest("OSS", "grub_cmdline_linux");
     requireEmptyValueRequest(
         "IDENTITY_ACCESS", "user_default_supplementary_groups");
 
     std::vector<std::string> values{
-        "fic-cli", "policy", "set", "DAC", "custom_mode_and_owner"};
+        "fic-cli", "policy", "set", "DAC", "mode_and_owner_profiles"};
     std::vector<char*> argv = arguments(values);
     nlohmann::json request;
     std::string error;

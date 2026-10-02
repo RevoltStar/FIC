@@ -8,22 +8,6 @@
 #include <optional>
 #include <vector>
 
-class FileAccessRulesPolicyTypeValue : public FixedPolicyTypeValue
-{
-public:
-    explicit FileAccessRulesPolicyTypeValue(
-        std::vector<fic::platform::FileAccessRule> rules,
-        std::optional<fic::platform::TcbCredentialStorageConfig>
-            tcbCredentialStorage = std::nullopt);
-
-    std::string getPolicyRestrictionInfo() override;
-
-private:
-    std::vector<fic::platform::FileAccessRule> rules_;
-    std::optional<fic::platform::TcbCredentialStorageConfig>
-        tcbCredentialStorage_;
-};
-
 enum class MissingFilePolicy {
     Ignore,
     Fail
@@ -37,8 +21,13 @@ enum class ModeEnforcement {
 struct ModeAndOwnerExpectation {
     FileStats stats;
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
-    std::vector<fic::platform::ProviderManagedFileTarget>
+    std::vector<fic::platform::DacPlatformConfig::ProviderTarget>
         providerManagedFinalSymlinkTargets;
+    fic::platform::DacPlatformConfig::ObjectType objectType =
+        fic::platform::DacPlatformConfig::ObjectType::RegularFile;
+    bool required = false;
+    ModeEnforcement modeEnforcement = ModeEnforcement::Exact;
+    bool validateOnly = false;
 };
 
 //Класс для работы правами/владельцами файлов и каталогов
@@ -59,14 +48,9 @@ protected:
     ModeEnforcement modeEnforcement_;
     // counters.fixed of the most recent apply(); -1 before the first apply.
     int lastApplyFixedCount_ = -1;
-    void addExpectedRule(const fic::platform::FileAccessRule& rule);
-    // Convenience overload for policies that do not use the platform
-    // baseline model (e.g. custom_mode_and_owner): enforced == baseline.
     void addExpectedRule(
         const std::filesystem::path& path,
-        const std::string& owner,
-        const std::string& group,
-        mode_t permissions);
+        const fic::platform::DacPlatformConfig::PathContract& contract);
     void applyOpenedRule(const std::string& diagnosticPath,
                          const FileStats& expectedStats,
                          FileStats currentStats,
@@ -74,17 +58,10 @@ protected:
                          ApplyCounters& counters,
                          mode_t requiredPermissions = 0);
     virtual void applyAdditionalRules(ApplyCounters& counters);
+    void applyTcbCredentialTree(
+        const fic::platform::TcbCredentialStorageConfig& config,
+        ApplyCounters& counters);
 
-    // Crash-safe journal provenance wrapper for platform-baseline rollback
-    // (see docs/rollback.md, "Platform-baseline rollback"). Records a
-    // Prepared DAC undo before the enforced-state mutation, commits it after
-    // a state-changing successful apply, discards it when the attempt did
-    // not change any system state, and keeps the record active after a
-    // failed apply ONLY when the failed attempt actually changed system
-    // state (partial mutation) so that a later disable can still resolve
-    // provenance. This is persistent disable-time provenance, NOT
-    // apply-time transactional compensation.
-    bool applyWithBaselineJournalProvenance();
 public:
     explicit ModeAndOwner(
         MissingFilePolicy missingFilePolicy,

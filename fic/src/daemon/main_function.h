@@ -17,9 +17,7 @@
 #include "daemon/PolicyMutationResult.h"
 
 //Дискреционное разграничение доступа
-#include "modules/dac/mode_and_owner/policies/DAC_blocking_user_access_to_system_files.h"
-#include "modules/dac/mode_and_owner/policies/DAC_custom_mode_and_owner.h"
-#include "modules/dac/mode_and_owner/policies/DAC_systemcommandlock.h"
+#include "modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.h"
 #include "modules/dac/sudo/policies/DAC_sudo_env_reset.h"
 #include "modules/dac/sudo/policies/DAC_sudo_passwd_tries.h"
 #include "modules/dac/sudo/policies/DAC_sudo_securepath.h"

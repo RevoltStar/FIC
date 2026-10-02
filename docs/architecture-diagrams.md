@@ -1030,9 +1030,7 @@ flowchart TB
 
     arr --> dac[DAC]
     dac --> dacMode[ModeAndOwner]
-    dacMode --> dacSystemCommandLock[systemcommandlock]
-    dacMode --> dacBlockSystemFiles[blocking_user_access_to_system_files]
-    dacMode --> dacCustomMode[custom_mode_and_owner]
+    dacMode --> dacProfiles[mode_and_owner_profiles]
     dac --> sudo[Sudo]
     sudo --> sudoEnvReset[sudo_env_reset]
     sudo --> sudoPassTries[sudo_passwd_tries]
@@ -1148,18 +1146,26 @@ flowchart TB
     dcRules --> map
 ```
 
+`mode_and_owner_profiles` — desired-state controller каталога логических
+объектов platform profile. TextEdit-значение `object=profile` хранится как
+canonical JSON. Только явно перечисленные objects управляются: omitted object
+не равен `object=system`, удаление object и DISABLE освобождают управление без
+изменения текущих metadata. Каждый exposed object имеет явный `system`, а
+`minimum`/`optimal`/`strict` существуют только при наличии подтверждённого
+platform contract.
+
 `ModeAndOwner` выполняет `fstat`, `fchown`, `fchmod` и контрольный `fstat` через
 один descriptor. После успешного `fchown` состояние перечитывается до решения о
 необходимости `fchmod`, поскольку Linux может сбросить SUID/SGID при смене
 владельца. Проверка режима учитывает маску `07777`, включая SUID, SGID и sticky
-bit. Built-in политики `blocking_user_access_to_system_files` и
-`systemcommandlock` трактуют профильный mode как максимум: состояние compliant,
-если все фактические bits входят в разрешённую маску, а исправление применяет
-`actual & allowed` и поэтому никогда не добавляет отсутствующие permissions или
-special bits. `custom_mode_and_owner` сохраняет exact declarative mode.
+bit. Mode semantics задаётся contract конкретного object/profile. Collection
+Каждый executable (`df`, `chattr`, `arp`, `ip`) является отдельным logical
+object и сохраняет MaximumAllowed: исправление применяет
+`actual & allowed` и не добавляет отсутствующие permissions или special bits.
+StaticPath по умолчанию использует Exact. Arbitrary user paths не принимаются.
 
-ALT p11 дополнительно задаёт typed TCB topology для
-`blocking_user_access_to_system_files`: `/etc/tcb`, динамически обнаруживаемые
+ALT p11 дополнительно задаёт logical object `tcb_credentials` с typed TCB
+topology: `/etc/tcb`, динамически обнаруживаемые
 каталоги локальных учётных записей и известные credential files. Вся topology
 сначала открывается descriptor-relative с `O_NOFOLLOW`, проверяется на
 неизвестные объекты, symlink, hardlink и замену inode, и только затем
@@ -1168,9 +1174,8 @@ ALT p11 дополнительно задаёт typed TCB topology для
 восстанавливается отдельно. Слепой recursive chmod не используется.
 
 Обычный конечный объект открывается с `O_NOFOLLOW`. Platform profile может
-задать для конкретного `FileAccessRule` точный список допустимых целей symlink в
-самом policy path. Пустой список запрещает такой symlink; пользовательский
-`custom_mode_and_owner` всегда использует пустой список. Относительная цель
+задать для конкретного StaticPath contract точный список допустимых целей
+symlink в самом policy path. Пустой список запрещает такой symlink. Относительная цель
 разрешается от каталога policy path и лексически нормализуется. Сам symlink
 закрепляется `O_PATH|O_NOFOLLOW`-дескриптором и читается через
 `readlinkat(descriptor, "")`. Разрешённая абсолютная цель открывается от
@@ -1185,10 +1190,9 @@ ALT p11 дополнительно задаёт typed TCB topology для
 после этой проверки; это может сделать namespace несоответствующим уже
 применённому правилу, но не перенаправляет `fchown`/`fchmod` на иной inode:
 операции остаются привязаны к предварительно проверенной allowlisted цели.
-Отсутствующие файлы из platform profile пропускаются, поскольку соответствующий
-пакет может быть не установлен; отсутствующий явно заданный
-`custom_mode_and_owner` path является ошибкой. Неожиданная цель symlink и ошибки
-открытия не считаются отсутствующим файлом.
+Required/optional semantics задаются каждым object contract. Неожиданная цель
+symlink, неверный object type и ошибки открытия fail closed; runtime failures
+агрегируются, поэтому независимые objects всё равно проверяются.
 
 Для `/etc/resolv.conf` platform profile различает static regular file и
 provider-managed final symlink targets. Debian 12/13 разрешают три цели

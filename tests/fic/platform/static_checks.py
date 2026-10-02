@@ -153,20 +153,6 @@ def main():
             "/etc/sudoers",
             "/etc/sudoers.d/zzzz-fic",
         ),
-        "fic/src/modules/dac/mode_and_owner/policies/"
-        "DAC_blocking_user_access_to_system_files.cpp": (
-            "/etc/bashrc",
-            "/etc/bash.bashrc",
-            "/etc/grub.cfg",
-            "/boot/grub/grub.cfg",
-            "/etc/securetty",
-        ),
-        "fic/src/modules/dac/mode_and_owner/policies/"
-        "DAC_systemcommandlock.cpp": (
-            "/bin/df",
-            "/usr/bin/chattr",
-            "/sbin/ip",
-        ),
         "fic/src/modules/oss/display_manager/DisplayManager.cpp": (
             "/usr/bin/systemctl",
             "/bin/systemctl",
@@ -228,8 +214,6 @@ def main():
         "displayManager.gdmConfigCandidates",
         "grub.topology",
         "grub.rebuildArguments",
-        "dac.protectedSystemFiles",
-        "dac.protectedSystemCommands",
     )
     for name, source in profiles.items():
         for section in required_profile_sections:
@@ -237,6 +221,11 @@ def main():
                 section in source,
                 f"platform profile {name} does not define {section}",
             )
+        require(
+            "dac.modeAndOwnerObjects" in source
+            or "appendModeAndOwnerObjects(profile.dac" in source,
+            f"platform profile {name} does not define the DAC object catalog",
+        )
         require(
             "ExecutableId::Chage" in source
             and '"/usr/bin/chage"' in source,

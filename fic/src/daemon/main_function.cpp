@@ -486,10 +486,8 @@ bool initPolicyRegistry(
         PolicyList cafArr;
 
     //Дискреционное разграничение доступа (DAC)
-    cafArr.push_back(std::make_unique<DAC_systemcommandlock>(platform.dac));
-    cafArr.push_back(std::make_unique<DAC_blocking_user_access_to_system_files>(
-        platform.dac));
-    cafArr.push_back(std::make_unique<DAC_custom_mode_and_owner>());
+    cafArr.push_back(
+        std::make_unique<DAC_mode_and_owner_profiles>(platform.dac));
     cafArr.push_back(std::make_unique<DAC_sudo_env_reset>(
         platform.sudo, executables));
     cafArr.push_back(std::make_unique<DAC_sudo_passwd_tries>(

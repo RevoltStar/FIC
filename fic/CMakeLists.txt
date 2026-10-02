@@ -60,6 +60,7 @@ configure_file(
     "${FIC_GENERATED_INCLUDE_DIR}/platform/SudoSecurePathDefaultGenerated.h"
     @ONLY)
 add_library(fic-platform STATIC
+    src/platform/ModeAndOwnerPlatform.cpp
     src/platform/PlatformCompatibility.cpp
     src/platform/PlatformExecutableResolver.cpp
     src/platform/PamFaillockStrategy.cpp

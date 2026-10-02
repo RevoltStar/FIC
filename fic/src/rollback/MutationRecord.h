@@ -31,7 +31,6 @@ enum class MutationBackend {
     Ssh,
     Firewall,
     DeviceControl,
-    Dac,
     Grub,
     Sssd,
     Kerberos,
@@ -81,18 +80,6 @@ struct UndoRemoveFirewallPolicy {
 
 struct UndoDisableDeviceFeature {
     std::string feature;      // DC category-level desired state feature
-};
-
-// Platform-baseline rollback payload for the DAC hardening policies
-// (systemcommandlock, blocking_user_access_to_system_files). The journal
-// record only proves that FIC performed a state-changing apply of this
-// policy; the rollback target metadata is NOT stored here and no pre-FIC
-// owner/group/mode is ever recorded. The platform profile baseline
-// (FileAccessRule::baseline / TcbCredentialStorageConfig) is the single
-// source of truth for the disable-time state transition.
-struct UndoApplyDacPlatformBaseline {
-    std::string policyName; // "systemcommandlock" or
-                            // "blocking_user_access_to_system_files"
 };
 
 // SSSD ownership-release payload for the FIC-owned drop-in
@@ -235,7 +222,6 @@ using UndoPayload = std::variant<
     UndoRemoveSshManagedPolicy,
     UndoRemoveFirewallPolicy,
     UndoDisableDeviceFeature,
-    UndoApplyDacPlatformBaseline,
     UndoRemoveGrubManagedSetting,
     UndoRemoveSssdManagedSetting,
     UndoRestoreKerberosScalar,

@@ -167,11 +167,10 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.managedConfigPath = "/etc/default/grub.d/zzzz-fic.cfg";
     profile.grub.baseDefaultsPath = "/etc/default/grub";
     profile.grub.rebuildArguments = {};
-    profile.dac.protectedSystemFiles = {
+    std::vector<ModeAndOwnerPathProfiles> modeAndOwnerPaths = {
         {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}},
         // Ubuntu ships /etc/crontab as 0644 root:root (cron-daemon-common
-        // package archive). FIC hardens it to 0600 and restores the packaged
-        // 0644 on disable.
+        // package archive). FIC hardens it to 0600 and exposes packaged 0644 as the explicit system profile.
         {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}},
         {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}},
         {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}},
@@ -206,13 +205,12 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}},
         {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}}
     };
-    profile.dac.protectedSystemFiles.push_back(
+    modeAndOwnerPaths.push_back(
         {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}});
     // Packaged executable metadata is root:root 0755 (coreutils, e2fsprogs,
-    // net-tools, iproute2 archives); FIC hardens to 0750 and restores the
-    // packaged 0755 on disable. The gnudf and /usr/bin/ip symlink exceptions
+    // net-tools, iproute2 archives); FIC exposes packaged 0755 as system and 0750 as strict. The gnudf and /usr/bin/ip symlink exceptions
     // are Ubuntu 26.04 packaging topology.
-    profile.dac.protectedSystemCommands = {
+    std::vector<ModeAndOwnerPathProfiles> modeAndOwnerCommands = {
         {
             "/usr/bin/df",
             {"root", "root", 0750},
@@ -228,6 +226,11 @@ PlatformProfile makeBuildPlatformProfile() {
             {"/usr/bin/ip"}
         }
     };
+    appendModeAndOwnerObjects(profile.dac, modeAndOwnerPaths, {
+        "bashrc", "crontab", "fstab", "hostname", "hosts", "hosts_allow",
+        "hosts_deny", "group", "resolv", "sysctl_config",
+        "logrotate_config", "passwd", "shadow", "grub_config", "securetty",
+        "sudoers"}, modeAndOwnerCommands, {"df", "chattr", "arp", "ip"});
     return profile;
 }
 

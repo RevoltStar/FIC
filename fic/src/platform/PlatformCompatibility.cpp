@@ -809,81 +809,182 @@ bool validateArguments(const std::vector<std::string>& arguments,
     return true;
 }
 
-bool validateFileAccessRules(const std::vector<FileAccessRule>& rules,
-                             const std::string& label,
-                             std::string& error) {
-    if (rules.empty()) {
-        error = label + " list is empty";
+bool validateModeAndOwnerCatalog(const DacPlatformConfig& config,
+                                 std::string& error) {
+    using Dac = DacPlatformConfig;
+    if (config.modeAndOwnerObjects.empty()) {
+        error = "DAC mode-and-owner logical object catalog is empty";
         return false;
     }
-    std::set<std::filesystem::path> uniquePaths;
-    // Validates one FileMetadata set: non-empty owner/group and a valid
-    // mode_t permission set (special bits setuid/setgid/sticky preserved).
-    const auto validateMetadata = [](const FileMetadata& metadata) {
+    const auto validId = [](const std::string& id) {
+        return !id.empty() && std::all_of(id.begin(), id.end(), [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                   c == '_';
+        });
+    };
+    const auto validMetadata = [](const FileMetadata& metadata) {
         return !metadata.owner.empty() && !metadata.group.empty() &&
                metadata.permissions != 0 &&
                (metadata.permissions & ~07777U) == 0;
     };
-    for (const FileAccessRule& rule : rules) {
-        if (!validatePath(rule.path, label + " path", error)) {
+    const auto validProfile = [](Dac::Profile profile) {
+        switch (profile) {
+        case Dac::Profile::System:
+        case Dac::Profile::Minimum:
+        case Dac::Profile::Optimal:
+        case Dac::Profile::Strict:
+            return true;
+        }
+        return false;
+    };
+    const auto validContract = [&](const Dac::PathContract& contract,
+                                   const std::string& label) {
+        if (!validMetadata(contract.metadata)) {
+            error = label + " has invalid owner/group/mode";
             return false;
         }
-        if (!validateMetadata(rule.enforced) || !validateMetadata(rule.baseline)) {
-            error = label + " enforced and baseline metadata must declare a " +
-                    "non-empty owner, group and valid mode: " +
-                    rule.path.string();
+        switch (contract.objectType) {
+        case Dac::ObjectType::RegularFile:
+        case Dac::ObjectType::Directory:
+            break;
+        default:
+            error = label + " has invalid expected object type";
             return false;
         }
-        if (!uniquePaths.insert(rule.path).second) {
-            error = label + " path is duplicated: " + rule.path.string();
+        switch (contract.modeSemantics) {
+        case Dac::ModeSemantics::Exact:
+        case Dac::ModeSemantics::MaximumAllowed:
+            break;
+        default:
+            error = label + " has invalid mode semantics";
             return false;
         }
-        std::set<std::filesystem::path> uniqueSymlinkTargets;
-        for (const std::filesystem::path& target :
-             rule.allowedFinalSymlinkTargets) {
-            if (!validAbsolutePath(target)) {
-                error = label +
-                    " allowed final symlink target must be a non-empty "
-                    "absolute normalized path: " + target.string();
-                return false;
-            }
-            if (!uniqueSymlinkTargets.insert(target).second) {
-                error = label + " allowed final symlink target is duplicated: " +
-                    target.string();
+        switch (contract.remediation) {
+        case Dac::Remediation::Remediate:
+        case Dac::Remediation::ValidateOnly:
+            break;
+        default:
+            error = label + " has invalid remediation mode";
+            return false;
+        }
+        std::set<std::filesystem::path> targets;
+        for (const auto& path : contract.allowedFinalSymlinkTargets) {
+            if (!validAbsolutePath(path) || !targets.insert(path).second) {
+                error = label + " has invalid or duplicate symlink target";
                 return false;
             }
         }
-        for (const ProviderManagedFileTarget& target :
-             rule.providerManagedFinalSymlinkTargets) {
-            if (!validAbsolutePath(target.path)) {
-                error = label +
-                    " provider-managed final symlink target must be a non-empty "
-                    "absolute normalized path: " + target.path.string();
+        for (const auto& target : contract.providerTargets) {
+            if (!validAbsolutePath(target.path) ||
+                !targets.insert(target.path).second ||
+                !validMetadata(target.metadata)) {
+                error = label + " has invalid provider target contract";
                 return false;
             }
-            if (!validateMetadata(target.enforced) ||
-                !validateMetadata(target.baseline)) {
-                error = label +
-                    " provider-managed target enforced and baseline metadata "
-                    "must declare a non-empty owner, group and valid mode: " +
-                    target.path.string();
-                return false;
+        }
+        return true;
+    };
+    std::set<std::string> ids;
+    std::set<std::filesystem::path> mutablePaths;
+    for (const Dac::Object& object : config.modeAndOwnerObjects) {
+        if (!validId(object.id) || !ids.insert(object.id).second) {
+            error = "DAC logical object id is invalid or duplicated: " +
+                    object.id;
+            return false;
+        }
+        bool hasSystem = false;
+        bool valid = std::visit([&](const auto& target) {
+            using Target = std::decay_t<decltype(target)>;
+            if constexpr (std::is_same_v<Target, Dac::StaticPathObject>) {
+                hasSystem = target.profiles.count(Dac::Profile::System) != 0;
+                if (!validAbsolutePath(target.path) ||
+                    !mutablePaths.insert(target.path).second) {
+                    error = "DAC static path is invalid or ambiguously owned: " +
+                            target.path.string();
+                    return false;
+                }
+                for (const auto& [profile, contract] : target.profiles) {
+                    if (!validProfile(profile)) {
+                        error = "DAC static path has invalid profile enum";
+                        return false;
+                    }
+                    if (!validContract(contract, object.id)) return false;
+                }
+                return true;
+            } else if constexpr (std::is_same_v<Target,
+                                                Dac::PathCollectionObject>) {
+                if (target.members.empty()) {
+                    error = "DAC path collection is empty: " + object.id;
+                    return false;
+                }
+                hasSystem = true;
+                for (const auto& member : target.members) {
+                    hasSystem &= member.profiles.count(Dac::Profile::System) != 0;
+                    if (!validAbsolutePath(member.path) ||
+                        !mutablePaths.insert(member.path).second) {
+                        error = "DAC collection path is invalid or ambiguously owned: " +
+                                member.path.string();
+                        return false;
+                    }
+                    for (const auto& [profile, contract] : member.profiles) {
+                        if (!validProfile(profile)) {
+                            error = "DAC collection has invalid profile enum";
+                            return false;
+                        }
+                        if (!validContract(contract, object.id)) return false;
+                    }
+                }
+                return true;
+            } else if constexpr (std::is_same_v<Target,
+                                                Dac::UserHomesObject>) {
+                hasSystem = target.directoryModes.count(Dac::Profile::System) != 0;
+                if (!validAbsolutePath(target.rootPath) ||
+                    !validAbsolutePath(target.passwdPath)) {
+                    error = "DAC user-homes paths are invalid: " + object.id;
+                    return false;
+                }
+                for (const auto& [profile, mode] : target.directoryModes) {
+                    if (!validProfile(profile) || mode == 0 ||
+                        (mode & ~07777U) != 0) {
+                        error = "DAC user-homes mode is invalid: " + object.id;
+                        return false;
+                    }
+                }
+                return true;
+            } else {
+                hasSystem = target.profiles.count(Dac::Profile::System) != 0;
+                for (const auto& [profile, tcb] : target.profiles) {
+                    if (!validProfile(profile) ||
+                        !validAbsolutePath(tcb.rootPath) ||
+                        tcb.rootOwner.empty() || tcb.rootGroup.empty() ||
+                        tcb.entryGroup.empty() || tcb.rootPermissions == 0 ||
+                        (tcb.rootPermissions & ~07777U) != 0 ||
+                        tcb.entryDirectoryPermissions == 0 ||
+                        (tcb.entryDirectoryPermissions & ~07777U) != 0) {
+                        error = "DAC TCB profile contract is invalid: " +
+                                object.id;
+                        return false;
+                    }
+                    std::set<std::string> names;
+                    for (const auto& file : tcb.files) {
+                        if (file.name.empty() || file.name == "." ||
+                            file.name == ".." || file.name.find('/') !=
+                                std::string::npos || file.permissions == 0 ||
+                            (file.permissions & ~07777U) != 0 ||
+                            !names.insert(file.name).second) {
+                            error = "DAC TCB file contract is invalid: " +
+                                    object.id;
+                            return false;
+                        }
+                    }
+                }
+                return !target.profiles.empty();
             }
-            if (!uniqueSymlinkTargets.insert(target.path).second) {
-                error = label + " final symlink target is duplicated: " +
-                    target.path.string();
-                return false;
-            }
-            switch (target.provider) {
-            case ManagedFileProvider::SystemdResolved:
-            case ManagedFileProvider::NetworkManager:
-            case ManagedFileProvider::Resolvconf:
-                break;
-            default:
-                error = label + " has an invalid managed-file provider: " +
-                    rule.path.string();
-                return false;
-            }
+        }, object.target);
+        if (!valid) return false;
+        if (!hasSystem) {
+            error = "DAC logical object has no system profile: " + object.id;
+            return false;
         }
     }
     return true;
@@ -935,12 +1036,12 @@ bool validateTcbCredentialStorage(
     if (config.rootOwner.empty() || config.rootGroup.empty() ||
         config.entryGroup.empty() || config.rootPermissions == 0 ||
         (config.rootPermissions & ~07777U) != 0 ||
-        config.rootBaselinePermissions == 0 ||
-        (config.rootBaselinePermissions & ~07777U) != 0 ||
+        config.rootSystemPermissions == 0 ||
+        (config.rootSystemPermissions & ~07777U) != 0 ||
         config.entryDirectoryPermissions == 0 ||
         (config.entryDirectoryPermissions & ~07777U) != 0 ||
-        config.entryDirectoryBaselinePermissions == 0 ||
-        (config.entryDirectoryBaselinePermissions & ~07777U) != 0 ||
+        config.entryDirectorySystemPermissions == 0 ||
+        (config.entryDirectorySystemPermissions & ~07777U) != 0 ||
         config.files.empty()) {
         error = "invalid TCB credential storage metadata";
         return false;
@@ -951,8 +1052,8 @@ bool validateTcbCredentialStorage(
         if (file.name.empty() || file.name == "." || file.name == ".." ||
             file.name.find('/') != std::string::npos ||
             file.permissions == 0 || (file.permissions & ~07777U) != 0 ||
-            file.baselinePermissions == 0 ||
-            (file.baselinePermissions & ~07777U) != 0 ||
+            file.systemPermissions == 0 ||
+            (file.systemPermissions & ~07777U) != 0 ||
             !names.insert(file.name).second) {
             error = "invalid TCB credential file metadata";
             return false;
@@ -1036,12 +1137,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
         !validateGrubConfig(profile.grub, error) ||
         !validateArguments(profile.grub.rebuildArguments,
                            "GRUB rebuild arguments", error) ||
-        !validateFileAccessRules(profile.dac.protectedSystemFiles,
-                                 "DAC protected system file", error) ||
-        !validateFileAccessRules(profile.dac.protectedSystemCommands,
-                                 "DAC protected system command", error) ||
-        !validateTcbCredentialStorage(profile.dac.tcbCredentialStorage,
-                                      error)) {
+        !validateModeAndOwnerCatalog(profile.dac, error)) {
         return false;
     }
     const bool usesPamAuthUpdate = std::any_of(

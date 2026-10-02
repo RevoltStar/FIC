@@ -194,7 +194,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.topology = GrubConfigTopology::SharedDefaultsFile;
     profile.grub.sharedDefaultsPath = "/etc/sysconfig/grub2";
     profile.grub.rebuildArguments = {"-o", "/etc/grub.cfg"};
-    profile.dac.protectedSystemFiles = {
+    std::vector<ModeAndOwnerPathProfiles> modeAndOwnerPaths = {
         {"/etc/bashrc", {"root", "root", 0644}, {"root", "root", 0644}},
         // NOTE (baseline verification): the ALT p11 RPM metadata could not be
         // queried from this environment (packages.altlinux.org and
@@ -230,26 +230,31 @@ PlatformProfile makeBuildPlatformProfile() {
         }},
         {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}}
     };
-    profile.dac.protectedSystemFiles.push_back(
+    modeAndOwnerPaths.push_back(
         {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}});
     // ALT p11 TCB storage is the native ALT credential topology (not the
     // Debian /etc/shadow model): the profile values are simultaneously the
     // hardening state and the ALT-native baseline, declared explicitly.
-    profile.dac.tcbCredentialStorage = TcbCredentialStorageConfig{
+    std::optional<TcbCredentialStorageConfig> modeAndOwnerTcb = TcbCredentialStorageConfig{
         "/etc/tcb", "root", "shadow", 0710, 0710, "auth", 02710, 02710,
         {{"shadow", 0640, 0640, true},
          {"shadow-", 0640, 0640, false},
          {"shadow.lock", 0600, 0600, false}}};
     // Packaged executable metadata is root:root 0755 (RPM %defattr defaults
     // for coreutils, e2fsprogs, net-tools, iproute2); FIC hardens to 0750 and
-    // restores the packaged 0755 on disable. ALT keeps its own topology:
+    // exposes packaged 0755 as system and 0750 as strict. ALT keeps its topology:
     // /bin/df and /sbin/ip are not merged-/usr paths.
-    profile.dac.protectedSystemCommands = {
+    std::vector<ModeAndOwnerPathProfiles> modeAndOwnerCommands = {
         {"/bin/df", {"root", "root", 0750}, {"root", "root", 0755}},
         {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}},
         {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}},
         {"/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}}
     };
+    appendModeAndOwnerObjects(profile.dac, modeAndOwnerPaths, {
+        "bashrc", "crontab", "fstab", "hostname", "hosts", "hosts_allow",
+        "hosts_deny", "group", "resolv", "sysctl_config",
+        "logrotate_config", "inittab", "passwd", "shadow", "grub_config",
+        "securetty", "sudoers"}, modeAndOwnerCommands, {"df", "chattr", "arp", "ip"}, modeAndOwnerTcb);
     return profile;
 }
 

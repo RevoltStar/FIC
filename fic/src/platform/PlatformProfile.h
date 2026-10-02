@@ -7,6 +7,8 @@
 
 #include <filesystem>
 #include <optional>
+#include <map>
+#include <variant>
 #include <string>
 #include <sys/types.h>
 #include <vector>
@@ -435,50 +437,42 @@ enum class ManagedFileProvider {
     Resolvconf
 };
 
-// DAC metadata declared by the platform profile for one managed file.
-// `enforced` is the state FIC applies while the policy is ENABLE;
-// `baseline` is the platform-defined штатное state of the distribution that
-// policy disable restores. Baseline is NOT a pre-FIC snapshot of arbitrary
-// host state: it is the packaged/default state declared by the profile.
+// DAC metadata declared by the platform profile for one managed object.
+// The profile catalog maps these complete metadata contracts to explicit
+// desired-state profiles; disabling the policy never restores either value.
 struct FileMetadata {
     std::string owner;
     std::string group;
     mode_t permissions = 0;
 };
 
-struct ProviderManagedFileTarget {
+struct ModeAndOwnerProviderProfileTarget {
     std::filesystem::path path;
     ManagedFileProvider provider;
     // Provider target DAC contract in the same metadata semantics as the
-    // owning FileAccessRule. Provider-owned final targets are validate-only
-    // during enforcement; on platform-baseline rollback they are transitioned
-    // to `baseline`. Provider-shipped metadata is the штатное provider state,
-    // so every current profile target declares enforced == baseline, but the
-    // structural distinction stays explicit in the contract.
-    FileMetadata enforced;
-    FileMetadata baseline;
+    // Provider-owned targets are always validate-only. The first contract is
+    // the verified strict state and the second is the distribution system
+    // state used to build explicit profiles.
+    FileMetadata strict;
+    FileMetadata system;
 };
 
-struct FileAccessRule {
+struct ModeAndOwnerPathProfiles {
     std::filesystem::path path;
 
-    // State applied by ENABLE (hardening).
-    FileMetadata enforced;
-    // State restored by DISABLE (distro baseline), never a pre-FIC snapshot.
-    FileMetadata baseline;
+    FileMetadata strict;
+    FileMetadata system;
 
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
-    std::vector<ProviderManagedFileTarget> providerManagedFinalSymlinkTargets;
+    std::vector<ModeAndOwnerProviderProfileTarget> providerManagedFinalSymlinkTargets;
 };
 
 struct TcbCredentialFileRule {
     std::string name;
-    // Enforced permission set while the policy is enabled.
+    // Verified strict permission set.
     unsigned int permissions = 0;
-    // Platform baseline permission set restored on policy disable. ALT TCB
-    // metadata is the native ALT state, so current profiles declare
-    // baseline == enforced, but the distinction stays explicit.
-    unsigned int baselinePermissions = 0;
+    // Verified distribution system permission set.
+    unsigned int systemPermissions = 0;
     bool required = false;
 };
 
@@ -486,22 +480,63 @@ struct TcbCredentialStorageConfig {
     std::filesystem::path rootPath;
     std::string rootOwner;
     std::string rootGroup;
-    // Enforced root-directory metadata.
+    // Verified strict root-directory metadata.
     unsigned int rootPermissions = 0;
-    // Platform baseline root-directory metadata.
-    unsigned int rootBaselinePermissions = 0;
+    // Verified distribution system root-directory metadata.
+    unsigned int rootSystemPermissions = 0;
     std::string entryGroup;
-    // Enforced per-account entry directory permissions.
+    // Verified strict per-account entry directory permissions.
     unsigned int entryDirectoryPermissions = 0;
-    // Platform baseline per-account entry directory permissions.
-    unsigned int entryDirectoryBaselinePermissions = 0;
+    // Verified distribution system per-account entry directory permissions.
+    unsigned int entryDirectorySystemPermissions = 0;
     std::vector<TcbCredentialFileRule> files;
 };
 
 struct DacPlatformConfig {
-    std::vector<FileAccessRule> protectedSystemFiles;
-    std::vector<FileAccessRule> protectedSystemCommands;
-    std::optional<TcbCredentialStorageConfig> tcbCredentialStorage;
+    enum class Profile { System, Minimum, Optimal, Strict };
+    enum class ObjectType { RegularFile, Directory };
+    enum class ModeSemantics { Exact, MaximumAllowed };
+    enum class Remediation { Remediate, ValidateOnly };
+
+    struct ProviderTarget {
+        std::filesystem::path path;
+        ManagedFileProvider provider;
+        FileMetadata metadata;
+    };
+    struct PathContract {
+        FileMetadata metadata;
+        ObjectType objectType = ObjectType::RegularFile;
+        ModeSemantics modeSemantics = ModeSemantics::Exact;
+        Remediation remediation = Remediation::Remediate;
+        bool required = false;
+        std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
+        std::vector<ProviderTarget> providerTargets;
+    };
+    struct StaticPathObject {
+        std::filesystem::path path;
+        std::map<Profile, PathContract> profiles;
+    };
+    struct CollectionMember {
+        std::filesystem::path path;
+        std::map<Profile, PathContract> profiles;
+    };
+    struct PathCollectionObject {
+        std::vector<CollectionMember> members;
+    };
+    struct UserHomesObject {
+        std::filesystem::path rootPath;
+        std::filesystem::path passwdPath = "/etc/passwd";
+        std::map<Profile, mode_t> directoryModes;
+    };
+    struct TcbCredentialTreeObject {
+        std::map<Profile, TcbCredentialStorageConfig> profiles;
+    };
+    struct Object {
+        std::string id;
+        std::variant<StaticPathObject, PathCollectionObject, UserHomesObject,
+                     TcbCredentialTreeObject> target;
+    };
+    std::vector<Object> modeAndOwnerObjects;
 };
 
 struct PlatformProfile {
@@ -520,6 +555,26 @@ struct PlatformProfile {
     GrubPlatformConfig grub;
     DacPlatformConfig dac;
 };
+
+// Constructs one logical object directly for the platform catalog. The ID is
+// explicit and is never derived from the physical path.
+DacPlatformConfig::Object makeModeAndOwnerPathObject(
+    std::string id,
+    const ModeAndOwnerPathProfiles& profiles,
+    DacPlatformConfig::ModeSemantics modeSemantics =
+        DacPlatformConfig::ModeSemantics::Exact);
+
+DacPlatformConfig::Object makeModeAndOwnerTcbObject(
+    std::string id,
+    const TcbCredentialStorageConfig& profiles);
+
+void appendModeAndOwnerObjects(
+    DacPlatformConfig& config,
+    const std::vector<ModeAndOwnerPathProfiles>& paths,
+    const std::vector<std::string>& pathIds,
+    const std::vector<ModeAndOwnerPathProfiles>& commands,
+    const std::vector<std::string>& commandIds,
+    const std::optional<TcbCredentialStorageConfig>& tcb = std::nullopt);
 
 // Exactly one distribution-specific implementation is selected by CMake.
 PlatformProfile makeBuildPlatformProfile();

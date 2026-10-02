@@ -90,21 +90,85 @@ fic::platform::OsReleaseValues compatibleValues(
     return values;
 }
 
-bool hasRule(const std::vector<fic::platform::FileAccessRule>& rules,
+std::vector<fic::platform::ModeAndOwnerPathProfiles> catalogRules(
+    const fic::platform::DacPlatformConfig& dac, bool commands) {
+    using Dac = fic::platform::DacPlatformConfig;
+    std::vector<fic::platform::ModeAndOwnerPathProfiles> result;
+    for (const auto& object : dac.modeAndOwnerObjects) {
+        const auto* path = std::get_if<Dac::StaticPathObject>(&object.target);
+        if (!path) continue;
+        const auto system = path->profiles.find(Dac::Profile::System);
+        if (system == path->profiles.end()) continue;
+        const bool isCommand = system->second.modeSemantics ==
+            Dac::ModeSemantics::MaximumAllowed;
+        if (isCommand != commands) continue;
+        const auto strict = path->profiles.find(Dac::Profile::Strict);
+        fic::platform::ModeAndOwnerPathProfiles rule;
+        rule.path = path->path;
+        rule.system = system->second.metadata;
+        rule.strict = strict == path->profiles.end()
+            ? rule.system : strict->second.metadata;
+        rule.allowedFinalSymlinkTargets =
+            system->second.allowedFinalSymlinkTargets;
+        for (const auto& provider : system->second.providerTargets) {
+            fic::platform::ModeAndOwnerProviderProfileTarget converted{
+                provider.path, provider.provider, provider.metadata,
+                provider.metadata};
+            if (strict != path->profiles.end()) {
+                const auto strictProvider = std::find_if(
+                    strict->second.providerTargets.begin(),
+                    strict->second.providerTargets.end(),
+                    [&](const auto& candidate) {
+                        return candidate.path == provider.path;
+                    });
+                if (strictProvider != strict->second.providerTargets.end()) {
+                    converted.strict = strictProvider->metadata;
+                }
+            }
+            rule.providerManagedFinalSymlinkTargets.push_back(
+                std::move(converted));
+        }
+        result.push_back(std::move(rule));
+    }
+    return result;
+}
+
+const fic::platform::DacPlatformConfig::TcbCredentialTreeObject* tcbObject(
+    const fic::platform::DacPlatformConfig& dac) {
+    for (const auto& object : dac.modeAndOwnerObjects) {
+        if (object.id == "tcb_credentials") {
+            return std::get_if<
+                fic::platform::DacPlatformConfig::TcbCredentialTreeObject>(
+                    &object.target);
+        }
+    }
+    return nullptr;
+}
+
+fic::platform::DacPlatformConfig::PathContract& firstPathContract(
+    fic::platform::PlatformProfile& profile) {
+    auto& object = profile.dac.modeAndOwnerObjects.front();
+    auto& path = std::get<fic::platform::DacPlatformConfig::StaticPathObject>(
+        object.target);
+    return path.profiles.at(
+        fic::platform::DacPlatformConfig::Profile::System);
+}
+
+bool hasRule(const std::vector<fic::platform::ModeAndOwnerPathProfiles>& rules,
              std::filesystem::path path) {
     return std::any_of(
         rules.begin(), rules.end(),
-        [&path](const fic::platform::FileAccessRule& rule) {
+        [&path](const fic::platform::ModeAndOwnerPathProfiles& rule) {
             return rule.path == path;
         });
 }
 
-const fic::platform::FileAccessRule& findRule(
-    const std::vector<fic::platform::FileAccessRule>& rules,
+fic::platform::ModeAndOwnerPathProfiles findRule(
+    const std::vector<fic::platform::ModeAndOwnerPathProfiles>& rules,
     std::filesystem::path path) {
     const auto found = std::find_if(
         rules.begin(), rules.end(),
-        [&path](const fic::platform::FileAccessRule& rule) {
+        [&path](const fic::platform::ModeAndOwnerPathProfiles& rule) {
             return rule.path == path;
         });
     if (found == rules.end()) {
@@ -563,7 +627,7 @@ void testSelectedProfile() {
                     profile.grub.baseDefaultsPath == "/etc/default/grub",
                 "Debian-family GRUB owned-drop-in topology is incorrect");
     }
-    require(hasRule(profile.dac.protectedSystemFiles,
+    require(hasRule(catalogRules(profile.dac, false),
                     profile.sudo.mainConfigPath),
             "the selected sudoers configuration must be protected by DAC policy");
     const std::string expectedSecurePath =
@@ -574,9 +638,21 @@ void testSelectedProfile() {
                 : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
     require(profile.sudo.securePathDefault == expectedSecurePath,
             "sudo secure_path platform default is incorrect");
+    const auto hasLogicalObject = [&](const std::string& id) {
+        return std::any_of(profile.dac.modeAndOwnerObjects.begin(),
+                           profile.dac.modeAndOwnerObjects.end(),
+                           [&](const auto& object) { return object.id == id; });
+    };
+    for (const std::string& command : {"df", "chattr", "arp", "ip"}) {
+        require(hasLogicalObject(command),
+                "protected executable must be an independent logical object: " +
+                    command);
+    }
+    require(!hasLogicalObject("system_commands"),
+            "aggregate system_commands logical object must not be exposed");
     const auto& resolvConfRule = findRule(
-        profile.dac.protectedSystemFiles, "/etc/resolv.conf");
-    using ManagedTarget = fic::platform::ProviderManagedFileTarget;
+        catalogRules(profile.dac, false), "/etc/resolv.conf");
+    using ManagedTarget = fic::platform::ModeAndOwnerProviderProfileTarget;
     using ManagedProvider = fic::platform::ManagedFileProvider;
     const ManagedTarget systemdResolvedRuntime = {
         "/run/systemd/resolve/stub-resolv.conf",
@@ -621,14 +697,14 @@ void testSelectedProfile() {
                 [](const auto& actual, const auto& expected) {
                     return actual.path == expected.path &&
                         actual.provider == expected.provider &&
-                        actual.enforced.owner == expected.enforced.owner &&
-                        actual.enforced.group == expected.enforced.group &&
-                        actual.enforced.permissions ==
-                            expected.enforced.permissions &&
-                        actual.baseline.owner == expected.baseline.owner &&
-                        actual.baseline.group == expected.baseline.group &&
-                        actual.baseline.permissions ==
-                            expected.baseline.permissions;
+                        actual.strict.owner == expected.strict.owner &&
+                        actual.strict.group == expected.strict.group &&
+                        actual.strict.permissions ==
+                            expected.strict.permissions &&
+                        actual.system.owner == expected.system.owner &&
+                        actual.system.group == expected.system.group &&
+                        actual.system.permissions ==
+                            expected.system.permissions;
                 }),
             "resolv.conf provider target contracts are incorrect");
     require(std::none_of(
@@ -638,7 +714,7 @@ void testSelectedProfile() {
                         "/run/NetworkManager/no-stub-resolv.conf";
                 }),
             "NetworkManager no-stub internal file must not be allowlisted");
-    for (const auto& rule : profile.dac.protectedSystemCommands) {
+    for (const auto& rule : catalogRules(profile.dac, true)) {
         std::vector<std::filesystem::path> expectedTargets;
         if ((profile.id == "debian-13" || profile.id == "ubuntu-26.04") &&
             rule.path == "/usr/sbin/ip") {
@@ -665,61 +741,61 @@ void testSelectedProfile() {
                         "/etc/gdm/custom.conf"
                     }),
                 "ALT p11 GDM configuration paths are incorrect");
-        require(hasRule(profile.dac.protectedSystemFiles, "/etc/bashrc"),
+        require(hasRule(catalogRules(profile.dac, false), "/etc/bashrc"),
                 "ALT p11 must protect /etc/bashrc");
-        require(hasRule(profile.dac.protectedSystemFiles, "/etc/securetty"),
+        require(hasRule(catalogRules(profile.dac, false), "/etc/securetty"),
                 "ALT p11 must protect /etc/securetty");
         const auto& shadowRule = findRule(
-            profile.dac.protectedSystemFiles, "/etc/shadow");
-        require(shadowRule.enforced.owner == "root" &&
-                    shadowRule.enforced.group == "root" &&
-                    shadowRule.enforced.permissions == 0400 &&
-                    shadowRule.baseline.owner == "root" &&
-                    shadowRule.baseline.group == "root" &&
-                    shadowRule.baseline.permissions == 0400,
+            catalogRules(profile.dac, false), "/etc/shadow");
+        require(shadowRule.strict.owner == "root" &&
+                    shadowRule.strict.group == "root" &&
+                    shadowRule.strict.permissions == 0400 &&
+                    shadowRule.system.owner == "root" &&
+                    shadowRule.system.group == "root" &&
+                    shadowRule.system.permissions == 0400,
                 "ALT p11 compatibility shadow metadata is incorrect");
-        require(profile.dac.tcbCredentialStorage.has_value(),
+        require(tcbObject(profile.dac) != nullptr,
                 "ALT p11 must describe TCB credential storage");
-        const auto& tcb = *profile.dac.tcbCredentialStorage;
+        const auto& tcb = tcbObject(profile.dac)->profiles.at(fic::platform::DacPlatformConfig::Profile::System);
         require(tcb.rootPath == "/etc/tcb" && tcb.rootOwner == "root" &&
                     tcb.rootGroup == "shadow" && tcb.rootPermissions == 0710 &&
-                    tcb.rootBaselinePermissions == 0710 &&
+                    tcb.rootSystemPermissions == 0710 &&
                     tcb.entryGroup == "auth" &&
                     tcb.entryDirectoryPermissions == 02710 &&
-                    tcb.entryDirectoryBaselinePermissions == 02710,
+                    tcb.entryDirectorySystemPermissions == 02710,
                 "ALT p11 TCB directory metadata is incorrect");
         require(tcb.files.size() == 3 &&
                     tcb.files[0].name == "shadow" &&
                     tcb.files[0].permissions == 0640 &&
-                    tcb.files[0].baselinePermissions == 0640 &&
+                    tcb.files[0].systemPermissions == 0640 &&
                     tcb.files[0].required &&
                     tcb.files[1].name == "shadow-" &&
                     tcb.files[1].permissions == 0640 &&
-                    tcb.files[1].baselinePermissions == 0640 &&
+                    tcb.files[1].systemPermissions == 0640 &&
                     !tcb.files[1].required &&
                     tcb.files[2].name == "shadow.lock" &&
                     tcb.files[2].permissions == 0600 &&
-                    tcb.files[2].baselinePermissions == 0600 &&
+                    tcb.files[2].systemPermissions == 0600 &&
                     !tcb.files[2].required,
                 "ALT p11 TCB credential file metadata is incorrect");
         require(findRule(
-                    profile.dac.protectedSystemFiles,
+                    catalogRules(profile.dac, false),
                     "/etc/sysctl.conf").allowedFinalSymlinkTargets ==
                     std::vector<std::filesystem::path>({
                         "/etc/sysctl.d/99-sysctl.conf"
                     }),
                 "ALT p11 sysctl.conf symlink target is incorrect");
         require(findRule(
-                    profile.dac.protectedSystemFiles,
+                    catalogRules(profile.dac, false),
                     "/etc/grub.cfg").allowedFinalSymlinkTargets ==
                     std::vector<std::filesystem::path>({
                         "/boot/grub/grub.cfg"
                     }),
                 "ALT p11 grub.cfg symlink target is incorrect");
-        require(!hasRule(profile.dac.protectedSystemFiles,
+        require(!hasRule(catalogRules(profile.dac, false),
                          "/etc/sysconfig/securetty"),
                 "ALT p11 must not use the obsolete securetty path");
-        require(hasRule(profile.dac.protectedSystemCommands, "/sbin/ip"),
+        require(hasRule(catalogRules(profile.dac, true), "/sbin/ip"),
                 "ALT p11 ip command path is incorrect");
         require(executableSpec(
                     profile,
@@ -733,7 +809,7 @@ void testSelectedProfile() {
                     std::vector<std::string>({"-o", "/etc/grub.cfg"}),
                 "ALT p11 grub-mkconfig must write /etc/grub.cfg");
     } else if (profile.id == "debian-12") {
-        require(!profile.dac.tcbCredentialStorage.has_value(),
+        require(tcbObject(profile.dac) == nullptr,
                 "Debian must not enable ALT TCB handling");
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,
@@ -743,12 +819,12 @@ void testSelectedProfile() {
         require(profile.displayManager.gdmConfigCandidates.front() ==
                     "/etc/gdm3/daemon.conf",
                 "Debian 12 primary GDM configuration path is incorrect");
-        require(hasRule(profile.dac.protectedSystemFiles, "/etc/bash.bashrc"),
+        require(hasRule(catalogRules(profile.dac, false), "/etc/bash.bashrc"),
                 "Debian 12 must protect /etc/bash.bashrc");
-        require(hasRule(profile.dac.protectedSystemFiles,
+        require(hasRule(catalogRules(profile.dac, false),
                         "/boot/grub/grub.cfg"),
                 "Debian 12 GRUB configuration path is incorrect");
-        require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
+        require(hasRule(catalogRules(profile.dac, true), "/usr/sbin/ip"),
                 "Debian 12 ip command path is incorrect");
         require(executableSpec(
                     profile,
@@ -761,7 +837,7 @@ void testSelectedProfile() {
         require(profile.grub.rebuildArguments.empty(),
                 "Debian 12 update-grub must not receive arguments");
     } else if (profile.id == "debian-13") {
-        require(!profile.dac.tcbCredentialStorage.has_value(),
+        require(tcbObject(profile.dac) == nullptr,
                 "Debian must not enable ALT TCB handling");
         require(profile.hostCompatibility.versionIds ==
                     std::vector<std::string>({"13"}),
@@ -777,17 +853,17 @@ void testSelectedProfile() {
         require(profile.displayManager.gdmConfigCandidates.front() ==
                     "/etc/gdm3/daemon.conf",
                 "Debian 13 primary GDM configuration path is incorrect");
-        require(hasRule(profile.dac.protectedSystemFiles, "/etc/bash.bashrc"),
+        require(hasRule(catalogRules(profile.dac, false), "/etc/bash.bashrc"),
                 "Debian 13 must protect /etc/bash.bashrc");
-        require(hasRule(profile.dac.protectedSystemFiles,
+        require(hasRule(catalogRules(profile.dac, false),
                         "/boot/grub/grub.cfg"),
                 "Debian 13 GRUB configuration path is incorrect");
-        require(hasRule(profile.dac.protectedSystemCommands, "/usr/bin/df"),
+        require(hasRule(catalogRules(profile.dac, true), "/usr/bin/df"),
                 "Debian 13 df command path must use the merged-/usr location");
-        require(hasRule(profile.dac.protectedSystemCommands, "/usr/sbin/ip"),
+        require(hasRule(catalogRules(profile.dac, true), "/usr/sbin/ip"),
                 "Debian 13 ip command path is incorrect");
         require(findRule(
-                    profile.dac.protectedSystemCommands,
+                    catalogRules(profile.dac, true),
                     "/usr/sbin/ip").allowedFinalSymlinkTargets ==
                     std::vector<std::filesystem::path>({"/usr/bin/ip"}),
                 "Debian 13 ip command symlink target is incorrect");
@@ -809,7 +885,7 @@ void testSelectedProfile() {
                 "NO module-argument evidence");
     } else if (profile.id == "ubuntu-24.04" ||
                profile.id == "ubuntu-26.04") {
-        require(!profile.dac.tcbCredentialStorage.has_value(),
+        require(tcbObject(profile.dac) == nullptr,
                 "Ubuntu must not enable ALT TCB handling");
         require(profile.packageManager.kind ==
                     fic::platform::PackageManagerKind::Dpkg,
@@ -819,9 +895,9 @@ void testSelectedProfile() {
         require(profile.displayManager.gdmConfigCandidates.front() ==
                     "/etc/gdm3/custom.conf",
                 "Ubuntu primary GDM configuration path is incorrect");
-        require(hasRule(profile.dac.protectedSystemFiles, "/etc/bash.bashrc"),
+        require(hasRule(catalogRules(profile.dac, false), "/etc/bash.bashrc"),
                 "Ubuntu must protect /etc/bash.bashrc");
-        require(hasRule(profile.dac.protectedSystemCommands, "/usr/bin/df"),
+        require(hasRule(catalogRules(profile.dac, true), "/usr/bin/df"),
                 "Ubuntu df command path is incorrect");
         require(profile.grub.rebuildArguments.empty(),
                 "Ubuntu update-grub must not receive arguments");
@@ -1139,16 +1215,19 @@ void testInvalidProfileIsRejected() {
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a trusted PAM bypass for an unverified service must be rejected");
 
-    const auto withResolvConfTargets =
-        [](std::function<void(fic::platform::FileAccessRule&)> mutate) {
+    const auto withResolvConfTargets = [](std::function<void(
+        fic::platform::DacPlatformConfig::PathContract&)> mutate) {
             fic::platform::PlatformProfile profile =
                 fic::platform::makeBuildPlatformProfile();
             bool mutated = false;
-            for (fic::platform::FileAccessRule& rule :
-                 profile.dac.protectedSystemFiles) {
-                if (rule.path == "/etc/resolv.conf" &&
-                    !rule.providerManagedFinalSymlinkTargets.empty()) {
-                    mutate(rule);
+            for (auto& object : profile.dac.modeAndOwnerObjects) {
+                if (object.id != "resolv") continue;
+                auto* path = std::get_if<fic::platform::DacPlatformConfig::
+                    StaticPathObject>(&object.target);
+                auto& contract = path->profiles.at(
+                    fic::platform::DacPlatformConfig::Profile::System);
+                if (!contract.providerTargets.empty()) {
+                    mutate(contract);
                     mutated = true;
                 }
             }
@@ -1161,36 +1240,23 @@ void testInvalidProfileIsRejected() {
                     "invalid provider target metadata must be rejected");
         };
 
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().enforced.owner.clear();
+    withResolvConfTargets([](auto& contract) {
+        contract.providerTargets.front().metadata.owner.clear();
     });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().enforced.group.clear();
+    withResolvConfTargets([](auto& contract) {
+        contract.providerTargets.front().metadata.group.clear();
     });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().enforced.permissions =
-            0;
+    withResolvConfTargets([](auto& contract) {
+        contract.providerTargets.front().metadata.permissions = 0;
     });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().enforced.permissions =
-            010000;
+    withResolvConfTargets([](auto& contract) {
+        contract.providerTargets.push_back(contract.providerTargets.front());
     });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().baseline.owner.clear();
+    withResolvConfTargets([](auto& contract) {
+        contract.providerTargets.front().path = "run/relative";
     });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().baseline.permissions =
-            0;
-    });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.push_back(
-            rule.providerManagedFinalSymlinkTargets.front());
-    });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().path = "run/relative";
-    });
-    withResolvConfTargets([](fic::platform::FileAccessRule& rule) {
-        rule.providerManagedFinalSymlinkTargets.front().path =
+    withResolvConfTargets([](auto& contract) {
+        contract.providerTargets.front().path =
             "/run/NetworkManager/../resolv.conf";
     });
 
@@ -1451,67 +1517,70 @@ void testInvalidProfileIsRejected() {
             "a GRUB generator argument containing a newline must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.protectedSystemFiles.front().enforced.permissions = 0;
+    firstPathContract(profile).metadata.permissions = 0;
     require(!fic::platform::validatePlatformProfile(profile, error),
             "invalid DAC enforced permissions must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.protectedSystemFiles.front().baseline.owner.clear();
+    firstPathContract(profile).metadata.owner.clear();
     require(!fic::platform::validatePlatformProfile(profile, error),
             "empty DAC baseline owner must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.tcbCredentialStorage =
-        fic::platform::TcbCredentialStorageConfig{
+    profile.dac.modeAndOwnerObjects.push_back(
+        fic::platform::makeModeAndOwnerTcbObject(
+        "invalid_tcb", fic::platform::TcbCredentialStorageConfig{
             "etc/tcb", "root", "shadow", 0710, 0710, "auth", 02710, 02710,
-            {{"shadow", 0640, 0640, true}}};
+            {{"shadow", 0640, 0640, true}}}));
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative TCB credential root must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.tcbCredentialStorage =
-        fic::platform::TcbCredentialStorageConfig{
+    profile.dac.modeAndOwnerObjects.push_back(
+        fic::platform::makeModeAndOwnerTcbObject(
+        "invalid_tcb", fic::platform::TcbCredentialStorageConfig{
             "/etc/tcb", "root", "shadow", 0710, 0710, "auth", 02710, 02710,
-            {{"shadow", 0640, 0640, true}, {"shadow", 0600, 0600, false}}};
+            {{"shadow", 0640, 0640, true}, {"shadow", 0600, 0600, false}}}));
     require(!fic::platform::validatePlatformProfile(profile, error),
             "duplicate TCB credential file metadata must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.protectedSystemFiles.front().allowedFinalSymlinkTargets = {
+    firstPathContract(profile).allowedFinalSymlinkTargets = {
         "run/unsafe-target"
     };
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative DAC symlink target must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.protectedSystemFiles.front().allowedFinalSymlinkTargets = {
+    firstPathContract(profile).allowedFinalSymlinkTargets = {
         "/run/safe/../unnormalized"
     };
     require(!fic::platform::validatePlatformProfile(profile, error),
             "an unnormalized DAC symlink target must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.protectedSystemFiles.front().allowedFinalSymlinkTargets = {
+    firstPathContract(profile).allowedFinalSymlinkTargets = {
         "/run/target", "/run/target"
     };
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a duplicate DAC symlink target must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    profile.dac.protectedSystemFiles.front()
-        .providerManagedFinalSymlinkTargets = {{
+    firstPathContract(profile).providerTargets = {{
             "run/provider-target",
-            fic::platform::ManagedFileProvider::NetworkManager
+            fic::platform::ManagedFileProvider::NetworkManager,
+            {"root", "root", 0644}
         }};
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative provider-managed target must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
-    auto& duplicateProviderTarget = profile.dac.protectedSystemFiles.front();
+    auto& duplicateProviderTarget = firstPathContract(profile);
     duplicateProviderTarget.allowedFinalSymlinkTargets = {"/run/target"};
-    duplicateProviderTarget.providerManagedFinalSymlinkTargets = {{
+    duplicateProviderTarget.providerTargets = {{
         "/run/target",
-        fic::platform::ManagedFileProvider::NetworkManager
+        fic::platform::ManagedFileProvider::NetworkManager,
+        {"root", "root", 0644}
     }};
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a target shared by remediate and validate-only lists must be rejected");
@@ -1707,6 +1776,44 @@ void testOsReleaseParsing() {
     require(fic::platform::isHostCompatible(profile, parsed, error), error);
 }
 
+void testModeAndOwnerCatalogValidation() {
+    using Dac = fic::platform::DacPlatformConfig;
+    std::string error;
+    auto profile = fic::platform::makeBuildPlatformProfile();
+    require(!profile.dac.modeAndOwnerObjects.empty(),
+            "mode-and-owner logical catalog is empty");
+    for (const Dac::Object& object : profile.dac.modeAndOwnerObjects) {
+        const bool hasSystem = std::visit([](const auto& target) {
+            using Target = std::decay_t<decltype(target)>;
+            if constexpr (std::is_same_v<Target, Dac::PathCollectionObject>) {
+                return !target.members.empty() &&
+                    std::all_of(target.members.begin(), target.members.end(),
+                        [](const Dac::CollectionMember& member) {
+                            return member.profiles.count(Dac::Profile::System) != 0;
+                        });
+            } else if constexpr (std::is_same_v<Target, Dac::UserHomesObject>) {
+                return target.directoryModes.count(Dac::Profile::System) != 0;
+            } else {
+                return target.profiles.count(Dac::Profile::System) != 0;
+            }
+        }, object.target);
+        require(hasSystem, "logical object lacks system profile: " + object.id);
+    }
+
+    profile.dac.modeAndOwnerObjects.push_back(
+        profile.dac.modeAndOwnerObjects.front());
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "duplicate mode-and-owner object id was accepted");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    auto* path = std::get_if<Dac::StaticPathObject>(
+        &profile.dac.modeAndOwnerObjects.front().target);
+    require(path != nullptr, "first catalog object is not StaticPath");
+    path->profiles.erase(Dac::Profile::System);
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "logical object without system profile was accepted");
+}
+
 } // namespace
 
 int main() {
@@ -1719,6 +1826,7 @@ int main() {
         testExecutableResolver();
         testProviderLinkedExecutableResolver();
         testOsReleaseParsing();
+        testModeAndOwnerCatalogValidation();
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
