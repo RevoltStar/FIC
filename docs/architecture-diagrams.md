@@ -1154,6 +1154,21 @@ canonical JSON. Только явно перечисленные objects упр�
 `minimum`/`optimal`/`strict` существуют только при наличии подтверждённого
 platform contract.
 
+Metadata `Profile` и `PresenceRequirement` — независимые оси. Отсутствующий в
+policy value object не управляется; `object=system` требует существования и
+точного system metadata; `object=system_or_not_exists` допускает отсутствие,
+но для существующего объекта применяет тот же точный system contract;
+`strict_or_not_exists` аналогично использует обычный strict contract.
+`_or_not_exists` подавляет только настоящий `ENOENT`: небезопасная topology,
+broken/unknown symlink, неверный тип, ошибки доступа и postcondition остаются
+failure. Variant доступен только для явно объявившего capability logical
+object.
+
+Fresh-install config не содержит `.value` для этой policy: unconfigured policy
+использует generated catalog default (`system` либо
+`system_or_not_exists`). Явно сохранённый `{}` остаётся пустым managed set, а
+сохранённые mappings никогда не дополняются новыми objects автоматически.
+
 `ModeAndOwner` выполняет `fstat`, `fchown`, `fchmod` и контрольный `fstat` через
 один descriptor. После успешного `fchown` состояние перечитывается до решения о
 необходимости `fchmod`, поскольку Linux может сбросить SUID/SGID при смене
@@ -1161,8 +1176,9 @@ platform contract.
 bit. Каждый executable (`df`, `chattr`, `arp`, `ip`) является отдельным logical
 object. Каждый profile Mode_And_Owner — полный точный desired-state contract
 owner/group/mode: и более строгий, и более слабый фактический mode не считается
-соответствующим и исправляется до точного profile mode. Required/optional
-задаётся platform contract каждого объекта, а не единым правилом всей policy.
+соответствующим и исправляется до точного profile mode. Capability
+`allowMissingVariant` задаётся platform contract logical object, а выбранный
+`PresenceRequirement` приходит из policy value.
 Arbitrary user paths не принимаются.
 
 ALT p11 дополнительно задаёт logical object `tcb_credentials` с typed TCB
@@ -1191,8 +1207,8 @@ symlink в самом policy path. Пустой список запрещает 
 после этой проверки; это может сделать namespace несоответствующим уже
 применённому правилу, но не перенаправляет `fchown`/`fchmod` на иной inode:
 операции остаются привязаны к предварительно проверенной allowlisted цели.
-Required/optional semantics задаются каждым object contract. Неожиданная цель
-symlink, неверный object type и ошибки открытия fail closed; runtime failures
+Presence semantics задаётся выбранным value logical object. Неожиданная цель
+symlink, broken symlink, неверный object type и ошибки открытия fail closed; runtime failures
 агрегируются, поэтому независимые objects всё равно проверяются.
 
 Для `/etc/resolv.conf` platform profile различает static regular file и

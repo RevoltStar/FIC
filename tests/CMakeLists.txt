@@ -781,6 +781,7 @@ add_test(NAME mutation_journal_tests COMMAND mutation_journal_tests)
 
 add_executable(rollback_executor_tests
     fic/rollback/RollbackExecutorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PolicyDisableFlow.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
@@ -857,6 +858,7 @@ target_include_directories(rollback_executor_tests PRIVATE
 )
 target_link_libraries(rollback_executor_tests PRIVATE
     fic-core
+    fic-ipc
     fic-policy
     fic-platform
     Threads::Threads
@@ -2081,6 +2083,8 @@ target_include_directories(package_trust_selection_tests PRIVATE
 add_test(NAME package_trust_selection_tests COMMAND package_trust_selection_tests)
 
 add_executable(schema_contract_tests common/version/SchemaContractTests.cpp)
+target_compile_definitions(schema_contract_tests PRIVATE
+    FIC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(schema_contract_tests PRIVATE
     fic-core
     fic-device-db

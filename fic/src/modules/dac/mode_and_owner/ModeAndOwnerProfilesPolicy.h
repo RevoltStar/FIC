@@ -5,8 +5,11 @@
 
 class ModeAndOwnerProfilesPolicyTypeValue final : public PolicyTypeValue {
 public:
-    using Selection = std::map<std::string,
-        fic::platform::DacPlatformConfig::Profile>;
+    struct SelectedProfile {
+        fic::platform::DacPlatformConfig::Profile profile;
+        fic::platform::DacPlatformConfig::PresenceRequirement presence;
+    };
+    using Selection = std::map<std::string, SelectedProfile>;
 
     explicit ModeAndOwnerProfilesPolicyTypeValue(
         const fic::platform::DacPlatformConfig& platform);

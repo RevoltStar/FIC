@@ -247,7 +247,7 @@ PlatformProfile makeBuildPlatformProfile() {
     std::vector<ModeAndOwnerPathProfiles> modeAndOwnerCommands = {
         {"/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, true},
         {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true},
-        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, false},
         {"/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, true}
     };
     appendModeAndOwnerObjects(profile.dac, modeAndOwnerPaths, {

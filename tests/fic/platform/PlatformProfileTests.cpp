@@ -650,23 +650,24 @@ void testSelectedProfile() {
     }
     require(!hasLogicalObject("system_commands"),
             "aggregate system_commands logical object must not be exposed");
-    const auto requiredFlag = [&](const std::string& id) {
+    const auto allowMissingVariant = [&](const std::string& id) {
         const auto found = std::find_if(
             profile.dac.modeAndOwnerObjects.begin(),
             profile.dac.modeAndOwnerObjects.end(),
             [&](const auto& object) { return object.id == id; });
         require(found != profile.dac.modeAndOwnerObjects.end(),
                 "required DAC logical object is absent: " + id);
-        using DacConfig = fic::platform::DacPlatformConfig;
-        const auto& path = std::get<DacConfig::StaticPathObject>(found->target);
-        return path.profiles.at(DacConfig::Profile::System).required;
+        return found->allowMissingVariant;
     };
     for (const std::string& id : {"fstab", "group", "passwd", "shadow",
-                                  "sudoers", "df", "chattr", "arp", "ip"}) {
-        require(requiredFlag(id), "mandatory DAC object is not required: " + id);
+                                  "sudoers", "df", "chattr", "ip"}) {
+        require(!allowMissingVariant(id),
+                "mandatory DAC object allows missing variant: " + id);
     }
-    for (const std::string& id : {"hosts_allow", "hosts_deny", "securetty"}) {
-        require(!requiredFlag(id), "optional DAC object is marked required: " + id);
+    for (const std::string& id : {"hosts_allow", "hosts_deny", "securetty",
+                                  "arp"}) {
+        require(allowMissingVariant(id),
+                "optional DAC object lacks allow-missing variant: " + id);
     }
     const auto& resolvConfRule = findRule(
         catalogRules(profile.dac, false), "/etc/resolv.conf");

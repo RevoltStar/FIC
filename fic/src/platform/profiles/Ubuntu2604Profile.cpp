@@ -219,7 +219,7 @@ PlatformProfile makeBuildPlatformProfile() {
             {"/usr/bin/gnudf"}
         },
         {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true},
-        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, false},
         {
             "/usr/sbin/ip",
             {"root", "root", 0750},

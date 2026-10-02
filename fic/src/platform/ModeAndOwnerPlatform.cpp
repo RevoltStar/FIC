@@ -16,7 +16,6 @@ Dac::PathContract contract(const ModeAndOwnerPathProfiles& rule,
                            const FileMetadata& metadata) {
     Dac::PathContract result;
     result.metadata = metadata;
-    result.required = rule.required;
     result.allowedFinalSymlinkTargets = rule.allowedFinalSymlinkTargets;
     for (const ModeAndOwnerProviderProfileTarget& target :
          rule.providerManagedFinalSymlinkTargets) {
@@ -43,7 +42,7 @@ Dac::Object makeModeAndOwnerPathObject(
             Dac::Profile::Strict,
             contract(profiles, profiles.strict));
     }
-    return {std::move(id), std::move(target)};
+    return {std::move(id), std::move(target), !profiles.mustExistOnly};
 }
 
 Dac::Object makeModeAndOwnerTcbObject(
@@ -65,7 +64,7 @@ Dac::Object makeModeAndOwnerTcbObject(
     if (differs) {
         target.profiles.emplace(Dac::Profile::Strict, profiles);
     }
-    return {std::move(id), std::move(target)};
+    return {std::move(id), std::move(target), false};
 }
 
 void appendModeAndOwnerObjects(

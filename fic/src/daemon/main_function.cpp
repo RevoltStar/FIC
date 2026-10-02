@@ -1,5 +1,7 @@
 #include "main_function.h"
 
+#include "daemon/PolicyDisableFlow.h"
+
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
@@ -382,50 +384,8 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
                     platform.pam, capability, services, executables, error);
             };
 
-        const fic::rollback::RollbackReport rollbackReport =
-            fic::rollback::rollbackPolicyBeforeDisable(
-                policyRef, resourceHint, rollbackDeps);
-        for (const fic::rollback::MutationRollbackOutcome& outcome :
-             rollbackReport.outcomes) {
-            std::cout << "Rollback [" << outcome.id << "] " << outcome.resource
-                      << ": " << fic::rollback::rollbackStatusToString(outcome.status)
-                      << (outcome.message.empty()
-                              ? ""
-                              : (": " + outcome.message))
-                      << '\n';
-        }
-        if (!rollbackReport.rollbackCompleted()) {
-            std::cout << "Rollback не завершен: " << rollbackReport.message << '\n';
-            std::cout << "Отключение политики отменено, чтобы не оставить "
-                         "незадокументированные изменения FIC." << '\n';
-            return fic::daemon::PolicyMutationResult::failure(
-                rollbackReport.message);
-        }
-        if (rollbackReport.status == fic::rollback::RollbackStatus::Success) {
-            std::cout << "Rollback выполнен: " << rollbackReport.message << '\n';
-        }
-
-        ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
-        if(!mcfh.loadConfig()){
-            std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
-            return fic::daemon::PolicyMutationResult::failure(
-                "could not load module configuration");
-        }
-        if(!mcfh.disablePolicy(policy)){
-            std::cout << "Не удалось отключить параметр" << '\n';
-            return fic::daemon::PolicyMutationResult::failure(
-                "could not disable policy in module configuration");
-        }
-        std::cout << "Параметр " + policy + " отключен" << '\n';
-        //mcfh.printConfig();
-        if(!mcfh.saveConfig()){
-            std::cout << "Не удалось отключить политику" << '\n';
-            return fic::daemon::PolicyMutationResult::failure(
-                "could not save module configuration");
-        }else{
-            std::cout << "Политика была успешно дезактивирована" << '\n';
-            return fic::daemon::PolicyMutationResult::success();
-        }
+        return fic::daemon::disablePolicyAfterLookup(
+            policyRef, resourceHint, rollbackDeps);
     }
     return fic::daemon::PolicyMutationResult::failure(
         "policy was not found");

@@ -201,7 +201,7 @@ PlatformProfile makeBuildPlatformProfile() {
     // net-tools, iproute2 archives); FIC exposes packaged 0755 as system and 0750 as strict.
         makeModeAndOwnerPathObject("df", {"/usr/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, true}),
         makeModeAndOwnerPathObject("chattr", {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true}),
-        makeModeAndOwnerPathObject("arp", {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true}),
+        makeModeAndOwnerPathObject("arp", {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, false}),
         makeModeAndOwnerPathObject("ip", {"/usr/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, true})
     };
     return profile;

@@ -39,6 +39,31 @@ bool parseProfile(const std::string& text, Dac::Profile& profile) {
     return true;
 }
 
+bool parseSelectedProfile(
+    const std::string& text,
+    ModeAndOwnerProfilesPolicyTypeValue::SelectedProfile& selected) {
+    constexpr const char* suffix = "_or_not_exists";
+    const bool allowMissing = text.size() > std::char_traits<char>::length(suffix) &&
+        text.compare(text.size() - std::char_traits<char>::length(suffix),
+                     std::char_traits<char>::length(suffix), suffix) == 0;
+    const std::string base = allowMissing
+        ? text.substr(0, text.size() - std::char_traits<char>::length(suffix))
+        : text;
+    if (!parseProfile(base, selected.profile)) return false;
+    selected.presence = allowMissing
+        ? Dac::PresenceRequirement::AllowMissing
+        : Dac::PresenceRequirement::MustExist;
+    return true;
+}
+
+std::string selectedProfileName(
+    const ModeAndOwnerProfilesPolicyTypeValue::SelectedProfile& selected) {
+    std::string result = profileName(selected.profile);
+    if (selected.presence == Dac::PresenceRequirement::AllowMissing)
+        result += "_or_not_exists";
+    return result;
+}
+
 const Dac::Object* findObject(const Dac& platform, const std::string& id) {
     const auto it = std::find_if(platform.modeAndOwnerObjects.begin(),
         platform.modeAndOwnerObjects.end(),
@@ -105,7 +130,6 @@ bool planUserHomes(const Dac::UserHomesObject& homes, Dac::Profile profile,
         contract.metadata = {account, groupEntry->gr_name,
                              homes.directoryModes.at(profile)};
         contract.objectType = Dac::ObjectType::Directory;
-        contract.required = false;
         plan.emplace_back(home, std::move(contract));
     }
     return passwd.eof();
@@ -136,8 +160,9 @@ ModeAndOwnerProfilesPolicyTypeValue::ModeAndOwnerProfilesPolicyTypeValue(
     for (std::size_t index = 0;
          index < platform_.modeAndOwnerObjects.size(); ++index) {
         if (index != 0) generatedDefault << '\n';
-        generatedDefault << platform_.modeAndOwnerObjects[index].id
-                         << "=system";
+        const Dac::Object& object = platform_.modeAndOwnerObjects[index];
+        generatedDefault << object.id << "=system";
+        if (object.allowMissingVariant) generatedDefault << "_or_not_exists";
     }
     defaultValue = generatedDefault.str();
 }
@@ -173,8 +198,8 @@ bool ModeAndOwnerProfilesPolicyTypeValue::parse(
                     ": object and profile must be non-empty";
             return false;
         }
-        Dac::Profile profile;
-        if (!parseProfile(profileText, profile)) {
+        SelectedProfile selected;
+        if (!parseSelectedProfile(profileText, selected)) {
             error = "unknown profile '" + profileText + "'";
             return false;
         }
@@ -183,12 +208,18 @@ bool ModeAndOwnerProfilesPolicyTypeValue::parse(
             error = "unknown logical object '" + id + "'";
             return false;
         }
-        if (!supports(*object, profile)) {
+        if (selected.presence == Dac::PresenceRequirement::AllowMissing &&
+            !object->allowMissingVariant) {
+            error = "profile variant '" + profileText +
+                    "' is unavailable for '" + id + "'";
+            return false;
+        }
+        if (!supports(*object, selected.profile)) {
             error = "profile '" + profileText + "' is unavailable for '" +
                     id + "'";
             return false;
         }
-        if (!selection.emplace(id, profile).second) {
+        if (!selection.emplace(id, selected).second) {
             error = "duplicate logical object '" + id + "'";
             return false;
         }
@@ -210,7 +241,8 @@ std::string ModeAndOwnerProfilesPolicyTypeValue::postProcessingValue(
         throw std::invalid_argument(error);
     }
     nlohmann::json stored = nlohmann::json::object();
-    for (const auto& [id, profile] : selection) stored[id] = profileName(profile);
+    for (const auto& [id, selected] : selection)
+        stored[id] = selectedProfileName(selected);
     return stored.dump();
 }
 
@@ -242,7 +274,11 @@ std::string ModeAndOwnerProfilesPolicyTypeValue::getPolicyRestrictionInfo() {
                                     Dac::Profile::Minimum,
                                     Dac::Profile::Optimal,
                                     Dac::Profile::Strict}) {
-            if (supports(object, profile)) result << ' ' << profileName(profile);
+            if (supports(object, profile)) {
+                result << ' ' << profileName(profile);
+                if (object.allowMissingVariant)
+                    result << ' ' << profileName(profile) << "_or_not_exists";
+            }
         }
     }
     return result.str();
@@ -256,36 +292,48 @@ DAC_mode_and_owner_profiles::DAC_mode_and_owner_profiles(const Dac& platform)
 }
 
 bool DAC_mode_and_owner_profiles::apply() {
-    const std::optional<std::string> value = getValue();
-    if (!value) return false;
+    const std::optional<std::string> configuredValue =
+        hasConfiguredValue() ? getValue() : std::optional<std::string>{getDefaultValue()};
+    if (!configuredValue) return false;
     ModeAndOwnerProfilesPolicyTypeValue::Selection selection;
     std::string error;
     const auto& valueType = static_cast<const ModeAndOwnerProfilesPolicyTypeValue&>(
         getPolicyTypeValue());
-    if (!valueType.parse(*value, selection, error)) {
+    if (!valueType.parse(*configuredValue, selection, error)) {
         log("Invalid mode_and_owner_profiles value: " + error, logLevel::ERROR);
         return false;
     }
 
-    std::vector<std::pair<std::filesystem::path, Dac::PathContract>> pathPlan;
+    struct PlannedPath {
+        std::filesystem::path path;
+        Dac::PathContract contract;
+        Dac::PresenceRequirement presence;
+    };
+    std::vector<PlannedPath> pathPlan;
     std::optional<fic::platform::TcbCredentialStorageConfig> tcbPlan;
-    for (const auto& [id, profile] : selection) {
+    for (const auto& [id, selected] : selection) {
         const Dac::Object* object = findObject(platform_, id);
         if (const auto* path = std::get_if<Dac::StaticPathObject>(&object->target)) {
-            pathPlan.emplace_back(path->path, path->profiles.at(profile));
+            pathPlan.push_back(
+                {path->path, path->profiles.at(selected.profile), selected.presence});
         } else if (const auto* collection =
                        std::get_if<Dac::PathCollectionObject>(&object->target)) {
             for (const Dac::CollectionMember& member : collection->members)
-                pathPlan.emplace_back(member.path, member.profiles.at(profile));
+                pathPlan.push_back({member.path,
+                    member.profiles.at(selected.profile), selected.presence});
         } else if (const auto* homes =
                        std::get_if<Dac::UserHomesObject>(&object->target)) {
-            if (!planUserHomes(*homes, profile, pathPlan, error)) {
+            std::vector<std::pair<std::filesystem::path, Dac::PathContract>> homesPlan;
+            if (!planUserHomes(*homes, selected.profile, homesPlan, error)) {
                 log("UserHomes preflight failed: " + error, logLevel::ERROR);
                 return false;
             }
+            for (auto& [path, contract] : homesPlan)
+                pathPlan.push_back({std::move(path), std::move(contract),
+                    Dac::PresenceRequirement::MustExist});
         } else if (const auto* tcb =
                        std::get_if<Dac::TcbCredentialTreeObject>(&object->target)) {
-            tcbPlan = tcb->profiles.at(profile);
+            tcbPlan = tcb->profiles.at(selected.profile);
         } else {
             log("Selected handler is not yet executable: " + id,
                 logLevel::ERROR);
@@ -296,8 +344,8 @@ bool DAC_mode_and_owner_profiles::apply() {
     // passed semantic and handler-specific preflight.
     expected.clear();
     selectedTcb_ = std::move(tcbPlan);
-    for (const auto& [path, contract] : pathPlan)
-        addExpectedRule(path, contract);
+    for (const PlannedPath& planned : pathPlan)
+        addExpectedRule(planned.path, planned.contract, planned.presence);
     return ModeAndOwner::apply();
 }
 

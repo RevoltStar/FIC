@@ -462,7 +462,8 @@ struct ModeAndOwnerPathProfiles {
 
     FileMetadata strict;
     FileMetadata system;
-    bool required = false;
+    // Fail closed when a future catalog entry omits this capability field.
+    bool mustExistOnly = true;
 
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
     std::vector<ModeAndOwnerProviderProfileTarget> providerManagedFinalSymlinkTargets;
@@ -495,6 +496,7 @@ struct TcbCredentialStorageConfig {
 
 struct DacPlatformConfig {
     enum class Profile { System, Minimum, Optimal, Strict };
+    enum class PresenceRequirement { MustExist, AllowMissing };
     enum class ObjectType { RegularFile, Directory };
     enum class Remediation { Remediate, ValidateOnly };
 
@@ -507,7 +509,6 @@ struct DacPlatformConfig {
         FileMetadata metadata;
         ObjectType objectType = ObjectType::RegularFile;
         Remediation remediation = Remediation::Remediate;
-        bool required = false;
         std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
         std::vector<ProviderTarget> providerTargets;
     };
@@ -534,6 +535,7 @@ struct DacPlatformConfig {
         std::string id;
         std::variant<StaticPathObject, PathCollectionObject, UserHomesObject,
                      TcbCredentialTreeObject> target;
+        bool allowMissingVariant = false;
     };
     std::vector<Object> modeAndOwnerObjects;
 };

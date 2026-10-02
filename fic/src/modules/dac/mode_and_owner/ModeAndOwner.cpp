@@ -23,14 +23,15 @@ ModeAndOwner::ModeAndOwner(PolicyPathResolution pathResolution)
 
 void ModeAndOwner::addExpectedRule(
     const std::filesystem::path& path,
-    const fic::platform::DacPlatformConfig::PathContract& contract) {
+    const fic::platform::DacPlatformConfig::PathContract& contract,
+    fic::platform::DacPlatformConfig::PresenceRequirement presence) {
     expected.insert_or_assign(
         path.string(),
         ModeAndOwnerExpectation{
             FileStats(contract.metadata.owner, contract.metadata.group,
                       contract.metadata.permissions),
             contract.allowedFinalSymlinkTargets, contract.providerTargets,
-            contract.objectType, contract.required,
+            contract.objectType, presence,
             contract.remediation ==
                 fic::platform::DacPlatformConfig::Remediation::ValidateOnly});
 }
@@ -206,7 +207,8 @@ bool ModeAndOwner::apply() {
             filename, allowedTargets, pathResolution_);
 
         if (currentStats.is_missing()) {
-            if (!expectation.required) {
+            if (expectation.presence ==
+                fic::platform::DacPlatformConfig::PresenceRequirement::AllowMissing) {
                 this->log("Файл " + filename + " отсутствует; правило пропущено",
                           logLevel::DEBUG);
                 ++counters.success;

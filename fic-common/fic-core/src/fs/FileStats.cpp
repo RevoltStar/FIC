@@ -391,6 +391,14 @@ FileStats FileStats::openPolicyPath(
     result.close_descriptor();
     result.systemError_.clear();
     result.errorMessage_.clear();
+    const auto setSymlinkError = [&](const std::string& operation,
+                                     int errorNumber) {
+        result.state_ = FileStatsState::Error;
+        const FileStatsOperationResult failure =
+            failureResult(operation, path.string(), errorNumber);
+        result.systemError_ = failure.systemError;
+        result.errorMessage_ = failure.message;
+    };
 
     if (!path.is_absolute() || path.filename().empty()) {
         result.state_ = FileStatsState::Error;
@@ -418,8 +426,7 @@ FileStats FileStats::openPolicyPath(
         O_PATH | O_DIRECTORY | O_CLOEXEC,
         RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS));
     if (parentDescriptor.get() < 0) {
-        result.set_open_error(
-            "openat2 policy symlink parent for", errno);
+        setSymlinkError("openat2 policy symlink parent for", errno);
         return result;
     }
 
@@ -428,12 +435,12 @@ FileStats FileStats::openPolicyPath(
         normalizedPath.filename().c_str(),
         O_PATH | O_NOFOLLOW | O_CLOEXEC));
     if (linkDescriptor.get() < 0) {
-        result.set_open_error("openat policy symlink for", errno);
+        setSymlinkError("openat policy symlink for", errno);
         return result;
     }
     struct stat linkStat {};
     if (::fstat(linkDescriptor.get(), &linkStat) != 0) {
-        result.set_open_error("fstat policy symlink for", errno);
+        setSymlinkError("fstat policy symlink for", errno);
         return result;
     }
     if (!S_ISLNK(linkStat.st_mode)) {
@@ -473,7 +480,7 @@ FileStats FileStats::openPolicyPath(
         O_RDONLY | O_CLOEXEC | O_NONBLOCK,
         RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS));
     if (targetDescriptor.get() < 0) {
-        result.set_open_error("openat2 allowed symlink target for", errno);
+        setSymlinkError("openat2 allowed symlink target for", errno);
         return result;
     }
 
@@ -482,7 +489,7 @@ FileStats FileStats::openPolicyPath(
                   normalizedPath.filename().c_str(),
                   &currentLinkStat,
                   AT_SYMLINK_NOFOLLOW) != 0) {
-        result.set_open_error("fstatat policy symlink verification for", errno);
+        setSymlinkError("fstatat policy symlink verification for", errno);
         return result;
     }
     if (!S_ISLNK(currentLinkStat.st_mode) ||

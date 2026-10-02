@@ -214,7 +214,7 @@ PlatformProfile makeBuildPlatformProfile() {
         {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}, true},
         {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, false},
         // util-linux no longer ships /etc/securetty on Debian 12+; the rule
-        // stays Ignore-on-missing and the baseline matches the legacy
+        // exposes the allow-missing selection variant and the baseline matches the legacy
         // securetty file mode.
         {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, false}
     };
@@ -225,7 +225,7 @@ PlatformProfile makeBuildPlatformProfile() {
     std::vector<ModeAndOwnerPathProfiles> modeAndOwnerCommands = {
         {"/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, true},
         {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true},
-        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, false},
         {"/usr/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, true}
     };
     appendModeAndOwnerObjects(profile.dac, modeAndOwnerPaths, {

@@ -15,7 +15,8 @@ struct ModeAndOwnerExpectation {
         providerManagedFinalSymlinkTargets;
     fic::platform::DacPlatformConfig::ObjectType objectType =
         fic::platform::DacPlatformConfig::ObjectType::RegularFile;
-    bool required = false;
+    fic::platform::DacPlatformConfig::PresenceRequirement presence =
+        fic::platform::DacPlatformConfig::PresenceRequirement::MustExist;
     bool validateOnly = false;
 };
 
@@ -37,7 +38,8 @@ protected:
     int lastApplyFixedCount_ = -1;
     void addExpectedRule(
         const std::filesystem::path& path,
-        const fic::platform::DacPlatformConfig::PathContract& contract);
+        const fic::platform::DacPlatformConfig::PathContract& contract,
+        fic::platform::DacPlatformConfig::PresenceRequirement presence);
     void applyOpenedRule(const std::string& diagnosticPath,
                          const FileStats& expectedStats,
                          FileStats currentStats,

@@ -1,6 +1,7 @@
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
 #include "rollback/PamRollback.h"
+#include "daemon/PolicyDisableFlow.h"
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
@@ -676,6 +677,42 @@ void testNotEnrolledPolicyKeepsLegacyDisable() {
     require(report.status == RollbackStatus::Success,
             "not enrolled policy must allow legacy disable");
     require(report.rollbackCompleted(), "legacy disable must not be refused");
+}
+
+void testModeAndOwnerProductionDisableFlowIsReleaseOnly() {
+    TempJournal journal;
+    const std::filesystem::path journalPath=journal.tree.root/"journal.json";
+    JournalOverride overrideGuard(journalPath);
+    const std::filesystem::path managed=journal.tree.root/"managed";
+    writeFile(managed,"data");
+    require(::chmod(managed.c_str(),0600)==0,"strict fixture chmod failed");
+    struct stat before {};
+    require(::stat(managed.c_str(),&before)==0,"strict fixture stat failed");
+
+    writeFile(fic::core::FicRuntimePaths::get().configDir/"DAC.conf",
+              "_schema_version=1\n"
+              "mode_and_owner_profiles.status=ENABLE\n"
+              "mode_and_owner_profiles.value={\"fixture\":\"strict\"}\n");
+    const fic::daemon::PolicyMutationResult result =
+        fic::daemon::disablePolicyAfterLookup(
+            {"DAC","Mode_and_Owner","mode_and_owner_profiles"},"",
+            RollbackExecutorDeps{});
+    require(result.ok,"production DAC disable flow failed: "+result.detail);
+    const std::string config=readFile(
+        fic::core::FicRuntimePaths::get().configDir/"DAC.conf");
+    require(config.find("mode_and_owner_profiles.status=DISABLE")!=
+                std::string::npos,
+            "production disable flow did not persist DISABLE");
+    require(config.find("mode_and_owner_profiles.value={\"fixture\":\"strict\"}")!=
+                std::string::npos,
+            "production disable flow changed the selected value");
+    struct stat after {};
+    require(::stat(managed.c_str(),&after)==0,"disabled fixture stat failed");
+    require(before.st_uid==after.st_uid&&before.st_gid==after.st_gid&&
+                (before.st_mode&07777)==(after.st_mode&07777),
+            "DISABLE changed managed object metadata");
+    require(!std::filesystem::exists(journalPath),
+            "DAC disable created rollback records");
 }
 
 void testUnsupportedPolicyRefusesDisable() {
@@ -2490,6 +2527,19 @@ void testKerberosExecutorDriftConflictRefusesDisable() {
 }
 
 int main() {
+    TempTree runtimeTree("/tmp/fic-rollback-runtime-XXXXXX");
+    fic::core::FicProductPaths paths=fic::core::FicProductPaths::production();
+    paths.configDir=runtimeTree.root/"config";
+    paths.defaultConfigDir=runtimeTree.root/"defaults";
+    paths.logDir=runtimeTree.root/"log";
+    paths.notifyDir=runtimeTree.root/"notify";
+    paths.dataDir=runtimeTree.root/"data";
+    paths.runtimeDir=runtimeTree.root/"run";
+    std::filesystem::create_directories(paths.configDir);
+    std::filesystem::create_directories(paths.logDir);
+    std::filesystem::create_directories(paths.notifyDir);
+    std::string pathsError;
+    require(fic::core::FicRuntimePaths::initialize(paths,pathsError),pathsError);
     const struct {
         const char* name;
         void (*test)();
@@ -2516,6 +2566,8 @@ int main() {
         {"kerberos executor drift conflict refuses disable",
          testKerberosExecutorDriftConflictRefusesDisable},
         {"not enrolled policy keeps legacy disable", testNotEnrolledPolicyKeepsLegacyDisable},
+        {"mode-and-owner production disable is release-only",
+         testModeAndOwnerProductionDisableFlowIsReleaseOnly},
         {"unsupported policy refuses disable", testUnsupportedPolicyRefusesDisable},
         {"sysctl rollback removes managed key and moves runtime",
          testSysctlRollbackRemovesManagedKeyAndMovesRuntime},

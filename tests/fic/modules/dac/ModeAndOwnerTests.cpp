@@ -28,7 +28,7 @@ void setupPaths(const fs::path& r) {
     fs::create_directories(p.notifyDir); std::string error;
     require(fic::core::FicRuntimePaths::initialize(p, error), error);
 }
-Dac::PathContract contract(mode_t m) { Dac::PathContract c; c.metadata={owner(),group(),m}; c.required=true; return c; }
+Dac::PathContract contract(mode_t m) { Dac::PathContract c; c.metadata={owner(),group(),m}; return c; }
 Dac platform(const fs::path& a, const fs::path& b={}) {
     Dac d; Dac::StaticPathObject one{a,{{Dac::Profile::System,contract(0644)},{Dac::Profile::Strict,contract(0600)}}};
     d.modeAndOwnerObjects.push_back({"first",std::move(one)});
@@ -39,18 +39,41 @@ void configure(const fs::path& r, const std::string& json) {
     write(r/"config/DAC.conf", "_schema_version=1\nmode_and_owner_profiles.status=ENABLE\nmode_and_owner_profiles.value="+json+"\n",0640);
 }
 void testParser(const fs::path& r) {
-    Dac d=platform(r/"one",r/"two"); ModeAndOwnerProfilesPolicyTypeValue t(d);
+    Dac d=platform(r/"one",r/"two");
+    d.modeAndOwnerObjects[1].allowMissingVariant=true;
+    auto& second=std::get<Dac::StaticPathObject>(
+        d.modeAndOwnerObjects[1].target);
+    second.profiles.emplace(Dac::Profile::Minimum,contract(0640));
+    second.profiles.emplace(Dac::Profile::Optimal,contract(0620));
+    ModeAndOwnerProfilesPolicyTypeValue t(d);
     require(t.validate(""),"empty rejected"); require(t.validate(" first = strict \n\nsecond=system "),"valid rejected");
     require(!t.validate("first=strict\nfirst=system"),"duplicate accepted"); require(!t.validate("unknown=system"),"unknown accepted");
     require(!t.validate("first=optimal"),"unavailable accepted"); require(!t.validate("first=strict=system"),"malformed accepted");
+    require(t.validate("second=system_or_not_exists\nsecond=strict_or_not_exists")==false,
+        "duplicate optional object accepted");
+    require(t.validate("second=system_or_not_exists"),"system allow-missing rejected");
+    require(t.validate("second=strict_or_not_exists"),"strict allow-missing rejected");
+    require(t.validate("second=minimum_or_not_exists"),
+        "minimum allow-missing rejected");
+    require(t.validate("second=optimal_or_not_exists"),
+        "optimal allow-missing rejected");
+    require(!t.validate("first=system_or_not_exists"),"forbidden allow-missing accepted");
+    require(!t.validate("first=minimum_or_not_exists"),"missing base profile accepted");
+    for (const std::string& invalid : {"system_or_not_exist","_system_or_not_exists",
+                                      "system_or_not_exists_extra"})
+        require(!t.validate("second="+invalid),"malformed presence suffix accepted");
     const std::string stored=t.postProcessingValue("second=system\nfirst=strict");
     require(stored=="{\"first\":\"strict\",\"second\":\"system\"}","noncanonical JSON");
     require(t.reverse_postProcessingValue(stored)=="first=strict\nsecond=system","roundtrip failed");
-    const std::string expectedDefault="first=system\nsecond=system";
+    require(t.postProcessingValue("second=strict_or_not_exists")==
+        "{\"second\":\"strict_or_not_exists\"}","optional JSON mismatch");
+    require(t.reverse_postProcessingValue("{\"second\":\"strict_or_not_exists\"}")==
+        "second=strict_or_not_exists","optional roundtrip mismatch");
+    const std::string expectedDefault="first=system\nsecond=system_or_not_exists";
     require(t.getDefaultValue()==expectedDefault,"default is not logical all-system value");
     require(t.validate(t.getDefaultValue()),"default is invalid");
     require(t.postProcessingValue(t.getDefaultValue())==
-        "{\"first\":\"system\",\"second\":\"system\"}","default JSON mismatch");
+        "{\"first\":\"system\",\"second\":\"system_or_not_exists\"}","default JSON mismatch");
     require(t.reverse_postProcessingValue("{\"first\":\"strict\"}")==
         "first=strict","saved explicit value was auto-filled");
     require(t.reverse_postProcessingValue("not-json")=="<invalid stored value>","malformed JSON accepted");
@@ -60,6 +83,20 @@ void testParser(const fs::path& r) {
         "DAC","Mode_and_Owner","mode_and_owner_profiles",policy);
     require(descriptor.at("default_value")==expectedDefault,
         "PolicyRegistryJson descriptor lost logical default");
+    require(!descriptor.at("set").get<bool>() &&
+            descriptor.at("value")==expectedDefault,
+        "unconfigured descriptor did not expose generated default");
+    write(r/"one","x",0777);
+    DAC_mode_and_owner_profiles unconfigured(d);
+    require(unconfigured.apply()&&mode(r/"one")==0644,
+        "unconfigured policy did not apply generated default");
+    require(!fs::exists(r/"two"),
+        "allow-missing default unexpectedly created an object");
+    configure(r,"{}");
+    require(::chmod((r/"one").c_str(),0600)==0,"explicit empty setup failed");
+    DAC_mode_and_owner_profiles explicitEmpty(d);
+    require(explicitEmpty.apply()&&mode(r/"one")==0600,
+        "explicit empty mapping was replaced with generated default");
 }
 void testExactTransitionsAndSpecialBits(const fs::path& r) {
     const fs::path f=r/"exact";
@@ -96,17 +133,76 @@ void testExactTransitionsAndSpecialBits(const fs::path& r) {
     write(f,"x",0750); configure(r,"{\"special\":\"system\"}");
     DAC_mode_and_owner_profiles setSticky(sticky);
     require(setSticky.apply()&&mode(f)==01750,"required sticky bit not set");
+
+    if (::geteuid()==0) {
+        const struct passwd* nobody=::getpwnam("nobody");
+        const struct group* nobodyGroup=::getgrnam("nogroup");
+        if (nobodyGroup==nullptr) nobodyGroup=::getgrnam("nobody");
+        require(nobody!=nullptr&&nobodyGroup!=nullptr,
+            "root special-bit test identity is unavailable");
+        write(f,"x",04755);
+        require(::chown(f.c_str(),nobody->pw_uid,nobodyGroup->gr_gid)==0,
+            "could not prepare wrong ownership");
+        require(::chmod(f.c_str(),04755)==0,"could not restore fixture SUID");
+        Dac ownership; auto rootSpecial=contract(04755);
+        rootSpecial.metadata.owner="root"; rootSpecial.metadata.group="root";
+        ownership.modeAndOwnerObjects.push_back({"special",Dac::StaticPathObject{
+            f,{{Dac::Profile::System,rootSpecial}}}});
+        configure(r,"{\"special\":\"system\"}");
+        DAC_mode_and_owner_profiles afterChown(ownership);
+        require(afterChown.apply(),"ownership+SUID remediation failed");
+        struct stat finalState {};
+        require(::stat(f.c_str(),&finalState)==0&&finalState.st_uid==0&&
+                finalState.st_gid==0&&(finalState.st_mode&07777)==04755,
+            "fchown-cleared SUID was not restored exactly");
+    }
 }
 void testRequiredOptionalAndIdentityFailure(const fs::path& r) {
     const fs::path required=r/"missing-required", optional=r/"missing-optional", good=r/"required-good";
     write(good,"x",0777); Dac d;
-    auto req=contract(0600); req.required=true; auto opt=contract(0600); opt.required=false;
+    auto req=contract(0600); auto opt=contract(0600);
     d.modeAndOwnerObjects.push_back({"required",Dac::StaticPathObject{required,{{Dac::Profile::System,req}}}});
-    d.modeAndOwnerObjects.push_back({"optional",Dac::StaticPathObject{optional,{{Dac::Profile::System,opt}}}});
+    d.modeAndOwnerObjects.push_back({"optional",Dac::StaticPathObject{optional,
+        {{Dac::Profile::System,opt},{Dac::Profile::Strict,contract(0500)}}},true});
     d.modeAndOwnerObjects.push_back({"good",Dac::StaticPathObject{good,{{Dac::Profile::System,req}}}});
-    configure(r,"{\"good\":\"system\",\"optional\":\"system\",\"required\":\"system\"}");
+    configure(r,"{\"good\":\"system\",\"optional\":\"system_or_not_exists\",\"required\":\"system\"}");
     DAC_mode_and_owner_profiles aggregate(d); require(!aggregate.apply(),"missing required accepted");
     require(mode(good)==0600,"aggregate loop stopped after missing required");
+    configure(r,"{\"optional\":\"system\"}");
+    DAC_mode_and_owner_profiles optionalMustExist(d);
+    require(!optionalMustExist.apply(),"plain system allowed missing object");
+    configure(r,"{\"optional\":\"system_or_not_exists\"}");
+    DAC_mode_and_owner_profiles optionalMissing(d);
+    require(optionalMissing.apply(),"allow-missing rejected ENOENT");
+    write(optional,"x",0777);
+    DAC_mode_and_owner_profiles optionalExisting(d);
+    require(optionalExisting.apply()&&mode(optional)==0600,
+        "allow-missing failed exact remediation for existing object");
+    fs::remove(optional);
+    configure(r,"{\"optional\":\"strict\"}");
+    DAC_mode_and_owner_profiles strictMustExist(d);
+    require(!strictMustExist.apply(),"plain strict allowed missing object");
+    configure(r,"{\"optional\":\"strict_or_not_exists\"}");
+    DAC_mode_and_owner_profiles strictMissing(d);
+    require(strictMissing.apply(),"strict allow-missing rejected ENOENT");
+
+    if (::geteuid()!=0) {
+        const fs::path deniedParent=r/"inaccessible";
+        const fs::path deniedPath=deniedParent/"object";
+        write(deniedPath,"x",0600);
+        Dac inaccessible;
+        inaccessible.modeAndOwnerObjects.push_back({"inaccessible",
+            Dac::StaticPathObject{deniedPath,
+                {{Dac::Profile::System,contract(0600)}}},true});
+        configure(r,"{\"inaccessible\":\"system_or_not_exists\"}");
+        require(::chmod(deniedParent.c_str(),0000)==0,
+            "could not prepare EACCES fixture");
+        DAC_mode_and_owner_profiles inaccessiblePolicy(inaccessible);
+        const bool accepted=inaccessiblePolicy.apply();
+        require(::chmod(deniedParent.c_str(),0700)==0,
+            "could not restore EACCES fixture");
+        require(!accepted,"allow-missing suppressed EACCES");
+    }
 
     write(good,"x",0644); Dac badIdentity;
     auto bad=contract(0600); bad.metadata.owner="fic-no-such-owner";
@@ -206,8 +302,8 @@ void testCollectionAndProviderSafety(const fs::path& r) {
         {target,fic::platform::ManagedFileProvider::NetworkManager,
          {owner(),group(),0644}});
     Dac::StaticPathObject object{link,{{Dac::Profile::System,resolvSystem}}};
-    resolv.modeAndOwnerObjects.push_back({"resolv",std::move(object)});
-    configure(r,"{\"resolv\":\"system\"}");
+    resolv.modeAndOwnerObjects.push_back({"resolv",std::move(object),true});
+    configure(r,"{\"resolv\":\"system_or_not_exists\"}");
     DAC_mode_and_owner_profiles providerOk(resolv);
     require(providerOk.apply(),"valid provider target rejected");
     require(::chmod(target.c_str(),0600)==0,"provider test chmod failed");
@@ -222,14 +318,19 @@ void testCollectionAndProviderSafety(const fs::path& r) {
     require(!providerDirectory.apply(),"provider directory accepted as file");
     require(mode(target)==0700,"unexpected provider type was mutated");
 
+    fs::remove(link); fs::remove_all(target); fs::create_symlink(target,link);
+    DAC_mode_and_owner_profiles brokenProvider(resolv);
+    require(!brokenProvider.apply(),
+        "allow-missing accepted a broken provider symlink");
+
     fs::remove(link); fs::remove_all(target); write(target,"nameserver",0600);
     fs::create_symlink(target,link);
 
     Dac forbidden;
     Dac::StaticPathObject forbiddenObject{
         link,{{Dac::Profile::System,contract(0644)}}};
-    forbidden.modeAndOwnerObjects.push_back({"forbidden",std::move(forbiddenObject)});
-    configure(r,"{\"forbidden\":\"system\"}");
+    forbidden.modeAndOwnerObjects.push_back({"forbidden",std::move(forbiddenObject),true});
+    configure(r,"{\"forbidden\":\"system_or_not_exists\"}");
     DAC_mode_and_owner_profiles forbiddenPolicy(forbidden);
     require(!forbiddenPolicy.apply(),"unlisted final symlink accepted");
     require(mode(target)==0600,"forbidden symlink target was mutated");
@@ -244,8 +345,8 @@ void testCollectionAndProviderSafety(const fs::path& r) {
     const fs::path fifo=r/"unsafe-fifo"; fs::remove(fifo,ignored);
     require(::mkfifo(fifo.c_str(),0666)==0,"mkfifo failed");
     Dac unsafe; unsafe.modeAndOwnerObjects.push_back({"fifo",Dac::StaticPathObject{
-        fifo,{{Dac::Profile::System,contract(0600)}}}});
-    configure(r,"{\"fifo\":\"system\"}"); DAC_mode_and_owner_profiles fifoPolicy(unsafe);
+        fifo,{{Dac::Profile::System,contract(0600)}}},true});
+    configure(r,"{\"fifo\":\"system_or_not_exists\"}"); DAC_mode_and_owner_profiles fifoPolicy(unsafe);
     require(!fifoPolicy.apply(),"FIFO accepted as regular file");
 }
 void testTcbTopology(const fs::path& r) {

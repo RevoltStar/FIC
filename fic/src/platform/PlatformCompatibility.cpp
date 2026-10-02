@@ -884,6 +884,13 @@ bool validateModeAndOwnerCatalog(const DacPlatformConfig& config,
                     object.id;
             return false;
         }
+        if (object.allowMissingVariant &&
+            !std::holds_alternative<Dac::StaticPathObject>(object.target) &&
+            !std::holds_alternative<Dac::PathCollectionObject>(object.target)) {
+            error = "DAC allow-missing variant is unsupported for handler: " +
+                    object.id;
+            return false;
+        }
         bool hasSystem = false;
         bool valid = std::visit([&](const auto& target) {
             using Target = std::decay_t<decltype(target)>;

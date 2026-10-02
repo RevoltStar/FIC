@@ -136,6 +136,30 @@ void testConfigContract(const fs::path& root) {
     assert(fic::core::ConfigSchemaManager::verifyConfigs(working, error));
 }
 
+void testModeAndOwnerFreshInstallConfig(const fs::path& root) {
+    const fs::path defaults = root / "mode-owner-defaults";
+    const fs::path working = root / "mode-owner-config";
+    fs::create_directories(defaults);
+    for (const char* fileName : CONFIG_FILES) {
+        if (std::string(fileName) == "DAC.conf") {
+            fs::copy_file(fs::path(FIC_SOURCE_DIR) /
+                              "fic/src/resources/config/DAC.conf.in",
+                          defaults / fileName);
+        } else {
+            writeFile(defaults / fileName,
+                "_schema_version=" +
+                std::to_string(fic::version::CONFIG_SCHEMA_VERSION) + "\n");
+        }
+    }
+    std::string error;
+    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+        defaults, working, error));
+    const std::string dac = readFile(working / "DAC.conf");
+    assert(dac.find("mode_and_owner_profiles.status=DISABLE") !=
+           std::string::npos);
+    assert(dac.find("mode_and_owner_profiles.value=") == std::string::npos);
+}
+
 void testDatabaseContract(const fs::path& root) {
     std::string error;
     const DBOptions fresh = optionsFor(root, "fresh");
@@ -227,6 +251,7 @@ int main() {
     assert(fic::core::FicRuntimePaths::initialize(paths, pathError));
 
     testConfigContract(root);
+    testModeAndOwnerFreshInstallConfig(root);
     testDatabaseContract(root);
 
     fs::remove_all(root);

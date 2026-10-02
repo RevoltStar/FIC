@@ -1,6 +1,5 @@
 _schema_version=1
 mode_and_owner_profiles.status=DISABLE
-mode_and_owner_profiles.value={}
 sudo_env_reset.status=DISABLE
 sudo_env_reset.value=ENABLE
 sudo_passwd_tries.status=DISABLE
